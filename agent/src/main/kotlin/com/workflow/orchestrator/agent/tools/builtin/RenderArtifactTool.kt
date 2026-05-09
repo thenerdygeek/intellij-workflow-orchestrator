@@ -8,6 +8,11 @@ import com.workflow.orchestrator.agent.tools.ArtifactPayload
 import com.workflow.orchestrator.agent.tools.ArtifactRenderResult
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
@@ -68,6 +73,254 @@ Before calling render_artifact, load the frontend-design skill via use_skill("fr
     )
 
     override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR, WorkerType.CODER, WorkerType.ANALYZER)
+
+    override fun documentation(): ToolDocumentation = toolDoc("render_artifact") {
+        summary {
+            technical(
+                "Renders an LLM-generated React component in a sandboxed iframe (react-runner via " +
+                    "agent/webview/src/sandbox-main.ts) and SUSPENDS the agent loop until the iframe " +
+                    "reports the actual outcome via JCEF bridge → ArtifactResultRegistry. Returns " +
+                    "Success(heightPx) / RenderError(phase, message, missingSymbols, line) / " +
+                    "Timeout(30s) / Skipped(headless). Self-repair loop: extractMissingSymbols parses " +
+                    "ReferenceError/TypeError phrasings so the LLM gets back a structured list of " +
+                    "missing identifiers + the canonical SCOPE_HINT and can self-correct on the next " +
+                    "iteration. Sandbox scope: React hooks, shadcn/Radix UI primitives, Recharts, " +
+                    "Lucide, motion/react, d3, cobe, roughjs, react-simple-maps, @xyflow/react, " +
+                    "@tanstack/react-table, date-fns, colord. No imports, no network, all data inline."
+            )
+            plain(
+                "Like asking the LLM to draw — instead of describing a chart in words or sketching " +
+                    "ASCII art, it can ship a real interactive widget that renders inline in the chat: " +
+                    "charts, dependency graphs, sortable tables, dashboards, mockups. The widget is a " +
+                    "tiny React app running in a locked-down browser sandbox: no internet, no file " +
+                    "access, all the data baked in. If the LLM tries to use something the sandbox " +
+                    "doesn't have, the error comes back with a list of what IS available so the LLM " +
+                    "can try again."
+            )
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.AGENT_CONTROL)
+        counterfactual(
+            "Without render_artifact, the LLM falls back to ASCII art, Markdown tables, and " +
+                "fenced code blocks for everything that wants to be visual. Architecture diagrams " +
+                "become indented bullet trees; build-duration trends become tabulated numbers; " +
+                "dependency graphs become 'A → B → C' chains. The user loses interactivity entirely — " +
+                "no hover, no sort, no click-to-navigate, no dark-mode-aware charts. Markdown can " +
+                "render images via the rich block pipeline, but the LLM has no path to GENERATE them; " +
+                "this tool is the only one that lets the model produce non-trivial visual output."
+        )
+        llmMistake(
+            "Writes `import { motion } from 'motion/react'` (or any other import statement). The " +
+                "sandbox injects identifiers as scope variables — imports are syntactically rejected " +
+                "by react-runner and surface as a parse-phase RenderError. The description and " +
+                "SCOPE_HINT both warn against this; the self-repair loop usually catches it on retry."
+        )
+        llmMistake(
+            "Reaches for a library not in scope — `Histogram` (not in Recharts), `framer-motion` " +
+                "(only `motion/react` is exposed), `react-table v7` (only the v8 `@tanstack/react-table` " +
+                "headless API), `Mermaid` (Mermaid is for chat code blocks, not artifacts). Surfaces " +
+                "as ReferenceError; extractMissingSymbols catches the identifier and the LLM gets " +
+                "the SCOPE_HINT inventory back so it can swap to a sandbox-native equivalent."
+        )
+        llmMistake(
+            "Tries to fetch data at runtime (`fetch('...')`, `useEffect` calling an API). The " +
+                "sandbox has no network egress — the request fails, the component renders empty, " +
+                "and the LLM gets confused about why the chart is blank. Correct pattern: aggregate " +
+                "the data on the Kotlin/agent side first, then bake it inline as a JS literal."
+        )
+        llmMistake(
+            "Calls render_artifact for trivial output — a one-line answer wrapped in a `<Card>`, " +
+                "a yes/no question rendered as a `<Badge>`, two PRs in a `<Table>`. The system prompt " +
+                "explicitly discourages this (`Use when: 3+ entities …; Do NOT use when: short text " +
+                "answers, fewer than 3 items, yes/no`), but the LLM occasionally over-reaches when " +
+                "frontend-design skill is loaded."
+        )
+        llmMistake(
+            "Forgets `export default` — the source-validator rejects with " +
+                "'source must export a default function component' before the iframe is even " +
+                "mounted. Cheap to detect, but a recurring source of churn when the LLM emits a " +
+                "named export instead."
+        )
+        llmMistake(
+            "Doesn't wire bridge.navigateToFile when the artifact lists files (a diagnostics view, " +
+                "a call graph). The component renders fine but the user can't click through to source " +
+                "— a missed feature, not a bug, but the IDE bridge is the whole point of rendering " +
+                "in-IDE versus shipping a standalone HTML preview."
+        )
+        params {
+            required("title", "string") {
+                llmSeesIt(
+                    "Short title for the artifact (e.g., 'Authentication Flow', 'Module Dependencies')"
+                )
+                humanReadable(
+                    "The header shown above the rendered widget — like the caption on a figure in a " +
+                        "paper. Keep it short; it's metadata, not content."
+                )
+                whenPresent(
+                    "Used as the artifact card title in chat and echoed back in the success/error " +
+                        "ToolResult content (`[Artifact: <title>] …`)."
+                )
+                constraint("kept short — title is rendered in the artifact card header, not inside the iframe")
+                example("Authentication Flow")
+                example("Module Dependencies")
+                example("Build duration trend (last 30 builds)")
+            }
+            required("source", "string") {
+                llmSeesIt(
+                    "JSX source code. Must export a default function component. bridge, useState, " +
+                        "useEffect etc. are scope variables (use directly, NOT as props). All data " +
+                        "must be inline."
+                )
+                humanReadable(
+                    "The actual React component, as a string of JSX. Same shape as a `.tsx` file — " +
+                        "but with no import lines, no external data fetches, and a hard cap on size."
+                )
+                whenPresent(
+                    "Validated for the literal text `export default` before being shipped to the " +
+                        "iframe. The sandbox's react-runner compiles and mounts it against the " +
+                        "fullScope object; failures surface back through the self-repair loop."
+                )
+                constraint("must contain the literal text `export default` — pre-render validator rejects otherwise")
+                constraint("max 100,000 characters (~100KB) — larger sources are rejected with a 'simplify' nudge")
+                constraint("no `import` statements — react-runner parses them as syntax errors")
+                constraint("no runtime network access — `fetch`, `XHR`, dynamic `<script>` tags all fail silently")
+                example("export default function Flow() { return <BarChart width={400} height={300} data={[…inline…]}>…</BarChart>; }")
+            }
+        }
+        verdict {
+            keep(
+                "STRONG keep — this is the only tool that produces interactive output. Every other " +
+                    "tool is text-bound (Markdown, code blocks, ASCII). The bundled webview surface " +
+                    "(react-runner + Recharts + xyflow + tanstack-table + d3 + cobe + roughjs + " +
+                    "react-simple-maps + date-fns + colord + shadcn/Radix + Lucide + motion) exists " +
+                    "specifically to give this tool teeth: dependency graphs, dashboards, charts, " +
+                    "sortable tables, IDE-bridge navigation. The self-repair loop (parse missing " +
+                    "symbols → return SCOPE_HINT → LLM retries) makes it a pleasant tool to use; " +
+                    "without that scaffolding the failure mode would be 'crash silently and give up'.",
+                VerdictSeverity.STRONG,
+            )
+        }
+        related(
+            "attempt_completion",
+            Relationship.SEE_ALSO,
+            "Conceptual contrast: attempt_completion ends the session with a final text message; " +
+                "render_artifact augments an in-progress assistant turn with a visual. Use " +
+                "render_artifact alongside text in the same turn — not as a substitute for completion."
+        )
+        related(
+            "read_file",
+            Relationship.COMPOSE_WITH,
+            "Read the source first to harvest data (function names, dependency edges, test counts), " +
+                "then render_artifact with that data baked inline. The pipeline is data-gather → " +
+                "summarise → render."
+        )
+        related(
+            "search_code",
+            Relationship.COMPOSE_WITH,
+            "Aggregate matches with search_code (diagnostic counts, callers per function, etc.) " +
+                "and render the aggregate as a chart or table — search_code's text output benefits " +
+                "from being summarised visually."
+        )
+        related(
+            "use_skill",
+            Relationship.COMPLEMENT,
+            "The system prompt instructs the LLM to load `frontend-design` via use_skill before " +
+                "calling render_artifact for the canonical component APIs and design guidelines."
+        )
+        related(
+            "ask_followup_question",
+            Relationship.ALTERNATIVE,
+            "When the LLM needs the user to MAKE a choice (multi-select, single-select), use " +
+                "ask_followup_question's wizard mode — it has built-in option handling. " +
+                "render_artifact is for displaying information, not collecting structured input."
+        )
+        downside(
+            "Sandbox is iframe-isolated with no network egress — `fetch`, dynamic imports, and " +
+                "external scripts all fail. ALL data must be inline as a JS literal in the source. " +
+                "For large datasets, the LLM has to summarise/aggregate on the agent side first."
+        )
+        downside(
+            "Bundle scope is fixed at compile time of the webview. Adding a new library (e.g. " +
+                "react-pdf, three.js) requires editing `agent/webview/package.json` + " +
+                "`sandbox-main.ts` fullScope, rebuilding the webview, and updating both the " +
+                "description AND SCOPE_HINT (kept hand-in-sync — see the SCOPE_HINT KDoc warning " +
+                "about prompt drift). The TODO(layer-1) note plans a build-time-generated scope list."
+        )
+        downside(
+            "Description AND SCOPE_HINT can drift from the actual sandbox `fullScope` object. " +
+                "Today they are kept in sync by hand. A scope-list mismatch produces a " +
+                "particularly unhelpful failure mode: the LLM sees `Histogram` listed in the prompt, " +
+                "the sandbox throws ReferenceError on `Histogram`, and the self-repair loop returns " +
+                "the same prompt that caused the failure. Mitigated by the SCOPE_HINT comment at " +
+                "the source — but not eliminated."
+        )
+        downside(
+            "100KB source cap is generous for hand-written React but not for auto-generated " +
+                "tables of 1000+ rows or graphs with thousands of nodes. Large datasets need " +
+                "aggregation upstream — the LLM occasionally tries to inline a giant array and " +
+                "gets the 'simplify' rejection."
+        )
+        downside(
+            "30-second render timeout. Components that hit infinite loops (uncontrolled " +
+                "useEffect, while-true), make blocking calls, or render before the webview is " +
+                "visible time out and surface as `Timeout`. The error message instructs the LLM to " +
+                "remove heavy computations and async-effects-that-never-resolve, but the underlying " +
+                "cause is occasionally just a hidden webview at the moment of render."
+        )
+        downside(
+            "AGENT_CONTROL classification under-sells the surface area. The tool only mutates " +
+                "the rendered iframe (no filesystem, no process spawn, no IDE state), but it does " +
+                "introduce sandboxed JS execution generated by the LLM. The CSP, lack of network " +
+                "egress, and inline-data-only constraints are what make this safe — not the " +
+                "tool's own purity."
+        )
+        observation(
+            "render_artifact is one of the few tools that uses `suspendCancellableCoroutine` " +
+                "via ArtifactResultRegistry. If the user cancels the agent run mid-render, the " +
+                "deferred completes with cancellation and the iframe is left orphaned. The " +
+                "cleanup contract on AgentCefPanel handles disposal, but mid-flight render " +
+                "cancellation is a less-tested path than completion."
+        )
+        observation(
+            "The Skipped path (no listener registered) returns optimistic success. This is " +
+                "intentional for headless test contexts where there is no real iframe — but it " +
+                "means tests cannot easily assert on render correctness. End-to-end render " +
+                "validation requires a live AgentCefPanel."
+        )
+        flowchart(
+            """
+            flowchart TD
+                A[LLM emits render_artifact title source] --> B{title param present}
+                B -- no --> X1[Error missing title]
+                B -- yes --> C{source param present}
+                C -- no --> X2[Error missing source]
+                C -- yes --> D{contains export default}
+                D -- no --> X3[Error missing default export]
+                D -- yes --> E{source under 100KB}
+                E -- no --> X4[Error source too large]
+                E -- yes --> F[Generate UUID renderId]
+                F --> G[ArtifactResultRegistry.renderAndAwait]
+                G --> H[AgentCefPanel.renderArtifact pushes payload to React]
+                H --> I[ArtifactRenderer mounts iframe via react-runner]
+                I --> J{component compiles and mounts}
+                J -- ReferenceError --> K[extractMissingSymbols parses error]
+                K --> L[postMessage RenderError back]
+                J -- ok --> M[postMessage Success heightPx]
+                J -- runtime throw --> N[postMessage RenderError phase=runtime]
+                L --> O[ArtifactRenderer.reportToKotlin via JCEF bridge]
+                M --> O
+                N --> O
+                O --> P[AgentController.parseAndDispatchArtifactResult]
+                P --> Q[ArtifactResultRegistry.reportResult completes deferred]
+                Q --> R{outcome}
+                R -- Success --> S[ToolResult with artifact payload, 15 token estimate]
+                R -- RenderError --> T[ToolResult error with missingSymbols + SCOPE_HINT for self-repair]
+                R -- Timeout 30s --> U[ToolResult error suggesting simplification]
+                R -- Skipped headless --> V[Optimistic success for tests]
+            """
+        )
+        narrative("render_artifact")
+    }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val title = params["title"]?.jsonPrimitive?.content
