@@ -1,5 +1,7 @@
 package com.workflow.orchestrator.agent.tools.docs
 
+import kotlinx.serialization.Serializable
+
 /**
  * Rich, source-embedded documentation for an [com.workflow.orchestrator.agent.tools.AgentTool].
  *
@@ -12,6 +14,7 @@ package com.workflow.orchestrator.agent.tools.docs
  * Documentation is intentionally not serialized to the LLM. It exists only for users
  * (you, deciding which tools to keep) and the tool-docs UI.
  */
+@Serializable
 data class ToolDocumentation(
     /** Tool's registered name — must match [com.workflow.orchestrator.agent.tools.AgentTool.name]. */
     val toolName: String,
@@ -83,6 +86,7 @@ data class ToolDocumentation(
  * meta-tools whose actions span multiple categories pick the broadest (e.g. a tool
  * that can either read OR write picks `FILE_WRITE`).
  */
+@Serializable
 enum class SideEffectKind {
     /** Pure read — no filesystem, process, or IDE state mutation. (`read_file`, `find_definition`.) */
     READ_ONLY,
@@ -115,6 +119,7 @@ enum class SideEffectKind {
  * Intentionally separate from [ToolDocumentation] so author-only fields don't
  * accidentally drift from runtime reality.
  */
+@Serializable
 data class AutoDerivedMetadata(
     /** "Core" / "Deferred" / "Active-deferred". */
     val tier: String,
@@ -137,6 +142,7 @@ data class AutoDerivedMetadata(
 )
 
 /** A single description in both technical and plain-English registers. */
+@Serializable
 data class ToolSummary(
     /** Engineer-facing — concise, jargon ok. */
     val technical: String,
@@ -145,6 +151,7 @@ data class ToolSummary(
 )
 
 /** Documentation for one action of a multi-action tool. */
+@Serializable
 data class ActionDoc(
     /** Action name as it appears in the `action` enum parameter. */
     val name: String,
@@ -182,12 +189,14 @@ data class ActionDoc(
 )
 
 /** A grouping of params shared across actions (or for single-action tools). */
+@Serializable
 data class ParamGroup(
     val required: List<ParamDoc> = emptyList(),
     val optional: List<ParamDoc> = emptyList(),
 )
 
 /** Documentation for a single parameter. */
+@Serializable
 data class ParamDoc(
     val name: String,
     /** JSON schema type — `string`, `integer`, `boolean`, `number`, `array`, `object`. */
@@ -213,6 +222,7 @@ data class ParamDoc(
  * action-specific contracts without forcing the LLM to read 10 action descriptions
  * just to know which params apply.
  */
+@Serializable
 data class RejectedParam(
     val name: String,
     /** Why this param is irrelevant for this action. */
@@ -220,6 +230,7 @@ data class RejectedParam(
 )
 
 /** A documented failure mode — used for "things that go wrong" in the UI. */
+@Serializable
 data class FailureMode(
     /** The condition that triggers this failure ("file is binary", "session is running"). */
     val condition: String,
@@ -228,6 +239,7 @@ data class FailureMode(
 )
 
 /** A concrete invocation example. */
+@Serializable
 data class ToolExample(
     val title: String,
     /** Param name → string-form value, exactly as the LLM would emit. */
@@ -247,12 +259,14 @@ data class ToolExample(
  * - If neither is set, the verdict is "no opinion" — a flag to the user that
  *   this tool/action needs more thought.
  */
+@Serializable
 data class Verdict(
     val keep: VerdictReason? = null,
     val drop: VerdictReason? = null,
 )
 
 /** Reasoning for one side of a verdict. */
+@Serializable
 data class VerdictReason(
     val reasoning: String,
     val severity: VerdictSeverity = VerdictSeverity.NORMAL,
@@ -262,17 +276,20 @@ data class VerdictReason(
  * Strength of a verdict claim. STRONG verdicts colour the UI urgently — useful
  * when scanning for drop candidates across 79 tools.
  */
+@Serializable
 enum class VerdictSeverity { STRONG, NORMAL, WEAK }
 
 /**
  * A non-blocking audit note — opportunities for tool/action consolidation,
  * removable params, or other refactors that don't fit neatly into a verdict.
  */
+@Serializable
 data class AuditNote(
     val kind: AuditKind,
     val text: String,
 )
 
+@Serializable
 enum class AuditKind {
     /** Two actions could plausibly merge. */
     MERGE_OPPORTUNITY,
@@ -285,6 +302,7 @@ enum class AuditKind {
 }
 
 /** Pointer to a related tool with semantic relationship. */
+@Serializable
 data class RelatedTool(
     val name: String,
     val relationship: Relationship,
@@ -292,6 +310,7 @@ data class RelatedTool(
     val note: String,
 )
 
+@Serializable
 enum class Relationship {
     /** Use instead — does the same job differently. */
     ALTERNATIVE,
@@ -304,3 +323,33 @@ enum class Relationship {
     /** Conceptually related, no specific workflow link. */
     SEE_ALSO,
 }
+
+/**
+ * Wire-format payload sent to the JCEF tool-docs editor. Flattens hand-authored
+ * [ToolDocumentation] with runtime [AutoDerivedMetadata] and the optionally-loaded
+ * narrative markdown into a single JSON object whose shape matches the static
+ * preview at `/tmp/tool-docs-preview/data.js`.
+ *
+ * The duplication between top-level `tier` and `metadata.tier` is intentional —
+ * the React header reads the top-level field for the badge, while `metadata.tier`
+ * lives inside the capability strip. Same value, two binding sites.
+ */
+@Serializable
+data class ToolDocPayload(
+    val toolName: String,
+    val tier: String,
+    val sideEffect: SideEffectKind,
+    val counterfactual: String? = null,
+    val commonLLMMistakes: List<String> = emptyList(),
+    val metadata: AutoDerivedMetadata,
+    val summary: ToolSummary,
+    val whatLLMSees: String,
+    val actions: List<ActionDoc>? = null,
+    val singleActionParams: ParamGroup? = null,
+    val toolVerdict: Verdict = Verdict(),
+    val auditNotes: List<AuditNote> = emptyList(),
+    val relatedTools: List<RelatedTool> = emptyList(),
+    val flowchart: String? = null,
+    val downsides: List<String> = emptyList(),
+    val narrative: String? = null,
+)
