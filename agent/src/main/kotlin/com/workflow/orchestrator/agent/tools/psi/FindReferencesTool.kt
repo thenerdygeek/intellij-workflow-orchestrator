@@ -14,6 +14,11 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.PathValidator
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -31,6 +36,76 @@ class FindReferencesTool(
         required = listOf("symbol")
     )
     override val allowedWorkers = setOf(WorkerType.ANALYZER, WorkerType.REVIEWER)
+
+    override fun documentation(): ToolDocumentation = toolDoc("find_references") {
+        summary {
+            technical("PSI find-usages for a class, method, or field — resolves the symbol to a `PsiElement` (provider `findSymbol` first, `PsiShortNamesCache` fallback), then runs `ReferencesSearch.search(target, projectScope).findAll()` and emits `path:line  <line text>` rows (or `>>>`-marked context blocks when `context_lines > 0`); capped at the first 50 hits with a count footer.")
+            plain("The agent's 'Find Usages' (Cmd-Click → Find Usages in IntelliJ). Hand it a symbol name and it returns every place that symbol is read, called, or referenced — same index-backed search the IDE shows in the Usages tool window, just textual output instead of a tree view.")
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.READ_ONLY)
+        counterfactual(
+            "Without find_references, the LLM falls back to `search_code` with the symbol name as a regex — which mixes the definition, every call site, every import statement, every comment, and every string literal mentioning the name into a single undifferentiated list (commonly 50-200 hits for a normal method). The LLM then has to read each candidate file to classify hit vs. noise, often follows an import or comment and misattributes a 'usage', and burns 3-10x more tool calls per impact-analysis question. find_references uses PSI resolution, so it returns ONLY actual references to the resolved target — imports of the same name on a different symbol don't false-match."
+        )
+        llmMistake("Confuses the result with `find_definition` output — find_references returns USAGES (excluding the declaration itself, which lives elsewhere in the index), so the LLM sometimes claims 'this method has no callers' when the result is empty, when really the method IS the only thing named `foo` and just isn't called yet. Use find_definition first to confirm the target exists before drawing 'unused' conclusions.")
+        llmMistake("Searches an overloaded method by bare name without the `file` hint — the resolver hits `PsiShortNamesCache.getMethodsByName(symbol).firstOrNull()`, which picks WHICHEVER overload the cache returns first. References for the wrong overload come back, and the LLM treats them as canonical. Pass `file` to scope the lookup to the declaring file.")
+        llmMistake("Calls find_references in a pure-Python project — the no-file-context path resolves only `JAVA`/`kotlin` providers (line 152), so even though `PythonProvider` is registered the global lookup goes through the wrong provider. The PsiShortNamesCache fallback may still find Python methods/fields by short name, but the result is incidental, not designed. Pass `file` pointing at a `.py` file and the file-scoped resolver picks `PythonProvider` correctly.")
+        llmMistake("Calls find_references during indexing — gets a dumb-mode error from `PsiToolUtils.isDumb(project)` and immediately retries without backoff. No internal wait/retry; the LLM should pause one tool-call cycle or fall back to `search_code`.")
+        llmMistake("Sets `context_lines` higher than 3 expecting more context — the value is silently coerced to `0..3` by `coerceIn(0, 3)`. Asking for `context_lines=10` returns the same output as `context_lines=3`, which can mislead the LLM into thinking it's seeing the full surrounding block.")
+        llmMistake("Treats the 50-result cap as the true count — output truncation appends `... (showing first 50 of N)` only when `references.size > 50`, but the LLM sometimes drops the footer when summarising and reports '50 references' as the total. The header line `References to '<symbol>' (N total)` is the authoritative count.")
+        params {
+            required("symbol", "string") {
+                llmSeesIt("Symbol name to search for (class name, method name, or field name)")
+                humanReadable("What you're looking for — typically a class name, method name, or field name. Bare names work; `Class#method` / FQN is NOT parsed by this tool's resolver (unlike `find_definition`), so for member disambiguation use the `file` hint instead.")
+                whenPresent("Routed to `resolveSearchTarget`: if `file` is set, file-scoped resolution runs first (provider for that file's language → file-scoped class+method walk for Java files); otherwise the hardcoded `JAVA`/`kotlin` provider lookup runs, with `PsiShortNamesCache.getMethodsByName` / `getFieldsByName` as the last fallback. The first match is fed to `ReferencesSearch.search(target, projectScope)`.")
+                constraint("must be a single identifier — `Class#method` / `Class.method` / FQN strings are NOT parsed and will fall through to `PsiShortNamesCache` short-name lookup, which won't match")
+                constraint("case-sensitive — `MyClass` and `myclass` are distinct lookups")
+                example("AgentService")
+                example("executeTask")
+                example("planModeActive")
+            }
+            optional("file", "string") {
+                llmSeesIt("Optional file path for disambiguation when multiple symbols share the same name")
+                humanReadable("Path to the file that DECLARES the symbol — used to pick the right one when multiple classes/methods share a name across the project. Validated against the project root by `PathValidator.resolveAndValidate` to prevent traversal.")
+                whenPresent("File-scoped resolution runs first: the resolver looks up the provider for that file's language, calls `findSymbol`, and accepts the result only if its containing file matches. Falls through to `(PsiJavaFile).classes.flatMap { methods }.firstOrNull { name == symbol }` for method-by-name within the file. If file-scoped resolution misses, the global path runs anyway — so `file` is a hint, not a hard filter.")
+                whenAbsent("Tool runs the global path: `registry.forLanguageId(\"JAVA\") ?: registry.forLanguageId(\"kotlin\")` (hardcoded fallback, see downsides), then `PsiShortNamesCache` short-name lookup. First hit wins regardless of which file declares it.")
+                constraint("must resolve under the project root after `PathValidator.resolveAndValidate` — absolute paths outside the project return a path-error ToolResult before any PSI work runs")
+                example("src/main/kotlin/com/workflow/orchestrator/agent/AgentService.kt")
+                example("src/main/java/com/example/UserRepository.java")
+            }
+            optional("context_lines", "integer") {
+                llmSeesIt("Number of context lines around each reference (default: 0, max: 3)")
+                humanReadable("How many lines of code to print above and below each reference, with `>>>` marking the actual hit line. 0 is a single-line `path:line  <code>` row; 1-3 is a small surrounding block.")
+                whenPresent("Each reference is rendered as `path:line\\n` followed by `(start..end).joinToString` over the surrounding lines, with `>>>` prefixing the hit line and `   ` (3 spaces) prefixing context lines. Computed via `document.getLineStartOffset` / `getLineEndOffset` on the containing file's PSI document.")
+                whenAbsent("Single-line rendering: `path:line  <trimmed line text>`. Compact and cheap — preferred for high-fanout symbols where context lines would blow out the 50-result cap into a wall of code.")
+                constraint("silently coerced into the range 0..3 via `coerceIn(0, 3)` — values above 3 are clamped without warning")
+                constraint("non-integer / unparseable strings fall back to the default 0 (`toIntOrNull() ?: 0`)")
+                example("0")
+                example("2")
+                example("3")
+            }
+        }
+        verdict {
+            keep(
+                "Foundational read-only IDE intelligence and the inverse half of the find_definition / find_references pair. The counterfactual (`search_code` for the symbol name) loses the definition-vs-usage distinction, the import-vs-call distinction, and the symbol-identity distinction — three signal losses that the LLM cannot recover textually. Drop only if PSI infrastructure goes away entirely; on its own merits this tool earns its schema slot.",
+                VerdictSeverity.STRONG,
+            )
+        }
+        related("find_definition", Relationship.COMPLEMENT, "Inverse-direction pair: find_definition jumps to where a symbol is DECLARED, find_references lists where it is USED. Canonical workflow: find_definition to anchor the target, then find_references to map its blast radius before refactoring or removing.")
+        related("search_code", Relationship.FALLBACK, "Use when no LanguageIntelligenceProvider exists for the language (JS/TS, Go, Rust today), when the symbol is dynamic (Python `getattr`, runtime-injected names), when find_references returns 'No symbol found', or when you specifically WANT to find string-literal / comment mentions that PSI references-search excludes by design.")
+        related("call_hierarchy", Relationship.COMPOSE_WITH, "find_references gives you the flat list of usage sites; call_hierarchy walks the tree of who-calls-who. Use find_references to spot-check 'is this method used at all'; switch to call_hierarchy when you need to follow the chain through wrappers and indirections.")
+        related("find_implementations", Relationship.SEE_ALSO, "For interfaces and abstract methods, `find_references` tends to return the implementations and call-through sites; `find_implementations` returns ONLY the concrete subtype/override declarations. Use the latter when you need a clean list of who satisfies a contract.")
+        related("refactor_rename", Relationship.COMPOSE_WITH, "Run find_references before refactor_rename to preview the rename's blast radius, then rename. Skipping the preview risks renaming through a misidentified symbol when overloads collide.")
+        downside("Hardcoded `JAVA`/`kotlin` fallback at line 152 (`registry.forLanguageId(\"JAVA\") ?: registry.forLanguageId(\"kotlin\")`) — same bug shape as `find_definition`. In a pure-Python project (no Java plugin loaded), the no-file-context path skips `PythonProvider` entirely even though it IS registered, and falls through to `PsiShortNamesCache`, which returns Python results incidentally rather than by design. Workaround: always pass `file` pointing at a `.py` file, which routes through the file-scoped resolver and picks the correct provider. Fix: iterate `registry.allProviders()` for the global fallback or pick by language ID present in the registry.")
+        downside("Hard 50-result cap with no pagination, sort key, or filter — `references.take(50)` truncates without sorting by file path, line number, or relevance. For a method called 200+ times across the codebase, the LLM sees an arbitrary slice of the first 50 in iteration order and can't widen the search. Workaround: pass a more specific symbol or use `file` to scope, then re-query for the remainder.")
+        downside("Does NOT separate import-statement references from real call/use references — `ReferencesSearch.search` returns import references alongside actual usages. For Java/Kotlin classes with many imports and few real call sites, the result is dominated by import lines. The LLM has to filter visually. Workaround: ask the LLM to grep for the symbol name in the result lines, ignoring lines starting with `import`.")
+        downside("Slow on large codebases — `ReferencesSearch.findAll()` is index-backed but still walks every file in `GlobalSearchScope.projectScope`. For symbols in large monorepos, expect multi-second latencies; the 120s default tool timeout can be hit on pathological symbols (every PSI element named `equals` / `hashCode` / `toString`).")
+        downside("Requires indexing to be complete — `PsiToolUtils.isDumb(project)` guard at entry returns immediately with a dumb-mode error if indexing is in progress; the `inSmartMode(project)` on the read-action only defers WITHIN the action, not the entry check. LLM gets a hard fail and has to retry.")
+        downside("File-scoped resolution's class-walk fallback (lines 144-147) only runs for `PsiJavaFile` — Kotlin files, Python files, and any other language with `file` set fall through to the global path even when file-scoped resolution should narrow them. Disambiguation via `file` is therefore most reliable for Java sources.")
+        downside("Top-level Kotlin functions / extension functions are not findable by bare name in the no-file-context path — `findSymbol` walks `PsiShortNamesCache.getMethodsByName`, which indexes class members only. Workaround: pass `file` pointing at the containing `.kt` file, which uses provider resolution.")
+        observation("Same `JAVA`/`kotlin` hardcoded-fallback bug as `find_definition` (Batch 2 finding, see commit 6bf719d0). Both tools share the no-file-context resolution shortcut and both should be fixed together by switching to `registry.allProviders()` enumeration. Tracking as a single defect across the PSI tool family — do NOT fix here, log for separate triage.")
+        observation("`file` parameter does double duty as a path-validation entry point AND a disambiguation hint, but the file-scoped fallback only handles `PsiJavaFile.classes.methods` — non-Java files get path validation but no actual file-scoping benefit. Consider either dropping the Java-only fallback, generalizing it via the provider, or renaming the parameter to signal its Java-leaning behaviour.")
+    }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         if (PsiToolUtils.isDumb(project)) return PsiToolUtils.dumbModeError()
