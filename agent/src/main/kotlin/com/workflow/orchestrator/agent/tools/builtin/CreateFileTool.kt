@@ -15,6 +15,11 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -39,6 +44,90 @@ class CreateFileTool : AgentTool {
         required = listOf("path", "content", "description")
     )
     override val allowedWorkers = setOf(WorkerType.CODER)
+
+    override fun documentation(): ToolDocumentation = toolDoc("create_file") {
+        summary {
+            technical("Create a new file (or overwrite-on-flag) at a project-relative or absolute path. Routes through PathValidator (project root + `{agentDir}/memory/` only), auto-creates missing parent directories via VfsUtil/mkdirs, writes via WriteCommandAction so the change is undoable from the IDE's Edit menu, and falls back to direct java.io.File + LocalFileSystem.refresh if the VFS path is unavailable. Refuses to clobber existing files unless `overwrite=true`. Bytes written via VFS use the VirtualFile's detected charset; the I/O fallback writes UTF-8.")
+            plain("Like hitting File → New → Save in your editor: type a path, type the contents, and the file appears on disk and in IntelliJ's project view. Won't quietly stomp a file that already exists — you have to explicitly say 'yes, replace it'.")
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.FILE_WRITE)
+        counterfactual(
+            "Without create_file, the LLM falls back to `run_command \"cat > path/to/file <<'EOF' … EOF\"` — which bypasses PathValidator (so the LLM could write to `/etc/`, `~/.ssh/`, or another project), bypasses the IntelliJ Document/VFS API (no IDE undo, no editor refresh, stale buffers in open editors), produces no unified diff for the approval dialog, and runs through run_command's stricter `ALWAYS_PER_INVOCATION` approval gate instead of the friendlier `SESSION_APPROVABLE` one. Net cost: a real path-traversal regression plus a worse UX on every single new-file write."
+        )
+        llmMistake("Reaches for create_file with `overwrite=true` to make a small change to an existing file — re-writing all 800 lines instead of using edit_file. Wastes output tokens, defeats the per-edit diff that ships to the approval dialog, and makes the change impossible to review at a glance.")
+        llmMistake("Forgets that a file with that path already exists, calls without `overwrite=true`, gets the `file exists` error, then panics and retries with overwrite — when the right move was edit_file all along.")
+        llmMistake("Truncates content with `// ... rest of file unchanged` placeholders. The description spells out 'COMPLETE intended content' and 'NO truncation', but the LLM still does it; the result is a file with literal `…` ellipses on disk that breaks the next compile.")
+        llmMistake("Tries to `create_file` outside the project — most often into `/tmp/`, the user home, or a sibling repo to 'stage' something. PathValidator rejects with 'path outside project'; the only out-of-project root that works is `{agentDir}/memory/` for agent memory files.")
+        params {
+            required("path", "string") {
+                llmSeesIt("The path of the file to create (absolute or relative to the project root).")
+                humanReadable("Where the new file should land. Relative paths are resolved against the project root; absolute paths are accepted but must canonicalise back into the project (or `{agentDir}/memory/`).")
+                whenPresent("Path is canonicalised, validated against project + memory roots, and the file is created at that location. Missing parent directories are created automatically (mkdirs / VfsUtil.createDirectoryIfMissing).")
+                constraint("must resolve inside the project root or `{agentDir}/memory/` — anywhere else is rejected before any I/O")
+                constraint("`..`-style traversal is canonicalised away before the boundary check")
+                example("src/main/kotlin/com/foo/NewService.kt")
+                example("docs/research/2026-05-09-followups.md")
+                example(".workflow/skills/my-skill/SKILL.md")
+            }
+            required("content", "string") {
+                llmSeesIt("The content to write to the file. ALWAYS provide the COMPLETE intended content of the file, without any truncation or omissions. You MUST include ALL parts of the file, even if they haven't been modified.")
+                humanReadable("The full text of the file. Whatever you put here is exactly what hits disk — no template, no merge, no comment-stripping. Line endings and trailing newlines are preserved verbatim; the tool does not normalise CRLF to LF.")
+                whenPresent("Bytes are written verbatim via VirtualFile.setBinaryContent (using the file's detected charset) or, on the fallback path, `File.writeText(Charsets.UTF_8)`.")
+                constraint("MUST be the entire intended file body — placeholders like `// ... unchanged ...` end up literally on disk")
+                example("package com.foo\n\nclass NewService {\n    fun hello() = \"world\"\n}\n")
+            }
+            required("description", "string") {
+                llmSeesIt("Brief description of what this file is for (shown in approval dialog).")
+                humanReadable("One-line human-readable rationale shown in the user's approval dialog. Not written to the file. Required so the user has context when granting approval.")
+                whenPresent("Surfaces verbatim in the approval gate UI alongside the unified diff.")
+                example("New service class for the X feature")
+                example("Test fixture covering the empty-project branch")
+            }
+            optional("overwrite", "boolean") {
+                llmSeesIt("Allow overwrite if file already exists. Default: false. Set to true for complete rewrites.")
+                humanReadable("Safety latch. False (default) means 'I expect this file to be brand new — fail if it isn't'. True means 'I really do want to replace whatever is on disk with the content I'm about to send'.")
+                whenPresent("If true, an existing file at `path` is silently replaced. If false (default), an existing file causes the call to error out with a `file exists` message that nudges toward edit_file.")
+                whenAbsent("Defaults to false — the call errors if the target file already exists, protecting the user from accidental clobber.")
+                example("true")
+            }
+        }
+        verdict {
+            keep(
+                "Foundational write primitive. New file creation is one of the most common operations in any coding agent (new tests, new modules, new docs, new memory files), and create_file is the only path that combines PathValidator's safety, the IntelliJ Document/VFS API's undo + editor-refresh, parent-directory auto-creation, and a unified diff for the approval gate. Removing it forces the LLM onto raw shell heredocs, which regresses on safety, UX, and reviewability.",
+                VerdictSeverity.STRONG,
+            )
+        }
+        related("edit_file", Relationship.ALTERNATIVE, "Use this instead when you're modifying an EXISTING file — edit_file produces a targeted diff, preserves unrelated content, and is the right tool for nearly every change to an already-tracked file.")
+        related("read_file", Relationship.COMPLEMENT, "Use after a create_file to confirm what landed on disk, especially before chaining further edits — read_file sees unsaved Document state, so it confirms the IDE picked up the change.")
+        related("revert_file", Relationship.FALLBACK, "Use to undo a botched create_file before any further work touches the file. Pairs with the LocalHistory checkpoint create_file leaves behind.")
+        related("glob_files", Relationship.COMPOSE_WITH, "Run before create_file when generating multiple files in a directory — confirms the directory layout and catches name collisions in advance.")
+        downside("`overwrite=true` does NOT produce a side-by-side diff against the prior file content in the approval gate — the diff shown is `\"\"` → new content (full-file addition). Reviewers lose the ability to see what's actually changing on a rewrite. For meaningful changes to existing files, edit_file is strictly better for review.")
+        downside("Writes through the `description` parameter into the approval dialog — but the parameter shares its name with the tool's own `description` LLM-facing field, which is a recurring source of authoring confusion when reading the source.")
+        downside("Auto-creates parent directories without prompting. Convenient when intentional, but a typo in `path` (`src/maim/...` instead of `src/main/...`) will silently produce a stray directory tree that the user has to clean up manually.")
+        downside("Plan mode blocks this tool entirely (it's in `WRITE_TOOLS`). Even an LLM that hallucinates a create_file call in plan mode will be rejected at the AgentLoop execution guard.")
+        downside("Approval is required (`ApprovalPolicy.SESSION_APPROVABLE`) — the user can grant 'allow for session', but the first call always pauses the loop for human confirmation. In headless / CI-style usage this is a friction point.")
+        downside("Charset asymmetry: the VFS write path encodes via the VirtualFile's detected charset, but the I/O fallback always writes UTF-8. On a project with a non-UTF-8 default encoding, a file written via the fallback may not round-trip identically with one written via VFS.")
+        downside("Empty content produces a 0-byte file rather than erroring. Sometimes useful (placeholder files, .gitkeep), occasionally surprising.")
+        observation("`overwrite=true` could plausibly be split into a separate `overwrite_file` tool — keeping `create_file` strictly for new-file creation would tighten the description, eliminate the 'reach for overwrite instead of edit_file' failure mode, and let the approval dialog show a true before/after diff for the overwrite case.")
+        flowchart("""
+            flowchart TD
+                A[LLM calls create_file] --> B{Path validates?}
+                B -- no --> X1[Return path-outside-project error]
+                B -- yes --> C{File exists?}
+                C -- yes & overwrite=false --> X2[Return file-exists error<br/>nudge toward edit_file]
+                C -- no, or overwrite=true --> D{Parent dir exists?}
+                D -- no --> E[mkdirs / VfsUtil.createDirectoryIfMissing]
+                E -- failed --> X3[Return mkdir-failed error]
+                E -- ok --> F[Write via VFS + WriteCommandAction]
+                D -- yes --> F
+                F -- ok --> G[Return summary + unified diff + artifact]
+                F -- failed --> H[Fallback: java.io.File.writeText UTF-8]
+                H -- ok --> I[LocalFileSystem.refresh]
+                I --> G
+                H -- failed --> X4[Return create-failed error]
+        """)
+    }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val rawPath = params["path"]?.jsonPrimitive?.content
