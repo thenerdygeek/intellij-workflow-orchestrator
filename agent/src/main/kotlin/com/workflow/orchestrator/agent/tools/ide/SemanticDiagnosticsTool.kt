@@ -14,6 +14,11 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.PathValidator
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -42,6 +47,71 @@ class SemanticDiagnosticsTool(
         required = listOf("path")
     )
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER)
+
+    override fun documentation(): ToolDocumentation = toolDoc("diagnostics") {
+        summary {
+            technical("Single-file semantic diagnostics via the registered LanguageIntelligenceProvider — runs PSI traversal under ReadAction.nonBlocking().inSmartMode() to surface compile errors, unresolved references, type mismatches, and PsiErrorElements; optional start_line/end_line scopes the result to an edit range; full structured DiagnosticEntry list spills to disk above 30K, prose preview (head 20) stays inline.")
+            plain("Like the squiggly red and yellow underlines in your IDE — but as a structured list the agent can read. Tells the LLM exactly which lines have errors, what's broken, and at what severity, without it having to spawn a Maven or Gradle build.")
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.READ_ONLY)
+        counterfactual(
+            "Without diagnostics, the LLM iterates `run_command ./gradlew build` (or mvn compile / pytest --collect-only) just to learn whether its last edit compiles — 30-90s per cycle, 100K+ chars of build noise to filter, and zero line-precise mapping. After three failed-build cycles the context is half full of stack traces. diagnostics gives the same signal in <1s, scoped to the file, with 1-based line numbers ready for edit_file. This tool is the dominant reason agent edit-then-verify loops finish in seconds rather than minutes."
+        )
+        llmMistake("Reads `isError=false` as 'no problems found'. WRONG — `isError=false` means 'the tool ran successfully'; the problem list IS the payload. Problems-found and clean-file results both return `isError=false`. Only path validation, indexing, missing file, parse failure, PSI invalidation, and uncaught exceptions return `isError=true`. The LLM must inspect the content (`No errors in X.` vs `N issue(s) in X: ...`) to decide success-vs-fix-needed.")
+        llmMistake("Calls diagnostics on a file the IDE hasn't finished indexing yet — receives `IDE is still indexing. Try again shortly.` (`isError=true`) and immediately re-fires instead of waiting or doing other work first. The DumbService guard is intentional; retry-with-backoff or pivoting to non-PSI work is the right move.")
+        llmMistake("Calls diagnostics immediately after edit_file without realising the SyntaxValidator that edit_file ran already covered the same file at write time — duplicate work. edit_file's post-write validation is local and fast; diagnostics is the broader sweep. Use diagnostics for the *next* iteration after the structural edit has settled, not as a redundant check on the line you just wrote.")
+        llmMistake("Provides only `start_line` (or only `end_line`) expecting partial scoping — both are required to filter, and a missing pair causes the tool to fall through to whole-file analysis silently. Easy to miss because there is no explicit error.")
+        llmMistake("Calls diagnostics on JSON / YAML / Go / TypeScript and gets `Code intelligence not available for {language}` (`isError=false`, token estimate 5). The LLM occasionally retries with the same path expecting a different result. Move on — there is no provider; use search_code or run_inspections instead.")
+        params {
+            required("path", "string") {
+                llmSeesIt("File path to check (e.g., 'src/main/kotlin/UserService.kt')")
+                humanReadable("Where the file lives — relative to the project root or absolute. Same path semantics as read_file.")
+                whenPresent("Path is canonicalised, validated against project boundaries via PathValidator, the VFS entry is resolved, PSI is built, and the language provider runs its diagnostics walk inside `inSmartMode`.")
+                constraint("must point inside the project root or another allow-listed root — traversal (`../etc/passwd`) is rejected before any IDE call")
+                constraint("must point to a file, not a directory")
+                constraint("file must already exist in the VFS — pass-through `findFileByIoFile` returns null for unsaved/scratch paths")
+                example("src/main/kotlin/com/example/UserService.kt")
+                example("agent/src/test/kotlin/com/workflow/orchestrator/agent/tools/ide/SemanticDiagnosticsToolTest.kt")
+            }
+            optional("start_line", "integer") {
+                llmSeesIt("First line of the range to check (1-based, inclusive). Requires end_line.")
+                humanReadable("Lower bound of the line range to scope diagnostics to — useful right after an edit when you only care about issues near your change.")
+                whenPresent("Combined with end_line to filter the diagnostic list. The full file is still parsed (PSI doesn't do partial parses); only the result list is filtered and a `(N issue(s) outside the specified range were excluded)` suffix is added.")
+                whenAbsent("Whole-file diagnostics are returned; no scope filter is applied.")
+                constraint("must be paired with end_line — providing only one is silently ignored and falls back to whole-file analysis")
+                constraint("1-based")
+                example("40")
+            }
+            optional("end_line", "integer") {
+                llmSeesIt("Last line of the range to check (1-based, inclusive). Requires start_line.")
+                humanReadable("Upper bound of the line range — pair with start_line to scope to a specific edit window.")
+                whenPresent("Combined with start_line to filter the diagnostic list to lines within the inclusive range.")
+                whenAbsent("Whole-file diagnostics are returned.")
+                constraint("must be paired with start_line — providing only one is silently ignored")
+                constraint("1-based, inclusive")
+                example("80")
+            }
+        }
+        verdict {
+            keep(
+                "Foundational for any edit-then-verify loop. Replaces the need to shell out to `./gradlew build` / `mvn compile` / `pytest --collect-only` after every edit — same signal, ~100x faster, line-precise, no build-system noise. Without it, agent iteration cycles balloon from seconds to minutes and contexts fill with stack traces. Core tool, registered always when a language provider is registered.",
+                VerdictSeverity.STRONG,
+            )
+        }
+        related("run_inspections", Relationship.ALTERNATIVE, "Project-wide or scope-wide inspection sweep — heavier, slower, but covers IntelliJ inspection profiles diagnostics doesn't see (style, performance, deprecation). Use diagnostics for fast per-file checks, run_inspections for broader audits.")
+        related("list_quickfixes", Relationship.COMPLEMENT, "Once diagnostics surfaces a problem, list_quickfixes returns the IDE-suggested fixes for it — the natural next step after the LLM reads the diagnostic line.")
+        related("problem_view", Relationship.SEE_ALSO, "Reads the IDE's existing Problems tool window state instead of running a fresh analysis — overlapping payload but reflects what the IDE has already computed (Wolf flag, persisted issues) rather than re-walking PSI.")
+        related("edit_file", Relationship.COMPOSE_WITH, "edit_file runs SyntaxValidator on every write — diagnostics is the broader follow-up sweep. Typical loop: edit_file → diagnostics (verify nothing else broke) → list_quickfixes if issues found.")
+        related("find_references", Relationship.COMPOSE_WITH, "When diagnostics reports an unresolved reference, find_references / find_definition help the LLM locate the missing symbol's actual definition.")
+        downside("Depends on indexing being complete — returns `IDE is still indexing` (isError=true) during DumbService periods (project import, plugin reload, VCS branch switch). The agent has to back off and retry, which adds latency at session start.")
+        downside("Not all languages have a provider — JSON, YAML, Go, TypeScript, etc. return `Code intelligence not available for {language}`. Coverage is currently Java/Kotlin (JavaKotlinProvider) and Python (PythonProvider via reflection on PythonCore).")
+        downside("Column numbers are pinned to -1 in the structured DiagnosticEntry output — providers don't expose column through the DiagnosticInfo contract today (Phase 7 follow-up).")
+        downside("`hasQuickFix` is pinned to false in DiagnosticEntry — providers don't propagate quick-fix availability (same limitation as ProblemViewTool).")
+        downside("Severity classification reflects the inspection profile / language provider's own thresholds, not a stable cross-language taxonomy. An ERROR in Kotlin and an ERROR in Python may have very different blast radii.")
+        downside("Mid-refactor false positives: when the user (or the agent itself) is mid-edit and references are temporarily unresolved, diagnostics will report them — matches IDE behaviour but means the LLM should not panic on transient errors right after a large edit.")
+        observation("isError=false on problems-found is unusual enough that it warrants a llmMistake entry above and a dedicated KDoc block on `execute`. Same contract as RunInspectionsTool, ListQuickFixesTool, ProblemViewTool — the problem list IS the payload.")
+    }
 
     /**
      * ## `isError` semantics (Task 5.6 / F6 invariant)
