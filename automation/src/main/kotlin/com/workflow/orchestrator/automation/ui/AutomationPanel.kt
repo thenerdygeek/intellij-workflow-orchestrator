@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.automation.ui
 
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
@@ -14,6 +15,7 @@ import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.automation.model.*
 import com.workflow.orchestrator.automation.service.*
+import com.workflow.orchestrator.automation.service.BaselineCacheService
 import com.workflow.orchestrator.automation.service.TriggerDefaultAction
 import com.workflow.orchestrator.bamboo.ui.ManualStageDialog
 import com.workflow.orchestrator.bamboo.ui.TriggerMode
@@ -50,6 +52,13 @@ class AutomationPanel(
     private val queueService by lazy { project.getService(QueueService::class.java) }
     private val bambooService by lazy { project.getService(BambooService::class.java) }
     private val driftDetectorService by lazy { project.getService(DriftDetectorService::class.java) }
+    private val baselineCacheService: BaselineCacheService =
+        project.getService(BaselineCacheService::class.java)
+    private val refreshButton: JButton = JButton(AllIcons.Actions.Refresh).apply {
+        toolTipText = "Re-scan recent builds for the selected suite"
+        isFocusable = false
+        margin = JBUI.insets(2)
+    }
 
     // Header components
     private val suiteCombo = JComboBox<SuiteComboItem>().apply {
@@ -187,6 +196,7 @@ class AutomationPanel(
                 })
                 add(branchLabel)
                 add(statusLabel)
+                add(refreshButton)
             }
 
             // Single split-button: primary action = enqueue first stage;
@@ -233,6 +243,22 @@ class AutomationPanel(
             onSuiteSelected(item.planKey)
         }
 
+        // Refresh button: cache-bust for the currently-selected suite
+        refreshButton.addActionListener {
+            val planKey = currentSuitePlanKey.takeIf { it.isNotBlank() } ?: return@addActionListener
+            val token = ++loadGeneration
+            refreshButton.isEnabled = false
+            statusLabel.text = "Refreshing…"
+            statusLabel.foreground = StatusColors.INFO
+            scope.launch {
+                try {
+                    refreshBaseline(planKey, token)
+                } finally {
+                    invokeLater { refreshButton.isEnabled = true }
+                }
+            }
+        }
+
         // QueueStatusPanel observes QueueService directly (A-P1-2); Cancel is wired
         // inside the panel. Trigger Now / Queue Run live on the parent header above.
 
@@ -269,9 +295,15 @@ class AutomationPanel(
         // Subscribe to BuildLogReady events from the Build tab
         subscribeToBuildEvents()
 
-        // Auto-select first suite
+        // Auto-select first suite and kick off the tab-open baseline load
         if (suiteCombo.itemCount > 0) {
             suiteCombo.selectedIndex = 0
+            val initialPlanKey = (suiteCombo.selectedItem as? SuiteComboItem)?.planKey
+            if (!initialPlanKey.isNullOrBlank()) {
+                currentSuitePlanKey = initialPlanKey
+                val token = ++loadGeneration
+                scope.launch { onTabOpenedFor(initialPlanKey, token) }
+            }
         }
     }
 
@@ -337,17 +369,24 @@ class AutomationPanel(
 
     private fun onSuiteSelected(planKey: String) {
         currentSuitePlanKey = planKey
-        // A-P1-6: bump the generation token so any in-flight suite fetches
-        // from a previous selection short-circuit instead of overwriting the new state.
         val token = ++loadGeneration
-        statusLabel.text = "Loading..."
-        statusLabel.foreground = StatusColors.INFO
-        diagnosticPanel.isVisible = false
-        log.info("[Automation:UI] Suite selected: $planKey (gen=$token)")
-
+        log.info("[Automation:UI] Suite selected: $planKey (gen=$token) — sticky baseline, no scan")
+        // Suite-switch only re-binds the selected-suite reference used by
+        // Refresh and Trigger Now. The displayed baseline is sticky; the
+        // user must click Refresh to recompute it for a different suite.
         scope.launch {
-            // Load baseline and plan variables for the selected suite
-            loadBaselineAndVariables(planKey, token)
+            // Reload plan variables (suite-specific) so the variables dropdown
+            // in SuiteConfigPanel matches the new suite. The baseline display
+            // and the docker-tag banner are NOT touched.
+            val varsResult = bambooService.getPlanVariables(planKey)
+            invokeLater {
+                if (token != loadGeneration) return@invokeLater
+                if (!varsResult.isError) {
+                    val vars = varsResult.data!!
+                    suiteConfigPanel.setAvailableVariables(vars)
+                    suiteConfigPanel.loadSuiteVariables(planKey)
+                }
+            }
         }
     }
 
@@ -413,15 +452,44 @@ class AutomationPanel(
     }
 
     /**
-     * Loads baseline tags and plan variables for the given suite plan key.
-     * Called by [onSuiteSelected] and on initial suite auto-selection.
+     * Tab-open path: render from cache immediately (if present) for the
+     * default suite, then reconcile with Bamboo in the background. Called
+     * once at panel mount.
      */
-    private suspend fun loadBaselineAndVariables(planKey: String, token: Long) {
+    private suspend fun onTabOpenedFor(planKey: String, token: Long) {
+        // Synchronous in-memory read — show whatever we last saved instantly.
+        val cached = baselineCacheService.get(planKey)
+        if (cached != null) {
+            invokeLater {
+                if (token != loadGeneration) return@invokeLater
+                tagStagingPanel.setBaseline(cached.tags)
+                refreshBaselinePicker(cached.allRanked, cached.selectedBuild)
+                updateStatusLabel(cached)
+                updateDiagnosticBanner(cached, tagDetection = null)
+            }
+        }
+        // Reconcile in background. Errors keep the cached display untouched
+        // and surface in the diagnostic banner.
+        reconcileFromBamboo(planKey, token, isRefresh = false)
+    }
+
+    /**
+     * Refresh path: bypass cache, hit Bamboo, overwrite cache on success.
+     * Called on Refresh button click.
+     */
+    private suspend fun refreshBaseline(planKey: String, token: Long) {
+        reconcileFromBamboo(planKey, token, isRefresh = true)
+    }
+
+    /** Shared core — single Bamboo call, optional cache write, EDT render. */
+    private suspend fun reconcileFromBamboo(planKey: String, token: Long, isRefresh: Boolean) {
         // Step 1: Load baseline with the selected suite plan key
         val baselineResult = tagBuilderService.loadBaselineWithDiagnostics(planKey)
         var tags = baselineResult.tags
-        log.info("[Automation:UI] Baseline result: ${baselineResult.diagnostics.buildsQueried} builds queried, " +
-            "${baselineResult.diagnostics.buildsWithDockerTags} with tags, selected=${baselineResult.selectedBuild?.buildNumber}")
+        log.info("[Automation:UI] Bamboo reconcile for $planKey (isRefresh=$isRefresh): " +
+            "${baselineResult.diagnostics.buildsQueried} builds queried, " +
+            "${baselineResult.diagnostics.buildsWithDockerTags} parseable, " +
+            "selected=${baselineResult.selectedBuild?.buildNumber}")
 
         // Step 2: Enrich with latest release tags from Nexus (if configured)
         if (tags.isNotEmpty() && driftDetectorService.isRegistryConfigured()) {
@@ -432,8 +500,8 @@ class AutomationPanel(
         // Step 3: Load plan variables for the suite (master plan key)
         val varsResult = bambooService.getPlanVariables(planKey)
 
-        // Step 4: Docker-tag detection is now driven by onFocusBuildChanged (Phase B).
-        // At suite-load time we apply whatever we already have from the current focusBuild;
+        // Step 4: Docker-tag detection is driven by onFocusBuildChanged (Phase B).
+        // At reconcile time we apply whatever we already have from the current focusBuild;
         // subsequent focusBuild emissions will overwrite via onFocusBuildChanged.
         val focusBuild = currentFocusBuild
         val chainKey = focusBuild?.chainKey
@@ -442,7 +510,7 @@ class AutomationPanel(
                 tagBuilderService.detectDockerTag(chainKey)
             }
         } else null
-        log.info("[Automation:UI] Suite-load tag detection: chainKey='$chainKey', detected=${tagDetection?.detected}, tag=${tagDetection?.tag}")
+        log.info("[Automation:UI] Reconcile tag detection: chainKey='$chainKey', detected=${tagDetection?.detected}, tag=${tagDetection?.tag}")
 
         val dockerTagKey = resolveDockerTagKey()
         if (tagDetection?.detected == true && tagDetection.tag != null && dockerTagKey.isNotBlank()) {
@@ -454,10 +522,15 @@ class AutomationPanel(
             ))
         }
 
+        // Success path: write cache (only when we actually have data to cache).
+        if (baselineResult.selectedBuild != null) {
+            baselineCacheService.put(planKey, baselineResult.copy(tags = tags))
+        }
+
         // Step 5: Update UI on EDT
         invokeLater {
             if (token != loadGeneration) {
-                log.info("[Automation:UI] Dropping stale baseline result (gen=$token, current=$loadGeneration)")
+                log.info("[Automation:UI] Dropping stale reconcile result (gen=$token, current=$loadGeneration)")
                 return@invokeLater
             }
             tagStagingPanel.setBaseline(tags)
