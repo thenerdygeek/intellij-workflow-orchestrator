@@ -7,6 +7,11 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.agent.tools.integration.sonar.CeTaskIdParser
 import com.workflow.orchestrator.agent.tools.integration.sonar.IssueSeverity
 import com.workflow.orchestrator.agent.tools.integration.sonar.SonarRetry
@@ -48,6 +53,1125 @@ import kotlin.coroutines.coroutineContext
 class SonarTool : AgentTool {
 
     override val name = "sonar"
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Tool documentation (DSL) — 18 actions
+    // ══════════════════════════════════════════════════════════════════════
+
+    override fun documentation(): ToolDocumentation = toolDoc("sonar") {
+        summary {
+            technical(
+                "Single-tool dispatcher for 18 SonarQube REST operations: issue listing (simple + paginated), " +
+                "quality-gate status, overall coverage metrics, project measures, source-line coverage view, " +
+                "security hotspot listing + full hotspot detail, issue facets, branch/file enumeration, " +
+                "analysis task status, rule detail, quality-gate catalog, current-user identity, code duplications, " +
+                "a consolidated branch-quality report, and a local Maven/Gradle scanner with CE-task polling. " +
+                "Bearer-auth via PasswordSafe; conditionally registered when ConnectionSettings.sonarUrl is non-blank."
+            )
+            plain(
+                "The agent's SonarQube remote control. Like having the Sonar web UI available as a tool — " +
+                "read issues, check if the quality gate would block a merge, see exactly which lines aren't " +
+                "covered, run the scanner locally on a handful of files and get back results in seconds. " +
+                "Credentials stay in the OS keychain (PasswordSafe) and never appear in the LLM's context."
+            )
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.NETWORK)
+        counterfactual(
+            "Without `sonar`, the LLM must fall back to `run_command curl -H 'Authorization: Bearer <token>' " +
+            "https://sonar/api/issues/search?...`. That leaks the Sonar token into the command line (visible in " +
+            "`ps aux`, shell history, and agent JSONL logs), forces the LLM to build and parse raw JSON manually, " +
+            "and loses the local-analysis workflow entirely (Maven/Gradle spawn + CE-task polling + parallel " +
+            "per-file result fetching cannot be replicated with a single curl call)."
+        )
+        llmMistake(
+            "Calls `coverage` expecting to see new-code (PR) coverage. `coverage` returns OVERALL project coverage; " +
+            "new-code coverage lives in `branch_quality_report`. When the user asks 'is my PR covered?', use " +
+            "`branch_quality_report` with the PR branch name."
+        )
+        llmMistake(
+            "Calls `issues` on a large project and concludes 'all issues are listed' after seeing 500 results. " +
+            "`issues` is hard-capped at 500 — for complete enumeration use `issues_paged` across multiple pages, " +
+            "or use `issue_facets` to get aggregate counts first without fetching every issue body."
+        )
+        llmMistake(
+            "Calls `analysis_tasks` and gets a 403, then retries. `analysis_tasks` requires admin permission. " +
+            "A 403 means the token lacks the right — retrying will never help. Fall back to `branches` or " +
+            "`quality_gate` which return equivalent freshness data without admin."
+        )
+        llmMistake(
+            "Calls `security_hotspots` and then tries to mark hotspots fixed via the API. Whether a hotspot " +
+            "can be marked via the API depends on `canChangeStatus` in the hotspot_detail response. " +
+            "When false, the only remediation path is edit code → push → wait for re-analysis."
+        )
+        llmMistake(
+            "Passes a bare filename (e.g. 'OrderService.java') to `source_lines` as the `component_key`. " +
+            "`component_key` must be the full SonarQube component key (e.g. 'com.example:my-service:src/main/java/com/example/OrderService.java'). " +
+            "Call `branches(include_files=true)` first to discover the exact component keys in Sonar's scope."
+        )
+        llmMistake(
+            "Passes a branch name like 'release/1.0' or 'main' to `local_analysis` hoping to publish to that branch. " +
+            "Protected names (main, master, develop, release/*, hotfix/*, trunk) are automatically redirected to " +
+            "'local-scratch-<name>' to avoid overwriting the real branch's Sonar dashboard."
+        )
+        llmMistake(
+            "Uses `issue_facets` with facet names like 'fileUuids' or 'components'. The correct 25.x facet name is 'files' " +
+            "(not 'fileUuids'). See the tool description for the full list of valid facet names."
+        )
+        llmMistake(
+            "Calls `local_analysis` without waiting for the result before interpreting Sonar data. `local_analysis` " +
+            "blocks until the Maven/Gradle scanner finishes AND the CE task is processed server-side — the returned " +
+            "results already reflect the latest analysis. No follow-up `analysis_tasks` poll is needed."
+        )
+        flowchart(
+            """
+            flowchart TD
+                A[LLM needs Sonar data] --> B{What kind of question?}
+                B -- PR quality check --> C[branch_quality_report project_key branch]
+                C --> D[New-code issues + coverage + hotspots + gate in one call]
+                B -- overall project health --> E[quality_gate + coverage + project_measures]
+                B -- find specific issues --> F{How many?}
+                F -- up to 500 --> G[issues project_key]
+                F -- full enumeration --> H[issue_facets → issues_paged page=1..N]
+                B -- security review --> I[security_hotspots → hotspot_detail per key]
+                B -- line-level coverage --> J[branches include_files=true → source_lines component_key]
+                B -- immediate feedback after edit --> K[local_analysis files=...]
+                K --> L{Maven/Gradle detected?}
+                L -- yes --> M[Spawn scanner → poll CE task → fetch per-file results]
+                L -- no --> N[Error: no build tool found]
+                B -- unfamiliar rule --> O[rule rule_key]
+            """
+        )
+        actions {
+            action("issues") {
+                description {
+                    technical(
+                        "Calls GET /api/issues/search with project_key, optional file-path filter, optional branch, " +
+                        "and optional new_code_only. Returns up to 500 issues in one call. Each issue on Sonar 9.6+ " +
+                        "carries `impacts[]` (per-software-quality severity) and `cleanCodeAttribute`/`cleanCodeAttributeCategory` " +
+                        "alongside legacy `severity`/`type` fields."
+                    )
+                    plain(
+                        "Fetches the issue list for a project — like opening the Issues page in the Sonar UI " +
+                        "and applying a file or branch filter. Capped at 500 results; use `issues_paged` for complete enumeration."
+                    )
+                }
+                whenLLMUses(
+                    "When the user asks 'what issues does this project have?' or 'show me bugs in OrderService'. " +
+                    "Also the first step before prioritizing what to fix. Set new_code_only=true when the user asks " +
+                    "specifically about PR-introduced issues."
+                )
+                params {
+                    required("project_key", "string") {
+                        llmSeesIt("SonarQube project key e.g. 'com.example:my-service' — for issues, quality_gate, coverage, analysis_tasks, branches, project_measures, issues_paged")
+                        humanReadable("The Sonar project identifier — typically 'groupId:artifactId' in Maven projects or a configured key in CI.")
+                        whenPresent("Used as the `componentKeys` query parameter in the Sonar API call.")
+                        example("com.example:my-service")
+                        example("org.acme:payment-gateway")
+                    }
+                    optional("file", "string") {
+                        llmSeesIt("Optional relative file path filter — for issues")
+                        humanReadable("Scope the issue list to a single file. Pass the repo-relative path, not the full component key.")
+                        whenPresent("Sent as `files` query param to narrow the issue set to that file only.")
+                        whenAbsent("All files in the project are included (up to the 500-result cap).")
+                        example("src/main/java/com/example/OrderService.java")
+                    }
+                    optional("branch", "string") {
+                        llmSeesIt("Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch. For local_analysis: omit to auto-derive from current Git HEAD; protected names (main/master/develop/release/*/hotfix/*/trunk) are auto-redirected to 'local-scratch-<name>'. When include_files=true on the 'branches' action, this scopes the file-list query.")
+                        humanReadable("Which branch to query. Without this, Sonar returns the main-branch data.")
+                        whenPresent("Passed as `branch` query parameter to scope to that branch's analysis.")
+                        whenAbsent("Sonar returns main-branch analysis data.")
+                        example("feature/my-pr-branch")
+                    }
+                    optional("new_code_only", "boolean") {
+                        llmSeesIt("When true, return only issues introduced in the new code period (since branch point or configured baseline) — for issues, issues_paged, local_analysis")
+                        humanReadable("When true, filters to issues introduced since the branch point — analogous to 'Only New Code' in the Sonar UI.")
+                        whenPresent("Adds `inNewCodePeriod=true` to the API call; returns only issues in the new-code window.")
+                        whenAbsent("All issues for the branch are returned regardless of when they were introduced.")
+                        example("true")
+                    }
+                    optional("repo_name", "string") {
+                        llmSeesIt("Repository name for multi-repo projects")
+                        humanReadable("Used to select the right Sonar service instance when the IntelliJ project contains multiple repositories.")
+                        whenPresent("Passed to `ServiceLookup.sonar(repoName)` to pick the correct service configuration.")
+                        whenAbsent("Primary (or only) configured Sonar service is used.")
+                        example("payments-service")
+                    }
+                }
+                onSuccess("Returns a formatted issue list grouped by severity (BLOCKER → CRITICAL → MAJOR → MINOR → INFO), with per-issue: rule key, message, file, line, status, and on Sonar 9.6+ the impact vector and clean-code category.")
+                onFailure("403 Forbidden", "Token lacks Browse permission on the project. Surface to user; don't retry.")
+                onFailure("project not found", "Sonar returns 404 or an empty result if the project_key is wrong. Verify via `search_projects` first.")
+                onFailure("result capped at 500", "If the project has more than 500 issues, only the first 500 are returned — no error. Use `issues_paged` or `issue_facets` for complete data.")
+                example("all bugs in a project") {
+                    param("action", "issues")
+                    param("project_key", "com.example:my-service")
+                    outcome("Returns up to 500 issues sorted by severity.")
+                }
+                example("issues in one file on a PR branch") {
+                    param("action", "issues")
+                    param("project_key", "com.example:my-service")
+                    param("file", "src/main/java/com/example/OrderService.java")
+                    param("branch", "feature/PROJ-123")
+                    param("new_code_only", "true")
+                    outcome("Returns only issues introduced in OrderService.java since the branch point.")
+                }
+                verdict {
+                    keep("Core read operation; used in nearly every code-quality workflow.", VerdictSeverity.STRONG)
+                }
+            }
+
+            action("quality_gate") {
+                description {
+                    technical(
+                        "Calls GET /api/qualitygates/project_status for the given project_key and optional branch. " +
+                        "Returns both the overall gate status (OK/WARN/ERROR) and per-condition detail. " +
+                        "On Sonar 25.x also carries `caycStatus` ∈ compliant/over-compliant/non-compliant."
+                    )
+                    plain(
+                        "Answers 'would this branch block a merge?' — like looking at the quality gate badge on the " +
+                        "Sonar project overview. Shows which specific conditions (coverage, duplication, bugs) are passing or failing."
+                    )
+                }
+                whenLLMUses(
+                    "When the user asks 'will my PR pass the quality gate?' or 'what's blocking the quality gate?'. " +
+                    "Also useful to run before triggering a merge to confirm Sonar won't block it."
+                )
+                params {
+                    required("project_key", "string") {
+                        llmSeesIt("SonarQube project key e.g. 'com.example:my-service' — for issues, quality_gate, coverage, analysis_tasks, branches, project_measures, issues_paged")
+                        humanReadable("The Sonar project key.")
+                        whenPresent("Used to query the project's current quality-gate status.")
+                        example("com.example:my-service")
+                    }
+                    optional("branch", "string") {
+                        llmSeesIt("Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch. For local_analysis: omit to auto-derive from current Git HEAD; protected names (main/master/develop/release/*/hotfix/*/trunk) are auto-redirected to 'local-scratch-<name>'. When include_files=true on the 'branches' action, this scopes the file-list query.")
+                        humanReadable("Which branch to check. Omit to check the main branch gate status.")
+                        whenPresent("Gate status is returned for this specific branch analysis.")
+                        whenAbsent("Main branch gate status is returned.")
+                        example("feature/PROJ-123")
+                    }
+                    optional("repo_name", "string") {
+                        llmSeesIt("Repository name for multi-repo projects")
+                        humanReadable("Selects the right Sonar service for multi-repo projects.")
+                        whenPresent("Used for service selection.")
+                        whenAbsent("Primary Sonar service used.")
+                    }
+                }
+                onSuccess("Returns the gate status (OK/WARN/ERROR), per-condition breakdown (metric, operator, threshold, actual value, status), and on 25.x the caycStatus for 'Clean as You Code' gate compliance.")
+                onFailure("branch not found", "Sonar returns an error if the branch has never been analyzed. Run `local_analysis` or trigger a CI build first.")
+                onFailure("project_key wrong", "Empty/error response. Verify via `search_projects`.")
+                example("check PR gate before merge") {
+                    param("action", "quality_gate")
+                    param("project_key", "com.example:my-service")
+                    param("branch", "feature/PROJ-123")
+                    outcome("Returns ERROR with the failing conditions (e.g. 'New Coverage < 80%') so the LLM can explain what needs fixing.")
+                }
+                verdict {
+                    keep("Critical integration point for the PR-merge workflow. Used in every 'can I merge?' query.", VerdictSeverity.STRONG)
+                }
+            }
+
+            action("coverage") {
+                description {
+                    technical(
+                        "Calls GET /api/measures/component for line_coverage, branch_coverage, covered_lines, " +
+                        "lines_to_cover. Returns OVERALL project coverage metrics — not new-code coverage."
+                    )
+                    plain(
+                        "Shows the headline coverage numbers for the whole project. Like reading the 'Coverage' widget " +
+                        "on the Sonar project overview. Does NOT show PR-specific new-code coverage — use " +
+                        "`branch_quality_report` for that."
+                    )
+                }
+                whenLLMUses(
+                    "When the user asks 'what's the overall test coverage?' or 'is coverage above 80%?'. " +
+                    "NOT for 'did my PR add enough coverage?' — that's `branch_quality_report`."
+                )
+                params {
+                    required("project_key", "string") {
+                        llmSeesIt("SonarQube project key e.g. 'com.example:my-service' — for issues, quality_gate, coverage, analysis_tasks, branches, project_measures, issues_paged")
+                        humanReadable("The Sonar project key.")
+                        whenPresent("Used to query overall coverage metrics.")
+                        example("com.example:my-service")
+                    }
+                    optional("branch", "string") {
+                        llmSeesIt("Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch. For local_analysis: omit to auto-derive from current Git HEAD; protected names (main/master/develop/release/*/hotfix/*/trunk) are auto-redirected to 'local-scratch-<name>'. When include_files=true on the 'branches' action, this scopes the file-list query.")
+                        humanReadable("Which branch to check coverage for.")
+                        whenPresent("Returns coverage for that branch analysis.")
+                        whenAbsent("Main branch coverage returned.")
+                        example("main")
+                    }
+                    optional("repo_name", "string") {
+                        llmSeesIt("Repository name for multi-repo projects")
+                        humanReadable("Multi-repo service selection.")
+                        whenPresent("Picks the right Sonar service.")
+                        whenAbsent("Primary Sonar service used.")
+                    }
+                }
+                onSuccess("Returns line coverage %, branch coverage %, covered lines, and lines to cover for the project.")
+                onFailure("no coverage data", "Sonar returns null metrics if coverage was never configured in the CI pipeline. Return includes the raw response; LLM should explain this to the user.")
+                example("check overall coverage") {
+                    param("action", "coverage")
+                    param("project_key", "com.example:my-service")
+                    outcome("Returns 'Line Coverage: 72.3%, Branch Coverage: 61.1%, Covered Lines: 1824/2521'.")
+                    notes("Use `branch_quality_report` if the user's question is about new-code coverage in a PR.")
+                }
+                verdict {
+                    keep("Useful for project-level coverage snapshots; complementary to branch_quality_report.", VerdictSeverity.NORMAL)
+                }
+            }
+
+            action("branch_quality_report") {
+                description {
+                    technical(
+                        "Consolidated new-code quality report via parallel fan-out: GET /api/qualitygates/project_status " +
+                        "for new-code gate conditions, GET /api/issues/search inNewCodePeriod for bugs/smells/vulns, " +
+                        "GET /api/hotspots/search for security hotspots, GET /api/measures/component for new-code " +
+                        "coverage metrics, and GET /api/measures/component_tree for per-file drill-down up to max_files. " +
+                        "The per-file block includes exact uncovered line numbers, uncovered branch lines, and " +
+                        "duplicated line ranges."
+                    )
+                    plain(
+                        "The single most useful action for PR reviews. One call returns everything you'd check manually " +
+                        "on the Sonar 'New Code' tab: which gate conditions fail, what new issues were introduced, " +
+                        "which lines aren't covered, and which files have duplication. Saves 4-5 separate API calls."
+                    )
+                }
+                whenLLMUses(
+                    "Whenever the user asks about PR quality, new code, 'will this pass Sonar?', or 'what's uncovered in my changes?'. " +
+                    "This should be the first Sonar call for any PR-review or code-quality improvement task."
+                )
+                params {
+                    required("project_key", "string") {
+                        llmSeesIt("SonarQube project key e.g. 'com.example:my-service' — for issues, quality_gate, coverage, analysis_tasks, branches, project_measures, issues_paged")
+                        humanReadable("The Sonar project key for the PR's repository.")
+                        whenPresent("All fan-out sub-calls use this key.")
+                        example("com.example:my-service")
+                    }
+                    required("branch", "string") {
+                        llmSeesIt("Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch. For local_analysis: omit to auto-derive from current Git HEAD; protected names (main/master/develop/release/*/hotfix/*/trunk) are auto-redirected to 'local-scratch-<name>'. When include_files=true on the 'branches' action, this scopes the file-list query.")
+                        humanReadable("The PR's source branch name — required because new-code data is always branch-specific.")
+                        whenPresent("All sub-calls are scoped to this branch.")
+                        example("feature/PROJ-123-add-order-validation")
+                    }
+                    optional("max_files", "string") {
+                        llmSeesIt("Max files to drill down into for line-level details (default 20) — for branch_quality_report")
+                        humanReadable("Cap the per-file drill-down. Default 20. Increase for large PRs; decrease to avoid context overflow.")
+                        whenPresent("Limits per-file blocks to this count. Files with most issues are shown first.")
+                        whenAbsent("Defaults to 20 files.")
+                        constraint("must be a positive integer")
+                        example("10")
+                        example("50")
+                    }
+                    optional("repo_name", "string") {
+                        llmSeesIt("Repository name for multi-repo projects")
+                        humanReadable("Multi-repo service selection.")
+                        whenPresent("Picks the right Sonar service.")
+                        whenAbsent("Primary Sonar service used.")
+                    }
+                }
+                onSuccess(
+                    "Returns a consolidated report: quality gate status + per-condition breakdown, new-code issue counts by severity, " +
+                    "security hotspot count, new-code line/branch coverage %, uncovered lines, duplication density, " +
+                    "and per-file drill-down with exact uncovered line numbers and duplicated ranges."
+                )
+                onFailure("branch not analyzed yet", "Sonar returns empty/error data if the branch has never been pushed to CI. Run `local_analysis` to seed the branch first.")
+                onFailure("partial fan-out failure", "If one sub-call fails (e.g. hotspots returns 403), that section is omitted from the report; other sections still render.")
+                example("full PR quality check") {
+                    param("action", "branch_quality_report")
+                    param("project_key", "com.example:my-service")
+                    param("branch", "feature/PROJ-123")
+                    outcome("Returns gate status, new-code issues grouped by severity, coverage %, and per-file uncovered lines — the agent can then use `local_analysis` or direct edits to fix the gaps.")
+                }
+                example("large PR with more files") {
+                    param("action", "branch_quality_report")
+                    param("project_key", "com.example:my-service")
+                    param("branch", "feature/refactor-payment")
+                    param("max_files", "50")
+                    outcome("Per-file drill-down covers up to 50 files instead of the default 20.")
+                }
+                verdict {
+                    keep("The highest-value action in the tool. Replaces 4-5 separate calls in a PR review workflow.", VerdictSeverity.STRONG)
+                }
+            }
+
+            action("local_analysis") {
+                description {
+                    technical(
+                        "Spawns a Maven (`mvn sonar:sonar`) or Gradle (`gradle sonar`) process on specific files via " +
+                        "-Dsonar.inclusions=<files>. Uses SONAR_TOKEN env-var (token never in argv). Resolves Maven " +
+                        "multi-module scope via MavenProjectsManager. Streams scanner output with CE-task-ID extraction " +
+                        "(CeTaskIdParser), polls GET /api/ce/task until SUCCESS/FAILED/CANCELED or timeout. " +
+                        "After CE finishes, fetches per-file: issues, source_lines, security_hotspots, duplications " +
+                        "in parallel. Branch is auto-derived from Git HEAD; protected names redirected to " +
+                        "'local-scratch-<name>' to avoid polluting the real branch's Sonar dashboard."
+                    )
+                    plain(
+                        "Runs SonarQube analysis locally on a handful of files and gives you back the results " +
+                        "in one tool call. Like a miniature CI pipeline in your IDE: it compiles, uploads, waits for " +
+                        "Sonar to process, then shows you issues + coverage + hotspots per file — without needing to push " +
+                        "to remote or wait for the full CI run. Ideal for a tight edit → scan → fix loop."
+                    )
+                }
+                whenLLMUses(
+                    "After editing files and wanting immediate Sonar feedback before pushing. Also useful when the " +
+                    "CI pipeline is slow and the user wants to verify their fix locally. Requires Maven (pom.xml) or " +
+                    "Gradle (build.gradle/settings.gradle) in the project root."
+                )
+                params {
+                    required("files", "string") {
+                        llmSeesIt("Comma-separated file paths to analyse (relative to project root or absolute) — for local_analysis. E.g. 'src/main/java/com/example/OrderService.java,src/main/java/com/example/PaymentService.java'")
+                        humanReadable("The files to scan — passed as -Dsonar.inclusions to the scanner. Relative or absolute paths both accepted.")
+                        whenPresent("Scanner is scoped to only these files; builds only the owning Maven module(s).")
+                        constraint("comma-separated; paths can be relative to project root or absolute")
+                        example("src/main/java/com/example/OrderService.java")
+                        example("src/main/java/com/example/OrderService.java,src/main/java/com/example/PaymentService.java")
+                    }
+                    optional("branch", "string") {
+                        llmSeesIt("Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch. For local_analysis: omit to auto-derive from current Git HEAD; protected names (main/master/develop/release/*/hotfix/*/trunk) are auto-redirected to 'local-scratch-<name>'. When include_files=true on the 'branches' action, this scopes the file-list query.")
+                        humanReadable("Branch to publish results under. Omit to auto-derive from current Git HEAD.")
+                        whenPresent("Scanner publishes under this branch name (after protected-name redirect if applicable).")
+                        whenAbsent("Auto-derived from Git HEAD via focusPr.fromBranch → current editor branch. Omitted entirely if no branch is detectable (Community Edition safe).")
+                        example("feature/PROJ-123")
+                    }
+                    optional("timeout", "integer") {
+                        llmSeesIt("Seconds before the scanner process is killed (default 300, max 900) — for local_analysis")
+                        humanReadable("How long to wait for the scanner before killing it. Large projects may need 600-900s.")
+                        whenPresent("Scanner process is killed after this many seconds and a TIMEOUT error is returned.")
+                        whenAbsent("Defaults to 300s. Clamped to [30, 900].")
+                        constraint("clamped to [30, 900]")
+                        example("600")
+                        example("900")
+                    }
+                    optional("new_code_only", "boolean") {
+                        llmSeesIt("When true, return only issues introduced in the new code period (since branch point or configured baseline) — for issues, issues_paged, local_analysis")
+                        humanReadable("Filters per-file results to show only issues introduced since the branch point. Reduces output ~100x on large codebases.")
+                        whenPresent("Per-file issue fetching passes inNewCodePeriod=true; min_severity filter is applied after.")
+                        whenAbsent("All issues for the scanned files are returned.")
+                        example("true")
+                    }
+                    optional("min_severity", "string") {
+                        llmSeesIt("Minimum issue severity to surface in output (BLOCKER | CRITICAL | MAJOR | MINOR | INFO). Lower-severity issues are dropped. Default: INFO (no filter) — for local_analysis")
+                        humanReadable("Drop issues below this severity from the output. Useful to reduce noise when the codebase has many MINOR/INFO issues.")
+                        whenPresent("Issues below this threshold are counted but not printed; the output notes how many were dropped.")
+                        whenAbsent("Defaults to INFO — no filtering.")
+                        enumValue("BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO")
+                        example("MAJOR")
+                    }
+                    optional("repo_name", "string") {
+                        llmSeesIt("Repository name for multi-repo projects")
+                        humanReadable("Multi-repo service selection for the post-scan API calls.")
+                        whenPresent("Used for service selection in CE-task polling and per-file result fetches.")
+                        whenAbsent("Primary Sonar service used.")
+                    }
+                }
+                precondition("Maven (pom.xml) or Gradle (build.gradle/settings.gradle) must exist in the project root.")
+                precondition("SonarQube URL and token must be configured in Settings > Workflow Orchestrator > Connections.")
+                precondition("Pre-flight connection check runs before spawning any process — bad URL/token fails fast.")
+                onSuccess(
+                    "Returns a per-file report with: scanner duration, branch published to (with any redirect note), " +
+                    "CE task ID, then for each file: issues grouped by severity with inline rule 'How to fix' snippets, " +
+                    "security hotspots with risk/fix guidance, per-line coverage %, uncovered line ranges, and duplication blocks."
+                )
+                onFailure("no build tool found", "Returns error: 'No Maven (pom.xml) or Gradle (build.gradle) build file found'. Cannot scan without a build tool.")
+                onFailure("scanner timeout", "Returns TIMEOUT error after `timeout` seconds. Try increasing `timeout` or scanning fewer files at once.")
+                onFailure("scanner exit non-zero", "Returns the scanner's last 30 lines of stdout. Common causes: Sonar project key mismatch, auth failure, compilation error.")
+                onFailure("CE task FAILED", "Scanner succeeded but server processing failed (e.g. plugin version mismatch). Check CE task status in Sonar admin.")
+                onFailure("CE task polling 403", "Token lacks 'Execute Analysis' or 'Administer System' permission; falls back to a fixed 5s wait instead of polling. Per-file results may be from a prior analysis.")
+                example("quick feedback after editing one file") {
+                    param("action", "local_analysis")
+                    param("files", "src/main/java/com/example/OrderService.java")
+                    param("new_code_only", "true")
+                    param("min_severity", "MAJOR")
+                    outcome("Runs Maven sonar:sonar scoped to OrderService.java; returns only MAJOR+ issues introduced by the edit, with uncovered lines and hotspots.")
+                }
+                example("multi-file analysis with custom timeout") {
+                    param("action", "local_analysis")
+                    param("files", "src/main/java/com/example/OrderService.java,src/main/java/com/example/PaymentService.java")
+                    param("timeout", "600")
+                    outcome("Analyzes both files with a 600s timeout; per-file results include all issues, coverage, and hotspots.")
+                }
+                verdict {
+                    keep(
+                        "Unique capability — no other tool can run a local Sonar scan with CE-task polling and per-file result fetch. " +
+                        "Essential for tight edit → verify loops on feature branches.",
+                        VerdictSeverity.STRONG
+                    )
+                }
+            }
+
+            action("issues_paged") {
+                description {
+                    technical(
+                        "Calls GET /api/issues/search with p=page and ps=page_size, allowing pagination beyond the " +
+                        "500-result cap of the `issues` action. Max page_size is 500."
+                    )
+                    plain(
+                        "The paginated sibling of `issues`. Like flipping through pages on the Sonar Issues tab. " +
+                        "Use when the project has more than 500 issues and you need the full list."
+                    )
+                }
+                whenLLMUses(
+                    "After calling `issue_facets` to discover total issue count, then walking through pages if total > 500. " +
+                    "Or when the user asks for a complete issue export."
+                )
+                params {
+                    required("project_key", "string") {
+                        llmSeesIt("SonarQube project key e.g. 'com.example:my-service' — for issues, quality_gate, coverage, analysis_tasks, branches, project_measures, issues_paged")
+                        humanReadable("The Sonar project key.")
+                        whenPresent("Used as the componentKeys parameter.")
+                        example("com.example:my-service")
+                    }
+                    optional("page", "string") {
+                        llmSeesIt("Page number (default 1) — for issues_paged")
+                        humanReadable("Which page to fetch (1-based).")
+                        whenPresent("Fetches this specific page of results.")
+                        whenAbsent("Defaults to page 1.")
+                        example("2")
+                    }
+                    optional("page_size", "string") {
+                        llmSeesIt("Results per page max 500 (default 100) — for issues_paged")
+                        humanReadable("How many results per page. Default 100, max 500.")
+                        whenPresent("Overrides the default page size.")
+                        whenAbsent("Defaults to 100.")
+                        constraint("max 500")
+                        example("100")
+                        example("500")
+                    }
+                    optional("branch", "string") {
+                        llmSeesIt("Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch. For local_analysis: omit to auto-derive from current Git HEAD; protected names (main/master/develop/release/*/hotfix/*/trunk) are auto-redirected to 'local-scratch-<name>'. When include_files=true on the 'branches' action, this scopes the file-list query.")
+                        humanReadable("Branch to query.")
+                        whenPresent("Scopes results to this branch.")
+                        whenAbsent("Main branch.")
+                        example("feature/PROJ-123")
+                    }
+                    optional("new_code_only", "boolean") {
+                        llmSeesIt("When true, return only issues introduced in the new code period (since branch point or configured baseline) — for issues, issues_paged, local_analysis")
+                        humanReadable("Filter to new-code issues only.")
+                        whenPresent("Scopes results to new-code period.")
+                        whenAbsent("All issues returned.")
+                        example("true")
+                    }
+                    optional("repo_name", "string") {
+                        llmSeesIt("Repository name for multi-repo projects")
+                        humanReadable("Multi-repo service selection.")
+                        whenPresent("Picks the right Sonar service.")
+                        whenAbsent("Primary Sonar service used.")
+                    }
+                }
+                onSuccess("Returns one page of issues with pagination metadata (page, pageSize, total).")
+                onFailure("page beyond total", "Sonar returns an empty result — not an error. LLM should stop paging when results are empty.")
+                example("enumerate all issues across pages") {
+                    param("action", "issues_paged")
+                    param("project_key", "com.example:my-service")
+                    param("page", "2")
+                    param("page_size", "500")
+                    outcome("Returns issues 501-1000 of the project's full issue list.")
+                    notes("Call `issue_facets` first with facets='rules,severities' to decide whether full enumeration is worth it.")
+                }
+                verdict {
+                    keep("Necessary complement to `issues` for large projects. Could be merged into `issues` with a page param, but the action-split keeps the common case simple.", VerdictSeverity.NORMAL)
+                }
+            }
+
+            action("issue_facets") {
+                description {
+                    technical(
+                        "Calls GET /api/issues/search with facets= param. Returns aggregate counts per facet " +
+                        "(e.g. per-severity, per-rule, per-file) without fetching issue bodies. " +
+                        "Valid 25.x facets include: severities, types, tags, impactSoftwareQualities, " +
+                        "impactSeverities, cleanCodeAttributeCategories, assignees, files, rules, statuses, " +
+                        "resolutions, author, directories, scopes, languages, codeVariants, issueStatuses, " +
+                        "prioritizedRule, createdAt, sonarsourceSecurity, plus security-compliance facets " +
+                        "(pciDss-3.2, pciDss-4.0, owaspAsvs-4.0, owaspMobileTop10-2024, stig-ASD_V5R3, " +
+                        "casa, sansTop25, cwe)."
+                    )
+                    plain(
+                        "Gets issue statistics without fetching individual issues. Like the facet bar on the left " +
+                        "side of Sonar's Issues page — tells you '42 CRITICAL, 310 MAJOR, 8 BLOCKER' before you " +
+                        "decide whether to walk the full list. Much cheaper than paginating all issues."
+                    )
+                }
+                whenLLMUses(
+                    "Before walking issues to understand the distribution and decide priority order. " +
+                    "Also useful when the user asks 'how many bugs are there?' without wanting the full list. " +
+                    "Call BEFORE `issues_paged` to determine how many pages to fetch."
+                )
+                params {
+                    required("project_key", "string") {
+                        llmSeesIt("SonarQube project key e.g. 'com.example:my-service' — for issues, quality_gate, coverage, analysis_tasks, branches, project_measures, issues_paged")
+                        humanReadable("The Sonar project key.")
+                        whenPresent("All facet counts are scoped to this project.")
+                        example("com.example:my-service")
+                    }
+                    required("facets", "string") {
+                        llmSeesIt("Comma-separated facet names — for issue_facets. Valid 25.x: severities, types, tags, impactSoftwareQualities, impactSeverities, cleanCodeAttributeCategories, assignees, files, rules, statuses, resolutions, author, directories, scopes, languages, codeVariants, issueStatuses, prioritizedRule, createdAt, sonarsourceSecurity, plus pciDss-3.2/4.0, owaspAsvs-4.0, owaspMobileTop10-2024, stig-ASD_V5R3, casa, sansTop25, cwe.")
+                        humanReadable("Comma-separated list of facets to compute. No spaces. Use 'files' NOT 'fileUuids'.")
+                        whenPresent("Sonar computes aggregate counts for each named facet and returns them.")
+                        constraint("comma-separated, no spaces; use 'files' not 'fileUuids'")
+                        example("severities,types")
+                        example("files,rules,impactSoftwareQualities")
+                    }
+                    optional("branch", "string") {
+                        llmSeesIt("Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch. For local_analysis: omit to auto-derive from current Git HEAD; protected names (main/master/develop/release/*/hotfix/*/trunk) are auto-redirected to 'local-scratch-<name>'. When include_files=true on the 'branches' action, this scopes the file-list query.")
+                        humanReadable("Branch to compute facets for.")
+                        whenPresent("Facets reflect issues on this branch.")
+                        whenAbsent("Main branch.")
+                        example("feature/PROJ-123")
+                    }
+                    optional("new_code_only", "boolean") {
+                        llmSeesIt("When true, return only issues introduced in the new code period (since branch point or configured baseline) — for issues, issues_paged, local_analysis")
+                        humanReadable("Scope facets to new-code issues only.")
+                        whenPresent("Facets computed only over new-code issues.")
+                        whenAbsent("All issues.")
+                        example("true")
+                    }
+                    optional("repo_name", "string") {
+                        llmSeesIt("Repository name for multi-repo projects")
+                        humanReadable("Multi-repo service selection.")
+                        whenPresent("Picks the right Sonar service.")
+                        whenAbsent("Primary Sonar service used.")
+                    }
+                }
+                onSuccess("Returns a map of facet → list of (value, count) pairs, e.g. {severities: [{val: 'BLOCKER', count: 3}, {val: 'CRITICAL', count: 14}]}.")
+                onFailure("invalid facet name", "Sonar returns a 400 with 'Unknown facet'. Use 'files' not 'fileUuids'; check the description for valid names.")
+                example("pre-paging decision") {
+                    param("action", "issue_facets")
+                    param("project_key", "com.example:my-service")
+                    param("facets", "severities,types,files")
+                    outcome("Returns per-severity and per-type counts plus the top files by issue count — LLM can decide whether to page through all issues or focus on CRITICAL only.")
+                }
+                verdict {
+                    keep("Low-cost reconnaissance before expensive issue enumeration. Saves unnecessary pagination.", VerdictSeverity.NORMAL)
+                }
+            }
+
+            action("security_hotspots") {
+                description {
+                    technical(
+                        "Calls GET /api/hotspots/search for the project. Returns hotspot list with location " +
+                        "(file, line), probability (HIGH/MEDIUM/LOW), and status (TO_REVIEW/REVIEWED). " +
+                        "Does NOT include risk description, fix guidance, or canChangeStatus — use `hotspot_detail` for those."
+                    )
+                    plain(
+                        "Lists security hotspots — like the Security Hotspots page in Sonar. Each hotspot " +
+                        "is a potential security issue that needs human review. This action gives you the list; " +
+                        "call `hotspot_detail` on each key to get the actual fix guidance."
+                    )
+                }
+                whenLLMUses(
+                    "When the user asks about security vulnerabilities or 'what security hotspots are there?' — " +
+                    "as the first step before calling `hotspot_detail` on the most critical ones."
+                )
+                params {
+                    required("project_key", "string") {
+                        llmSeesIt("SonarQube project key e.g. 'com.example:my-service' — for issues, quality_gate, coverage, analysis_tasks, branches, project_measures, issues_paged")
+                        humanReadable("The Sonar project key.")
+                        whenPresent("Lists hotspots for this project.")
+                        example("com.example:my-service")
+                    }
+                    optional("branch", "string") {
+                        llmSeesIt("Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch. For local_analysis: omit to auto-derive from current Git HEAD; protected names (main/master/develop/release/*/hotfix/*/trunk) are auto-redirected to 'local-scratch-<name>'. When include_files=true on the 'branches' action, this scopes the file-list query.")
+                        humanReadable("Branch to query.")
+                        whenPresent("Hotspots scoped to this branch.")
+                        whenAbsent("Main branch hotspots returned.")
+                        example("feature/PROJ-123")
+                    }
+                    optional("repo_name", "string") {
+                        llmSeesIt("Repository name for multi-repo projects")
+                        humanReadable("Multi-repo service selection.")
+                        whenPresent("Picks the right Sonar service.")
+                        whenAbsent("Primary Sonar service used.")
+                    }
+                }
+                onSuccess("Returns a list of hotspots with: key, file path, line, probability, status, message, rule key.")
+                onFailure("empty list", "No hotspots — safe result, not an error. The project may have no security-sensitive code patterns.")
+                example("list hotspots then get details") {
+                    param("action", "security_hotspots")
+                    param("project_key", "com.example:my-service")
+                    outcome("Returns list of hotspot keys and locations. LLM then calls hotspot_detail for the HIGH-probability ones.")
+                }
+                verdict {
+                    keep("Required first step for the security hotspot workflow. Pairs with hotspot_detail.", VerdictSeverity.NORMAL)
+                }
+            }
+
+            action("hotspot_detail") {
+                description {
+                    technical(
+                        "Calls GET /api/hotspots/show?hotspot=<key>. Returns full hotspot: riskDescription, " +
+                        "vulnerabilityDescription, fixRecommendations (HTML, contains 'Compliant Solution' code " +
+                        "examples), canChangeStatus (whether the active token can mark it fixed via API), " +
+                        "securityCategory, vulnerabilityProbability."
+                    )
+                    plain(
+                        "Fetches the full details for one security hotspot — like clicking on a hotspot in Sonar " +
+                        "to open the details panel. The `fixRecommendations` field contains an actual code example " +
+                        "of the correct pattern. **Check `canChangeStatus`** — if false, you cannot mark it fixed " +
+                        "via the API; the only path is to fix the code and wait for re-analysis."
+                    )
+                }
+                whenLLMUses(
+                    "After calling `security_hotspots` to get the key list, for each HIGH-probability hotspot " +
+                    "the user wants guidance on fixing."
+                )
+                precondition("hotspot_key must be obtained from a prior `security_hotspots` call.")
+                params {
+                    required("hotspot_key", "string") {
+                        llmSeesIt("Hotspot UUID — for hotspot_detail. Discover via security_hotspots first.")
+                        humanReadable("The hotspot UUID from the security_hotspots response.")
+                        whenPresent("Used as the `hotspot` query parameter.")
+                        example("AXoXVjlVjajj3N38AAAA")
+                    }
+                    optional("repo_name", "string") {
+                        llmSeesIt("Repository name for multi-repo projects")
+                        humanReadable("Multi-repo service selection.")
+                        whenPresent("Picks the right Sonar service.")
+                        whenAbsent("Primary Sonar service used.")
+                    }
+                }
+                onSuccess("Returns riskDescription, vulnerabilityDescription, fixRecommendations (with a Compliant Solution code example), canChangeStatus, securityCategory, vulnerabilityProbability.")
+                onFailure("hotspot not found", "404 if the key is wrong or the hotspot was resolved. Re-run security_hotspots to refresh the key list.")
+                onFailure("canChangeStatus=false", "Non-error result. Agent CANNOT mark the hotspot fixed via API — must edit code and wait for re-analysis. Never promise autonomous closure in this case.")
+                example("get fix guidance for a hotspot") {
+                    param("action", "hotspot_detail")
+                    param("hotspot_key", "AXoXVjlVjajj3N38AAAA")
+                    outcome("Returns the vulnerability description and a 'Compliant Solution' code snippet the agent can show the user or use to guide a code edit.")
+                }
+                verdict {
+                    keep("Essential complement to security_hotspots. The fixRecommendations field is the key value — it contains a ready-made code pattern.", VerdictSeverity.STRONG)
+                }
+            }
+
+            action("source_lines") {
+                description {
+                    technical(
+                        "Calls GET /api/sources/lines?component=<component_key>&from=<from>&to=<to>&branch=<branch>. " +
+                        "Returns per-line coverage data: lineHits (statement coverage), conditions/coveredConditions " +
+                        "(branch coverage), coverageStatus (covered/uncovered/partially-covered), isNew " +
+                        "(whether the line is in the new-code period)."
+                    )
+                    plain(
+                        "Shows the source code with coverage data overlaid on each line — like the Sonar " +
+                        "'Coverage' view per file. Use it to find exactly which lines lack coverage and whether " +
+                        "they are in the new-code window."
+                    )
+                }
+                whenLLMUses(
+                    "After confirming via `branches(include_files=true)` that the file is in Sonar's scope, " +
+                    "to find uncovered lines and write targeted tests. Also useful to verify whether a specific " +
+                    "line is covered before writing a test for it."
+                )
+                precondition("component_key must be the full SonarQube component key — call `branches(include_files=true)` first to discover it.")
+                params {
+                    required("component_key", "string") {
+                        llmSeesIt("SonarQube component key e.g. 'com.example:my-service:src/main/java/MyClass.java' — for source_lines, duplications")
+                        humanReadable("The full component key — not just a filename. Multi-module projects use 'projectKey:moduleName:pathWithinModule' format.")
+                        whenPresent("Used as the `component` query parameter.")
+                        example("com.example:my-service:src/main/java/com/example/OrderService.java")
+                    }
+                    optional("from", "string") {
+                        llmSeesIt("Start line number — for source_lines")
+                        humanReadable("First line to return (1-based). Omit to start from line 1.")
+                        whenPresent("Only lines from this line number onward are returned.")
+                        whenAbsent("Defaults to line 1.")
+                        example("50")
+                    }
+                    optional("to", "string") {
+                        llmSeesIt("End line number — for source_lines")
+                        humanReadable("Last line to return (inclusive). Omit to read to end of file.")
+                        whenPresent("Only lines up to this line number are returned.")
+                        whenAbsent("Reads to end of file.")
+                        example("150")
+                    }
+                    optional("branch", "string") {
+                        llmSeesIt("Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch. For local_analysis: omit to auto-derive from current Git HEAD; protected names (main/master/develop/release/*/hotfix/*/trunk) are auto-redirected to 'local-scratch-<name>'. When include_files=true on the 'branches' action, this scopes the file-list query.")
+                        humanReadable("Branch to query coverage for.")
+                        whenPresent("Coverage data for this branch analysis.")
+                        whenAbsent("Main branch coverage data.")
+                        example("feature/PROJ-123")
+                    }
+                    optional("repo_name", "string") {
+                        llmSeesIt("Repository name for multi-repo projects")
+                        humanReadable("Multi-repo service selection.")
+                        whenPresent("Picks the right Sonar service.")
+                        whenAbsent("Primary Sonar service used.")
+                    }
+                }
+                onSuccess("Returns per-line data: line number, coverageStatus, lineHits, conditions, coveredConditions, isNew. Uncovered lines have coverageStatus='uncovered' and lineHits=0.")
+                onFailure("component key wrong", "Sonar returns empty or 404. Call `branches(include_files=true)` to get the exact component key.")
+                onFailure("no coverage data for file", "Lines are returned but coverageStatus is null — the file exists but wasn't instrumented by the coverage tool.")
+                example("find uncovered lines in a file") {
+                    param("action", "source_lines")
+                    param("component_key", "com.example:my-service:src/main/java/com/example/OrderService.java")
+                    param("branch", "feature/PROJ-123")
+                    outcome("Returns per-line coverage. LLM filters for coverageStatus='uncovered' lines to know exactly what tests to write.")
+                }
+                verdict {
+                    keep("High precision — uniquely identifies exactly which lines need test coverage. No other action provides this granularity.", VerdictSeverity.STRONG)
+                }
+            }
+
+            action("duplications") {
+                description {
+                    technical(
+                        "Calls GET /api/duplications/show?component=<component_key>&branch=<branch>. Returns " +
+                        "duplication blocks with per-fragment: file path, startLine, endLine."
+                    )
+                    plain(
+                        "Shows which code blocks in a file are duplicated and where else they appear. " +
+                        "Like the 'Duplications' view on a Sonar file detail page."
+                    )
+                }
+                whenLLMUses(
+                    "When the user asks 'where is this code duplicated?' or the quality gate fails on duplication. " +
+                    "Call after confirming the component key via `branches(include_files=true)`."
+                )
+                precondition("component_key must be the full SonarQube component key.")
+                params {
+                    required("component_key", "string") {
+                        llmSeesIt("SonarQube component key e.g. 'com.example:my-service:src/main/java/MyClass.java' — for source_lines, duplications")
+                        humanReadable("Full SonarQube component key for the file to check.")
+                        whenPresent("Used as the `component` query parameter.")
+                        example("com.example:my-service:src/main/java/com/example/OrderService.java")
+                    }
+                    optional("branch", "string") {
+                        llmSeesIt("Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch. For local_analysis: omit to auto-derive from current Git HEAD; protected names (main/master/develop/release/*/hotfix/*/trunk) are auto-redirected to 'local-scratch-<name>'. When include_files=true on the 'branches' action, this scopes the file-list query.")
+                        humanReadable("Branch to query.")
+                        whenPresent("Returns duplication data for this branch analysis.")
+                        whenAbsent("Main branch.")
+                        example("feature/PROJ-123")
+                    }
+                    optional("repo_name", "string") {
+                        llmSeesIt("Repository name for multi-repo projects")
+                        humanReadable("Multi-repo service selection.")
+                        whenPresent("Picks the right Sonar service.")
+                        whenAbsent("Primary Sonar service used.")
+                    }
+                }
+                onSuccess("Returns duplication groups: each block has a list of fragments with file path, start line, end line. Empty blocks list means no duplications.")
+                onFailure("component not found", "Empty result or 404 if component key is wrong.")
+                example("find where code is duplicated") {
+                    param("action", "duplications")
+                    param("component_key", "com.example:my-service:src/main/java/com/example/OrderService.java")
+                    outcome("Returns 2 duplication blocks: one in PaymentService.java lines 45-67, one in InvoiceService.java lines 102-124.")
+                }
+                verdict {
+                    keep("Unique duplication data, only available here.", VerdictSeverity.NORMAL)
+                }
+            }
+
+            action("project_measures") {
+                description {
+                    technical(
+                        "Calls GET /api/measures/component with a broad metric-key list: ratings (reliability_rating, " +
+                        "security_rating, sqale_rating), debt (sqale_index, sqale_debt_ratio), coverage " +
+                        "(line_coverage, branch_coverage), duplication (duplicated_lines_density)."
+                    )
+                    plain(
+                        "Fetches all headline metrics for a project in one call — like the Sonar project overview " +
+                        "summary card. Broader than `coverage` (which only returns coverage metrics)."
+                    )
+                }
+                whenLLMUses(
+                    "When the user asks for an overall health summary: 'how is this project doing on Sonar overall?' " +
+                    "or before a release to check all ratings at once."
+                )
+                params {
+                    required("project_key", "string") {
+                        llmSeesIt("SonarQube project key e.g. 'com.example:my-service' — for issues, quality_gate, coverage, analysis_tasks, branches, project_measures, issues_paged")
+                        humanReadable("The Sonar project key.")
+                        whenPresent("All measures are fetched for this component.")
+                        example("com.example:my-service")
+                    }
+                    optional("branch", "string") {
+                        llmSeesIt("Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch. For local_analysis: omit to auto-derive from current Git HEAD; protected names (main/master/develop/release/*/hotfix/*/trunk) are auto-redirected to 'local-scratch-<name>'. When include_files=true on the 'branches' action, this scopes the file-list query.")
+                        humanReadable("Branch to query measures for.")
+                        whenPresent("Returns measures for this branch analysis.")
+                        whenAbsent("Main branch.")
+                        example("main")
+                    }
+                    optional("repo_name", "string") {
+                        llmSeesIt("Repository name for multi-repo projects")
+                        humanReadable("Multi-repo service selection.")
+                        whenPresent("Picks the right Sonar service.")
+                        whenAbsent("Primary Sonar service used.")
+                    }
+                }
+                onSuccess("Returns all configured measures as (metric_key, value, bestValue) triples — e.g. reliability_rating=A, sqale_debt_ratio=2.3%, line_coverage=72.3%.")
+                onFailure("no data", "Sonar may return null for metrics that haven't been computed — common for new projects or unconfigured quality profiles.")
+                example("pre-release health check") {
+                    param("action", "project_measures")
+                    param("project_key", "com.example:my-service")
+                    outcome("Returns all ratings (A/B/C/D/E), debt ratio, coverage %, and duplication % for an at-a-glance health summary.")
+                }
+                verdict {
+                    keep("Broad health snapshot in one call; complements quality_gate (which only shows gate conditions).", VerdictSeverity.NORMAL)
+                }
+            }
+
+            action("branches") {
+                description {
+                    technical(
+                        "Calls GET /api/project_branches/list?project=<project_key>. With include_files=true, " +
+                        "also fans out a parallel GET /api/components/tree?component=<project_key>&qualifiers=FIL " +
+                        "to list all files Sonar has analyzed. The file list is capped at 100 entries in the output."
+                    )
+                    plain(
+                        "Lists the branches Sonar has analyzed for a project. With include_files=true, also " +
+                        "shows every file Sonar knows about — useful to confirm a file is in scope before " +
+                        "calling `source_lines` or `duplications` with a component key."
+                    )
+                }
+                whenLLMUses(
+                    "To discover which branches have been analyzed (to pick the right branch name for other actions). " +
+                    "With include_files=true: before calling source_lines or duplications to verify the file exists " +
+                    "in Sonar's component tree and get the exact component key."
+                )
+                params {
+                    required("project_key", "string") {
+                        llmSeesIt("SonarQube project key e.g. 'com.example:my-service' — for issues, quality_gate, coverage, analysis_tasks, branches, project_measures, issues_paged")
+                        humanReadable("The Sonar project key.")
+                        whenPresent("Lists branches for this project.")
+                        example("com.example:my-service")
+                    }
+                    optional("branch", "string") {
+                        llmSeesIt("Optional branch name — for issues, quality_gate, coverage, project_measures, source_lines, issues_paged, security_hotspots, duplications. Use project_context tool to discover current branch. For local_analysis: omit to auto-derive from current Git HEAD; protected names (main/master/develop/release/*/hotfix/*/trunk) are auto-redirected to 'local-scratch-<name>'. When include_files=true on the 'branches' action, this scopes the file-list query.")
+                        humanReadable("When include_files=true, scopes the component-tree query to this branch.")
+                        whenPresent("File list is fetched for this branch.")
+                        whenAbsent("File list uses the main branch.")
+                        example("feature/PROJ-123")
+                    }
+                    optional("include_files", "boolean") {
+                        llmSeesIt("On the branches action, also include the list of files Sonar analyzed for this project. Default false. Useful before drilling into source_lines / duplications to verify the file is in Sonar's scope.")
+                        humanReadable("When true, runs a second parallel call to fetch the file component tree. Output is capped at 100 files.")
+                        whenPresent("Parallel async call to listFileComponents; result appended with component keys.")
+                        whenAbsent("Only branch list is returned; no file enumeration.")
+                        example("true")
+                    }
+                    optional("repo_name", "string") {
+                        llmSeesIt("Repository name for multi-repo projects")
+                        humanReadable("Multi-repo service selection.")
+                        whenPresent("Picks the right Sonar service.")
+                        whenAbsent("Primary Sonar service used.")
+                    }
+                }
+                onSuccess("Returns branch list (name, isMain, status, lastAnalysisDate). With include_files=true, also appends a file list section with full component keys.")
+                onFailure("no branches", "Project exists but has never been analyzed — Sonar returns an empty list.")
+                example("discover branches then fetch file components") {
+                    param("action", "branches")
+                    param("project_key", "com.example:my-service")
+                    param("include_files", "true")
+                    param("branch", "feature/PROJ-123")
+                    outcome("Returns branch list + up to 100 file component keys, confirming whether OrderService.java is in Sonar's scope and showing its exact component key.")
+                }
+                verdict {
+                    keep("Essential discovery step before source_lines/duplications — prevents the common 'empty results because component key is wrong' failure.", VerdictSeverity.NORMAL)
+                }
+            }
+
+            action("analysis_tasks") {
+                description {
+                    technical(
+                        "Calls GET /api/ce/activity?component=<project_key>. Returns recent CE task history: " +
+                        "task ID, status (SUCCESS/FAILED/CANCELED/IN_PROGRESS/PENDING), submitter, started, " +
+                        "duration. Requires admin permission — returns 403 for non-admin tokens."
+                    )
+                    plain(
+                        "Shows the analysis task history — like the 'Background Tasks' page in Sonar admin. " +
+                        "Tells you when the last analysis ran, whether it succeeded, and how long it took. " +
+                        "REQUIRES admin token; if the token isn't admin, use `branches` or `quality_gate` instead."
+                    )
+                }
+                whenLLMUses(
+                    "When the user asks 'when did Sonar last analyze this project?' or 'did the last analysis succeed?' " +
+                    "and the user's token is known to be an admin token. DO NOT retry on 403 — surface it immediately."
+                )
+                params {
+                    required("project_key", "string") {
+                        llmSeesIt("SonarQube project key e.g. 'com.example:my-service' — for issues, quality_gate, coverage, analysis_tasks, branches, project_measures, issues_paged")
+                        humanReadable("The Sonar project key.")
+                        whenPresent("Lists CE tasks for this project.")
+                        example("com.example:my-service")
+                    }
+                    optional("repo_name", "string") {
+                        llmSeesIt("Repository name for multi-repo projects")
+                        humanReadable("Multi-repo service selection.")
+                        whenPresent("Picks the right Sonar service.")
+                        whenAbsent("Primary Sonar service used.")
+                    }
+                }
+                onSuccess("Returns a list of CE tasks with: id, status, type, component, submittedAt, startedAt, executionTimeMs.")
+                onFailure("403 Forbidden", "Token lacks admin permission. Do NOT retry. Fall back to `branches` (shows lastAnalysisDate) or `quality_gate` (shows current status). Explain to the user that an admin token is required for this action.")
+                example("check last analysis status") {
+                    param("action", "analysis_tasks")
+                    param("project_key", "com.example:my-service")
+                    outcome("Returns last 5 CE tasks showing the most recent SUCCESS 3 hours ago, confirming the branch data in other actions is fresh.")
+                }
+                verdict {
+                    keep("Useful for admin workflows, but 403 is common. The 403 guidance is the most important part of this action's documentation.", VerdictSeverity.NORMAL)
+                }
+            }
+
+            action("search_projects") {
+                description {
+                    technical(
+                        "Calls GET /api/components/search?qualifiers=TRK&q=<query>. Returns matching projects " +
+                        "with their project keys."
+                    )
+                    plain(
+                        "Searches for SonarQube projects by name or key. Like the project search bar in the Sonar UI. " +
+                        "Use when you don't know the exact project_key."
+                    )
+                }
+                whenLLMUses(
+                    "When the user mentions a service by name but you don't know its Sonar project key. " +
+                    "Run this first, then use the returned project_key in subsequent actions."
+                )
+                params {
+                    required("query", "string") {
+                        llmSeesIt("Search query — for search_projects")
+                        humanReadable("Partial project name or key to search for.")
+                        whenPresent("Passed as the `q` query parameter to the Sonar components search API.")
+                        constraint("must not be blank")
+                        example("payment")
+                        example("com.example:my-service")
+                    }
+                }
+                onSuccess("Returns a list of matching projects with: key, name, qualifier, lastAnalysisDate.")
+                onFailure("no results", "Empty list — the query matched nothing. Try a shorter or differently spelled query.")
+                example("discover project key") {
+                    param("action", "search_projects")
+                    param("query", "payment")
+                    outcome("Returns projects matching 'payment' — e.g. 'com.example:payment-service', 'com.example:payment-gateway'.")
+                }
+                verdict {
+                    keep("Necessary discovery tool when the project_key is unknown. Common first step.", VerdictSeverity.NORMAL)
+                }
+            }
+
+            action("rule") {
+                description {
+                    technical(
+                        "Calls GET /api/rules/show?key=<rule_key>. Returns: name, description (merged from " +
+                        "descriptionSections), severity, type, remediation guidance, tags."
+                    )
+                    plain(
+                        "Fetches the full definition of a Sonar rule — like clicking on a rule name in the Sonar UI " +
+                        "to read 'why this matters' and 'how to fix it'. Use when an issue references an unfamiliar " +
+                        "rule key like 'java:S1234'."
+                    )
+                }
+                whenLLMUses(
+                    "After seeing an issue with an unfamiliar rule key, before guessing what the rule means. " +
+                    "The description field includes the fix guidance that the LLM can apply directly."
+                )
+                params {
+                    required("rule_key", "string") {
+                        llmSeesIt("Sonar rule key (e.g. 'java:S1234'). Required for the rule action.")
+                        humanReadable("The Sonar rule key from an issue — format is 'language:ruleId', e.g. 'java:S1234' or 'kotlin:S100'.")
+                        whenPresent("Used as the `key` query parameter.")
+                        constraint("must not be blank")
+                        example("java:S1234")
+                        example("kotlin:S100")
+                        example("javascript:S3776")
+                    }
+                    optional("repo_name", "string") {
+                        llmSeesIt("Repository name for multi-repo projects")
+                        humanReadable("Multi-repo service selection.")
+                        whenPresent("Picks the right Sonar service.")
+                        whenAbsent("Primary Sonar service used.")
+                    }
+                }
+                onSuccess("Returns rule name, full description text (HTML stripped), severity, type, tags, and remediation function/effort.")
+                onFailure("rule not found", "404 if the rule key is wrong (wrong language prefix or rule ID). Double-check the key from the issue body.")
+                example("look up an unfamiliar rule before fixing") {
+                    param("action", "rule")
+                    param("rule_key", "java:S3749")
+                    outcome("Returns the rule name ('Spring beans should be accessed through the container'), description, and fix guidance — agent can apply the pattern without guessing.")
+                }
+                verdict {
+                    keep("Prevents the LLM from guessing rule semantics. The fix guidance is often directly actionable.", VerdictSeverity.NORMAL)
+                }
+            }
+
+            action("current_user") {
+                description {
+                    technical(
+                        "Calls GET /api/users/current. Returns the authenticated user's login, name, email, " +
+                        "group memberships, and global permission flags (isAdmin, etc.)."
+                    )
+                    plain(
+                        "Checks who the configured Sonar token belongs to and what global permissions it has. " +
+                        "Like logging into Sonar and viewing 'My Account'. Use to decide whether admin-only " +
+                        "actions (like `analysis_tasks`) are safe to call."
+                    )
+                }
+                whenLLMUses(
+                    "Before calling `analysis_tasks` to verify the token is admin. Also useful when the user " +
+                    "asks 'which Sonar account is this plugin using?'."
+                )
+                params { }
+                onSuccess("Returns: login, name, email, groups[], isAdmin flag, sonarLintAdSeen flag, and other global permissions.")
+                onFailure("401 Unauthorized", "Token is invalid or expired. Surface to user immediately — do not retry.")
+                example("check if token has admin") {
+                    param("action", "current_user")
+                    outcome("Returns {login: 'ci-agent', isAdmin: true, groups: ['sonar-administrators']} — confirms analysis_tasks is callable.")
+                }
+                verdict {
+                    keep("Low-cost pre-flight check. Avoids the user receiving a confusing 403 from analysis_tasks.", VerdictSeverity.NORMAL)
+                }
+            }
+
+            action("quality_gates_list") {
+                description {
+                    technical(
+                        "Calls GET /api/qualitygates/list. Returns all configured quality gates with: " +
+                        "id, name, isDefault, isBuiltIn, caycStatus, isAiCodeSupported."
+                    )
+                    plain(
+                        "Lists all quality gate configurations — like the Quality Gates admin page in Sonar. " +
+                        "Shows which gate is the default and whether it supports AI-code analysis. " +
+                        "Note: `isAiCodeSupported=false` on Community Build — Sonar-side AI Code Fix is unavailable."
+                    )
+                }
+                whenLLMUses(
+                    "When the user asks 'which quality gate is applied to this project?' or wants to understand " +
+                    "the caycStatus (Clean as You Code compliance) of the configured gates."
+                )
+                params { }
+                onSuccess("Returns a list of quality gate objects with: id, name, isDefault, isBuiltIn, caycStatus (compliant/over-compliant/non-compliant), isAiCodeSupported.")
+                onFailure("403 Forbidden", "Listing quality gates may require specific permissions on some Sonar versions. If 403, inform the user.")
+                example("check if default gate is CAYC compliant") {
+                    param("action", "quality_gates_list")
+                    outcome("Returns list showing the default gate has caycStatus='compliant' — meaning new code must meet coverage and issue thresholds before it can be merged.")
+                }
+                verdict {
+                    keep("Useful for understanding the gate landscape before PR quality decisions.", VerdictSeverity.NORMAL)
+                }
+            }
+        }
+        related("jira", Relationship.COMPLEMENT, "Jira ticket links to a PR that needs Sonar gate approval before merge.")
+        related("bitbucket_pr", Relationship.COMPLEMENT, "BitbucketPR check_merge_status shows Sonar as a required build — use sonar quality_gate to understand why it's failing.")
+        related("bamboo_builds", Relationship.COMPLEMENT, "Bamboo triggers the Sonar analysis; bamboo_builds shows build status and sonar shows the resulting quality data.")
+        related("diagnostics", Relationship.ALTERNATIVE, "For local IDE-detected errors before pushing — diagnostics uses IntelliJ's inspections; sonar uses the server-side rule engine after analysis.")
+        downside("local_analysis requires Maven or Gradle in the project root; pure sonar-scanner projects (no Maven/Gradle) are not supported.")
+        downside("analysis_tasks requires an admin token; the LLM cannot know in advance whether the user's token is admin.")
+        downside("The `issues` action is hard-capped at 500 results — no paging parameter. Large projects silently truncate.")
+        downside("Protected branch names (main, master, develop, release/*, hotfix/*, trunk) in local_analysis are silently redirected; the LLM must read the branch-redirect note in the result to know the published branch name.")
+        downside("canChangeStatus=false on security hotspots means the agent cannot mark hotspots reviewed via API — the only remediation path requires code changes and CI re-analysis.")
+        observation("CLAUDE.md documents 13 actions but source has 18: issue_facets, current_user, quality_gates_list, hotspot_detail, and rule are all present in the when-block and enum list but were undercounted. Update CLAUDE.md.")
+        mergeOpportunity("`issues` and `issues_paged` could be unified into one action with an optional `page` param — the current two-action split is a minor schema-budget inefficiency since `issues_paged` is strictly more general.")
+        observation("local_analysis is the most complex action (350+ lines): branch resolution, Maven multi-module scoping, ProcessBuilder security, CE-task polling, parallel per-file fan-out, inline rule/hotspot caches, and range-collapse output formatting.")
+        verdict {
+            keep(
+                "The most comprehensive external-service integration in the plugin. `branch_quality_report` and `local_analysis` " +
+                "provide capabilities (consolidated new-code report, local scanner pipeline) that no other tool can replicate. " +
+                "18 actions spanning the full Sonar surface area justify the single-tool consolidation.",
+                VerdictSeverity.STRONG
+            )
+        }
+    }
 
     override val description = """
 SonarQube code quality — issues, coverage, quality gates, analysis, security hotspots.
