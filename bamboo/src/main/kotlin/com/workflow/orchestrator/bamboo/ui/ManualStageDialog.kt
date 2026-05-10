@@ -9,8 +9,10 @@ import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
+import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
+import java.awt.Dimension
 import com.workflow.orchestrator.core.model.bamboo.PlanVariableData
 import com.workflow.orchestrator.core.services.BambooService
 import kotlinx.coroutines.CoroutineScope
@@ -179,11 +181,6 @@ class ManualStageDialog(
         contentPanel?.add(createCenterPanel())
         contentPanel?.revalidate()
         contentPanel?.repaint()
-        // Resize the dialog window to fit the new content. Without this, the
-        // window stays at its initial pack() size (computed when stages were
-        // still loading and the layout was minimal); larger post-load content
-        // overflows the frame and pushes the south button panel out of view.
-        peer.pack()
     }
 
     /** Modality-aware EDT dispatch. Platform `invokeLater` defaults to NON_MODAL from a
@@ -200,10 +197,29 @@ class ManualStageDialog(
         outer.layout = BoxLayout(outer, BoxLayout.Y_AXIS)
         outer.border = JBUI.Borders.empty(8)
 
+        // CUSTOM_STAGES: bound the dialog to a fixed reasonable size. Without this,
+        // a plan with many stages produces a dialog taller than the screen, which
+        // puts the south button panel (OK/Cancel) below the visible bottom edge —
+        // user reports the dialog "has no buttons". The scroll pane on the stage
+        // section ensures stages can scroll inside the bounded outer.
+        if (triggerMode == TriggerMode.CUSTOM_STAGES) {
+            val preferred = Dimension(JBUI.scale(420), JBUI.scale(380))
+            outer.preferredSize = preferred
+            outer.minimumSize = preferred
+        }
+
         // Stage selection section (CUSTOM_STAGES only).
         if (triggerMode == TriggerMode.CUSTOM_STAGES) {
             val stageSection = buildStageSection()
-            outer.add(stageSection)
+            // Wrap in a scroll pane so a long stage list doesn't push the dialog
+            // taller than the screen. The scroll pane has a constrained preferred
+            // height; the stage panel inside scrolls vertically when needed.
+            val scrollPane = JBScrollPane(stageSection).apply {
+                border = JBUI.Borders.empty()
+                preferredSize = Dimension(JBUI.scale(400), JBUI.scale(280))
+                horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+            }
+            outer.add(scrollPane)
         }
 
         // Variable editors section — only for FULL_BUILD / STAGE modes (Build tab).
