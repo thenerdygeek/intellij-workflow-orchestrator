@@ -19,12 +19,16 @@ import com.workflow.orchestrator.core.services.BambooService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import java.awt.FlowLayout
+import java.awt.Font
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import javax.swing.BorderFactory
 import javax.swing.BoxLayout
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.JTable
+import javax.swing.table.AbstractTableModel
+import javax.swing.table.DefaultTableCellRenderer
 
 /**
  * Trigger mode for [ManualStageDialog].
@@ -68,10 +72,20 @@ data class ManualStageDialogResult(
  *   checkboxes. When null, falls back to pre-checking the first stage.
  * @param variablesPreview when non-null and in CUSTOM_STAGES mode, renders a
  *   read-only summary panel showing the variables that will be sent with the
- *   trigger. The Automation tab passes its merged var map (suiteConfigPanel +
- *   suiteExtras + dockerTagsAsJson) so the user can verify the payload before
- *   confirming. Variables remain editable on the Automation tab itself; this
- *   preview is intentionally read-only to avoid two competing edit surfaces.
+ *   trigger. The Automation tab passes its merged var map (suiteConfigPanel
+ *   variable overrides + dockerTagsAsJson) so the user can verify the payload
+ *   before confirming. Variables remain editable on the Automation tab itself;
+ *   this preview is intentionally read-only to avoid two competing edit surfaces.
+ * @param suiteDisplayName when non-null and in CUSTOM_STAGES mode, renders a
+ *   non-editable "Suite: <displayName>" header at the top of the dialog so
+ *   the user can confirm which suite is about to fire without relying on the
+ *   title bar alone. Pass null (the default) for STAGE/FULL_BUILD callers or
+ *   whenever the display name is not available.
+ *
+ *   **AutomationPanel call-site note:** the AutomationPanel's `onTriggerCustomized()`
+ *   should pass `suiteDisplayName = AutomationSettingsService.getInstance()
+ *   .getSuiteConfig(planKey)?.displayName` to wire this header. That call site
+ *   lives in `:automation` — update it once the sibling agent's changes land.
  */
 class ManualStageDialog(
     private val project: Project,
@@ -80,7 +94,8 @@ class ManualStageDialog(
     private val scope: CoroutineScope,
     private val triggerMode: TriggerMode = TriggerMode.STAGE,
     private val savedDefaultStages: Set<String>? = null,
-    private val variablesPreview: Map<String, String>? = null
+    private val variablesPreview: Map<String, String>? = null,
+    private val suiteDisplayName: String? = null
 ) : DialogWrapper(project) {
 
     private val log = Logger.getInstance(ManualStageDialog::class.java)
@@ -237,13 +252,39 @@ class ManualStageDialog(
         // the variable count without issue.
         if (triggerMode == TriggerMode.CUSTOM_STAGES) {
             val outerWidth = JBUI.scale(460)
-            // Stages scroll (~260) + vars summary (~140 with header) +
-            // save-default (~28) + borders/struts (~32). Without the vars
-            // preview, fall back to the prior 380 height.
-            val outerHeight = JBUI.scale(if (variablesPreview != null) 470 else 380)
+            // Stages scroll (~260) + vars summary (~220 with header — bigger now) +
+            // suite header (~36 when present) + save-default (~28) + borders (~32).
+            // Without the vars preview, fall back to a shorter height.
+            val outerHeight = JBUI.scale(if (variablesPreview != null) 560 else 380)
             val preferred = Dimension(outerWidth, outerHeight)
             outer.preferredSize = preferred
             outer.minimumSize = preferred
+        }
+
+        // Suite header (CUSTOM_STAGES + suiteDisplayName only): non-editable
+        // "Suite: <displayName> [(<planKey>)]" row at the very top so the user
+        // can confirm which suite is about to fire without relying on the title bar.
+        if (triggerMode == TriggerMode.CUSTOM_STAGES && suiteDisplayName != null) {
+            val headerPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(2))).apply {
+                border = BorderFactory.createCompoundBorder(
+                    JBUI.Borders.emptyBottom(4),
+                    BorderFactory.createMatteBorder(0, 0, 1, 0, JBColor.border())
+                )
+                alignmentX = JComponent.LEFT_ALIGNMENT
+            }
+            headerPanel.add(JBLabel("Suite:").apply {
+                font = font.deriveFont(Font.BOLD)
+                foreground = com.workflow.orchestrator.core.ui.StatusColors.SECONDARY_TEXT
+            })
+            headerPanel.add(JBLabel(suiteDisplayName))
+            // Show the plan key in dim secondary text when it differs from the display name
+            // so the user can disambiguate suites that share similar names.
+            if (planKey != suiteDisplayName) {
+                headerPanel.add(JBLabel("($planKey)").apply {
+                    foreground = com.workflow.orchestrator.core.ui.StatusColors.SECONDARY_TEXT
+                })
+            }
+            outer.add(headerPanel)
         }
 
         // Stage selection section (CUSTOM_STAGES only).
@@ -355,9 +396,12 @@ class ManualStageDialog(
     /**
      * Read-only preview of variables that will be sent with the trigger.
      * Used in CUSTOM_STAGES mode to show the merged Automation-tab var map
-     * (suiteConfigPanel + suiteExtras + dockerTagsAsJson). Uses a scroll pane
-     * so a long var list (or a large dockerTagsAsJson JSON) doesn't push the
-     * dialog past its bounded height.
+     * (suiteConfigPanel variable overrides + dockerTagsAsJson). Uses a JTable
+     * inside a JBScrollPane so a long var list (or a large dockerTagsAsJson JSON)
+     * is scrollable and fully readable without pushing the dialog past its bounded
+     * height. Rows are sorted alphabetically by key; cells are read-only and
+     * select-and-copy friendly. Value column uses monospace font; long JSON values
+     * wrap within the cell so vertical scrolling works.
      */
     private fun buildVariablesPreviewSection(vars: Map<String, String>): JComponent {
         val container = JPanel().apply {
@@ -366,7 +410,7 @@ class ManualStageDialog(
         }
 
         container.add(JBLabel("VARIABLES TO SEND").apply {
-            font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(10).toFloat())
+            font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
             foreground = com.workflow.orchestrator.core.ui.StatusColors.SECONDARY_TEXT
             border = JBUI.Borders.emptyBottom(4)
             alignmentX = JComponent.LEFT_ALIGNMENT
@@ -380,36 +424,123 @@ class ManualStageDialog(
             return container
         }
 
-        val table = JPanel(GridBagLayout())
-        val gbc = GridBagConstraints().apply {
-            anchor = GridBagConstraints.NORTHWEST
-            fill = GridBagConstraints.HORIZONTAL
-            insets = JBUI.insets(2, 0, 2, 8)
-        }
-        vars.entries.sortedBy { it.key }.forEachIndexed { idx, (k, v) ->
-            gbc.gridy = idx
-            gbc.gridx = 0
-            gbc.weightx = 0.0
-            table.add(JBLabel("$k:").apply {
-                font = font.deriveFont(java.awt.Font.BOLD)
-            }, gbc)
+        // Sort entries alphabetically by key so dockerTagsAsJson always lands in a
+        // predictable position and new keys don't shuffle the list on re-open.
+        val sortedEntries = vars.entries.sortedBy { it.key }
 
-            gbc.gridx = 1
-            gbc.weightx = 1.0
-            // Long values (notably dockerTagsAsJson) wrap inside the cell so
-            // the scroll pane scrolls vertically rather than horizontally.
-            val displayValue = v.ifBlank { "(empty)" }
-            table.add(JBLabel("<html><div style='width:280px'>${com.workflow.orchestrator.core.util.HtmlEscape.escapeHtml(displayValue)}</div></html>"), gbc)
+        val tableModel = VariablesTableModel(sortedEntries)
+        val table = JTable(tableModel).apply {
+            // Read-only — variables are edited on the Automation tab, not here.
+            setDefaultEditor(Any::class.java, null)
+            // Allow row selection so the user can copy individual rows with Ctrl+C.
+            setSelectionMode(javax.swing.ListSelectionModel.SINGLE_SELECTION)
+            rowSelectionAllowed = true
+            columnSelectionAllowed = false
+            // Key column: fixed preferred width; value column: takes remaining space.
+            columnModel.getColumn(0).apply {
+                preferredWidth = JBUI.scale(160)
+                minWidth = JBUI.scale(80)
+                maxWidth = JBUI.scale(220)
+                // Bold header-style renderer for the key column.
+                cellRenderer = DefaultTableCellRenderer().apply {
+                    font = font.deriveFont(Font.BOLD)
+                }
+            }
+            columnModel.getColumn(1).apply {
+                preferredWidth = JBUI.scale(260)
+                // Monospace renderer for values; HTML-wraps long lines so the row
+                // grows in height rather than clipping content horizontally.
+                cellRenderer = WrappingMonospaceCellRenderer()
+            }
+            // Let rows grow in height to fit wrapped content.
+            setRowHeight(JBUI.scale(20))
+            // Remove the outer table border — the scroll pane provides the border.
+            border = JBUI.Borders.empty()
+            // Ensure the table fills the viewport width so the value column is flex.
+            fillsViewportHeight = false
+            autoResizeMode = JTable.AUTO_RESIZE_LAST_COLUMN
+            // Recalculate row heights once the table is laid out so wrapping works.
+            addComponentListener(object : java.awt.event.ComponentAdapter() {
+                override fun componentResized(e: java.awt.event.ComponentEvent) {
+                    updateRowHeights(this@apply)
+                }
+            })
         }
 
         val scroll = JBScrollPane(table).apply {
             border = BorderFactory.createLineBorder(JBColor.border())
-            preferredSize = Dimension(JBUI.scale(420), JBUI.scale(120))
+            preferredSize = Dimension(JBUI.scale(440), JBUI.scale(220))
             horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
         }
         scroll.alignmentX = JComponent.LEFT_ALIGNMENT
         container.add(scroll)
         return container
+    }
+
+    /**
+     * Recalculates the row height for each row in [table] based on the preferred
+     * height of the rendered value cell (which may wrap to multiple lines). Must
+     * be called after the table has been laid out so column widths are known.
+     */
+    private fun updateRowHeights(table: JTable) {
+        for (row in 0 until table.rowCount) {
+            var maxHeight = table.rowHeight
+            for (col in 0 until table.columnCount) {
+                val renderer = table.getCellRenderer(row, col)
+                val comp = table.prepareRenderer(renderer, row, col)
+                val preferred = comp.preferredSize.height
+                if (preferred > maxHeight) maxHeight = preferred
+            }
+            if (table.getRowHeight(row) != maxHeight) {
+                table.setRowHeight(row, maxHeight)
+            }
+        }
+    }
+
+    /**
+     * Table model for the variables preview. Two columns: Key (String) and Value (String).
+     * All cells are read-only. The [entries] list must already be sorted by the caller.
+     */
+    internal class VariablesTableModel(
+        private val entries: List<Map.Entry<String, String>>
+    ) : AbstractTableModel() {
+        override fun getRowCount() = entries.size
+        override fun getColumnCount() = 2
+        override fun getColumnName(col: Int) = if (col == 0) "Key" else "Value"
+        override fun getColumnClass(col: Int) = String::class.java
+        override fun isCellEditable(row: Int, col: Int) = false
+        override fun getValueAt(row: Int, col: Int): Any {
+            val entry = entries[row]
+            return when (col) {
+                0 -> entry.key
+                else -> entry.value.ifBlank { "(empty)" }
+            }
+        }
+    }
+
+    /**
+     * Cell renderer that displays text in a monospace font and wraps long values
+     * using an HTML `div` with a fixed pixel width. This causes the JTable row to
+     * grow in height (via [updateRowHeights]) rather than clipping content.
+     */
+    private inner class WrappingMonospaceCellRenderer : DefaultTableCellRenderer() {
+        private val monoFont = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scale(11))
+
+        override fun getTableCellRendererComponent(
+            table: JTable, value: Any?,
+            isSelected: Boolean, hasFocus: Boolean,
+            row: Int, column: Int
+        ): java.awt.Component {
+            val raw = value?.toString() ?: ""
+            val escaped = com.workflow.orchestrator.core.util.HtmlEscape.escapeHtml(raw)
+            // Wrap at ~300px (column flex width). Using a fixed px value here is safe
+            // because the scroll pane has HORIZONTAL_SCROLLBAR_NEVER and the value
+            // column always fills the remaining space after the 160px key column.
+            val html = "<html><div style='width:300px;font-family:monospace'>$escaped</div></html>"
+            val comp = super.getTableCellRendererComponent(table, html, isSelected, hasFocus, row, column)
+            comp.font = monoFont
+            return comp
+        }
     }
 
     /**
