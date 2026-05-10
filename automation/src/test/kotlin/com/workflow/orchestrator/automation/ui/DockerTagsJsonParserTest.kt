@@ -85,4 +85,17 @@ class DockerTagsJsonParserTest {
         assertEquals("svc", result[0].serviceName)
         assertEquals("feature-branch-abc123", result[0].currentTag)
     }
+
+    @Test
+    fun `parse returns null when value is JSON null`() {
+        // A literal null tag value is almost certainly user error — Paste must reject it
+        // rather than silently emitting a TagEntry with currentTag="null".
+        assertNull(parser.parse("""{"svc": null}"""))
+    }
+
+    @Test
+    fun `parse returns null when any value is JSON null even with valid peers`() {
+        // Mixed object: one valid tag + one null — the whole payload is rejected.
+        assertNull(parser.parse("""{"auth":"2.4.0","payments":null}"""))
+    }
 }

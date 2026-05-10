@@ -17,6 +17,7 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.ui.ClipboardUtil
 import com.intellij.ui.components.JBScrollPane
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.awt.BorderLayout
@@ -34,7 +35,7 @@ class TagStagingPanel(
 
     private val tagBuilderService by lazy { project.getService(TagBuilderService::class.java) }
 
-    private val tableModel = TagTableModel()
+    private val tableModel = TagTableModel(onEntriesChanged = ::refreshButtonStates)
     private val table = JBTable(tableModel)
     private val cardLayout = CardLayout()
     private val cardPanel = JPanel(cardLayout)
@@ -130,8 +131,6 @@ class TagStagingPanel(
             add(headerPanel)
             add(buttonRow)
         }
-        // Remove original headerPanel add — we replaced it with northPanel
-        remove(headerPanel)
         add(northPanel, BorderLayout.NORTH)
 
         cardPanel.add(JBScrollPane(table), "table")
@@ -237,7 +236,9 @@ class TagStagingPanel(
     // Table model — 3 columns: Service | Docker Tag | Status
     // -----------------------------------------------------------------------
 
-    private class TagTableModel : AbstractTableModel() {
+    private class TagTableModel(
+        private val onEntriesChanged: () -> Unit = {}
+    ) : AbstractTableModel() {
         var entries: List<TagEntry> = emptyList()
 
         private val columns = arrayOf("Service", "Docker Tag", "Status")
@@ -274,6 +275,7 @@ class TagStagingPanel(
                     )
                 }
                 fireTableRowsUpdated(row, row)
+                onEntriesChanged()
             }
         }
     }
@@ -345,6 +347,9 @@ class TagStagingPanel(
         fun parse(text: String): List<TagEntry>? {
             return try {
                 val obj = json.decodeFromString<JsonObject>(text)
+                // Reject entries whose value is JSON null — a literal "null" tag is
+                // almost certainly user error and must not silently produce bad payloads.
+                if (obj.values.any { it is JsonNull }) return null
                 obj.entries.map { (service, tagElement) ->
                     TagEntry(
                         serviceName = service,
