@@ -8,7 +8,6 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.services.isSuccess
 import com.workflow.orchestrator.core.services.looksLikeAuthRedirect
 import com.workflow.orchestrator.core.services.postForm
-import com.workflow.orchestrator.core.services.postFormNoRedirect
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -145,44 +144,47 @@ class BambooApiClient(
      *
      * This is the single Bamboo trigger primitive. All callers must route through here.
      *
-     * **Wire contract (C-faithful implementation, Phase H):**
+     * **Wire contract (validated against Bamboo DC 10.2.14, working in production):**
      *
      * - `selectedStages == null` → run all stages. Uses the REST queue endpoint with
-     *   `executeAllStages=true`. This is the explicit "run everything" escape hatch,
-     *   not a default.
+     *   `executeAllStages=true`. Explicit "run everything" escape hatch, not a default.
      * - `selectedStages != null && selectedStages.isEmpty()` → rejected with an error.
      *   An empty selection is invalid (Bamboo would default to all stages, silently
      *   violating the caller's intent).
-     * - `selectedStages != null && selectedStages.isNotEmpty()` → C-faithful path:
-     *   POST to Bamboo's Struts action endpoint `/build/admin/ajax/runChainAction.action`
-     *   with `stages_<name>=true` form fields per selected stage + `planKey` + any
-     *   `bamboo.variable.<k>=<v>` entries. Header `X-Atlassian-Token: no-check` is
-     *   set automatically by [postForm]. Auth: existing Bearer PAT (per memory
-     *   `project_bamboo_write_path_lessons` — confirmed working on DC 10.2.14 write paths).
-     *   This is the only path that supports non-contiguous multi-stage selection.
+     * - `selectedStages != null && selectedStages.isNotEmpty()` → form POST to the
+     *   REST queue endpoint with `executeAllStages=false&stage=<firstStageName>`.
+     *   Bamboo's REST API accepts a single `stage` param and runs from that stage forward.
      *
-     * **C-faithful action endpoint.** The previous (C-simple) implementation used
-     * `/rest/api/latest/queue/{planKey}?executeAllStages=false&stage=<first>`, which
-     * can only express "from the first stage forward" — non-contiguous subsets were
-     * impossible. Phase H switches to the Struts action endpoint
-     * `/build/admin/ajax/runChainAction.action` with `stages_<name>=true` per stage.
-     * The failure mode is explicit: if the endpoint URL is wrong on a particular
-     * Bamboo version, the error is surfaced to the user — there is NO silent fallback
-     * to C-simple. The URL is based on the Bamboo DC 10.2.14 write-path audit memo;
-     * the user should verify on first manual test.
+     * **Why REST and not the Struts action endpoint.** A previous attempt to use
+     * `/build/admin/ajax/runChainAction.action` with `stages_<name>=true` per stage
+     * (for non-contiguous subset selection) returned 404 on the user's Bamboo —
+     * confirming the 2026-05-07 write-ops audit memo's warning that the Struts action
+     * endpoint is undocumented, version-specific, and not reliably available across
+     * Bamboo DC versions. The REST queue endpoint is the documented, validated path
+     * and matches the previously-working "Trigger" button behaviour.
      *
-     * **Action endpoint response.** The Struts action may return 200/302 with an
-     * HTML body. Don't attempt to parse it as JSON. After a successful POST, call
-     * [getRunningAndQueuedBuilds] to locate the just-queued entry by the highest
-     * build number in Queued/Pending state, and synthesise a [BambooQueueResponse].
+     * **Acknowledged limitation.** The REST API supports only a single `stage` param,
+     * so `selectedStages` is interpreted as "run from the first selected stage
+     * forward" — Bamboo runs every plan stage at or after the first selected. This
+     * matches the dialog's pre-check default (first stage selected) and the common
+     * "run everything from here" workflow. Non-contiguous selection (e.g. {Build,
+     * Deploy} skipping Test) cannot be expressed via REST; if reintroduced, callers
+     * should detect the gap and warn the user before submission, not silently send.
      *
-     * **After POST:** calls `getRunningAndQueuedBuilds(chainKey)` to find the
-     * just-queued build and extract `buildResultKey` + `buildNumber` for the caller.
+     * The set's first element is taken in iteration order. Production callers build
+     * the set from the dialog's checkbox list (a `LinkedHashSet` preserving plan
+     * stage order), so `.first()` returns the earliest-selected plan stage.
+     *
+     * **Form encoding.** Uses [postForm] which sets `X-Atlassian-Token: no-check`
+     * (DC XSRF bypass — empirically required, otherwise the queue endpoint 403s) and
+     * sends variables as `bamboo.variable.<k>=<v>` form fields. Bamboo silently drops
+     * variables sent as JSON, so form encoding is mandatory — see PR 2 of the
+     * write-ops fix plan and the `project_bamboo_write_path_lessons` memory note.
      *
      * @param chainKey the resolved chain/plan key (e.g. `PROJ-BUILD` or `PROJ-BUILD523`).
      * @param variables map of variable name → value. Sent as `bamboo.variable.<k>=<v>`.
-     * @param selectedStages set of stage names to run. null = all stages; empty = error.
-     *   Non-null non-empty → C-faithful Struts action endpoint with `stages_<name>=true`.
+     * @param selectedStages set of stage names to run. null = all stages; empty = error;
+     *   non-empty → REST `?stage=<first>` (runs from that stage forward).
      */
     suspend fun queueBuildWithStageSelection(
         chainKey: String,
@@ -198,86 +200,32 @@ class BambooApiClient(
             )
         }
 
-        if (selectedStages == null) {
-            // Explicit "run all stages" escape hatch via the REST queue endpoint.
+        val varFields = variables.mapKeys { (k, _) -> "bamboo.variable.$k" }
+
+        val query = if (selectedStages == null) {
             log.debug("[Bamboo:API] queueBuildWithStageSelection chainKey=$chainKey, stages=ALL, variables=${variables.keys}")
-            val varFields = variables.mapKeys { (k, _) -> "bamboo.variable.$k" }
-            val url = "$baseUrl/rest/api/latest/queue/$chainKey?executeAllStages=true"
-            return when (val raw = postForm(httpClient, url, varFields)) {
-                is ApiResult.Success -> {
-                    try {
-                        ApiResult.Success(json.decodeFromString<BambooQueueResponse>(raw.data))
-                    } catch (e: Exception) {
-                        log.warn("[Bamboo:API] queueBuildWithStageSelection (all) parse failed: ${e.message}")
-                        log.debug("[Bamboo:API] queueBuildWithStageSelection (all) response (first 200): ${raw.data.take(200)}")
-                        ApiResult.Error(ErrorType.PARSE_ERROR, "Failed to parse queue response: ${e.message}")
-                    }
-                }
-                is ApiResult.Error -> raw
-            }
+            "?executeAllStages=true"
+        } else {
+            // Bamboo runs from this stage forward (every plan stage at or after the
+            // first selected). Iteration order is plan order — the production caller
+            // builds selectedStages from the dialog's checkbox list (LinkedHashSet).
+            val firstStage = selectedStages.first()
+            log.debug("[Bamboo:API] queueBuildWithStageSelection chainKey=$chainKey, stages=$selectedStages, firstStage=$firstStage, variables=${variables.keys}")
+            "?executeAllStages=false&stage=${URLEncoder.encode(firstStage, "UTF-8")}"
         }
 
-        // C-faithful path: POST to the Struts action endpoint with stages_<name>=true.
-        // The action endpoint returns HTML/302 — do NOT parse as JSON.
-        // After success, call getRunningAndQueuedBuilds to locate the queued entry.
-        log.debug("[Bamboo:API] queueBuildWithStageSelection chainKey=$chainKey, stages=$selectedStages, variables=${variables.keys} [C-faithful]")
-
-        val formFields = buildMap<String, String> {
-            put("planKey", chainKey)
-            for (stage in selectedStages) {
-                put("stages_$stage", "true")
-            }
-            for ((k, v) in variables) {
-                put("bamboo.variable.$k", v)
-            }
-        }
-
-        // Use postFormNoRedirect: the Struts action endpoint returns 302 on success.
-        // OkHttp's default followRedirects=true would follow the 302 to the HTML
-        // build-dashboard page, whose Content-Type: text/html triggers looksLikeAuthRedirect
-        // as a false-positive AUTH_REDIRECT error. postFormNoRedirect keeps followRedirects=false
-        // and treats non-auth 302/303 as success — see HttpFormPost.kt for auth-redirect
-        // detection via the Location header.
-        val actionUrl = "$baseUrl/build/admin/ajax/runChainAction.action"
-        return when (val actionResult = postFormNoRedirect(httpClient, actionUrl, formFields)) {
-            is ApiResult.Error -> {
-                log.warn("[Bamboo:API] queueBuildWithStageSelection action POST failed: ${actionResult.type}: ${actionResult.message}")
-                actionResult
-            }
+        val url = "$baseUrl/rest/api/latest/queue/$chainKey$query"
+        return when (val raw = postForm(httpClient, url, varFields)) {
             is ApiResult.Success -> {
-                // Action returned HTML/redirect body — don't parse. Look up the queued build.
-                log.debug("[Bamboo:API] queueBuildWithStageSelection action POST succeeded (code ok). Looking up queued build for $chainKey.")
-                when (val queued = getRunningAndQueuedBuilds(chainKey)) {
-                    is ApiResult.Success -> {
-                        val entry = queued.data.maxByOrNull { it.buildNumber }
-                        if (entry != null) {
-                            ApiResult.Success(
-                                BambooQueueResponse(
-                                    buildResultKey = entry.buildResultKey,
-                                    buildNumber = entry.buildNumber,
-                                    planKey = chainKey
-                                )
-                            )
-                        } else {
-                            log.warn("[Bamboo:API] queueBuildWithStageSelection: action POST succeeded but no queued build found for $chainKey")
-                            ApiResult.Error(
-                                ErrorType.SERVER_ERROR,
-                                "Build triggered (action endpoint returned success) but no queued entry found for $chainKey. " +
-                                    "The build may have started and transitioned to InProgress too quickly."
-                            )
-                        }
-                    }
-                    is ApiResult.Error -> {
-                        log.warn("[Bamboo:API] queueBuildWithStageSelection: action POST succeeded but getRunningAndQueuedBuilds failed: ${queued.message}")
-                        // Build was queued (action POST succeeded), but we couldn't read back the queue entry.
-                        // Surface partial success rather than pretending nothing happened.
-                        ApiResult.Error(
-                            ErrorType.SERVER_ERROR,
-                            "Build triggered (action endpoint returned success) but could not confirm queue entry: ${queued.message}"
-                        )
-                    }
+                try {
+                    ApiResult.Success(json.decodeFromString<BambooQueueResponse>(raw.data))
+                } catch (e: Exception) {
+                    log.warn("[Bamboo:API] queueBuildWithStageSelection parse failed: ${e.message}")
+                    log.debug("[Bamboo:API] queueBuildWithStageSelection response (first 200): ${raw.data.take(200)}")
+                    ApiResult.Error(ErrorType.PARSE_ERROR, "Failed to parse queue response: ${e.message}")
                 }
             }
+            is ApiResult.Error -> raw
         }
     }
 

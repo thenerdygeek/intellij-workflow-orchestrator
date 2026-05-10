@@ -13,17 +13,22 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- * Stage-picker tests for [BambooApiClient.queueBuildWithStageSelection] — C-faithful implementation.
+ * Stage-picker tests for [BambooApiClient.queueBuildWithStageSelection].
  *
- * Validates that:
- *  - null selectedStages → REST `executeAllStages=true` path (explicit "run everything" escape hatch)
- *  - non-null non-empty set → C-faithful action endpoint `/build/admin/ajax/runChainAction.action`
- *    with `stages_<name>=true` form fields and `X-Atlassian-Token: no-check` header
+ * **Wire contract (validated against Bamboo DC 10.2.14):**
+ *  - `null` selectedStages → REST `?executeAllStages=true` path
+ *  - non-null non-empty selection → REST `?executeAllStages=false&stage=<firstStage>`
+ *    (Bamboo runs from that stage forward — single-stage param limit of REST API)
  *  - empty set → validation error before any network call
- *  - build variables are forwarded correctly as `bamboo.variable.<k>=<v>` form fields
- *  - after successful action POST: `getRunningAndQueuedBuilds` called to find the queued entry
+ *  - build variables forwarded as `bamboo.variable.<k>=<v>` form fields
+ *  - `X-Atlassian-Token: no-check` header set on every POST (Bamboo DC XSRF bypass)
  *
- * See `docs/architecture/automation-stage-picker-c-faithful-plan.md` Phase H1 + H8.
+ * **History.** A previous attempt to use the Struts action endpoint
+ * `/build/admin/ajax/runChainAction.action` for arbitrary subset selection returned
+ * 404 in production. The REST queue endpoint is the documented and validated path.
+ * The "non-contiguous selection" capability is acknowledged as a future enhancement;
+ * today the first selected stage drives the trigger and Bamboo runs forward from
+ * there.
  */
 class BambooApiClientStageSelectionTest {
 
@@ -32,27 +37,6 @@ class BambooApiClientStageSelectionTest {
 
     private val queuedBuildResponse = """
         {"buildResultKey":"PROJ-BUILD-42","buildNumber":42,"planKey":"PROJ-BUILD"}
-    """.trimIndent()
-
-    // Running/queued builds response used after the action POST to find the queued entry.
-    private val runningBuildsResponse = """
-        {
-          "results": {
-            "result": [
-              {
-                "key": "PROJ-BUILD-43",
-                "buildResultKey": "PROJ-BUILD-43",
-                "buildNumber": 43,
-                "state": "Unknown",
-                "lifeCycleState": "Queued",
-                "buildDurationInSeconds": 0,
-                "buildRelativeTime": "",
-                "stages": {"size": 0, "stage": []},
-                "variables": {"size": 0, "variable": []}
-              }
-            ]
-          }
-        }
     """.trimIndent()
 
     @BeforeEach
@@ -70,7 +54,7 @@ class BambooApiClientStageSelectionTest {
         server.shutdown()
     }
 
-    // ==================== null selectedStages → executeAllStages=true (REST path) ====================
+    // ==================== null selectedStages → executeAllStages=true ====================
 
     @Test
     fun `null selectedStages sends executeAllStages=true via REST queue endpoint`() = runTest {
@@ -88,9 +72,8 @@ class BambooApiClientStageSelectionTest {
             recorded.path!!.contains("stage="),
             "Should not have a stage= param when stages=null, got: ${recorded.path}"
         )
-        // REST path should use /rest/api/latest/queue/, NOT the action endpoint
         assertTrue(
-            recorded.path!!.contains("/rest/api/latest/queue/"),
+            recorded.path!!.contains("/rest/api/latest/queue/PROJ-BUILD"),
             "Expected REST queue path, got: ${recorded.path}"
         )
     }
@@ -118,106 +101,102 @@ class BambooApiClientStageSelectionTest {
         assertEquals(0, server.requestCount, "No network call should be made for empty stages")
     }
 
-    // ==================== C-faithful action endpoint ====================
+    // ==================== non-null non-empty → REST queue with stage=<first> ====================
 
     @Test
-    fun `non-null selectedStages POSTs to action endpoint with stages_name=true form fields`() = runTest {
-        // Action POST returns 200, then getRunningAndQueuedBuilds returns the queued entry
-        server.enqueue(MockResponse().setResponseCode(200).setBody("<!-- action ok -->"))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(runningBuildsResponse))
+    fun `non-null selectedStages POSTs to REST queue endpoint with stage=firstStage`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(queuedBuildResponse))
 
-        val stages = setOf("Build", "Deploy")
+        // LinkedHashSet preserves insertion order; production callers build the set
+        // from the dialog's checkbox list which iterates in plan order.
+        val stages = linkedSetOf("Build", "Deploy")
         val result = client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), stages)
 
         assertTrue(result.isSuccess, "Expected success, got $result")
 
-        // First request must be the action endpoint
-        val actionRequest = server.takeRequest()
+        val recorded = server.takeRequest()
         assertTrue(
-            actionRequest.path!!.contains("/build/admin/ajax/runChainAction.action"),
-            "Expected action endpoint, got: ${actionRequest.path}"
+            recorded.path!!.contains("/rest/api/latest/queue/PROJ-BUILD"),
+            "Expected REST queue path, got: ${recorded.path}"
         )
-        // Should NOT use the REST queue endpoint
+        assertTrue(
+            recorded.path!!.contains("executeAllStages=false"),
+            "Expected executeAllStages=false in path, got: ${recorded.path}"
+        )
+        // First stage in iteration order is "Build"; Bamboo runs from Build forward.
+        assertTrue(
+            recorded.path!!.contains("stage=Build"),
+            "Expected stage=Build in path, got: ${recorded.path}"
+        )
+        // Should NOT use the Struts action endpoint (the path that 404'd in production).
         assertFalse(
-            actionRequest.path!!.contains("/rest/api/latest/queue/"),
-            "C-faithful must not use REST queue path, got: ${actionRequest.path}"
-        )
-
-        // Form body must contain stages_<name>=true for each selected stage
-        val body = actionRequest.body.readUtf8()
-        assertTrue(body.contains("stages_Build=true"),
-            "Expected stages_Build=true in body, got: $body")
-        assertTrue(body.contains("stages_Deploy=true"),
-            "Expected stages_Deploy=true in body, got: $body")
-        // planKey must be present
-        assertTrue(body.contains("planKey=PROJ-BUILD") || body.contains("planKey=PROJ%2DBUILD"),
-            "Expected planKey in body, got: $body")
-
-        // Second request must be the getRunningAndQueuedBuilds lookup
-        val lookupRequest = server.takeRequest()
-        assertTrue(
-            lookupRequest.path!!.contains("/rest/api/latest/result/"),
-            "Expected running/queued builds lookup, got: ${lookupRequest.path}"
+            recorded.path!!.contains("/build/admin/ajax/runChainAction.action"),
+            "Must not use Struts action endpoint, got: ${recorded.path}"
         )
     }
 
     @Test
-    fun `action endpoint request has X-Atlassian-Token header`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("<!-- action ok -->"))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(runningBuildsResponse))
+    fun `single-stage selection uses REST queue with that stage`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(queuedBuildResponse))
+
+        val result = client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), setOf("Deploy"))
+
+        assertTrue(result.isSuccess, "Expected success, got $result")
+        val recorded = server.takeRequest()
+        assertTrue(
+            recorded.path!!.contains("/rest/api/latest/queue/PROJ-BUILD"),
+            "Single-stage selection must use REST queue endpoint, got: ${recorded.path}"
+        )
+        assertTrue(
+            recorded.path!!.contains("stage=Deploy"),
+            "Expected stage=Deploy, got: ${recorded.path}"
+        )
+        assertEquals(1, server.requestCount, "Single REST call — no follow-up lookup needed")
+    }
+
+    @Test
+    fun `stage names with spaces are URL-encoded in the stage query param`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(queuedBuildResponse))
+
+        client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), setOf("Unit Tests"))
+
+        val recorded = server.takeRequest()
+        // URLEncoder uses + for spaces in form-encoded query params.
+        assertTrue(
+            recorded.path!!.contains("stage=Unit+Tests") || recorded.path!!.contains("stage=Unit%20Tests"),
+            "Expected URL-encoded stage name, got: ${recorded.path}"
+        )
+    }
+
+    @Test
+    fun `non-null selectedStages request includes X-Atlassian-Token header`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(queuedBuildResponse))
 
         client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), setOf("Build"))
 
-        val actionRequest = server.takeRequest()
-        assertEquals("no-check", actionRequest.getHeader("X-Atlassian-Token"),
-            "X-Atlassian-Token: no-check required on action endpoint")
+        val recorded = server.takeRequest()
+        assertEquals("no-check", recorded.getHeader("X-Atlassian-Token"),
+            "X-Atlassian-Token: no-check required on the REST queue endpoint")
     }
 
+    // ==================== Error mapping ====================
+
     @Test
-    fun `C-faithful path does not contain executeAllStages=false or stage= in URL`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("<!-- action ok -->"))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(runningBuildsResponse))
+    fun `404 from queue endpoint returns NOT_FOUND error type`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404).setBody("Not found"))
 
-        client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), setOf("Build", "Unit Tests"))
+        val result = client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), setOf("Build"))
 
-        val actionRequest = server.takeRequest()
-        assertFalse(
-            actionRequest.path!!.contains("executeAllStages=false"),
-            "C-faithful must not use executeAllStages=false (C-simple pattern), got: ${actionRequest.path}"
-        )
-        assertFalse(
-            actionRequest.path!!.contains("stage="),
-            "C-faithful must not use stage= param (C-simple pattern), got: ${actionRequest.path}"
+        assertTrue(result is ApiResult.Error, "Expected ApiResult.Error for 404")
+        assertEquals(
+            ErrorType.NOT_FOUND,
+            (result as ApiResult.Error).type,
+            "404 from REST queue must map to NOT_FOUND so the user gets a useful hint"
         )
     }
 
     @Test
-    fun `action POST followed by getRunningAndQueuedBuilds synthesises BambooQueueResponse`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("<!-- ok -->"))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(runningBuildsResponse))
-
-        val result = client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), setOf("Build"))
-
-        assertTrue(result.isSuccess, "Expected success, got $result")
-        val response = (result as ApiResult.Success).data
-        assertEquals("PROJ-BUILD-43", response.buildResultKey)
-        assertEquals(43, response.buildNumber)
-        assertEquals(2, server.requestCount, "Expected 2 requests: action POST + queue lookup")
-    }
-
-    @Test
-    fun `action endpoint failure is surfaced as error without fallback`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(403).setBody("Forbidden"))
-
-        val result = client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), setOf("Build"))
-
-        assertTrue(result.isError, "Expected error when action endpoint returns 403")
-        // No second request should be made (no fallback attempted)
-        assertEquals(1, server.requestCount, "Should stop after action endpoint failure")
-    }
-
-    @Test
-    fun `action endpoint 403 returns FORBIDDEN error type`() = runTest {
+    fun `403 from queue endpoint returns FORBIDDEN error type`() = runTest {
         server.enqueue(MockResponse().setResponseCode(403).setBody("Forbidden"))
 
         val result = client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), setOf("Build"))
@@ -226,13 +205,12 @@ class BambooApiClientStageSelectionTest {
         assertEquals(
             ErrorType.FORBIDDEN,
             (result as ApiResult.Error).type,
-            "403 from action endpoint must map to FORBIDDEN, not a generic error"
+            "403 from REST queue must map to FORBIDDEN, not a generic error"
         )
-        assertEquals(1, server.requestCount, "No follow-up call after 403")
     }
 
     @Test
-    fun `action endpoint 401 returns AUTH_FAILED error type`() = runTest {
+    fun `401 from queue endpoint returns AUTH_FAILED error type`() = runTest {
         server.enqueue(MockResponse().setResponseCode(401).setBody("Unauthorized"))
 
         val result = client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), setOf("Build"))
@@ -241,76 +219,21 @@ class BambooApiClientStageSelectionTest {
         assertEquals(
             ErrorType.AUTH_FAILED,
             (result as ApiResult.Error).type,
-            "401 from action endpoint must map to AUTH_FAILED"
+            "401 from REST queue must map to AUTH_FAILED"
         )
-        assertEquals(1, server.requestCount, "No follow-up call after 401")
-    }
-
-    // NOTE: A test for 500 → SERVER_ERROR is intentionally omitted here.
-    // RetryInterceptor retries 5xx codes up to 3 times and calls log.error() on
-    // exhaustion. IntelliJ's TestLoggerFactory turns log.error() into a test failure,
-    // so any test that exercises the 500 retry path will always fail in the IntelliJ
-    // test runner regardless of the returned ApiResult. The 500 → SERVER_ERROR mapping
-    // is exercised implicitly: BambooApiClient's `get` helper maps every non-retried
-    // 5xx to SERVER_ERROR using the same `else ->` branch, and that path is tested by
-    // BambooApiClientTest. The 403 and 401 tests above lock in the error-type contract
-    // for the non-retryable action-endpoint failures.
-
-    // ==================== Redirect handling (Blocker 1 fix) ====================
-
-    @Test
-    fun `action endpoint 302 redirect to non-login Location is treated as success`() = runTest {
-        // Bamboo's Struts action returns 302 → /build/admin/dashboard on success.
-        // This must NOT be treated as AUTH_REDIRECT — only auth redirects (Location
-        // containing /login, userlogin, permissionViolation, usernotloggedin) are errors.
-        server.enqueue(
-            MockResponse()
-                .setResponseCode(302)
-                .addHeader("Location", "/build/admin/dashboard")
-        )
-        server.enqueue(MockResponse().setResponseCode(200).setBody(runningBuildsResponse))
-
-        val result = client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), setOf("Build"))
-
-        assertTrue(result.isSuccess,
-            "302 redirect to /build/admin/dashboard should be treated as Struts-success, got $result")
-        assertEquals(2, server.requestCount,
-            "Expected 2 requests: action POST (302) + queue lookup")
-    }
-
-    @Test
-    fun `action endpoint 302 redirect to login page returns AUTH_REDIRECT error`() = runTest {
-        // A genuine auth-expiry redirect has Location pointing to the login page.
-        server.enqueue(
-            MockResponse()
-                .setResponseCode(302)
-                .addHeader("Location", "/userlogin.action?permissionViolation=true")
-        )
-
-        val result = client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), setOf("Build"))
-
-        assertTrue(result is ApiResult.Error, "Expected error for auth redirect")
-        assertEquals(
-            ErrorType.AUTH_REDIRECT,
-            (result as ApiResult.Error).type,
-            "302 to login must map to AUTH_REDIRECT"
-        )
-        // No second request — auth failure is terminal
-        assertEquals(1, server.requestCount, "No queue lookup after auth redirect")
     }
 
     // ==================== Variables forwarded correctly ====================
 
     @Test
-    fun `build variables are included in action endpoint form body`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("<!-- ok -->"))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(runningBuildsResponse))
+    fun `build variables are included in REST queue form body`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(queuedBuildResponse))
 
         val vars = mapOf("myVar" to "hello", "otherVar" to "world")
         client.queueBuildWithStageSelection("PROJ-BUILD", vars, setOf("Build"))
 
-        val actionRequest = server.takeRequest()
-        val body = actionRequest.body.readUtf8()
+        val recorded = server.takeRequest()
+        val body = recorded.body.readUtf8()
         assertTrue(
             body.contains("bamboo.variable.myVar=hello"),
             "Expected myVar in form body, got: $body"
@@ -337,36 +260,6 @@ class BambooApiClientStageSelectionTest {
         assertTrue(
             body.contains("bamboo.variable.otherVar=world"),
             "Expected otherVar in form body, got: $body"
-        )
-    }
-
-    @Test
-    fun `non-contiguous stage selection includes all stages as stages_name=true`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("<!-- ok -->"))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(runningBuildsResponse))
-
-        // Non-contiguous: Build and Deploy (skipping Unit Tests)
-        val stages = linkedSetOf("Build", "Deploy")
-        client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), stages)
-
-        val actionRequest = server.takeRequest()
-        val body = actionRequest.body.readUtf8()
-        assertTrue(body.contains("stages_Build=true"), "Expected stages_Build=true, got: $body")
-        assertTrue(body.contains("stages_Deploy=true"), "Expected stages_Deploy=true, got: $body")
-        assertFalse(body.contains("stages_Unit"), "Should not have Unit Tests stage, got: $body")
-    }
-
-    @Test
-    fun `single-stage set uses action endpoint not REST queue`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("<!-- ok -->"))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(runningBuildsResponse))
-
-        client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), setOf("Build"))
-
-        val actionRequest = server.takeRequest()
-        assertTrue(
-            actionRequest.path!!.contains("/build/admin/ajax/runChainAction.action"),
-            "Even a single-stage set must use the action endpoint (not REST), got: ${actionRequest.path}"
         )
     }
 }
