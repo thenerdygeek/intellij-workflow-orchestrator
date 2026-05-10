@@ -6,6 +6,8 @@ import com.workflow.orchestrator.automation.model.QueueEntry
 import com.workflow.orchestrator.automation.model.QueueEntryStatus
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.sql.Connection
 import java.sql.DriverManager
@@ -98,7 +100,7 @@ class TagHistoryService : Disposable {
             stmt.setString(2, entry.suitePlanKey)
             stmt.setString(3, entry.dockerTagsPayload)
             stmt.setString(4, json.encodeToString(entry.variables))
-            stmt.setString(5, json.encodeToString(entry.stages))
+            stmt.setString(5, encodeStages(entry.stages))
             stmt.setString(6, entry.status.name)
             stmt.setString(7, entry.bambooResultKey)
             stmt.setLong(8, entry.enqueuedAt.epochSecond)
@@ -158,7 +160,7 @@ class TagHistoryService : Disposable {
                         suitePlanKey = rs.getString("suite_plan_key"),
                         dockerTagsPayload = rs.getString("docker_tags_json"),
                         variables = json.decodeFromString(rs.getString("variables_json")),
-                        stages = json.decodeFromString(rs.getString("stages_json")),
+                        stages = decodeStages(rs.getString("stages_json")),
                         enqueuedAt = Instant.ofEpochSecond(rs.getLong("enqueued_at")),
                         status = QueueEntryStatus.valueOf(rs.getString("status")),
                         bambooResultKey = rs.getString("bamboo_result_key"),
@@ -174,6 +176,31 @@ class TagHistoryService : Disposable {
         connection.prepareStatement("DELETE FROM queue_entries WHERE id = ?").use { stmt ->
             stmt.setString(1, entryId)
             stmt.executeUpdate()
+        }
+    }
+
+    /**
+     * Serialize [stages] for the `stages_json` column.
+     * - null → `null` (JSON null literal) so we can distinguish "run all" from old empty-array rows.
+     * - non-null set → JSON array of stage name strings.
+     */
+    private fun encodeStages(stages: Set<String>?): String =
+        if (stages == null) "null" else json.encodeToString(stages.toList())
+
+    /**
+     * Deserialize the `stages_json` column back into [Set<String>?].
+     * - JSON null → null (run all stages).
+     * - Empty JSON array `[]` → null (backward-compat: old rows stored `[]` for "all stages").
+     * - Non-empty array → parsed set of stage names.
+     * - Any parse error → null (fail-safe; treated as "run all").
+     */
+    private fun decodeStages(raw: String?): Set<String>? {
+        if (raw.isNullOrBlank() || raw.trim() == "null") return null
+        return try {
+            val arr = json.parseToJsonElement(raw).jsonArray
+            if (arr.isEmpty()) null else arr.map { it.jsonPrimitive.content }.toSet()
+        } catch (_: Exception) {
+            null
         }
     }
 

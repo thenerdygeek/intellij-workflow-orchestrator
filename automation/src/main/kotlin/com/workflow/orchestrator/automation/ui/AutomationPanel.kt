@@ -14,6 +14,8 @@ import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.automation.model.*
 import com.workflow.orchestrator.automation.service.*
+import com.workflow.orchestrator.bamboo.ui.ManualStageDialog
+import com.workflow.orchestrator.bamboo.ui.TriggerMode
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.services.BambooService
@@ -162,15 +164,10 @@ class AutomationPanel(
                 add(statusLabel)
             }
 
+            // Single split-button: primary action = enqueue first stage;
+            // dropdown = "Trigger Customized\u2026" | "Trigger All Stages".
             val rightPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
-                add(JButton("Queue Run").apply {
-                    isFocusPainted = false
-                    addActionListener { onQueueRun() }
-                })
-                add(JButton("Trigger Now \u25B6").apply {
-                    isFocusPainted = false
-                    addActionListener { onTriggerNow() }
-                })
+                add(buildTriggerSplitButton())
             }
 
             add(leftPanel, BorderLayout.WEST)
@@ -632,51 +629,99 @@ class AutomationPanel(
         suppressBaselineListener = false
     }
 
-    private fun onTriggerNow() {
+    /**
+     * Builds the split-button for the header:
+     *  - Primary button: enqueue with the first stage only (fast-path for the most
+     *    common case where the user wants to run just the first stage).
+     *  - Arrow button opens a popup with:
+     *      • "Trigger Customized…" — opens ManualStageDialog(CUSTOM_STAGES) and
+     *        enqueues with the user’s stage selection.
+     *      • "Trigger All Stages" — enqueues with stages = null (run everything).
+     */
+    private fun buildTriggerSplitButton(): JPanel {
+        val mainBtn = JButton("Run").apply {
+            toolTipText = "Enqueue build with first stage only"
+            addActionListener { onEnqueueFirstStage() }
+        }
+
+        val arrowBtn = JButton("\u25BE").apply {  // \u25BE (small downward triangle)
+            toolTipText = "More trigger options"
+            isFocusPainted = false
+            margin = java.awt.Insets(0, 2, 0, 2)
+        }
+
+        val popup = JPopupMenu()
+        val customizeItem = JMenuItem("Trigger Customized\u2026")
+        val allStagesItem = JMenuItem("Trigger All Stages")
+        customizeItem.addActionListener { onTriggerCustomized() }
+        allStagesItem.addActionListener { onEnqueueAllStages() }
+        popup.add(customizeItem)
+        popup.add(allStagesItem)
+
+        arrowBtn.addActionListener {
+            popup.show(arrowBtn, 0, arrowBtn.height)
+        }
+
+        return JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+            add(mainBtn)
+            add(arrowBtn)
+        }
+    }
+
+    /**
+     * Primary split-button click: enqueue with only the first stage.
+     * Looks up the first stage name from the suite’s latest build stages.
+     * Falls back to null (all stages) if stage list is empty or unavailable.
+     */
+    private fun onEnqueueFirstStage() {
         if (currentSuitePlanKey.isBlank()) return
-
-        val tags = tagStagingPanel.getCurrentTags()
-        val extraVars = suiteConfigPanel.getVariables()
-        // PR 7 #7: merge the per-suite free-form extras into the trigger payload.
-        // [TagBuilderService.buildTriggerVariables] applies the docker payload last
-        // so the auto-generated DockerTagsAsJSON always wins on key conflict.
-        val suiteExtras = AutomationSettingsService.getInstance().getExtraVariables(currentSuitePlanKey)
-        val variables = tagBuilderService.buildTriggerVariables(tags, extraVars, suiteExtras)
-
-        log.info("[Automation:UI] Triggering suite $currentSuitePlanKey with ${variables.size} variables")
-        statusLabel.text = "Triggering..."
-
         scope.launch {
-            val result = bambooService.triggerBuild(currentSuitePlanKey, variables)
+            val stagesResult = bambooService.getLatestBuild(currentSuitePlanKey)
+            val firstStage = stagesResult.data?.stages?.firstOrNull()?.name
+            val selectedStages: Set<String>? = if (firstStage != null) setOf(firstStage) else null
             invokeLater {
-                if (!result.isError) {
-                    val resultKey = result.data!!.buildKey
-                    log.info("[Automation:UI] Build triggered: $resultKey")
-                    statusLabel.text = "\u25B6 Triggered \u2014 $resultKey"
-                    statusLabel.foreground = StatusColors.LINK
-                    // Switch to Monitor tab
-                    tabbedPane.selectedIndex = 1
-                    monitorPanel.addRun(currentSuitePlanKey, resultKey)
-                } else {
-                    statusLabel.text = "Failed: ${result.summary}"
-                    statusLabel.foreground = StatusColors.ERROR
-                    log.warn("[Automation:UI] Trigger failed: ${result.summary}")
-                }
+                enqueueWith(selectedStages)
             }
         }
     }
 
-    private fun onQueueRun() {
+    /**
+     * "Trigger Customized…" popup action: open ManualStageDialog in CUSTOM_STAGES mode,
+     * then enqueue with whatever stages the user checked.
+     */
+    private fun onTriggerCustomized() {
         if (currentSuitePlanKey.isBlank()) return
+        val dialog = ManualStageDialog(
+            project = project,
+            planKey = currentSuitePlanKey,
+            scope = scope,
+            triggerMode = TriggerMode.CUSTOM_STAGES
+        )
+        if (dialog.showAndGet()) {
+            val selectedStages = dialog.getSelectedStages()
+            enqueueWith(if (selectedStages.isEmpty()) null else selectedStages)
+        }
+    }
+
+    /**
+     * "Trigger All Stages" popup action: enqueue with stages = null (run all stages).
+     */
+    private fun onEnqueueAllStages() {
+        if (currentSuitePlanKey.isBlank()) return
+        enqueueWith(stages = null)
+    }
+
+    /**
+     * Single submission point: build a [QueueEntry] from current UI state and hand
+     * it off to [QueueService.enqueue]. [stages] semantics:
+     *  - null  → run all stages (backward-compatible with old entries)
+     *  - non-null set → run from the first stage in the set forward
+     */
+    private fun enqueueWith(stages: Set<String>?) {
         val tags = tagStagingPanel.getCurrentTags()
         val extraVars = suiteConfigPanel.getVariables()
-        // PR 7 #7: merge per-suite extras into the queued entry's variables
-        // (same precedence as onTriggerNow). The docker payload is stored
-        // separately in [QueueEntry.dockerTagsPayload], so we don't need to
-        // worry about it overriding here — the QueueService re-applies it at
-        // submit time.
         val suiteExtras = AutomationSettingsService.getInstance().getExtraVariables(currentSuitePlanKey)
-        val mergedVars = (extraVars + suiteExtras)
+        val mergedVars = extraVars + suiteExtras
         val dockerTagsPayload = tagBuilderService.buildJsonPayload(tags)
 
         val entry = QueueEntry(
@@ -684,7 +729,7 @@ class AutomationPanel(
             suitePlanKey = currentSuitePlanKey,
             dockerTagsPayload = dockerTagsPayload,
             variables = mergedVars,
-            stages = suiteConfigPanel.getEnabledStages(),
+            stages = stages,
             enqueuedAt = java.time.Instant.now(),
             status = QueueEntryStatus.WAITING_LOCAL,
             bambooResultKey = null
@@ -694,7 +739,7 @@ class AutomationPanel(
         statusLabel.text = "\u27F3 Queued"
         statusLabel.foreground = JBColor(0x0969DA, 0x89b4fa)
         tabbedPane.selectedIndex = 1
-        log.info("[Automation:UI] Run queued for suite $currentSuitePlanKey")
+        log.info("[Automation:UI] Run queued for suite $currentSuitePlanKey (stages=${stages ?: "all"})")
     }
 
     override fun dispose() {

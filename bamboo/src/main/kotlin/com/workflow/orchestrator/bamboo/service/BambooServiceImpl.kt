@@ -95,17 +95,18 @@ class BambooServiceImpl(private val project: Project) : BambooService {
     }
 
     override suspend fun triggerBuild(
-        planKey: String,
-        variables: Map<String, String>
+        chainKey: String,
+        variables: Map<String, String>,
+        stages: Set<String>?
     ): ToolResult<BuildTriggerData> {
         val api = client ?: return ToolResult(
             data = BuildTriggerData(buildKey = "", buildNumber = 0, link = ""),
-            summary = "Bamboo not configured. Cannot trigger build for $planKey.",
+            summary = "Bamboo not configured. Cannot trigger build for $chainKey.",
             isError = true,
             hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        return when (val result = api.queueBuild(planKey, variables)) {
+        return when (val result = api.queueBuildWithStageSelection(chainKey, variables, stages)) {
             is ApiResult.Success -> {
                 val qr = result.data
                 val data = BuildTriggerData(
@@ -113,16 +114,20 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     buildNumber = qr.buildNumber,
                     link = "${cachedBaseUrl}/browse/${qr.buildResultKey}"
                 )
+                val stagesSummary = when {
+                    stages == null -> "all stages"
+                    else -> stages.joinToString(", ")
+                }
                 ToolResult.success(
                     data = data,
-                    summary = "Build triggered: ${data.buildKey} (#${data.buildNumber})\nLink: ${data.link}"
+                    summary = "Build triggered: ${data.buildKey} (#${data.buildNumber}) — stages: $stagesSummary\nLink: ${data.link}"
                 )
             }
             is ApiResult.Error -> {
-                log.warn("[BambooService] Failed to trigger build for $planKey: ${result.message}")
+                log.warn("[BambooService] Failed to trigger build for $chainKey: ${result.message}")
                 ToolResult(
                     data = BuildTriggerData(buildKey = "", buildNumber = 0, link = ""),
-                    summary = "Error triggering build for $planKey: ${result.message}",
+                    summary = "Error triggering build for $chainKey: ${result.message}",
                     isError = true,
                     hint = when (result.type) {
                         ErrorType.AUTH_FAILED ->
@@ -131,6 +136,8 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                             "You may not have permission to trigger this plan."
                         ErrorType.NOT_FOUND ->
                             "Verify the plan key is correct (e.g., PROJ-PLAN)."
+                        ErrorType.VALIDATION_ERROR ->
+                            result.message
                         else -> "Check Bamboo connection in Settings."
                     }
                 )
@@ -338,7 +345,9 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        return when (val result = api.queueBuild(planKey, variables, stage)) {
+        // Delegate to queueBuildWithStageSelection; stage=null → all stages.
+        val stageSet = if (stage != null) setOf(stage) else null
+        return when (val result = api.queueBuildWithStageSelection(planKey, variables, stageSet)) {
             is ApiResult.Success -> ToolResult.success(
                 data = Unit,
                 summary = "Stage '${stage ?: "all"}' triggered for $planKey (#${result.data.buildNumber})."

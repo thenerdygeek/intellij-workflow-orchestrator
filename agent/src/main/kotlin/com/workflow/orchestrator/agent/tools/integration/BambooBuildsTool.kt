@@ -18,6 +18,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
@@ -43,7 +44,7 @@ Do NOT use for: local IDE Maven/Gradle reload errors, 'why did my IDE build fail
 Actions and their parameters:
 - build_status(plan_key, branch?, repo_name?) → Latest build status for plan
 - get_build(build_key, include_commits?) → Detailed build info. Returns BuildResultData with stages[].jobs[].resultKey usable as the build_key parameter for get_build_log/get_test_results. Pass include_commits=true to also fetch the per-build commit list (SHA, message, author) and complete the Bamboo→Bitbucket→Jira triangle.
-- trigger_build(plan_key, variables?) → Trigger new build (variables: JSON {"key":"value"})
+- trigger_build(plan_key, variables?, stages?) → Trigger new build (variables: JSON {"key":"value"}; stages: optional array of stage names to run, omit to run all)
 - get_build_log(build_key) → Build log output. Accepts a build key (e.g. PROJ-PLAN138-4) for the whole-build log, OR a job-level resultKey from get_build's stages[].jobs[].resultKey (e.g. PROJ-PLAN138-UNIT-4) for just that job's log. Prefer per-job logs when triaging a single failing job.
 - get_test_results(build_key) → Test results for build
 - stop_build(build_key) → Stop running build
@@ -87,6 +88,14 @@ description optional: for approval dialog on trigger/stop/cancel.
             "variables" to ParameterProperty(
                 type = "string",
                 description = "JSON object of build variables e.g. '{\"key\":\"value\"}' — for trigger_build"
+            ),
+            "stages" to ParameterProperty(
+                type = "array",
+                description = "Optional list of stage names to run — for trigger_build. Omit to run all stages (Bamboo default). " +
+                    "When provided, Bamboo runs from the first stage in the list forward (REST API limitation: only the first stage is passed). " +
+                    "Example: [\"Build\", \"Unit Tests\"] triggers from 'Build' stage onward. " +
+                    "Rejected with an error if the list is empty.",
+                items = ParameterProperty(type = "string", description = "Stage name")
             ),
             "artifact_url" to ParameterProperty(
                 type = "string",
@@ -372,6 +381,15 @@ description optional: for approval dialog on trigger/stop/cancel.
                         whenAbsent("Build is triggered with no extra variables — plan's default variables apply.")
                         constraint("must be valid JSON object; values must be strings (not numbers or booleans)")
                         example("{\"docker.tag\": \"1.2.3\", \"run.smoke\": \"true\"}")
+                    }
+                    optional("stages", "array") {
+                        llmSeesIt("Optional list of stage names to run — for trigger_build. Omit to run all stages.")
+                        humanReadable("Restrict the build to specific stages. Bamboo runs from the first stage in the list forward. Empty list is rejected.")
+                        whenPresent("Parsed to a Set<String>; first element passed as stage=<name> with executeAllStages=false to the Bamboo REST queue endpoint.")
+                        whenAbsent("All stages run (Bamboo default, executeAllStages=true).")
+                        constraint("Must be a non-empty array. Each element is a stage name string.")
+                        example("[\"Build\"]")
+                        example("[\"Build\", \"Unit Tests\"]")
                     }
                     optional("description", "string") {
                         llmSeesIt("Brief description shown in approval dialog — for write actions: trigger_build, stop_build, cancel_build")
@@ -836,7 +854,19 @@ description optional: for approval dialog on trigger/stop/cancel.
                     is BambooToolUtils.VariablesParseResult.Success -> parsed.variables
                     is BambooToolUtils.VariablesParseResult.Failure -> return parsed.error
                 }
-                service.triggerBuild(planKey, variables).toAgentToolResult()
+                val stages: Set<String>? = params["stages"]?.let { el ->
+                    try {
+                        val arr = el.jsonArray
+                        if (arr.isEmpty()) return ToolResult(
+                            content = "Error: 'stages' list is empty. Provide at least one stage name or omit the parameter to run all stages.",
+                            summary = "Empty stages list",
+                            tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                            isError = true
+                        )
+                        arr.map { it.jsonPrimitive.content }.toSet()
+                    } catch (_: Exception) { null }
+                }
+                service.triggerBuild(planKey, variables, stages).toAgentToolResult()
             }
 
             "get_build_log" -> {

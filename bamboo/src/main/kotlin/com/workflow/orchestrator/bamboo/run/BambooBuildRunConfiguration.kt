@@ -29,6 +29,16 @@ class BambooBuildRunConfigurationOptions : RunConfigurationOptions() {
     var buildVariables: String?
         get() = _buildVariables.getValue(this)
         set(value) { _buildVariables.setValue(this, value) }
+
+    /**
+     * Comma-separated stage names to restrict this run to, or blank/null to run all stages.
+     * e.g., `"Build,Unit Tests"` → passes `executeAllStages=false&stage=Build` to Bamboo.
+     * Stored as a plain comma-separated string for simple XML persistence.
+     */
+    private val _stages = string("")
+    var stages: String?
+        get() = _stages.getValue(this)
+        set(value) { _stages.setValue(this, value) }
 }
 
 class BambooBuildRunConfiguration(
@@ -76,6 +86,16 @@ class BambooBuildRunConfiguration(
             }
     }
 
+    /**
+     * Parses [stages] option (comma-separated) into a [Set<String>?].
+     * Returns null when blank (run all stages) or non-null set of stage names.
+     */
+    fun getStages(): Set<String>? {
+        val raw = options.stages.orEmpty().trim()
+        if (raw.isBlank()) return null
+        return raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet().takeIf { it.isNotEmpty() }
+    }
+
     override fun getDockerTagsJson(): String = options.buildVariables.orEmpty()
 
     // Public accessors for the settings editor
@@ -90,6 +110,10 @@ class BambooBuildRunConfiguration(
     var buildVariablesValue: String
         get() = options.buildVariables.orEmpty()
         set(value) { options.buildVariables = value }
+
+    var stagesValue: String
+        get() = options.stages.orEmpty()
+        set(value) { options.stages = value }
 }
 
 class BambooBuildSettingsEditor(private val project: Project) : SettingsEditor<BambooBuildRunConfiguration>() {
@@ -97,6 +121,11 @@ class BambooBuildSettingsEditor(private val project: Project) : SettingsEditor<B
     private var planKey: String = ""
     private var branch: String = ""
     private var buildVariables: String = ""
+    /**
+     * Comma-separated stage names to run, or blank to run all stages.
+     * Example: `"Build,Unit Tests"` runs only those two stages.
+     */
+    private var stages: String = ""
     private lateinit var myPanel: DialogPanel
 
     override fun createEditor(): JComponent {
@@ -117,6 +146,11 @@ class BambooBuildSettingsEditor(private val project: Project) : SettingsEditor<B
                     .rows(4)
                     .comment("One per line: KEY=value")
             }
+            row("Stages (optional):") {
+                textField()
+                    .bindText(::stages)
+                    .comment("Comma-separated stage names to run, e.g. \"Build,Unit Tests\". Leave blank to run all stages.")
+            }
         }
         return myPanel
     }
@@ -126,6 +160,7 @@ class BambooBuildSettingsEditor(private val project: Project) : SettingsEditor<B
         s.planKeyValue = planKey
         s.branchValue = branch
         s.buildVariablesValue = buildVariables
+        s.stagesValue = stages
     }
 
     override fun resetEditorFrom(s: BambooBuildRunConfiguration) {
@@ -139,6 +174,7 @@ class BambooBuildSettingsEditor(private val project: Project) : SettingsEditor<B
             } catch (_: Exception) { "" }
         }
         buildVariables = s.buildVariablesValue
+        stages = s.stagesValue
         myPanel.reset()
     }
 }

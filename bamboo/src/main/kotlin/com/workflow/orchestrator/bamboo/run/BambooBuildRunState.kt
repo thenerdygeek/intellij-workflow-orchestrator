@@ -82,9 +82,11 @@ class BambooBuildProcessHandler(
         }
         printOutput("\n")
 
+        val stages = configuration.getStages()
         printOutput("Triggering build...\n")
+        if (stages != null) printOutput("Stages: ${stages.joinToString(", ")}\n")
 
-        val triggerResult = bambooService.triggerBuild(planKey, effectiveVariables)
+        val triggerResult = bambooService.triggerBuild(planKey, effectiveVariables, stages)
         if (triggerResult.isError) {
             printOutput("ERROR: Failed to trigger build: ${triggerResult.summary}\n")
             destroyProcess()

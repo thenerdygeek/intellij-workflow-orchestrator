@@ -3,6 +3,7 @@ package com.workflow.orchestrator.bamboo.service
 import com.workflow.orchestrator.core.services.BambooService
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import kotlin.reflect.KClass
 import kotlin.reflect.full.declaredMemberFunctions
@@ -72,5 +73,42 @@ class BambooServiceShapeInvariantTest {
             "No BambooService method may have a 'branch' parameter — " +
                 "callers must resolve to a chainKey first via ChainKeyResolver. " +
                 "Offending methods: ${violations.map { it.name }}")
+    }
+
+    // ── Stage-picker shape invariants (automation-stage-picker-plan.md F2) ──────
+
+    @Test
+    fun `BambooService triggerBuild has exactly three value parameters chainKey variables stages`() {
+        val fn = BambooService::class.memberFunctions.single { it.name == "triggerBuild" }
+        val valueParams = fn.parameters.filter { it.kind == kotlin.reflect.KParameter.Kind.VALUE }
+        assertEquals(3, valueParams.size,
+            "triggerBuild must have exactly 3 value parameters (chainKey, variables, stages). " +
+                "Got: ${valueParams.map { it.name }}")
+        assertEquals("chainKey",  valueParams[0].name)
+        assertEquals("variables", valueParams[1].name)
+        assertEquals("stages",    valueParams[2].name)
+    }
+
+    @Test
+    fun `BambooService triggerBuild does not have an executeAllStages Boolean parameter`() {
+        val fn = BambooService::class.memberFunctions.single { it.name == "triggerBuild" }
+        val paramNames = fn.parameters.filter { it.kind == kotlin.reflect.KParameter.Kind.VALUE }.map { it.name }
+        assertNull(
+            paramNames.find { it == "executeAllStages" },
+            "triggerBuild must not expose an executeAllStages param — that detail is internal to " +
+                "BambooApiClient.queueBuildWithStageSelection. Got params: $paramNames"
+        )
+    }
+
+    @Test
+    fun `BambooService triggerBuild stages parameter is nullable Set of String`() {
+        val fn = BambooService::class.memberFunctions.single { it.name == "triggerBuild" }
+        val stagesParam = fn.parameters
+            .filter { it.kind == kotlin.reflect.KParameter.Kind.VALUE }
+            .single { it.name == "stages" }
+        // The KType for Set<String>? is nullable. Verify isMarkedNullable so callers can pass null.
+        assertTrue(stagesParam.type.isMarkedNullable,
+            "triggerBuild's 'stages' parameter must be nullable (Set<String>?) to indicate 'run all stages'. " +
+                "Got type: ${stagesParam.type}")
     }
 }

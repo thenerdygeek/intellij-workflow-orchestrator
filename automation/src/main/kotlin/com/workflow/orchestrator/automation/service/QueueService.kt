@@ -115,6 +115,29 @@ class QueueService {
                     position = position,
                     estimatedWaitMs = null
                 ))
+
+                // Fast-path: if this is the first entry for this suite AND Bamboo is
+                // idle for this plan, trigger immediately instead of waiting for the
+                // next poll tick (which could be up to 60s when the queue was empty).
+                if (autoTriggerEnabled && suiteEntries == 0) {
+                    val runningResult = bambooService.getRunningBuilds(entry.suitePlanKey)
+                    if (!runningResult.isError && runningResult.data!!.isEmpty()) {
+                        log.info("[Automation:Queue] Fast-path trigger for entry ${entry.id} (queue was empty and Bamboo is idle)")
+                        val triggerResult = doTrigger(entry)
+                        if (!triggerResult.isError) {
+                            val updatedEntry = entry.copy(
+                                status = QueueEntryStatus.QUEUED_ON_BAMBOO,
+                                bambooResultKey = triggerResult.data
+                            )
+                            _stateFlow.value = _stateFlow.value.map {
+                                if (it.id == entry.id) updatedEntry else it
+                            }
+                        }
+                        // Start poller to track the build we just fired (even on fast-path)
+                        startPollingIfNeeded()
+                        return@withLock
+                    }
+                }
             }
 
             if (autoTriggerEnabled) {
@@ -287,13 +310,13 @@ class QueueService {
     }
 
     private suspend fun doTrigger(entry: QueueEntry): ToolResult<String> {
-        log.info("[Automation:Queue] Triggering build for entry ${entry.id}, suite='${entry.suitePlanKey}'")
+        log.info("[Automation:Queue] Triggering build for entry ${entry.id}, suite='${entry.suitePlanKey}', stages=${entry.stages ?: "all"}")
 
         val variables = entry.variables.toMutableMap()
         variables[buildVariableName] = entry.dockerTagsPayload
         log.debug("[Automation:Queue] Using build variable '$buildVariableName' for trigger")
 
-        val result = bambooService.triggerBuild(entry.suitePlanKey, variables)
+        val result = bambooService.triggerBuild(entry.suitePlanKey, variables, entry.stages)
         return if (!result.isError) {
             val buildKey = result.data!!.buildKey
             log.info("[Automation:Queue] Build triggered successfully, buildKey=$buildKey")

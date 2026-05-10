@@ -126,7 +126,7 @@ class BambooApiClientTest {
     }
 
     @Test
-    fun `queueBuild sends form-encoded POST with bamboo dot variable pairs`() = runTest {
+    fun `queueBuildWithStageSelection sends form-encoded POST with bamboo dot variable pairs`() = runTest {
         // Wire shape validated 2026-05-07 against Bamboo DC 10.2.14 via
         // tools/atlassian-probe/probe_bamboo.py --write-test. Bamboo silently dropped
         // every variable when sent JSON; form-encoded `bamboo.variable.X=Y` is the
@@ -134,7 +134,7 @@ class BambooApiClientTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"buildResultKey":"PROJ-BUILD-44","buildNumber":44}"""))
 
         val variables = mapOf("skipTests" to "true", "deployTarget" to "prod")
-        val result = client.queueBuild("PROJ-BUILD", variables, stageName = "Deploy")
+        val result = client.queueBuildWithStageSelection("PROJ-BUILD", variables, setOf("Deploy"))
 
         assertTrue(result.isSuccess)
         val qr = (result as ApiResult.Success).data
@@ -167,29 +167,29 @@ class BambooApiClientTest {
     }
 
     @Test
-    fun `queueBuild URL-encodes special characters in variable values`() = runTest {
+    fun `queueBuildWithStageSelection URL-encodes special characters in variable values`() = runTest {
         // dockerTagsAsJson values are JSON literals like {"svc":"1.2.3"} — braces, quotes,
         // colons all need URL-encoding. Round-trip must reach the server intact.
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"buildResultKey":"PROJ-AUTO-101","buildNumber":101}"""))
 
         val payload = """{"svc":"1.2.3","env":"prod"}"""
-        val result = client.queueBuild("PROJ-AUTO", mapOf("dockerTagsAsJson" to payload))
+        val result = client.queueBuildWithStageSelection("PROJ-AUTO", mapOf("dockerTagsAsJson" to payload), null)
 
         assertTrue(result.isSuccess)
         val recorded = server.takeRequest()
         // Decoded body must contain the exact original payload + key — proves URL-encoding round-trip.
         val decoded = java.net.URLDecoder.decode(recorded.body.readUtf8(), "UTF-8")
         assertEquals("bamboo.variable.dockerTagsAsJson=$payload", decoded)
-        // executeAllStages defaults to true when no stage is provided
+        // null selectedStages → executeAllStages=true
         assertTrue(recorded.path!!.contains("executeAllStages=true"))
         assertFalse(recorded.path!!.contains("stage="))
     }
 
     @Test
-    fun `queueBuild URL-encodes stage name in query string`() = runTest {
+    fun `queueBuildWithStageSelection URL-encodes stage name in query string`() = runTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"buildResultKey":"PROJ-BUILD-50","buildNumber":50}"""))
 
-        val result = client.queueBuild("PROJ-BUILD", emptyMap(), stageName = "Deploy & Verify")
+        val result = client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), setOf("Deploy & Verify"))
 
         assertTrue(result.isSuccess)
         val recorded = server.takeRequest()

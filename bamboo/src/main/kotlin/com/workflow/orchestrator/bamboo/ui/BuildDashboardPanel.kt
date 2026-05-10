@@ -1216,7 +1216,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         BuildDashboardActionGate.readOnlyTooltip(workflowContextService.state.value)
 
     private fun openTriggerDialog(planKey: String) {
-        ManualStageDialog(project, planKey, scope = panelScope, triggerMode = TriggerMode.FULL_BUILD).show()
+        ManualStageDialog(project, planKey, scope = panelScope, triggerMode = TriggerMode.CUSTOM_STAGES).show()
     }
 
     companion object {

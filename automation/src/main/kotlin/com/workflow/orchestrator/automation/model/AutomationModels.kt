@@ -33,7 +33,14 @@ data class QueueEntry(
     val suitePlanKey: String,
     val dockerTagsPayload: String,
     val variables: Map<String, String>,
-    val stages: List<String>,
+    /**
+     * Stage filter for this queue entry.
+     *  - null  → run all stages (Bamboo default; also the backward-compatible value
+     *    for entries persisted before the stage-picker feature was introduced).
+     *  - non-null set → pass the first element as `stage=<name>` + `executeAllStages=false`
+     *    to the Bamboo REST queue endpoint.  Empty set is rejected by [QueueService].
+     */
+    val stages: Set<String>?,
     val enqueuedAt: Instant,
     val status: QueueEntryStatus,
     val bambooResultKey: String?,

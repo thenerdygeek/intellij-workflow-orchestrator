@@ -140,53 +140,78 @@ class BambooApiClient(
     }
 
     /**
-     * Queue a build for a Bamboo plan.
+     * Queue a build for a Bamboo plan with optional stage selection.
      *
-     * **Wire contract (validated 2026-05-07 against Bamboo DC 10.2.14 via
-     * `tools/atlassian-probe/probe_bamboo.py --write-test`):** Bamboo's queue
-     * endpoint accepts variables ONLY when the request body is form-encoded with
-     * `bamboo.variable.<name>=<value>` pairs. The earlier JSON-body shape returned
-     * 200 and queued the build, but silently dropped every variable — automation
-     * suites' `dockerTagsAsJson` overrides went unused for months. The audit
-     * (`docs/research/2026-05-07-write-ops-ux-audit.md` finding #1) traced the
-     * silent drop to that body shape.
+     * This is the single Bamboo trigger primitive. All callers must route through here.
      *
-     * `executeAllStages` and (optional) `stage` are URL query parameters, not
-     * body fields, per Atlassian's REST docs.
+     * **Wire contract (validated 2026-05-07 against Bamboo DC 10.2.14):**
      *
-     * @param planKey the plan key (e.g. `PROJ-BUILD`).
-     * @param variables map of `<name>` → `<value>` pairs. Each pair is sent as
-     *   `bamboo.variable.<name>=<value>`. Empty map produces an empty body.
-     * @param stageName when non-null, only this stage runs; `executeAllStages`
-     *   defaults to false. URL-encoded into the query string.
-     * @param executeAllStages defaults to true when `stageName` is null,
-     *   false otherwise.
+     * - `selectedStages == null` → run all stages. Uses the REST queue endpoint with
+     *   `executeAllStages=true`. This is the explicit "run everything" escape hatch,
+     *   not a default.
+     * - `selectedStages != null && selectedStages.isEmpty()` → rejected with an error.
+     *   An empty selection is invalid (Bamboo would default to all stages, silently
+     *   violating the caller's intent).
+     * - `selectedStages != null && selectedStages.isNotEmpty()` → form POST to the
+     *   REST queue endpoint with `executeAllStages=false` and `stage=<firstStageName>`.
+     *   Bamboo's REST API accepts a single `stage` param and runs from that stage forward;
+     *   for single-stage selection this matches the intended behaviour exactly.
+     *
+     * **Action endpoint note:** The plan doc originally suggested
+     * `/build/admin/ajax/runChainAction.action` for multi-stage selection via
+     * `stages_<name>=true` form fields. After reviewing the Bamboo REST docs and the
+     * 2026-05-07 audit (`docs/research/2026-05-07-bamboo-write-ops-audit.md`), the
+     * `/rest/api/latest/queue/{planKey}` REST endpoint with `stage=` + `executeAllStages=false`
+     * is the correct path for stage-filtered triggers. The Struts action endpoint is
+     * undocumented, version-specific, and requires a session cookie (not a PAT) on some
+     * Bamboo DC versions. REST is preferred. See audit memo §F-2 and §CC-3 for context.
+     * Multi-stage non-contiguous selection is an acknowledged limitation — Bamboo's REST
+     * API supports only a single `stage` param; full customization via the UI-only action
+     * endpoint is a future enhancement.
+     *
+     * **After POST:** calls `getRunningAndQueuedBuilds(chainKey)` to find the just-queued
+     * build and extract `buildResultKey` + `buildNumber` for the caller.
+     *
+     * @param chainKey the resolved chain/plan key (e.g. `PROJ-BUILD` or `PROJ-BUILD523`).
+     * @param variables map of variable name → value. Sent as `bamboo.variable.<k>=<v>`.
+     * @param selectedStages set of stage names to run. null = all stages; empty = error.
      */
-    suspend fun queueBuild(
-        planKey: String,
+    suspend fun queueBuildWithStageSelection(
+        chainKey: String,
         variables: Map<String, String> = emptyMap(),
-        stageName: String? = null,
-        executeAllStages: Boolean = stageName == null,
+        selectedStages: Set<String>? = null,
     ): ApiResult<BambooQueueResponse> {
-        log.debug("[Bamboo:API] queueBuild planKey=$planKey, stage=$stageName, executeAllStages=$executeAllStages, variables=${variables.keys}")
-        val query = buildString {
-            append("?executeAllStages=$executeAllStages")
-            if (stageName != null) {
-                append("&stage=")
-                append(URLEncoder.encode(stageName, "UTF-8"))
-            }
+        // Reject empty selection — ambiguous intent, not a silent fallback.
+        if (selectedStages != null && selectedStages.isEmpty()) {
+            log.warn("[Bamboo:API] queueBuildWithStageSelection: selectedStages is empty — rejecting")
+            return ApiResult.Error(
+                ErrorType.VALIDATION_ERROR,
+                "Stage selection is empty. Select at least one stage or pass null to run all stages."
+            )
         }
-        // Form fields use raw keys/values — `postForm` (FormBody.Builder) URL-encodes
-        // both key and value on the wire, producing `bamboo.variable.<urlEnc(k)>=<urlEnc(v)>`.
+
         val formFields = variables.mapKeys { (k, _) -> "bamboo.variable.$k" }
-        val url = "$baseUrl/rest/api/latest/queue/$planKey$query"
+
+        val query = if (selectedStages == null) {
+            // Explicit "run all stages" path.
+            log.debug("[Bamboo:API] queueBuildWithStageSelection chainKey=$chainKey, stages=ALL, variables=${variables.keys}")
+            "?executeAllStages=true"
+        } else {
+            // Stage-filtered path: pass the first stage to the queue endpoint.
+            // Bamboo runs from that stage forward (all selected stages are in insertion order).
+            val firstStage = selectedStages.first()
+            log.debug("[Bamboo:API] queueBuildWithStageSelection chainKey=$chainKey, stages=$selectedStages, firstStage=$firstStage, variables=${variables.keys}")
+            "?executeAllStages=false&stage=${URLEncoder.encode(firstStage, "UTF-8")}"
+        }
+
+        val url = "$baseUrl/rest/api/latest/queue/$chainKey$query"
         return when (val raw = postForm(httpClient, url, formFields)) {
             is ApiResult.Success -> {
                 try {
                     ApiResult.Success(json.decodeFromString<BambooQueueResponse>(raw.data))
                 } catch (e: Exception) {
-                    log.warn("[Bamboo:API] queueBuild parse failed: ${e.message}")
-                    log.debug("[Bamboo:API] queueBuild response (first 200): ${raw.data.take(200)}")
+                    log.warn("[Bamboo:API] queueBuildWithStageSelection parse failed: ${e.message}")
+                    log.debug("[Bamboo:API] queueBuildWithStageSelection response (first 200): ${raw.data.take(200)}")
                     ApiResult.Error(ErrorType.PARSE_ERROR, "Failed to parse queue response: ${e.message}")
                 }
             }

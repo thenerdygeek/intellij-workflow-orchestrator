@@ -48,7 +48,7 @@ class AutomationModelsTest {
             suitePlanKey = "PROJ-AUTO",
             dockerTagsPayload = """{"auth":"2.4.0"}""",
             variables = mapOf("suiteType" to "regression"),
-            stages = listOf("QA Automation"),
+            stages = setOf("QA Automation"),
             enqueuedAt = Instant.now(),
             status = QueueEntryStatus.WAITING_LOCAL,
             bambooResultKey = null

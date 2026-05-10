@@ -28,8 +28,21 @@ interface BambooService {
     /** Get a specific build result with stages. */
     suspend fun getBuild(buildKey: String): ToolResult<BuildResultData>
 
-    /** Trigger a build with optional variables. */
-    suspend fun triggerBuild(planKey: String, variables: Map<String, String> = emptyMap()): ToolResult<BuildTriggerData>
+    /**
+     * Trigger a build with optional variables and optional stage selection.
+     *
+     * @param chainKey the resolved chain/plan key (e.g. `PROJ-BUILD` or `PROJ-BUILD523`).
+     * @param variables map of variable name → value overrides.
+     * @param stages set of stage names to run. `null` means run all stages (explicit
+     *   "run everything" — not a silent default). Empty set is rejected with an error.
+     *   When a set is provided, Bamboo runs from the first stage in the set forward
+     *   (REST API limitation: only one `stage` param accepted per call).
+     */
+    suspend fun triggerBuild(
+        chainKey: String,
+        variables: Map<String, String> = emptyMap(),
+        stages: Set<String>? = null
+    ): ToolResult<BuildTriggerData>
 
     /** Test the Bamboo connection. */
     suspend fun testConnection(): ToolResult<Unit>
@@ -46,7 +59,13 @@ interface BambooService {
     /** Get plan variables. */
     suspend fun getPlanVariables(planKey: String): ToolResult<List<PlanVariableData>>
 
-    /** Trigger a specific stage. */
+    /**
+     * Trigger a specific stage by name.
+     *
+     * Prefer `triggerBuild(chainKey, variables, stages = setOf(stageName))` for new callers.
+     * This overload is retained for the `ManualStageDialog` STAGE-mode path which triggers
+     * a single named manual stage and discards the result key (returns `Unit`).
+     */
     suspend fun triggerStage(planKey: String, variables: Map<String, String>, stage: String? = null): ToolResult<Unit>
 
     /** Stop a running build. */

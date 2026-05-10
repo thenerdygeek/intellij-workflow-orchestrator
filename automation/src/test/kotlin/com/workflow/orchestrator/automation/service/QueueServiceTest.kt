@@ -82,13 +82,14 @@ class QueueServiceTest {
     private fun makeEntry(
         id: String = "q-1",
         planKey: String = "PROJ-AUTO",
-        status: QueueEntryStatus = QueueEntryStatus.WAITING_LOCAL
+        status: QueueEntryStatus = QueueEntryStatus.WAITING_LOCAL,
+        stages: Set<String>? = null
     ) = QueueEntry(
         id = id,
         suitePlanKey = planKey,
         dockerTagsPayload = """{"auth":"2.4.0"}""",
         variables = mapOf("suiteType" to "regression"),
-        stages = listOf("QA Automation"),
+        stages = stages,
         enqueuedAt = Instant.now(),
         status = status,
         bambooResultKey = null
@@ -182,7 +183,7 @@ class QueueServiceTest {
     @Test
     fun `triggerNow bypasses queue and triggers immediately`() = runTest {
         val entry = makeEntry()
-        coEvery { bambooService.triggerBuild(any(), any()) } returns ToolResult.success(
+        coEvery { bambooService.triggerBuild(any(), any(), any()) } returns ToolResult.success(
             data = BuildTriggerData(
                 buildKey = "PROJ-AUTO-850",
                 buildNumber = 850,
@@ -263,7 +264,7 @@ class QueueServiceTest {
         val entry1 = QueueEntry(
             id = "x-1", suitePlanKey = "PROJ-AUTO",
             dockerTagsPayload = """{"auth":"1.0.0"}""",
-            variables = emptyMap(), stages = emptyList(),
+            variables = emptyMap(), stages = null,
             enqueuedAt = Instant.now(),
             status = QueueEntryStatus.QUEUED_ON_BAMBOO,
             bambooResultKey = "PROJ-AUTO-100"
@@ -271,7 +272,7 @@ class QueueServiceTest {
         val entry2 = QueueEntry(
             id = "x-2", suitePlanKey = "PROJ-AUTO",
             dockerTagsPayload = """{"auth":"1.0.0"}""",
-            variables = emptyMap(), stages = emptyList(),
+            variables = emptyMap(), stages = null,
             enqueuedAt = Instant.now(),
             status = QueueEntryStatus.QUEUED_ON_BAMBOO,
             bambooResultKey = "PROJ-AUTO-101"
@@ -319,7 +320,7 @@ class QueueServiceTest {
         val entry = QueueEntry(
             id = "u-1", suitePlanKey = "PROJ-AUTO",
             dockerTagsPayload = """{"auth":"1.0.0"}""",
-            variables = emptyMap(), stages = emptyList(),
+            variables = emptyMap(), stages = null,
             enqueuedAt = Instant.now(),
             status = QueueEntryStatus.QUEUED_ON_BAMBOO,
             bambooResultKey = "PROJ-AUTO-200"
@@ -334,5 +335,88 @@ class QueueServiceTest {
             "Unknown/NotBuilt build should be removed from stateFlow (A-P0-5), but was: ${testService.stateFlow.value}"
         )
         scopeForTest.cancel()
+    }
+
+    // ── Stage-picker and fast-path tests (automation-stage-picker-plan.md F5) ──
+
+    @Test
+    fun `enqueue passes entry stages to triggerBuild via doTrigger`() = runTest {
+        // Build a service with autoTrigger disabled — drive doTrigger via triggerNow
+        val capturedStages = mutableListOf<Set<String>?>()
+        coEvery { bambooService.triggerBuild(any(), any(), any()) } answers {
+            capturedStages.add(thirdArg())
+            ToolResult.success(
+                data = BuildTriggerData(buildKey = "PROJ-AUTO-1", buildNumber = 1, link = ""),
+                summary = "ok"
+            )
+        }
+
+        val stages = setOf("Build", "Unit Tests")
+        val entry = makeEntry(stages = stages)
+        service.triggerNow(entry)
+
+        assertEquals(1, capturedStages.size)
+        assertEquals(stages, capturedStages[0],
+            "doTrigger must pass entry.stages to bambooService.triggerBuild")
+    }
+
+    @Test
+    fun `enqueue passes null stages to triggerBuild when stages is null`() = runTest {
+        val capturedStages = mutableListOf<Set<String>?>()
+        coEvery { bambooService.triggerBuild(any(), any(), any()) } answers {
+            capturedStages.add(thirdArg())
+            ToolResult.success(
+                data = BuildTriggerData(buildKey = "PROJ-AUTO-2", buildNumber = 2, link = ""),
+                summary = "ok"
+            )
+        }
+
+        val entry = makeEntry(stages = null)
+        service.triggerNow(entry)
+
+        assertEquals(1, capturedStages.size)
+        assertNull(capturedStages[0],
+            "doTrigger must pass null stages when entry.stages is null (run all stages)")
+    }
+
+    @Test
+    fun `fast-path fires immediately when queue empty and Bamboo idle`() = runTest {
+        // Service with autoTriggerEnabled=true so fast-path is active
+        val fastPathService = QueueService(
+            bambooService = bambooService,
+            eventBus = eventBus,
+            tagHistoryService = TagHistoryService(tempDir.resolve("fp.db").toString()),
+            scope = serviceScope,
+            autoTriggerEnabled = true,
+            maxDepthPerSuite = 10
+        )
+
+        coEvery { bambooService.getRunningBuilds(any()) } returns ToolResult.success(
+            data = emptyList(),
+            summary = "none running"
+        )
+        coEvery { bambooService.triggerBuild(any(), any(), any()) } returns ToolResult.success(
+            data = BuildTriggerData(buildKey = "PROJ-AUTO-99", buildNumber = 99, link = ""),
+            summary = "triggered"
+        )
+        // Mock getBuild so the background poller doesn't throw ClassCastException on the
+        // relaxed mock's untyped return when it polls the just-triggered entry.
+        coEvery { bambooService.getBuild(any()) } returns ToolResult(
+            data = null,
+            summary = "not found",
+            isError = true
+        )
+
+        val entry = makeEntry()
+        fastPathService.enqueue(entry)
+
+        // Fast-path should move the entry to QUEUED_ON_BAMBOO
+        awaitState(3000) {
+            fastPathService.stateFlow.value.any { it.status == QueueEntryStatus.QUEUED_ON_BAMBOO }
+        }
+
+        val queued = fastPathService.stateFlow.value.firstOrNull { it.bambooResultKey == "PROJ-AUTO-99" }
+        assertNotNull(queued, "Fast-path must set bambooResultKey on the entry after immediate trigger")
+        assertEquals(QueueEntryStatus.QUEUED_ON_BAMBOO, queued!!.status)
     }
 }
