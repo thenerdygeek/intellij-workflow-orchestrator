@@ -106,4 +106,62 @@ class SuiteConfigPanelSortTest {
         // Unrelated variable must NOT be excluded
         assertEquals(false, SuiteConfigPanel.isDockerTagsVariable("DEPLOY_ENV", configuredName))
     }
+
+    // ──────────────────────────── SkipSeparatorComboBox tests ────────────────────────────
+
+    /**
+     * Verifies the JComboBox subclass refuses to land on a separator entry. The
+     * dropdown popup or arrow-key navigation can target a separator index; the
+     * combo must transparently forward to the next real entry so the
+     * "selectedItem is always a real VariableOption" contract holds.
+     */
+    @Test
+    fun `SkipSeparatorComboBox jumps to next real entry when target is separator`() {
+        val items = arrayOf(
+            SuiteConfigPanel.VariableOption("", "PLAN", "", isSeparator = true, categoryCaption = "Plan variables"),
+            SuiteConfigPanel.VariableOption("DEPLOY_ENV", "PLAN", "staging"),
+            SuiteConfigPanel.VariableOption("", "PARENT", "", isSeparator = true, categoryCaption = "Project variables"),
+            SuiteConfigPanel.VariableOption("TIMEOUT_MS", "PARENT", "30000")
+        )
+        val combo = SuiteConfigPanel.SkipSeparatorComboBox(items)
+
+        // setSelectedIndex(0) targets the leading separator → must land on index 1 (DEPLOY_ENV)
+        combo.selectedIndex = 0
+        assertEquals(1, combo.selectedIndex)
+        assertEquals("DEPLOY_ENV", (combo.selectedItem as SuiteConfigPanel.VariableOption).name)
+
+        // setSelectedIndex(2) targets the middle separator → must land on index 3 (TIMEOUT_MS)
+        combo.selectedIndex = 2
+        assertEquals(3, combo.selectedIndex)
+        assertEquals("TIMEOUT_MS", (combo.selectedItem as SuiteConfigPanel.VariableOption).name)
+    }
+
+    @Test
+    fun `SkipSeparatorComboBox falls back to previous real entry when target is trailing separator`() {
+        val items = arrayOf(
+            SuiteConfigPanel.VariableOption("DEPLOY_ENV", "PLAN", "staging"),
+            SuiteConfigPanel.VariableOption("", "PARENT", "", isSeparator = true, categoryCaption = "Project variables")
+        )
+        val combo = SuiteConfigPanel.SkipSeparatorComboBox(items)
+
+        // setSelectedIndex(1) targets a trailing separator with no later real entry →
+        // must fall back to index 0 (DEPLOY_ENV)
+        combo.selectedIndex = 1
+        assertEquals(0, combo.selectedIndex)
+        assertEquals("DEPLOY_ENV", (combo.selectedItem as SuiteConfigPanel.VariableOption).name)
+    }
+
+    @Test
+    fun `SkipSeparatorComboBox passes through real-entry selection unchanged`() {
+        val items = arrayOf(
+            SuiteConfigPanel.VariableOption("", "PLAN", "", isSeparator = true, categoryCaption = "Plan variables"),
+            SuiteConfigPanel.VariableOption("ALPHA", "PLAN", "1"),
+            SuiteConfigPanel.VariableOption("BETA", "PLAN", "2")
+        )
+        val combo = SuiteConfigPanel.SkipSeparatorComboBox(items)
+
+        combo.selectedIndex = 2 // BETA
+        assertEquals(2, combo.selectedIndex)
+        assertEquals("BETA", (combo.selectedItem as SuiteConfigPanel.VariableOption).name)
+    }
 }

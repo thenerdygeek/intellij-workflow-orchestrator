@@ -93,15 +93,46 @@ class SuiteConfigPanel(
 
     /**
      * A single entry in a key dropdown.
-     * [variableType] is used for category-prefix rendering; [defaultValue] pre-fills
-     * the value field when this option is selected.
+     *
+     * - Real entries: [name], [variableType] (PLAN/PARENT/GLOBAL), [defaultValue].
+     * - Separator entries: [isSeparator] = true. Used as a visual bar between
+     *   variable categories with [categoryCaption] shown as a small uppercase
+     *   label on the bar (e.g. "PROJECT VARIABLES"). Non-selectable — see
+     *   [SkipSeparatorComboBox.setSelectedIndex]. Real-entry fields default to
+     *   empty for separators.
      */
-    private data class VariableOption(
+    internal data class VariableOption(
         val name: String,
         val variableType: String,
-        val defaultValue: String
+        val defaultValue: String,
+        val isSeparator: Boolean = false,
+        val categoryCaption: String = ""
     ) {
-        override fun toString(): String = name // fallback; renderer overrides this
+        override fun toString(): String = if (isSeparator) categoryCaption else name
+    }
+
+    /**
+     * JComboBox that refuses to select a separator entry. If the caller (popup
+     * click, arrow-key navigation, or `setSelectedItem`) targets a separator,
+     * we forward to the nearest real entry — next, then previous — so the
+     * combo's selected value contract (always a real `VariableOption`) holds.
+     */
+    internal class SkipSeparatorComboBox(items: Array<VariableOption>) : JComboBox<VariableOption>(items) {
+        override fun setSelectedIndex(anIndex: Int) {
+            if (anIndex < 0 || anIndex >= itemCount) {
+                super.setSelectedIndex(anIndex)
+                return
+            }
+            val item = getItemAt(anIndex)
+            if (item == null || !item.isSeparator) {
+                super.setSelectedIndex(anIndex)
+                return
+            }
+            val nextReal = ((anIndex + 1) until itemCount).firstOrNull { !getItemAt(it).isSeparator }
+                ?: ((anIndex - 1) downTo 0).firstOrNull { !getItemAt(it).isSeparator }
+            if (nextReal != null) super.setSelectedIndex(nextReal)
+            // else: only separators present (impossible by construction) — leave selection alone.
+        }
     }
 
     init {
@@ -183,22 +214,23 @@ class SuiteConfigPanel(
     }
 
     private fun addVariableRow(savedKey: String, savedValue: String) {
-        val options = buildOptions(excludeKeys = currentlySelectedKeys())
+        val realOptions = buildOptions(excludeKeys = currentlySelectedKeys())
 
-        // If the savedKey is not in options (e.g. variable was removed from plan),
+        // If the savedKey is not in realOptions (e.g. variable was removed from plan),
         // include it as an ad-hoc PLAN-type entry so the user can see and remove it.
-        val allOptions: List<VariableOption> = if (savedKey.isNotBlank() && options.none { it.name == savedKey }) {
+        val withPhantom: List<VariableOption> = if (savedKey.isNotBlank() && realOptions.none { it.name == savedKey }) {
             val phantom = VariableOption(savedKey, "PLAN", savedValue)
-            listOf(phantom) + options
+            listOf(phantom) + realOptions
         } else {
-            options
+            realOptions
         }
+        val allOptions = interleaveSeparators(withPhantom)
 
-        val keyCombo = JComboBox(allOptions.toTypedArray()).apply {
+        val keyCombo = SkipSeparatorComboBox(allOptions.toTypedArray()).apply {
             isEditable = false
             font = Font(Font.MONOSPACED, Font.PLAIN, font.size)
             bindBoundedWidth(ComboBoxWidth.SHORT)
-            renderer = CategoryPrefixRenderer()
+            renderer = CategoryGroupedRenderer()
         }
 
         // Pre-select the saved key if present.
@@ -284,8 +316,9 @@ class SuiteConfigPanel(
                 .filterIndexed { i, _ -> i != idx }
                 .mapNotNull { (it.keyCombo.selectedItem as? VariableOption)?.name }
                 .toSet()
-            val options = buildOptions(excludeKeys = keysUsedByOthers)
-            val currentOption = options.firstOrNull { it.name == currentKey }
+            val realOptions = buildOptions(excludeKeys = keysUsedByOthers)
+            val options = interleaveSeparators(realOptions)
+            val currentOption = options.firstOrNull { !it.isSeparator && it.name == currentKey }
 
             // Temporarily suppress the keyCombo action listener to avoid cascade.
             val listeners = row.keyCombo.actionListeners.toList()
@@ -295,6 +328,43 @@ class SuiteConfigPanel(
             if (currentOption != null) row.keyCombo.selectedItem = currentOption
             listeners.forEach { row.keyCombo.addActionListener(it) }
         }
+    }
+
+    /**
+     * Returns [realOptions] with non-clickable separator entries inserted between
+     * variableType groups so the dropdown visually reads as `PLAN VARIABLES` block,
+     * `PROJECT VARIABLES` block, `GLOBAL VARIABLES` block. The first group gets a
+     * leading separator too, so every group is uniformly captioned.
+     *
+     * `realOptions` must already be sorted PLAN → PARENT → GLOBAL by [sortedVariables].
+     */
+    private fun interleaveSeparators(realOptions: List<VariableOption>): List<VariableOption> {
+        if (realOptions.isEmpty()) return emptyList()
+        val out = mutableListOf<VariableOption>()
+        var lastCategory: String? = null
+        for (opt in realOptions) {
+            val cat = opt.variableType.uppercase()
+            if (cat != lastCategory) {
+                out += VariableOption(
+                    name = "",
+                    variableType = cat,
+                    defaultValue = "",
+                    isSeparator = true,
+                    categoryCaption = captionFor(cat)
+                )
+                lastCategory = cat
+            }
+            out += opt
+        }
+        return out
+    }
+
+    /** Maps Bamboo's variableType enum to a user-facing caption for the separator bar. */
+    private fun captionFor(category: String): String = when (category) {
+        "PLAN" -> "Plan variables"
+        "PARENT" -> "Project variables"
+        "GLOBAL" -> "Global variables"
+        else -> category.lowercase().replaceFirstChar { it.uppercase() } + " variables"
     }
 
     /**
@@ -384,27 +454,79 @@ class SuiteConfigPanel(
     // ──────────────────────────── Cell renderer ────────────────────────────
 
     /**
-     * Renders each [VariableOption] in the dropdown with a small category prefix
-     * in secondary-text colour, e.g.:
+     * Renders dropdown items in two modes:
      *
-     *   PLAN  | DEPLOY_ENV
-     *   PARENT| TIMEOUT_MS
+     * - **Real entry**: plain monospace name. Visual grouping comes from the
+     *   separator above, so the per-item `PLAN |` prefix the prior renderer
+     *   added is no longer needed.
+     * - **Separator entry**: a thin horizontal panel (`SeparatorRow`) with the
+     *   category caption in small uppercase secondary-text colour and a 1px
+     *   matte line below — visually reads as a non-clickable section header.
+     *   `SkipSeparatorComboBox.setSelectedIndex` enforces non-selectability.
+     *
+     * The separator panel ignores selection highlighting (returns the same
+     * background even when `isSelected` is true) so hovering over it doesn't
+     * produce a misleading clickable look.
      */
-    private inner class CategoryPrefixRenderer : DefaultListCellRenderer() {
+    private inner class CategoryGroupedRenderer : ListCellRenderer<VariableOption> {
+        private val itemLabel = JBLabel().apply {
+            font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scale(12))
+            isOpaque = true
+            border = JBUI.Borders.empty(2, 8)
+        }
+        private val separatorRow = SeparatorRow()
+
         override fun getListCellRendererComponent(
-            list: JList<*>?,
-            value: Any?,
+            list: JList<out VariableOption>?,
+            value: VariableOption?,
             index: Int,
             isSelected: Boolean,
             cellHasFocus: Boolean
         ): Component {
-            val label = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus) as JLabel
-            if (value is VariableOption) {
-                val category = value.variableType.uppercase().padEnd(6)
-                label.text = "$category| ${value.name}"
-                label.font = Font(Font.MONOSPACED, Font.PLAIN, label.font.size)
+            if (value == null) {
+                itemLabel.text = ""
+                return itemLabel
             }
-            return label
+            if (value.isSeparator) {
+                separatorRow.setCaption(value.categoryCaption)
+                return separatorRow
+            }
+            itemLabel.text = value.name
+            itemLabel.background = if (isSelected) list?.selectionBackground ?: UIManager.getColor("List.background")
+                                    else UIManager.getColor("List.background")
+            itemLabel.foreground = if (isSelected) list?.selectionForeground ?: UIManager.getColor("List.foreground")
+                                    else UIManager.getColor("List.foreground")
+            return itemLabel
+        }
+    }
+
+    /**
+     * The non-clickable separator row inside the dropdown popup: small uppercase
+     * caption above a 1px horizontal rule. Always renders as the list's
+     * background regardless of hover/selection state — the JComboBox subclass
+     * already prevents selecting a separator, but we also avoid the visual
+     * affordance of a selectable item.
+     */
+    private class SeparatorRow : JPanel(BorderLayout()) {
+        private val caption = JBLabel().apply {
+            font = font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
+            foreground = StatusColors.SECONDARY_TEXT
+            border = JBUI.Borders.empty(4, 8, 1, 8)
+        }
+
+        init {
+            isOpaque = true
+            background = UIManager.getColor("List.background")
+            add(caption, BorderLayout.NORTH)
+            add(JSeparator(SwingConstants.HORIZONTAL).apply {
+                foreground = UIManager.getColor("Separator.foreground")
+                    ?: UIManager.getColor("Component.borderColor")
+                    ?: java.awt.Color.GRAY
+            }, BorderLayout.SOUTH)
+        }
+
+        fun setCaption(text: String) {
+            caption.text = text.uppercase()
         }
     }
 }
