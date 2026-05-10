@@ -201,10 +201,17 @@ class ManualStageDialog(
             outer.add(stageSection)
         }
 
-        // Variable editors section.
-        outer.add(buildVariablesSection())
+        // Variable editors section — only for FULL_BUILD / STAGE modes (Build tab).
+        // CUSTOM_STAGES (Automation tab) sources variables from the panel's own
+        // suiteConfigPanel + suiteExtrasPanel; the dialog is stages-only there.
+        if (triggerMode != TriggerMode.CUSTOM_STAGES) {
+            outer.add(buildVariablesSection())
+        }
 
-        // H5: "Save as default" checkbox — only in CUSTOM_STAGES mode, below variables.
+        // "Set this as default" checkbox — only in CUSTOM_STAGES mode.
+        // Unchecked → default not saved → next default-click opens this dialog again.
+        // Checked   → save selection as suite default → next default-click skips dialog.
+        // To change/clear the default, user clicks "Trigger Customized…".
         if (triggerMode == TriggerMode.CUSTOM_STAGES) {
             val currentSelection = stageCheckboxes
                 ?.filter { (_, cb) -> cb.isSelected }
@@ -213,7 +220,7 @@ class ManualStageDialog(
                 ?: emptySet()
             // Pre-check if the current selection exactly matches the saved default.
             val preChecked = savedDefaultStages != null && currentSelection == savedDefaultStages
-            val cb = JBCheckBox("Save as default for this suite", preChecked)
+            val cb = JBCheckBox("Set this as default", preChecked)
             saveAsDefaultCheckbox = cb
             val cbPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
                 border = JBUI.Borders.emptyTop(8)
