@@ -14,8 +14,8 @@ import com.workflow.orchestrator.core.ui.ComboBoxWidth
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import java.awt.BorderLayout
+import java.awt.CardLayout
 import java.awt.Component
-import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.GridBagConstraints
@@ -63,6 +63,18 @@ class SuiteConfigPanel(
         border = JBUI.Borders.empty(4, 2)
     }
 
+    /**
+     * CardLayout swaps between the empty-state hint and the variables scrollPane in
+     * the panel's CENTER region. v0.85.0-alpha shipped with the scrollPane in
+     * BorderLayout.SOUTH plus the no-op `preferredSize = Dimension(0, 0)` carried
+     * over from when the scrollPane lived in CENTER — SOUTH respects that preferred
+     * height, collapsing the rows region to zero pixels. Clicking "+ Override a
+     * variable" added rows that were rendered invisible. Mirrors the
+     * empty-vs-content pattern used by [TagStagingPanel].
+     */
+    private val cardLayout = CardLayout()
+    private val cardPanel = JPanel(cardLayout)
+
     private val overrideButton = JButton("+ Override a variable").apply {
         isFocusPainted = false
         addActionListener { onAddRow() }
@@ -108,16 +120,13 @@ class SuiteConfigPanel(
             border = JBUI.Borders.emptyBottom(4)
         }
 
-        val scrollPane = JBScrollPane(variablesPanel).apply {
-            border = null
-            preferredSize = Dimension(0, 0)
-        }
+        val scrollPane = JBScrollPane(variablesPanel).apply { border = null }
+        cardPanel.add(emptyHint, EMPTY_CARD)
+        cardPanel.add(scrollPane, ROWS_CARD)
+        cardLayout.show(cardPanel, EMPTY_CARD)
 
         add(topPanel, BorderLayout.NORTH)
-        add(emptyHint, BorderLayout.CENTER)
-
-        // variablesPanel is shown inside a scroll pane once rows exist
-        add(scrollPane, BorderLayout.SOUTH)
+        add(cardPanel, BorderLayout.CENTER)
     }
 
     // ──────────────────────────── Public API ────────────────────────────
@@ -303,6 +312,9 @@ class SuiteConfigPanel(
     }
 
     companion object {
+        private const val EMPTY_CARD = "empty"
+        private const val ROWS_CARD = "rows"
+
         /**
          * Returns `true` when [name] refers to the Docker tags variable.
          *
@@ -334,10 +346,9 @@ class SuiteConfigPanel(
         )
     }
 
-    /** Shows the empty-state hint when there are no rows; hides it otherwise. */
+    /** Switches the CardLayout between the empty hint and the rows scrollPane. */
     private fun syncEmptyHint() {
-        val hasRows = variableRows.isNotEmpty()
-        emptyHint.isVisible = !hasRows
+        cardLayout.show(cardPanel, if (variableRows.isEmpty()) EMPTY_CARD else ROWS_CARD)
     }
 
     /** Persists the current variable overrides to [AutomationSettingsService]. */
