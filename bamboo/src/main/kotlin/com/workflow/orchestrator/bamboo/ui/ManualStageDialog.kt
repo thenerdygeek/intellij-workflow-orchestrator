@@ -255,7 +255,11 @@ class ManualStageDialog(
             // Stages scroll (~260) + vars summary (~220 with header — bigger now) +
             // suite header (~36 when present) + save-default (~28) + borders (~32).
             // Without the vars preview, fall back to a shorter height.
-            val outerHeight = JBUI.scale(if (variablesPreview != null) 560 else 380)
+            val outerHeight = JBUI.scale(when {
+                variablesPreview != null && suiteDisplayName != null -> 590
+                variablesPreview != null -> 560
+                else -> 380
+            })
             val preferred = Dimension(outerWidth, outerHeight)
             outer.preferredSize = preferred
             outer.minimumSize = preferred
@@ -536,7 +540,7 @@ class ManualStageDialog(
             // Wrap at ~300px (column flex width). Using a fixed px value here is safe
             // because the scroll pane has HORIZONTAL_SCROLLBAR_NEVER and the value
             // column always fills the remaining space after the 160px key column.
-            val html = "<html><div style='width:300px;font-family:monospace'>$escaped</div></html>"
+            val html = "<html><div style='width:${JBUI.scale(280)}px;font-family:monospace'>$escaped</div></html>"
             val comp = super.getTableCellRendererComponent(table, html, isSelected, hasFocus, row, column)
             comp.font = monoFont
             return comp

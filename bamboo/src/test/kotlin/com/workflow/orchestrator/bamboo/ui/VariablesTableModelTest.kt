@@ -11,11 +11,6 @@ import org.junit.jupiter.api.Test
  */
 class VariablesTableModelTest {
 
-    private fun modelOf(vararg pairs: Pair<String, String>): ManualStageDialog.VariablesTableModel {
-        val entries = pairs.associate { it }.entries.toList()
-        return ManualStageDialog.VariablesTableModel(entries)
-    }
-
     private fun sortedModelOf(vararg pairs: Pair<String, String>): ManualStageDialog.VariablesTableModel {
         // Mirrors what buildVariablesPreviewSection does: sort by key before passing to the model.
         val entries = pairs.associate { it }.entries.sortedBy { it.key }

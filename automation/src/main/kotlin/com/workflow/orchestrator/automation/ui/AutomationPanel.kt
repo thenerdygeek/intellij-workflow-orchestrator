@@ -724,7 +724,8 @@ class AutomationPanel(
             scope = scope,
             triggerMode = TriggerMode.CUSTOM_STAGES,
             savedDefaultStages = savedDefault,
-            variablesPreview = previewVars
+            variablesPreview = previewVars,
+            suiteDisplayName = automationSettings.getSuiteConfig(currentSuitePlanKey)?.displayName ?: currentSuitePlanKey
         )
         if (dialog.showAndGet()) {
             val result = dialog.getResult()
