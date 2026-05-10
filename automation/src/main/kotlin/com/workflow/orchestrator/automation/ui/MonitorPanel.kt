@@ -19,7 +19,6 @@ import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.polling.SmartPoller
 import kotlinx.coroutines.*
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collectLatest
 import java.awt.BorderLayout
 import java.awt.Color
@@ -60,6 +59,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         border = JBUI.Borders.empty(12)
     }
 
+    @Volatile
     private var poller: SmartPoller? = null
 
     // Tracks the last set of queue entries we received, keyed by entry id, so the
@@ -71,7 +71,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         val queueId: String,           // QueueEntry.id — stable identity across refreshes
         val suiteName: String,
         val planKey: String,
-        val resultKey: String,         // "" for WAITING_LOCAL
+        val resultKey: String,         // "" for WAITING_LOCAL / FAILED_TO_TRIGGER
         val buildNumber: Int = 0,
         val status: String = "Triggered",
         val stages: List<StageInfo> = emptyList(),
@@ -80,7 +80,8 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         val failedTestNames: List<String> = emptyList(),
         val duration: String = "",
         val bambooUrl: String = "",
-        val isLocalWait: Boolean = false   // true when WAITING_LOCAL (no bambooResultKey)
+        val isLocalWait: Boolean = false,  // true when WAITING_LOCAL (no bambooResultKey)
+        val isTerminal: Boolean = false    // derived from QueueEntryStatus; avoids string-matching downstream
     )
 
     data class StageInfo(
@@ -254,10 +255,25 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
             .getInstance().getSuiteConfig(queueEntry.suitePlanKey)?.displayName
             ?: queueEntry.suitePlanKey
 
+        // FAILED_TO_TRIGGER: QueueService leaves this entry in _stateFlow (else → no-op branch in
+        // pollOnce), so it surfaces here.  Must be checked BEFORE the isLocalWait catch-all
+        // because bambooResultKey is also null for these entries.
+        if (queueEntry.status == QueueEntryStatus.FAILED_TO_TRIGGER) {
+            return RunEntry(
+                queueId = queueEntry.id,
+                suiteName = suiteName,
+                planKey = queueEntry.suitePlanKey,
+                resultKey = "",
+                status = "Failed to trigger",
+                isLocalWait = false,
+                isTerminal = true
+            )
+        }
+
+        // TRIGGERING is currently unused by QueueService; if reintroduced, add a branch above isLocalWait.
         val isLocalWait = queueEntry.bambooResultKey == null
         val statusText = when {
             isLocalWait -> "Waiting (local queue)"
-            queueEntry.status == QueueEntryStatus.TRIGGERING -> "Triggering"
             queueEntry.status == QueueEntryStatus.QUEUED_ON_BAMBOO -> "Queued"
             queueEntry.status == QueueEntryStatus.RUNNING -> "Running"
             else -> queueEntry.status.name
@@ -269,7 +285,8 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
             planKey = queueEntry.suitePlanKey,
             resultKey = queueEntry.bambooResultKey ?: "",
             status = statusText,
-            isLocalWait = isLocalWait
+            isLocalWait = isLocalWait,
+            isTerminal = false
         )
     }
 
@@ -313,6 +330,11 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                     }
 
                     val bambooUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/')
+                    val bambooStatus = when (buildData.state) {
+                        "Successful" -> "Successful"
+                        "Failed" -> "Failed"
+                        else -> if (queueEntry.status == QueueEntryStatus.RUNNING) "Running" else "Queued"
+                    }
                     var runEntry = RunEntry(
                         queueId = queueEntry.id,
                         suiteName = AutomationSettingsService
@@ -321,14 +343,11 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                         planKey = queueEntry.suitePlanKey,
                         resultKey = resultKey,
                         buildNumber = buildData.buildNumber,
-                        status = when (buildData.state) {
-                            "Successful" -> "Successful"
-                            "Failed" -> "Failed"
-                            else -> if (queueEntry.status == QueueEntryStatus.RUNNING) "Running" else "Queued"
-                        },
+                        status = bambooStatus,
                         stages = stages,
                         duration = TimeFormatter.formatDurationSeconds(buildData.durationSeconds, zero = ""),
-                        bambooUrl = "$bambooUrl/browse/$resultKey"
+                        bambooUrl = "$bambooUrl/browse/$resultKey",
+                        isTerminal = buildData.state in BAMBOO_TERMINAL_STATES
                     )
 
                     // Fetch test results if build is in a terminal-ish state from Bamboo's view
@@ -384,6 +403,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                 entry.status.equals("Successful", ignoreCase = true) -> "✓"
                 entry.status.equals("Failed", ignoreCase = true) ->
                     if (entry.failedTests > 0) "⚠" else "✗"
+                entry.status.equals("Failed to trigger", ignoreCase = true) -> "✗"
                 entry.isLocalWait -> "⏳"
                 else -> "⟳"
             }
@@ -406,7 +426,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
             val actionsPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0))
 
             // Cancel button — shown for any non-terminal entry
-            if (!entry.isTerminal()) {
+            if (!entry.terminal()) {
                 actionsPanel.add(JButton("Cancel").apply {
                     isFocusPainted = false
                     foreground = StatusColors.ERROR
@@ -423,7 +443,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                     addActionListener { BrowserUtil.browse(entry.bambooUrl) }
                 })
             }
-            if (entry.status.lowercase() in listOf("failed", "successful")) {
+            if (entry.status.equals("failed", ignoreCase = true) || entry.status.equals("successful", ignoreCase = true)) {
                 actionsPanel.add(JButton("Copy Results").apply {
                     addActionListener { copyResultsToClipboard(entry) }
                 })
@@ -588,13 +608,14 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
     private fun statusColorFor(entry: RunEntry): Color = when {
         entry.status.equals("Successful", ignoreCase = true) -> StatusColors.SUCCESS
         entry.status.equals("Failed", ignoreCase = true) -> StatusColors.ERROR
+        entry.status.equals("Failed to trigger", ignoreCase = true) -> StatusColors.ERROR
         entry.isLocalWait -> StatusColors.WARNING
         else -> StatusColors.LINK
     }
 
-    private fun RunEntry.isTerminal(): Boolean =
-        status.equals("Successful", ignoreCase = true) ||
-        status.equals("Failed", ignoreCase = true)
+    // isTerminal is derived from QueueEntryStatus in toRunEntry / the Bamboo poll loop;
+    // kept as an extension for call-site readability.
+    private fun RunEntry.terminal(): Boolean = isTerminal
 
     override fun dispose() {
         poller?.stop()
@@ -701,6 +722,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
             val statusColor = when {
                 entry.status.equals("Successful", ignoreCase = true) -> StatusColors.SUCCESS
                 entry.status.equals("Failed", ignoreCase = true) -> StatusColors.ERROR
+                entry.status.equals("Failed to trigger", ignoreCase = true) -> StatusColors.ERROR
                 entry.isLocalWait -> StatusColors.WARNING
                 else -> StatusColors.LINK
             }
