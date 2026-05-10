@@ -723,12 +723,27 @@ class AutomationPanel(
         if (currentSuitePlanKey.isBlank()) return
         val automationSettings = AutomationSettingsService.getInstance()
         val savedDefault = automationSettings.getSuiteDefaultStages(currentSuitePlanKey, currentPlanStages = null)
+
+        // Build the variable preview shown in the dialog. Mirrors what
+        // enqueueWith will actually submit so the user can verify the payload
+        // before clicking Trigger. The dockerTagsAsJson key matches the Bamboo
+        // variable name used by the automation plans.
+        val tags = tagStagingPanel.getCurrentTags()
+        val extraVars = suiteConfigPanel.getVariables()
+        val suiteExtras = automationSettings.getExtraVariables(currentSuitePlanKey)
+        val dockerTagsPayload = tagBuilderService.buildJsonPayload(tags)
+        val previewVars = buildMap {
+            putAll(extraVars + suiteExtras)
+            if (dockerTagsPayload.isNotBlank()) put("dockerTagsAsJson", dockerTagsPayload)
+        }
+
         val dialog = ManualStageDialog(
             project = project,
             planKey = currentSuitePlanKey,
             scope = scope,
             triggerMode = TriggerMode.CUSTOM_STAGES,
-            savedDefaultStages = savedDefault
+            savedDefaultStages = savedDefault,
+            variablesPreview = previewVars
         )
         if (dialog.showAndGet()) {
             val result = dialog.getResult()

@@ -6,6 +6,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.AnimatedIcon
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
@@ -20,6 +21,7 @@ import kotlinx.coroutines.launch
 import java.awt.FlowLayout
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
+import javax.swing.BorderFactory
 import javax.swing.BoxLayout
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -64,6 +66,12 @@ data class ManualStageDialogResult(
  *
  * @param savedDefaultStages when non-null, used to pre-check the matching stage
  *   checkboxes. When null, falls back to pre-checking the first stage.
+ * @param variablesPreview when non-null and in CUSTOM_STAGES mode, renders a
+ *   read-only summary panel showing the variables that will be sent with the
+ *   trigger. The Automation tab passes its merged var map (suiteConfigPanel +
+ *   suiteExtras + dockerTagsAsJson) so the user can verify the payload before
+ *   confirming. Variables remain editable on the Automation tab itself; this
+ *   preview is intentionally read-only to avoid two competing edit surfaces.
  */
 class ManualStageDialog(
     private val project: Project,
@@ -71,7 +79,8 @@ class ManualStageDialog(
     private val stageName: String = "",
     private val scope: CoroutineScope,
     private val triggerMode: TriggerMode = TriggerMode.STAGE,
-    private val savedDefaultStages: Set<String>? = null
+    private val savedDefaultStages: Set<String>? = null,
+    private val variablesPreview: Map<String, String>? = null
 ) : DialogWrapper(project) {
 
     private val log = Logger.getInstance(ManualStageDialog::class.java)
@@ -88,6 +97,15 @@ class ManualStageDialog(
     private var isLoadingStages = triggerMode == TriggerMode.CUSTOM_STAGES
     // CUSTOM_STAGES: "Save as default for this suite" checkbox.
     private var saveAsDefaultCheckbox: JBCheckBox? = null
+
+    // Stable slot panels — built ONCE in createCenterPanel(), then refilled in
+    // place after async load. Replacing the entire center panel via
+    // contentPanel.removeAll/add (the prior pattern) was racy: BoxLayout's
+    // preferred-size cache + DialogWrapper's internal myContentPanel layout
+    // could leave the south button row briefly invisible after the swap.
+    // Updating slots in place keeps the dialog frame and south panel untouched.
+    private var stageSlot: JPanel? = null
+    private var varsSlot: JPanel? = null
 
     init {
         title = when (triggerMode) {
@@ -144,7 +162,7 @@ class ManualStageDialog(
 
             isLoading = false
             invokeLater {
-                rebuildForm()
+                refillSlots()
                 updateOkButton()
             }
         }
@@ -176,11 +194,25 @@ class ManualStageDialog(
         okAction.isEnabled = hasSelection && !isLoading && !isLoadingStages
     }
 
-    private fun rebuildForm() {
-        contentPanel?.removeAll()
-        contentPanel?.add(createCenterPanel())
-        contentPanel?.revalidate()
-        contentPanel?.repaint()
+    /**
+     * Refills the dynamic slot panels (`stageSlot`, `varsSlot`) with their
+     * post-load content. Crucially, this never touches the dialog's
+     * `contentPanel` (DialogWrapper's `myContentPanel`) — the outer panel and
+     * its position relative to the south button row stay intact.
+     */
+    private fun refillSlots() {
+        stageSlot?.let { slot ->
+            slot.removeAll()
+            populateStageSlot(slot)
+            slot.revalidate()
+            slot.repaint()
+        }
+        varsSlot?.let { slot ->
+            slot.removeAll()
+            populateVariablesEditor(slot)
+            slot.revalidate()
+            slot.repaint()
+        }
     }
 
     /** Modality-aware EDT dispatch. Platform `invokeLater` defaults to NON_MODAL from a
@@ -197,49 +229,62 @@ class ManualStageDialog(
         outer.layout = BoxLayout(outer, BoxLayout.Y_AXIS)
         outer.border = JBUI.Borders.empty(8)
 
-        // CUSTOM_STAGES: bound the dialog to a fixed reasonable size. Without this,
-        // a plan with many stages produces a dialog taller than the screen, which
-        // puts the south button panel (OK/Cancel) below the visible bottom edge —
-        // user reports the dialog "has no buttons". The scroll pane on the stage
-        // section ensures stages can scroll inside the bounded outer.
+        // CUSTOM_STAGES only: bound the dialog to a predictable size. Without
+        // this a plan with many stages would push the south button panel below
+        // the screen edge. The scroll panes inside each section absorb
+        // overflow instead. STAGE/FULL_BUILD (Build tab) keeps content-driven
+        // sizing — those modes don't show stage lists and have always sized to
+        // the variable count without issue.
         if (triggerMode == TriggerMode.CUSTOM_STAGES) {
-            val preferred = Dimension(JBUI.scale(420), JBUI.scale(380))
+            val outerWidth = JBUI.scale(460)
+            // Stages scroll (~260) + vars summary (~140 with header) +
+            // save-default (~28) + borders/struts (~32). Without the vars
+            // preview, fall back to the prior 380 height.
+            val outerHeight = JBUI.scale(if (variablesPreview != null) 470 else 380)
+            val preferred = Dimension(outerWidth, outerHeight)
             outer.preferredSize = preferred
             outer.minimumSize = preferred
         }
 
         // Stage selection section (CUSTOM_STAGES only).
         if (triggerMode == TriggerMode.CUSTOM_STAGES) {
-            val stageSection = buildStageSection()
-            // Wrap in a scroll pane so a long stage list doesn't push the dialog
-            // taller than the screen. The scroll pane has a constrained preferred
-            // height; the stage panel inside scrolls vertically when needed.
-            val scrollPane = JBScrollPane(stageSection).apply {
+            val slot = JPanel(GridBagLayout()).apply {
+                border = JBUI.Borders.emptyBottom(8)
+            }
+            stageSlot = slot
+            populateStageSlot(slot)
+            val scrollPane = JBScrollPane(slot).apply {
                 border = JBUI.Borders.empty()
-                preferredSize = Dimension(JBUI.scale(400), JBUI.scale(280))
+                preferredSize = Dimension(JBUI.scale(420), JBUI.scale(260))
                 horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
             }
             outer.add(scrollPane)
         }
 
-        // Variable editors section — only for FULL_BUILD / STAGE modes (Build tab).
-        // CUSTOM_STAGES (Automation tab) sources variables from the panel's own
-        // suiteConfigPanel + suiteExtrasPanel; the dialog is stages-only there.
-        if (triggerMode != TriggerMode.CUSTOM_STAGES) {
-            outer.add(buildVariablesSection())
+        // Variables summary (CUSTOM_STAGES only, when caller supplied a preview).
+        // Rendered read-only — Automation-tab variables are edited on the tab,
+        // not in the dialog. The preview is here so the user can verify what
+        // will actually be sent before clicking Trigger.
+        if (triggerMode == TriggerMode.CUSTOM_STAGES && variablesPreview != null) {
+            outer.add(buildVariablesPreviewSection(variablesPreview))
         }
 
-        // "Set this as default" checkbox — only in CUSTOM_STAGES mode.
-        // Unchecked → default not saved → next default-click opens this dialog again.
-        // Checked   → save selection as suite default → next default-click skips dialog.
-        // To change/clear the default, user clicks "Trigger Customized…".
+        // Variable editors section (FULL_BUILD / STAGE only — Build tab callers
+        // that genuinely use the dialog as the variable edit surface).
+        if (triggerMode != TriggerMode.CUSTOM_STAGES) {
+            val slot = JPanel(GridBagLayout())
+            varsSlot = slot
+            populateVariablesEditor(slot)
+            outer.add(slot)
+        }
+
+        // "Set this as default" checkbox — CUSTOM_STAGES only.
         if (triggerMode == TriggerMode.CUSTOM_STAGES) {
             val currentSelection = stageCheckboxes
                 ?.filter { (_, cb) -> cb.isSelected }
                 ?.map { (name, _) -> name }
                 ?.toSet()
                 ?: emptySet()
-            // Pre-check if the current selection exactly matches the saved default.
             val preChecked = savedDefaultStages != null && currentSelection == savedDefaultStages
             val cb = JBCheckBox("Set this as default", preChecked)
             saveAsDefaultCheckbox = cb
@@ -253,10 +298,13 @@ class ManualStageDialog(
         return outer
     }
 
-    private fun buildStageSection(): JComponent {
-        val panel = JPanel(GridBagLayout())
-        panel.border = JBUI.Borders.emptyBottom(8)
-
+    /**
+     * Fills the supplied `panel` with the current stage-selection state:
+     * loading spinner, error banner, "no stages" placeholder, or the actual
+     * checkbox list. Called from both the initial layout build and from
+     * [refillSlots] after async stages load.
+     */
+    private fun populateStageSlot(panel: JPanel) {
         val gbc = GridBagConstraints().apply {
             fill = GridBagConstraints.HORIZONTAL
             anchor = GridBagConstraints.WEST
@@ -273,27 +321,27 @@ class ManualStageDialog(
                 add(JBLabel("Loading stages..."))
             }
             panel.add(loadingPanel, gbc)
-            return panel
+            return
         }
 
         val error = stageLoadError
         if (error != null) {
             gbc.gridy = 0
             panel.add(JBLabel("<html><b>Stage load failed</b><br>$error</html>").apply {
-                foreground = com.intellij.ui.JBColor.RED
+                foreground = JBColor.RED
             }, gbc)
-            return panel
+            return
         }
 
         val checkboxes = stageCheckboxes
         if (checkboxes.isNullOrEmpty()) {
             gbc.gridy = 0
             panel.add(JBLabel("No stages found for plan $planKey."), gbc)
-            return panel
+            return
         }
 
         gbc.gridy = 0
-        panel.add(JBLabel("STAGES TO RUN:").apply {
+        panel.add(JBLabel("STAGES TO RUN").apply {
             font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(10).toFloat())
             foreground = com.workflow.orchestrator.core.ui.StatusColors.SECONDARY_TEXT
         }, gbc)
@@ -302,13 +350,74 @@ class ManualStageDialog(
             gbc.gridy = idx + 1
             panel.add(cb, gbc)
         }
-
-        return panel
     }
 
-    private fun buildVariablesSection(): JComponent {
-        val panel = JPanel(GridBagLayout())
+    /**
+     * Read-only preview of variables that will be sent with the trigger.
+     * Used in CUSTOM_STAGES mode to show the merged Automation-tab var map
+     * (suiteConfigPanel + suiteExtras + dockerTagsAsJson). Uses a scroll pane
+     * so a long var list (or a large dockerTagsAsJson JSON) doesn't push the
+     * dialog past its bounded height.
+     */
+    private fun buildVariablesPreviewSection(vars: Map<String, String>): JComponent {
+        val container = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            border = JBUI.Borders.emptyTop(4)
+        }
 
+        container.add(JBLabel("VARIABLES TO SEND").apply {
+            font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(10).toFloat())
+            foreground = com.workflow.orchestrator.core.ui.StatusColors.SECONDARY_TEXT
+            border = JBUI.Borders.emptyBottom(4)
+            alignmentX = JComponent.LEFT_ALIGNMENT
+        })
+
+        if (vars.isEmpty()) {
+            container.add(JBLabel("(no variables — trigger will use plan defaults)").apply {
+                foreground = com.workflow.orchestrator.core.ui.StatusColors.SECONDARY_TEXT
+                alignmentX = JComponent.LEFT_ALIGNMENT
+            })
+            return container
+        }
+
+        val table = JPanel(GridBagLayout())
+        val gbc = GridBagConstraints().apply {
+            anchor = GridBagConstraints.NORTHWEST
+            fill = GridBagConstraints.HORIZONTAL
+            insets = JBUI.insets(2, 0, 2, 8)
+        }
+        vars.entries.sortedBy { it.key }.forEachIndexed { idx, (k, v) ->
+            gbc.gridy = idx
+            gbc.gridx = 0
+            gbc.weightx = 0.0
+            table.add(JBLabel("$k:").apply {
+                font = font.deriveFont(java.awt.Font.BOLD)
+            }, gbc)
+
+            gbc.gridx = 1
+            gbc.weightx = 1.0
+            // Long values (notably dockerTagsAsJson) wrap inside the cell so
+            // the scroll pane scrolls vertically rather than horizontally.
+            val displayValue = v.ifBlank { "(empty)" }
+            table.add(JBLabel("<html><div style='width:280px'>${com.workflow.orchestrator.core.util.HtmlEscape.escapeHtml(displayValue)}</div></html>"), gbc)
+        }
+
+        val scroll = JBScrollPane(table).apply {
+            border = BorderFactory.createLineBorder(JBColor.border())
+            preferredSize = Dimension(JBUI.scale(420), JBUI.scale(120))
+            horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+        }
+        scroll.alignmentX = JComponent.LEFT_ALIGNMENT
+        container.add(scroll)
+        return container
+    }
+
+    /**
+     * Fills `panel` with the variable editor rows for FULL_BUILD/STAGE modes.
+     * Called from createCenterPanel and refillSlots.
+     */
+    private fun populateVariablesEditor(panel: JPanel) {
+        variableEditors.clear()
         val gbc = GridBagConstraints().apply {
             fill = GridBagConstraints.HORIZONTAL
             anchor = GridBagConstraints.WEST
@@ -324,19 +433,19 @@ class ManualStageDialog(
                 add(JBLabel("Loading variables..."))
             }
             panel.add(loadingPanel, gbc)
-            return panel
+            return
         }
 
         variables.forEachIndexed { index, variable ->
             gbc.gridy = index
 
-            // Label
             gbc.gridx = 0
             gbc.weightx = 0.0
+            gbc.gridwidth = 1
             panel.add(JBLabel("${variable.name}:"), gbc)
 
-            // Editor selection priority (PR 7 audit P1 #1):
-            //   1. Password variables → JBPasswordField (value never echoed to log)
+            // Editor selection priority:
+            //   1. Password variables → JBPasswordField
             //   2. Boolean-like values → JBCheckBox
             //   3. Everything else    → JBTextField
             gbc.gridx = 1
@@ -360,8 +469,6 @@ class ManualStageDialog(
             gbc.gridwidth = 2
             panel.add(JBLabel("No build variables configured for this plan."), gbc)
         }
-
-        return panel
     }
 
     override fun doOKAction() {
@@ -384,12 +491,10 @@ class ManualStageDialog(
             val safeKeys = vars.keys.joinToString { name ->
                 if (name in passwordKeys) "$name=<redacted>" else name
             }
-            // Note: .info on the dialog log channel is intentional — we want a
-            // breadcrumb that the trigger fired without leaking the secret.
             log.info("[Bamboo:UI] Triggering with variables: $safeKeys")
         }
 
-        // CUSTOM_STAGES: the caller reads getSelectedStages() after show() returns.
+        // CUSTOM_STAGES: the caller reads getResult() after show() returns.
         // The dialog does NOT trigger the build itself in this mode — the caller owns
         // the trigger call so it can combine stages with the queue service.
         if (triggerMode != TriggerMode.CUSTOM_STAGES) {
