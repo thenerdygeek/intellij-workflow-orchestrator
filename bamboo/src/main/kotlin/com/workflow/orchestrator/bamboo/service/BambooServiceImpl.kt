@@ -558,11 +558,16 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         return when (val result = api.getPlans()) {
             is ApiResult.Success -> {
                 val data = result.data.map { dto ->
+                    // Prefer the canonical projectKey from the DTO. Fall back to substring
+                    // splitting only as a defensive path for older Bamboo versions that omit
+                    // the field — that split is wrong for hyphenated project keys (e.g.
+                    // MY-PROJ-PLAN returns "MY" instead of "MY-PROJ").
+                    val projectKey = dto.projectKey.ifBlank { dto.key.substringBefore("-") }
                     PlanData(
                         key = dto.key,
                         name = dto.name,
                         shortName = dto.shortName.ifBlank { dto.name },
-                        projectKey = dto.key.substringBefore("-"),
+                        projectKey = projectKey,
                         projectName = "",
                         enabled = dto.enabled
                     )
@@ -636,10 +641,14 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         return when (val result = api.searchPlans(query)) {
             is ApiResult.Success -> {
                 val data = result.data.map { entity ->
+                    // Prefer the canonical projectKey from the search entity. Fall back to
+                    // substring splitting only as a defensive path for older Bamboo versions
+                    // that omit the field — that split is wrong for hyphenated project keys.
+                    val projectKey = entity.projectKey.ifBlank { entity.key.substringBefore("-") }
                     PlanData(
                         key = entity.key,
                         name = entity.planName,
-                        projectKey = entity.key.substringBefore("-"),
+                        projectKey = projectKey,
                         projectName = entity.projectName,
                         enabled = true
                     )

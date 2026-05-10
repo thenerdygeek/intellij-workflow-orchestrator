@@ -52,7 +52,14 @@ data class BambooPlanDto(
     val name: String,
     val shortName: String = "",
     val enabled: Boolean = true,
-    val type: String = "chain"
+    val type: String = "chain",
+    /**
+     * Canonical project key returned by Bamboo REST API (e.g. `MY-PROJ` for plan key
+     * `MY-PROJ-AUTOTESTS`). Present in `GET /plan?expand=plans.plan` and individual plan
+     * responses. Blank on older API versions or when the plan is embedded in a result DTO
+     * that does not expand plan details.
+     */
+    val projectKey: String = ""
 )
 
 // --- Branch DTOs ---
@@ -259,7 +266,13 @@ data class BambooSearchEntity(
     val key: String,
     val planName: String = "",
     val projectName: String = "",
-    val type: String = ""
+    val type: String = "",
+    /**
+     * Canonical project key returned by Bamboo search API. Present since at least
+     * Bamboo 6.x. Blank on older instances that omit the field; in that case the
+     * service falls back to substring-splitting [key].
+     */
+    val projectKey: String = ""
 )
 
 // --- Queue (Trigger) DTOs ---
