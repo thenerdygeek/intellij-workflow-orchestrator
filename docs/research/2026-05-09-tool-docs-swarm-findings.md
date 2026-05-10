@@ -891,3 +891,46 @@ Tools: `spring`, `build`, `project_structure`.
 - **Bug count from swarm: 5 real defects.** find_definition (PSI), find_references (PSI mirror), revert_file (PathValidator bypass), create_file (charset), project_structure (plan-mode bypass). Each found via independent per-tool review — none would have surfaced via testing alone.
 - **CLAUDE.md drift count: 9+ instances.** The `build` undercount (26 vs 11) is the new high-water mark. **CLAUDE.md audit is no longer optional.**
 - **Per-batch wall time consistent at ~5-7 min** with sonnet + sleep-before-commit. Throughput: ~3 tools / 6 min = ~30 tools/hr. Remaining 34 tools → ~1.1 hours wall time.
+
+---
+
+## Batch 17 — 2026-05-10 (Python framework cluster, sonnet)
+
+Tools: `django`, `fastapi`, `flask`. All 3 share `PythonFileScanner`, all READ_ONLY.
+
+### `django` — commit `0276b1b7a` — STRONG keep on `models`/`settings`, NORMAL on others, 579 lines
+
+- 14 actions confirmed.
+- **🚨 `middleware` and `version_info` silently ignore `filter` param** — common LLM mistake.
+- **🚨 `redactIfSensitive` is key-name heuristic** — custom keys like `MY_STRIPE_CREDENTIAL` are NOT redacted (downside).
+- **`urls` doesn't follow `include()` chains** — shallow URL resolution only.
+- `serializers` + `forms` are structurally identical scanner actions — merge candidate (but per-name clarity is preferred for LLM usability).
+
+### `fastapi` — commit `71b3bb342` — KEEP, 441 lines
+
+- 10 actions confirmed.
+- `routes` STRONG keep — composes `APIRouter(prefix=...)` + `app.include_router(..., prefix=...)` into full URL paths. Only action `search_code` cannot replicate.
+- **🚨 Cross-file router imports silently not fully composed.** Router A imported into router B then into app — only inner-most file's prefix applied. Multi-level composition silently incomplete.
+- `database` action has fragile base-class detection (`Base`/`Model` literals only) — WEAK drop note.
+
+### `flask` — commit `9a6914fd7` — KEEP, 709 lines
+
+- 10 actions confirmed.
+- **🚨🚨 `models` scans only files literally named `models.py`. `forms` scans only `forms.py`/`form.py`.** Projects with split models (e.g. `user_model.py`, `orders/schema.py`) get **empty results silently**. Both documented as action-level drop candidates. **Real bug surface.**
+- **🚨 `extensions` uses hard-coded allow-list of ~25 extension class names.** Custom/uncommon extensions invisible. List drifts as Flask ecosystem evolves.
+- Drop candidates: `templates` (can be replaced by `glob_files **/*.html`), `version_info` (search_code with specifier patterns equivalent).
+
+### Action items surfaced by Batch 17
+
+- [ ] **🚨 Fix `flask.models` / `flask.forms` filename hardcoding** — should scan all .py files for `class X(db.Model)` / `class Y(FlaskForm)` patterns regardless of filename.
+- [ ] **🚨 Make `flask.extensions` extensible** — allow-list approach won't scale; use class-base detection or user-config override.
+- [ ] **🚨 Make Django `redactIfSensitive` user-configurable** — current key-name heuristic misses custom sensitive keys.
+- [ ] Make `django.urls` follow `include()` chains for full URL resolution.
+- [ ] Make `fastapi` resolve cross-file router prefix chains.
+- [ ] Drop or merge `flask.templates` / `flask.version_info` (low-value vs `glob_files` / `search_code`).
+
+### Cross-cutting observations from Batch 17
+
+- **Real bug count from swarm: 6 defects.** Added `flask.models` / `flask.forms` filename hardcoding to the list. These cause silent empty results — the worst kind of bug because the LLM gets a "no errors" signal.
+- **Python framework tools share scaffolding but diverge on convention details.** `PythonFileScanner` is shared, but per-framework heuristics (Django app discovery, FastAPI route composition, Flask blueprint stacking) are tool-specific and vary in completeness.
+- **No CLAUDE.md drift this batch** — all three matched. Drift count stays at 9.
