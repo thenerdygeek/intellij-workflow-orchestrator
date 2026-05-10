@@ -934,3 +934,44 @@ Tools: `django`, `fastapi`, `flask`. All 3 share `PythonFileScanner`, all READ_O
 - **Real bug count from swarm: 6 defects.** Added `flask.models` / `flask.forms` filename hardcoding to the list. These cause silent empty results — the worst kind of bug because the LLM gets a "no errors" signal.
 - **Python framework tools share scaffolding but diverge on convention details.** `PythonFileScanner` is shared, but per-framework heuristics (Django app discovery, FastAPI route composition, Flask blueprint stacking) are tool-specific and vary in completeness.
 - **No CLAUDE.md drift this batch** — all three matched. Drift count stays at 9.
+
+---
+
+## Batch 18 — 2026-05-10 (debug + send_stdin, sonnet)
+
+Tools: `debug_inspect`, `debug_breakpoints`, `send_stdin`.
+
+### `debug_inspect` — commit `43e5712c0` — STRONG keep, 736 lines + 215 narrative
+
+- 9 actions confirmed (matches CLAUDE.md).
+- **🚨 `drop_frame` rewinds program counter only — state NOT undone.** Name implies full rewind; implementation is PC-only. **Footgun.**
+- **`memory_view` silently unavailable on remote/non-HotSpot VMs** (`canGetInstanceInfo=false`). LLM must read error and not retry.
+- `evaluate` never spills (single value); `get_variables`/`thread_dump`/`memory_view` all spill on >30K.
+- `set_value` two-path: XValueModifier primary + evaluate-with-assignment fallback.
+
+### `debug_breakpoints` — commit `b5e815ecb` — STRONG keep, 607 lines
+
+- 7 actions confirmed (matches CLAUDE.md).
+- **🚨 CLAUDE.md/KDoc drift:** class KDoc still says "8 actions covering breakpoint CRUD and session lifecycle initiation" — predates `start_session` removal (now `runtime_exec(action=run_config, mode=debug)`). Drift count: 10.
+- **🚨 `remove_breakpoint` CANNOT remove exception breakpoints.** Exception breakpoints have no `file:line` anchor in IntelliJ's data model. LLM gets silent "No breakpoint found". Future "remove by id" design needed.
+- `method_breakpoint` closest to drop candidate — line breakpoint on the method's opening line achieves same with no perf overhead.
+
+### `send_stdin` — commit `33cf5964a` — KEEP NORMAL / DROP NORMAL (balanced), 153 lines
+
+- **MERGE_CANDIDATE with `background_process` explicitly flagged.** Migration path: absorb `ProcessRegistry` idle path into `BackgroundPool`, migrate guards, drop standalone.
+- **🚨 `isLikelyPasswordPrompt` is keyword-heuristic** — fires on `password`, `passphrase`, `secret` etc. False positives block legitimate stdin writes.
+- **🚨 `IDLE_AFTER_STDIN_MS = 10s` misfires on slow computing processes** — premature `[IDLE]` signal.
+
+### Action items surfaced by Batch 18
+
+- [ ] **🚨 Fix `remove_breakpoint`** to accept removal by id, not just file:line. Currently can't remove exception breakpoints at all.
+- [ ] **🚨 Update `debug_breakpoints` KDoc** — remove "8 actions" + "session lifecycle initiation" (predates start_session removal).
+- [ ] Document `drop_frame`'s PC-only behavior in LLM-facing description (or rename to make limit explicit).
+- [ ] Tighten `send_stdin.isLikelyPasswordPrompt` heuristic (or make user-overridable).
+- [ ] Tune `IDLE_AFTER_STDIN_MS` or make it configurable per-process — current 10s misfires.
+
+### Cross-cutting observations from Batch 18
+
+- **CLAUDE.md drift count: 10.** `debug_breakpoints` KDoc joins the list. Drift sources are now: agent CLAUDE.md (multiple), `:agent` CLAUDE.md (multiple), source-level KDoc comments (this one). The audit needs to cover both CLAUDE.md and source KDocs.
+- **3 actionable real bugs added this batch:** `remove_breakpoint` exception-breakpoint silent failure, `drop_frame` state-not-rewound footgun, `send_stdin` password-prompt heuristic false-positives. Total real bug count: 9.
+- **No race this batch.** Sleep mitigation continues to work.
