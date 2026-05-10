@@ -527,7 +527,8 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                         buildResultKey = dto.buildResultKey.ifBlank { dto.key },
                         buildRelativeTime = dto.buildRelativeTime,
                         stages = dto.stages.stage.map { it.toBuildStageData() },
-                        lifeCycleState = dto.lifeCycleState  // A-P1-1
+                        lifeCycleState = dto.lifeCycleState,  // A-P1-1
+                        variables = dto.variables.variable.associate { it.name to it.value }
                     )
                 }
                 ToolResult.success(

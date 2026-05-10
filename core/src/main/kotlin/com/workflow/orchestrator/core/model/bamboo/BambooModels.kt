@@ -25,7 +25,17 @@ data class BuildResultData(
      * relying on the lossy `state.ifBlank{lifeCycleState}` collapse.
      * Populated by BambooServiceImpl.mapBuildResult and sibling mappers (A-P1-1).
      */
-    val lifeCycleState: String = ""
+    val lifeCycleState: String = "",
+    /**
+     * Bamboo build-level variables, populated when the result was fetched via the
+     * result-collection endpoint (GET /result/{planKey}?expand=variables.variable).
+     * The endpoint already expands variables inline, so [BambooServiceImpl.getRecentBuilds]
+     * carries them through here to avoid per-build re-fetch calls in downstream consumers
+     * such as TagBuilderService.scoreAndRankRuns.
+     * Defaults to empty map for callers that construct BuildResultData from other endpoints
+     * which do not expand variables.
+     */
+    val variables: Map<String, String> = emptyMap()
 )
 
 /**
