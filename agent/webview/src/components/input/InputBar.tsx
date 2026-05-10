@@ -810,12 +810,16 @@ export const InputBar = memo(function InputBar() {
   // parallel copy here for the hook. Ticket and Skill dropdowns expose items
   // via state/store respectively.
   const mentionResults = useChatStore(s => s.mentionResults);
+  const mentionResultsQuery = useChatStore(s => s.mentionResultsQuery);
   const skillsList = useChatStore(s => s.skillsList);
 
   // Flat mention items for keyboard navigation. Must mirror MentionDropdown's
-  // visible list (same score/filter/sort) so arrow-key indices line up with what
-  // the user sees — otherwise selection picks a different item than highlighted.
+  // visible list (same staleness gate + score/filter/sort) so arrow-key indices
+  // line up with what the user sees — otherwise selection picks a different
+  // item than highlighted. See MentionDropdown.tsx for the rationale on each
+  // gate.
   const flatMentionItems = useMemo(() => {
+    if (mentionResultsQuery !== mentionQuery) return [];
     const maxPerGroup = mentionQuery ? 5 : 8;
     const scored = mentionResults
       .filter(r => r.type === 'file' || r.type === 'folder' || r.type === 'symbol')
@@ -829,7 +833,7 @@ export const InputBar = memo(function InputBar() {
         .slice(0, maxPerGroup);
     }
     return (['file', 'folder', 'symbol'] as const).flatMap(t => grouped[t] ?? []);
-  }, [mentionResults, mentionQuery]);
+  }, [mentionResults, mentionResultsQuery, mentionQuery]);
 
   // Flat skill items (same order as SkillDropdown renders)
   const flatSkillItems = useMemo(() => {

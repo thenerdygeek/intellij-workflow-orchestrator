@@ -154,10 +154,30 @@ function ToolCallDetails({ toolCall }: { toolCall: ToolCall }) {
   const useHighlighted = shouldHighlight && !!shikiHtml && !shikiLoading;
   const isError = toolCall.status === 'ERROR';
 
-  // Auto-scroll to bottom so latest output is visible; older content is above
+  // Sticky-bottom auto-scroll: keep the latest output visible while the user
+  // is at (or near) the bottom; if they've scrolled up to read earlier output,
+  // leave their scroll position alone. Tracking is via a ref that's updated on
+  // every scroll event — including the programmatic scroll below — so the
+  // "user manually scrolled away" signal is captured the moment it happens.
+  const stuckToBottomRef = useRef(true);
+
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const el = scrollRef.current;
+    if (!el) return;
+    const STICK_THRESHOLD_PX = 32;
+    const onScroll = () => {
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      stuckToBottomRef.current = distanceFromBottom <= STICK_THRESHOLD_PX;
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (stuckToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
     }
   }, [displayOutput, shikiHtml]);
 

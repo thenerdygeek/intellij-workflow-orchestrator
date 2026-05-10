@@ -208,6 +208,14 @@ interface ChatState {
   skillsList: Skill[];
   tokenBudget: { used: number; max: number };
   mentionResults: MentionSearchResult[];
+  /**
+   * The query string that produced the items currently in `mentionResults`.
+   * Echoed by Kotlin from `searchMentionsQuery` so the React filter can drop
+   * stale responses (e.g. response for `@fil` arriving after the user has
+   * backspaced to `@fi` or `@`). Default `''` matches an empty/open-tabs
+   * response.
+   */
+  mentionResultsQuery: string;
   pendingApproval: PendingApproval | null;
   pendingProcessInput: PendingProcessInput | null;
   focusInputTrigger: number;
@@ -343,7 +351,7 @@ interface ChatState {
   hideSkeleton(): void;
   showToast(message: string, type: string, durationMs: number): void;
   dismissToast(id: string): void;
-  receiveMentionResults(results: MentionSearchResult[]): void;
+  receiveMentionResults(query: string, results: MentionSearchResult[]): void;
   showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval?: boolean): void;
   resolveApproval(decision: 'approve' | 'deny' | 'allowForSession'): void;
   showProcessInput(processId: string, description: string, prompt: string, command: string): void;
@@ -441,6 +449,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   skillsList: [],
   tokenBudget: { used: 0, max: 0 },
   mentionResults: [],
+  mentionResultsQuery: '',
   pendingApproval: null,
   pendingProcessInput: null,
   focusInputTrigger: 0,
@@ -1221,8 +1230,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
-  receiveMentionResults(results: MentionSearchResult[]) {
-    set({ mentionResults: results });
+  receiveMentionResults(query: string, results: MentionSearchResult[]) {
+    set({ mentionResults: results, mentionResultsQuery: query });
   },
 
   showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval: boolean = true) {

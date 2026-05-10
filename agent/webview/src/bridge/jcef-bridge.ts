@@ -391,10 +391,10 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   showProcessInput(processId: string, description: string, prompt: string, command: string) {
     stores?.getChatStore().showProcessInput(processId, description, prompt, command);
   },
-  receiveMentionResults(resultsJson: string) {
+  receiveMentionResults(query: string, resultsJson: string) {
     try {
       const results = JSON.parse(resultsJson);
-      stores?.getChatStore().receiveMentionResults(results);
+      stores?.getChatStore().receiveMentionResults(query, results);
     } catch (e) {
       console.error('[bridge] receiveMentionResults parse error:', e);
     }

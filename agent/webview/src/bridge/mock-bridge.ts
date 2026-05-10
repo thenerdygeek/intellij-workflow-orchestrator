@@ -262,7 +262,9 @@ export function installMockBridge(): void {
           const q = searchTerm.toLowerCase();
           return r.label.toLowerCase().includes(q) || (r.path ?? '').toLowerCase().includes(q);
         });
-    w.receiveMentionResults?.(JSON.stringify(filtered));
+    // Echo the search term back so the JS staleness gate can drop out-of-order
+    // responses (mirrors Kotlin's contract in AgentCefPanel.searchMentionsQuery).
+    w.receiveMentionResults?.(searchTerm, JSON.stringify(filtered));
   };
 
   // Mock _searchTickets for # ticket autocomplete

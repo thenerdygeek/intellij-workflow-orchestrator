@@ -57,8 +57,15 @@ beforeEach(() => {
   // Suppress real bridge calls and reset store between tests
   (window as any)._searchMentions = vi.fn();
   (window as any)._searchTickets = vi.fn();
-  useChatStore.setState({ mentionResults: [] });
+  useChatStore.setState({ mentionResults: [], mentionResultsQuery: '' });
 });
+
+// Helper: seed mentionResults as if they came from the bridge response for
+// a specific query. Tests should always set both — the staleness gate drops
+// results whose `mentionResultsQuery` doesn't match the rendered `query`.
+function seedBridgeResponse(query: string, results: MentionSearchResult[]) {
+  useChatStore.setState({ mentionResults: results, mentionResultsQuery: query });
+}
 
 afterEach(() => {
   cleanup();
@@ -88,22 +95,26 @@ describe('relevanceScore', () => {
 
 describe('MentionDropdown staleness filter (Bug 2)', () => {
   it('drops score=0 items when the query is non-empty', () => {
-    // Simulates the 200ms bridge-debounce window: store still holds results from a prior
-    // query (here `foo`-shaped) while the user has typed something else (`xyz`). Without
-    // the filter every stale item rendered as a "suggestion" against the new query.
-    useChatStore.setState({ mentionResults: STALE_PRIOR_QUERY_RESULTS });
-    render(<MentionHarness query="xyz" />);
+    // The bridge response for `foo` is in the store; the user has since typed
+    // `xyz` (a non-prefix change). Without the relevance gate every item would
+    // render as a "suggestion" against the new query.
+    seedBridgeResponse('foo', STALE_PRIOR_QUERY_RESULTS);
+    render(<MentionHarness query="foo" />);
+    // Sanity: the response for "foo" should keep items that match "foo".
+    expect(screen.getByText('foo.kt')).toBeTruthy();
 
+    // Now simulate the user typing past the response — bridge still holds "foo".
+    // The staleness gate drops the whole set because `foo` ≠ `xyz`.
+    cleanup();
+    seedBridgeResponse('foo', STALE_PRIOR_QUERY_RESULTS);
+    render(<MentionHarness query="xyz" />);
     expect(screen.getByText('No results found.')).toBeTruthy();
     expect(screen.queryByText('foo.kt')).toBeNull();
-    expect(screen.queryByText('bar.kt')).toBeNull();
-    expect(screen.queryByText('helpers/')).toBeNull();
-    expect(screen.queryByText('FooClass')).toBeNull();
   });
 
   it('keeps score>0 items and drops score=0 items when both are present', () => {
     // foo.kt and FooClass score>0 against `foo`; bar.kt and helpers/ score 0 and must be hidden.
-    useChatStore.setState({ mentionResults: STALE_PRIOR_QUERY_RESULTS });
+    seedBridgeResponse('foo', STALE_PRIOR_QUERY_RESULTS);
     render(<MentionHarness query="foo" />);
 
     expect(screen.getByText('foo.kt')).toBeTruthy();
@@ -112,16 +123,30 @@ describe('MentionDropdown staleness filter (Bug 2)', () => {
     expect(screen.queryByText('helpers/')).toBeNull();
   });
 
-  it('shows everything when the query is empty (open-tabs behavior)', () => {
-    // Empty query is the "open editor tabs" path — score=0 items must NOT be filtered,
-    // otherwise the empty-state landing dropdown would always render blank.
-    useChatStore.setState({ mentionResults: STALE_PRIOR_QUERY_RESULTS });
+  it('renders bridge-supplied empty-query results unfiltered (open-tabs mode)', () => {
+    // For the empty query, the bridge returns open editor tabs — score=0 items
+    // must render. The staleness gate is satisfied because the response was
+    // for the empty query.
+    seedBridgeResponse('', STALE_PRIOR_QUERY_RESULTS);
     render(<MentionHarness query="" />);
 
     expect(screen.getByText('foo.kt')).toBeTruthy();
     expect(screen.getByText('bar.kt')).toBeTruthy();
     expect(screen.getByText('helpers/')).toBeTruthy();
     expect(screen.getByText('FooClass')).toBeTruthy();
+  });
+
+  it('drops a stale typed-query response when the user has backspaced to empty', () => {
+    // Regression: pre-staleness-gate, a typed-query response (`foo` matches)
+    // would flash for ~200ms after the user backspaced to `@` because the empty
+    // query bypasses the relevance gate. The staleness gate (Kotlin echoes
+    // the query alongside results) catches it: the response was for `foo`,
+    // the user is at `` — drop everything until the bridge replies for ``.
+    seedBridgeResponse('foo', STALE_PRIOR_QUERY_RESULTS);
+    render(<MentionHarness query="" />);
+
+    expect(screen.getByText('No results found.')).toBeTruthy();
+    expect(screen.queryByText('foo.kt')).toBeNull();
   });
 });
 

@@ -68,6 +68,7 @@ export const MentionDropdown = memo(function MentionDropdown({
   listRef,
 }: MentionDropdownProps) {
   const mentionResults = useChatStore(s => s.mentionResults);
+  const mentionResultsQuery = useChatStore(s => s.mentionResultsQuery);
 
   // Request search results from Kotlin
   // Always request `all:` — for empty query, Kotlin returns open editor tabs (active file first)
@@ -81,13 +82,24 @@ export const MentionDropdown = memo(function MentionDropdown({
   const maxPerGroup = query ? 5 : 8;
 
   // Build a flat ordered list of results for keyboard navigation.
-  // When the user has typed a query, drop score=0 items: those came from a prior
-  // bridge response (the 200ms debounce window) and don't match what they typed.
+  //
+  // Staleness gate (line A): drop the entire result set when Kotlin's echoed
+  // query doesn't match what the user is currently looking at. This covers
+  // out-of-order bridge responses (e.g. response for `@fil` lands after the
+  // user has backspaced to `@`) — without it the empty-query open-tabs path
+  // would flash typed-query matches for ~200ms while the new request is
+  // debouncing.
+  //
+  // Relevance gate (line B): for non-empty queries, drop score=0 items so a
+  // late-arriving in-flight response can't surface unrelated items. Empty
+  // queries (open-tabs mode) intentionally bypass this — score=0 is the
+  // natural state for that path.
   const flatItems = useMemo(() => {
+    if (mentionResultsQuery !== query) return [];                                  // line A
     const scored = mentionResults
       .filter(r => r.type === 'file' || r.type === 'folder' || r.type === 'symbol')
       .map(r => ({ ...r, score: relevanceScore(r.label, r.path, query) }))
-      .filter(r => !query || r.score > 0);
+      .filter(r => !query || r.score > 0);                                         // line B
 
     const grouped: Record<string, typeof scored> = {};
     for (const r of scored) {
@@ -101,7 +113,7 @@ export const MentionDropdown = memo(function MentionDropdown({
 
     // Maintain stable group order: file → folder → symbol
     return (['file', 'folder', 'symbol'] as const).flatMap(t => grouped[t] ?? []);
-  }, [mentionResults, query, maxPerGroup]);
+  }, [mentionResults, mentionResultsQuery, query, maxPerGroup]);
 
   // Group boundaries for rendering headings
   const groups = useMemo(() => {

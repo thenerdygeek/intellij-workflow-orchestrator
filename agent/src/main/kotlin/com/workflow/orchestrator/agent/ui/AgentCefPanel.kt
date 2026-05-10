@@ -476,16 +476,18 @@ class AgentCefPanel(
             val colonIdx = data.indexOf(':')
             val type = if (colonIdx > 0) data.substring(0, colonIdx) else data
             val query = if (colonIdx > 0) data.substring(colonIdx + 1) else ""
-            // Search on IO thread, callback to JS
+            // Search on IO thread, callback to JS. Echo the query alongside
+            // results so JS can drop stale responses (out-of-order races
+            // between rapid keystrokes and the 200ms bridge debounce).
             scope.launch {
                 try {
                     withTimeout(15_000L) {
                         val results = mentionSearchProvider?.search(type, query) ?: "[]"
-                        callJs("receiveMentionResults(${JsEscape.toJsString(results)})")
+                        callJs("receiveMentionResults(${JsEscape.toJsString(query)}, ${JsEscape.toJsString(results)})")
                     }
                 } catch (e: Exception) {
                     LOG.warn("searchMentions handler failed: ${e.message}")
-                    callJs("receiveMentionResults('[]')")
+                    callJs("receiveMentionResults(${JsEscape.toJsString(query)}, '[]')")
                 }
             }
             JBCefJSQuery.Response("ok")
