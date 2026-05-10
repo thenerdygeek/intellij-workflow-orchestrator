@@ -760,3 +760,54 @@ Tools: `db_query`, `db_schema`, `db_list_databases`. Read-mostly database tools.
 - **`jira`'s 785-line doc is the swarm's largest single-tool block.** Justified by 17 actions × per-action quality bar. Sets the bar for upcoming integration tools (`bitbucket_pr` 18 actions will be similar).
 - **Drop candidate count keeps growing.** The swarm has now identified ~7 concrete drop/merge candidates across the documented tools. Phase 7's Compare Tools view will need a real prioritization scheme.
 - **🚨 Race recurred (1 in 6 batches now).** The mitigation language was helpful but not bulletproof. Stronger mitigation: ask subagents to add a small randomized sleep before `git commit` (cheap, breaks tight collisions), or pre-acquire a lock file. Or accept it — work always lands in git, only commit messages drift.
+
+---
+
+## Batch 14 — 2026-05-10 (Bitbucket integration cluster — Sonnet model)
+
+Tools: `bitbucket_pr`, `bitbucket_repo`, `bitbucket_review`. Switched to **`model: sonnet`** per user preference for well-planned mechanical execution. Quality on par with Opus output; faster + cheaper.
+
+### `bitbucket_pr` — commit `b24e57697` — STRONG keep
+
+- **Lines added:** 982 in `documentation()` + 176 lines narrative MD.
+- **🚨 CLAUDE.md drift: 19 actions, not 18.** CLAUDE.md omitted `get_prs_for_branch`. Drift count: 5.
+- **Per-action verdicts:** 6 STRONG keep, 13 NORMAL keep.
+
+#### 🚨 Drop candidates (action-level)
+1. **`get_blocker_comment_count`** — returns only an integer; fully superseded by `check_merge_status` which gives veto reasons too.
+2. **`get_required_builds`** — repo-level merge-gate config, not PR state. Near-zero expected query frequency; teams set this up once.
+3. **`update_pr_title`** — lowest-frequency housekeeping; titles are set correctly at `create_pr`. (`update_pr_description` is more justified — descriptions evolve with scope.)
+
+### `bitbucket_repo` — commit `6cc9e7e54` — all actions keep (NORMAL except `get_commit_pull_requests` STRONG)
+
+- **Lines added:** 532 in `documentation()`.
+- `get_commit_pull_requests` STRONG keep — unique reverse-lookup (commit → PR) not available via any other tool.
+
+#### Surprising findings
+1. **`get_file_content` ↔ `read_file` overlap** — for local tracked files `read_file` is strictly better (line numbers, no network). `get_file_content` only justified for remote/historical refs or branches not checked out locally. **Documented as commonLLMMistake + WEAK drop note.**
+2. **`get_build_statuses` ↔ `get_commit_build_stats` split** — token-cost guidance: call aggregate counter first, escalate to full per-build list only when needed. **MergeOpportunity audit note** flags this two-action split as consolidation candidate.
+
+### `bitbucket_review` — commit `f72e7fcd1` — STRONG keep
+
+- **Lines added:** 966 in `documentation()`.
+- **🚨 CLAUDE.md drift: 12 actions, not 6.** Off by 100%. Drift count: 6.
+
+#### Surprising findings
+1. **Optimistic-locking contract on `edit_comment` / `delete_comment`** — requires `expected_version` from prior `get_comment` call. The most defensible differentiator vs raw curl — without it concurrent edits silently clobber.
+2. **🚨 Asymmetric parameter surface = LLM footgun.** Write actions (`add_pr_comment`, `add_inline_comment`, `reply_to_comment`, reviewer mgmt) take only `pr_id` (active repo inferred); read/lifecycle actions (`list_comments`, `get_comment`, `edit_comment`, `delete_comment`, `resolve_comment`, `reopen_comment`) require all three of `project_key`, `repo_slug`, `pr_id`. LLM frequently passes/omits wrong set.
+3. **Should `bitbucket_pr` + `bitbucket_review` merge?** **No.** 30 actions exceeds any sensible meta-tool size (Jira 17, bamboo_builds 11); both tools live in deferred tier so LLM loads only the one needed per session; semantic groupings clean (PR lifecycle vs review conversation). Only gap: LLM discoverability — add cross-reference hint in both descriptions.
+
+### Action items surfaced by Batch 14
+
+- [ ] **🚨 CLAUDE.md drift fixes:** `bitbucket_pr` 19 actions (not 18), `bitbucket_review` 12 actions (not 6). Sweep CLAUDE.md against all integration tools.
+- [ ] Drop or fold `bitbucket_pr` actions: `get_blocker_comment_count` (superseded), `get_required_builds` (rare), `update_pr_title` (rare).
+- [ ] Add cross-reference hint in `bitbucket_pr` and `bitbucket_review` descriptions so `tool_search` surfaces the companion.
+- [ ] Consider unifying `bitbucket_repo`'s asymmetric param requirements (`bitbucket_review` style) — currently each action picks its own param surface.
+- [ ] Merge `get_build_statuses` + `get_commit_build_stats` (token cost guidance).
+
+### Cross-cutting observations from Batch 14
+
+- **Sonnet works well for this workload.** Quality on par with Opus. Faster + cheaper. Confirmed feedback: well-planned mechanical execution → Sonnet.
+- **CLAUDE.md drift count: 6 instances.** Now spans `edit_file.lastEditLineRanges`, task statuses, agent tool actions, bitbucket_pr action count, bitbucket_review action count, and the missing BLOCKED status. **The CLAUDE.md audit is now a real backlog item, not a side note.**
+- **No race this batch (Sonnet sleep+commit pattern landed cleanly).**
+- **Doc length record set:** `bitbucket_pr` 982 lines is the swarm's largest single-file doc. Justified by 19 actions × per-action quality bar.
