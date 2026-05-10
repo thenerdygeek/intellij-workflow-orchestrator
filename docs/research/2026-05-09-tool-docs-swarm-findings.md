@@ -975,3 +975,41 @@ Tools: `debug_inspect`, `debug_breakpoints`, `send_stdin`.
 - **CLAUDE.md drift count: 10.** `debug_breakpoints` KDoc joins the list. Drift sources are now: agent CLAUDE.md (multiple), `:agent` CLAUDE.md (multiple), source-level KDoc comments (this one). The audit needs to cover both CLAUDE.md and source KDocs.
 - **3 actionable real bugs added this batch:** `remove_breakpoint` exception-breakpoint silent failure, `drop_frame` state-not-rewound footgun, `send_stdin` password-prompt heuristic false-positives. Total real bug count: 9.
 - **No race this batch.** Sleep mitigation continues to work.
+
+---
+
+## Batch 19 — 2026-05-10 (PSI intelligence cluster, sonnet)
+
+Tools: `file_structure`, `type_inference`, `dataflow_analysis`. Continued PSI bug-pattern audit.
+
+**Bug pattern verdict: still isolated to `find_definition` + `find_references` only.** All three tools in this batch correctly use `registry.forFile(psiFile)` — they always have a `PsiFile` in hand before provider lookup, so the no-element-context fallback path that bugs the two siblings doesn't apply.
+
+### `file_structure` — commit `c39b4c4af` — STRONG keep, 229 lines
+
+- 8-10x token saving vs `read_file` on a 1000-line file (signatures mode returns ~100 lines).
+- ✅ Bug absent — line 290 uses `registry.forFile(psiFile)`.
+- **Surprising:** `allowedWorkers` includes `ORCHESTRATOR`, unlike `find_definition`/`find_references` which restrict to ANALYZER+REVIEWER. Orchestrator legitimately needs file shape to route sub-tasks.
+
+### `type_inference` — commit `2712a5847` — STRONG keep, 248 lines
+
+- Resolves types invisible in source: Kotlin `val`/`var` inferred initializers, lambda `it` types in chained expressions, generic bound resolution, `PLATFORM` nullability on Java APIs from Kotlin.
+- ✅ Bug absent — line 331 uses `registry.forFile(psiFile)`.
+- **🚨 Latent ordering issue in `classifyElementKind`:** uses `PsiTreeUtil.getParentOfType` for Java PSI then a manual `while (current != null)` class-name loop for Kotlin. Subtle dependency: if a Kotlin element matches a Java PSI interface (e.g. compiled Kotlin forms matching `PsiLocalVariable`), it gets classified as Java local instead of `KtProperty`.
+
+### `dataflow_analysis` — commit `7cba94ca8` — STRONG keep / WEAK drop, 253 lines
+
+- Java-only scope. Kotlin explicitly rejected at lines 299-302; Python returns null (no equivalent API).
+- ✅ Bug absent — line 336 uses `registry.forFile(psiFile)`.
+- 5-15 manual tool calls saved per investigation for fields with multiple writers.
+- **Note:** subagent found `documentation()` already present (likely added by a prior swarm agent in an earlier batch); verified all fields correct rather than re-authoring.
+
+### Action items surfaced by Batch 19
+
+- [ ] Investigate `type_inference.classifyElementKind` Kotlin-vs-Java traversal ordering — could misclassify Kotlin elements matching Java PSI interfaces.
+- [ ] Document `dataflow_analysis` Python-on-position behavior more clearly: returns "No expression found at this position" instead of "Code intelligence not available" (misleading but not incorrect).
+
+### Cross-cutting observations from Batch 19
+
+- **PSI bug audit is now complete.** 8 PSI tools surveyed; 2 have the fallback bug (`find_definition`, `find_references`); 6 are correct (`call_hierarchy`, `type_hierarchy`, `find_implementations`, `file_structure`, `type_inference`, `dataflow_analysis`). The fix shape from `find_implementations` is the canonical reference. Single PR can close both bugs.
+- **No new CLAUDE.md drift this batch.** Drift count holds at 10.
+- **No race this batch (8 in a row).**
