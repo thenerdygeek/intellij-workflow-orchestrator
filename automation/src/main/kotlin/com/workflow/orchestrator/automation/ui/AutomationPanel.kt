@@ -140,6 +140,24 @@ class AutomationPanel(
     // of clobbering the newer selection's state.
     private var loadGeneration: Long = 0L
 
+    /**
+     * Cache of canonical Bamboo `shortName` per planKey, populated lazily by
+     * [refreshShortNamesInBackground] on tab init. The dropdown render prefers
+     * this cached value over the saved `SuiteConfig.displayName` so suites
+     * added before v0.85.0 (which kept the long `Project — Plan` form in
+     * settings) display their canonical short name without requiring the user
+     * to re-pick in Settings. Falls back to displayName on cache miss / fetch
+     * failure / blank shortName.
+     *
+     * **Declared BEFORE the init block** — the init block calls [loadSuites]
+     * which reads this field. Kotlin initialises properties in source order
+     * interleaved with init blocks, so a declaration after the init block
+     * leaves this field null when loadSuites runs (v0.85.3-alpha shipped with
+     * exactly that bug).
+     */
+    private val planShortNames: java.util.concurrent.ConcurrentHashMap<String, String> =
+        java.util.concurrent.ConcurrentHashMap()
+
     init {
         border = JBUI.Borders.empty(4)
 
@@ -253,18 +271,6 @@ class AutomationPanel(
             suiteCombo.selectedIndex = 0
         }
     }
-
-    /**
-     * Cache of canonical Bamboo `shortName` per planKey, populated lazily by
-     * [refreshShortNamesInBackground] on tab init. The dropdown render prefers
-     * this cached value over the saved `SuiteConfig.displayName` so suites
-     * added before v0.85.0 (which kept the long `Project \u2014 Plan` form in
-     * settings) display their canonical short name without requiring the user
-     * to re-pick in Settings. Falls back to displayName on cache miss / fetch
-     * failure / blank shortName.
-     */
-    private val planShortNames: java.util.concurrent.ConcurrentHashMap<String, String> =
-        java.util.concurrent.ConcurrentHashMap()
 
     private fun loadSuites() {
         val automationSettings = AutomationSettingsService.getInstance()
