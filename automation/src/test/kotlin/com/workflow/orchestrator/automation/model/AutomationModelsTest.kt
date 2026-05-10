@@ -69,10 +69,35 @@ class AutomationModelsTest {
         assertTrue(statuses.contains(QueueEntryStatus.FAILED_TO_TRIGGER))
         // TAG_INVALID is deprecated but retained for pre-L3 SQLite row deserialisation safety
         assertTrue(statuses.contains(QueueEntryStatus.TAG_INVALID))
-        assertTrue(statuses.contains(QueueEntryStatus.PLAN_UNAVAILABLE))
-        assertTrue(statuses.contains(QueueEntryStatus.STALE))
         assertTrue(statuses.contains(QueueEntryStatus.CANCELLED))
-        assertEquals(10, statuses.size)
+        // PLAN_UNAVAILABLE and STALE were removed — they were never set by QueueService
+        assertEquals(8, statuses.size)
+    }
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun `QueueEntryStatus TERMINAL contains exactly the statuses QueueService transitions to`() {
+        // This test locks the alignment between QueueEntryStatus.TERMINAL and the statuses
+        // that QueueService actually sets when removing entries from its active stateFlow.
+        // If QueueService gains a new terminal transition path, TERMINAL must be updated too.
+        val terminal = QueueEntryStatus.TERMINAL
+        assertTrue(terminal.contains(QueueEntryStatus.COMPLETED),
+            "COMPLETED must be terminal — QueueService removes entries on build success/failure/Unknown")
+        assertTrue(terminal.contains(QueueEntryStatus.CANCELLED),
+            "CANCELLED must be terminal — QueueService removes entries on cancel()")
+        assertTrue(terminal.contains(QueueEntryStatus.FAILED_TO_TRIGGER),
+            "FAILED_TO_TRIGGER must be terminal — QueueService sets this when doTrigger fails")
+        assertTrue(terminal.contains(QueueEntryStatus.TAG_INVALID),
+            "TAG_INVALID must be terminal — pre-L3 SQLite rows must not be re-queued on recovery")
+
+        // Non-terminal active statuses must NOT appear in TERMINAL
+        assertFalse(terminal.contains(QueueEntryStatus.WAITING_LOCAL))
+        assertFalse(terminal.contains(QueueEntryStatus.TRIGGERING))
+        assertFalse(terminal.contains(QueueEntryStatus.QUEUED_ON_BAMBOO))
+        assertFalse(terminal.contains(QueueEntryStatus.RUNNING))
+
+        assertEquals(4, terminal.size,
+            "TERMINAL should have exactly 4 entries: COMPLETED, CANCELLED, FAILED_TO_TRIGGER, TAG_INVALID")
     }
 
     @Test

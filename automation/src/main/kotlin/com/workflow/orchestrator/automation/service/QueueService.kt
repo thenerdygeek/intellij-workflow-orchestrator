@@ -359,13 +359,7 @@ class QueueService {
 
     private companion object {
         private val ACTIVE_STATUSES = setOf(QueueEntryStatus.RUNNING, QueueEntryStatus.QUEUED_ON_BAMBOO)
-        @Suppress("DEPRECATION")
-        private val TERMINAL_STATUSES_SET = setOf(
-            QueueEntryStatus.COMPLETED, QueueEntryStatus.CANCELLED,
-            QueueEntryStatus.FAILED_TO_TRIGGER,
-            // TAG_INVALID: deprecated in L3; kept here so recovered entries with this
-            // status are treated as terminal rather than re-queued.
-            QueueEntryStatus.TAG_INVALID
-        )
+        /** Delegates to the canonical set on the enum — single source of truth. */
+        private val TERMINAL_STATUSES_SET = QueueEntryStatus.TERMINAL
     }
 }

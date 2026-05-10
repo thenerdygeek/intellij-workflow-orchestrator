@@ -61,9 +61,28 @@ enum class QueueEntryStatus {
     // the tag-validation flow). Safe to drop in a future release once a DB migration is added.
     @Deprecated("No new entries use this status. Retained only for safe deserialisation of pre-L3 SQLite rows.")
     TAG_INVALID,
-    PLAN_UNAVAILABLE,
-    STALE,
-    CANCELLED
+    CANCELLED;
+
+    companion object {
+        /**
+         * Canonical set of terminal statuses — entries in any of these states are
+         * considered done and are removed from [QueueService]'s active `_stateFlow`
+         * before subscribers see them.
+         *
+         * This is the single source of truth for terminal classification.
+         * [QueueStatusPanel] and [QueueService] both reference this field so that
+         * a future addition of a new terminal status cannot drift between the two.
+         */
+        @Suppress("DEPRECATION")
+        val TERMINAL: Set<QueueEntryStatus> = setOf(
+            COMPLETED,
+            CANCELLED,
+            FAILED_TO_TRIGGER,
+            // TAG_INVALID: deprecated in L3; kept so recovered pre-L3 SQLite rows
+            // are treated as terminal rather than re-queued or shown as active.
+            TAG_INVALID
+        )
+    }
 }
 
 data class CurrentRepoContext(

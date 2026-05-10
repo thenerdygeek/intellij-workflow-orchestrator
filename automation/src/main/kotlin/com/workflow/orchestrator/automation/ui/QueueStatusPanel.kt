@@ -168,14 +168,7 @@ class QueueStatusPanel(
     )
 
     private companion object {
-        private val TERMINAL_STATUSES = setOf(
-            QueueEntryStatus.COMPLETED,
-            QueueEntryStatus.CANCELLED,
-            QueueEntryStatus.FAILED_TO_TRIGGER,
-            @Suppress("DEPRECATION")
-            QueueEntryStatus.TAG_INVALID,
-            QueueEntryStatus.PLAN_UNAVAILABLE,
-            QueueEntryStatus.STALE
-        )
+        /** Delegates to the canonical set on the enum — single source of truth. */
+        private val TERMINAL_STATUSES = QueueEntryStatus.TERMINAL
     }
 }
