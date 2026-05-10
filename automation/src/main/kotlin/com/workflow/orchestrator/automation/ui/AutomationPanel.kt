@@ -325,7 +325,11 @@ class AutomationPanel(
                             featureBranchTag = tagDetection.tag,
                             detectedFrom = DetectionSource.SETTINGS_MAPPING
                         ))
-                        tagStagingPanel.updateTags(updatedTags)
+                        // Promote the auto-overlay output to baseline so that Revert is
+                        // sticky: every auto-computed tag set (baseline pick OR per-build
+                        // feature-branch overlay) becomes the new revert target.  Only the
+                        // user's own edits (cell edit, Paste) diverge from baseline.
+                        tagStagingPanel.setBaseline(updatedTags)
                     }
                 }
                 invokeLater {
@@ -542,7 +546,11 @@ class AutomationPanel(
                         featureBranchTag = tagDetection.tag,
                         detectedFrom = DetectionSource.SETTINGS_MAPPING
                     ))
-                    tagStagingPanel.updateTags(updatedTags)
+                    // Promote the auto-overlay output to baseline so that Revert is
+                    // sticky: every auto-computed tag set (baseline pick OR per-build
+                    // feature-branch overlay) becomes the new revert target.  Only the
+                    // user's own edits (cell edit, Paste) diverge from baseline.
+                    tagStagingPanel.setBaseline(updatedTags)
                 }
             }
         }
