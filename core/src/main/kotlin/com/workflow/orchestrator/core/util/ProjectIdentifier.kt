@@ -37,4 +37,8 @@ object ProjectIdentifier {
     fun logsDir(projectBasePath: String): File {
         return File(rootDir(projectBasePath), "logs")
     }
+
+    fun automationDir(projectBasePath: String): File {
+        return File(rootDir(projectBasePath), "automation")
+    }
 }
