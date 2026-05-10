@@ -561,6 +561,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     PlanData(
                         key = dto.key,
                         name = dto.name,
+                        shortName = dto.shortName.ifBlank { dto.name },
                         projectKey = dto.key.substringBefore("-"),
                         projectName = "",
                         enabled = dto.enabled
@@ -597,6 +598,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     PlanData(
                         key = dto.key,
                         name = dto.name,
+                        shortName = dto.shortName.ifBlank { dto.name },
                         projectKey = projectKey,
                         projectName = "",
                         enabled = dto.enabled

@@ -139,6 +139,7 @@ data class ArtifactData(
 data class PlanData(
     val key: String,
     val name: String,
+    val shortName: String = "",
     val projectKey: String,
     val projectName: String,
     val enabled: Boolean = true

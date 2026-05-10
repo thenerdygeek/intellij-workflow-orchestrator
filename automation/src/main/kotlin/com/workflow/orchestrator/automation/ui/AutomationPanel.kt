@@ -265,7 +265,7 @@ class AutomationPanel(
         val automationSettings = AutomationSettingsService.getInstance()
         val suites = automationSettings.getAllSuites()
         suiteCombo.removeAllItems()
-        for (suite in suites) {
+        for (suite in suites.sortedBy { it.displayName.lowercase() }) {
             suiteCombo.addItem(SuiteComboItem(suite.planKey, suite.displayName))
         }
         if (suites.isEmpty()) {
