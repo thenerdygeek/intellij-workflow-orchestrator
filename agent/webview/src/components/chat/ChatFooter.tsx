@@ -10,6 +10,7 @@ import { RollbackCard } from '@/components/agent/RollbackCard';
 import { PlanSummaryCard } from '@/components/agent/PlanSummaryCard';
 import { PlanProgressWidget } from '@/components/agent/PlanProgressWidget';
 import { QuestionView } from '@/components/agent/QuestionView';
+import { ThinkingView } from '@/components/agent/ThinkingView';
 
 /**
  * Trailing UI that flows below the last finalized message inside the
@@ -32,6 +33,8 @@ import { QuestionView } from '@/components/agent/QuestionView';
 export const ChatFooter = memo(function ChatFooter() {
   const streamingText = useChatStore(s => s.streamingText);
   const streamingMsgTs = useChatStore(s => s.streamingMsgTs);
+  const streamingThinkingText = useChatStore(s => s.streamingThinkingText);
+  const streamingThinkingTs = useChatStore(s => s.streamingThinkingTs);
   const activeToolCalls = useChatStore(s => s.activeToolCalls);
   const busy = useChatStore(s => s.busy);
   const plan = useChatStore(s => s.plan);
@@ -77,6 +80,16 @@ export const ChatFooter = memo(function ChatFooter() {
 
   return (
     <div className="px-4 pb-4 flex flex-col gap-3">
+      {/* Live thinking bubble — rendered ABOVE the prose stream because the LLM
+          typically emits <thinking>...</thinking> before any prose. Once the
+          closing tag arrives, endThinking() moves this content into `messages`
+          where ChatView renders it with isStreaming=false (auto-collapses). */}
+      {streamingThinkingText != null && streamingThinkingTs != null && (
+        <ErrorBoundary key={`streaming-thinking-${streamingThinkingTs}`}>
+          <ThinkingView content={streamingThinkingText} isStreaming={true} />
+        </ErrorBoundary>
+      )}
+
       {streamingText != null && streamingMsgTs != null && (
         <ErrorBoundary key={`stream-${streamingMsgTs}`}>
           <AgentMessage

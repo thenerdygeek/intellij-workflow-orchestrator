@@ -156,6 +156,17 @@ interface ChatState {
    * same ts so DOM continuity is preserved (no remount flash).
    */
   streamingMsgTs: number | null;
+  /**
+   * Live thinking-block content accumulating between Kotlin's `appendToThinking`
+   * deltas and the eventual `endThinking` finalize. While non-null, ChatFooter
+   * renders a `<ThinkingView isStreaming={true}>` showing the reasoning live with
+   * a shimmer. On endThinking the buffer is flushed into `messages` as a
+   * REASONING UiMessage (reusing `streamingThinkingTs` for DOM continuity if
+   * possible) and both fields are reset to null. Mirrors the
+   * `streamingText`/`streamingMsgTs` pair for prose.
+   */
+  streamingThinkingText: string | null;
+  streamingThinkingTs: number | null;
   activeToolCalls: Map<string, ToolCall>;  // key = unique tool call ID
   /** Live sub-agent state — accumulates internal messages and tool chains while running.
    *  On completion/kill, the state is frozen into the UiMessage and removed from this map. */
@@ -288,6 +299,8 @@ interface ChatState {
   clearNextStepHint(): void;
   addStatus(message: string, type: StatusType): void;
   addThinking(text: string): void;
+  appendToThinking(text: string): void;
+  endThinking(): void;
   clearChat(): void;
   setPlan(plan: Plan): void;
   clearPlan(): void;
@@ -413,6 +426,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   streamingText: null,
   streamingMsgTs: null,
+  streamingThinkingText: null,
+  streamingThinkingTs: null,
   activeToolCalls: new Map(),
   activeSubAgents: new Map(),
   plan: null,
@@ -490,6 +505,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [firstMessage],
       streamingText: null,
       streamingMsgTs: null,
+      streamingThinkingText: null,
+      streamingThinkingTs: null,
       activeToolCalls: new Map(),
   activeSubAgents: new Map(),
       // Reset tool output streams alongside activeToolCalls — they are keyed by
@@ -567,6 +584,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       steeringMode: false,
       streamingText: null,
       streamingMsgTs: null,
+      streamingThinkingText: null,
+      streamingThinkingTs: null,
       activeToolCalls: new Map(),
   activeSubAgents: new Map(),
       // Drop all tool output streams — the map was keyed by the now-cleared
@@ -610,6 +629,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages: [...state.messages, ...flushed, msg],
         streamingText: null,
         streamingMsgTs: null,
+        streamingThinkingText: null,
+        streamingThinkingTs: null,
       };
     });
   },
@@ -680,6 +701,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages: [...state.messages, finalized],
         streamingText: null,
         streamingMsgTs: null,
+        streamingThinkingText: null,
+        streamingThinkingTs: null,
         ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
       };
     });
@@ -817,6 +840,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messages: [...state.messages, ...flushed, msg],
         streamingText: null,
         streamingMsgTs: null,
+        streamingThinkingText: null,
+        streamingThinkingTs: null,
         nextStepHint: hint,
       };
     });
@@ -846,6 +871,52 @@ export const useChatStore = create<ChatState>((set, get) => ({
       text,
     };
     set(state => ({ messages: [...state.messages, msg] }));
+  },
+
+  /**
+   * Incremental thinking delta. Creates a new streaming-thinking block on first
+   * call after an `endThinking` (or initial state); subsequent calls append to
+   * the running buffer. ChatFooter watches `streamingThinkingText` and renders
+   * `<ThinkingView isStreaming={true}>` live with a shimmer animation.
+   */
+  appendToThinking(text: string) {
+    set(state => {
+      if (state.streamingThinkingTs == null) {
+        return {
+          streamingThinkingText: text,
+          streamingThinkingTs: uniqueTs(),
+        };
+      }
+      return {
+        streamingThinkingText: (state.streamingThinkingText ?? '') + text,
+      };
+    });
+  },
+
+  /**
+   * Finalize the in-flight thinking block. Flushes the accumulated buffer into
+   * `messages` as a REASONING UiMessage (reusing the same ts for DOM continuity)
+   * so ChatView's renderItem switch picks it up and renders it with
+   * `isStreaming={false}` — at which point ThinkingView's auto-collapse kicks
+   * in after 600 ms. No-op if there is no active streaming thinking.
+   */
+  endThinking() {
+    set(state => {
+      if (state.streamingThinkingTs == null || state.streamingThinkingText == null) {
+        return {};
+      }
+      const finalized: UiMessage = {
+        ts: state.streamingThinkingTs,
+        type: 'SAY',
+        say: 'REASONING',
+        text: state.streamingThinkingText,
+      };
+      return {
+        messages: [...state.messages, finalized],
+        streamingThinkingText: null,
+        streamingThinkingTs: null,
+      };
+    });
   },
 
   finalizeToolChain() {
@@ -893,6 +964,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [],
       streamingText: null,
       streamingMsgTs: null,
+      streamingThinkingText: null,
+      streamingThinkingTs: null,
       activeToolCalls: new Map(),
   activeSubAgents: new Map(),
       // Drop tool output streams in lockstep with activeToolCalls.
@@ -1293,6 +1366,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return {
         pendingApproval: approval,
         ...(hadStream ? { streamingText: null, streamingMsgTs: null } : {}),
+        ...(state.streamingThinkingTs != null ? { streamingThinkingText: null, streamingThinkingTs: null } : {}),
         ...(tools.length > 0 ? { activeToolCalls: new Map(), toolOutputStreams: {}, toolCallOpen: {} } : {}),
         ...(newMessages.length !== state.messages.length ? { messages: newMessages } : {}),
       };
@@ -1889,6 +1963,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: upgraded,
       streamingText: null,
       streamingMsgTs: null,
+      streamingThinkingText: null,
+      streamingThinkingTs: null,
       viewMode: 'chat',
       ...(restoredPlan ? { plan: restoredPlan } : {}),
     });

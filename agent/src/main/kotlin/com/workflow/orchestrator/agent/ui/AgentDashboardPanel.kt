@@ -546,9 +546,24 @@ class AgentDashboardPanel(
         broadcast { it.finalizeToolChain() }
     }
 
-    fun appendThinking(text: String) {
-        cefPanel?.appendThinking(text) ?: fallbackPanel?.appendThinking(text)
-        broadcast { it.appendThinking(text) }
+    // Per-panel buffer used to aggregate streaming thinking deltas when the
+    // fallback (non-JCEF) panel is active — the fallback renders the whole
+    // block in one shot, while JCEF streams it live via appendToThinking.
+    private val thinkingFallbackBuffer = StringBuilder()
+
+    fun appendToThinking(text: String) {
+        cefPanel?.appendToThinking(text)
+        if (cefPanel == null) thinkingFallbackBuffer.append(text)
+        broadcast { it.appendToThinking(text) }
+    }
+
+    fun endThinking() {
+        cefPanel?.endThinking()
+        if (cefPanel == null && thinkingFallbackBuffer.isNotEmpty()) {
+            fallbackPanel?.appendThinking(thinkingFallbackBuffer.toString())
+            thinkingFallbackBuffer.setLength(0)
+        }
+        broadcast { it.endThinking() }
     }
 
     fun appendCompletionCard(data: CompletionData) {

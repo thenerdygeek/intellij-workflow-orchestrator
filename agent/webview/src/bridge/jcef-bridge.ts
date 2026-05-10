@@ -180,8 +180,11 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   appendStatus(message: string, type: string) {
     stores?.getChatStore().addStatus(message, type as StatusType);
   },
-  appendThinking(text: string) {
-    stores?.getChatStore().addThinking(text);
+  appendToThinking(text: string) {
+    stores?.getChatStore().appendToThinking(text);
+  },
+  endThinking() {
+    stores?.getChatStore().endThinking();
   },
   clearChat() {
     stores?.getChatStore().clearChat();

@@ -996,8 +996,12 @@ class AgentCefPanel(
 
     fun appendError(message: String) = appendStatus(message, RichStreamingPanel.StatusType.ERROR)
 
-    fun appendThinking(text: String) {
-        callJs("appendThinking(${JsEscape.toJsString(text)})")
+    fun appendToThinking(text: String) {
+        callJs("appendToThinking(${JsEscape.toJsString(text)})")
+    }
+
+    fun endThinking() {
+        callJs("endThinking()")
     }
 
     fun clear() {

@@ -1690,13 +1690,17 @@ class AgentController(
     /**
      * Routes parts from [thinkingSplitter] to their respective bridges.
      * `Text` parts continue through the regular 16ms-batched stream pipe;
-     * `Thinking` parts go through `appendThinking`, which the webview renders
-     * via `<ThinkingView>` (prompt-kit `Reasoning` + `TextShimmer`).
+     * `ThinkingDelta` parts stream live through `appendToThinking`, which the
+     * webview renders via `<ThinkingView isStreaming={true}>` (prompt-kit
+     * `Reasoning` + `TextShimmer`); `ThinkingEnd` finalizes the block so the
+     * webview moves it from the streaming slot into the persistent message
+     * list (where it auto-collapses).
      */
     private fun dispatchSplitParts(parts: List<ThinkingTagSplitter.Part>) {
         for (part in parts) when (part) {
             is ThinkingTagSplitter.Part.Text -> streamBatcher.append(part.text)
-            is ThinkingTagSplitter.Part.Thinking -> dashboard.appendThinking(part.text)
+            is ThinkingTagSplitter.Part.ThinkingDelta -> dashboard.appendToThinking(part.text)
+            ThinkingTagSplitter.Part.ThinkingEnd -> dashboard.endThinking()
         }
     }
 
