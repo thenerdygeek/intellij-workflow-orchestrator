@@ -87,4 +87,23 @@ class SuiteConfigPanelSortTest {
     fun `empty list returns empty`() {
         assertEquals(emptyList<PlanVariableData>(), sortedVariables(emptyList()))
     }
+
+    // ──────────────────────────── Docker-tags filter tests ────────────────────────────
+
+    /**
+     * Verifies [SuiteConfigPanel.isDockerTagsVariable] excludes the configured
+     * variable name case-insensitively, matching both the canonical mixed-case
+     * form and the all-lowercase variant.
+     */
+    @Test
+    fun `isDockerTagsVariable excludes canonical DockerTagsAsJSON case-insensitively`() {
+        val configuredName = "DockerTagsAsJSON"
+
+        // Exact match
+        assertEquals(true, SuiteConfigPanel.isDockerTagsVariable("DockerTagsAsJSON", configuredName))
+        // All-lowercase variant must also be excluded
+        assertEquals(true, SuiteConfigPanel.isDockerTagsVariable("dockertagsasjson", configuredName))
+        // Unrelated variable must NOT be excluded
+        assertEquals(false, SuiteConfigPanel.isDockerTagsVariable("DEPLOY_ENV", configuredName))
+    }
 }

@@ -48,6 +48,19 @@ class AutomationSettingsService : PersistentStateComponent<AutomationSettingsSer
      */
     private val staleStagedNotifiedSuites: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+    /**
+     * Per-suite persisted config.
+     *
+     * **Schema note (2026-05-10):** the `extraVariables` field was removed when
+     * SuiteExtrasPanel was deleted. Pre-upgrade `workflowAutomationSuites.xml`
+     * files containing `<extra key=... value=.../>` entries will silently lose
+     * those entries on next load — IntelliJ's BeanBinding logs unknown child
+     * elements at DEBUG and continues. The data is intentionally NOT migrated
+     * into [variables] (extras were free-form names not in the plan's
+     * variableContext, so they don't have a target slot in the new
+     * categorised dropdown). Users who relied on extras must re-add via the
+     * "Override a variable" UX, which is now bound to plan-known keys only.
+     */
     @Tag("suite")
     data class SuiteConfig(
         var planKey: String = "",

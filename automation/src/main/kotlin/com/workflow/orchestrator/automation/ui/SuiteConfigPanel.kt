@@ -164,9 +164,6 @@ class SuiteConfigPanel(
             key to (row.valueField.text ?: "")
         }.filter { it.key.isNotEmpty() }
 
-    // Kept for interface compatibility — no longer sets values externally; no-op.
-    fun getEnabledStages(): List<String> = emptyList()
-
     // ──────────────────────────── Internal helpers ────────────────────────────
 
     private fun onAddRow() {
@@ -300,9 +297,26 @@ class SuiteConfigPanel(
         val dockerKey = dockerTagsVariableName
         return availableVariables
             .filter { v ->
-                !v.name.equals(dockerKey, ignoreCase = true) && v.name !in excludeKeys
+                !isDockerTagsVariable(v.name, dockerKey) && v.name !in excludeKeys
             }
             .map { v -> VariableOption(v.name, v.variableType, v.value) }
+    }
+
+    companion object {
+        /**
+         * Returns `true` when [name] refers to the Docker tags variable.
+         *
+         * The check is case-insensitive so that user-configured names like
+         * "DockerTagsAsJSON", "dockertagsasjson", or "DOCKERTAGSASJSON" all
+         * match consistently.
+         *
+         * Extracted here (instead of inlined in [buildOptions]) so that
+         * [com.workflow.orchestrator.automation.ui.SuiteConfigPanelSortTest]
+         * can exercise the filter logic without instantiating the panel or
+         * requiring IntelliJ infrastructure.
+         */
+        internal fun isDockerTagsVariable(name: String, dockerTagsVariableName: String): Boolean =
+            name.equals(dockerTagsVariableName, ignoreCase = true)
     }
 
     /** Returns the set of keys currently selected across all rows. */
