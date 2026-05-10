@@ -179,6 +179,11 @@ class ManualStageDialog(
         contentPanel?.add(createCenterPanel())
         contentPanel?.revalidate()
         contentPanel?.repaint()
+        // Resize the dialog window to fit the new content. Without this, the
+        // window stays at its initial pack() size (computed when stages were
+        // still loading and the layout was minimal); larger post-load content
+        // overflows the frame and pushes the south button panel out of view.
+        peer.pack()
     }
 
     /** Modality-aware EDT dispatch. Platform `invokeLater` defaults to NON_MODAL from a
