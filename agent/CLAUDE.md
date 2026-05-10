@@ -811,6 +811,13 @@ cd agent/webview && npm run build    # Output: agent/src/main/resources/webview/
 - `stores/chatStore.ts` — Primary state: messages, streaming, plans, questions, tool calls
 - `stores/themeStore.ts` — IDE theme variables synced from Kotlin
 
+### Chat-tab component layout
+
+- `components/chat/ChatView.tsx` — owns the `MessageList` ref, the post-stream scroll-to-top behavior, the `ScrollButton` overlay, and the `renderItem` switch for finalized messages. Holds **no** footer JSX.
+- `components/chat/MessageList.tsx` — single-Virtuoso-root wrapper. Takes a `Footer: ComponentType` and registers it via Virtuoso's `components.Footer` slot. **Never wrap Virtuoso in a flex container**: the parent in `ChatView` is non-flex, so any `flex-1` on a wrapper inside MessageList becomes a dead declaration and collapses the scroller to 0 px. The `Footer` adapter (line ~74) swallows Virtuoso's `ContextProp<>` so a parameter-less Footer component satisfies Virtuoso's typing.
+- `components/chat/ChatFooter.tsx` — trailing UI that flows below the last finalized message inside the scrolling region: streaming bubble, active `ToolCallChain`, approval gate, `ProcessInputView`, rollbacks, plan card, `PlanProgressWidget`, question wizard, queued steering messages, `WorkingIndicator`, retry pill, resume banner. **Architectural contract:** stable component (mounted once via `components.Footer`), subscribes to `chatStore` directly, never receives content as a prop. Owns its own `approvalRef` / `questionsRef` and the `scrollIntoView` effects. Reason for the no-prop rule: Virtuoso's urx store does not reliably forward fresh props to its Footer slot under high-frequency streaming updates — a regression from `fce96d1df` confirmed empirically; pinned by `__tests__/message-list.test.tsx`.
+- `components/chat/WorkingIndicator.tsx` — the working indicator + `WORKING_PHRASES` + `useTypewriter`. Lives in its own file because of the 220-line phrase list.
+
 ## Streaming Text Pipeline
 
 Three layers between raw SSE token and rendered DOM:
