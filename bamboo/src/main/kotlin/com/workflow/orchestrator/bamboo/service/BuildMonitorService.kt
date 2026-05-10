@@ -217,12 +217,16 @@ class BuildMonitorService {
                     }
                 }
                 log.info("[Bamboo:Monitor] Fetched ${logParts.size}/${keysToFetch.size} job logs for build $planKey-${dto.buildNumber}")
+                // planKey passed to startPolling is already the chain key (the resolved
+                // branch-plan key after autoDetectPlan) — set chainKey = planKey so the
+                // BuildLogCache is keyed by chain, not by the master plan key.
                 val logEvent = WorkflowEvent.BuildLogReady(
                     planKey = planKey,
                     buildNumber = dto.buildNumber,
                     resultKey = resultKey,
                     status = eventStatus,
-                    logText = logParts.joinToString("\n")
+                    logText = logParts.joinToString("\n"),
+                    chainKey = planKey,
                 )
                 // Cache before emit so a subscriber that mounts mid-emit and immediately
                 // queries the cache still sees a value.

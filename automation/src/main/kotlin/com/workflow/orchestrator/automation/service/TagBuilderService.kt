@@ -5,6 +5,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.automation.model.*
 import com.workflow.orchestrator.core.services.BambooService
+import com.workflow.orchestrator.core.services.BuildLogCache
 import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -17,6 +18,7 @@ class TagBuilderService {
     private val log = Logger.getInstance(TagBuilderService::class.java)
     private val bambooService: BambooService
     private val buildVariableName: String
+    private val buildLogCache: BuildLogCache?
 
     companion object {
         private val DOCKER_TAG_REGEX = Regex("Unique Docker Tag\\s*:\\s*(.+)")
@@ -27,14 +29,20 @@ class TagBuilderService {
     constructor(project: Project) {
         val settings = PluginSettings.getInstance(project)
         this.bambooService = project.getService(BambooService::class.java)
+        this.buildLogCache = BuildLogCache.getInstance(project)
         this.buildVariableName = settings.state.bambooBuildVariableName?.takeIf { it.isNotBlank() } ?: "DockerTagsAsJSON"
         log.info("[Automation:Tags] TagBuilderService initialized, buildVariableName='$buildVariableName'")
     }
 
     /** Test constructor — allows injecting mocks. */
-    constructor(bambooService: BambooService, buildVariableName: String = "DockerTagsAsJSON") {
+    constructor(
+        bambooService: BambooService,
+        buildVariableName: String = "DockerTagsAsJSON",
+        buildLogCache: BuildLogCache? = null,
+    ) {
         this.bambooService = bambooService
         this.buildVariableName = buildVariableName
+        this.buildLogCache = buildLogCache
     }
     private val json = Json { ignoreUnknownKeys = true }
     // A-P2-2: reject pre-release / build-metadata suffixes so e.g. "1.2.3-rc1" or
@@ -319,16 +327,49 @@ class TagBuilderService {
     }
 
     /**
-     * Detect the current repo's docker tag from its CI build log.
-     * Returns a [TagDetectionResult] with diagnostic info for the UI.
+     * Detects the current repo's docker tag from its CI build log using the resolved
+     * branch-chain key. This is the canonical Phase-B path — it consults
+     * [BuildLogCache] first (cache-first, O(1)) and falls back to a Bamboo REST call
+     * only when the cache is cold.
+     *
+     * Cache hit: extracts tag from [WorkflowEvent.BuildLogReady.logText] — no API call.
+     * Cache miss: calls [BambooService.getLatestBuild] with [chainKey] as the `planKey`
+     *   arg (single unbranched call — chain key already encodes the branch-plan identity).
+     *   Then fetches the build log via [BambooService.getBuildLog].
+     *
+     * @param chainKey  the resolved branch-chain key (e.g. `PROJ-PLANKEY523`).
+     *   Obtained from [WorkflowContextService.state].value.focusBuild.chainKey.
      */
-    suspend fun detectDockerTag(serviceCiPlanKey: String, branchName: String): TagDetectionResult {
-        log.info("[Automation:Tags] Detecting docker tag: plan=$serviceCiPlanKey, branch=$branchName")
+    suspend fun detectDockerTag(chainKey: String): TagDetectionResult {
+        log.info("[Automation:Tags] Detecting docker tag via chainKey='$chainKey'")
 
-        val buildResult = bambooService.getLatestBuild(serviceCiPlanKey, branchName)
+        // Cache-first: the Bamboo poller already cached the latest BuildLogReady keyed
+        // by chain key. Reuse it to avoid burning a Bamboo round-trip on panel mount.
+        val cached = buildLogCache?.getLatest(chainKey)
+        if (cached != null) {
+            log.info("[Automation:Tags] Cache hit for chainKey='$chainKey' (build #${cached.buildNumber})")
+            return when (cached.status) {
+                com.workflow.orchestrator.core.events.WorkflowEvent.BuildEventStatus.FAILED ->
+                    TagDetectionResult.buildFailed(cached.planKey, cached.buildNumber)
+                com.workflow.orchestrator.core.events.WorkflowEvent.BuildEventStatus.SUCCESS -> {
+                    if (cached.logText.isEmpty()) {
+                        TagDetectionResult.logFetchFailed(cached.resultKey)
+                    } else {
+                        val tag = extractDockerTagFromLog(cached.logText)
+                        if (tag != null) TagDetectionResult.success(tag, cached.resultKey)
+                        else TagDetectionResult.noTagInLog(cached.resultKey)
+                    }
+                }
+            }
+        }
+
+        // REST fallback: cache cold — fetch directly. Pass chainKey as the planKey arg;
+        // the unbranched form returns the chain's latest build without branch resolution.
+        log.info("[Automation:Tags] Cache miss for chainKey='$chainKey' — falling back to REST")
+        val buildResult = bambooService.getLatestBuild(chainKey)
         if (buildResult.isError) {
-            log.warn("[Automation:Tags] No build found for $serviceCiPlanKey/$branchName: ${buildResult.summary}")
-            return TagDetectionResult.noBuild(branchName)
+            log.warn("[Automation:Tags] No build found for chainKey='$chainKey': ${buildResult.summary}")
+            return TagDetectionResult.noBuild("(unknown)")
         }
 
         val resultKey = buildResult.data!!.buildResultKey
@@ -341,7 +382,6 @@ class TagBuilderService {
         }
 
         val tag = extractDockerTagFromLog(logResult.data!!)
-
         return if (tag != null) {
             log.info("[Automation:Tags] Detected docker tag: '$tag' from $resultKey")
             TagDetectionResult.success(tag, resultKey)
@@ -361,10 +401,6 @@ class TagBuilderService {
             .replace(ANSI_ESCAPE_REGEX, "")
             .takeIf { it.isNotBlank() }
     }
-
-    /** Legacy method — delegates to [detectDockerTag]. */
-    suspend fun extractDockerTagFromBuildLog(serviceCiPlanKey: String, branchName: String): String? =
-        detectDockerTag(serviceCiPlanKey, branchName).tag
 
     private fun parseDockerTagsJson(jsonStr: String): Map<String, String> {
         return try {

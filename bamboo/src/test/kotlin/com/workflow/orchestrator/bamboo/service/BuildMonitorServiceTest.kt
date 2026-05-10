@@ -350,6 +350,27 @@ class BuildMonitorServiceTest {
     }
 
     @Test
+    fun `pollOnce sets chainKey equal to planKey on BuildLogReady`() = runTest {
+        // Phase E: chainKey is always populated — equals planKey when the monitor
+        // was started with the chain key (post-autoDetectPlan resolution).
+        val result = makeResult("Successful", "Finished")
+        coEvery { apiClient.getLatestResult("PROJ-BUILD523", "main") } returns ApiResult.Success(result.copy(key = "PROJ-BUILD523-42"))
+        mockJobLogs(buildNumber = 42, job1Log = ApiResult.Success("Unique Docker Tag : feature-tag-xyz"))
+
+        val service = BuildMonitorService(apiClient, eventBus, this)
+
+        eventBus.events.test {
+            service.pollOnce("PROJ-BUILD523", "main")
+
+            val event = awaitItem() as WorkflowEvent.BuildLogReady
+            assertEquals("PROJ-BUILD523", event.chainKey)
+            assertEquals("PROJ-BUILD523", event.planKey)
+
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
     fun `pollOnce handles API error gracefully`() = runTest {
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns
             ApiResult.Error(com.workflow.orchestrator.core.model.ErrorType.NETWORK_ERROR, "Connection refused")

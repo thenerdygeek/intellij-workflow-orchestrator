@@ -200,8 +200,15 @@ class PlanDetectionService(
      *
      * Branch plan keys already look like `PROJ-PLAN-7` (trailing digit segment), so if
      * [master] already matches that pattern we skip resolution to avoid double-nesting.
+     *
+     * `internal` (was `private`) so the cross-module
+     * [com.workflow.orchestrator.bamboo.workflow.ChainKeyResolverImpl] EP can share the
+     * branches lookup. The EP itself uses [resolveBranchKeyOrNull] (no master fallback)
+     * — that separate entry point exists because `WorkflowContextService.focusPr`
+     * needs strict null-on-miss to avoid the master-substitution bug; this method's
+     * fallback-to-[master] behaviour stays in service of the auto-detect waterfall.
      */
-    private suspend fun resolveBranchKey(master: String, branchName: String?): String {
+    internal suspend fun resolveBranchKey(master: String, branchName: String?): String {
         if (branchName.isNullOrBlank()) return master
         // If the candidate already looks like a branch plan key (e.g. PROJ-PLAN-7), skip resolution
         if (master.matches(Regex("^.+-.+-\\d+$"))) return master
@@ -213,6 +220,34 @@ class PlanDetectionService(
         } else {
             log.info("[Bamboo:Plan] No branch plan found for '$branchName' under $master — falling back to master plan (branch-plan creation may be disabled)")
             master
+        }
+    }
+
+    /**
+     * Strict variant of [resolveBranchKey] that returns null when no branch chain exists
+     * for [branchName] under [parentPlanKey] — **no master fallback**. Used by
+     * [com.workflow.orchestrator.bamboo.workflow.ChainKeyResolverImpl] (the EP impl
+     * consumed by `WorkflowContextService.focusPr`) so a missing branch chain surfaces as
+     * "no build for this branch" rather than silently substituting the master chain's
+     * latest build (the bug Phase A is unblocking).
+     *
+     * Lookup logic mirrors [resolveBranchKey] — `apiClient.getPlanBranches(parentPlanKey)`
+     * matched by `shortName` (case-sensitive) — so chain-key resolution and the
+     * auto-detect waterfall stay in lockstep on the matching rule.
+     */
+    internal suspend fun resolveBranchKeyOrNull(parentPlanKey: String, branchName: String): String? {
+        if (branchName.isBlank()) return null
+        // If the parent already looks like a branch plan key, the caller passed the wrong
+        // input — no further resolution possible.
+        if (parentPlanKey.matches(Regex("^.+-.+-\\d+$"))) return null
+        val branches = apiClient.getPlanBranches(parentPlanKey).getOrNull() ?: return null
+        val match = branches.firstOrNull { it.shortName?.equals(branchName, ignoreCase = false) == true }
+        return if (match != null) {
+            log.info("[Bamboo:Plan] Chain-key resolved: ${match.key} for branch '$branchName' under parent $parentPlanKey")
+            match.key
+        } else {
+            log.info("[Bamboo:Plan] No branch chain found for '$branchName' under $parentPlanKey — returning null (no master substitution)")
+            null
         }
     }
 

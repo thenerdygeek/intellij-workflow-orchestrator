@@ -7,6 +7,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
+import com.workflow.orchestrator.core.model.workflow.BuildRef
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
@@ -16,11 +17,13 @@ import com.workflow.orchestrator.automation.service.*
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.services.BambooService
-import com.workflow.orchestrator.core.services.BuildLogCache
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.ui.ComboBoxWidth
 import com.workflow.orchestrator.core.ui.bindBoundedWidth
+import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import java.awt.Font
@@ -112,15 +115,24 @@ class AutomationPanel(
     // Sub-tabs
     private val tabbedPane = JBTabbedPane()
 
-    // Branch selector
-    private val branchCombo = JComboBox<BranchComboItem>().apply {
-        bindBoundedWidth(ComboBoxWidth.DEFAULT)
+    /**
+     * Passive branch label (Phase B) — displays the focused PR's chain branch name.
+     * Replaces the old interactive JComboBox: branch selection is now driven by
+     * [WorkflowContextService.state] → [onFocusBuildChanged], not by the user.
+     */
+    private val branchLabel = JBLabel("—").apply {
+        font = font.deriveFont(Font.PLAIN, JBUI.scale(11).toFloat())
+        foreground = StatusColors.SECONDARY_TEXT
     }
-    private var suppressBranchListener = false
 
     // State
     private var currentSuitePlanKey: String = ""
-    private var currentBranchPlanKey: String = ""
+    /**
+     * The focused build from [WorkflowContextService] — drives docker-tag detection.
+     * Null when no PR is focused or chain-key resolution failed.
+     */
+    @Volatile
+    private var currentFocusBuild: BuildRef? = null
     // A-P1-6: monotonically incremented on each suite/branch switch so stale
     // invokeLater handlers from prior selections drop their UI updates instead
     // of clobbering the newer selection's state.
@@ -146,7 +158,7 @@ class AutomationPanel(
                     foreground = StatusColors.SECONDARY_TEXT
                     font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
                 })
-                add(branchCombo)
+                add(branchLabel)
                 add(statusLabel)
             }
 
@@ -207,15 +219,21 @@ class AutomationPanel(
             onSuiteSelected(item.planKey)
         }
 
-        // Branch selection listener
-        branchCombo.addActionListener {
-            if (suppressBranchListener) return@addActionListener
-            val item = branchCombo.selectedItem as? BranchComboItem ?: return@addActionListener
-            onBranchSelected(item)
-        }
-
         // QueueStatusPanel observes QueueService directly (A-P1-2); Cancel is wired
         // inside the panel. Trigger Now / Queue Run live on the parent header above.
+
+        // Phase B: subscribe to WorkflowContextService.state for focusBuild changes.
+        // Whenever the focused PR changes (or its chain key resolves), we re-run
+        // docker-tag detection using the resolved chain key. No user-driven branch
+        // picking — the WorkflowContextService is the single source of truth.
+        scope.launch {
+            WorkflowContextService.getInstance(project).state
+                .map { it.focusBuild }
+                .distinctUntilChanged()
+                .collect { focusBuild ->
+                    onFocusBuildChanged(focusBuild)
+                }
+        }
 
         Disposer.register(this, tagStagingPanel)
         Disposer.register(this, suiteConfigPanel)
@@ -258,152 +276,148 @@ class AutomationPanel(
 
     private fun onSuiteSelected(planKey: String) {
         currentSuitePlanKey = planKey
-        currentBranchPlanKey = ""
-        // A-P1-6: bump the generation token so any in-flight suite/branch fetches
+        // A-P1-6: bump the generation token so any in-flight suite fetches
         // from a previous selection short-circuit instead of overwriting the new state.
         val token = ++loadGeneration
-        statusLabel.text = "Loading branches..."
+        statusLabel.text = "Loading..."
         statusLabel.foreground = StatusColors.INFO
         diagnosticPanel.isVisible = false
         log.info("[Automation:UI] Suite selected: $planKey (gen=$token)")
 
         scope.launch {
-            // Fetch branches for this suite plan
-            val branchesResult = bambooService.getPlanBranches(planKey)
-            val branches = if (!branchesResult.isError) branchesResult.data!! else emptyList()
-            log.info("[Automation:UI] Found ${branches.size} branches for $planKey")
+            // Load baseline and plan variables for the selected suite
+            loadBaselineAndVariables(planKey, token)
+        }
+    }
 
+    /**
+     * Phase B: called whenever [WorkflowContextService] emits a new [focusBuild].
+     *
+     * - Updates the passive branch label.
+     * - If `focusBuild == null` or `focusBuild.chainKey == null` → shows empty state.
+     *   No fallback to master/develop; better to show "No build context" than wrong data.
+     * - Otherwise: launches docker-tag detection via [tagBuilderService.detectDockerTag]
+     *   using the resolved chain key.
+     */
+    private fun onFocusBuildChanged(focusBuild: BuildRef?) {
+        currentFocusBuild = focusBuild
+        log.info("[Automation:UI] focusBuild changed: planKey=${focusBuild?.planKey}, chainKey=${focusBuild?.chainKey}, branch=${focusBuild?.branch}")
+
+        invokeLater {
+            // Update the passive branch label
+            branchLabel.text = focusBuild?.branch ?: "—"
+        }
+
+        if (focusBuild == null || focusBuild.chainKey == null) {
             invokeLater {
-                if (token != loadGeneration) {
-                    log.info("[Automation:UI] Dropping stale branch result for $planKey (gen=$token, current=$loadGeneration)")
-                    return@invokeLater
+                updateDockerTagBanner(
+                    TagDetectionResult.noBuild("No build context for this PR's branch yet")
+                )
+                diagnosticPanel.isVisible = true
+                diagnosticPanel.revalidate()
+            }
+            return
+        }
+
+        val chainKey = focusBuild.chainKey!!
+        scope.launch {
+            val tagDetection = withTimeoutOrNull(15_000L) {
+                tagBuilderService.detectDockerTag(chainKey)
+            }
+            log.info("[Automation:UI] Tag detection via chainKey='$chainKey': detected=${tagDetection?.detected}, tag=${tagDetection?.tag}")
+
+            if (tagDetection != null) {
+                val dockerTagKey = resolveDockerTagKey()
+                if (tagDetection.detected && tagDetection.tag != null && dockerTagKey.isNotBlank()) {
+                    invokeLater {
+                        val currentTags = tagStagingPanel.getCurrentTags()
+                        val updatedTags = tagBuilderService.replaceCurrentRepoTag(currentTags, CurrentRepoContext(
+                            serviceName = dockerTagKey,
+                            branchName = focusBuild.branch,
+                            featureBranchTag = tagDetection.tag,
+                            detectedFrom = DetectionSource.SETTINGS_MAPPING
+                        ))
+                        tagStagingPanel.updateTags(updatedTags)
+                    }
                 }
-                suppressBranchListener = true
-                branchCombo.removeAllItems()
-
-                // Master plan is the default (first entry)
-                branchCombo.addItem(BranchComboItem(planKey, "default"))
-
-                // Add child branches below
-                for (branch in branches.filter { it.enabled }) {
-                    val displayName = branch.shortName.ifBlank { branch.name }
-                    branchCombo.addItem(BranchComboItem(branch.key, displayName))
+                invokeLater {
+                    updateDockerTagBanner(tagDetection)
                 }
-
-                branchCombo.selectedIndex = 0
-                suppressBranchListener = false
-
-                onBranchSelected(branchCombo.getItemAt(0))
             }
         }
     }
 
-    private fun onBranchSelected(branch: BranchComboItem) {
-        currentBranchPlanKey = branch.branchPlanKey
-        // A-P1-6: same token discipline as onSuiteSelected — a fast suite/branch
-        // toggle must not let an earlier branch's baseline-load result trample
-        // the current selection's UI state.
-        val token = ++loadGeneration
-        statusLabel.text = "Loading..."
-        statusLabel.foreground = StatusColors.INFO
-        diagnosticPanel.isVisible = false
-        log.info("[Automation:UI] Branch selected: ${branch.branchName} (key=${branch.branchPlanKey}, gen=$token)")
+    /**
+     * Loads baseline tags and plan variables for the given suite plan key.
+     * Called by [onSuiteSelected] and on initial suite auto-selection.
+     */
+    private suspend fun loadBaselineAndVariables(planKey: String, token: Long) {
+        // Step 1: Load baseline with the selected suite plan key
+        val baselineResult = tagBuilderService.loadBaselineWithDiagnostics(planKey)
+        var tags = baselineResult.tags
+        log.info("[Automation:UI] Baseline result: ${baselineResult.diagnostics.buildsQueried} builds queried, " +
+            "${baselineResult.diagnostics.buildsWithDockerTags} with tags, selected=${baselineResult.selectedBuild?.buildNumber}")
 
-        scope.launch {
-            // Step 1: Load baseline with the selected branch plan key
-            val baselineResult = tagBuilderService.loadBaselineWithDiagnostics(currentBranchPlanKey)
-            var tags = baselineResult.tags
-            log.info("[Automation:UI] Baseline result: ${baselineResult.diagnostics.buildsQueried} builds queried, " +
-                "${baselineResult.diagnostics.buildsWithDockerTags} with tags, selected=${baselineResult.selectedBuild?.buildNumber}")
+        // Step 2: Enrich with latest release tags from Nexus (if configured)
+        if (tags.isNotEmpty() && driftDetectorService.isRegistryConfigured()) {
+            log.info("[Automation:UI] Fetching latest release tags from registry...")
+            tags = driftDetectorService.enrichWithLatestReleaseTags(tags)
+        }
 
-            // Step 2: Enrich with latest release tags from Nexus (if configured)
-            if (tags.isNotEmpty() && driftDetectorService.isRegistryConfigured()) {
-                log.info("[Automation:UI] Fetching latest release tags from registry...")
-                tags = driftDetectorService.enrichWithLatestReleaseTags(tags)
+        // Step 3: Load plan variables for the suite (master plan key)
+        val varsResult = bambooService.getPlanVariables(planKey)
+
+        // Step 4: Docker-tag detection is now driven by onFocusBuildChanged (Phase B).
+        // At suite-load time we apply whatever we already have from the current focusBuild;
+        // subsequent focusBuild emissions will overwrite via onFocusBuildChanged.
+        val focusBuild = currentFocusBuild
+        val chainKey = focusBuild?.chainKey
+        val tagDetection: TagDetectionResult? = if (chainKey != null) {
+            withTimeoutOrNull(15_000L) {
+                tagBuilderService.detectDockerTag(chainKey)
             }
+        } else null
+        log.info("[Automation:UI] Suite-load tag detection: chainKey='$chainKey', detected=${tagDetection?.detected}, tag=${tagDetection?.tag}")
 
-            // Step 3: Load plan variables for the suite (master plan key)
-            val varsResult = bambooService.getPlanVariables(currentSuitePlanKey)
+        val dockerTagKey = resolveDockerTagKey()
+        if (tagDetection?.detected == true && tagDetection.tag != null && dockerTagKey.isNotBlank()) {
+            tags = tagBuilderService.replaceCurrentRepoTag(tags, CurrentRepoContext(
+                serviceName = dockerTagKey,
+                branchName = focusBuild?.branch ?: "",
+                featureBranchTag = tagDetection.tag,
+                detectedFrom = DetectionSource.SETTINGS_MAPPING
+            ))
+        }
 
-            // Step 4: Resolve the current docker tag for the panel mount.
-            //
-            // Cache-first (preferred): the Bamboo poller already fetched and cached
-            // the latest BuildLogReady in [BuildLogCache] every time it polled — if
-            // the panel is mounting after that, we reuse the cached log instead of
-            // burning another Bamboo round-trip. Backstops the EventBus replay=0
-            // semantics (a subscriber that joins after the emit otherwise misses it).
-            //
-            // REST fallback: when the cache is cold (e.g. plugin just started, no
-            // poll has fired yet for this plan) we fall back to a direct REST fetch
-            // via [TagBuilderService.detectDockerTag]. Branch source: prefer the
-            // user's explicit branchCombo selection; for the "default" master entry
-            // fall back to the git checkout (matches what BuildMonitorStartupActivity
-            // polls with). The 15s timeout guards against a slow Bamboo locking up
-            // the panel at "Loading…".
-            //
-            // Live-update path is independent: [subscribeToBuildEvents] still
-            // overwrites this with whatever the next poll emits.
-            val ciPlanKey = resolveServiceCiPlanKey()
-            val branchForCi = branch.branchName.takeIf { it.isNotBlank() && it != "default" }
-                ?: runCatching {
-                    com.workflow.orchestrator.core.settings.RepoContextResolver
-                        .getInstance(project).getPrimaryBranchName()
-                }.getOrNull().orEmpty()
-            val cachedLog = if (ciPlanKey.isNotBlank()) {
-                BuildLogCache.getInstance(project).getLatest(ciPlanKey)
-            } else null
-            val tagDetection: TagDetectionResult? = when {
-                cachedLog != null -> tagDetectionFromCachedEvent(cachedLog)
-                ciPlanKey.isNotBlank() && branchForCi.isNotBlank() ->
-                    withTimeoutOrNull(15_000L) {
-                        tagBuilderService.detectDockerTag(ciPlanKey, branchForCi)
-                    }
-                else -> null
+        // Step 5: Update UI on EDT
+        invokeLater {
+            if (token != loadGeneration) {
+                log.info("[Automation:UI] Dropping stale baseline result (gen=$token, current=$loadGeneration)")
+                return@invokeLater
             }
-            log.info("[Automation:UI] Tag detection: ciPlan='$ciPlanKey', branch='$branchForCi', " +
-                "source=${if (cachedLog != null) "cache" else "rest"}, " +
-                "detected=${tagDetection?.detected}, tag=${tagDetection?.tag}, reason=${tagDetection?.reason}")
+            tagStagingPanel.updateTags(tags)
 
-            val dockerTagKey = resolveDockerTagKey()
-            if (tagDetection?.detected == true && tagDetection.tag != null && dockerTagKey.isNotBlank()) {
-                tags = tagBuilderService.replaceCurrentRepoTag(tags, CurrentRepoContext(
-                    serviceName = dockerTagKey,
-                    branchName = "",
-                    featureBranchTag = tagDetection.tag,
-                    detectedFrom = DetectionSource.SETTINGS_MAPPING
-                ))
+            if (!varsResult.isError) {
+                val vars = varsResult.data!!
+                val varKeys = vars.map { it.name }
+                val varValues = vars.associate { it.name to it.value }
+                suiteConfigPanel.setAvailableVariables(varKeys)
+                suiteConfigPanel.loadSuiteVariables(planKey)
+                suiteConfigPanel.setVariableValues(varValues)
             }
+            // PR 7 #7: load the per-suite free-form extras for this suite so
+            // the user sees their persisted overrides on suite switch.
+            suiteExtrasPanel.loadSuite(planKey)
 
-            // Step 5: Update UI on EDT
-            invokeLater {
-                if (token != loadGeneration) {
-                    log.info("[Automation:UI] Dropping stale baseline result (gen=$token, current=$loadGeneration)")
-                    return@invokeLater
-                }
-                tagStagingPanel.updateTags(tags)
+            // PR 7 #8: refresh the baseline picker to reflect the alternatives
+            // we just received from scoreAndRankRuns.
+            refreshBaselinePicker(baselineResult.allRanked, baselineResult.selectedBuild)
 
-                if (!varsResult.isError) {
-                    val vars = varsResult.data!!
-                    val varKeys = vars.map { it.name }
-                    val varValues = vars.associate { it.name to it.value }
-                    suiteConfigPanel.setAvailableVariables(varKeys)
-                    suiteConfigPanel.loadSuiteVariables(currentSuitePlanKey)
-                    suiteConfigPanel.setVariableValues(varValues)
-                }
-                // PR 7 #7: load the per-suite free-form extras for this suite so
-                // the user sees their persisted overrides on suite switch.
-                suiteExtrasPanel.loadSuite(currentSuitePlanKey)
+            updateStatusLabel(baselineResult)
 
-                // PR 7 #8: refresh the baseline picker to reflect the alternatives
-                // we just received from scoreAndRankRuns.
-                refreshBaselinePicker(baselineResult.allRanked, baselineResult.selectedBuild)
-
-                updateStatusLabel(baselineResult)
-
-                // Diagnostic banner: pass the pulled detection through; a fresh
-                // BuildLogReady from a later poll will overwrite it via onBuildLogReady.
-                updateDiagnosticBanner(baselineResult, tagDetection = tagDetection)
-            }
+            // Diagnostic banner: pass the pulled detection through; a fresh
+            // BuildLogReady from a later poll will overwrite it via onBuildLogReady.
+            updateDiagnosticBanner(baselineResult, tagDetection = tagDetection)
         }
     }
 
@@ -416,7 +430,7 @@ class AutomationPanel(
      * another submodule would swap the staged docker tag for the wrong service.
      */
     private fun resolveDockerTagKey(): String {
-        val focusedRepoName = com.workflow.orchestrator.core.workflow.WorkflowContextService
+        val focusedRepoName = WorkflowContextService
             .getInstance(project).state.value.focusPr?.repoName
         val repoConfig = focusedRepoName
             ?.let { name -> settings.getRepos().firstOrNull { it.name == name || it.displayLabel == name } }
@@ -433,12 +447,17 @@ class AutomationPanel(
      *
      * Repo source is the focused PR — see [resolveDockerTagKey] for why editor-derived
      * resolution is intentionally avoided here.
+     *
+     * NOTE (Phase B): This method is no longer called from the docker-tag detection path.
+     * Docker-tag detection now uses [currentFocusBuild]?.chainKey exclusively.
+     * This method remains because it may be used by other future callers — keep it until
+     * Phase D cleans up the remaining indirect usages.
      */
     private fun resolveServiceCiPlanKey(): String {
         val fromDedicated = settings.state.serviceCiPlanKey?.takeIf { it.isNotBlank() }
         if (fromDedicated != null) return fromDedicated
 
-        val focusedRepoName = com.workflow.orchestrator.core.workflow.WorkflowContextService
+        val focusedRepoName = WorkflowContextService
             .getInstance(project).state.value.focusPr?.repoName
         val repoConfig = focusedRepoName
             ?.let { name -> settings.getRepos().firstOrNull { it.name == name || it.displayLabel == name } }
@@ -511,11 +530,13 @@ class AutomationPanel(
             return
         }
 
-        // Only process events matching the configured service CI plan key
-        val ciPlanKey = resolveServiceCiPlanKey()
-        log.info("[Automation:UI] BuildLogReady event: planKey='${event.planKey}', ciPlanKey='$ciPlanKey', suitePlan='$currentSuitePlanKey'")
-        if (ciPlanKey.isBlank() || !event.planKey.equals(ciPlanKey, ignoreCase = true)) {
-            log.info("[Automation:UI] Ignoring BuildLogReady for '${event.planKey}' — does not match CI plan '$ciPlanKey'")
+        // Phase B: filter by chain key — only process events that match the focused
+        // PR's chain key. This prevents cross-branch bleed (e.g. develop's poll
+        // overwriting a feature branch's detected tag).
+        val focusedChainKey = currentFocusBuild?.chainKey
+        log.info("[Automation:UI] BuildLogReady event: planKey='${event.planKey}', chainKey='${event.chainKey}', focusedChainKey='$focusedChainKey'")
+        if (focusedChainKey == null || !event.chainKey.equals(focusedChainKey, ignoreCase = true)) {
+            log.info("[Automation:UI] Ignoring BuildLogReady for chain '${event.chainKey}' — does not match focused chain '$focusedChainKey'")
             return
         }
 
@@ -535,7 +556,7 @@ class AutomationPanel(
                     val currentTags = tagStagingPanel.getCurrentTags()
                     val updatedTags = tagBuilderService.replaceCurrentRepoTag(currentTags, CurrentRepoContext(
                         serviceName = dockerTagKey,
-                        branchName = "",
+                        branchName = currentFocusBuild?.branch ?: "",
                         featureBranchTag = tagDetection.tag,
                         detectedFrom = DetectionSource.SETTINGS_MAPPING
                     ))
@@ -683,10 +704,6 @@ class AutomationPanel(
 
 private data class SuiteComboItem(val planKey: String, val displayName: String) {
     override fun toString() = displayName.ifBlank { planKey }
-}
-
-private data class BranchComboItem(val branchPlanKey: String, val branchName: String) {
-    override fun toString() = branchName.ifBlank { branchPlanKey }
 }
 
 /**

@@ -20,6 +20,11 @@ data class BuildRef(
     val buildNumber: Int,
     val branch: String,
     val selectedJobKey: String?,
+    /**
+     * The resolved branch-chain key (e.g. `PROJ-PLANKEY523`); null when chain-key
+     * resolution failed for this PR's branch.
+     */
+    val chainKey: String? = null,
 )
 data class QualityScope(
     val sonarProjectKey: String,

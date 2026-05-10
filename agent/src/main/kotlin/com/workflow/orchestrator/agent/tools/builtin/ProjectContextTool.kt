@@ -15,6 +15,7 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
+import com.workflow.orchestrator.core.workflow.ChainKeyResolver
 import git4idea.commands.Git
 import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
@@ -488,7 +489,12 @@ class ProjectContextTool : AgentTool {
         if (planKey.isBlank()) return ""
         val bamboo = ServiceLookup.bamboo(project) ?: return ""
         return try {
-            val result = bamboo.getLatestBuild(planKey, branch)
+            val chainKey = if (branch.isNotBlank()) {
+                ChainKeyResolver.getInstance()?.resolveChainKey(project, planKey, branch) ?: planKey
+            } else {
+                planKey
+            }
+            val result = bamboo.getLatestBuild(chainKey)
             if (result.isError) return ""
             val build = result.data!!
             buildString {

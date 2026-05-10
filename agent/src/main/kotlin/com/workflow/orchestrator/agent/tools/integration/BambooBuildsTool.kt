@@ -8,6 +8,7 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.core.model.bamboo.BuildChangeData
+import com.workflow.orchestrator.core.workflow.ChainKeyResolver
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.JsonObject
@@ -126,8 +127,19 @@ description optional: for approval dialog on trigger/stop/cancel.
                 val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("plan_key")
                 ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
                 val branch = params["branch"]?.jsonPrimitive?.content
-                val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
-                service.getLatestBuild(planKey, branch = branch, repoName = repoName).toAgentToolResult()
+                val chainKey = if (branch != null) {
+                    ChainKeyResolver.getInstance()?.resolveChainKey(project, planKey, branch)
+                        ?: return ToolResult(
+                            content = "No Bamboo branch chain for '$branch' in plan $planKey. " +
+                                "Verify the branch has been built in Bamboo at least once.",
+                            summary = "No chain key for $planKey/$branch",
+                            tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                            isError = true
+                        )
+                } else {
+                    planKey
+                }
+                service.getLatestBuild(chainKey).toAgentToolResult()
             }
 
             "get_build" -> {
@@ -210,8 +222,19 @@ description optional: for approval dialog on trigger/stop/cancel.
                 val maxResults = params["max_results"]?.jsonPrimitive?.content?.toIntOrNull() ?: 10
                 ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
                 val branch = params["branch"]?.jsonPrimitive?.content
-                val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
-                service.getRecentBuilds(planKey, maxResults, branch = branch, repoName = repoName).toAgentToolResult()
+                val chainKey = if (branch != null) {
+                    ChainKeyResolver.getInstance()?.resolveChainKey(project, planKey, branch)
+                        ?: return ToolResult(
+                            content = "No Bamboo branch chain for '$branch' in plan $planKey. " +
+                                "Verify the branch has been built in Bamboo at least once.",
+                            summary = "No chain key for $planKey/$branch",
+                            tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                            isError = true
+                        )
+                } else {
+                    planKey
+                }
+                service.getRecentBuilds(chainKey, maxResults).toAgentToolResult()
             }
 
             "get_running_builds" -> {

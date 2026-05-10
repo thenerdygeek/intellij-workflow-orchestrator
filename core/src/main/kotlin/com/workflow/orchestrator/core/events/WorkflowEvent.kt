@@ -21,7 +21,14 @@ sealed class WorkflowEvent {
         val buildNumber: Int,
         val resultKey: String,
         val status: BuildEventStatus,
-        val logText: String
+        val logText: String,
+        /**
+         * The resolved branch-chain key (e.g. `PROJ-PLANKEY523`). Non-null: the poller
+         * knows its chain key — it is the `planKey` arg passed to [BuildMonitorService.startPolling]
+         * after `autoDetectPlan` resolution. Set equal to [planKey] when no separate chain
+         * resolution was performed (branch == master plan).
+         */
+        val chainKey: String = planKey,
     ) : WorkflowEvent()
 
     /** Emitted by :sonar when quality gate status changes. */

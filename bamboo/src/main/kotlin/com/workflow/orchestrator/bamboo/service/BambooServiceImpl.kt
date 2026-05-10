@@ -71,51 +71,13 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             return cachedClient
         }
 
-    override suspend fun getLatestBuild(planKey: String, branch: String?, repoName: String?): ToolResult<BuildResultData> {
-        val api = client ?: return notConfiguredError("fetch latest build for $planKey")
-
-        if (branch != null) {
-            // Try branch plan key resolution first
-            val (resolved, _) = resolveBranchPlanKey(api, planKey, branch)
-            if (resolved != null) {
-                return when (val result = api.getLatestResult(resolved)) {
-                    is ApiResult.Success -> mapBuildResult(result.data)
-                    is ApiResult.Error -> {
-                        log.warn("[BambooService] Failed to fetch latest build for resolved key $resolved: ${result.message}")
-                        buildErrorResult(planKey, 0, result)
-                    }
-                }
-            }
-            // Fallback: use Bamboo's /branch/{name}/latest URL (server-side resolution).
-            // This works even when the branch isn't in the branches list API response.
-            log.info("[BambooService] Branch resolution failed for '$branch', falling back to direct branch URL")
-            val branchResult = api.getLatestResult(planKey, branch)
-            if (branchResult is ApiResult.Success) return mapBuildResult(branchResult.data)
-
-            // Second fallback: when the requested branch IS the master plan's tracked branch,
-            // Bamboo returns 404 for /branch/{name}/latest (no separate branch plan exists).
-            // The plain /result/{planKey}/latest IS the requested branch's build in that case.
-            if (branchResult is ApiResult.Error && branchResult.type == ErrorType.NOT_FOUND) {
-                log.warn("[BambooService] Branch URL 404 for $planKey/branch/$branch — " +
-                    "branch may be master's tracked branch; retrying unbranched /latest")
-                return when (val masterResult = api.getLatestResult(planKey)) {
-                    is ApiResult.Success -> mapBuildResult(masterResult.data)
-                    is ApiResult.Error -> {
-                        log.warn("[BambooService] Unbranched fallback also failed for $planKey: ${masterResult.message}")
-                        buildErrorResult(planKey, 0, masterResult)
-                    }
-                }
-            }
-            val errResult = branchResult as ApiResult.Error
-            log.warn("[BambooService] Fallback also failed for $planKey/branch/$branch: ${errResult.message}")
-            return buildErrorResult(planKey, 0, errResult)
-        }
-
-        return when (val result = api.getLatestResult(planKey)) {
+    override suspend fun getLatestBuild(chainKey: String): ToolResult<BuildResultData> {
+        val api = client ?: return notConfiguredError("fetch latest build for $chainKey")
+        return when (val result = api.getLatestResult(chainKey)) {
             is ApiResult.Success -> mapBuildResult(result.data)
             is ApiResult.Error -> {
-                log.warn("[BambooService] Failed to fetch latest build for $planKey: ${result.message}")
-                buildErrorResult(planKey, 0, result)
+                log.warn("[BambooService] No build for chain $chainKey: ${result.message}")
+                buildErrorResult(chainKey, 0, result)
             }
         }
     }
@@ -537,28 +499,15 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         }
     }
 
-    override suspend fun getRecentBuilds(planKey: String, maxResults: Int, branch: String?, repoName: String?): ToolResult<List<BuildResultData>> {
+    override suspend fun getRecentBuilds(chainKey: String, maxResults: Int): ToolResult<List<BuildResultData>> {
         val api = client ?: return ToolResult(
             data = emptyList(),
-            summary = "Bamboo not configured. Cannot fetch recent builds for $planKey.",
+            summary = "Bamboo not configured. Cannot fetch recent builds for $chainKey.",
             isError = true,
             hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        // If branch is specified, resolve the branch plan key first
-        val effectivePlanKey = if (branch != null) {
-            val (resolved, error) = resolveBranchPlanKey(api, planKey, branch)
-            resolved ?: return ToolResult(
-                data = emptyList(),
-                summary = error ?: "Branch resolution failed",
-                isError = true,
-                hint = "Check the branch name and try again."
-            )
-        } else {
-            planKey
-        }
-
-        return when (val result = api.getRecentResults(effectivePlanKey, maxResults)) {
+        return when (val result = api.getRecentResults(chainKey, maxResults)) {
             is ApiResult.Success -> {
                 val builds = result.data.map { dto ->
                     BuildResultData(
@@ -574,14 +523,14 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                 }
                 ToolResult.success(
                     data = builds,
-                    summary = "Found ${builds.size} recent builds for $planKey"
+                    summary = "Found ${builds.size} recent builds for $chainKey"
                 )
             }
             is ApiResult.Error -> {
-                log.warn("[BambooService] Failed to fetch recent builds for $planKey: ${result.message}")
+                log.warn("[BambooService] Failed to fetch recent builds for $chainKey: ${result.message}")
                 ToolResult(
                     data = emptyList(),
-                    summary = "Error fetching recent builds for $planKey: ${result.message}",
+                    summary = "Error fetching recent builds for $chainKey: ${result.message}",
                     isError = true,
                     hint = "Check Bamboo connection in Settings."
                 )
@@ -982,42 +931,6 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                 )
             }
         )
-
-    /**
-     * Resolves a branch name to its Bamboo branch plan key.
-     * Lists branch plans for the given plan, finds the one matching [branch] by name
-     * (case-insensitive), and returns its key. Returns null with an error message if
-     * the branch is not found or the API call fails.
-     *
-     * Used by both [getLatestBuild] and [getRecentBuilds] to avoid duplicating
-     * branch resolution logic.
-     */
-    private suspend fun resolveBranchPlanKey(
-        api: BambooApiClient,
-        planKey: String,
-        branch: String
-    ): Pair<String?, String?> { // (resolvedKey, errorMessage)
-        log.info("[BambooService] Resolving branch plan key: planKey=$planKey, branch='$branch'")
-        return when (val branchResult = api.getBranches(planKey)) {
-            is ApiResult.Success -> {
-                val branches = branchResult.data
-                log.info("[BambooService] Found ${branches.size} branches for $planKey: ${branches.joinToString { "'${it.name}'→${it.key}" }}")
-                val branchDto = branches.find { it.name.equals(branch, ignoreCase = true) }
-                if (branchDto != null) {
-                    log.info("[BambooService] Resolved branch '$branch' → key '${branchDto.key}'")
-                    branchDto.key to null
-                } else {
-                    val msg = "Branch '$branch' not found in plan $planKey. Available: ${branches.joinToString { it.name }}"
-                    log.warn("[BambooService] $msg")
-                    null to msg
-                }
-            }
-            is ApiResult.Error -> {
-                log.warn("[BambooService] Failed to fetch branches for $planKey: ${branchResult.message}")
-                null to "Error fetching branches for $planKey: ${branchResult.message}"
-            }
-        }
-    }
 
     private fun mapBuildResult(dto: BambooResultDto): ToolResult<BuildResultData> {
         val stages = dto.stages.stage.map { it.toBuildStageData() }

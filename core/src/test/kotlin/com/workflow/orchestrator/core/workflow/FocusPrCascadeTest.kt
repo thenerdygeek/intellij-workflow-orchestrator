@@ -22,25 +22,41 @@ import org.junit.jupiter.api.Test
  * - mutex-serialized single-merged emission (spec §4.0, §4.4)
  * - cancel-previous via `currentFocusJob` (spec §4.0, §4.1)
  * - EP-driven build lookup via [LatestBuildLookup] (spec §4.1)
+ * - chain-key resolution via [ChainKeyResolver] (Phase A)
  */
 class FocusPrCascadeTest {
 
-    @AfterEach fun teardown() = unmockkObject(LatestBuildLookup.Companion)
+    @AfterEach fun teardown() {
+        unmockkObject(LatestBuildLookup.Companion)
+        unmockkObject(ChainKeyResolver.Companion)
+    }
 
-    private fun setup(project: Project, build: BuildRef? = null) {
+    private fun setup(
+        project: Project,
+        build: BuildRef? = null,
+        chainKey: String? = "CHAIN-KEY-7",
+    ) {
         val settings = mockk<PluginSettings>(relaxed = true)
         every { project.getService(PluginSettings::class.java) } returns settings
         every { settings.state.activeTicketId } returns null
 
+        mockkObject(ChainKeyResolver.Companion)
+        val resolver = mockk<ChainKeyResolver>()
+        coEvery { resolver.resolveChainKey(any(), any(), any()) } returns chainKey
+        every { ChainKeyResolver.getInstance() } returns resolver
+
         mockkObject(LatestBuildLookup.Companion)
         val lookup = mockk<LatestBuildLookup>()
-        coEvery { lookup.fetchLatestBuild(any(), any(), any()) } returns build
+        coEvery { lookup.fetchLatestBuild(any(), any()) } returns build
         every { LatestBuildLookup.getInstance() } returns lookup
     }
 
     @Test fun `focusPr emits exactly one new state with focusPr+focusBuild populated`() = runTest {
         val project = mockk<Project>(relaxed = true)
-        setup(project, build = BuildRef("PLAN", 13, "feat/abc", null))
+        setup(
+            project,
+            build = BuildRef("CHAIN-KEY-7", 13, "", null, chainKey = "CHAIN-KEY-7"),
+        )
         val service = WorkflowContextService(project, TestScope())
         val pr = PrRef(42, "feat/abc", "main", "r", "PLAN", null)
 
@@ -50,6 +66,9 @@ class FocusPrCascadeTest {
             val next = awaitItem()
             assertEquals(pr, next.focusPr)
             assertEquals(13, next.focusBuild?.buildNumber)
+            assertEquals("CHAIN-KEY-7", next.focusBuild?.chainKey)
+            // Cascade overwrites BuildRef.branch with PR.fromBranch (EP impl leaves it blank).
+            assertEquals("feat/abc", next.focusBuild?.branch)
             cancel()
         }
     }

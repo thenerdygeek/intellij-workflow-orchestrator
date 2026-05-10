@@ -471,16 +471,41 @@ class WorkflowContextService(
             sonarProjectKey = pr.sonarProjectKey ?: resolveSonarProjectKey(pr.repoName),
         )
 
-        // The [LatestBuildLookup] EP contract documents the implementation as "off-EDT"
-        // (`:bamboo`'s `BambooApiClient.get()` already dispatches to `Dispatchers.IO`),
-        // so we don't double-wrap with `withContext(Dispatchers.IO)` here. We do bound
-        // it with [withTimeoutOrNull] (5s, per spec §4.1 R2) so a stalled HTTP call
-        // never wedges the cascade — null on timeout is the documented degraded state.
-        val build = resolvedPr.bambooPlanKey?.let { planKey ->
+        // Phase A: resolve the branch-chain key first (parent + branch → chain key, e.g.
+        // `PROJ-PLANKEY523`), then fetch the latest build for that chain. Single addressable
+        // identifier — no more `(planKey, branch)` parallel path that produced wrong-branch
+        // builds when Bamboo's branch label disagreed with the git branch name.
+        //
+        // **No master fallback.** When chain-key resolution returns null (no branch chain
+        // for this PR's branch), `focusBuild` stays null. Per project directive: faulty
+        // fallbacks are worse than no data.
+        //
+        // Both EP calls are bounded by [withTimeoutOrNull] (5s, per spec §4.1 R2). The
+        // [ChainKeyResolver] / [LatestBuildLookup] EP impls dispatch to `Dispatchers.IO`
+        // internally (Bamboo's `BambooApiClient.get()` already wraps), so no double-wrap.
+        val chainKey = resolvedPr.bambooPlanKey?.let { parent ->
             withTimeoutOrNull(5_000) {
-                LatestBuildLookup.getInstance()?.fetchLatestBuild(project, planKey, resolvedPr.fromBranch)
+                ChainKeyResolver.getInstance()?.resolveChainKey(project, parent, resolvedPr.fromBranch)
             }
         }
+        if (resolvedPr.bambooPlanKey != null) {
+            if (chainKey != null) {
+                log.info("[Workflow:Context] chainKey resolved → $chainKey for ${resolvedPr.bambooPlanKey}@${resolvedPr.fromBranch}")
+            } else {
+                log.warn(
+                    "[Workflow:Context] chainKey resolution failed for ${resolvedPr.bambooPlanKey}@${resolvedPr.fromBranch} — focusBuild will be null (no master substitution)"
+                )
+            }
+        }
+        val build = chainKey?.let { ck ->
+            withTimeoutOrNull(5_000) {
+                LatestBuildLookup.getInstance()?.fetchLatestBuild(project, ck)
+            }
+        }?.copy(
+            // EP impl doesn't know the git branch label — populate it from the PR ref so
+            // legacy readers of `BuildRef.branch` keep seeing the human-readable branch.
+            branch = resolvedPr.fromBranch,
+        )
         val quality = resolvedPr.sonarProjectKey?.let {
             QualityScope(
                 sonarProjectKey = it,

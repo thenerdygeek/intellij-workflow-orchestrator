@@ -55,6 +55,10 @@
             interface="com.workflow.orchestrator.core.workflow.LatestBuildLookup"
             dynamic="true"/>
         <extensionPoint
+            qualifiedName="com.workflow.orchestrator.chainKeyResolver"
+            interface="com.workflow.orchestrator.core.workflow.ChainKeyResolver"
+            dynamic="true"/>
+        <extensionPoint
             qualifiedName="com.workflow.orchestrator.plugin.sonarProjectPickerLauncher"
             interface="com.workflow.orchestrator.core.services.SonarProjectPickerLauncher"
             dynamic="true"/>
@@ -448,6 +452,7 @@
         <createPrLauncher implementation="com.workflow.orchestrator.pullrequest.action.CreatePrLauncherImpl"/>
         <openPrLister implementation="com.workflow.orchestrator.pullrequest.workflow.OpenPrListerImpl"/>
         <latestBuildLookup implementation="com.workflow.orchestrator.bamboo.workflow.LatestBuildLookupImpl"/>
+        <chainKeyResolver implementation="com.workflow.orchestrator.bamboo.workflow.ChainKeyResolverImpl"/>
         <sonarProjectPickerLauncher
             implementation="com.workflow.orchestrator.sonar.service.SonarProjectPickerLauncherImpl"/>
     </extensions>

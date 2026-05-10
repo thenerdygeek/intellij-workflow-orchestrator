@@ -3,6 +3,7 @@ package com.workflow.orchestrator.pullrequest.ui
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.model.workflow.PrRef
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.workflow.ChainKeyResolver
 import com.workflow.orchestrator.core.workflow.LatestBuildLookup
 import com.workflow.orchestrator.core.workflow.OpenPrLister
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
@@ -30,6 +31,7 @@ class PrDashboardCrossTabTest {
 
     @AfterEach fun teardown() {
         unmockkObject(LatestBuildLookup.Companion)
+        unmockkObject(ChainKeyResolver.Companion)
         unmockkObject(OpenPrLister.Companion)
     }
 
@@ -41,6 +43,8 @@ class PrDashboardCrossTabTest {
 
         mockkObject(LatestBuildLookup.Companion)
         every { LatestBuildLookup.getInstance() } returns null
+        mockkObject(ChainKeyResolver.Companion)
+        every { ChainKeyResolver.getInstance() } returns null
         mockkObject(OpenPrLister.Companion)
         every { OpenPrLister.getInstance() } returns null
 

@@ -32,7 +32,7 @@ class TagBuilderServiceTest {
             makeBuildResultData(848, "Failed", listOf("Successful", "Failed")),
             makeBuildResultData(846, "Successful", listOf("Successful", "Successful"))
         )
-        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult.success(
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = runs,
             summary = "Found 3 recent builds"
         )
@@ -73,7 +73,7 @@ class TagBuilderServiceTest {
         val runs = listOf(
             makeBuildResultData(847, "Successful", listOf("Successful", "Successful"))
         )
-        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult.success(
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = runs,
             summary = "Found 1 build"
         )
@@ -161,7 +161,7 @@ class TagBuilderServiceTest {
 
     @Test
     fun `loadBaseline handles empty results gracefully`() = runTest {
-        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult.success(
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = emptyList(),
             summary = "No builds found"
         )
@@ -173,7 +173,7 @@ class TagBuilderServiceTest {
 
     @Test
     fun `loadBaseline handles API error gracefully`() = runTest {
-        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult(
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult(
             data = emptyList(),
             summary = "timeout",
             isError = true
@@ -186,7 +186,7 @@ class TagBuilderServiceTest {
 
     @Test
     fun `loadBaselineWithDiagnostics reports API error`() = runTest {
-        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult(
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult(
             data = emptyList(),
             summary = "Bamboo returned 401",
             isError = true
@@ -203,7 +203,7 @@ class TagBuilderServiceTest {
     @Test
     fun `loadBaselineWithDiagnostics reports missing variable`() = runTest {
         val runs = listOf(makeBuildResultData(100, "Successful", listOf("Successful")))
-        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult.success(
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = runs,
             summary = "1 build"
         )
@@ -226,7 +226,7 @@ class TagBuilderServiceTest {
     @Test
     fun `loadBaselineWithDiagnostics reports success with build details`() = runTest {
         val runs = listOf(makeBuildResultData(847, "Successful", listOf("Successful", "Successful")))
-        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult.success(
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = runs,
             summary = "1 build"
         )
@@ -244,55 +244,124 @@ class TagBuilderServiceTest {
         assertTrue(result.diagnostics.toStatusText().isEmpty()) // empty = success
     }
 
+    // ---- Phase B: chain-key-based detectDockerTag ----
+
     @Test
-    fun `detectDockerTag returns success with tag from log`() = runTest {
-        coEvery { bambooService.getLatestBuild("CI-PLAN", "feature/test", null) } returns ToolResult.success(
-            data = makeBuildResultData(42, "Successful", emptyList(), "CI-PLAN"),
+    fun `detectDockerTag(chainKey) returns success when log contains Unique Docker Tag`() = runTest {
+        // Cache miss → REST path
+        coEvery { bambooService.getLatestBuild("CI-PLAN523") } returns ToolResult.success(
+            data = makeBuildResultData(42, "Successful", emptyList(), "CI-PLAN523"),
             summary = "build found"
         )
-        coEvery { bambooService.getBuildLog("CI-PLAN-42") } returns ToolResult.success(
+        coEvery { bambooService.getBuildLog("CI-PLAN523-42") } returns ToolResult.success(
             data = "Building...\nUnique Docker Tag : feature-test-abc123\nDone.",
             summary = "log fetched"
         )
 
-        val result = service.detectDockerTag("CI-PLAN", "feature/test")
+        val result = service.detectDockerTag("CI-PLAN523")
 
         assertTrue(result.detected)
         assertEquals("feature-test-abc123", result.tag)
-        assertEquals("CI-PLAN-42", result.buildKey)
+        assertEquals("CI-PLAN523-42", result.buildKey)
     }
 
     @Test
-    fun `detectDockerTag returns noBuild when no build found`() = runTest {
-        coEvery { bambooService.getLatestBuild("CI-PLAN", "feature/gone", null) } returns ToolResult(
-            data = BuildResultData(planKey = "CI-PLAN", buildNumber = 0, state = "ERROR", durationSeconds = 0),
-            summary = "Branch 'feature/gone' not found",
-            isError = true
-        )
-
-        val result = service.detectDockerTag("CI-PLAN", "feature/gone")
-
-        assertFalse(result.detected)
-        assertNull(result.tag)
-        assertTrue(result.reason.contains("feature/gone"))
-    }
-
-    @Test
-    fun `detectDockerTag returns noTagInLog when pattern not found`() = runTest {
-        coEvery { bambooService.getLatestBuild("CI-PLAN", "main", null) } returns ToolResult.success(
-            data = makeBuildResultData(99, "Successful", emptyList(), "CI-PLAN"),
+    fun `detectDockerTag(chainKey) returns noTagInLog when pattern not found`() = runTest {
+        coEvery { bambooService.getLatestBuild("CI-PLAN523") } returns ToolResult.success(
+            data = makeBuildResultData(99, "Successful", emptyList(), "CI-PLAN523"),
             summary = "build found"
         )
-        coEvery { bambooService.getBuildLog("CI-PLAN-99") } returns ToolResult.success(
+        coEvery { bambooService.getBuildLog("CI-PLAN523-99") } returns ToolResult.success(
             data = "Building...\nTests passed.\nDone.",
             summary = "log fetched"
         )
 
-        val result = service.detectDockerTag("CI-PLAN", "main")
+        val result = service.detectDockerTag("CI-PLAN523")
 
         assertFalse(result.detected)
         assertNull(result.tag)
-        assertTrue(result.reason.contains("CI-PLAN-99"))
+        assertTrue(result.reason.contains("CI-PLAN523-99"))
+    }
+
+    @Test
+    fun `detectDockerTag(chainKey) returns logFetchFailed when getBuildLog errors`() = runTest {
+        coEvery { bambooService.getLatestBuild("CI-PLAN523") } returns ToolResult.success(
+            data = makeBuildResultData(77, "Successful", emptyList(), "CI-PLAN523"),
+            summary = "build found"
+        )
+        coEvery { bambooService.getBuildLog("CI-PLAN523-77") } returns ToolResult(
+            data = "",
+            summary = "timeout fetching log",
+            isError = true
+        )
+
+        val result = service.detectDockerTag("CI-PLAN523")
+
+        assertFalse(result.detected)
+        assertNull(result.tag)
+        // reason should reference the result key
+        assertTrue(result.reason.contains("CI-PLAN523-77"))
+    }
+
+    @Test
+    fun `detectDockerTag(chainKey) returns noBuild when getLatestBuild errors`() = runTest {
+        coEvery { bambooService.getLatestBuild("CI-PLAN523") } returns ToolResult(
+            data = BuildResultData(planKey = "CI-PLAN523", buildNumber = 0, state = "ERROR", durationSeconds = 0),
+            summary = "no build found",
+            isError = true
+        )
+
+        val result = service.detectDockerTag("CI-PLAN523")
+
+        assertFalse(result.detected)
+        assertNull(result.tag)
+    }
+
+    @Test
+    fun `detectDockerTag(chainKey) cache hit short-circuits API call`() = runTest {
+        // Pre-populate the cache with a SUCCESS event
+        val cache = com.workflow.orchestrator.core.services.BuildLogCache()
+        val cachedEvent = com.workflow.orchestrator.core.events.WorkflowEvent.BuildLogReady(
+            planKey = "CI-PLAN523",
+            buildNumber = 55,
+            resultKey = "CI-PLAN523-55",
+            status = com.workflow.orchestrator.core.events.WorkflowEvent.BuildEventStatus.SUCCESS,
+            logText = "Unique Docker Tag : cached-feature-tag\nDone.",
+            chainKey = "CI-PLAN523",
+        )
+        cache.put(cachedEvent)
+
+        // Service with cache injected — bambooService is NOT called
+        val serviceWithCache = TagBuilderService(bambooService, buildLogCache = cache)
+
+        val result = serviceWithCache.detectDockerTag("CI-PLAN523")
+
+        assertTrue(result.detected)
+        assertEquals("cached-feature-tag", result.tag)
+        assertEquals("CI-PLAN523-55", result.buildKey)
+        // Verify bambooService was never called (mockk will throw if unstubbed calls are made)
+    }
+
+    @Test
+    fun `detectDockerTag(chainKey) cache hit with FAILED build returns buildFailed`() = runTest {
+        val cache = com.workflow.orchestrator.core.services.BuildLogCache()
+        val failedEvent = com.workflow.orchestrator.core.events.WorkflowEvent.BuildLogReady(
+            planKey = "CI-PLAN523",
+            buildNumber = 60,
+            resultKey = "CI-PLAN523-60",
+            status = com.workflow.orchestrator.core.events.WorkflowEvent.BuildEventStatus.FAILED,
+            logText = "",
+            chainKey = "CI-PLAN523",
+        )
+        cache.put(failedEvent)
+
+        val serviceWithCache = TagBuilderService(bambooService, buildLogCache = cache)
+
+        val result = serviceWithCache.detectDockerTag("CI-PLAN523")
+
+        assertFalse(result.detected)
+        assertNull(result.tag)
+        assertTrue(result.reason.startsWith("CI build failed"))
     }
 
     @Test
@@ -330,7 +399,7 @@ class TagBuilderServiceTest {
             makeBuildResultData(847, "Successful", listOf("Successful", "Successful")),
             makeBuildResultData(848, "Successful", listOf("Successful", "Successful"))
         )
-        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult.success(
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = builds,
             summary = "2 builds"
         )
@@ -356,7 +425,7 @@ class TagBuilderServiceTest {
     fun `A-P2-2 four-segment Maven-style version still counts as release`() = runTest {
         // "1.2.3.4" is the Maven-style 4-segment release form — kept eligible.
         val builds = listOf(makeBuildResultData(900, "Successful", listOf("Successful")))
-        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult.success(
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = builds,
             summary = "1 build"
         )
@@ -377,7 +446,7 @@ class TagBuilderServiceTest {
         // 12 builds total; only every other build has dockerTagsAsJson, so the
         // walker must pull the full 12 to accumulate 6 parseable results.
         val builds = (1..12).map { makeBuildResultData(it, "Successful", listOf("Successful")) }
-        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 12, null, null) } returns ToolResult.success(
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 12) } returns ToolResult.success(
             data = builds,
             summary = "12 builds"
         )
@@ -415,7 +484,7 @@ class TagBuilderServiceTest {
         // means we should stop after walking 3 builds and never request
         // variables for #4-#10.
         val builds = (1..10).map { makeBuildResultData(it, "Successful", listOf("Successful")) }
-        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult.success(
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = builds,
             summary = "10 builds"
         )
@@ -499,7 +568,7 @@ class TagBuilderServiceTest {
             makeBuildResultData(848, "Successful", listOf("Successful", "Successful")),
             makeBuildResultData(846, "Successful", listOf("Successful", "Successful"))
         )
-        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10, null, null) } returns ToolResult.success(
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = runs,
             summary = "3 builds"
         )

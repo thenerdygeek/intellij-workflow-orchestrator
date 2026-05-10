@@ -21,6 +21,7 @@ class WorkflowEventMirrorTest {
 
     @AfterEach fun teardown() {
         unmockkObject(LatestBuildLookup.Companion)
+        unmockkObject(ChainKeyResolver.Companion)
         unmockkObject(OpenPrLister.Companion)
     }
 
@@ -35,6 +36,9 @@ class WorkflowEventMirrorTest {
 
         mockkObject(LatestBuildLookup.Companion)
         every { LatestBuildLookup.getInstance() } returns null
+
+        mockkObject(ChainKeyResolver.Companion)
+        every { ChainKeyResolver.getInstance() } returns null
 
         mockkObject(OpenPrLister.Companion)
         every { OpenPrLister.getInstance() } returns null
