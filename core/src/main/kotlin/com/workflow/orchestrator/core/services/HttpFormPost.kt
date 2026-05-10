@@ -87,3 +87,115 @@ suspend fun postForm(
         ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach server: ${e.message}", e)
     }
 }
+
+/**
+ * Form-encoded POST that does NOT follow redirects, intended for Bamboo Struts
+ * action endpoints that return 302 on success.
+ *
+ * **Why a separate helper.** Bamboo's Struts action endpoints (e.g.
+ * `/build/admin/ajax/runChainAction.action`) return a 302 redirect to the build
+ * dashboard on success. When OkHttp follows that redirect (its default behaviour),
+ * it lands on a 200 HTML page whose `Content-Type: text/html` body triggers
+ * [looksLikeAuthRedirect] — correctly for genuine auth-expiry redirects to
+ * `/login`, but incorrectly for this normal Struts success flow. Disabling
+ * redirect-following for just this path breaks the false-positive chain without
+ * touching [postForm]'s semantics for all other callers.
+ *
+ * **Auth-redirect detection.** With `followRedirects(false)`, a genuine auth
+ * redirect surfaces as a 302 with a `Location` pointing to a login path. This
+ * helper inspects the `Location` header for typical Atlassian login path tokens
+ * (`/login`, `permissionViolation`, `usernotloggedin`) and maps those to
+ * [ErrorType.AUTH_REDIRECT]. Any other 302/303 is treated as success.
+ *
+ * **Other status codes.** 200 is success; 401/403/404/429 map to the canonical
+ * error types (same as [postForm]); anything else is [ErrorType.SERVER_ERROR].
+ *
+ * **Thread safety.** Runs on [Dispatchers.IO]. The no-redirect client variant is
+ * constructed per-call via `client.newBuilder()` — cheap because OkHttp reuses
+ * the underlying connection pool and dispatcher from the parent client.
+ *
+ * @param client the per-service client (auth/retry interceptors apply).
+ * @param url the absolute action endpoint URL.
+ * @param formFields key/value pairs for the form body.
+ * @param extraHeaders optional additional headers.
+ */
+suspend fun postFormNoRedirect(
+    client: OkHttpClient,
+    url: String,
+    formFields: Map<String, String>,
+    extraHeaders: Map<String, String> = emptyMap()
+): ApiResult<String> = withContext(Dispatchers.IO) {
+    try {
+        val bodyBuilder = FormBody.Builder()
+        for ((k, v) in formFields) bodyBuilder.add(k, v)
+        val body = bodyBuilder.build()
+
+        val requestBuilder = Request.Builder()
+            .url(url)
+            .post(body)
+            .header("X-Atlassian-Token", "no-check")
+            .header("Accept", "application/json")
+        for ((k, v) in extraHeaders) requestBuilder.header(k, v)
+
+        // Disable redirect-following so the caller sees the raw 302/303 from the
+        // Struts action endpoint rather than the followed HTML dashboard page.
+        val noRedirectClient = client.newBuilder().followRedirects(false).build()
+        val response = noRedirectClient.newCall(requestBuilder.build()).execute()
+        response.use {
+            val bodyStr = it.body?.string().orEmpty()
+            when {
+                // 200 success — still guard against HTML (genuine session expiry
+                // can produce 200 with login HTML when the session cookie expired
+                // between calls, even on endpoints that normally return JSON).
+                isSuccess(it.code) -> {
+                    if (looksLikeAuthRedirect(it.headers)) {
+                        ApiResult.Error(
+                            ErrorType.AUTH_REDIRECT,
+                            "Server returned HTML — your session may have expired. Re-authenticate in Settings."
+                        )
+                    } else {
+                        ApiResult.Success(bodyStr)
+                    }
+                }
+                // 302/303 — normal Struts-action success. Distinguish by Location.
+                it.code == 302 || it.code == 303 -> {
+                    val location = it.header("Location").orEmpty()
+                    if (isAuthRedirectLocation(location)) {
+                        ApiResult.Error(
+                            ErrorType.AUTH_REDIRECT,
+                            "Redirected to login — your session may have expired. Re-authenticate in Settings."
+                        )
+                    } else {
+                        // Non-auth redirect = Struts success; body is irrelevant.
+                        ApiResult.Success(bodyStr)
+                    }
+                }
+                it.code == 401 -> ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid token")
+                it.code == 403 -> ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient permissions")
+                it.code == 404 -> ApiResult.Error(ErrorType.NOT_FOUND, "Resource not found")
+                it.code == 429 -> ApiResult.Error(ErrorType.RATE_LIMITED, "Rate limit exceeded")
+                else -> ApiResult.Error(ErrorType.SERVER_ERROR, "Server returned ${it.code}: ${bodyStr.take(200)}")
+            }
+        }
+    } catch (e: IOException) {
+        ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach server: ${e.message}", e)
+    }
+}
+
+/**
+ * Returns true if [location] looks like an Atlassian login redirect.
+ *
+ * Typical Atlassian session-expiry redirect locations:
+ *  - `https://bamboo.example.com/userlogin.action?...`
+ *  - `https://bamboo.example.com/login.jsp?permissionViolation=true`
+ *  - `...?usernotloggedin=true`
+ *  - `...?os_destination=...`
+ */
+private fun isAuthRedirectLocation(location: String): Boolean {
+    if (location.isBlank()) return false
+    val lower = location.lowercase()
+    return lower.contains("/login") ||
+        lower.contains("userlogin") ||
+        lower.contains("permissionviolation") ||
+        lower.contains("usernotloggedin")
+}

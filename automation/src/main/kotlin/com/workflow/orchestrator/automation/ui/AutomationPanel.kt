@@ -14,7 +14,9 @@ import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.automation.model.*
 import com.workflow.orchestrator.automation.service.*
+import com.workflow.orchestrator.automation.service.TriggerDefaultAction
 import com.workflow.orchestrator.bamboo.ui.ManualStageDialog
+import com.workflow.orchestrator.bamboo.ui.ManualStageDialogResult
 import com.workflow.orchestrator.bamboo.ui.TriggerMode
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
@@ -631,17 +633,18 @@ class AutomationPanel(
 
     /**
      * Builds the split-button for the header:
-     *  - Primary button: enqueue with the first stage only (fast-path for the most
-     *    common case where the user wants to run just the first stage).
+     *  - Primary button: trigger with the saved per-suite default stages.
+     *    If no default is configured, opens the customize dialog instead.
+     *    Never silently falls back to "first stage" or "all stages".
      *  - Arrow button opens a popup with:
-     *      • "Trigger Customized…" — opens ManualStageDialog(CUSTOM_STAGES) and
-     *        enqueues with the user’s stage selection.
-     *      • "Trigger All Stages" — enqueues with stages = null (run everything).
+     *      • "Trigger Customized…" — always opens ManualStageDialog(CUSTOM_STAGES),
+     *        regardless of whether a saved default exists.
+     *      • "Trigger All Stages" — enqueues with stages = null (explicit escape hatch).
      */
     private fun buildTriggerSplitButton(): JPanel {
-        val mainBtn = JButton("Run").apply {
-            toolTipText = "Enqueue build with first stage only"
-            addActionListener { onEnqueueFirstStage() }
+        val mainBtn = JButton("Trigger").apply {
+            toolTipText = "Trigger with saved default stages (opens dialog if no default configured)"
+            addActionListener { onTriggerDefault() }
         }
 
         val arrowBtn = JButton("\u25BE").apply {  // \u25BE (small downward triangle)
@@ -669,37 +672,72 @@ class AutomationPanel(
     }
 
     /**
-     * Primary split-button click: enqueue with only the first stage.
-     * Looks up the first stage name from the suite’s latest build stages.
-     * Falls back to null (all stages) if stage list is empty or unavailable.
+     * Primary split-button click (H2): enqueue with the saved per-suite default stages.
+     *
+     * Delegates the async stage-fetch + stale-filter decision to [resolveTriggerDefaultAction]
+     * (a standalone testable function) then acts on the returned [TriggerDefaultAction]:
+     *
+     * - [TriggerDefaultAction.EnqueueWith] — enqueue immediately with the filtered saved stages.
+     * - [TriggerDefaultAction.OpenCustomizeDialog] — no default (or stale default emptied by
+     *   filter); open the customize dialog so the user makes an explicit choice.
+     * - [TriggerDefaultAction.FetchError] — plan-stage fetch failed; surface the error and do
+     *   NOT trigger anything. No silent fallback to "all stages" or "first stage".
      */
-    private fun onEnqueueFirstStage() {
+    private fun onTriggerDefault() {
         if (currentSuitePlanKey.isBlank()) return
+        val suitePlanKey = currentSuitePlanKey
+
         scope.launch {
-            val stagesResult = bambooService.getLatestBuild(currentSuitePlanKey)
-            val firstStage = stagesResult.data?.stages?.firstOrNull()?.name
-            val selectedStages: Set<String>? = if (firstStage != null) setOf(firstStage) else null
+            val action = resolveTriggerDefaultAction(
+                suitePlanKey = suitePlanKey,
+                bambooService = bambooService,
+                automationSettings = AutomationSettingsService.getInstance()
+            )
+
             invokeLater {
-                enqueueWith(selectedStages)
+                when (action) {
+                    is TriggerDefaultAction.EnqueueWith -> {
+                        log.info("[Automation:UI] onTriggerDefault: using saved default stages=${action.stages} for $suitePlanKey")
+                        enqueueWith(action.stages)
+                    }
+                    is TriggerDefaultAction.OpenCustomizeDialog -> {
+                        log.info("[Automation:UI] onTriggerDefault: no (or stale) saved default for $suitePlanKey — opening customize dialog")
+                        onTriggerCustomized()
+                    }
+                    is TriggerDefaultAction.FetchError -> {
+                        log.warn("[Automation:UI] onTriggerDefault: stage fetch failed for $suitePlanKey — ${action.errorMessage}")
+                        statusLabel.text = "✗ Could not load plan stages: ${action.errorMessage}"
+                        statusLabel.foreground = com.workflow.orchestrator.core.ui.StatusColors.ERROR
+                    }
+                }
             }
         }
     }
 
     /**
      * "Trigger Customized…" popup action: open ManualStageDialog in CUSTOM_STAGES mode,
-     * then enqueue with whatever stages the user checked.
+     * then enqueue with whatever stages the user checked. If the user checked
+     * "Save as default for this suite", persists the selection before enqueueing.
      */
     private fun onTriggerCustomized() {
         if (currentSuitePlanKey.isBlank()) return
+        val automationSettings = AutomationSettingsService.getInstance()
+        val savedDefault = automationSettings.getSuiteDefaultStages(currentSuitePlanKey, currentPlanStages = null)
         val dialog = ManualStageDialog(
             project = project,
             planKey = currentSuitePlanKey,
             scope = scope,
-            triggerMode = TriggerMode.CUSTOM_STAGES
+            triggerMode = TriggerMode.CUSTOM_STAGES,
+            savedDefaultStages = savedDefault
         )
         if (dialog.showAndGet()) {
-            val selectedStages = dialog.getSelectedStages()
-            enqueueWith(if (selectedStages.isEmpty()) null else selectedStages)
+            val result = dialog.getResult()
+            if (result.saveAsDefault) {
+                automationSettings.setSuiteDefaultStages(currentSuitePlanKey, result.selectedStages)
+                log.info("[Automation:UI] Saved default stages for $currentSuitePlanKey: ${result.selectedStages}")
+            }
+            val stages = result.selectedStages
+            enqueueWith(if (stages.isEmpty()) null else stages)
         }
     }
 

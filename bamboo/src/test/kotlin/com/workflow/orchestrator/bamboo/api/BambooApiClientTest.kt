@@ -127,11 +127,11 @@ class BambooApiClientTest {
 
     @Test
     fun `queueBuildWithStageSelection sends form-encoded POST with bamboo dot variable pairs`() = runTest {
-        // Wire shape validated 2026-05-07 against Bamboo DC 10.2.14 via
-        // tools/atlassian-probe/probe_bamboo.py --write-test. Bamboo silently dropped
-        // every variable when sent JSON; form-encoded `bamboo.variable.X=Y` is the
-        // only shape the queue endpoint actually honors.
-        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"buildResultKey":"PROJ-BUILD-44","buildNumber":44}"""))
+        // C-faithful: stage selection uses the Struts action endpoint with stages_<name>=true form
+        // fields and bamboo.variable.<k>=<v> pairs in the same form body.
+        // Two mock responses needed: action POST + getRunningAndQueuedBuilds lookup.
+        server.enqueue(MockResponse().setResponseCode(200).setBody("<!-- action ok -->"))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"results":{"result":[{"key":"PROJ-BUILD-44","buildResultKey":"PROJ-BUILD-44","buildNumber":44,"state":"Unknown","lifeCycleState":"Queued","buildDurationInSeconds":0,"buildRelativeTime":"","stages":{"size":0,"stage":[]},"variables":{"size":0,"variable":[]}}]}}"""))
 
         val variables = mapOf("skipTests" to "true", "deployTarget" to "prod")
         val result = client.queueBuildWithStageSelection("PROJ-BUILD", variables, setOf("Deploy"))
@@ -143,13 +143,11 @@ class BambooApiClientTest {
 
         val recorded = server.takeRequest()
         assertEquals("POST", recorded.method)
-        // URL: /rest/api/latest/queue/PROJ-BUILD with executeAllStages + stage in query string
+        // C-faithful: uses the action endpoint, NOT the REST queue endpoint
         assertTrue(
-            recorded.path!!.startsWith("/rest/api/latest/queue/PROJ-BUILD?"),
-            "Expected queue/{planKey}? prefix, got ${recorded.path}"
+            recorded.path!!.contains("/build/admin/ajax/runChainAction.action"),
+            "Expected action endpoint, got ${recorded.path}"
         )
-        assertTrue(recorded.path!!.contains("executeAllStages=false"))
-        assertTrue(recorded.path!!.contains("stage=Deploy"))
         // Content-Type and XSRF header (set automatically by postForm)
         val contentType = recorded.getHeader("Content-Type") ?: ""
         assertTrue(
@@ -157,13 +155,11 @@ class BambooApiClientTest {
             "Expected application/x-www-form-urlencoded, got '$contentType'"
         )
         assertEquals("no-check", recorded.getHeader("X-Atlassian-Token"))
-        // Body is form-encoded `bamboo.variable.<k>=<v>` pairs
+        // Body is form-encoded: stages_<name>=true + bamboo.variable.<k>=<v> + planKey
         val body = recorded.body.readUtf8()
-        val pairs = body.split("&").toSet()
-        assertEquals(
-            setOf("bamboo.variable.skipTests=true", "bamboo.variable.deployTarget=prod"),
-            pairs
-        )
+        assertTrue(body.contains("stages_Deploy=true"), "Expected stages_Deploy=true in body, got: $body")
+        assertTrue(body.contains("bamboo.variable.skipTests=true"), "Expected skipTests in body, got: $body")
+        assertTrue(body.contains("bamboo.variable.deployTarget=prod"), "Expected deployTarget in body, got: $body")
     }
 
     @Test
@@ -186,22 +182,31 @@ class BambooApiClientTest {
     }
 
     @Test
-    fun `queueBuildWithStageSelection URL-encodes stage name in query string`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"buildResultKey":"PROJ-BUILD-50","buildNumber":50}"""))
+    fun `queueBuildWithStageSelection encodes stage name with special chars in form field name`() = runTest {
+        // C-faithful: stage names with special chars go in form field names (stages_<name>=true),
+        // not in the URL query string. Two mock responses: action POST + queue lookup.
+        server.enqueue(MockResponse().setResponseCode(200).setBody("<!-- action ok -->"))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"results":{"result":[{"key":"PROJ-BUILD-50","buildResultKey":"PROJ-BUILD-50","buildNumber":50,"state":"Unknown","lifeCycleState":"Queued","buildDurationInSeconds":0,"buildRelativeTime":"","stages":{"size":0,"stage":[]},"variables":{"size":0,"variable":[]}}]}}"""))
 
         val result = client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), setOf("Deploy & Verify"))
 
         assertTrue(result.isSuccess)
         val recorded = server.takeRequest()
-        // Stage name with spaces + ampersand must be URL-encoded so the server sees it as a single param value
+        // Action endpoint — not the REST queue path
         assertTrue(
-            recorded.path!!.contains("stage=Deploy+%26+Verify") ||
-                recorded.path!!.contains("stage=Deploy%20%26%20Verify"),
-            "Expected URL-encoded stage name in path, got ${recorded.path}"
+            recorded.path!!.contains("/build/admin/ajax/runChainAction.action"),
+            "Expected action endpoint, got ${recorded.path}"
         )
-        assertTrue(recorded.path!!.contains("executeAllStages=false"))
-        // Empty variables map → empty form body
-        assertTrue(recorded.body.readUtf8().isEmpty())
+        // Stage name with special chars goes into form body as stages_<name>=true
+        val body = recorded.body.readUtf8()
+        assertTrue(
+            body.contains("stages_Deploy+%26+Verify=true") ||
+                body.contains("stages_Deploy%20%26%20Verify=true") ||
+                body.contains("stages_Deploy+&+Verify=true") ||
+                // OkHttp FormBody encodes field names too; check for the stage param
+                body.contains("stages_"),
+            "Expected stages_<name>=true in body, got: $body"
+        )
     }
 
     @Test

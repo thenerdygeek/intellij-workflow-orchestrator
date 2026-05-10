@@ -29,9 +29,10 @@ import javax.swing.JPanel
  * - [FULL_BUILD] — trigger the full plan (all stages). Legacy escape hatch;
  *   most callers should use [CUSTOM_STAGES] or the split-button on the Automation tab.
  * - [CUSTOM_STAGES] — show a checkbox list of all plan stages, let the user pick one
- *   or more. Pre-checks the first stage (Bamboo UI default). OK button disabled when
- *   nothing is selected. On confirm, the selected stage names are returned via
- *   [ManualStageDialog.getSelectedStages].
+ *   or more. Pre-checks: saved default if any; else first stage; else nothing.
+ *   OK button disabled when nothing is selected or stage load failed.
+ *   On confirm, the selected stage names + optional "save as default" flag are returned
+ *   via [ManualStageDialog.getResult].
  */
 enum class TriggerMode {
     STAGE,
@@ -41,20 +42,34 @@ enum class TriggerMode {
 }
 
 /**
+ * Result returned by [ManualStageDialog.getResult] in [TriggerMode.CUSTOM_STAGES] mode.
+ *
+ * @param selectedStages the set of stage names the user checked.
+ * @param saveAsDefault true if the "Save as default for this suite" checkbox was checked.
+ */
+data class ManualStageDialogResult(
+    val selectedStages: Set<String>,
+    val saveAsDefault: Boolean
+)
+
+/**
  * Dialog for triggering a Bamboo build stage or full build, with optional
  * variable overrides and (in [TriggerMode.CUSTOM_STAGES] mode) stage selection.
  *
- * In CUSTOM_STAGES mode, the caller is responsible for reading [getSelectedStages]
- * after `show()` returns and using those names to construct a trigger call.
+ * In CUSTOM_STAGES mode, the caller reads [getResult] after `showAndGet()` returns.
  * The dialog itself does NOT call [BambooService.triggerBuild] in CUSTOM_STAGES mode
- * — it only collects the selection.
+ * — it only collects the selection + the "Save as default" preference.
+ *
+ * @param savedDefaultStages when non-null, used to pre-check the matching stage
+ *   checkboxes. When null, falls back to pre-checking the first stage.
  */
 class ManualStageDialog(
     private val project: Project,
     private val planKey: String,
     private val stageName: String = "",
     private val scope: CoroutineScope,
-    private val triggerMode: TriggerMode = TriggerMode.STAGE
+    private val triggerMode: TriggerMode = TriggerMode.STAGE,
+    private val savedDefaultStages: Set<String>? = null
 ) : DialogWrapper(project) {
 
     private val log = Logger.getInstance(ManualStageDialog::class.java)
@@ -69,6 +84,8 @@ class ManualStageDialog(
     private var stageLoadError: String? = null
     // Whether stage loading is in progress (CUSTOM_STAGES only).
     private var isLoadingStages = triggerMode == TriggerMode.CUSTOM_STAGES
+    // CUSTOM_STAGES: "Save as default for this suite" checkbox.
+    private var saveAsDefaultCheckbox: JBCheckBox? = null
 
     init {
         title = when (triggerMode) {
@@ -96,13 +113,19 @@ class ManualStageDialog(
 
             if (triggerMode == TriggerMode.CUSTOM_STAGES) {
                 // Fetch stages from the latest build result for this plan.
+                // H6: on load failure, show banner and disable OK — no silent "run all".
                 val stagesResult = bambooService.getLatestBuild(planKey)
                 isLoadingStages = false
                 if (!stagesResult.isError && stagesResult.data != null) {
                     val stageNames = stagesResult.data!!.stages.map { it.name }
                     if (stageNames.isNotEmpty()) {
-                        stageCheckboxes = stageNames.mapIndexed { idx, name ->
-                            val cb = JBCheckBox(name, idx == 0) // first stage pre-checked
+                        stageCheckboxes = stageNames.map { name ->
+                            // Pre-check logic (H6): saved default if any; else first stage; else nothing.
+                            val preChecked = when {
+                                savedDefaultStages != null -> name in savedDefaultStages
+                                else -> name == stageNames.first()
+                            }
+                            val cb = JBCheckBox(name, preChecked)
                             cb.addActionListener { updateOkButton() }
                             name to cb
                         }
@@ -111,8 +134,9 @@ class ManualStageDialog(
                             "Trigger a full build first so Bamboo records the stage list."
                     }
                 } else {
-                    stageLoadError = "Could not load stage list: ${stagesResult.summary}. " +
-                        "Check Bamboo connection in Settings."
+                    // H6: stage load failure — banner + OK stays disabled. Never silently runs all.
+                    stageLoadError = "Couldn't load stages from Bamboo: ${stagesResult.summary}. " +
+                        "Refresh, or cancel."
                 }
             }
 
@@ -124,13 +148,25 @@ class ManualStageDialog(
         }
     }
 
-    /** Returns the set of stage names the user checked. Only meaningful in CUSTOM_STAGES mode. */
-    fun getSelectedStages(): Set<String> =
-        stageCheckboxes
+    /**
+     * Returns the set of stage names the user checked. Only meaningful in CUSTOM_STAGES mode.
+     * @deprecated Use [getResult] which also returns the "save as default" flag.
+     */
+    fun getSelectedStages(): Set<String> = getResult().selectedStages
+
+    /**
+     * Returns the full dialog result after the user clicked OK.
+     * Only meaningful in [TriggerMode.CUSTOM_STAGES] mode.
+     */
+    fun getResult(): ManualStageDialogResult {
+        val stages = stageCheckboxes
             ?.filter { (_, cb) -> cb.isSelected }
             ?.map { (name, _) -> name }
             ?.toSet()
             ?: emptySet()
+        val save = saveAsDefaultCheckbox?.isSelected ?: false
+        return ManualStageDialogResult(selectedStages = stages, saveAsDefault = save)
+    }
 
     private fun updateOkButton() {
         if (triggerMode != TriggerMode.CUSTOM_STAGES) return
@@ -167,6 +203,24 @@ class ManualStageDialog(
 
         // Variable editors section.
         outer.add(buildVariablesSection())
+
+        // H5: "Save as default" checkbox — only in CUSTOM_STAGES mode, below variables.
+        if (triggerMode == TriggerMode.CUSTOM_STAGES) {
+            val currentSelection = stageCheckboxes
+                ?.filter { (_, cb) -> cb.isSelected }
+                ?.map { (name, _) -> name }
+                ?.toSet()
+                ?: emptySet()
+            // Pre-check if the current selection exactly matches the saved default.
+            val preChecked = savedDefaultStages != null && currentSelection == savedDefaultStages
+            val cb = JBCheckBox("Save as default for this suite", preChecked)
+            saveAsDefaultCheckbox = cb
+            val cbPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+                border = JBUI.Borders.emptyTop(8)
+                add(cb)
+            }
+            outer.add(cbPanel)
+        }
 
         return outer
     }

@@ -85,6 +85,8 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
     data class SuiteRow(
         val displayNameField: JBTextField,
         val planKeyField: JBTextField,
+        /** Comma-separated default stage names for this suite (H4). Empty = no default. */
+        val defaultStagesField: JBTextField,
         val panel: JPanel
     )
 
@@ -356,9 +358,18 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
     }
 
     private fun addSuiteRow(displayName: String, planKey: String) {
+        val automationSettings = AutomationSettingsService.getInstance()
+        val existingSavedStages = automationSettings.getSuiteConfig(planKey)
+            ?.defaultStages
+            ?.joinToString(", ")
+            .orEmpty()
+        addSuiteRowWithStages(displayName, planKey, existingSavedStages)
+    }
+
+    private fun addSuiteRowWithStages(displayName: String, planKey: String, defaultStagesText: String) {
         val rowPanel = JPanel(GridBagLayout()).apply {
             border = JBUI.Borders.emptyBottom(4)
-            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(32))
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(56))
         }
         val gbc = GridBagConstraints().apply {
             fill = GridBagConstraints.HORIZONTAL
@@ -377,11 +388,31 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
             }
         }
 
+        // H4: Default stages field (comma-separated stage names). Empty = no default configured.
+        val defaultStagesField = JBTextField(defaultStagesText).apply {
+            emptyText.setText("Default stages (comma-separated, e.g. Build, Deploy)")
+            toolTipText = "Stage names to run by default for this suite. " +
+                "Leave blank for no default (customize dialog opens on each trigger)."
+        }
+
+        // Row 0: display name + plan key + remove
+        gbc.gridy = 0
         gbc.gridx = 0; gbc.weightx = 0.35; rowPanel.add(nameField, gbc)
         gbc.gridx = 1; gbc.weightx = 0.55; rowPanel.add(keyField, gbc)
         gbc.gridx = 2; gbc.weightx = 0.0; rowPanel.add(removeButton, gbc)
 
-        suiteRows.add(SuiteRow(nameField, keyField, rowPanel))
+        // Row 1: default stages label + field (full width minus remove button)
+        gbc.gridy = 1
+        gbc.gridx = 0; gbc.weightx = 0.0
+        rowPanel.add(JBLabel("Default stages:").apply {
+            font = JBUI.Fonts.smallFont()
+            foreground = StatusColors.SECONDARY_TEXT
+        }, gbc)
+        gbc.gridx = 1; gbc.weightx = 0.9; gbc.gridwidth = 1
+        rowPanel.add(defaultStagesField, gbc)
+        gbc.gridwidth = 1
+
+        suiteRows.add(SuiteRow(nameField, keyField, defaultStagesField, rowPanel))
         suitesContainer?.add(rowPanel)
         suitesContainer?.revalidate()
     }
@@ -394,9 +425,12 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
 
         // Automation suites (app-level AutomationSettingsService)
         val automationSettings = AutomationSettingsService.getInstance()
-        val currentSuites = automationSettings.getAllSuites().map { it.planKey to it.displayName }.toSet()
+        val currentSuites = automationSettings.getAllSuites().map { suite ->
+            Triple(suite.planKey, suite.displayName, suite.defaultStages?.joinToString(", ").orEmpty())
+        }.toSet()
         val editedSuites = suiteRows.filter { it.planKeyField.text.isNotBlank() }
-            .map { it.planKeyField.text to it.displayNameField.text }.toSet()
+            .map { Triple(it.planKeyField.text, it.displayNameField.text, it.defaultStagesField.text.trim()) }
+            .toSet()
         val suitesModified = currentSuites != editedSuites
 
         return dslModified || suitesModified
@@ -425,18 +459,25 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
             automationSettings.state.suites.remove(removedKey)
         }
 
-        // Update displayName for existing suites; insert minimal config for new ones
+        // Update displayName + defaultStages for existing suites; insert minimal config for new ones
         for (row in suiteRows) {
             val key = row.planKeyField.text.trim()
             val name = row.displayNameField.text.trim()
             if (key.isBlank()) continue
 
+            // Parse comma-separated default stages from H4 text field.
+            val stagesText = row.defaultStagesField.text.trim()
+            val parsedStages: MutableList<String>? = if (stagesText.isBlank()) null
+            else stagesText.split(",").map { it.trim() }.filter { it.isNotBlank() }.toMutableList()
+
             val existing = automationSettings.getSuiteConfig(key)
             if (existing != null) {
-                // Preserve variables / enabledStages / serviceNameMapping — only update display fields
+                // Preserve variables / enabledStages / serviceNameMapping / extraVariables
+                // — only update display fields and defaultStages.
                 automationSettings.saveSuiteConfig(
                     existing.copy(
                         displayName = name.ifBlank { key },
+                        defaultStages = parsedStages,
                         lastModified = System.currentTimeMillis()
                     )
                 )
@@ -444,6 +485,7 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
                 automationSettings.saveSuiteConfig(
                     AutomationSettingsService.SuiteConfig(
                         planKey = key, displayName = name.ifBlank { key },
+                        defaultStages = parsedStages,
                         lastModified = System.currentTimeMillis()
                     )
                 )
@@ -459,7 +501,8 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
         suitesContainer?.removeAll()
         val automationSettings = AutomationSettingsService.getInstance()
         for (suite in automationSettings.getAllSuites()) {
-            addSuiteRow(suite.displayName, suite.planKey)
+            val defaultStagesText = suite.defaultStages?.joinToString(", ").orEmpty()
+            addSuiteRowWithStages(suite.displayName, suite.planKey, defaultStagesText)
         }
         suitesContainer?.revalidate()
     }

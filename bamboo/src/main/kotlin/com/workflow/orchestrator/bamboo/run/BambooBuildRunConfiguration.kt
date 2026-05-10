@@ -32,7 +32,8 @@ class BambooBuildRunConfigurationOptions : RunConfigurationOptions() {
 
     /**
      * Comma-separated stage names to restrict this run to, or blank/null to run all stages.
-     * e.g., `"Build,Unit Tests"` → passes `executeAllStages=false&stage=Build` to Bamboo.
+     * e.g., `"Build,Unit Tests"` → posts `stages_Build=true&stages_Unit+Tests=true` to the
+     * Bamboo action endpoint via [BambooApiClient.queueBuildWithStageSelection] (C-faithful).
      * Stored as a plain comma-separated string for simple XML persistence.
      */
     private val _stages = string("")
