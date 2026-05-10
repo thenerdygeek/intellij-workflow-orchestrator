@@ -179,6 +179,10 @@ class HandoverPlaceholderResolverTest {
 
     @Test
     fun `pr url resolves from HandoverState prUrl`() = runTest {
+        // Phase 7 T-Handover-a: PullRequestCreated is now filtered by activeTicket.key so
+        // the context must have an activeTicket matching the event's ticketId before emitting.
+        setContext(WorkflowContext(activeTicket = TicketRef("PROJ-42", "My feature")))
+
         // Seed prUrl via PullRequestCreated event
         eventBus.emit(
             WorkflowEvent.PullRequestCreated(

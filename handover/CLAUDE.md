@@ -7,9 +7,43 @@ Spec: docs/superpowers/specs/2026-05-08-handover-tab-redesign-design.md
 ## Architecture
 
 - `JiraClosureService` — formats wiki-markup closure comments from suite results; calls `JiraService.addComment` via panel action. No project state; all Jira mutations route through `:core` `JiraService`.
-- `HandoverStateService` — tracks handover progress across panels. Subscribes to `WorkflowContextService.activeTicketFlow` (ticket changes) and `EventBus` (build/automation/PR events). Uses platform-injected `cs: CoroutineScope` (see `:core` "Service & threading conventions").
+- `HandoverStateService` — tracks handover progress across panels. Subscribes to:
+  - `WorkflowContextService.activeTicketFlow` — ticket changes; full state reset on new ticket.
+  - `WorkflowContextService.state.map { it.focusPr }.distinctUntilChanged()` — **focusPr changes** (Phase 7 T-Handover-a); resets status slices only (see below).
+  - `EventBus` — build/quality/health/automation/PR/comment events, all **PR-scope filtered** (see `isInScope()`).
+  - Uses platform-injected `cs: CoroutineScope` (see `:core` "Service & threading conventions").
 - `TimeTrackingService` — time logging with worklog dialog.
 - `CopyrightFixService` — copyright header enforcement with year consolidation (earliest-currentYear).
+
+### Phase 7 T-Handover-a: PR-scope event filtering and focus-change reset
+
+**Architecture decision — Option C (EventBus with PR-scope filtering):** `:handover` depends only on `:core` and cannot import `BuildMonitorService` (`:bamboo`) or `QueueService` (`:automation`) directly — a direct cross-module dependency violates the module-graph rule. Status hydration therefore uses the existing `EventBus` with focus-anchored scope filtering. Bridging via extension points (Option A) is deferred if needed; it is out of scope for T-Handover-a.
+
+**Focus-change reset semantics:** when `focusPr` changes (even within the same ticket), `HandoverStateService` clears all *status-derived* slices:
+
+| Slice | Reset on focusPr change? | Reason |
+|---|---|---|
+| `buildStatus` | Yes | Build is PR-specific |
+| `qualityGatePassed` | Yes | Quality gate is PR-specific |
+| `healthCheckPassed` | Yes | Health check is run-specific |
+| `suiteResults` | Yes | Suite runs are triggered per PR |
+| `prCreated` | Yes | Tracks this PR's creation |
+| `prUrl` | Yes | Tracks this PR's URL |
+| `jiraCommentPosted` | Yes | Closure comment is per-handover action |
+| `copyrightFixed` | **No** | Ticket-level action — performed once per ticket |
+| `todayWorkLogged` | **No** | Ticket-level action — performed once per ticket |
+| `jiraTransitioned` | **No** | Ticket-level action — performed once per ticket |
+
+**PR-scope filter (`isInScope()`):** applied before every `handleEvent` call. Filtering rules:
+
+| Event | Filter key |
+|---|---|
+| `BuildFinished` | `event.planKey == focusBuild.planKey` — branch-level match not possible (no branch field in event) |
+| `QualityGateResult` | `event.projectKey == focusQualityScope.sonarProjectKey` |
+| `PullRequestCreated` | `event.ticketId == activeTicket.key` |
+| `JiraCommentPosted` | `event.ticketId == activeTicket.key` |
+| `HealthCheckFinished` | always accepted — no key in payload |
+| `AutomationTriggered` / `AutomationFinished` | always accepted — no direct chainKey link to `focusBuild` (limitation; see queue item #3 in phase7-handover-context-plan.md) |
 
 All `@Service(Service.Level.PROJECT)` classes have a `(Project)` IntelliJ-DI constructor and a no-arg constructor annotated `@TestOnly`. Production DI never picks the no-arg form; tests use it to avoid spinning up a `BasePlatformTestCase` for pure-logic assertions.
 

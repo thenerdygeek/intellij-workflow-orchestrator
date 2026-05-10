@@ -5,6 +5,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.model.workflow.PrRef
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import com.workflow.orchestrator.handover.model.BuildSummary
@@ -14,6 +15,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Instant
 
@@ -75,9 +80,98 @@ class HandoverStateService {
                 resetForNewTicket(ticket?.key.orEmpty(), ticket?.summary.orEmpty())
             }
         }
+
+        // Phase 7 T-Handover-a: reset status slices when focusPr changes, even within the
+        // same ticket. Switching focused PR means stale build/quality/suite data no longer
+        // applies. The user-actioned slices (copyrightFixed, todayWorkLogged, jiraTransitioned)
+        // are ticket-level, not PR-level, so they are preserved through focus changes.
+        // See docs/architecture/phase7-handover-context-plan.md §5.4 and §T-Handover-a.
+        cs.launch {
+            workflowService.state
+                .map { it.focusPr }
+                .distinctUntilChanged()
+                .drop(1) // skip initial value; ticket-reset / boot already covers it
+                .collect { newFocusPr ->
+                    log.info("[Handover:State] focusPr changed to ${newFocusPr?.prId ?: "<cleared>"} — resetting status slices")
+                    resetStatusSlices()
+                }
+        }
+    }
+
+    /**
+     * Resets only the status-derived slices of [HandoverState] when [WorkflowContextService.state]'s
+     * [focusPr] changes. Ticket-level user-actioned slices ([HandoverState.copyrightFixed],
+     * [HandoverState.todayWorkLogged], [HandoverState.jiraTransitioned]) are preserved because they
+     * are bound to the active ticket, not to a specific PR.
+     *
+     * Design decision (T-Handover-a): copyrightFixed / todayWorkLogged / jiraTransitioned are NOT
+     * cleared on PR focus change — copyright fix and time log are ticket-level actions a developer
+     * performs once per ticket regardless of how many PRs are in flight. Clearing them on every
+     * focus switch would cause spurious "action needed" dots every time the user switches tabs.
+     */
+    private fun resetStatusSlices() {
+        _stateFlow.update { current ->
+            current.copy(
+                buildStatus = null,
+                qualityGatePassed = null,
+                healthCheckPassed = null,
+                suiteResults = emptyList(),
+                prCreated = false,
+                prUrl = null,
+                jiraCommentPosted = false,
+            )
+        }
+    }
+
+    /**
+     * PR-scope filter for event handlers.
+     *
+     * Architecture decision (T-Handover-a, Option C): `:handover` depends only on `:core` and
+     * therefore cannot import `BuildMonitorService` (`:bamboo`) or `QueueService` (`:automation`)
+     * directly. A direct cross-module dependency would violate the module-graph rule. Instead,
+     * status hydration uses the existing `EventBus` with PR-scoped filtering anchored to
+     * `WorkflowContextService.state.value` (the focus snapshot). This is structurally correct for
+     * this task; bridging via EPs is deferred to a future task if needed.
+     *
+     * Filtering rules:
+     * - [WorkflowEvent.BuildFinished]: match `event.planKey` == `focusBuild.planKey`. Branch-level
+     *   match is not possible because `BuildFinished` carries no branch field (limitation noted in
+     *   the queue).
+     * - [WorkflowEvent.QualityGateResult]: match `event.projectKey` == `focusQualityScope.sonarProjectKey`.
+     * - [WorkflowEvent.PullRequestCreated], [WorkflowEvent.JiraCommentPosted]: match `event.ticketId`
+     *   == `activeTicket.key`.
+     * - [WorkflowEvent.HealthCheckFinished]: always in-scope — no key in payload.
+     * - [WorkflowEvent.AutomationTriggered] / [WorkflowEvent.AutomationFinished]: always in-scope for
+     *   now — automation suites are separate Bamboo plans with no direct chainKey link to `focusBuild`.
+     *   This is a known limitation; see queue item in phase7-handover-context-plan.md.
+     */
+    private fun isInScope(event: WorkflowEvent): Boolean {
+        val ctx = workflowService.state.value
+        return when (event) {
+            is WorkflowEvent.BuildFinished ->
+                ctx.focusBuild?.planKey == event.planKey
+
+            is WorkflowEvent.QualityGateResult ->
+                ctx.focusQualityScope?.sonarProjectKey == event.projectKey
+
+            is WorkflowEvent.PullRequestCreated ->
+                ctx.activeTicket?.key == event.ticketId
+
+            is WorkflowEvent.JiraCommentPosted ->
+                ctx.activeTicket?.key == event.ticketId
+
+            // HealthCheckFinished, AutomationTriggered, AutomationFinished — unfiltered.
+            // HealthCheckFinished has no key in payload.
+            // Automation events lack a direct focusBuild.chainKey link (tracked in queue).
+            else -> true
+        }
     }
 
     private fun handleEvent(event: WorkflowEvent) {
+        if (!isInScope(event)) {
+            log.debug("[Handover:State] Event out of scope, skipping: ${event::class.simpleName}")
+            return
+        }
         log.debug("[Handover:State] Handling event: ${event::class.simpleName}")
         val current = _stateFlow.value
         val next = when (event) {

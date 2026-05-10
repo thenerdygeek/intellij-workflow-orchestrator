@@ -3,13 +3,14 @@ package com.workflow.orchestrator.handover.service
 import app.cash.turbine.test
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.model.workflow.BuildRef
+import com.workflow.orchestrator.core.model.workflow.QualityScope
 import com.workflow.orchestrator.core.model.workflow.TicketRef
 import com.workflow.orchestrator.core.model.workflow.WorkflowContext
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import com.workflow.orchestrator.handover.model.BuildSummary
 import com.workflow.orchestrator.handover.model.HandoverState
-import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
@@ -48,7 +49,24 @@ class HandoverStateServiceTest {
         val seededTicket = TicketRef("PROJ-123", "Add login feature")
         activeTicketFlow = MutableStateFlow(seededTicket)
         workflowService = mockk(relaxed = true)
-        every { workflowService.state } returns MutableStateFlow(WorkflowContext(activeTicket = seededTicket))
+        // Phase 7 T-Handover-a: seed a WorkflowContext that has focusBuild and focusQualityScope
+        // set so existing event tests remain in-scope after the isInScope() guard was added.
+        // focusBuild.planKey matches "PROJ-BUILD"; focusQualityScope.sonarProjectKey matches "proj-key".
+        val seedContext = WorkflowContext(
+            activeTicket = seededTicket,
+            focusBuild = BuildRef(
+                planKey = "PROJ-BUILD",
+                buildNumber = 41,
+                branch = "feature/PROJ-123",
+                selectedJobKey = null,
+            ),
+            focusQualityScope = QualityScope(
+                sonarProjectKey = "proj-key",
+                branchName = "feature/PROJ-123",
+                moduleKey = null,
+            ),
+        )
+        every { workflowService.state } returns MutableStateFlow(seedContext)
         every { workflowService.activeTicketFlow } returns activeTicketFlow
 
         scope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
