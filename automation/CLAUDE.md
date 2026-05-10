@@ -12,6 +12,15 @@ Tag validation flow removed — Trigger Now does not pre-validate tags against a
 - `TagHistoryService` — persists active queue entries for crash recovery (queue restart)
 - `AutomationSettingsService` — suite plan keys and configuration
 - `QueueRecoveryStartupActivity` — recovers queue state on IDE restart
+- `BaselineCacheService` — project-level cache of the last computed `BaselineLoadResult`
+  per suite plan key. In-memory `Map<String, CachedSuiteEntry>` plus on-disk JSON at
+  `~/.workflow-orchestrator/{slug}-{sha6}/automation/baseline-cache.json` (atomic
+  `.tmp` + `ATOMIC_MOVE`, coroutine `Mutex`-guarded). Tab-open reads cache for
+  instant render then reconciles with Bamboo in the background; suite-switch in
+  the dropdown does NOT trigger a scan (sticky baseline); the new Refresh button
+  in `AutomationPanel`'s status row is the cache-bust signal. Cache survives IDE
+  restart. No TTL — terminal-build data is immutable modulo stage re-runs, which
+  Refresh handles. Spec: `docs/superpowers/specs/2026-05-11-automation-baseline-cache-design.md`.
 
 ## UI
 
