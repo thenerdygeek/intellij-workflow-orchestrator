@@ -811,3 +811,45 @@ Tools: `bitbucket_pr`, `bitbucket_repo`, `bitbucket_review`. Switched to **`mode
 - **CLAUDE.md drift count: 6 instances.** Now spans `edit_file.lastEditLineRanges`, task statuses, agent tool actions, bitbucket_pr action count, bitbucket_review action count, and the missing BLOCKED status. **The CLAUDE.md audit is now a real backlog item, not a side note.**
 - **No race this batch (Sonnet sleep+commit pattern landed cleanly).**
 - **Doc length record set:** `bitbucket_pr` 982 lines is the swarm's largest single-file doc. Justified by 19 actions × per-action quality bar.
+
+---
+
+## Batch 15 — 2026-05-10 (sonar + bamboo cluster, sonnet)
+
+Tools: `sonar`, `bamboo_builds`, `bamboo_plans`. Closes the integration cluster.
+
+### `sonar` — commit `f361e4de8` — STRONG keep, 1124 lines (new record)
+
+- **🚨 CLAUDE.md drift: 18 actions actual, 13 in CLAUDE.md** (missed `issue_facets`, `current_user`, `quality_gates_list`, `hotspot_detail`, and undercounted `rule`).
+- **`local_analysis` is ~350 lines of runtime alone** — branch resolution, Maven multi-module scoping, ProcessBuilder security (token in env, never in argv), CE-task polling, parallel per-file fan-out. Uniquely irreplaceable.
+- `branch_quality_report` consolidates new-code quality in one call. Uniquely capable vs `run_command curl`.
+
+### `bamboo_builds` — commit `349c88e1a` — STRONG keep, 680 lines
+
+- **11 actions confirmed** (matches CLAUDE.md).
+- **🚨 X-Atlassian-Token + form-body requirement is the load-bearing safety value.** LLM almost always omits both when falling back to `run_command curl`, producing 403 XSRF rejection.
+- `download_artifact` silently writes to `java.io.tmpdir` when `target_path` omitted — flagged downside.
+- `stop_build` + `cancel_build` accept legacy `result_key` alias — removable param.
+- `get_artifacts` + `download_artifact` merge candidate (list-and-optionally-download in one action).
+
+### `bamboo_plans` — commit `ac75fb34d` — KEEP NORMAL, 552 lines
+
+- **🚨 CLAUDE.md drift: 10 actions actual, 8 in CLAUDE.md.**
+- **`bamboo_plans` ↔ `bamboo_builds` should NOT merge.** 21 combined actions would exceed sensible meta-tool size; keeping split saves schema cost when LLM only needs one side.
+- **`get_build_variables` is semantically wrong tool** — operates on `result_key`, belongs in `bamboo_builds`.
+- `get_plans` only used internally by `auto_detect_plan` legacy path — drop candidate.
+
+### Action items surfaced by Batch 15
+
+- [ ] **🚨 CLAUDE.md drift fixes:** `sonar` 18 actions (not 13), `bamboo_plans` 10 actions (not 8). Sweep CLAUDE.md.
+- [ ] Move `bamboo_plans.get_build_variables` to `bamboo_builds` (semantically belongs there).
+- [ ] Drop `bamboo_plans.get_plans` (only used internally) or reduce visibility.
+- [ ] Merge `bamboo_builds.get_artifacts` + `download_artifact` (list-and-optionally-download).
+- [ ] Remove legacy `result_key` alias from `bamboo_builds.stop_build` + `cancel_build`.
+
+### Cross-cutting observations from Batch 15
+
+- **Sonnet+sleep is rock-solid.** No race in 2 batches now; Sonnet quality matches Opus for these tasks; per-batch wall time is shorter.
+- **CLAUDE.md drift count: 8+ instances.** `edit_file.lastEditLineRanges`, task statuses, missing BLOCKED, agent tool 5-actions, bitbucket_pr action count, bitbucket_review action count, sonar action count, bamboo_plans action count. **The CLAUDE.md audit is now urgent.**
+- **Doc length new high:** sonar 1124 lines for 18 actions. Tracks complexity faithfully — the swarm's "match the surface area" instinct is calibrated.
+- **All 4 integration tool families now documented** (jira, bitbucket_pr/repo/review, sonar, bamboo_builds/plans). 9 integration tools, ~6800 lines of docs. Phase 5 integration coverage: ~100%.
