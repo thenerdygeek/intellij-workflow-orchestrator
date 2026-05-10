@@ -245,11 +245,6 @@
         <postStartupActivity
             implementation="com.workflow.orchestrator.core.workflow.WorkflowContextProjectActivity"/>
 
-        <!-- Build monitor — starts polling at project open so BuildLogReady events
-             flow to Automation tab without requiring the Build tab to be opened first -->
-        <postStartupActivity
-            implementation="com.workflow.orchestrator.bamboo.listeners.BuildMonitorStartupActivity"/>
-
         <!-- Bamboo→Bitbucket bridge (R-ADD-5, audit 2026-05-07): on a FAILED build,
              reverse-lookup the commit SHA to PRs and notify the user. -->
         <postStartupActivity

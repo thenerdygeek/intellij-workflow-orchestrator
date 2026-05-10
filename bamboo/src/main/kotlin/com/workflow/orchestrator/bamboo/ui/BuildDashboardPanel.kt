@@ -262,7 +262,10 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             is BuildPlanResolutionPolicy.Resolution.UseDetected -> {
                 log.info("[Build:Dashboard] Resolved branch plan '${resolution.planKey}' via BambooService.autoDetectPlan (branch='$branchName', preferredMaster='${configuredMasterKey.orEmpty()}')")
                 activePlanKey = resolution.planKey
-                monitorService.switchBranch(resolution.planKey, branchName, interval)
+                // T-B2/B3-b: polling lifecycle is fully owned by BuildMonitorService via
+                // its focusBuild subscription (T-B2/B3-a). Do NOT call switchBranch here;
+                // the focus cascade already targets the correct plan+branch. Update UI only.
+                reroutableFocusPr(branchName)
                 invokeLater {
                     hintLabel.isVisible = false
                     splitter.isVisible = true
@@ -272,7 +275,8 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             is BuildPlanResolutionPolicy.Resolution.UseConfigured -> {
                 log.info("[Build:Dashboard] Waterfall miss — falling back to configured planKey '${resolution.planKey}' (autoDetect summary: ${detection.summary})")
                 activePlanKey = resolution.planKey
-                monitorService.switchBranch(resolution.planKey, branchName, interval)
+                // T-B2/B3-b: same as UseDetected — no direct switchBranch; focus cascade drives polling.
+                reroutableFocusPr(branchName)
                 invokeLater { headerLabel.text = "Plan: ${resolution.planKey} / $branchName" }
             }
             is BuildPlanResolutionPolicy.Resolution.NoPlan -> {
@@ -549,16 +553,11 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             }
         }
 
-        // Fallback polling — only when no PR is focused. The focusPr collector below
-        // subscribes earlier and is the canonical driver when a PR exists; we wait a
-        // short tick to let its first emission land, then fall back if state is empty.
-        // Replaces the old unconditional startMonitoring() that raced the collector.
-        panelScope.launch {
-            delay(150)
-            if (workflowContextService.state.value.focusPr == null) {
-                invokeLater { startMonitoring() }
-            }
-        }
+        // T-B2/B3-b: fallback-polling block removed. BuildMonitorService drives its own
+        // lifecycle from WorkflowContextService.focusBuild (T-B2/B3-a). When focusBuild
+        // is null (no focused PR), the service's subscription calls stopPolling() —
+        // correct behaviour. The old startMonitoring() path polled the wrong plan for
+        // multi-repo users and is now superseded by the focus cascade.
 
         // Repo selector listener — write through to the canonical service. The dropdown
         // is a USER input ("switch focus to this repo"), not a private tab-local field.
@@ -683,6 +682,37 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         loadBuildsForContext(pr.fromBranch, pr.bambooPlanKey)
     }
 
+    /**
+     * T-B2/B3-b: reroutes a branch-selection (from [resolveBranchPlanAndMonitor]) through
+     * [WorkflowContextService.focusPr] when a matching open PR exists for [branchName].
+     *
+     * Concrete flow:
+     * 1. Look up open PRs via [OpenPrLister]. If a PR with `fromBranch == branchName` is
+     *    found, call [WorkflowContextService.focusPr] with the highest-`prId` match (mirrors
+     *    `findOpenPrMatchingTicket` semantics). The focus cascade fires and
+     *    [BuildMonitorService] retargets via its focusBuild subscription (T-B2/B3-a).
+     * 2. If NO matching PR exists (e.g. user selected a branch with no open PR), this is a
+     *    "view a non-PR branch's build" edge case. We log it and skip the focus update —
+     *    ambient polling continues against the previously-focused build, which is correct:
+     *    // local override: branch has no open PR — skip focusPr; ambient polling unchanged.
+     *
+     * Note: this is a suspend function so the OpenPrLister call can be made on IO without
+     * blocking. Callers must be in a coroutine context (they are — [resolveBranchPlanAndMonitor]
+     * is `suspend` and called from [panelScope.launch]).
+     */
+    private suspend fun reroutableFocusPr(branchName: String) {
+        val openPrs = OpenPrLister.getInstance()?.listOpenPrs(project) ?: emptyList()
+        val matchedPr = findMatchingPrForBranch(openPrs, branchName)
+
+        if (matchedPr != null) {
+            log.info("[Build:Dashboard] reroutableFocusPr: branch '$branchName' → PR #${matchedPr.prId} (${matchedPr.repoName}) — calling focusPr")
+            workflowContextService.focusPr(matchedPr)
+        } else {
+            // local override: branch has no open PR — skip focusPr; ambient polling unchanged.
+            log.info("[Build:Dashboard] reroutableFocusPr: branch '$branchName' has no open PR — focus unchanged; ambient polling continues on previously-focused build")
+        }
+    }
+
     private fun loadBuildsForContext(branch: String, bambooPlanKey: String?) {
         hintLabel.isVisible = false
         splitter.isVisible = true
@@ -716,32 +746,37 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     override fun dispose() {
-        // BuildMonitorService is a project-level service whose lifecycle is owned by
-        // the IntelliJ Platform; we only stop our polling subscription here.
-        monitorService.stopPolling()
+        // T-B2/B3-b: stopPolling() call removed. BuildMonitorService lifecycle is now
+        // fully driven by WorkflowContextService.focusBuild subscription (T-B2/B3-a).
+        // Disposing this panel does not cancel ambient polling — polling continues for
+        // other consumers (e.g. Automation tab, HandoverStateService) even when Build tab
+        // is closed. panelScope.cancel() stops only this panel's UI coroutines.
         panelScope.cancel()
     }
 
+    /**
+     * T-B2/B3-b: startMonitoring() no longer calls BuildMonitorService.startPolling().
+     * Polling lifecycle is entirely owned by BuildMonitorService's focusBuild subscription
+     * (T-B2/B3-a). This method is retained only to update the header label when a configured
+     * plan key exists but no focusPr is set — i.e., the single-repo, no-PR-open case where
+     * the user wants to see the build status for their current branch.
+     *
+     * No polling is started here; the focus cascade will start it when the PR tab seeds
+     * focusPr (via T-AutoSeed) or the user selects a PR.
+     */
     private fun startMonitoring() {
         val planKey = currentPlanKey()
         if (planKey.isBlank()) {
-            // Don't show error — PR detection will auto-detect the plan key
             headerLabel.text = "Waiting for PR detection to find Bamboo plan..."
             return
         }
-
         val knownBranch = getCurrentBranch()
-        val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000
         if (knownBranch != null) {
-            headerLabel.text = "Plan: $planKey / $knownBranch"
-            loadingIcon.isVisible = true
-            monitorService.startPolling(planKey, knownBranch, interval)
+            headerLabel.text = "Plan: $planKey / $knownBranch (polling via focus chain)"
         } else {
-            loadingIcon.isVisible = true
             panelScope.launch {
                 val branch = getGitRepo()?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
-                invokeLater { headerLabel.text = "Plan: $planKey / $branch" }
-                monitorService.startPolling(planKey, branch, interval)
+                invokeLater { headerLabel.text = "Plan: $planKey / $branch (polling via focus chain)" }
             }
         }
     }
@@ -1244,6 +1279,26 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
             val omittedKb = (logText.length - maxBytes) / 1024
             return "... [first ${omittedKb} KB omitted — log exceeds ${maxBytes / 1024} KB cap] ...\n$tail"
         }
+
+        /**
+         * T-B2/B3-b: pure PR-selection helper used by [reroutableFocusPr].
+         *
+         * Given a list of open PRs and a branch name, returns the PR with the highest
+         * `prId` whose `fromBranch` matches [branchName], or `null` when no match exists.
+         *
+         * Extracted as a `companion object` function so it can be unit-tested without
+         * IntelliJ infrastructure. Mirrors the `findOpenPrMatchingTicket` semantics
+         * (prefer highest prId when multiple PRs share the same fromBranch — rare but
+         * possible when a branch has had multiple PR iterations and the earlier ones are
+         * still listed as open by the server).
+         *
+         * This is a pure function: testable without IntelliJ infra.
+         */
+        fun findMatchingPrForBranch(
+            openPrs: List<com.workflow.orchestrator.core.model.workflow.PrRef>,
+            branchName: String,
+        ): com.workflow.orchestrator.core.model.workflow.PrRef? =
+            openPrs.filter { it.fromBranch == branchName }.maxByOrNull { it.prId }
     }
 
     /**
