@@ -273,7 +273,7 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
                     if (plans.isEmpty()) {
                         planCombo.addItem(AutomationPlanItem("", "No plans in this project"))
                     } else {
-                        for (plan in plans.sortedBy { it.shortName.ifBlank { it.name } }) {
+                        for (plan in plans.sortedBy { it.shortName.ifBlank { it.name }.lowercase() }) {
                             val displayName = plan.shortName.ifBlank { plan.name }
                             planCombo.addItem(AutomationPlanItem(plan.key, displayName))
                         }
