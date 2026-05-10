@@ -49,6 +49,42 @@ All `@Service(Service.Level.PROJECT)` classes have a `(Project)` IntelliJ-DI con
 
 Historical note: `QaClipboardService`, `HandoverContextPanel` (sidebar), `HandoverToolbar`, `QaClipboardPanel`, `JiraCommentPanel`, and `PanelHeaders` were removed in the Handover-tab redesign (T26). The macro panel + Handover-side AI Pre-Review were removed earlier; the PR-tab `AiReviewTabPanel` covers pre-review.
 
+### Phase 7 T-Handover-c: Placeholder source-of-truth audit (DONE)
+
+**Audit result:** `HandoverPlaceholderResolver` correctly routes all placeholder reads. No identity drift in the resolver itself.
+
+**Placeholder source-of-truth inventory:**
+
+| Placeholder key | Source | Kind |
+|---|---|---|
+| `ticket.id` | `ctx.activeTicket?.key` (`WorkflowContextService.state`) | Identity |
+| `ticket.summary` | `ctx.activeTicket?.summary` (`WorkflowContextService.state`) | Identity |
+| `ticket.status` | `state.currentStatusName` (`HandoverStateService.stateFlow`) | Action-outcome |
+| `pr.id` | `ctx.focusPr?.prId` (`WorkflowContextService.state`) | Identity |
+| `pr.url` | `state.prUrl` (`HandoverStateService.stateFlow`) — set via `PullRequestCreated` event | Status/action |
+| `build.url` | always unavailable — `BuildSummary` has no URL field | — |
+| `docker.tag` | `state.suiteResults.last().dockerTagsJson` (`HandoverStateService.stateFlow`) | Status |
+| `docker.tagsJson` | `state.suiteResults.last().dockerTagsJson` (`HandoverStateService.stateFlow`) | Status |
+| `automation.suiteTable` | `state.suiteResults` (`HandoverStateService.stateFlow`) | Status |
+| `ai.changeSummary` | `HandoverAiSummaryCache.changeSummary()` (uses `WorkflowContext` internally) | AI |
+| `ai.ticketSummary` | `HandoverAiSummaryCache.ticketSummary()` (uses `WorkflowContext` internally) | AI |
+
+**Drift fixed in `ShareTab.kt`:** two fallback reads of the stale `HandoverState.ticketId` mirror were replaced with canonical `WorkflowContextService.state` reads:
+
+- `emitOverrideIfNeeded()` (line ~184): `ctx.activeTicket?.key?.takeIf { it.isNotBlank() } ?: state.ticketId` → `ctx.activeTicket?.key?.takeIf { it.isNotBlank() }.orEmpty()`
+- `resolveTicketId()` (line ~203): `ctx.activeTicket?.key?.takeIf { it.isNotBlank() } ?: handoverStateFlow.value.ticketId` → `workflowContextFlow.value.activeTicket?.key?.takeIf { it.isNotBlank() }.orEmpty()`
+
+**ShareTab subscription audit:** `ShareTab` receives both `StateFlow<HandoverState>` and `StateFlow<WorkflowContext>` at construction time. It reads both flows at action time (not via collect subscriptions) — this is correct for action handlers (read snapshot at invocation). Preview re-rendering on context change is driven by `TemplateEditorCard`'s `onSourceChanged()` → `resolveMarkup()` path which calls `HandoverPlaceholderResolver.resolve()` on each keystroke/template-select; the resolver always snapshots `workflowContext.state.value` at call time. No stale subscription.
+
+**Tests added:** five focus-change regression tests in `HandoverPlaceholderResolverTest`:
+- `focus-change from PR-A to PR-B — ticket-id placeholder reflects new context`
+- `focus-change from PR-A to PR-B — ticket-summary placeholder reflects new context`
+- `focus-change from PR-A to PR-B — pr-id placeholder reflects new PR`
+- `focus-change clears focused PR — pr-id becomes unavailable`
+- `focus-change clears active ticket — ticket-id becomes unavailable`
+
+**Tests updated:** two existing `ShareTabTest` tests now pass `workflowContext = WorkflowContext(activeTicket = TicketRef(...))` to the `buildTab()` helper, replacing the previous implicit reliance on the removed `HandoverState.ticketId` fallback.
+
 ## UI
 
 `HandoverPanel` hosts a `JBTabbedPane` with three tabs and a persistent override banner (`HandoverOverrideBanner`):

@@ -485,4 +485,104 @@ class HandoverPlaceholderResolverTest {
         assertTrue(v.isAvailable)
         assertEquals("AI-generated ticket summary", v.value)
     }
+
+    // -------------------------------------------------------------------------
+    // T-Handover-c: focus-change → placeholder identity updates
+    //
+    // Regression guard: when the user switches focused PR, identity placeholders
+    // (ticket.id, ticket.summary, pr.id) must immediately reflect the new
+    // WorkflowContext snapshot — they must NOT lag behind via stale HandoverState
+    // mirror fields. This test simulates PR-A → PR-B and asserts that every
+    // re-resolve returns the PR-B identity, not PR-A's.
+    // -------------------------------------------------------------------------
+
+    private fun makePrRef(prId: Int, fromBranch: String = "feature/branch-$prId") = PrRef(
+        prId = prId,
+        fromBranch = fromBranch,
+        toBranch = "main",
+        repoName = "my-repo",
+        bambooPlanKey = null,
+        sonarProjectKey = null,
+    )
+
+    @Test
+    fun `focus-change from PR-A to PR-B — ticket-id placeholder reflects new context`() = runTest {
+        // Seed context with PR-A and ticket A
+        setContext(WorkflowContext(
+            activeTicket = TicketRef("PROJ-1", "Ticket for PR-A"),
+            focusPr = makePrRef(prId = 10),
+        ))
+
+        val vBefore = resolver.resolve("ticket.id", HandoverTemplateAction.JIRA)
+        assertTrue(vBefore.isAvailable)
+        assertEquals("PROJ-1", vBefore.value)
+
+        // Simulate the user switching focused PR → PR-B with a different ticket
+        setContext(WorkflowContext(
+            activeTicket = TicketRef("PROJ-2", "Ticket for PR-B"),
+            focusPr = makePrRef(prId = 20),
+        ))
+
+        val vAfter = resolver.resolve("ticket.id", HandoverTemplateAction.JIRA)
+        assertTrue(vAfter.isAvailable)
+        assertEquals("PROJ-2", vAfter.value, "ticket.id must reflect PR-B's ticket, not PR-A's")
+    }
+
+    @Test
+    fun `focus-change from PR-A to PR-B — ticket-summary placeholder reflects new context`() = runTest {
+        setContext(WorkflowContext(
+            activeTicket = TicketRef("PROJ-1", "Summary for PR-A"),
+            focusPr = makePrRef(prId = 10),
+        ))
+
+        val vBefore = resolver.resolve("ticket.summary", HandoverTemplateAction.JIRA)
+        assertEquals("Summary for PR-A", vBefore.value)
+
+        setContext(WorkflowContext(
+            activeTicket = TicketRef("PROJ-2", "Summary for PR-B"),
+            focusPr = makePrRef(prId = 20),
+        ))
+
+        val vAfter = resolver.resolve("ticket.summary", HandoverTemplateAction.JIRA)
+        assertEquals("Summary for PR-B", vAfter.value, "ticket.summary must reflect PR-B's ticket, not PR-A's")
+    }
+
+    @Test
+    fun `focus-change from PR-A to PR-B — pr-id placeholder reflects new PR`() = runTest {
+        setContext(WorkflowContext(focusPr = makePrRef(prId = 10)))
+
+        val vBefore = resolver.resolve("pr.id", HandoverTemplateAction.JIRA)
+        assertTrue(vBefore.isAvailable)
+        assertEquals("10", vBefore.value)
+
+        setContext(WorkflowContext(focusPr = makePrRef(prId = 20)))
+
+        val vAfter = resolver.resolve("pr.id", HandoverTemplateAction.JIRA)
+        assertTrue(vAfter.isAvailable)
+        assertEquals("20", vAfter.value, "pr.id must reflect PR-B, not PR-A")
+    }
+
+    @Test
+    fun `focus-change clears focused PR — pr-id becomes unavailable`() = runTest {
+        setContext(WorkflowContext(focusPr = makePrRef(prId = 10)))
+        val vBefore = resolver.resolve("pr.id", HandoverTemplateAction.JIRA)
+        assertTrue(vBefore.isAvailable)
+
+        // User clears the focus (e.g. closes PR tab)
+        setContext(WorkflowContext(focusPr = null))
+        val vAfter = resolver.resolve("pr.id", HandoverTemplateAction.JIRA)
+        assertFalse(vAfter.isAvailable, "pr.id must be unavailable when no PR is focused")
+    }
+
+    @Test
+    fun `focus-change clears active ticket — ticket-id becomes unavailable`() = runTest {
+        setContext(WorkflowContext(activeTicket = TicketRef("PROJ-1", "Some ticket")))
+        val vBefore = resolver.resolve("ticket.id", HandoverTemplateAction.JIRA)
+        assertTrue(vBefore.isAvailable)
+
+        // Ticket cleared (e.g. Stop Work)
+        setContext(WorkflowContext(activeTicket = null))
+        val vAfter = resolver.resolve("ticket.id", HandoverTemplateAction.JIRA)
+        assertFalse(vAfter.isAvailable, "ticket.id must be unavailable when no active ticket")
+    }
 }

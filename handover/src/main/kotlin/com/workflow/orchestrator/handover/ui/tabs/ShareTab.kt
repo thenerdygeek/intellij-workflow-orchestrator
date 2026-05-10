@@ -181,7 +181,9 @@ class ShareTab private constructor(
         val ctx = workflowContextFlow.value
         val failed = currentFailedChecks(state)
         if (failed.isNotEmpty()) {
-            val ticketId = ctx.activeTicket?.key?.takeIf { it.isNotBlank() } ?: state.ticketId
+            // Identity always comes from WorkflowContext (canonical source of truth).
+            // HandoverState.ticketId is a stale mirror — do not fall back to it.
+            val ticketId = ctx.activeTicket?.key?.takeIf { it.isNotBlank() }.orEmpty()
             eventBus.emit(WorkflowEvent.HandoverOverride(ticketId, action, failed, Instant.now()))
         }
     }
@@ -201,9 +203,9 @@ class ShareTab private constructor(
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private fun resolveTicketId(): String {
-        val ctx = workflowContextFlow.value
-        return ctx.activeTicket?.key?.takeIf { it.isNotBlank() }
-            ?: handoverStateFlow.value.ticketId
+        // Identity always comes from WorkflowContext (canonical source of truth).
+        // HandoverState.ticketId is a stale mirror — do not fall back to it.
+        return workflowContextFlow.value.activeTicket?.key?.takeIf { it.isNotBlank() }.orEmpty()
     }
 
     private fun notifyWarning(title: String, content: String) {

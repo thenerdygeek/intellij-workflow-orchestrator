@@ -3,6 +3,7 @@ package com.workflow.orchestrator.handover.ui.tabs
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.model.workflow.TicketRef
 import com.workflow.orchestrator.core.model.workflow.WorkflowContext
 import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.core.services.ToolResult
@@ -195,8 +196,11 @@ class ShareTabTest {
             jiraService.addComment(any(), any(), any())
         } returns ToolResult.success(Unit, "comment posted")
 
+        // Identity comes from WorkflowContext (canonical). Supply the matching ticket so
+        // resolveTicketId() doesn't early-return on blank ticket key.
         val tab = buildTab(
             handoverState = stateWithRedChecks(),
+            workflowContext = WorkflowContext(activeTicket = TicketRef("AFTER8TE-912", "Test ticket")),
             eventBus = eventBus,
             jiraService = jiraService,
             clipboardSink = ClipboardSink { },
@@ -229,8 +233,11 @@ class ShareTabTest {
             jiraService.addComment(any(), any(), any())
         } returns ToolResult.success(Unit, "comment posted")
 
+        // Identity comes from WorkflowContext (canonical). Supply the matching ticket so
+        // resolveTicketId() doesn't early-return on blank ticket key.
         val tab = buildTab(
             handoverState = stateAllGreen(),
+            workflowContext = WorkflowContext(activeTicket = TicketRef("AFTER8TE-912", "Test ticket")),
             eventBus = eventBus,
             jiraService = jiraService,
             clipboardSink = ClipboardSink { },
