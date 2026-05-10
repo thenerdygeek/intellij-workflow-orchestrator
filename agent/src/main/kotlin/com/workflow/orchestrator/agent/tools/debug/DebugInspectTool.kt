@@ -15,6 +15,11 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.agent.tools.integration.ToolValidation
 import com.workflow.orchestrator.agent.tools.platform.DebugState
 import com.workflow.orchestrator.agent.tools.platform.IdeStateProbe
@@ -140,6 +145,742 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
     )
 
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER)
+
+    override fun documentation(): ToolDocumentation = toolDoc("debug_inspect") {
+        summary {
+            technical(
+                "Single-tool dispatcher for runtime inspection and advanced debugger operations: " +
+                    "evaluate expressions, inspect and mutate variables, capture stack frames, " +
+                    "dump all threads, count live heap instances, hot-swap changed classes, " +
+                    "force-return from a method, and rewind execution via frame drop. " +
+                    "All session resolution goes through IdeStateProbe so agent-started and " +
+                    "user-started sessions are both visible."
+            )
+            plain(
+                "The agent's debugger 'inspector and surgeon'. Once the debugger is paused, this " +
+                    "tool lets the agent peer inside the running JVM (read variables, evaluate any " +
+                    "expression, get a thread dump) and — when needed — operate on the live process " +
+                    "(change a variable value, reload changed classes, force a method to return, or " +
+                    "rewind the call stack). Think of it as the Variables, Evaluate Expression, " +
+                    "Threads, and Hot Swap panels from IntelliJ's Debug UI, all callable by the LLM."
+            )
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.IDE_MUTATION)
+        counterfactual(
+            "Without debug_inspect the LLM has no way to inspect live runtime state: it would have " +
+                "to add `println` / logging statements, recompile, and re-run to observe variable " +
+                "values — each cycle takes seconds and pollutes the codebase. For mutation actions " +
+                "(set_value, hotswap, force_return, drop_frame) there is simply no text-based " +
+                "equivalent; the LLM would have to ask the user to perform them manually in the IDE."
+        )
+        llmMistake(
+            "Skips `debug_step(action=get_state)` and calls evaluate or get_variables on a running " +
+                "session — gets NOT_SUSPENDED error, then has to call pause + get_state + the " +
+                "inspect action (3 extra calls). The description's 'IMPORTANT: run get_state first' " +
+                "nudge reduces this but doesn't eliminate it."
+        )
+        llmMistake(
+            "Passes `session_id` to `get_state` (from debug_step) then forgets to pass the same " +
+                "`session_id` to debug_inspect when there are multiple sessions — hits AMBIGUOUS_SESSION " +
+                "error when the second session is also paused."
+        )
+        llmMistake(
+            "Calls `memory_view` without checking the VM capability note — fails on remote VMs " +
+                "(JMX/JDWP over network) that don't support `canGetInstanceInfo`. Should check the " +
+                "error response and fall back to evaluate-based instance counting."
+        )
+        llmMistake(
+            "Uses `drop_frame` expecting variable state to reset — variables retain their last-written " +
+                "values. drop_frame rewinds the program counter; it does NOT undo side effects " +
+                "or reset locals. The description says so explicitly but the name implies a full rewind."
+        )
+        llmMistake(
+            "Passes a bare integer string to `evaluate` expecting it to call a method — e.g. " +
+                "`evaluate(expression='myList.size')` works but `evaluate(expression='myList.size()')` " +
+                "is needed for Java (size is a method, not a property). Kotlin-style property access " +
+                "works in Kotlin frames; Java frames need the `()` suffix."
+        )
+        llmMistake(
+            "Calls `hotswap` on a Python debug session — always fails with an explicit error. " +
+                "Hotswap relies on JDWP `redefineClasses`, which is a Java/Kotlin-only protocol. " +
+                "The tool detects PyDebugProcess via reflection and returns a clear message, but " +
+                "the LLM sometimes retries anyway."
+        )
+        downside(
+            "Most actions require [SUSPENDED] state; calling them on a running session returns an " +
+                "error. The LLM must gate every inspect call on a prior debug_step(get_state) that " +
+                "confirmed the session is paused."
+        )
+        downside(
+            "`evaluate` is capped at 10 seconds — expressions that call blocking code (network I/O, " +
+                "lock acquisition, infinite loops) will time out instead of returning. The LLM should " +
+                "avoid evaluating side-effecting or blocking expressions."
+        )
+        downside(
+            "`hotswap` only works for body changes — adding/removing methods, fields, or changing " +
+                "class hierarchy causes the JDWP redefine to fail. Structural changes require a " +
+                "full session restart."
+        )
+        downside(
+            "`drop_frame` does NOT undo side effects (filesystem writes, network calls, DB mutations). " +
+                "It rewinds the program counter only. Misuse can leave the application in a " +
+                "half-executed, inconsistent state."
+        )
+        downside(
+            "`memory_view` requires `canGetInstanceInfo` — not available on remote VMs, some JVM " +
+                "implementations, or when the VM is not HotSpot-compatible."
+        )
+        downside(
+            "`get_variables` / `thread_dump` / `memory_view` auto-spill outputs >30K via " +
+                "`spillOrFormat`. The LLM receives a preview and a file path; it must call " +
+                "`read_file` to see the rest. `evaluate` output is always small (single value) " +
+                "and never spills."
+        )
+        related("debug_step", Relationship.COMPLEMENT, "Always call debug_step(get_state) before any inspect action to confirm the session is paused. debug_step drives session lifecycle (step, resume, pause, stop); debug_inspect drives observation and mutation.")
+        related("debug_breakpoints", Relationship.COMPLEMENT, "Use debug_breakpoints to set conditions for pausing; use debug_inspect to inspect state once paused. The two tools form the full breakpoint-inspect-mutate workflow.")
+        flowchart("""
+            flowchart TD
+                A[Need to inspect paused session] --> B[debug_step get_state — confirm PAUSED]
+                B --> C{What kind of inspection?}
+                C -- read values --> D[get_variables / evaluate]
+                C -- call tree --> E[get_stack_frames]
+                C -- all threads --> F[thread_dump]
+                C -- heap count --> G[memory_view]
+                C -- test hypothesis --> H[set_value then evaluate]
+                C -- reload code --> I[hotswap]
+                C -- skip method --> J[force_return]
+                C -- rerun method --> K[drop_frame]
+                D --> L[debug_step step_over / resume]
+                E --> L
+                F --> L
+                G --> L
+                H --> L
+                I --> L
+                J --> L
+                K --> L
+        """)
+        verdict {
+            keep(
+                "Provides the only programmatic path to JVM runtime state inspection and mutation. " +
+                    "Without it, the LLM's entire debugging workflow degrades to println-and-recompile. " +
+                    "All 9 actions map to distinct JVM/IntelliJ APIs with no reasonable textual " +
+                    "equivalent. The 3 mutation actions (set_value, hotswap, force_return) are " +
+                    "uniquely powerful: the LLM can test a hypothesis (change a value and step " +
+                    "forward) without touching the source code.",
+                VerdictSeverity.STRONG
+            )
+        }
+        actions {
+            // ── evaluate ──────────────────────────────────────────────────────────
+            action("evaluate") {
+                description {
+                    technical(
+                        "Evaluates a Java/Kotlin expression in the current stack frame using the " +
+                            "IntelliJ debugger's expression evaluator. Wrapped in withTimeoutOrNull(10s) " +
+                            "to prevent indefinite hangs on blocking or infinite-loop expressions. " +
+                            "Returns the value and its runtime type. Output is bounded to a single " +
+                            "value — no spill."
+                    )
+                    plain(
+                        "Like IntelliJ's 'Evaluate Expression' dialog — type any expression and see " +
+                            "its value without changing any code. Useful for 'what does this variable " +
+                            "equal right now?' or 'what would this calculation return?'"
+                    )
+                }
+                whenLLMUses(
+                    "When the LLM wants to read a variable value, call a method on an object, or " +
+                        "compute a sub-expression not already visible in the Variables pane — all without " +
+                        "editing or recompiling the source."
+                )
+                params {
+                    required("expression", "string") {
+                        llmSeesIt("Java/Kotlin expression to evaluate — for evaluate")
+                        humanReadable(
+                            "Any valid Java or Kotlin expression. The language of the expression " +
+                                "must match the language of the current frame. Kotlin property access " +
+                                "(`myList.size`) works in Kotlin frames; Java frames need method " +
+                                "syntax (`myList.size()`)."
+                        )
+                        whenPresent("The expression is evaluated in the context of the current stack frame and the result is returned.")
+                        constraint("must not be blank")
+                        constraint("evaluation is capped at 10 seconds — blocking or infinite-loop expressions will time out")
+                        example("myService.getUser(userId)")
+                        example("result.errorMessage")
+                        example("items.stream().filter(i -> i.active).count()")
+                    }
+                    optional("session_id", "string") {
+                        llmSeesIt("Debug session ID (optional — uses active session if omitted)")
+                        humanReadable("Which debug session to evaluate in. Needed only when multiple sessions are paused simultaneously.")
+                        whenPresent("That session's current frame is used for evaluation.")
+                        whenAbsent("The active/resolved session is used.")
+                    }
+                }
+                rejectsParam("thread_name", "Only get_stack_frames reads thread_name.")
+                rejectsParam("max_frames", "Only get_stack_frames and thread_dump read max_frames.")
+                rejectsParam("max_depth", "Only get_variables reads max_depth.")
+                rejectsParam("variable_name", "evaluate uses expression, not variable_name.")
+                rejectsParam("new_value", "Only set_value reads new_value.")
+                rejectsParam("include_stacks", "Only thread_dump reads include_stacks.")
+                rejectsParam("include_daemon", "Only thread_dump reads include_daemon.")
+                rejectsParam("class_name", "Only memory_view reads class_name.")
+                rejectsParam("max_instances", "Only memory_view reads max_instances.")
+                rejectsParam("compile_first", "Only hotswap reads compile_first.")
+                rejectsParam("return_value", "Only force_return reads return_value.")
+                rejectsParam("return_type", "Only force_return reads return_type.")
+                rejectsParam("frame_index", "Only drop_frame reads frame_index.")
+                precondition("session must be PAUSED at a breakpoint or after a step (requireSuspendedSession)")
+                onSuccess("Returns: expression text, result value string, runtime type. Output is always small — no spill.")
+                onFailure("expression is blank", "Immediate error: 'Expression cannot be blank.'")
+                onFailure("evaluation times out after 10s", "Error with message 'Expression evaluation timed out … may contain an infinite loop or be waiting for a lock.'")
+                onFailure("expression has a syntax error or references an unknown symbol", "Error with the evaluator's error message (e.g., 'Cannot find symbol: myVar').")
+                onFailure("session is running", "NOT_SUSPENDED error — call debug_step(get_state) first.")
+                example("read a field value") {
+                    param("action", "evaluate")
+                    param("expression", "order.totalAmount")
+                    outcome("Returns: Expression: order.totalAmount / Result: 150.00 / Type: java.math.BigDecimal")
+                }
+                example("call a method during pause") {
+                    param("action", "evaluate")
+                    param("expression", "userService.findById(userId).getUsername()")
+                    outcome("Executes the method call in the current context and returns the String result.")
+                    notes("Safe only if the method has no side effects — evaluate can modify state if the expression calls a mutating method.")
+                }
+                verdict {
+                    keep(
+                        "The most-used inspect action. Without it, the LLM can only read what " +
+                            "get_variables exposes at depth=2. Evaluate unlocks arbitrary expression " +
+                            "power: method calls, stream operations, chained property access.",
+                        VerdictSeverity.STRONG
+                    )
+                }
+            }
+
+            // ── get_stack_frames ──────────────────────────────────────────────────
+            action("get_stack_frames") {
+                description {
+                    technical(
+                        "Returns the call stack for the current (or named) thread as an ordered list " +
+                            "of frame records — index, method name, file name, line number. Defaults to " +
+                            "20 frames; capped at 50."
+                    )
+                    plain(
+                        "Like IntelliJ's 'Frames' pane in the Debug window — shows the chain of " +
+                            "method calls that led to the current pause point. Useful for understanding " +
+                            "how execution got here without manually walking up the call tree."
+                    )
+                }
+                whenLLMUses(
+                    "When the LLM needs to understand the call path that triggered the current pause — " +
+                        "especially useful when the paused method is a utility called from many places " +
+                        "and the LLM needs to know which caller to examine."
+                )
+                params {
+                    optional("session_id", "string") {
+                        llmSeesIt("Debug session ID (optional — uses active session if omitted)")
+                        humanReadable("Which session's stack to retrieve.")
+                        whenPresent("That session's frames are returned.")
+                        whenAbsent("Active session's frames are returned.")
+                    }
+                    optional("thread_name", "string") {
+                        llmSeesIt("Thread name to get stack from — for get_stack_frames")
+                        humanReadable("Filter to a specific thread's stack. Most useful when multiple threads are suspended and you want one specifically.")
+                        whenPresent("Stack frames for that thread are returned if it exists in the session; otherwise falls back to the default thread.")
+                        whenAbsent("The active execution stack's thread name is used (from suspendContext.activeExecutionStack.displayName).")
+                    }
+                    optional("max_frames", "integer") {
+                        llmSeesIt("Maximum stack frames to return (default 20, max 50) — for get_stack_frames, thread_dump")
+                        humanReadable("How many frames deep to go. Default 20 covers most call chains; increase to 50 for deep recursive stacks.")
+                        whenPresent("At most that many frames are returned.")
+                        whenAbsent("Default 20 frames returned.")
+                        constraint("clamped to [1, 50]")
+                        example("50")
+                    }
+                }
+                precondition("session must be PAUSED")
+                onSuccess("Returns: thread name, frame count, and numbered list of frames each with index, method name, file name, and line number.")
+                onFailure("no active stack frame", "Returns 'No stack frames available' (non-error result).")
+                onFailure("session is running", "NOT_SUSPENDED error.")
+                example("inspect call chain at pause") {
+                    param("action", "get_stack_frames")
+                    param("max_frames", "10")
+                    outcome("Returns stack trace: main thread, 7 frames. Frame #0 is the current pause line; frame #1 is the caller, etc.")
+                }
+                verdict {
+                    keep("Essential when 'how did I get here?' is the key question. Cannot be replaced by get_variables.", VerdictSeverity.STRONG)
+                }
+            }
+
+            // ── get_variables ─────────────────────────────────────────────────────
+            action("get_variables") {
+                description {
+                    technical(
+                        "Retrieves local variables in the current stack frame, expanded recursively " +
+                            "to `max_depth` (default 2, capped at 4). Optionally filters to a single " +
+                            "named variable for deep inspection. Large outputs auto-spill to " +
+                            "`{sessionDir}/tool-output/` via `spillOrFormat`."
+                    )
+                    plain(
+                        "Like IntelliJ's 'Variables' pane — shows all local variables and their " +
+                            "current values, including nested object fields up to a configurable depth. " +
+                            "'What does this object look like right now?'"
+                    )
+                }
+                whenLLMUses(
+                    "Immediately after pausing or stepping, to see the full local-variable state of " +
+                        "the current frame — especially for complex objects where evaluate would require " +
+                        "knowing all the field names in advance."
+                )
+                params {
+                    optional("session_id", "string") {
+                        llmSeesIt("Debug session ID (optional — uses active session if omitted)")
+                        humanReadable("Which session's variables to read.")
+                        whenPresent("That session's current frame variables are returned.")
+                        whenAbsent("Active session's current frame variables are returned.")
+                    }
+                    optional("variable_name", "string") {
+                        llmSeesIt("Specific variable name to deep-inspect — for get_variables, set_value")
+                        humanReadable("Name of a single variable to deep-inspect. When provided, max_depth is raised to at least 2 to give a meaningful expansion of that variable.")
+                        whenPresent("Only that variable is returned, expanded to the effective depth. Error if not found — the error message lists all available variable names.")
+                        whenAbsent("All variables in the current frame are returned.")
+                        example("order")
+                        example("serviceResult")
+                    }
+                    optional("max_depth", "integer") {
+                        llmSeesIt("Maximum depth for variable expansion (default 2, max 4) — for get_variables")
+                        humanReadable("How many levels of object nesting to expand. Depth 1 = immediate fields only; depth 4 = great-grandchild fields. Higher depths produce much larger output.")
+                        whenPresent("Variable tree is expanded to that depth.")
+                        whenAbsent("Default depth 2 is used.")
+                        constraint("clamped to [1, 4]")
+                        example("3")
+                    }
+                }
+                rejectsParam("new_value", "set_value action reads new_value; get_variables is read-only.")
+                precondition("session must be PAUSED")
+                precondition("an active stack frame must exist (session.currentStackFrame must be non-null)")
+                onSuccess("Returns: frame header (file:line), then formatted variable list with names, types, and values at the requested depth. Spills to disk if output exceeds 30K.")
+                onFailure("no active stack frame", "Error: 'No active stack frame available.'")
+                onFailure("variable_name not found in frame", "Error listing all available variable names so the LLM can correct its query.")
+                onFailure("no variables in frame", "Non-error: 'No variables in the current frame.'")
+                onFailure("session is running", "NOT_SUSPENDED error.")
+                example("inspect all frame locals") {
+                    param("action", "get_variables")
+                    outcome("Returns all local variables in Frame #0 at depth 2. If an object has more fields than depth 2 reaches, shows '…' placeholders.")
+                }
+                example("deep-inspect one complex object") {
+                    param("action", "get_variables")
+                    param("variable_name", "requestContext")
+                    param("max_depth", "4")
+                    outcome("Returns only the `requestContext` variable, expanded 4 levels deep — useful when that object is the suspect and you need to see all its nested state.")
+                }
+                verdict {
+                    keep(
+                        "The primary way to see all local state at once. Complements evaluate (which is " +
+                            "better for one specific calculation) and get_stack_frames (which shows location, " +
+                            "not values).",
+                        VerdictSeverity.STRONG
+                    )
+                }
+            }
+
+            // ── set_value ─────────────────────────────────────────────────────────
+            action("set_value") {
+                description {
+                    technical(
+                        "Modifies a local variable's value at runtime using `XValueModifier.setValue()` " +
+                            "(EDT-dispatched, as required by the API), with a fallback to " +
+                            "evaluate-with-assignment for variables that have no modifier. Verifies the " +
+                            "change by reading back the variable after write."
+                    )
+                    plain(
+                        "Like IntelliJ's 'Set Value' right-click in the Variables pane — changes a " +
+                            "variable's value while the program is paused, without restarting or " +
+                            "editing the source. Useful for testing a hypothesis: 'what happens if " +
+                            "this flag is true?'"
+                    )
+                }
+                whenLLMUses(
+                    "When the LLM suspects a bug is in a specific variable's value and wants to verify " +
+                        "by mutating it and continuing execution — a 'hypothesis test' without recompile. " +
+                        "Also useful for forcing a known-good value to prove the bug is isolated to that variable."
+                )
+                params {
+                    required("variable_name", "string") {
+                        llmSeesIt("Specific variable name to deep-inspect — for get_variables, set_value")
+                        humanReadable("The name of the local variable to change. Must exist in the current frame's variable list.")
+                        whenPresent("That variable is located in the frame and its value is set to new_value.")
+                        constraint("variable must exist in the current stack frame")
+                        constraint("variable must not be final/val — attempting to set a final field returns an error")
+                        example("isEnabled")
+                        example("retryCount")
+                    }
+                    required("new_value", "string") {
+                        llmSeesIt("Expression to set as the variable's new value (e.g., '42', '\"hello\"', 'null', 'listOf(1,2,3)') — for set_value")
+                        humanReadable("The new value as a string expression. Primitives as literals (42, true, 'x'); strings with quotes (\"hello\"); null as the word null; complex values as expressions.")
+                        whenPresent("The variable is set to the result of evaluating this expression.")
+                        constraint("must be a valid Java/Kotlin expression in the context of the current frame")
+                        example("42")
+                        example("\"admin\"")
+                        example("null")
+                        example("true")
+                    }
+                    optional("session_id", "string") {
+                        llmSeesIt("Debug session ID (optional — uses active session if omitted)")
+                        humanReadable("Which session's variable to set.")
+                        whenPresent("That session's current frame variable is set.")
+                        whenAbsent("Active session's current frame variable is set.")
+                    }
+                }
+                precondition("session must be PAUSED")
+                precondition("variable must exist in the current stack frame")
+                onSuccess("Confirms the new value by reading it back. Returns: variable name, actual new value (post-write), type, and which method was used (XValueModifier direct or evaluate fallback).")
+                onFailure("variable is final/val", "Error: 'Variable may not exist in the current frame, or may be final/val.'")
+                onFailure("XValueModifier returns an error", "Error with the modifier's message (e.g., type mismatch).")
+                onFailure("variable not in frame", "Error listing available variables.")
+                onFailure("session is running", "NOT_SUSPENDED error.")
+                example("force a flag to true to test a branch") {
+                    param("action", "set_value")
+                    param("variable_name", "featureEnabled")
+                    param("new_value", "true")
+                    outcome("Sets featureEnabled to true and confirms via read-back. The LLM can then resume and observe which branch executes.")
+                }
+                verdict {
+                    keep(
+                        "Uniquely valuable for hypothesis-testing without recompile. The LLM can run " +
+                            "'what if this value was X' experiments at the cost of zero source edits.",
+                        VerdictSeverity.STRONG
+                    )
+                }
+            }
+
+            // ── thread_dump ───────────────────────────────────────────────────────
+            action("thread_dump") {
+                description {
+                    technical(
+                        "Captures the state of all JVM threads via the JDWP VirtualMachine API " +
+                            "(`vm.allThreads()`). For each thread: name, id, status (RUNNING/SLEEPING/" +
+                            "BLOCKED/WAITING/NOT_STARTED/TERMINATED), daemon flag, suspended flag, " +
+                            "and optionally per-thread stack frames. Daemon threads excluded by default. " +
+                            "Large outputs auto-spill via `spillOrFormat`."
+                    )
+                    plain(
+                        "Like IntelliJ's 'Threads' pane or Java's `jstack` command — shows every thread " +
+                            "in the JVM and what it's doing. Useful for diagnosing deadlocks, thread leaks, " +
+                            "and unexpected blocking."
+                    )
+                }
+                whenLLMUses(
+                    "When the LLM suspects a concurrency issue — deadlock, thread starvation, or " +
+                        "an unexpected number of threads — and needs to see the global thread landscape " +
+                        "rather than just the currently paused thread's stack."
+                )
+                params {
+                    optional("session_id", "string") {
+                        llmSeesIt("Debug session ID (optional — uses active session if omitted)")
+                        humanReadable("Which session's JVM to query.")
+                        whenPresent("That session's VM threads are returned.")
+                        whenAbsent("Active session's VM threads are returned.")
+                    }
+                    optional("max_frames", "integer") {
+                        llmSeesIt("Maximum stack frames to return (default 20, max 50) — for get_stack_frames, thread_dump")
+                        humanReadable("How many frames per thread to include when include_stacks=true.")
+                        whenPresent("At most that many frames per thread.")
+                        whenAbsent("Default 20 frames per thread.")
+                        constraint("only meaningful when include_stacks=true")
+                        example("10")
+                    }
+                    optional("include_stacks", "boolean") {
+                        llmSeesIt("Include stack traces per thread (default: true) — for thread_dump")
+                        humanReadable("Whether to include per-thread stack frames. Set to false for a quick thread-count-only snapshot.")
+                        whenPresent("Stack frames are included per thread if that thread is suspended; otherwise shows '(frames unavailable — thread not suspended)'.")
+                        whenAbsent("Defaults to true — stack frames included.")
+                    }
+                    optional("include_daemon", "boolean") {
+                        llmSeesIt("Include daemon threads (default: false) — for thread_dump")
+                        humanReadable("Whether to include daemon threads (JVM housekeeping threads like GC, finalizer). Usually not interesting for application debugging.")
+                        whenPresent("Daemon threads are included in the dump.")
+                        whenAbsent("Defaults to false — daemon threads excluded.")
+                    }
+                }
+                precondition("[ANY] — works on running or paused sessions. Per-thread stack frames require that thread to be suspended.")
+                onSuccess("Returns: total thread count, suspended count, then per-thread block: name, id, status, daemon flag, and stack frames (if available and thread is suspended).")
+                onFailure("VM is disconnected or session ended", "Returns 'Thread dump returned empty — VM may be disconnected.'")
+                onFailure("include_stacks=true but threads are not suspended", "Per-thread frames show '(frames unavailable — thread not suspended)' — not an error, expected for running threads.")
+                example("detect deadlock") {
+                    param("action", "thread_dump")
+                    param("include_stacks", "true")
+                    outcome("Returns all non-daemon threads with their stack frames. Two threads BLOCKED on each other's monitor will show their stacks ending in synchronized blocks on each other's objects — classic deadlock signature.")
+                }
+                verdict {
+                    keep(
+                        "The only action that gives a system-wide thread view. `get_stack_frames` only " +
+                            "shows one thread; `thread_dump` shows all threads, which is essential for " +
+                            "diagnosing deadlocks and thread leaks.",
+                        VerdictSeverity.STRONG
+                    )
+                }
+            }
+
+            // ── memory_view ───────────────────────────────────────────────────────
+            action("memory_view") {
+                description {
+                    technical(
+                        "Counts live instances of a fully-qualified class name in the JVM heap via " +
+                            "`VirtualMachine.instanceCounts()`. Optionally lists per-instance details " +
+                            "(reference type, unique ID) for the first N instances. Requires " +
+                            "`vm.canGetInstanceInfo()`. Session must be paused (JDWP constraint). " +
+                            "Output auto-spills via `spillOrFormat`."
+                    )
+                    plain(
+                        "Like a JVM heap search: 'how many User objects are currently alive in " +
+                            "memory?' Useful for finding memory leaks (the count keeps growing) or " +
+                            "verifying that a cache is not unbounded."
+                    )
+                }
+                whenLLMUses(
+                    "When the LLM suspects a memory leak or wants to verify that object lifecycle " +
+                        "management is correct — e.g., that a connection pool doesn't grow unboundedly, " +
+                        "or that cached items are evicted properly."
+                )
+                params {
+                    required("class_name", "string") {
+                        llmSeesIt("Fully qualified class name — for memory_view")
+                        humanReadable("The fully-qualified class name to count in the heap. Must match exactly how the class is known to the JVM (e.g., inner classes use `$` separator).")
+                        whenPresent("All loaded reference types matching that name are counted; if multiple match (subclasses, inner classes), counts are listed per type.")
+                        constraint("must be a fully-qualified class name — short names will not resolve")
+                        constraint("class must be loaded in the JVM — not-yet-instantiated classes return a 'not loaded' error")
+                        example("com.example.service.UserSession")
+                        example("java.util.HashMap")
+                    }
+                    optional("session_id", "string") {
+                        llmSeesIt("Debug session ID (optional — uses active session if omitted)")
+                        humanReadable("Which session's heap to query.")
+                        whenPresent("That session's VM heap is counted.")
+                        whenAbsent("Active session's VM heap is counted.")
+                    }
+                    optional("max_instances", "integer") {
+                        llmSeesIt("Max instances to list details for (0=count only). Default 0 — for memory_view")
+                        humanReadable("How many individual instance records to include (unique ID, reference type). 0 = only the total count is shown, no per-instance detail.")
+                        whenPresent("Up to that many instance records are listed (capped at 50 internally).")
+                        whenAbsent("Default 0 — count only, no per-instance detail.")
+                        constraint("capped at 50 instances regardless of requested value")
+                        example("10")
+                    }
+                }
+                precondition("session must be PAUSED (JDWP constraint — instanceCounts requires a suspended VM)")
+                precondition("VM must support canGetInstanceInfo() — fails on remote / non-HotSpot VMs")
+                onSuccess("Returns: class name, total live instance count, optional breakdown by type (when multiple reference types match), optional per-instance details (first N instances with unique IDs).")
+                onFailure("VM does not support canGetInstanceInfo", "Error: 'VM does not support instance info … may be a remote or non-HotSpot JVM.'")
+                onFailure("class not loaded", "Error: 'Class not loaded in the JVM. It may not have been instantiated yet, or the name may be incorrect.'")
+                onFailure("session is running", "NOT_SUSPENDED error.")
+                example("check for connection leak") {
+                    param("action", "memory_view")
+                    param("class_name", "com.zaxxer.hikari.pool.PoolEntry")
+                    param("max_instances", "0")
+                    outcome("Returns the total count of HikariCP pool entries. If the count grows across snapshots while connections should be evicted, it indicates a leak.")
+                }
+                verdict {
+                    keep("Only way to count live heap instances programmatically. No evaluate-based equivalent exists without iterating all objects via ObjectReference, which has no LLM-callable surface.", VerdictSeverity.NORMAL)
+                    drop("Narrow JVM capability requirement (canGetInstanceInfo=false on remote/non-HotSpot). Rarely used — most debugging doesn't require heap counts.", VerdictSeverity.WEAK)
+                }
+            }
+
+            // ── hotswap ───────────────────────────────────────────────────────────
+            action("hotswap") {
+                description {
+                    technical(
+                        "Triggers IntelliJ's HotSwap mechanism via `HotSwapUI.reloadChangedClasses()`. " +
+                            "Optionally compiles changed files first. Registers a `HotSwapStatusListener` " +
+                            "to get success/failure/cancelled/nothing_to_reload status. Wrapped in a " +
+                            "60-second timeout. Python sessions are rejected early via reflection-based " +
+                            "PyDebugProcess detection."
+                    )
+                    plain(
+                        "Like IntelliJ's 'Reload Changed Classes' button (Alt+Shift+F9 → HotSwap) — " +
+                            "pushes your code changes into the running JVM without restarting the session. " +
+                            "Works only for body changes (not structural changes like adding/removing methods)."
+                    )
+                }
+                whenLLMUses(
+                    "After editing a method body during a paused debug session to fix a suspected bug, " +
+                        "the LLM calls hotswap to load the fix into the running JVM — then resumes " +
+                        "and observes whether the behaviour changes without restarting."
+                )
+                params {
+                    optional("session_id", "string") {
+                        llmSeesIt("Debug session ID (optional — uses active session if omitted)")
+                        humanReadable("Which session to hot-swap into.")
+                        whenPresent("That session's debugger is used to correlate with the DebuggerManagerEx session.")
+                        whenAbsent("Active session is used.")
+                    }
+                    optional("compile_first", "boolean") {
+                        llmSeesIt("Compile changed files before reloading (default: true) — for hotswap")
+                        humanReadable("Whether to compile changed files before asking the JVM to reload. Should almost always be true — reloading un-compiled changes is a no-op.")
+                        whenPresent("Files are compiled (or not) according to this flag before reload.")
+                        whenAbsent("Default true — files are compiled first.")
+                    }
+                }
+                precondition("[ANY] — works on running or paused sessions")
+                precondition("Java/Kotlin only — Python sessions return an error immediately")
+                precondition("structural changes (new methods, fields, changed hierarchy) cause hotswap failure — body-only changes only")
+                onSuccess("Returns: hot swap result (success/failure/cancelled/nothing_to_reload/timeout), session id, compile_first flag, and a human-readable explanation of the outcome.")
+                onFailure("Python debug session", "Immediate error: 'Hot swap is not supported for Python.'")
+                onFailure("structural changes", "Status 'failure' — 'Check for structural changes (new/removed methods, fields, or signature changes).'")
+                onFailure("nothing changed", "Status 'nothing_to_reload' — 'No changed classes detected. Make code changes first.'")
+                onFailure("timeout after 60s", "Status 'timeout' — 'Check compilation and IDE status.'")
+                example("edit and hot-reload a bug fix") {
+                    param("action", "hotswap")
+                    param("compile_first", "true")
+                    outcome("Returns 'hot swap result: success … Classes reloaded successfully. Execution continues with new code.' The LLM can then resume and verify the fix.")
+                }
+                verdict {
+                    keep(
+                        "Enables the only cycle shorter than recompile+restart — the LLM edits a method " +
+                            "body (edit_file), reloads it (hotswap), and resumes, all without terminating " +
+                            "the session. Crucial for debugging slow-to-start applications.",
+                        VerdictSeverity.STRONG
+                    )
+                }
+            }
+
+            // ── force_return ──────────────────────────────────────────────────────
+            action("force_return") {
+                description {
+                    technical(
+                        "Forces the current method to return immediately via `ThreadReference.forceEarlyReturn()`. " +
+                            "Requires `vmProxy.canForceEarlyReturn()`. Supports primitive types (int, long, " +
+                            "boolean, string, double, float, char, byte, short), void, and null. " +
+                            "Type is inferred from the value string when `return_type=auto`. " +
+                            "Handles JDI-specific exceptions: IncompatibleThreadStateException, " +
+                            "NativeMethodException, InvalidTypeException."
+                    )
+                    plain(
+                        "Forces the current method to return immediately — like pressing an emergency " +
+                            "eject button on the current method. The method returns the value you specify " +
+                            "without executing any remaining code. Useful for testing 'what if this " +
+                            "method returned X instead of what it normally computes?'"
+                    )
+                }
+                whenLLMUses(
+                    "When the LLM wants to skip the rest of a method's body and force a specific " +
+                        "return value — usually to test whether the bug is inside the current method " +
+                        "or in how the caller handles the return value."
+                )
+                params {
+                    optional("session_id", "string") {
+                        llmSeesIt("Debug session ID (optional — uses active session if omitted)")
+                        humanReadable("Which session's current method to force-return from.")
+                        whenPresent("That session's current method is force-returned.")
+                        whenAbsent("Active session's current method is force-returned.")
+                    }
+                    optional("return_value", "string") {
+                        llmSeesIt("Value to return: \"null\", \"42\", \"true\", etc. Omit for void — for force_return")
+                        humanReadable("The value the method will return. Omit entirely for void methods. Must be compatible with the method's declared return type.")
+                        whenPresent("The method returns this value.")
+                        whenAbsent("Returns void (or null for reference-type returns when return_type=null).")
+                        example("42")
+                        example("true")
+                        example("null")
+                        example("\"success\"")
+                    }
+                    optional("return_type", "string") {
+                        llmSeesIt("Return type: void, null, int, long, boolean, string, double, float, char, byte, short, auto (default) — for force_return")
+                        humanReadable("Explicit return type to use when constructing the JDI mirror value. 'auto' infers the type from the value string (null→null, true/false→boolean, '42' in int range→int, etc.).")
+                        whenPresent("The specified type is used to construct the JDI value — overrides auto-inference.")
+                        whenAbsent("Default 'auto' — type is inferred from return_value.")
+                        enumValue("auto", "void", "null", "int", "long", "boolean", "string", "double", "float", "char", "byte", "short")
+                    }
+                }
+                precondition("session must be PAUSED")
+                precondition("Java/Kotlin only — requires JDWP canForceEarlyReturn capability")
+                precondition("thread must not be in native code (IncompatibleThreadStateException otherwise)")
+                precondition("thread must not be at a native method (NativeMethodException otherwise)")
+                onSuccess("Confirms: 'Forced early return from current method.' with the return type, value, and a note that remaining method execution is skipped.")
+                onFailure("VM does not support canForceEarlyReturn", "Error: 'JVM does not support force early return … requires a JDWP-compliant JVM.'")
+                onFailure("thread is in native code", "IncompatibleThreadStateException: 'The thread must be suspended at a non-native frame.'")
+                onFailure("at a native method boundary", "NativeMethodException: 'Step out of the native method first.'")
+                onFailure("type mismatch", "InvalidTypeException with descriptive message.")
+                example("force a method to return true to isolate a caller bug") {
+                    param("action", "force_return")
+                    param("return_value", "true")
+                    param("return_type", "boolean")
+                    outcome("Current method returns true immediately. LLM resumes, observes caller behaviour when the method returns true, and determines whether the bug is in the caller's handling.")
+                }
+                verdict {
+                    keep(
+                        "Unique hypothesis-testing primitive. Lets the LLM short-circuit a method " +
+                            "and inject a specific return value — equivalent to temporarily replacing " +
+                            "the method body with `return X`, but without any source change.",
+                        VerdictSeverity.STRONG
+                    )
+                }
+            }
+
+            // ── drop_frame ────────────────────────────────────────────────────────
+            action("drop_frame") {
+                description {
+                    technical(
+                        "Rewinds the program counter to the start of the method at `frame_index` " +
+                            "via `ThreadReference.popFrames()`. Requires `vmProxy.canPopFrames()`. " +
+                            "frame_index=0 rewinds the current method; frame_index=1 rewinds to the " +
+                            "caller. IMPORTANT: variable state is NOT reset — locals retain their " +
+                            "last-written values. Side effects are NOT undone. Python sessions are " +
+                            "rejected early."
+                    )
+                    plain(
+                        "Like rewinding a video to the start of a scene — execution jumps back to " +
+                            "the beginning of the method, but any side effects it already caused " +
+                            "(writes to files, DB inserts, etc.) are NOT undone. Useful when you " +
+                            "stepped past the interesting line and want to step through it again."
+                    )
+                }
+                whenLLMUses(
+                    "When the LLM has accidentally stepped past a critical line and wants to re-enter " +
+                        "the method to step through it carefully from the top — without restarting the " +
+                        "entire debug session."
+                )
+                params {
+                    optional("session_id", "string") {
+                        llmSeesIt("Debug session ID (optional — uses active session if omitted)")
+                        humanReadable("Which session's frame to drop.")
+                        whenPresent("That session's thread is rewound.")
+                        whenAbsent("Active session's thread is rewound.")
+                    }
+                    optional("frame_index", "integer") {
+                        llmSeesIt("Frame index to drop to (0=current, 1=caller). Default 0 — for drop_frame")
+                        humanReadable("Which frame in the call stack to rewind to. 0 = rewind the current method (most common); 1 = rewind to the caller of the current method (pop two frames).")
+                        whenPresent("Execution rewinds to the start of that frame's method.")
+                        whenAbsent("Default 0 — rewinds the current method.")
+                        constraint("must be ≥ 0")
+                        constraint("must be less than the number of frames on the stack")
+                        example("0")
+                        example("1")
+                    }
+                }
+                precondition("session must be PAUSED")
+                precondition("Java/Kotlin only — Python sessions return a non-error message (not supported)")
+                precondition("VM must support canPopFrames() — fails on remote/non-HotSpot VMs")
+                precondition("variable state is NOT reset — only the program counter moves")
+                onSuccess("Confirms: 'Dropped frame: rewound to beginning of ClassName.methodName', with frame index, thread name, session id, and the critical note that variable state and side effects are NOT undone.")
+                onFailure("VM does not support canPopFrames", "Error: 'VM does not support frame popping.'")
+                onFailure("Python debug session", "Non-error message: 'Drop frame is not supported in Python debug sessions.'")
+                onFailure("frame_index out of range", "Error listing the valid range.")
+                onFailure("no suspended thread found", "Error: 'No suspended thread found matching [thread].'")
+                onFailure("session is running", "NOT_SUSPENDED error.")
+                example("re-enter a method to step through it again") {
+                    param("action", "drop_frame")
+                    param("frame_index", "0")
+                    outcome("Rewound to beginning of current method. LLM can now step through the method again from the top, this time more carefully at the interesting lines.")
+                    notes("Variable state (locals) is NOT reset — any assignments that already happened are preserved. Only the program counter moves.")
+                }
+                verdict {
+                    keep("Avoids full session restart when the LLM overstepped. The alternative is stop + relaunch + re-navigate to the same state, which can take minutes for slow-starting applications.", VerdictSeverity.NORMAL)
+                    drop("Narrow use case: only useful when the LLM overstepped. The 'state not reset' caveat makes it confusing and a source of subtle mistakes when the LLM expects a clean re-run.", VerdictSeverity.WEAK)
+                }
+            }
+        }
+        narrative("debug_inspect")
+    }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         coroutineContext.ensureActive()
