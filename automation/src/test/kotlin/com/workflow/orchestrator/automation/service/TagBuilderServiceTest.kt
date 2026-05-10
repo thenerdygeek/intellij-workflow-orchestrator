@@ -144,22 +144,6 @@ class TagBuilderServiceTest {
     }
 
     @Test
-    fun `buildTriggerVariables combines tags and extra vars`() {
-        val entries = listOf(
-            TagEntry("auth", "2.4.0", null, TagSource.BASELINE, RegistryStatus.VALID, false, false)
-        )
-        val extraVars = mapOf("suiteType" to "regression", "featureFlag" to "true")
-
-        val vars = service.buildTriggerVariables(entries, extraVars)
-
-        // A-P0-3: canonical variable name is "DockerTagsAsJSON" (probe-confirmed)
-        assertTrue(vars.containsKey("DockerTagsAsJSON"),
-            "Expected trigger variables to contain key 'DockerTagsAsJSON' but got: ${vars.keys}")
-        assertEquals("regression", vars["suiteType"])
-        assertEquals("true", vars["featureFlag"])
-    }
-
-    @Test
     fun `loadBaseline handles empty results gracefully`() = runTest {
         coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = emptyList(),
@@ -504,59 +488,6 @@ class TagBuilderServiceTest {
         )
 
         assertEquals(3, ranked.size)
-    }
-
-    // PR 7 #7 — suite extras merge
-
-    @Test
-    fun `buildTriggerVariables merges suiteExtras alongside extraVars`() {
-        val entries = listOf(
-            TagEntry("auth", "2.4.0", null, TagSource.BASELINE, RegistryStatus.VALID, false, false)
-        )
-        val extraVars = mapOf("suiteType" to "regression")
-        val suiteExtras = mapOf("featureFlag" to "true", "timeoutMs" to "30000")
-
-        val vars = service.buildTriggerVariables(entries, extraVars, suiteExtras)
-
-        // Both kinds of extras flow into the trigger payload.
-        assertEquals("regression", vars["suiteType"])
-        assertEquals("true", vars["featureFlag"])
-        assertEquals("30000", vars["timeoutMs"])
-        // Docker payload still present.
-        assertTrue(vars.containsKey("DockerTagsAsJSON"))
-    }
-
-    @Test
-    fun `buildTriggerVariables docker payload wins over suiteExtras with same key`() {
-        // User-named extra collides with the canonical docker tag variable —
-        // the auto-generated payload must win (PR 7 #7 conflict resolution).
-        val entries = listOf(
-            TagEntry("auth", "2.4.0", null, TagSource.BASELINE, RegistryStatus.VALID, false, false)
-        )
-        val suiteExtras = mapOf("DockerTagsAsJSON" to "should-be-ignored")
-
-        val vars = service.buildTriggerVariables(entries, emptyMap(), suiteExtras)
-
-        // The docker payload should reflect the entries, NOT the colliding extra.
-        assertTrue(vars["DockerTagsAsJSON"]!!.contains("\"auth\""))
-        assertTrue(vars["DockerTagsAsJSON"]!!.contains("\"2.4.0\""))
-        assertFalse(vars["DockerTagsAsJSON"] == "should-be-ignored")
-    }
-
-    @Test
-    fun `buildTriggerVariables suiteExtras override extraVars on key conflict`() {
-        // Per the contract docstring, suiteExtras (rule 2) is applied AFTER
-        // extraVars (rule 1) but before the docker payload (rule 3). So a
-        // shared key resolves to the suiteExtras value.
-        val entries = listOf(
-            TagEntry("auth", "2.4.0", null, TagSource.BASELINE, RegistryStatus.VALID, false, false)
-        )
-        val extraVars = mapOf("env" to "staging")
-        val suiteExtras = mapOf("env" to "production")
-
-        val vars = service.buildTriggerVariables(entries, extraVars, suiteExtras)
-
-        assertEquals("production", vars["env"])
     }
 
     // PR 7 #8 — baseline picker exposes ranked alternatives

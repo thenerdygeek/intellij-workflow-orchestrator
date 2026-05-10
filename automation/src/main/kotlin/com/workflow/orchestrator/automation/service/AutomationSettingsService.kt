@@ -64,22 +64,6 @@ class AutomationSettingsService : PersistentStateComponent<AutomationSettingsSer
         var serviceNameMapping: MutableMap<String, String>? = null,
         var lastModified: Long = 0,
         /**
-         * Free-form per-suite extras (PR 7 #7). Keys are user-supplied — they
-         * are NOT validated against the plan's variable list. Merged into the
-         * trigger payload at trigger-time (`TagBuilderService.buildTriggerVariables`)
-         * so they show up in Bamboo as `bamboo.variable.<key>=<value>`.
-         *
-         * Conflict resolution: if the user creates an extra named
-         * `DockerTagsAsJSON`, the auto-generated docker tags payload always wins —
-         * see [com.workflow.orchestrator.automation.service.TagBuilderService.buildTriggerVariables]
-         * for the merge order.
-         *
-         * Placed last in the parameter list so existing positional constructor
-         * calls (e.g. tests built before PR 7) continue to work without edits.
-         */
-        @MapAnnotation(surroundWithTag = false, entryTagName = "extra", keyAttributeName = "key", valueAttributeName = "value")
-        var extraVariables: MutableMap<String, String> = mutableMapOf(),
-        /**
          * Per-suite default stage selection (Phase H, H3).
          *
          * When non-null, the default Trigger button click uses this set instead of
@@ -115,29 +99,6 @@ class AutomationSettingsService : PersistentStateComponent<AutomationSettingsSer
     }
 
     fun getAllSuites(): List<SuiteConfig> = myState.suites.values.toList()
-
-    /**
-     * Returns the free-form extras for [planKey], or empty when no suite is
-     * configured / no extras have been added. Convenience wrapper over
-     * [getSuiteConfig] for trigger-time merging.
-     */
-    fun getExtraVariables(planKey: String): Map<String, String> =
-        getSuiteConfig(planKey)?.extraVariables?.toMap().orEmpty()
-
-    /**
-     * Replaces the extras map for [planKey]. Creates a new SuiteConfig when
-     * the suite isn't already in state. Persists immediately — IntelliJ flushes
-     * the underlying XML file on a periodic schedule (no explicit save needed).
-     */
-    fun setExtraVariables(planKey: String, extras: Map<String, String>) {
-        val existing = myState.suites[planKey]
-        val updated = (existing ?: SuiteConfig(planKey = planKey, displayName = planKey))
-            .also {
-                it.extraVariables = extras.toMutableMap()
-                it.lastModified = System.currentTimeMillis()
-            }
-        myState.suites[planKey] = updated
-    }
 
     /**
      * Returns the saved default stages for [suitePlanKey], after applying the

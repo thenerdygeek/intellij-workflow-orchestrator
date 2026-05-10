@@ -16,7 +16,6 @@ import com.workflow.orchestrator.automation.model.*
 import com.workflow.orchestrator.automation.service.*
 import com.workflow.orchestrator.automation.service.TriggerDefaultAction
 import com.workflow.orchestrator.bamboo.ui.ManualStageDialog
-import com.workflow.orchestrator.bamboo.ui.ManualStageDialogResult
 import com.workflow.orchestrator.bamboo.ui.TriggerMode
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
@@ -112,7 +111,6 @@ class AutomationPanel(
     // Sub-panels
     private val tagStagingPanel = TagStagingPanel(project)
     private val suiteConfigPanel = SuiteConfigPanel(project)
-    private val suiteExtrasPanel = SuiteExtrasPanel()
     private val queueStatusPanel = QueueStatusPanel(project)
     private val monitorPanel = MonitorPanel(project)
 
@@ -184,20 +182,12 @@ class AutomationPanel(
         }
         add(topPanel, BorderLayout.NORTH)
 
-        // Configure tab: tag table (left) + variables (right, plan-scoped + extras)
-        // Right column stacks SuiteConfigPanel (plan vars) above SuiteExtrasPanel
-        // (free-form). The plan vars panel takes most of the height; extras grow
-        // from the bottom. Both share the same JBSplitter slot via a Y-axis box.
+        // Configure tab: tag table (left) + suite variable overrides (right).
         val configurePanel = JPanel(BorderLayout()).apply {
-            val rightStack = JPanel().apply {
-                layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                add(suiteConfigPanel)
-                add(suiteExtrasPanel)
-            }
             val splitter = com.intellij.ui.JBSplitter(false, 0.65f).apply {
                 setSplitterProportionKey("workflow.automation.splitter")
                 firstComponent = JBScrollPane(tagStagingPanel)
-                secondComponent = JBScrollPane(rightStack)
+                secondComponent = JBScrollPane(suiteConfigPanel)
             }
             add(splitter, BorderLayout.CENTER)
         }
@@ -236,7 +226,6 @@ class AutomationPanel(
 
         Disposer.register(this, tagStagingPanel)
         Disposer.register(this, suiteConfigPanel)
-        Disposer.register(this, suiteExtrasPanel)
         Disposer.register(this, queueStatusPanel)
         Disposer.register(this, monitorPanel)
 
@@ -398,15 +387,9 @@ class AutomationPanel(
 
             if (!varsResult.isError) {
                 val vars = varsResult.data!!
-                val varKeys = vars.map { it.name }
-                val varValues = vars.associate { it.name to it.value }
-                suiteConfigPanel.setAvailableVariables(varKeys)
+                suiteConfigPanel.setAvailableVariables(vars)
                 suiteConfigPanel.loadSuiteVariables(planKey)
-                suiteConfigPanel.setVariableValues(varValues)
             }
-            // PR 7 #7: load the per-suite free-form extras for this suite so
-            // the user sees their persisted overrides on suite switch.
-            suiteExtrasPanel.loadSuite(planKey)
 
             // PR 7 #8: refresh the baseline picker to reflect the alternatives
             // we just received from scoreAndRankRuns.
@@ -729,11 +712,9 @@ class AutomationPanel(
         // before clicking Trigger. The dockerTagsAsJson key matches the Bamboo
         // variable name used by the automation plans.
         val tags = tagStagingPanel.getCurrentTags()
-        val extraVars = suiteConfigPanel.getVariables()
-        val suiteExtras = automationSettings.getExtraVariables(currentSuitePlanKey)
         val dockerTagsPayload = tagBuilderService.buildJsonPayload(tags)
         val previewVars = buildMap {
-            putAll(extraVars + suiteExtras)
+            putAll(suiteConfigPanel.getVariables())
             if (dockerTagsPayload.isNotBlank()) put("dockerTagsAsJson", dockerTagsPayload)
         }
 
@@ -772,9 +753,7 @@ class AutomationPanel(
      */
     private fun enqueueWith(stages: Set<String>?) {
         val tags = tagStagingPanel.getCurrentTags()
-        val extraVars = suiteConfigPanel.getVariables()
-        val suiteExtras = AutomationSettingsService.getInstance().getExtraVariables(currentSuitePlanKey)
-        val mergedVars = extraVars + suiteExtras
+        val mergedVars = suiteConfigPanel.getVariables()
         val dockerTagsPayload = tagBuilderService.buildJsonPayload(tags)
 
         val entry = QueueEntry(

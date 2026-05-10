@@ -284,49 +284,6 @@ class TagBuilderService {
     }
 
     /**
-     * Merges plan-scoped extras + per-suite free-form extras into the docker
-     * tags payload, then returns the final trigger variable map.
-     *
-     * **Conflict resolution (PR 7 #7).** Order of precedence (later wins for
-     * non-docker keys; docker key is locked):
-     *   1. [extraVars] — plan-scoped variables from the picker dropdown.
-     *   2. [suiteExtras] — free-form per-suite extras the user added in the
-     *      "Custom Variables" sub-panel. May redefine plan-scoped keys.
-     *   3. The docker tags payload (`buildVariableName` → JSON) — ALWAYS the
-     *      last write-in. If a user creates a free-form extra named
-     *      `DockerTagsAsJSON`, this overrides it. The docker payload is the
-     *      whole point of the automation tab; letting an extra clobber it
-     *      would silently break every triggered run.
-     *
-     * Empty values are preserved so the user can deliberately blank out a
-     * plan default by setting an extra to "".
-     */
-    fun buildTriggerVariables(
-        entries: List<TagEntry>,
-        extraVars: Map<String, String>,
-        suiteExtras: Map<String, String> = emptyMap()
-    ): Map<String, String> {
-        log.info("[Automation:Tags] Building trigger variables using '$buildVariableName' " +
-            "with ${extraVars.size} plan-scoped extras + ${suiteExtras.size} suite extras")
-
-        // Detect and warn (without rejecting) when a suite extra collides with
-        // the docker tag variable. The trigger still fires correctly because
-        // we apply the docker payload last, but the user almost certainly
-        // means something else and we want a breadcrumb in the log.
-        val collidingExtra = suiteExtras.keys.firstOrNull { it.equals(buildVariableName, ignoreCase = true) }
-        if (collidingExtra != null) {
-            log.warn("[Automation:Tags] Suite extra '$collidingExtra' collides with the " +
-                "auto-generated docker tags variable; the docker payload wins.")
-        }
-
-        val result = mutableMapOf<String, String>()
-        result.putAll(extraVars)
-        result.putAll(suiteExtras)
-        result[buildVariableName] = buildJsonPayload(entries)
-        return result
-    }
-
-    /**
      * Detects the current repo's docker tag from its CI build log using the resolved
      * branch-chain key. This is the canonical Phase-B path — it consults
      * [BuildLogCache] first (cache-first, O(1)) and falls back to a Bamboo REST call

@@ -470,7 +470,7 @@ class AutomationConfigurable(private val project: Project) : SearchableConfigura
 
             val existing = automationSettings.getSuiteConfig(key)
             if (existing != null) {
-                // Preserve variables / enabledStages / serviceNameMapping / extraVariables
+                // Preserve variables / enabledStages / serviceNameMapping
                 // — only update display fields and defaultStages.
                 automationSettings.saveSuiteConfig(
                     existing.copy(
