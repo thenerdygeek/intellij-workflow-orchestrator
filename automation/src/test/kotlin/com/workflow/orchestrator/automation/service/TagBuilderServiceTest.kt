@@ -7,6 +7,7 @@ import com.workflow.orchestrator.core.model.bamboo.PlanVariableData
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.services.ToolResult
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
@@ -28,31 +29,16 @@ class TagBuilderServiceTest {
     @Test
     fun `scoreAndRankRuns scores runs by release tags and stage results`() = runTest {
         val runs = listOf(
-            makeBuildResultData(847, "Successful", listOf("Successful", "Successful", "Successful")),
-            makeBuildResultData(848, "Failed", listOf("Successful", "Failed")),
-            makeBuildResultData(846, "Successful", listOf("Successful", "Successful"))
+            makeBuildResultData(847, "Successful", listOf("Successful", "Successful", "Successful"),
+                variables = mapOf("dockerTagsAsJson" to """{"auth":"2.4.0","payments":"2.3.1","user":"1.9.0"}""")),
+            makeBuildResultData(848, "Failed", listOf("Successful", "Failed"),
+                variables = mapOf("dockerTagsAsJson" to """{"auth":"2.4.0","payments":"feature-abc"}""")),
+            makeBuildResultData(846, "Successful", listOf("Successful", "Successful"),
+                variables = mapOf("dockerTagsAsJson" to """{"auth":"2.3.0","payments":"2.3.1"}"""))
         )
         coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = runs,
             summary = "Found 3 recent builds"
-        )
-        coEvery { bambooService.getBuildVariables("PROJ-AUTO-847") } returns ToolResult.success(
-            data = listOf(
-                PlanVariableData("dockerTagsAsJson", """{"auth":"2.4.0","payments":"2.3.1","user":"1.9.0"}""")
-            ),
-            summary = "1 variable"
-        )
-        coEvery { bambooService.getBuildVariables("PROJ-AUTO-848") } returns ToolResult.success(
-            data = listOf(
-                PlanVariableData("dockerTagsAsJson", """{"auth":"2.4.0","payments":"feature-abc"}""")
-            ),
-            summary = "1 variable"
-        )
-        coEvery { bambooService.getBuildVariables("PROJ-AUTO-846") } returns ToolResult.success(
-            data = listOf(
-                PlanVariableData("dockerTagsAsJson", """{"auth":"2.3.0","payments":"2.3.1"}""")
-            ),
-            summary = "1 variable"
         )
 
         val (ranked, diagnostics) = service.scoreAndRankRuns("PROJ-AUTO")
@@ -71,17 +57,12 @@ class TagBuilderServiceTest {
     @Test
     fun `loadBaseline returns tag entries from best-scored run`() = runTest {
         val runs = listOf(
-            makeBuildResultData(847, "Successful", listOf("Successful", "Successful"))
+            makeBuildResultData(847, "Successful", listOf("Successful", "Successful"),
+                variables = mapOf("dockerTagsAsJson" to """{"auth":"2.4.0","payments":"2.3.1"}"""))
         )
         coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = runs,
             summary = "Found 1 build"
-        )
-        coEvery { bambooService.getBuildVariables("PROJ-AUTO-847") } returns ToolResult.success(
-            data = listOf(
-                PlanVariableData("dockerTagsAsJson", """{"auth":"2.4.0","payments":"2.3.1"}""")
-            ),
-            summary = "1 variable"
         )
 
         val entries = service.loadBaseline("PROJ-AUTO")
@@ -186,15 +167,14 @@ class TagBuilderServiceTest {
 
     @Test
     fun `loadBaselineWithDiagnostics reports missing variable`() = runTest {
-        val runs = listOf(makeBuildResultData(100, "Successful", listOf("Successful")))
+        val runs = listOf(
+            // Build has variables but NOT dockerTagsAsJson
+            makeBuildResultData(100, "Successful", listOf("Successful"),
+                variables = mapOf("someOtherVar" to "value"))
+        )
         coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = runs,
             summary = "1 build"
-        )
-        // Build has variables but NOT dockerTagsAsJson
-        coEvery { bambooService.getBuildVariables("PROJ-AUTO-100") } returns ToolResult.success(
-            data = listOf(PlanVariableData("someOtherVar", "value")),
-            summary = "1 variable"
         )
 
         val result = service.loadBaselineWithDiagnostics("PROJ-AUTO")
@@ -209,14 +189,13 @@ class TagBuilderServiceTest {
 
     @Test
     fun `loadBaselineWithDiagnostics reports success with build details`() = runTest {
-        val runs = listOf(makeBuildResultData(847, "Successful", listOf("Successful", "Successful")))
+        val runs = listOf(
+            makeBuildResultData(847, "Successful", listOf("Successful", "Successful"),
+                variables = mapOf("dockerTagsAsJson" to """{"auth":"2.4.0","payments":"2.3.1"}"""))
+        )
         coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = runs,
             summary = "1 build"
-        )
-        coEvery { bambooService.getBuildVariables("PROJ-AUTO-847") } returns ToolResult.success(
-            data = listOf(PlanVariableData("dockerTagsAsJson", """{"auth":"2.4.0","payments":"2.3.1"}""")),
-            summary = "1 variable"
         )
 
         val result = service.loadBaselineWithDiagnostics("PROJ-AUTO")
@@ -380,20 +359,14 @@ class TagBuilderServiceTest {
         // pre-release tags ("2.4.0-rc1", "2.3.1-SNAPSHOT") that the old regex would
         // wrongly match as releases. Tightened regex must score build-A strictly higher.
         val builds = listOf(
-            makeBuildResultData(847, "Successful", listOf("Successful", "Successful")),
-            makeBuildResultData(848, "Successful", listOf("Successful", "Successful"))
+            makeBuildResultData(847, "Successful", listOf("Successful", "Successful"),
+                variables = mapOf("dockerTagsAsJson" to """{"auth":"2.4.0","payments":"2.3.1"}""")),
+            makeBuildResultData(848, "Successful", listOf("Successful", "Successful"),
+                variables = mapOf("dockerTagsAsJson" to """{"auth":"2.4.0-rc1","payments":"2.3.1-SNAPSHOT"}"""))
         )
         coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = builds,
             summary = "2 builds"
-        )
-        coEvery { bambooService.getBuildVariables("PROJ-AUTO-847") } returns ToolResult.success(
-            data = listOf(PlanVariableData("dockerTagsAsJson", """{"auth":"2.4.0","payments":"2.3.1"}""")),
-            summary = "1 var"
-        )
-        coEvery { bambooService.getBuildVariables("PROJ-AUTO-848") } returns ToolResult.success(
-            data = listOf(PlanVariableData("dockerTagsAsJson", """{"auth":"2.4.0-rc1","payments":"2.3.1-SNAPSHOT"}""")),
-            summary = "1 var"
         )
 
         val (ranked, _) = service.scoreAndRankRuns("PROJ-AUTO")
@@ -408,14 +381,13 @@ class TagBuilderServiceTest {
     @Test
     fun `A-P2-2 four-segment Maven-style version still counts as release`() = runTest {
         // "1.2.3.4" is the Maven-style 4-segment release form — kept eligible.
-        val builds = listOf(makeBuildResultData(900, "Successful", listOf("Successful")))
+        val builds = listOf(
+            makeBuildResultData(900, "Successful", listOf("Successful"),
+                variables = mapOf("dockerTagsAsJson" to """{"auth":"1.2.3.4"}"""))
+        )
         coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = builds,
             summary = "1 build"
-        )
-        coEvery { bambooService.getBuildVariables("PROJ-AUTO-900") } returns ToolResult.success(
-            data = listOf(PlanVariableData("dockerTagsAsJson", """{"auth":"1.2.3.4"}""")),
-            summary = "1 var"
         )
 
         val (ranked, _) = service.scoreAndRankRuns("PROJ-AUTO")
@@ -429,23 +401,18 @@ class TagBuilderServiceTest {
     fun `targetParseable honored when first 10 builds yield few parseable`() = runTest {
         // 12 builds total; only every other build has dockerTagsAsJson, so the
         // walker must pull the full 12 to accumulate 6 parseable results.
-        val builds = (1..12).map { makeBuildResultData(it, "Successful", listOf("Successful")) }
+        val builds = (1..12).map { n ->
+            val vars = if (n % 2 == 0) {
+                mapOf("dockerTagsAsJson" to """{"svc":"1.0.$n"}""")
+            } else {
+                mapOf("noise" to "x")
+            }
+            makeBuildResultData(n, "Successful", listOf("Successful"), variables = vars)
+        }
         coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 12) } returns ToolResult.success(
             data = builds,
             summary = "12 builds"
         )
-        for (b in builds) {
-            val resultKey = "PROJ-AUTO-${b.buildNumber}"
-            val vars = if (b.buildNumber % 2 == 0) {
-                listOf(PlanVariableData("dockerTagsAsJson", """{"svc":"1.0.${b.buildNumber}"}"""))
-            } else {
-                listOf(PlanVariableData("noise", "x"))
-            }
-            coEvery { bambooService.getBuildVariables(resultKey) } returns ToolResult.success(
-                data = vars,
-                summary = "1 var"
-            )
-        }
 
         val (ranked, diagnostics) = service.scoreAndRankRuns(
             "PROJ-AUTO",
@@ -465,21 +432,16 @@ class TagBuilderServiceTest {
     @Test
     fun `pagination early-exits once targetParseable is reached`() = runTest {
         // 10 builds, all parseable. Asking for targetParseable=3, maxWalk=10
-        // means we should stop after walking 3 builds and never request
-        // variables for #4-#10.
-        val builds = (1..10).map { makeBuildResultData(it, "Successful", listOf("Successful")) }
+        // means we should stop after walking 3 builds. Builds 4-10 have empty
+        // variables so they would be skipped — the early-exit fires first.
+        val builds = (1..10).map { n ->
+            val vars = if (n <= 3) mapOf("dockerTagsAsJson" to """{"svc":"1.0.$n"}""") else emptyMap()
+            makeBuildResultData(n, "Successful", listOf("Successful"), variables = vars)
+        }
         coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = builds,
             summary = "10 builds"
         )
-        // Mock variable fetches for the first 3 only — if the walker keeps
-        // going, mockk will throw an unstubbed-call error.
-        for (n in 1..3) {
-            coEvery { bambooService.getBuildVariables("PROJ-AUTO-$n") } returns ToolResult.success(
-                data = listOf(PlanVariableData("dockerTagsAsJson", """{"svc":"1.0.$n"}""")),
-                summary = "1 var"
-            )
-        }
 
         val (ranked, _) = service.scoreAndRankRuns(
             "PROJ-AUTO",
@@ -495,25 +457,16 @@ class TagBuilderServiceTest {
     @Test
     fun `loadBaselineWithDiagnostics surfaces all ranked builds for picker`() = runTest {
         val runs = listOf(
-            makeBuildResultData(847, "Successful", listOf("Successful", "Successful")),
-            makeBuildResultData(848, "Successful", listOf("Successful", "Successful")),
-            makeBuildResultData(846, "Successful", listOf("Successful", "Successful"))
+            makeBuildResultData(847, "Successful", listOf("Successful", "Successful"),
+                variables = mapOf("dockerTagsAsJson" to """{"a":"2.0.0","b":"3.0.0"}""")),
+            makeBuildResultData(848, "Successful", listOf("Successful", "Successful"),
+                variables = mapOf("dockerTagsAsJson" to """{"a":"2.0.0"}""")),
+            makeBuildResultData(846, "Successful", listOf("Successful", "Successful"),
+                variables = mapOf("dockerTagsAsJson" to """{"a":"1.5.0","b":"2.5.0"}"""))
         )
         coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = runs,
             summary = "3 builds"
-        )
-        coEvery { bambooService.getBuildVariables("PROJ-AUTO-847") } returns ToolResult.success(
-            data = listOf(PlanVariableData("dockerTagsAsJson", """{"a":"2.0.0","b":"3.0.0"}""")),
-            summary = "1 var"
-        )
-        coEvery { bambooService.getBuildVariables("PROJ-AUTO-848") } returns ToolResult.success(
-            data = listOf(PlanVariableData("dockerTagsAsJson", """{"a":"2.0.0"}""")),
-            summary = "1 var"
-        )
-        coEvery { bambooService.getBuildVariables("PROJ-AUTO-846") } returns ToolResult.success(
-            data = listOf(PlanVariableData("dockerTagsAsJson", """{"a":"1.5.0","b":"2.5.0"}""")),
-            summary = "1 var"
         )
 
         val result = service.loadBaselineWithDiagnostics("PROJ-AUTO")
@@ -548,11 +501,37 @@ class TagBuilderServiceTest {
         assertEquals(RegistryStatus.UNKNOWN, auth.registryStatus)
     }
 
+    @Test
+    fun `scoreAndRankRuns does not call getBuildVariables when variables are inline`() = runTest {
+        coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
+            data = listOf(
+                BuildResultData(
+                    planKey = "PROJ-AUTO",
+                    buildNumber = 200,
+                    state = "Successful",
+                    durationSeconds = 120,
+                    buildResultKey = "PROJ-AUTO-200",
+                    lifeCycleState = "Finished",
+                    variables = mapOf("dockerTagsAsJson" to """{"svc-a":"1.0.0"}""")
+                )
+            ),
+            summary = "ok"
+        )
+
+        val (ranked, _) = service.scoreAndRankRuns("PROJ-AUTO")
+
+        assertEquals(1, ranked.size)
+        assertEquals(mapOf("svc-a" to "1.0.0"), ranked[0].dockerTags)
+        // The key contract: no per-build re-fetch.
+        coVerify(exactly = 0) { bambooService.getBuildVariables(any()) }
+    }
+
     private fun makeBuildResultData(
         buildNumber: Int,
         state: String,
         stageStates: List<String>,
-        planKey: String = "PROJ-AUTO"
+        planKey: String = "PROJ-AUTO",
+        variables: Map<String, String> = emptyMap()
     ): BuildResultData {
         val stages = stageStates.mapIndexed { i, s ->
             BuildStageData(
@@ -568,7 +547,8 @@ class TagBuilderServiceTest {
             durationSeconds = 700,
             buildResultKey = "$planKey-$buildNumber",
             buildRelativeTime = "5 min ago",
-            stages = stages
+            stages = stages,
+            variables = variables
         )
     }
 }

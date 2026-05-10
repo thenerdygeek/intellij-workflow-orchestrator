@@ -124,17 +124,15 @@ class TagBuilderService {
             log.info("[Automation:Tags] Checking build #${build.buildNumber} (buildResultKey=${build.buildResultKey}, state=${build.state})")
 
             val resultKey = build.buildResultKey.ifBlank { "${suitePlanKey}-${build.buildNumber}" }
-            log.info("[Automation:Tags]   Build #${build.buildNumber}: fetching variables with key='$resultKey'")
-            val varsResult = bambooService.getBuildVariables(resultKey)
-            if (varsResult.isError) {
-                val reason = "#${build.buildNumber}: variables fetch failed — ${varsResult.summary}"
+            val variables = build.variables
+            if (variables.isEmpty()) {
+                val reason = "#${build.buildNumber}: no variables on build (likely in-progress or unexpanded result)"
                 log.info("[Automation:Tags]   $reason")
                 skippedReasons.add(reason)
                 continue
             }
-            val variables = varsResult.data!!.associate { it.name to it.value }
             buildsWithVars++
-            log.info("[Automation:Tags]   Build #${build.buildNumber}: fetched ${variables.size} variables: ${variables.keys}")
+            log.info("[Automation:Tags]   Build #${build.buildNumber}: ${variables.size} inline variables: ${variables.keys}")
 
             // Case-insensitive lookup — Bamboo variable may be DockerTagsAsJson or dockerTagsAsJson
             val dockerTagsJson = variables.entries
