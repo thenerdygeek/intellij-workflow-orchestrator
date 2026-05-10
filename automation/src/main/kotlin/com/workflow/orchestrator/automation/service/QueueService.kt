@@ -90,7 +90,11 @@ class QueueService {
     fun enqueue(entry: QueueEntry) {
         cs.launch(Dispatchers.IO) {
             mutex.withLock {
-                val suiteEntries = _stateFlow.value.count { it.suitePlanKey == entry.suitePlanKey }
+                // PR 8: depth check counts only LIVE entries — terminal rows that
+                // the user hasn't dismissed yet must not block new enqueues.
+                val suiteEntries = _stateFlow.value.count {
+                    it.suitePlanKey == entry.suitePlanKey && it.status !in TERMINAL_STATUSES_SET
+                }
                 if (suiteEntries >= maxDepthPerSuite) {
                     log.warn("[Automation:Queue] Queue depth limit reached for suite '${entry.suitePlanKey}' (max=$maxDepthPerSuite), rejecting entry ${entry.id}")
                     return@launch
@@ -146,6 +150,12 @@ class QueueService {
         }
     }
 
+    /**
+     * User-initiated cancel: stop the run on Bamboo (if applicable) and transition
+     * the entry to [QueueEntryStatus.CANCELLED]. The entry STAYS in [_stateFlow]
+     * so the user can still see it in the Monitor list — they remove it explicitly
+     * via [dismiss]. (PR 8: Monitor lifecycle no longer auto-prunes terminal entries.)
+     */
     fun cancel(entryId: String) {
         cs.launch(Dispatchers.IO) {
             mutex.withLock {
@@ -159,7 +169,9 @@ class QueueService {
                 }
 
                 tagHistoryService.updateQueueEntryStatus(entryId, QueueEntryStatus.CANCELLED)
-                _stateFlow.value = _stateFlow.value.filter { it.id != entryId }
+                _stateFlow.value = _stateFlow.value.map {
+                    if (it.id == entryId) it.copy(status = QueueEntryStatus.CANCELLED) else it
+                }
 
                 eventBus.emit(WorkflowEvent.QueuePositionChanged(
                     suitePlanKey = entry.suitePlanKey,
@@ -170,11 +182,34 @@ class QueueService {
         }
     }
 
-    fun getActiveEntries(): List<QueueEntry> = _stateFlow.value
+    /**
+     * Removes a terminal entry from the active list. The Monitor panel exposes
+     * this as the per-row "Remove" button. No-op (with a warn log) if the entry
+     * is non-terminal — callers should use [cancel] for live entries first.
+     */
+    fun dismiss(entryId: String) {
+        cs.launch(Dispatchers.IO) {
+            mutex.withLock {
+                val entry = _stateFlow.value.find { it.id == entryId } ?: return@launch
+                if (entry.status !in QueueEntryStatus.TERMINAL) {
+                    log.warn("[Automation:Queue] dismiss($entryId) ignored — entry is non-terminal (status=${entry.status})")
+                    return@launch
+                }
+                log.info("[Automation:Queue] Dismissing terminal entry $entryId (status=${entry.status})")
+                _stateFlow.value = _stateFlow.value.filter { it.id != entryId }
+            }
+        }
+    }
+
+    /** Live (non-terminal) entries only. PR 8: terminal rows persist in [_stateFlow]
+     *  but should not be exposed via "active" accessors. UI subscribers that need
+     *  to render terminal rows should read [stateFlow] directly. */
+    fun getActiveEntries(): List<QueueEntry> =
+        _stateFlow.value.filter { it.status !in TERMINAL_STATUSES_SET }
 
     fun getQueuePositionForSuite(suitePlanKey: String, entryId: String): Int {
         return _stateFlow.value
-            .filter { it.suitePlanKey == suitePlanKey }
+            .filter { it.suitePlanKey == suitePlanKey && it.status !in TERMINAL_STATUSES_SET }
             .indexOfFirst { it.id == entryId }
     }
 
@@ -220,8 +255,11 @@ class QueueService {
                 val jitter = kotlin.random.Random.nextLong(interval / 10)
                 delay(interval + jitter)
 
-                if (_stateFlow.value.isEmpty()) {
-                    log.info("[Automation:Queue] Queue empty, stopping polling")
+                // PR 8: terminal entries persist in _stateFlow but don't need polling.
+                // Stop the loop when there is no remaining live work — even if the list
+                // still contains COMPLETED/FAILED/CANCELLED rows the user hasn't dismissed.
+                if (_stateFlow.value.none { it.status !in TERMINAL_STATUSES_SET }) {
+                    log.info("[Automation:Queue] No live entries (terminal-only or empty), stopping polling")
                     break
                 }
             }
@@ -247,17 +285,14 @@ class QueueService {
                         }
                         QueueEntryStatus.QUEUED_ON_BAMBOO,
                         QueueEntryStatus.RUNNING -> {
-                            // handleRunningOrQueued manages _stateFlow directly for terminal outcomes
                             val updated = handleRunningOrQueued(entry)
-                            if (updated.status !in TERMINAL_STATUSES_SET) {
-                                // Non-terminal update (e.g. WAITING→RUNNING): reflect in state
-                                _stateFlow.value = _stateFlow.value.map {
-                                    if (it.id == entry.id) updated else it
-                                }
+                            // PR 8: replace in-place for ALL outcomes — terminal entries
+                            // now persist in _stateFlow until the user dismisses them.
+                            _stateFlow.value = _stateFlow.value.map {
+                                if (it.id == entry.id) updated else it
                             }
-                            // Terminal outcomes: handleRunningOrQueued already removed the entry
                         }
-                        else -> { /* already terminal — no-op */ }
+                        else -> { /* already terminal — no-op (skip polling) */ }
                     }
                 }
             }
@@ -298,29 +333,26 @@ class QueueService {
         return when {
             buildData.state == "Successful" || buildData.state == "Failed" -> {
                 val passed = buildData.state == "Successful"
-                log.info("[Automation:Queue] Build finished for entry ${entry.id}, resultKey=$resultKey, passed=$passed")
-                tagHistoryService.updateQueueEntryStatus(
-                    entry.id, QueueEntryStatus.COMPLETED, resultKey
-                )
+                val terminalStatus = if (passed) QueueEntryStatus.COMPLETED else QueueEntryStatus.FAILED
+                log.info("[Automation:Queue] Build finished for entry ${entry.id}, resultKey=$resultKey, passed=$passed → $terminalStatus")
+                tagHistoryService.updateQueueEntryStatus(entry.id, terminalStatus, resultKey)
                 eventBus.emit(WorkflowEvent.AutomationFinished(
                     suitePlanKey = entry.suitePlanKey,
                     buildResultKey = resultKey,
                     passed = passed,
                     durationMs = buildData.durationSeconds * 1000
                 ))
-                // Remove from active state — history is persisted in TagHistoryService (A-P0-5)
-                _stateFlow.value = _stateFlow.value.filter { it.id != entry.id }
-                entry.copy(status = QueueEntryStatus.COMPLETED)
+                // PR 8: terminal entries STAY in _stateFlow — Monitor list keeps them
+                // until the user dismisses. pollOnce skips terminal-status entries.
+                entry.copy(status = terminalStatus)
             }
             // "Unknown" = Bamboo lifeCycleState "NotBuilt" (manual skip / already-up-to-date).
-            // Treat as terminal to prevent infinite polling (A-P0-5, A-P0-4 companion fix).
+            // Treat as terminal (COMPLETED) to prevent infinite polling.
             buildData.state == "Unknown" -> {
-                log.info("[Automation:Queue] Build in Unknown/NotBuilt state for entry ${entry.id}, treating as terminal")
+                log.info("[Automation:Queue] Build in Unknown/NotBuilt state for entry ${entry.id}, treating as COMPLETED")
                 tagHistoryService.updateQueueEntryStatus(
                     entry.id, QueueEntryStatus.COMPLETED, resultKey
                 )
-                // Remove from active state (A-P0-5)
-                _stateFlow.value = _stateFlow.value.filter { it.id != entry.id }
                 entry.copy(status = QueueEntryStatus.COMPLETED)
             }
             else -> entry.copy(status = QueueEntryStatus.RUNNING)

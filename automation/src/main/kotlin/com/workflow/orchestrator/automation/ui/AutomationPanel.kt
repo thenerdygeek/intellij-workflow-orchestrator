@@ -112,7 +112,10 @@ class AutomationPanel(
     private val tagStagingPanel = TagStagingPanel(project)
     private val suiteConfigPanel = SuiteConfigPanel(project)
     private val queueStatusPanel = QueueStatusPanel(project)
-    private val monitorPanel = MonitorPanel(project)
+    private val monitorPanel = MonitorPanel(project).apply {
+        // PR 8 #4: top status bar mirrors the row the user picked in the list.
+        onSelectionChanged = { selected -> queueStatusPanel.setSelection(selected?.queueId) }
+    }
 
     // Sub-tabs
     private val tabbedPane = JBTabbedPane()

@@ -17,7 +17,13 @@ Tag validation flow removed — Trigger Now does not pre-validate tags against a
 
 - `AutomationPanel` — main panel with tag staging + queue + monitor sub-panels
 - `TagStagingPanel` — service table + tag selector + JSON preview
-- `QueueStatusPanel` — queue position, wait time, cancel/retry actions
-- `MonitorPanel` — running suite status with polling
+- `QueueStatusPanel` — read-only status indicator. Mirrors the user's `MonitorPanel` selection (PR 8 #4) via `setSelection(entryId)`; falls back to the most-actionable live entry when nothing is selected. The Cancel button was removed in PR 8 — Cancel/Remove now live on the per-row detail panel where the target is unambiguous.
+- `MonitorPanel` — list+detail of every queue entry, including terminal ones. Filter chips (All / Queued / Running / Failed / Completed) with `CANCELLED` bucketed under Failed. Sorted latest-first by `enqueuedAt`. Detail header shows **Cancel** for live entries and **Remove** for terminal entries (calls `QueueService.dismiss`). Exposes `onSelectionChanged: (RunEntry?) -> Unit`.
 - `AutomationStatusBarWidgetFactory` — queue indicator in status bar
 - **UI Overhaul:** Monospace docker tags, outline run status badges, uppercase section headers. RunListCellRenderer uses cached/pre-built components for performance.
+
+## Monitor lifecycle (PR 8)
+
+Terminal entries (`COMPLETED` / `FAILED` / `FAILED_TO_TRIGGER` / `CANCELLED` / `TAG_INVALID`) are no longer auto-pruned from `QueueService._stateFlow`. They persist in the Monitor list until the user clicks **Remove** (which calls `QueueService.dismiss`). `cancel()` now transitions to `CANCELLED` and keeps the row; only `dismiss()` removes. The `getActiveEntries()` and `getQueuePositionForSuite()` accessors filter out terminal rows so callers like the depth check and the status-bar widget retain "active = live" semantics. The polling loop stops when there are no live entries (terminal-only counts as idle). Across IDE restarts, terminal entries are dropped by `TagHistoryService.getActiveQueueEntries()` — i.e. the persistence layer is still session-scoped.
+
+`QueueEntryStatus` gains a separate `FAILED` value distinct from the `COMPLETED` (success) status; `handleRunningOrQueued` picks one or the other based on Bamboo's `Successful`/`Failed` state. `Unknown`/`NotBuilt` is treated as `COMPLETED` to terminate polling.

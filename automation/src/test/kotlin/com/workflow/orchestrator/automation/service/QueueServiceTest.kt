@@ -144,26 +144,56 @@ class QueueServiceTest {
     }
 
     @Test
-    fun `cancel removes entry from state`() = runTest {
+    fun `cancel transitions entry to CANCELLED but keeps it in stateFlow (PR 8)`() = runTest {
         service.enqueue(makeEntry())
         awaitState { service.stateFlow.value.isNotEmpty() }
 
         service.cancel("q-1")
+        awaitState { service.stateFlow.value.firstOrNull()?.status == QueueEntryStatus.CANCELLED }
+
+        assertEquals(1, service.stateFlow.value.size)
+        assertEquals(QueueEntryStatus.CANCELLED, service.stateFlow.value[0].status)
+    }
+
+    @Test
+    fun `dismiss removes a terminal entry from stateFlow`() = runTest {
+        service.enqueue(makeEntry())
+        awaitState { service.stateFlow.value.isNotEmpty() }
+        service.cancel("q-1")
+        awaitState { service.stateFlow.value.firstOrNull()?.status == QueueEntryStatus.CANCELLED }
+
+        service.dismiss("q-1")
         awaitState { service.stateFlow.value.isEmpty() }
 
         assertTrue(service.stateFlow.value.isEmpty())
     }
 
     @Test
-    fun `getActiveEntries returns only non-terminal entries`() = runTest {
+    fun `dismiss is no-op for a non-terminal entry`() = runTest {
+        service.enqueue(makeEntry())
+        awaitState { service.stateFlow.value.isNotEmpty() }
+
+        service.dismiss("q-1")
+        // Give the dismiss launch a moment to run; entry must still be present.
+        runBlocking(Dispatchers.IO) { delay(100) }
+        assertEquals(1, service.stateFlow.value.size)
+        assertEquals(QueueEntryStatus.WAITING_LOCAL, service.stateFlow.value[0].status)
+    }
+
+    @Test
+    fun `getActiveEntries returns only non-terminal entries (PR 8)`() = runTest {
         service.enqueue(makeEntry(id = "q-1"))
         awaitState { service.stateFlow.value.size == 1 }
         service.enqueue(makeEntry(id = "q-2"))
         awaitState { service.stateFlow.value.size == 2 }
 
         service.cancel("q-1")
-        awaitState { service.stateFlow.value.size == 1 }
+        awaitState {
+            service.stateFlow.value.find { it.id == "q-1" }?.status == QueueEntryStatus.CANCELLED
+        }
 
+        // PR 8: stateFlow keeps both, but getActiveEntries filters out the cancelled one.
+        assertEquals(2, service.stateFlow.value.size)
         val active = service.getActiveEntries()
         assertEquals(1, active.size)
         assertEquals("q-2", active[0].id)
@@ -208,10 +238,12 @@ class QueueServiceTest {
         assertEquals("""{"auth":"2.4.0"}""", queued.dockerTagsPayload)
     }
 
-    // A-P0-5 regression: completed entries are removed from _stateFlow
+    // PR 8: completed entries STAY in _stateFlow with terminal status.
+    // Was A-P0-5 ("removed from stateFlow"); flipped because the Monitor list
+    // now retains terminal entries until the user dismisses them.
 
     @Test
-    fun `completed entries are removed from stateFlow after build finishes (A-P0-5)`() = runTest {
+    fun `completed entries keep COMPLETED status in stateFlow after build finishes (PR 8)`() = runTest {
         // Arrange: two entries in QUEUED_ON_BAMBOO state
         val e1 = makeEntry(id = "q-1", status = QueueEntryStatus.QUEUED_ON_BAMBOO).copy(bambooResultKey = "PROJ-AUTO-100")
         val e2 = makeEntry(id = "q-2", status = QueueEntryStatus.QUEUED_ON_BAMBOO).copy(bambooResultKey = "PROJ-AUTO-101")
@@ -283,21 +315,64 @@ class QueueServiceTest {
         testService.enqueue(entry2)
         awaitState(2000) { testService.stateFlow.value.size == 2 }
 
-        // pollOnce will call getBuild for both entries → both Successful → both removed
+        // pollOnce will call getBuild for both entries → both Successful → both transition to COMPLETED
         runBlocking(Dispatchers.IO) { testService.pollOnce() }
 
-        // Assert: both completed entries removed from stateFlow (A-P0-5 fix)
+        // PR 8: both stay in stateFlow, both with COMPLETED status.
+        val state = testService.stateFlow.value
+        assertEquals(2, state.size, "Expected both entries to remain in stateFlow, was: $state")
         assertTrue(
-            testService.stateFlow.value.isEmpty(),
-            "Expected stateFlow to be empty after both builds completed, but was: ${testService.stateFlow.value}"
+            state.all { it.status == QueueEntryStatus.COMPLETED },
+            "Expected both entries to have status=COMPLETED, was: ${state.map { it.status }}"
         )
         scopeForTest.cancel()
     }
 
-    // A-P0-4 / A-P0-5 companion: Unknown state treated as terminal
+    @Test
+    fun `failed entries transition to FAILED status and stay in stateFlow (PR 8)`() = runTest {
+        coEvery { bambooService.getBuild("PROJ-AUTO-300") } returns ToolResult.success(
+            data = BuildResultData(
+                planKey = "PROJ-AUTO", buildNumber = 300,
+                state = "Failed", durationSeconds = 75,
+                buildResultKey = "PROJ-AUTO-300"
+            ),
+            summary = "fail"
+        )
+
+        val scopeForTest = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val testService = QueueService(
+            bambooService = bambooService,
+            eventBus = eventBus,
+            tagHistoryService = TagHistoryService(tempDir.resolve("test-failed.db").toString()),
+            scope = scopeForTest,
+            autoTriggerEnabled = false,
+            maxDepthPerSuite = 10
+        )
+
+        val entry = QueueEntry(
+            id = "f-1", suitePlanKey = "PROJ-AUTO",
+            dockerTagsPayload = """{"auth":"1.0.0"}""",
+            variables = emptyMap(), stages = null,
+            enqueuedAt = Instant.now(),
+            status = QueueEntryStatus.QUEUED_ON_BAMBOO,
+            bambooResultKey = "PROJ-AUTO-300"
+        )
+
+        testService.enqueue(entry)
+        awaitState(2000) { testService.stateFlow.value.size == 1 }
+
+        runBlocking(Dispatchers.IO) { testService.pollOnce() }
+
+        val state = testService.stateFlow.value
+        assertEquals(1, state.size)
+        assertEquals(QueueEntryStatus.FAILED, state[0].status)
+        scopeForTest.cancel()
+    }
+
+    // PR 8: Unknown state treated as terminal (COMPLETED), entry stays in stateFlow.
 
     @Test
-    fun `Unknown build state is treated as terminal and entry removed from stateFlow`() = runTest {
+    fun `Unknown build state transitions entry to COMPLETED and keeps it in stateFlow (PR 8)`() = runTest {
         coEvery { bambooService.getBuild("PROJ-AUTO-200") } returns ToolResult.success(
             data = BuildResultData(
                 planKey = "PROJ-AUTO", buildNumber = 200,
@@ -330,10 +405,9 @@ class QueueServiceTest {
 
         runBlocking(Dispatchers.IO) { testService.pollOnce() }
 
-        assertTrue(
-            testService.stateFlow.value.isEmpty(),
-            "Unknown/NotBuilt build should be removed from stateFlow (A-P0-5), but was: ${testService.stateFlow.value}"
-        )
+        val state = testService.stateFlow.value
+        assertEquals(1, state.size, "PR 8: entry stays in stateFlow even after Unknown/NotBuilt")
+        assertEquals(QueueEntryStatus.COMPLETED, state[0].status)
         scopeForTest.cancel()
     }
 

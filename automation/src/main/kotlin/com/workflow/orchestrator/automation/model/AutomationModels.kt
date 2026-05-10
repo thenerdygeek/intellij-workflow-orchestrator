@@ -53,6 +53,7 @@ enum class QueueEntryStatus {
     QUEUED_ON_BAMBOO,
     RUNNING,
     COMPLETED,
+    FAILED,
     FAILED_TO_TRIGGER,
     // Kept for backwards-compat with pre-L3 persisted SQLite rows.
     // TagHistoryService.getActiveQueueEntries() deserialises via valueOf(); removing this
@@ -66,16 +67,18 @@ enum class QueueEntryStatus {
     companion object {
         /**
          * Canonical set of terminal statuses — entries in any of these states are
-         * considered done and are removed from [QueueService]'s active `_stateFlow`
-         * before subscribers see them.
+         * done. Unlike pre-PR-8 behaviour, terminal entries are NOT removed from
+         * [QueueService]'s `_stateFlow`; they remain visible in the Monitor list
+         * until the user explicitly dismisses them via `QueueService.dismiss`.
          *
-         * This is the single source of truth for terminal classification.
-         * [QueueStatusPanel] and [QueueService] both reference this field so that
-         * a future addition of a new terminal status cannot drift between the two.
+         * Single source of truth for terminal classification — referenced by
+         * QueueService (for skip-on-poll), MonitorPanel (filter chips, Cancel
+         * vs Remove button gating), and QueueStatusPanel.
          */
         @Suppress("DEPRECATION")
         val TERMINAL: Set<QueueEntryStatus> = setOf(
             COMPLETED,
+            FAILED,
             CANCELLED,
             FAILED_TO_TRIGGER,
             // TAG_INVALID: deprecated in L3; kept so recovered pre-L3 SQLite rows

@@ -32,16 +32,20 @@ import javax.swing.*
 
 /**
  * Unified monitor panel showing all automation suite runs.
- * Left: compact run list. Right: selected run detail.
+ * North: filter chip row (All / Queued / Running / Failed / Completed).
+ * Centre: split view — compact run list on the left, selected run detail on the right.
  *
- * Subscribes to [QueueService.stateFlow] and reflects every active queue entry in
- * real time.  WAITING_LOCAL entries are shown with a "Waiting (local queue)" status
- * and no Bamboo polling — the plugin is holding them locally until the previous run
- * for the same suite finishes on Bamboo (Bamboo cannot queue the same plan twice
- * server-side).  Entries with a bambooResultKey (QUEUED_ON_BAMBOO / RUNNING) are
- * polled for live stage and test data via [SmartPoller].  Terminal entries
- * (COMPLETED, CANCELLED, etc.) are removed from the flow by [QueueService] itself,
- * so they drop off the list automatically.
+ * Subscribes to [QueueService.stateFlow] and renders every queue entry — including
+ * **terminal** ones (COMPLETED, FAILED, CANCELLED, FAILED_TO_TRIGGER). PR 8: terminal
+ * entries persist in [_stateFlow] until the user explicitly clicks Remove (which
+ * calls [QueueService.dismiss]).  Entries are sorted latest-first by `enqueuedAt`.
+ *
+ * Polling: WAITING_LOCAL entries are not polled (no resultKey yet). QUEUED_ON_BAMBOO
+ * and RUNNING entries are polled every 15 s by [SmartPoller] for stage and test data.
+ * Once an entry hits a terminal status, polling stops for that row.
+ *
+ * Selection: the parent [AutomationPanel] subscribes via [onSelectionChanged] so the
+ * top status bar can mirror the user's selection (PR 8 #4).
  */
 class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.intellij.openapi.Disposable {
 
@@ -67,6 +71,35 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
     @Volatile
     private var lastQueueSnapshot: List<QueueEntry> = emptyList()
 
+    /** Latest unfiltered RunEntry list, sorted latest-first. Re-applied to the model when the filter changes. */
+    @Volatile
+    private var allEntries: List<RunEntry> = emptyList()
+
+    /** Active filter chip. Mutated on the EDT only. */
+    private var currentFilter: MonitorFilter = MonitorFilter.ALL
+
+    /**
+     * Fired on the EDT when the list selection changes (or the selected row is
+     * removed). The parent [AutomationPanel] wires this into [QueueStatusPanel]
+     * so the top status bar reflects the user's selection.
+     */
+    var onSelectionChanged: ((RunEntry?) -> Unit)? = null
+
+    enum class MonitorFilter(val label: String) {
+        ALL("All"),
+        QUEUED("Queued"),
+        RUNNING("Running"),
+        FAILED("Failed"),
+        COMPLETED("Completed")
+    }
+
+    private val filterToggles: Map<MonitorFilter, JToggleButton> = MonitorFilter.values().associateWith { f ->
+        JToggleButton(f.label).apply {
+            isFocusPainted = false
+            isSelected = (f == MonitorFilter.ALL)
+        }
+    }
+
     data class RunEntry(
         val queueId: String,           // QueueEntry.id — stable identity across refreshes
         val suiteName: String,
@@ -81,7 +114,9 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         val duration: String = "",
         val bambooUrl: String = "",
         val isLocalWait: Boolean = false,  // true when WAITING_LOCAL (no bambooResultKey)
-        val isTerminal: Boolean = false    // derived from QueueEntryStatus; avoids string-matching downstream
+        val isTerminal: Boolean = false,   // derived from QueueEntryStatus; avoids string-matching downstream
+        /** Bucket used by the filter chips. Derived once in [toRunEntry]. */
+        val filterBucket: MonitorFilter = MonitorFilter.ALL
     )
 
     data class StageInfo(
@@ -91,6 +126,19 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
     )
 
     init {
+        // Filter chips — radio-style; All is the default. Mutating currentFilter
+        // triggers re-render with the cached allEntries list.
+        val filterGroup = ButtonGroup()
+        val filterRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), JBUI.scale(2))).apply {
+            border = JBUI.Borders.empty(2, 4, 4, 4)
+            for ((filter, toggle) in filterToggles) {
+                filterGroup.add(toggle)
+                toggle.addActionListener { onFilterChanged(filter) }
+                add(toggle)
+            }
+        }
+        add(filterRow, BorderLayout.NORTH)
+
         val splitter = com.intellij.ui.JBSplitter(false, 0.3f).apply {
             setSplitterProportionKey("workflow.automation.monitor.splitter")
             firstComponent = JBScrollPane(runList).apply { border = JBUI.Borders.empty() }
@@ -103,8 +151,27 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                 val selected = runList.selectedValue
                 if (selected != null) showRunDetail(selected)
                 else if (runListModel.isEmpty) showEmptyState()
+                onSelectionChanged?.invoke(selected)
             }
         }
+
+        // Right-click context menu — fast access to per-row actions without
+        // requiring the user to click into the detail panel first.  We use one
+        // popup instance and rebuild items each show so it can target whichever
+        // row the click landed on.
+        runList.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mousePressed(e: java.awt.event.MouseEvent) = maybeShow(e)
+            override fun mouseReleased(e: java.awt.event.MouseEvent) = maybeShow(e)
+            private fun maybeShow(e: java.awt.event.MouseEvent) {
+                if (!e.isPopupTrigger) return
+                val idx = runList.locationToIndex(e.point).takeIf { it >= 0 } ?: return
+                val cellBounds = runList.getCellBounds(idx, idx) ?: return
+                if (!cellBounds.contains(e.point)) return
+                val entry = runListModel.getElementAt(idx) ?: return
+                runList.selectedIndex = idx
+                showRowContextMenu(entry, e.x, e.y)
+            }
+        })
 
         showEmptyState()
 
@@ -133,11 +200,15 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                 queueService.stateFlow.collectLatest { entries ->
                     lastQueueSnapshot = entries
 
-                    // Build the new RunEntry list from queue entries
-                    val newEntries = entries.map { queueEntry -> toRunEntry(queueEntry) }
+                    // PR 8: sort latest-first so applyNewEntryList's "insert new at top"
+                    // walk produces an enqueueTime-desc model. Existing rows keep their
+                    // position via in-place update.
+                    val sortedQueueEntries = entries.sortedByDescending { it.enqueuedAt }
+                    val newEntries = sortedQueueEntries.map { toRunEntry(it) }
+                    allEntries = newEntries
 
                     withContext(Dispatchers.EDT) {
-                        applyNewEntryList(newEntries)
+                        applyNewEntryList(visibleEntries(newEntries))
                     }
 
                     // Start or stop the Bamboo poll loop based on whether any
@@ -157,6 +228,22 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         }
     }
 
+    /** Filter chip click handler — re-renders the list with the same cached data. */
+    private fun onFilterChanged(newFilter: MonitorFilter) {
+        if (newFilter == currentFilter) return
+        currentFilter = newFilter
+        applyNewEntryList(visibleEntries(allEntries))
+    }
+
+    /**
+     * CANCELLED is bucketed under FAILED — terminal-not-success. Users who don't
+     * want to see cancelled rows can filter to Completed / Running / Queued; All
+     * surfaces them too.
+     */
+    private fun visibleEntries(all: List<RunEntry>): List<RunEntry> =
+        if (currentFilter == MonitorFilter.ALL) all
+        else all.filter { it.filterBucket == currentFilter }
+
     /**
      * Merges [newEntries] into [runListModel] while:
      *  - preserving the user's selected entry by [RunEntry.queueId]
@@ -172,6 +259,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         if (newEntries.isEmpty()) {
             runListModel.clear()
             showEmptyState()
+            onSelectionChanged?.invoke(null)
             return
         }
 
@@ -254,40 +342,79 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         val suiteName = AutomationSettingsService
             .getInstance().getSuiteConfig(queueEntry.suitePlanKey)?.displayName
             ?: queueEntry.suitePlanKey
+        val resultKey = queueEntry.bambooResultKey ?: ""
+        val bambooUrl = if (resultKey.isNotBlank()) {
+            settings.connections.bambooUrl.orEmpty().trimEnd('/').let { base ->
+                if (base.isBlank()) "" else "$base/browse/$resultKey"
+            }
+        } else ""
 
-        // FAILED_TO_TRIGGER: QueueService leaves this entry in _stateFlow (else → no-op branch in
-        // pollOnce), so it surfaces here.  Must be checked BEFORE the isLocalWait catch-all
-        // because bambooResultKey is also null for these entries.
-        if (queueEntry.status == QueueEntryStatus.FAILED_TO_TRIGGER) {
-            return RunEntry(
-                queueId = queueEntry.id,
-                suiteName = suiteName,
-                planKey = queueEntry.suitePlanKey,
-                resultKey = "",
+        // PR 8 status mapping. Terminal statuses now persist in _stateFlow; we render them
+        // here just like live ones. Each status is tagged with its filter bucket so the
+        // chips can filter without re-inspecting the string.
+        return when (queueEntry.status) {
+            QueueEntryStatus.FAILED_TO_TRIGGER -> RunEntry(
+                queueId = queueEntry.id, suiteName = suiteName,
+                planKey = queueEntry.suitePlanKey, resultKey = "",
                 status = "Failed to trigger",
-                isLocalWait = false,
-                isTerminal = true
+                isTerminal = true,
+                filterBucket = MonitorFilter.FAILED
+            )
+            QueueEntryStatus.WAITING_LOCAL -> RunEntry(
+                queueId = queueEntry.id, suiteName = suiteName,
+                planKey = queueEntry.suitePlanKey, resultKey = resultKey,
+                status = "Waiting (local queue)",
+                bambooUrl = bambooUrl, isLocalWait = true, isTerminal = false,
+                filterBucket = MonitorFilter.QUEUED
+            )
+            QueueEntryStatus.QUEUED_ON_BAMBOO -> RunEntry(
+                queueId = queueEntry.id, suiteName = suiteName,
+                planKey = queueEntry.suitePlanKey, resultKey = resultKey,
+                status = "Queued",
+                bambooUrl = bambooUrl, isTerminal = false,
+                filterBucket = MonitorFilter.QUEUED
+            )
+            QueueEntryStatus.RUNNING -> RunEntry(
+                queueId = queueEntry.id, suiteName = suiteName,
+                planKey = queueEntry.suitePlanKey, resultKey = resultKey,
+                status = "Running",
+                bambooUrl = bambooUrl, isTerminal = false,
+                filterBucket = MonitorFilter.RUNNING
+            )
+            QueueEntryStatus.COMPLETED -> RunEntry(
+                queueId = queueEntry.id, suiteName = suiteName,
+                planKey = queueEntry.suitePlanKey, resultKey = resultKey,
+                status = "Successful",
+                bambooUrl = bambooUrl, isTerminal = true,
+                filterBucket = MonitorFilter.COMPLETED
+            )
+            QueueEntryStatus.FAILED -> RunEntry(
+                queueId = queueEntry.id, suiteName = suiteName,
+                planKey = queueEntry.suitePlanKey, resultKey = resultKey,
+                status = "Failed",
+                bambooUrl = bambooUrl, isTerminal = true,
+                filterBucket = MonitorFilter.FAILED
+            )
+            QueueEntryStatus.CANCELLED -> RunEntry(
+                queueId = queueEntry.id, suiteName = suiteName,
+                planKey = queueEntry.suitePlanKey, resultKey = resultKey,
+                status = "Cancelled",
+                bambooUrl = bambooUrl, isTerminal = true,
+                // CANCELLED bucketed under Failed — terminal-not-success. See visibleEntries() KDoc.
+                filterBucket = MonitorFilter.FAILED
+            )
+            // TRIGGERING currently unused by QueueService — render generically if reintroduced.
+            // TAG_INVALID is a deprecated SQLite-only legacy state; treat as terminal Failed.
+            else -> RunEntry(
+                queueId = queueEntry.id, suiteName = suiteName,
+                planKey = queueEntry.suitePlanKey, resultKey = resultKey,
+                status = queueEntry.status.name,
+                bambooUrl = bambooUrl,
+                isTerminal = queueEntry.status in QueueEntryStatus.TERMINAL,
+                filterBucket = if (queueEntry.status in QueueEntryStatus.TERMINAL)
+                    MonitorFilter.FAILED else MonitorFilter.QUEUED
             )
         }
-
-        // TRIGGERING is currently unused by QueueService; if reintroduced, add a branch above isLocalWait.
-        val isLocalWait = queueEntry.bambooResultKey == null
-        val statusText = when {
-            isLocalWait -> "Waiting (local queue)"
-            queueEntry.status == QueueEntryStatus.QUEUED_ON_BAMBOO -> "Queued"
-            queueEntry.status == QueueEntryStatus.RUNNING -> "Running"
-            else -> queueEntry.status.name
-        }
-
-        return RunEntry(
-            queueId = queueEntry.id,
-            suiteName = suiteName,
-            planKey = queueEntry.suitePlanKey,
-            resultKey = queueEntry.bambooResultKey ?: "",
-            status = statusText,
-            isLocalWait = isLocalWait,
-            isTerminal = false
-        )
     }
 
     // -------------------------------------------------------------------------
@@ -335,6 +462,12 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                         "Failed" -> "Failed"
                         else -> if (queueEntry.status == QueueEntryStatus.RUNNING) "Running" else "Queued"
                     }
+                    val bucket = when (bambooStatus) {
+                        "Successful" -> MonitorFilter.COMPLETED
+                        "Failed" -> MonitorFilter.FAILED
+                        "Running" -> MonitorFilter.RUNNING
+                        else -> MonitorFilter.QUEUED
+                    }
                     var runEntry = RunEntry(
                         queueId = queueEntry.id,
                         suiteName = AutomationSettingsService
@@ -347,7 +480,8 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                         stages = stages,
                         duration = TimeFormatter.formatDurationSeconds(buildData.durationSeconds, zero = ""),
                         bambooUrl = "$bambooUrl/browse/$resultKey",
-                        isTerminal = buildData.state in BAMBOO_TERMINAL_STATES
+                        isTerminal = buildData.state in BAMBOO_TERMINAL_STATES,
+                        filterBucket = bucket
                     )
 
                     // Fetch test results if build is in a terminal-ish state from Bamboo's view
@@ -368,19 +502,15 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
 
                     val finalEntry = runEntry
                     invokeLater {
-                        val idx = (0 until runListModel.size()).firstOrNull {
-                            runListModel.getElementAt(it).queueId == queueEntry.id
-                        } ?: return@invokeLater
-
-                        // Preserve any richer fields from the existing row
-                        val existing = runListModel.getElementAt(idx)
-                        val merged = finalEntry.copy(
-                            totalTests = if (finalEntry.totalTests != 0) finalEntry.totalTests else existing.totalTests,
-                            failedTests = if (finalEntry.failedTests != 0) finalEntry.failedTests else existing.failedTests,
-                            failedTestNames = if (finalEntry.failedTestNames.isNotEmpty()) finalEntry.failedTestNames else existing.failedTestNames
-                        )
-                        runListModel.set(idx, merged)
-                        if (runList.selectedIndex == idx) showRunDetail(merged)
+                        // PR 8: keep allEntries (the unfiltered cache) in sync so a
+                        // later chip switch sees the latest stage/test data. Then
+                        // re-apply the filter — if the bucket changed (e.g. RUNNING
+                        // → COMPLETED) and the user is on a different chip, the row
+                        // falls out of the displayed list cleanly.
+                        allEntries = allEntries.map {
+                            if (it.queueId == finalEntry.queueId) finalEntry else it
+                        }
+                        applyNewEntryList(visibleEntries(allEntries))
                     }
                 }
             } catch (e: Exception) {
@@ -404,6 +534,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                 entry.status.equals("Failed", ignoreCase = true) ->
                     if (entry.failedTests > 0) "⚠" else "✗"
                 entry.status.equals("Failed to trigger", ignoreCase = true) -> "✗"
+                entry.status.equals("Cancelled", ignoreCase = true) -> "⏹"
                 entry.isLocalWait -> "⏳"
                 else -> "⟳"
             }
@@ -425,13 +556,27 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
 
             val actionsPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0))
 
-            // Cancel button — shown for any non-terminal entry
+            // Cancel button — shown for any non-terminal entry. Cancels on Bamboo
+            // (if applicable) and transitions the entry to CANCELLED. The row STAYS
+            // in the list — the user removes it later with the Remove button below.
             if (!entry.terminal()) {
                 actionsPanel.add(JButton("Cancel").apply {
                     isFocusPainted = false
                     foreground = StatusColors.ERROR
                     addActionListener {
                         project.getService(QueueService::class.java)?.cancel(entry.queueId)
+                    }
+                })
+            } else {
+                // Remove button — only on terminal entries. Calls dismiss(), which
+                // is the user's explicit "I've seen this, take it off the list"
+                // action. (PR 8 #3.)
+                actionsPanel.add(JButton("Remove").apply {
+                    isFocusPainted = false
+                    toolTipText = "Remove this run from the list"
+                    foreground = StatusColors.SECONDARY_TEXT
+                    addActionListener {
+                        project.getService(QueueService::class.java)?.dismiss(entry.queueId)
                     }
                 })
             }
@@ -442,8 +587,17 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                     foreground = StatusColors.LINK
                     addActionListener { BrowserUtil.browse(entry.bambooUrl) }
                 })
+                actionsPanel.add(JButton("Copy Link").apply {
+                    isBorderPainted = false
+                    toolTipText = "Copy the Bamboo build URL to the clipboard"
+                    addActionListener { copyLinkToClipboard(entry) }
+                })
             }
-            if (entry.status.equals("failed", ignoreCase = true) || entry.status.equals("successful", ignoreCase = true)) {
+            // Copy Results: useful for any terminal run (Successful, Failed,
+            // FailedToTrigger, Cancelled). Pre-PR-8 the visibility was narrowed
+            // to just Successful/Failed because terminal entries were pruned
+            // before the user could click — that constraint is gone now.
+            if (entry.terminal()) {
                 actionsPanel.add(JButton("Copy Results").apply {
                     addActionListener { copyResultsToClipboard(entry) }
                 })
@@ -573,12 +727,61 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
 
     private fun showEmptyState() {
         detailPanel.removeAll()
-        detailPanel.add(JBLabel("No active runs. Trigger a suite from the Configure tab.").apply {
+        // Filter-aware empty message: tell the user whether the list is truly
+        // empty or whether the current chip just hides everything.
+        val message = when {
+            allEntries.isEmpty() -> "No runs yet. Trigger a suite from the Configure tab."
+            currentFilter == MonitorFilter.ALL -> "No runs match the current view."
+            else -> "No ${currentFilter.label.lowercase()} runs. Pick another filter to see more."
+        }
+        detailPanel.add(JBLabel(message).apply {
             horizontalAlignment = SwingConstants.CENTER
             foreground = StatusColors.SECONDARY_TEXT
         }, BorderLayout.CENTER)
         detailPanel.revalidate()
         detailPanel.repaint()
+    }
+
+    /**
+     * Right-click popup on a run row.  Mirrors the detail-header buttons so
+     * users don't have to click a row, wait for the detail panel to render,
+     * then click again — common shortcut on a Monitor list.
+     */
+    private fun showRowContextMenu(entry: RunEntry, x: Int, y: Int) {
+        val menu = JPopupMenu()
+        if (entry.bambooUrl.isNotBlank()) {
+            menu.add(JMenuItem("Open in Bamboo ↗").apply {
+                addActionListener { BrowserUtil.browse(entry.bambooUrl) }
+            })
+            menu.add(JMenuItem("Copy Link").apply {
+                addActionListener { copyLinkToClipboard(entry) }
+            })
+        }
+        if (entry.terminal()) {
+            if (menu.componentCount > 0) menu.addSeparator()
+            menu.add(JMenuItem("Copy Results").apply {
+                addActionListener { copyResultsToClipboard(entry) }
+            })
+            menu.add(JMenuItem("Remove from list").apply {
+                addActionListener {
+                    project.getService(QueueService::class.java)?.dismiss(entry.queueId)
+                }
+            })
+        } else {
+            if (menu.componentCount > 0) menu.addSeparator()
+            menu.add(JMenuItem("Cancel").apply {
+                addActionListener {
+                    project.getService(QueueService::class.java)?.cancel(entry.queueId)
+                }
+            })
+        }
+        if (menu.componentCount > 0) menu.show(runList, x, y)
+    }
+
+    private fun copyLinkToClipboard(entry: RunEntry) {
+        if (entry.bambooUrl.isBlank()) return
+        ClipboardUtil.copyToClipboard(entry.bambooUrl)
+        log.info("[Automation:Monitor] Bamboo link copied: ${entry.bambooUrl}")
     }
 
     private fun copyResultsToClipboard(entry: RunEntry) {
@@ -609,6 +812,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         entry.status.equals("Successful", ignoreCase = true) -> StatusColors.SUCCESS
         entry.status.equals("Failed", ignoreCase = true) -> StatusColors.ERROR
         entry.status.equals("Failed to trigger", ignoreCase = true) -> StatusColors.ERROR
+        entry.status.equals("Cancelled", ignoreCase = true) -> StatusColors.SECONDARY_TEXT
         entry.isLocalWait -> StatusColors.WARNING
         else -> StatusColors.LINK
     }
@@ -723,6 +927,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                 entry.status.equals("Successful", ignoreCase = true) -> StatusColors.SUCCESS
                 entry.status.equals("Failed", ignoreCase = true) -> StatusColors.ERROR
                 entry.status.equals("Failed to trigger", ignoreCase = true) -> StatusColors.ERROR
+                entry.status.equals("Cancelled", ignoreCase = true) -> StatusColors.SECONDARY_TEXT
                 entry.isLocalWait -> StatusColors.WARNING
                 else -> StatusColors.LINK
             }

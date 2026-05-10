@@ -66,27 +66,31 @@ class AutomationModelsTest {
         assertTrue(statuses.contains(QueueEntryStatus.QUEUED_ON_BAMBOO))
         assertTrue(statuses.contains(QueueEntryStatus.RUNNING))
         assertTrue(statuses.contains(QueueEntryStatus.COMPLETED))
+        // PR 8: FAILED is distinct from COMPLETED — Bamboo "Failed" outcome
+        assertTrue(statuses.contains(QueueEntryStatus.FAILED))
         assertTrue(statuses.contains(QueueEntryStatus.FAILED_TO_TRIGGER))
         // TAG_INVALID is deprecated but retained for pre-L3 SQLite row deserialisation safety
         assertTrue(statuses.contains(QueueEntryStatus.TAG_INVALID))
         assertTrue(statuses.contains(QueueEntryStatus.CANCELLED))
         // PLAN_UNAVAILABLE and STALE were removed — they were never set by QueueService
-        assertEquals(8, statuses.size)
+        assertEquals(9, statuses.size)
     }
 
     @Test
     @Suppress("DEPRECATION")
-    fun `QueueEntryStatus TERMINAL contains exactly the statuses QueueService transitions to`() {
-        // This test locks the alignment between QueueEntryStatus.TERMINAL and the statuses
-        // that QueueService actually sets when removing entries from its active stateFlow.
-        // If QueueService gains a new terminal transition path, TERMINAL must be updated too.
+    fun `QueueEntryStatus TERMINAL contains exactly the terminal statuses (PR 8)`() {
+        // PR 8: terminal entries STAY in QueueService._stateFlow until the user
+        // dismisses; this set defines which statuses skip polling and gate the
+        // Cancel-vs-Remove button choice in MonitorPanel's detail view.
         val terminal = QueueEntryStatus.TERMINAL
         assertTrue(terminal.contains(QueueEntryStatus.COMPLETED),
-            "COMPLETED must be terminal — QueueService removes entries on build success/failure/Unknown")
+            "COMPLETED must be terminal — Bamboo Successful or Unknown/NotBuilt")
+        assertTrue(terminal.contains(QueueEntryStatus.FAILED),
+            "FAILED must be terminal — Bamboo Failed outcome (PR 8)")
         assertTrue(terminal.contains(QueueEntryStatus.CANCELLED),
-            "CANCELLED must be terminal — QueueService removes entries on cancel()")
+            "CANCELLED must be terminal — user-initiated cancel transitions to this state")
         assertTrue(terminal.contains(QueueEntryStatus.FAILED_TO_TRIGGER),
-            "FAILED_TO_TRIGGER must be terminal — QueueService sets this when doTrigger fails")
+            "FAILED_TO_TRIGGER must be terminal — set when doTrigger fails on Bamboo")
         assertTrue(terminal.contains(QueueEntryStatus.TAG_INVALID),
             "TAG_INVALID must be terminal — pre-L3 SQLite rows must not be re-queued on recovery")
 
@@ -96,8 +100,8 @@ class AutomationModelsTest {
         assertFalse(terminal.contains(QueueEntryStatus.QUEUED_ON_BAMBOO))
         assertFalse(terminal.contains(QueueEntryStatus.RUNNING))
 
-        assertEquals(4, terminal.size,
-            "TERMINAL should have exactly 4 entries: COMPLETED, CANCELLED, FAILED_TO_TRIGGER, TAG_INVALID")
+        assertEquals(5, terminal.size,
+            "TERMINAL should have exactly 5 entries: COMPLETED, FAILED, CANCELLED, FAILED_TO_TRIGGER, TAG_INVALID")
     }
 
     @Test
