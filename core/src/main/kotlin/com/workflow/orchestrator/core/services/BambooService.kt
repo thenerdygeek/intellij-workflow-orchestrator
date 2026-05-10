@@ -98,6 +98,18 @@ interface BambooService {
     suspend fun searchPlans(query: String): ToolResult<List<PlanData>>
 
     /**
+     * Returns Bamboo's canonical `shortName` for [planKey] (e.g. `"Auto Tests Smoke"`,
+     * not the long `"Project - Auto Tests Smoke"` form). Used by the Automation tab
+     * to refresh stored suite display names that still carry a long-form prefix
+     * from suites added before v0.85.0.
+     *
+     * Returns the data wrapped in a `ToolResult<String>`. The string is empty
+     * when Bamboo's response omits `shortName` (older Bamboo versions);
+     * `isError = true` on network/auth/not-found failures.
+     */
+    suspend fun getPlanShortName(planKey: String): ToolResult<String>
+
+    /**
      * 5-tier waterfall plan detection (T0 local specs → T1 Bitbucket commit-status walk
      * → T2 Bamboo `byChangeset` → T3 Linked Repositories → T4 deep-scan, gated). After
      * any tier hits, [PlanDetectionService.resolveBranchKey] maps the master plan key

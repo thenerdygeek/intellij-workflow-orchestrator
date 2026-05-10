@@ -140,6 +140,19 @@ class BambooApiClient(
     }
 
     /**
+     * Plan metadata (key, name, shortName) via the basic `/plan/{key}` endpoint.
+     * Used by the Automation tab to refresh stored suite display names against
+     * Bamboo's canonical short name when the saved value still carries the old
+     * long `Project — Plan` form (legacy suites added before v0.85.0). Returns
+     * an empty `shortName` when Bamboo's response omits the field — caller is
+     * responsible for falling back to the saved displayName in that case.
+     */
+    suspend fun getPlanInfo(planKey: String): ApiResult<BambooPlanDetailResponse> {
+        log.debug("[Bamboo:API] getPlanInfo: GET /plan/$planKey")
+        return get<BambooPlanDetailResponse>("/rest/api/latest/plan/$planKey")
+    }
+
+    /**
      * Queue a build for a Bamboo plan with optional stage selection.
      *
      * This is the single Bamboo trigger primitive. All callers must route through here.

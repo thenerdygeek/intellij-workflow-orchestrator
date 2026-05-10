@@ -176,6 +176,12 @@ data class BambooVcsRevisionDto(
 data class BambooPlanDetailResponse(
     val key: String = "",
     val name: String = "",
+    /**
+     * Bamboo's canonical short name for the plan (e.g. `"Auto Tests Smoke"`),
+     * distinct from [name] which is the long `"Project — Plan"` form. Defaulted
+     * to empty for backward compat — older Bamboo versions omit it.
+     */
+    val shortName: String = "",
     val variableContext: BambooVariableContextCollection = BambooVariableContextCollection()
 )
 

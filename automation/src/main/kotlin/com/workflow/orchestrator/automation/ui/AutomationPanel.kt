@@ -143,8 +143,12 @@ class AutomationPanel(
     init {
         border = JBUI.Borders.empty(4)
 
-        // Load suites into dropdown
+        // Load suites into dropdown — initial render uses whatever displayName
+        // is in SuiteConfig. The background refresh below replaces stale long-form
+        // displayNames (legacy suites added before v0.85.0) with Bamboo's canonical
+        // shortName when it's available.
         loadSuites()
+        refreshShortNamesInBackground()
 
         // Header bar
         val headerPanel = JPanel(BorderLayout()).apply {
@@ -250,15 +254,75 @@ class AutomationPanel(
         }
     }
 
+    /**
+     * Cache of canonical Bamboo `shortName` per planKey, populated lazily by
+     * [refreshShortNamesInBackground] on tab init. The dropdown render prefers
+     * this cached value over the saved `SuiteConfig.displayName` so suites
+     * added before v0.85.0 (which kept the long `Project \u2014 Plan` form in
+     * settings) display their canonical short name without requiring the user
+     * to re-pick in Settings. Falls back to displayName on cache miss / fetch
+     * failure / blank shortName.
+     */
+    private val planShortNames: java.util.concurrent.ConcurrentHashMap<String, String> =
+        java.util.concurrent.ConcurrentHashMap()
+
     private fun loadSuites() {
         val automationSettings = AutomationSettingsService.getInstance()
         val suites = automationSettings.getAllSuites()
         suiteCombo.removeAllItems()
-        for (suite in suites.sortedBy { it.displayName.lowercase() }) {
-            suiteCombo.addItem(SuiteComboItem(suite.planKey, suite.displayName))
+        // Effective label: prefer Bamboo's canonical shortName when we have it
+        // cached, otherwise the saved displayName. Sort by the effective label so
+        // the visible order matches what the user sees in the dropdown.
+        val labelled = suites.map { it to (planShortNames[it.planKey]?.takeIf { n -> n.isNotBlank() } ?: it.displayName) }
+        for ((suite, label) in labelled.sortedBy { it.second.lowercase() }) {
+            suiteCombo.addItem(SuiteComboItem(suite.planKey, label))
         }
         if (suites.isEmpty()) {
             statusLabel.text = "No suites configured \u2014 go to Settings"
+        }
+    }
+
+    /**
+     * Walks the configured suites in the background, fetches each plan's
+     * canonical `shortName` from Bamboo, populates [planShortNames], and
+     * re-renders the dropdown when there's at least one new value. Run-once at
+     * tab init; subsequent re-renders read from the cache and are instant.
+     *
+     * Suite selection is preserved across the refresh by planKey.
+     */
+    private fun refreshShortNamesInBackground() {
+        scope.launch {
+            val suites = AutomationSettingsService.getInstance().getAllSuites()
+            if (suites.isEmpty()) return@launch
+            var anyChanged = false
+            for (suite in suites) {
+                if (planShortNames.containsKey(suite.planKey)) continue
+                val result = bambooService.getPlanShortName(suite.planKey)
+                if (!result.isError) {
+                    val short = result.data
+                    if (!short.isNullOrBlank() && short != suite.displayName) {
+                        planShortNames[suite.planKey] = short
+                        anyChanged = true
+                    } else if (!short.isNullOrBlank()) {
+                        // Same value \u2014 cache it anyway so we don't refetch on subsequent panel re-inits.
+                        planShortNames[suite.planKey] = short
+                    }
+                }
+            }
+            if (anyChanged) {
+                invokeLater {
+                    val previouslySelected = (suiteCombo.selectedItem as? SuiteComboItem)?.planKey
+                    loadSuites()
+                    if (previouslySelected != null) {
+                        for (i in 0 until suiteCombo.itemCount) {
+                            if ((suiteCombo.getItemAt(i) as? SuiteComboItem)?.planKey == previouslySelected) {
+                                suiteCombo.selectedIndex = i
+                                break
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

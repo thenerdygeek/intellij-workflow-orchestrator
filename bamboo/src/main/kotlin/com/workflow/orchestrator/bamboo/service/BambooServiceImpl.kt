@@ -670,6 +670,29 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         }
     }
 
+    override suspend fun getPlanShortName(planKey: String): ToolResult<String> {
+        val api = client ?: return ToolResult(
+            data = "",
+            summary = "Bamboo not configured.",
+            isError = true,
+            hint = "Set Bamboo URL and token in Settings > Tools > Workflow Orchestrator > General."
+        )
+        return when (val result = api.getPlanInfo(planKey)) {
+            is ApiResult.Success -> ToolResult.success(
+                data = result.data.shortName,
+                summary = "Plan $planKey shortName: ${result.data.shortName.ifBlank { "(empty)" }}"
+            )
+            is ApiResult.Error -> {
+                log.debug("[BambooService] getPlanShortName($planKey) failed: ${result.message}")
+                ToolResult(
+                    data = "",
+                    summary = "Could not fetch shortName for $planKey: ${result.message}",
+                    isError = true
+                )
+            }
+        }
+    }
+
     override suspend fun getPlanBranches(planKey: String, repoName: String?): ToolResult<List<PlanBranchData>> {
         val api = client ?: return ToolResult(
             data = emptyList(),
