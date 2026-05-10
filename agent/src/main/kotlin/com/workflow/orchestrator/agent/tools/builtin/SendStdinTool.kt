@@ -9,6 +9,12 @@ import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.docs.AuditKind
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.agent.tools.process.OutputCollector
 import com.workflow.orchestrator.agent.tools.process.ShellResolver
 import kotlinx.coroutines.delay
@@ -38,6 +44,153 @@ class SendStdinTool : AgentTool {
 
     companion object {
         private val LOG = Logger.getInstance(SendStdinTool::class.java)
+    }
+
+    override fun documentation(): ToolDocumentation = toolDoc("send_stdin") {
+        summary {
+            technical(
+                "Writes text to a running process's stdin via ProcessRegistry (the synchronous-then-idle " +
+                    "run_command path, non-bg_ ids); guards against password prompts via " +
+                    "ShellResolver.isLikelyPasswordPrompt and enforces a per-process write cap from " +
+                    "AgentSettings.maxStdinPerProcess (default 10); then enters a 60-second monitor loop " +
+                    "polling for process exit or output-idle, returning the new output or an [IDLE] signal."
+            )
+            plain(
+                "Like typing into a terminal that already has a program running — the agent sends a line " +
+                    "of text (e.g., 'y' to confirm an 'Are you sure?' prompt), then waits up to a minute " +
+                    "to see what the program does next. Has a built-in safety check that refuses to send " +
+                    "input if the process looks like it's asking for a password."
+            )
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.PROCESS_SPAWN)
+        counterfactual(
+            "Without send_stdin, the LLM falls back to background_process(action=send_stdin) — which " +
+                "covers processes in BackgroundPool (bg_ ids) but not the ProcessRegistry idle path, " +
+                "lacks password-prompt detection, and lacks the per-process rate limit. " +
+                "Alternatively, the LLM might try shell tricks such as `echo y | cmd` (requires " +
+                "re-launching the process) or writing to /proc/<pid>/fd/0 (Linux-only, root-gated, " +
+                "fragile). Neither alternative is safe or cross-platform."
+        )
+        llmMistake(
+            "Uses this tool with a bgId (bg_... prefix) from run_command(background=true) — those " +
+                "ids live in BackgroundPool, not ProcessRegistry. This tool only handles non-bg_ ids " +
+                "from the synchronous-then-idle path. Use background_process(action=send_stdin) for " +
+                "bg_ ids."
+        )
+        llmMistake(
+            "Sends a password, token, or secret — the description explicitly forbids this. The " +
+                "password-prompt guard fires on common prompt patterns (sudo, passphrase, password:) " +
+                "but cannot detect all forms; the LLM must also apply judgment and use ask_user_input " +
+                "instead."
+        )
+        llmMistake(
+            "Forgets the trailing newline — sends 'y' instead of 'y\\n'. Many interactive prompts " +
+                "require Enter to confirm; without \\n the process keeps waiting and the monitor loop " +
+                "times out without progress."
+        )
+        llmMistake(
+            "Retries send_stdin after hitting the rate limit (maxStdinPerProcess, default 10) instead " +
+                "of killing and rerunning the process with non-interactive flags (e.g., -y, --yes, " +
+                "--non-interactive). The error message says exactly this, but the LLM sometimes loops."
+        )
+        params {
+            required("process_id", "string") {
+                llmSeesIt("The process ID from the [IDLE] message.")
+                humanReadable(
+                    "The ID that appeared in the [IDLE] banner when run_command returned with " +
+                        "'process is waiting for input'. It is NOT a bg_ prefixed id — those belong " +
+                        "to background_process."
+                )
+                whenPresent("The process is looked up in ProcessRegistry by this id.")
+                constraint("must be a non-bg_ id from the run_command synchronous-then-idle path")
+                constraint("process must exist and be alive — exits return an error before any write")
+                example("proc_a1b2c3d4")
+            }
+            required("input", "string") {
+                llmSeesIt("Text to send to stdin. Include \\n for Enter key.")
+                humanReadable(
+                    "Exact text to write — escape sequences like \\n are interpreted as real newlines " +
+                        "by the JSON layer. Include \\n to press Enter; omitting it leaves the process " +
+                        "waiting for line termination."
+                )
+                whenPresent("Those bytes are written to the process's stdin pipe via ProcessRegistry.writeStdin.")
+                constraint("must not be a password, token, or secret — use ask_user_input for credentials")
+                constraint("counted against maxStdinPerProcess (default 10) — error returned if limit exceeded")
+                example("y\\n")
+                example("1\\n")
+                example("no\\n")
+            }
+        }
+        verdict {
+            keep(
+                "Provides password-prompt detection and a per-process write cap that background_process " +
+                    "(action=send_stdin) does not have. These guards make it meaningfully safer than " +
+                    "its alternative for interactive scripting on the synchronous-then-idle path.",
+                VerdictSeverity.NORMAL
+            )
+            drop(
+                "Active MERGE_CANDIDATE: the Batch 10 audit flagged that having two send_stdin surfaces " +
+                    "(this standalone tool for ProcessRegistry + background_process action for BackgroundPool) " +
+                    "is a persistent source of LLM confusion over id namespaces. The right long-term fix is " +
+                    "to migrate the password-prompt guard and rate-limit into BackgroundPool and drop this tool.",
+                VerdictSeverity.NORMAL
+            )
+        }
+        mergeOpportunity(
+            "STRONG MERGE_OPPORTUNITY with background_process(action=send_stdin). Both tools write text " +
+                "to a process's stdin; they differ only in id namespace (ProcessRegistry vs BackgroundPool) " +
+                "and guard set (this tool has password-prompt detection + rate limit; the action does not). " +
+                "Migration path: absorb the synchronous-then-idle ProcessRegistry path into BackgroundPool, " +
+                "migrate ShellResolver.isLikelyPasswordPrompt and maxStdinPerProcess guards into the action, " +
+                "then drop this standalone tool. Flagged in Batch 10 audit findings. Until that migration " +
+                "lands, keep both but surface the distinction prominently in the description."
+        )
+        related(
+            "background_process",
+            Relationship.ALTERNATIVE,
+            "Use background_process(action=send_stdin) instead when the process id starts with bg_ — " +
+                "those ids belong to BackgroundPool (run_command background=true path). This tool is for " +
+                "the non-bg_ synchronous-then-idle path only. Note: background_process send_stdin lacks " +
+                "password-prompt detection and rate limiting."
+        )
+        related(
+            "run_command",
+            Relationship.COMPOSE_WITH,
+            "send_stdin is only meaningful after run_command returned [IDLE] with a process_id — " +
+                "that is the only way a non-bg_ id enters ProcessRegistry."
+        )
+        related(
+            "runtime_exec",
+            Relationship.SEE_ALSO,
+            "For IDE-managed run configurations, runtime_exec(action=run_config) is the canonical launch " +
+                "path; those processes live in ExecutionManagerImpl, not ProcessRegistry, and do not " +
+                "accept send_stdin."
+        )
+        downside(
+            "The 60-second monitor loop ties up the agent loop iteration for up to a minute if the " +
+                "process produces no output after the write. The LLM cannot do other work during this wait."
+        )
+        downside(
+            "Rate limit (maxStdinPerProcess, default 10) may surprise workflows that need many interactive " +
+                "exchanges. The only recovery once the limit is hit is to kill and rerun with non-interactive flags."
+        )
+        downside(
+            "Password-prompt detection via ShellResolver.isLikelyPasswordPrompt uses heuristic pattern " +
+                "matching and has false positives — any prompt containing words like 'password', 'passphrase', " +
+                "or 'secret' will block even if the input is not a credential. The LLM must then use " +
+                "ask_user_input, even when that is unnecessary."
+        )
+        downside(
+            "Only covers ProcessRegistry (non-bg_ ids from the synchronous-then-idle path). Does not " +
+                "handle processes in BackgroundPool — an easy mistake given both id types are short alphanumeric strings."
+        )
+        downside(
+            "The idle monitor exits after 60s (MAX_WAIT_AFTER_STDIN_MS) or 10s of output silence " +
+                "(IDLE_AFTER_STDIN_MS), whichever comes first. Slow processes that take longer than 10s to " +
+                "react to input will produce an [IDLE] result that looks like a new prompt even when the " +
+                "process is still computing."
+        )
     }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
