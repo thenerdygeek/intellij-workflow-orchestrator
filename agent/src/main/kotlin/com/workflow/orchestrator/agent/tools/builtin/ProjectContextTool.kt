@@ -489,10 +489,10 @@ class ProjectContextTool : AgentTool {
         if (planKey.isBlank()) return ""
         val bamboo = ServiceLookup.bamboo(project) ?: return ""
         return try {
-            val chainKey = if (branch.isNotBlank()) {
-                ChainKeyResolver.getInstance()?.resolveChainKey(project, planKey, branch) ?: planKey
-            } else {
-                planKey
+            val chainKey = when {
+                branch.isBlank() -> planKey
+                else -> ChainKeyResolver.getInstance()?.resolveChainKey(project, planKey, branch)
+                    ?: return ""
             }
             val result = bamboo.getLatestBuild(chainKey)
             if (result.isError) return ""
