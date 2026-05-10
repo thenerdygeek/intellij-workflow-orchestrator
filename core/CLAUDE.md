@@ -173,8 +173,17 @@ JBColor constants with light/dark variants: SUCCESS (green), ERROR (red), WARNIN
   `WorkflowContextProjectActivity` so panels see a hydrated state on first
   subscribe (spec R8). Anchor (`activeTicket`) persisted via `PluginSettings`;
   focus chain (`focusPr → focusBuild → focusQualityScope`) is session-only.
+  **Phase 7 / T-AutoSeed (2026-05-11):** `WorkflowContextService.init` calls
+  `loadAnchorFromSettings()` which sets `activeTicket` synchronously from
+  `PluginSettings.activeTicketId`, but does NOT trigger the `focusPr` cascade.
+  `WorkflowContextProjectActivity.execute()` now calls `service.setActiveTicket(persistedAnchor)`
+  (Option A) after `recomputeFromEditor()` and before installing `WorkflowEventMirror`.
+  This fires the full cascade so `focusBuild` is populated on fresh IDE, enabling
+  `BuildMonitorService` ambient polling without the user opening any tab. Without this,
+  `focusBuild` stays null until the user manually opens the PR tab.
   Spec: `docs/architecture/workflow-context-design.md`. Plan:
-  `docs/architecture/phase5-workflow-context-plan.md`.
+  `docs/architecture/phase5-workflow-context-plan.md`. T-AutoSeed:
+  `docs/architecture/phase7-handover-context-plan.md` § 6.
 
 ## Repo resolution
 
