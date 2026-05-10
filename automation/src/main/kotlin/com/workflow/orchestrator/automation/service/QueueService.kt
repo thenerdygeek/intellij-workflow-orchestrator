@@ -197,8 +197,26 @@ class QueueService {
                         pollInProgress.set(false)
                     }
                 }
-                val hasActive = _stateFlow.value.any { it.status in ACTIVE_STATUSES }
-                val interval = if (hasActive) 15_000L else 60_000L
+                // Three-tier cadence (user reported up-to-30s delay between Trigger
+                // click and Bamboo build start at v0.85.x — fast-path skipped because
+                // Bamboo's prior build still showed Queued/Pending, then we waited 15s
+                // for the next tick, sometimes twice):
+                //   - Any WAITING_LOCAL entry → 3s. We're polling specifically to
+                //     catch the moment Bamboo turns idle so we can fire doTrigger;
+                //     responsiveness here is what the user perceives as queue lag.
+                //   - Active but no WAITING_LOCAL (entries are QUEUED_ON_BAMBOO/RUNNING)
+                //     → 15s. We're just monitoring already-triggered builds; Bamboo
+                //     state changes on the order of minutes for these.
+                //   - Queue empty → 60s. Heartbeat for safety; we'd normally `break`
+                //     out below anyway.
+                val state = _stateFlow.value
+                val hasWaitingLocal = state.any { it.status == QueueEntryStatus.WAITING_LOCAL }
+                val hasActive = state.any { it.status in ACTIVE_STATUSES }
+                val interval = when {
+                    hasWaitingLocal -> 3_000L
+                    hasActive -> 15_000L
+                    else -> 60_000L
+                }
                 val jitter = kotlin.random.Random.nextLong(interval / 10)
                 delay(interval + jitter)
 
