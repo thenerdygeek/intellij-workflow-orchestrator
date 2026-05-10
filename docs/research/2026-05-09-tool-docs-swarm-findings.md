@@ -853,3 +853,41 @@ Tools: `sonar`, `bamboo_builds`, `bamboo_plans`. Closes the integration cluster.
 - **CLAUDE.md drift count: 8+ instances.** `edit_file.lastEditLineRanges`, task statuses, missing BLOCKED, agent tool 5-actions, bitbucket_pr action count, bitbucket_review action count, sonar action count, bamboo_plans action count. **The CLAUDE.md audit is now urgent.**
 - **Doc length new high:** sonar 1124 lines for 18 actions. Tracks complexity faithfully — the swarm's "match the surface area" instinct is calibrated.
 - **All 4 integration tool families now documented** (jira, bitbucket_pr/repo/review, sonar, bamboo_builds/plans). 9 integration tools, ~6800 lines of docs. Phase 5 integration coverage: ~100%.
+
+---
+
+## Batch 16 — 2026-05-10 (framework + project model, sonnet)
+
+Tools: `spring`, `build`, `project_structure`.
+
+### `spring` — commit `02a8e875f` — STRONG keep, READ_ONLY, 656 lines
+
+- 16 actions actual (CLAUDE.md says 15+; close enough — the 16th is `boot_endpoints` only present when `includeEndpointActions=true`).
+- **Drop candidates:** `scheduled_tasks` and `event_listeners` are zero-param convenience wrappers around `annotated_methods(annotation=@Scheduled)` and `annotated_methods(annotation=@EventListener)`.
+
+### `build` — commit `416ad2ec` — STRONG keep, READ_ONLY, 933 lines
+
+- **🚨 CLAUDE.md drift: 26 actions actual, 11 in CLAUDE.md (off by >2x).** Python ecosystem actions (pip, Poetry, uv, pytest) were added later and CLAUDE.md never updated. **The largest single drift instance.**
+- **Merge opportunities:** the three `*_list`, three `*_outdated`, and two `*_lock_status` groups across pip/Poetry/uv are structurally identical. Collapsing into `python_list(manager)` / `python_outdated(manager)` / `python_lock_status(manager)` would reduce action count from 26 → 20 with no LLM capability loss.
+
+### `project_structure` — commit `032f11507` — STRONG keep, 614 lines
+
+- 14 actions confirmed (matches CLAUDE.md).
+- **🚨 REAL BUG: 8 write actions are NOT in `AgentLoop.WRITE_TOOLS`** → not plan-mode-blocked, schema not filtered in plan mode. `requestApproval` is a no-op under `ALWAYS_APPROVE`. **Joins the swarm-surfaced bug list:** find_definition Python fallback, find_references mirror bug, revert_file PathValidator bypass, create_file charset asymmetry. **Action item:** add `project_structure` to `AgentLoop.WRITE_TOOLS`.
+- **`scope` param overloaded** — means dependency scope for `set_module_dependency` but enumeration scope for `topology` / `list_*`. Documented as audit observation.
+- Drop candidates: `add_content_root` + `remove_content_root` (only apply to pure IDE-managed modules, rare in Gradle/Maven projects).
+
+### Action items surfaced by Batch 16
+
+- [ ] **🚨 Add `project_structure` to `AgentLoop.WRITE_TOOLS`** — write actions are currently plan-mode-bypassable. Fifth real bug surfaced by the swarm.
+- [ ] **🚨 CLAUDE.md drift fix:** `build` 26 actions (not 11). Largest single drift instance.
+- [ ] **Collapse `build`'s pip/Poetry/uv triples** into `python_list(manager)` etc. — saves 6 schema slots, no capability loss.
+- [ ] Drop `spring.scheduled_tasks` + `event_listeners` (convenience-wrapper redundancy with `annotated_methods`).
+- [ ] Drop `project_structure.add_content_root` + `remove_content_root` if pure IDE-managed modules are rare.
+- [ ] Disambiguate `project_structure.scope` param (overloaded between dependency and enumeration semantics).
+
+### Cross-cutting observations from Batch 16
+
+- **Bug count from swarm: 5 real defects.** find_definition (PSI), find_references (PSI mirror), revert_file (PathValidator bypass), create_file (charset), project_structure (plan-mode bypass). Each found via independent per-tool review — none would have surfaced via testing alone.
+- **CLAUDE.md drift count: 9+ instances.** The `build` undercount (26 vs 11) is the new high-water mark. **CLAUDE.md audit is no longer optional.**
+- **Per-batch wall time consistent at ~5-7 min** with sonnet + sleep-before-commit. Throughput: ~3 tools / 6 min = ~30 tools/hr. Remaining 34 tools → ~1.1 hours wall time.
