@@ -127,9 +127,11 @@ class BambooApiClientTest {
 
     @Test
     fun `queueBuildWithStageSelection sends form-encoded POST with bamboo dot variable pairs`() = runTest {
-        // Stage selection uses the REST queue endpoint with stage=<firstStage> in the URL
-        // and bamboo.variable.<k>=<v> pairs in the form body. Single request — the REST
-        // endpoint returns the BambooQueueResponse directly so no follow-up lookup needed.
+        // Stage selection uses the REST queue endpoint with the LAST plan-order stage
+        // as the ?stage= upper bound (probe-verified semantic — Bamboo runs every plan
+        // stage from start through ?stage= and stops). bamboo.variable.<k>=<v> pairs
+        // ride in the form body. Single request — the REST endpoint returns the
+        // BambooQueueResponse directly so no follow-up lookup needed.
         server.enqueue(MockResponse().setResponseCode(200).setBody(
             """{"buildResultKey":"PROJ-BUILD-44","buildNumber":44,"planKey":"PROJ-BUILD"}"""
         ))
@@ -144,7 +146,7 @@ class BambooApiClientTest {
 
         val recorded = server.takeRequest()
         assertEquals("POST", recorded.method)
-        // Uses the REST queue endpoint with the first selected stage in the URL.
+        // Uses the REST queue endpoint with the LAST selected plan-order stage in the URL.
         assertTrue(
             recorded.path!!.contains("/rest/api/latest/queue/PROJ-BUILD"),
             "Expected REST queue path, got ${recorded.path}"

@@ -104,11 +104,13 @@ class BambooApiClientStageSelectionTest {
     // ==================== non-null non-empty → REST queue with stage=<first> ====================
 
     @Test
-    fun `non-null selectedStages POSTs to REST queue endpoint with stage=firstStage`() = runTest {
+    fun `non-null selectedStages POSTs to REST queue endpoint with stage=lastStageInPlanOrder`() = runTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody(queuedBuildResponse))
 
         // LinkedHashSet preserves insertion order; production callers build the set
-        // from the dialog's checkbox list which iterates in plan order.
+        // from the dialog's checkbox list which iterates in plan order. Bamboo's
+        // `stage` param is the upper bound — the LAST plan-order stage the user
+        // checked is what Bamboo should run TO (probe-verified 2026-05-10).
         val stages = linkedSetOf("Build", "Deploy")
         val result = client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), stages)
 
@@ -123,15 +125,42 @@ class BambooApiClientStageSelectionTest {
             recorded.path!!.contains("executeAllStages=false"),
             "Expected executeAllStages=false in path, got: ${recorded.path}"
         )
-        // First stage in iteration order is "Build"; Bamboo runs from Build forward.
+        // Last stage in iteration order is "Deploy" — that's the upper bound;
+        // Bamboo runs Build then Deploy and stops.
         assertTrue(
+            recorded.path!!.contains("stage=Deploy"),
+            "Expected stage=Deploy (the LAST selected, which is the upper bound), got: ${recorded.path}"
+        )
+        assertFalse(
             recorded.path!!.contains("stage=Build"),
-            "Expected stage=Build in path, got: ${recorded.path}"
+            "Must NOT send stage=Build (that was v0.84.10's bug — sending the first " +
+                "selected made Bamboo stop after Build, ignoring Deploy). Got: ${recorded.path}"
         )
         // Should NOT use the Struts action endpoint (the path that 404'd in production).
         assertFalse(
             recorded.path!!.contains("/build/admin/ajax/runChainAction.action"),
             "Must not use Struts action endpoint, got: ${recorded.path}"
+        )
+    }
+
+    @Test
+    fun `three-stage selection uses the last-in-plan-order stage as the bound`() = runTest {
+        // Locks in the .last() semantic against future regressions: with stages
+        // {Build, Test, Deploy} all checked, Bamboo must be told to run UP TO Deploy
+        // (not Build, which would only run the first stage).
+        server.enqueue(MockResponse().setResponseCode(200).setBody(queuedBuildResponse))
+
+        val stages = linkedSetOf("Build", "Test", "Deploy")
+        client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), stages)
+
+        val recorded = server.takeRequest()
+        assertTrue(
+            recorded.path!!.contains("stage=Deploy"),
+            "Three-stage selection must use the LAST stage as bound (Deploy), got: ${recorded.path}"
+        )
+        assertFalse(
+            recorded.path!!.contains("stage=Build") || recorded.path!!.contains("stage=Test"),
+            "Must NOT send Build or Test as the bound. Got: ${recorded.path}"
         )
     }
 

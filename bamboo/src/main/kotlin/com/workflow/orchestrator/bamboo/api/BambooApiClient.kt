@@ -144,7 +144,8 @@ class BambooApiClient(
      *
      * This is the single Bamboo trigger primitive. All callers must route through here.
      *
-     * **Wire contract (validated against Bamboo DC 10.2.14, working in production):**
+     * **Wire contract (documented + empirically verified by `--probe-stage-bound`
+     * against the user's Bamboo on 2026-05-10):**
      *
      * - `selectedStages == null` → run all stages. Uses the REST queue endpoint with
      *   `executeAllStages=true`. Explicit "run everything" escape hatch, not a default.
@@ -152,28 +153,36 @@ class BambooApiClient(
      *   An empty selection is invalid (Bamboo would default to all stages, silently
      *   violating the caller's intent).
      * - `selectedStages != null && selectedStages.isNotEmpty()` → form POST to the
-     *   REST queue endpoint with `executeAllStages=false&stage=<firstStageName>`.
-     *   Bamboo's REST API accepts a single `stage` param and runs from that stage forward.
+     *   REST queue endpoint with `executeAllStages=false&stage=<lastSelectedInPlanOrder>`.
+     *   Per Atlassian's REST docs (literal: *"name of the stage that should be executed
+     *   even if manual stage. Execution will follow to the next manual stage after this
+     *   or end of plan if no subsequent manual stage"*) and the accepted Steffen Opel
+     *   answer on community.atlassian.com (`?stage=X&executeAllStages=false` runs
+     *   *up to and including* X), the `stage` param is the UPPER BOUND. Bamboo runs
+     *   every plan stage from the start through the named stage and stops.
      *
-     * **Why REST and not the Struts action endpoint.** A previous attempt to use
-     * `/build/admin/ajax/runChainAction.action` with `stages_<name>=true` per stage
-     * (for non-contiguous subset selection) returned 404 on the user's Bamboo —
-     * confirming the 2026-05-07 write-ops audit memo's warning that the Struts action
-     * endpoint is undocumented, version-specific, and not reliably available across
-     * Bamboo DC versions. The REST queue endpoint is the documented, validated path
-     * and matches the previously-working "Trigger" button behaviour.
+     * **Why `.last()` and not `.first()`.** The set iterates in plan order (production
+     * callers build it from the dialog's checkbox list — a `LinkedHashSet` preserving
+     * plan stage order). The user's checked stages form a contiguous-or-not subset; the
+     * latest plan-order stage they checked is the upper bound we want Bamboo to run to.
+     * v0.84.10 sent `.first()` which made Bamboo run only up to the FIRST checked stage —
+     * the user reported "I select two stages, only one runs". `.last()` honours their
+     * intent: selecting {Build, Test} runs Build then Test (and stops), which is what
+     * the dialog promises.
      *
-     * **Acknowledged limitation.** The REST API supports only a single `stage` param,
-     * so `selectedStages` is interpreted as "run from the first selected stage
-     * forward" — Bamboo runs every plan stage at or after the first selected. This
-     * matches the dialog's pre-check default (first stage selected) and the common
-     * "run everything from here" workflow. Non-contiguous selection (e.g. {Build,
-     * Deploy} skipping Test) cannot be expressed via REST; if reintroduced, callers
-     * should detect the gap and warn the user before submission, not silently send.
+     * **Why REST and not the Struts action endpoint.** Commit `c3a38117a` switched to
+     * `/build/admin/ajax/runChainAction.action` for non-contiguous subset selection;
+     * that path 404'd in production. Bamboo 10.0+ removed Struts DMI (the `!method.action`
+     * URL form) per the 10.0 EAP release notes, so that endpoint is officially
+     * deprecated. REST is the only sanctioned path forward.
      *
-     * The set's first element is taken in iteration order. Production callers build
-     * the set from the dialog's checkbox list (a `LinkedHashSet` preserving plan
-     * stage order), so `.first()` returns the earliest-selected plan stage.
+     * **Architectural limitation (Bamboo design, not REST API).** Per Atlassian docs,
+     * manual stages must execute in plan order — a manual stage can only be triggered
+     * if its predecessor completed. Non-contiguous selection (e.g. {Build, Deploy}
+     * skipping Test) is not expressible in Bamboo, period. The dialog's checkbox UI
+     * lets the user select arbitrary subsets, but the wire layer collapses that to
+     * "the latest checked stage as the bound" — Bamboo will run every stage up to
+     * that bound regardless of which intermediate stages the user unchecked.
      *
      * **Form encoding.** Uses [postForm] which sets `X-Atlassian-Token: no-check`
      * (DC XSRF bypass — empirically required, otherwise the queue endpoint 403s) and
@@ -184,7 +193,8 @@ class BambooApiClient(
      * @param chainKey the resolved chain/plan key (e.g. `PROJ-BUILD` or `PROJ-BUILD523`).
      * @param variables map of variable name → value. Sent as `bamboo.variable.<k>=<v>`.
      * @param selectedStages set of stage names to run. null = all stages; empty = error;
-     *   non-empty → REST `?stage=<first>` (runs from that stage forward).
+     *   non-empty → REST `?stage=<last in plan order>` (Bamboo runs every stage from
+     *   the plan start up to and including that stage).
      */
     suspend fun queueBuildWithStageSelection(
         chainKey: String,
@@ -206,12 +216,14 @@ class BambooApiClient(
             log.debug("[Bamboo:API] queueBuildWithStageSelection chainKey=$chainKey, stages=ALL, variables=${variables.keys}")
             "?executeAllStages=true"
         } else {
-            // Bamboo runs from this stage forward (every plan stage at or after the
-            // first selected). Iteration order is plan order — the production caller
-            // builds selectedStages from the dialog's checkbox list (LinkedHashSet).
-            val firstStage = selectedStages.first()
-            log.debug("[Bamboo:API] queueBuildWithStageSelection chainKey=$chainKey, stages=$selectedStages, firstStage=$firstStage, variables=${variables.keys}")
-            "?executeAllStages=false&stage=${URLEncoder.encode(firstStage, "UTF-8")}"
+            // Bamboo's `stage` param is the UPPER BOUND — execution runs every plan
+            // stage from the start through the named stage and stops there. The set
+            // iterates in plan order (LinkedHashSet built from the dialog's plan-
+            // ordered checkbox list), so .last() returns the latest plan-order stage
+            // the user checked, which is the bound we want Bamboo to run to.
+            val boundStage = selectedStages.last()
+            log.debug("[Bamboo:API] queueBuildWithStageSelection chainKey=$chainKey, stages=$selectedStages, boundStage=$boundStage, variables=${variables.keys}")
+            "?executeAllStages=false&stage=${URLEncoder.encode(boundStage, "UTF-8")}"
         }
 
         val url = "$baseUrl/rest/api/latest/queue/$chainKey$query"
