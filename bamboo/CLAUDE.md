@@ -43,6 +43,7 @@ Build variables include `dockerTagsAsJson` — JSON payload of service-to-docker
 - `BambooServiceImpl` returns `BuildResultData.stages[].jobs[]` populated from `?expand=stages.stage.results.result` responses. Each `BuildJobData.resultKey` (e.g. `PROJ-PLAN138-UNIT-4`) is what the agent passes to `bamboo_builds.get_build_log` for per-job logs.
 - `BuildPlanResolutionPolicy` (in `:bamboo/ui/`) is a pure object encapsulating the Build dashboard's "use detected plan / use configured master / show hint" decision, so the resolution matrix is testable without IntelliJ infrastructure. The dashboard delegates to it after every `BambooService.autoDetectPlan` call.
 - `BuildMonitorService` — background polling via SmartPoller, emits `BuildFinished`/`BuildLogReady` events. Uses platform-injected `cs: CoroutineScope` (see `:core` "Service & threading conventions"). `PrBar` git reads use `readAction { }`.
+  - **T-B2/B3-a (2026-05-11):** `BuildMonitorService` now subscribes to `WorkflowContextService.state.map { it.focusBuild }.distinctUntilChanged()` via an internal `wireFocusBuildSubscription` method wired from the IntelliJ-DI constructor. Non-null `focusBuild` → `startPolling(chainKey ?: planKey, branch, interval)`; null → `stopPolling()`. Uses `collectLatest` so rapid focus changes cancel the in-flight body and only the latest target wins. `BuildDashboardPanel` still calls `startPolling`/`switchBranch`/`stopPolling` directly (dual-driver interim state); those calls will be removed in **T-B2/B3-b** (separate task). The test constructor accepts an optional `focusBuildFlow: StateFlow<BuildRef?>?` to inject a test-controlled flow without IntelliJ DI. `startPolling` and `stopPolling` are `open` to allow recording subclasses in tests.
 - `BuildLogParser` — extracts errors, test failures, CVE warnings from build logs
 - `CveRemediationService` — parses CVE data, provides version bump suggestions
 - `PlanDetectionService` — auto-detects Bamboo plan key from project
@@ -56,9 +57,9 @@ Build variables include `dockerTagsAsJson` — JSON payload of service-to-docker
 
 ## UI
 
-- `BuildDashboardPanel` — build list + stage detail + log viewer
-- `BuildStatusBarWidget` — build status in status bar
-- `BuildStatusNodeDecorator` — project tree build status badges
+- `BuildDashboardPanel` — build list + stage detail + log viewer. **T-B2/B3-b (next-up):** will drop direct `startPolling`/`switchBranch`/`stopPolling` calls; polling lifecycle moves fully to `BuildMonitorService`'s focus subscription (T-B2/B3-a already landed). Dropdown "select a branch" becomes a `WorkflowContextService.focusPr(...)` call.
 - `CveAnnotator` / `CveIntentionAction` — inline CVE warnings + auto-fix in pom.xml
 - `BambooBuildConfigurationType` — run configuration for manual stage triggers
 - **UI Overhaul:** StitchLeftAccentBorder utility for status-colored left borders on cards. Uppercase section headers, monospace build numbers in cell renderers.
+
+Note: `BuildStatusBarWidget` and `BuildStatusNodeDecorator` were Phase 1c / 3c plan entries that never landed. They are not implemented. Do not reference them as existing components.

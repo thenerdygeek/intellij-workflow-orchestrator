@@ -14,19 +14,25 @@ import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.model.workflow.BuildRef
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.services.BuildLogCache
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.polling.SmartPoller
+import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import java.time.Instant
 
 @Service(Service.Level.PROJECT)
-class BuildMonitorService {
+open class BuildMonitorService {
 
     private val log = Logger.getInstance(BuildMonitorService::class.java)
 
@@ -68,15 +74,30 @@ class BuildMonitorService {
     constructor(project: Project, cs: CoroutineScope) {
         this._project = project
         this.cs = cs
+        wireFocusBuildSubscription(
+            WorkflowContextService.getInstance(project).state
+                .map { it.focusBuild }
+                .distinctUntilChanged()
+        )
     }
 
-    /** Test constructor — allows injecting mocks. */
+    /**
+     * Test constructor — allows injecting mocks.
+     *
+     * @param focusBuildFlow when non-null, wires the same ambient focus-driven lifecycle
+     *   used by the IntelliJ-DI constructor against the supplied flow. Tests pass a
+     *   [MutableStateFlow<BuildRef?>] to drive polling lifecycle scenarios without
+     *   needing IntelliJ platform services. When null, no subscription is wired
+     *   (caller drives [startPolling]/[stopPolling] directly, matching the legacy
+     *   test style used by [BuildMonitorServiceTest]).
+     */
     constructor(
         apiClient: BambooApiClient,
         eventBus: EventBus,
         scope: CoroutineScope,
         notificationService: WorkflowNotificationService? = null,
-        buildLogCache: BuildLogCache = BuildLogCache()
+        buildLogCache: BuildLogCache = BuildLogCache(),
+        focusBuildFlow: StateFlow<BuildRef?>? = null,
     ) {
         this._apiClient = apiClient
         this._eventBus = eventBus
@@ -84,6 +105,42 @@ class BuildMonitorService {
         this._notificationService = notificationService
         this._notificationServiceResolved = true
         this._buildLogCache = buildLogCache
+        if (focusBuildFlow != null) {
+            wireFocusBuildSubscription(focusBuildFlow)
+        }
+    }
+
+    /**
+     * Wires a [collectLatest] subscription against [focusFlow] that drives
+     * [startPolling]/[stopPolling] as the focused build changes.
+     *
+     * - Non-null [BuildRef]: calls [startPolling] with the chain key (preferred) or
+     *   plan key as the plan target, using the current [PluginSettings] poll interval
+     *   when a project is available, or the default 30s when running under tests.
+     * - Null [BuildRef]: calls [stopPolling].
+     *
+     * [collectLatest] is essential here: it cancels the in-flight coroutine when a new
+     * value arrives, so a rapid A→B→C sequence delivers only C's [startPolling] target
+     * and never lets a stale A or B result win a race.
+     *
+     * Coexists safely with direct [startPolling]/[stopPolling] calls from
+     * [com.workflow.orchestrator.bamboo.ui.BuildDashboardPanel] — the last caller wins.
+     * The panel-side calls will be removed in T-B2/B3-b.
+     */
+    private fun wireFocusBuildSubscription(focusFlow: kotlinx.coroutines.flow.Flow<BuildRef?>) {
+        cs.launch {
+            focusFlow.collectLatest { focusBuild ->
+                if (focusBuild == null) {
+                    stopPolling()
+                } else {
+                    val pollKey = focusBuild.chainKey ?: focusBuild.planKey
+                    val intervalMs = _project?.let { p ->
+                        PluginSettings.getInstance(p).state.buildPollIntervalSeconds.toLong() * 1_000L
+                    } ?: 30_000L
+                    startPolling(pollKey, focusBuild.branch, intervalMs)
+                }
+            }
+        }
     }
 
     private val _stateFlow = MutableStateFlow<BuildState?>(null)
@@ -94,7 +151,7 @@ class BuildMonitorService {
     private var lastLogFetchedForBuild: Int? = null
     private var poller: SmartPoller? = null
 
-    fun startPolling(planKey: String, branch: String, intervalMs: Long = 30_000) {
+    open fun startPolling(planKey: String, branch: String, intervalMs: Long = 30_000) {
         log.info("[Bamboo:Monitor] Starting polling for planKey=$planKey, branch=$branch, intervalMs=$intervalMs")
         stopPolling()
         previousBuildNumber = null
@@ -112,7 +169,7 @@ class BuildMonitorService {
         }.also { it.start() }
     }
 
-    fun stopPolling() {
+    open fun stopPolling() {
         log.info("[Bamboo:Monitor] Stopping polling")
         poller?.stop()
         poller = null
@@ -183,7 +240,6 @@ class BuildMonitorService {
             // Emitted on first poll too (unlike BuildFinished) so consumers like
             // Automation tab get the current state when they subscribe.
             if (isTerminal && dto.buildNumber != lastLogFetchedForBuild) {
-                lastLogFetchedForBuild = dto.buildNumber
                 // Fetch logs from ALL jobs — the docker tag line can appear in any
                 // job's output, not necessarily the first. Plan-level logs are useless
                 // (404 or ~101 bytes), so we use job-level result keys.
@@ -200,6 +256,7 @@ class BuildMonitorService {
                 }
                 val keysToFetch = jobResultKeys.ifEmpty { listOf(resultKey) }
                 val logParts = mutableListOf<String>()
+                var allFetchesSucceeded = true
                 for (key in keysToFetch) {
                     try {
                         when (val logResult = apiClient.getBuildLog(key)) {
@@ -208,15 +265,25 @@ class BuildMonitorService {
                             }
                             is ApiResult.Error -> {
                                 log.warn("[Bamboo:Monitor] Failed to fetch log for $key: ${logResult.message}")
+                                allFetchesSucceeded = false
                             }
                         }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
                         log.warn("[Bamboo:Monitor] Exception fetching log for $key: ${e.message}")
+                        allFetchesSucceeded = false
                     }
                 }
-                log.info("[Bamboo:Monitor] Fetched ${logParts.size}/${keysToFetch.size} job logs for build $planKey-${dto.buildNumber}")
+                // Only mark this build as fetched when every job log returned Success.
+                // A partial fetch may be missing the publish job's "Unique Docker Tag"
+                // line (Bamboo flips a build to Successful slightly before all logs are
+                // flushed to disk) — the next poll must retry so the cache is overwritten
+                // with the complete log.
+                if (allFetchesSucceeded) {
+                    lastLogFetchedForBuild = dto.buildNumber
+                }
+                log.info("[Bamboo:Monitor] Fetched ${logParts.size}/${keysToFetch.size} job logs for build $planKey-${dto.buildNumber} (allSucceeded=$allFetchesSucceeded)")
                 // planKey passed to startPolling is already the chain key (the resolved
                 // branch-plan key after autoDetectPlan) — set chainKey = planKey so the
                 // BuildLogCache is keyed by chain, not by the master plan key.
