@@ -30,6 +30,21 @@ Key endpoints:
 - `SonarDataService` — caches state via `StateFlow<SonarState>`, refresh debouncing (500ms)
 - `IssueMapper` / `CoverageMapper` — transform DTOs to domain models
 
+## EventBus emissions (T-B1, Phase 7)
+
+`SonarDataService.refreshWith()` emits `WorkflowEvent.QualityGateResult` after every terminal gate
+result (OK → `passed=true`, ERROR → `passed=false`). Emissions are **deduplicated**: the event is
+only fired when the result changes from the previous terminal state (or on the first terminal result
+after a scope change). Non-terminal statuses (`IN_PROGRESS`, `PENDING`, `NONE` / API error) never
+emit.
+
+Subscribers:
+- `HealthCheckService.SonarGateCheck` — populates the cached Sonar health-check status
+- `HandoverStateService.handleEvent` — drives `HandoverState.qualityGatePassed` (Handover tab dot)
+
+The emit is a **side-effect of the existing `QualityDashboardPanel`-driven fetch path**. No new
+polling is introduced; if the Quality tab is not visible, no fetch occurs, no emit occurs.
+
 ## UI
 
 - `QualityDashboardPanel` — 3 sub-panels: overview, issue list (with detail split pane), coverage table (with preview pane). GateStatusBanner shown when gate fails.
