@@ -1564,6 +1564,372 @@ class BambooProbe:
         print(f"    GET /rest/api/latest/result/{new_result_key}?expand=variables")
         return 1
 
+    # -- stage-bound probe (verify ?stage=X&executeAllStages=false semantics) -
+
+    def run_stage_bound_probe(self, plan_key: str, bound_stage: Optional[str]) -> int:
+        """Empirically verify Bamboo's `?stage=X&executeAllStages=false` semantics
+        on this server by triggering ONE build and reporting which stages ran.
+
+        **Research baseline (cited so future maintainers don't re-derive):**
+
+        - Atlassian REST docs (`docs.atlassian.com/atlassian-bamboo/REST/...`) for
+          POST `/queue/{plan}` document the `stage` param as: *"name of the stage
+          that should be executed even if manual stage. Execution will follow to
+          the next manual stage after this or end of plan if no subsequent manual
+          stage."*
+        - Steffen Opel (Atlassian community, accepted answer at
+          community.atlassian.com/.../Rest-Api-to-start-a-stage-for-build/...):
+          *"`?stage=Second&executeAllStages=false` runs up to and including the
+          second stage only."*
+        - Documented Bamboo design constraint: manual stages must execute in plan
+          order — non-contiguous subset selection is not expressible.
+        - Bamboo 10.0+ removed Struts DMI (the `!method.action` URL form), so
+          `/build/admin/ajax/runChainAction.action` (the prior C-faithful
+          attempt that 404'd in production) is officially deprecated. REST is
+          the only sanctioned trigger path.
+
+        **What this probe verifies on this Bamboo:** does
+        `POST /queue/{plan}?stage=<bound_stage>&executeAllStages=false`
+        actually run all stages from the plan start through `bound_stage`
+        (inclusive), and stop after `bound_stage`? If yes, the plugin's
+        `BambooApiClient.queueBuildWithStageSelection` should pass the LAST
+        selected stage (in plan order) as `?stage=`, not the first.
+
+        Returns 0 on confirmed-as-documented, 1 on mismatch, 2 on user abort.
+        Triggers ONE real build with NO variable overrides.
+        """
+        self.session.headers["User-Agent"] = (
+            "WorkflowOrchestrator-BambooProbe/1.0 (probe-stage-bound)"
+        )
+
+        interactive = (bound_stage is None) or (bound_stage == "__INTERACTIVE__")
+        print(f"[probe] stage-bound mode — "
+              f"{'interactive (will prompt for bound after listing stages)' if interactive else f'bound={bound_stage!r}'}\n")
+
+        # === PHASE A — read plan stages (READ-ONLY) ===
+        print(f"=== PHASE A — reading plan stages for {plan_key} ===\n")
+        self._get(
+            name="stage_bound_plan_stages",
+            description=f"Latest build stages for {plan_key} (to enumerate stage names)",
+            path=f"/rest/api/latest/result/{plan_key}/latest?expand=stages.stage.results.result",
+            category="probe_stage_bound",
+        )
+        plan_blob = _read_raw_body(self.raw_dir / "stage_bound_plan_stages.json")
+        plan_stage_names: list[str] = []
+        if plan_blob:
+            stages_node = plan_blob.get("stages") or {}
+            stages_list = stages_node.get("stage") if isinstance(stages_node, dict) else []
+            if isinstance(stages_list, list):
+                for s in stages_list:
+                    n = s.get("name") if isinstance(s, dict) else None
+                    if n:
+                        plan_stage_names.append(n)
+        if not plan_stage_names:
+            print(f"  [probe] could not enumerate stages for {plan_key}. "
+                  f"See raw/stage_bound_plan_stages.json.")
+            print(f"  Possible causes: plan has no completed builds yet, "
+                  f"PAT lacks read perm, or plan key is wrong.")
+            return 1
+        print(f"  Plan has {len(plan_stage_names)} stages in order:")
+        for i, n in enumerate(plan_stage_names):
+            marker = "  <- bound" if (not interactive and n == bound_stage) else ""
+            print(f"    {i+1:>2}. {n}{marker}")
+
+        if interactive:
+            print()
+            print(f"  Pick the bound stage by number. Bamboo will be asked to run ")
+            print(f"  every stage from #1 up to and including your pick, and to ")
+            print(f"  skip everything after.")
+            try:
+                choice = input(
+                    f"  Bound stage number [1-{len(plan_stage_names)}], "
+                    f"or 'q' to quit: "
+                ).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\n  [probe] aborted at stage prompt.")
+                return 2
+            if choice == "q" or choice == "":
+                print("  [probe] aborted at stage prompt.")
+                return 2
+            try:
+                idx = int(choice) - 1
+            except ValueError:
+                print(f"  [probe] {choice!r} is not a number. Aborting.")
+                return 2
+            if idx < 0 or idx >= len(plan_stage_names):
+                print(f"  [probe] {choice} is out of range. Aborting.")
+                return 2
+            bound_stage = plan_stage_names[idx]
+            print(f"  Bound stage chosen: #{idx + 1} {bound_stage!r}")
+        elif bound_stage not in plan_stage_names:
+            print(f"\n  [probe] bound stage {bound_stage!r} is NOT in the plan's "
+                  f"stage list. Pick one of the names above (case-sensitive) ")
+            print(f"  or re-run with `--probe-stage-bound` (no value) to pick interactively.")
+            return 1
+        bound_index = plan_stage_names.index(bound_stage)
+        expected_run = plan_stage_names[: bound_index + 1]
+        expected_skip = plan_stage_names[bound_index + 1 :]
+        print()
+        print(f"  Expected per documented semantic:")
+        print(f"    SHOULD RUN ({len(expected_run)}): {', '.join(expected_run)}")
+        print(f"    SHOULD NOT RUN ({len(expected_skip)}): "
+              f"{', '.join(expected_skip) if expected_skip else '(none — bound is last stage)'}")
+
+        # === PHASE B — confirmation gate ===
+        print("\n=== PHASE B — confirmation gate ===\n")
+        post_path = (
+            f"/rest/api/latest/queue/{plan_key}"
+            f"?stage={urllib.parse.quote(bound_stage, safe='')}"
+            f"&executeAllStages=false"
+        )
+        full_url = f"{self.base}{post_path}"
+        print("About to send the following request:")
+        print()
+        print(f"  Method:  POST")
+        print(f"  URL:     {full_url}")
+        print(f"  Headers: Content-Type: application/x-www-form-urlencoded")
+        print(f"           Authorization: Bearer <redacted>")
+        print(f"           X-Atlassian-Token: no-check")
+        print(f"           User-Agent: WorkflowOrchestrator-BambooProbe/1.0 (probe-stage-bound)")
+        print(f"  Body:    (empty — no variable overrides for this probe)")
+        print()
+        print(f"  This will queue ONE real build on your CI.")
+        if expected_skip:
+            print(f"  SAFETY CHECK: stages AFTER {bound_stage!r} are expected to be SKIPPED:")
+            for s in expected_skip:
+                print(f"    - {s}")
+            print(f"  If any of these would be DESTRUCTIVE if accidentally triggered, ")
+            print(f"  pick a SAFER bound (e.g. one whose next-stage is harmless) BEFORE ")
+            print(f"  proceeding. The probe alerts loudly if a 'should-skip' stage starts, ")
+            print(f"  but the alert may arrive after the stage has already begun.")
+        print(f"  You may STOP the build at any time from Bamboo's web UI; the probe ")
+        print(f"  will detect terminal state and read the resulting stage outcomes.")
+        print(f"  Ctrl+C also exits cleanly and prompts for a manual verdict.")
+        print()
+        try:
+            answer = input("Proceed? Type 'y' (anything else aborts): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\n[probe] aborted at gate.")
+            return 2
+        if answer != "y":
+            print("[probe] aborted at gate.")
+            return 2
+
+        # === PHASE C — trigger ===
+        print("\n=== PHASE C — triggering build ===\n")
+        post_result = self._post_form(
+            name="stage_bound_post",
+            description=f"Trigger {plan_key} with ?stage={bound_stage}&executeAllStages=false",
+            path=post_path,
+            form_body="",
+            category="probe_stage_bound",
+        )
+        print(f"  POST → {post_result.status} in {post_result.elapsed_ms}ms")
+        post_blob = json.loads(
+            (self.raw_dir / "stage_bound_post.json").read_text(encoding="utf-8")
+        )
+        body = post_blob.get("raw_body")
+        if not post_result.ok:
+            preview = post_result.payload_preview
+            preview_text = (
+                json.dumps(preview, indent=2)[:800]
+                if isinstance(preview, (dict, list))
+                else str(preview or "")[:800]
+            )
+            print(f"  [probe] non-success status {post_result.status}.")
+            if preview_text.strip():
+                print(f"  Bamboo response body:")
+                for line in preview_text.splitlines():
+                    print(f"    {line}")
+            print(f"  Full response: raw/stage_bound_post.json. Aborting verification.")
+            return 1
+        new_result_key = None
+        if isinstance(body, dict):
+            new_result_key = (
+                body.get("buildResultKey")
+                or (body.get("triggerReason") or {}).get("buildResultKey")
+            )
+        if not new_result_key:
+            print("  [probe] could not extract buildResultKey from response. "
+                  "See raw/stage_bound_post.json.")
+            return 1
+        build_url = f"{self.base.rstrip('/')}/browse/{new_result_key}"
+        print()
+        print(f"  Build queued: {new_result_key}")
+        print(f"  ====================================================================")
+        print(f"  WATCH IN BROWSER: {build_url}")
+        print(f"  ====================================================================")
+        print(f"  You can stop the build from that page at any time. The probe will ")
+        print(f"  detect terminal state automatically and report which stages ran. ")
+        print(f"  Ctrl+C also exits cleanly and prompts you for a manual verdict.")
+
+        # === PHASE D — poll until terminal, tracking per-stage state changes ===
+        print("\n=== PHASE D — polling build, watching per-stage states ===\n")
+        # No timeout — the user owns when to stop. They can cancel via Bamboo
+        # UI (probe sees terminal state) or hit Ctrl+C (probe asks for manual
+        # verdict).
+        poll_interval_s = 15
+        last_lifecycle: Optional[str] = None
+        last_stage_states: dict[str, str] = {}  # stage name → last seen state
+        attempt = 0
+        terminal = False
+        verify_blob: Optional[dict[str, Any]] = None
+        early_alert_for: set[str] = set()
+        try:
+            while True:
+                attempt += 1
+                self._get(
+                    name=f"stage_bound_verify_{attempt:02d}",
+                    description=f"Stage states for {new_result_key} (poll #{attempt})",
+                    path=f"/rest/api/latest/result/{new_result_key}?expand=stages.stage.results.result",
+                    category="probe_stage_bound",
+                )
+                verify_blob = _read_raw_body(
+                    self.raw_dir / f"stage_bound_verify_{attempt:02d}.json"
+                )
+                if verify_blob is None:
+                    print(f"  [poll #{attempt}] could not parse verify response, retrying...")
+                    time.sleep(poll_interval_s)
+                    continue
+
+                lifecycle = verify_blob.get("lifeCycleState", "?")
+                state = verify_blob.get("state", "?")
+                if lifecycle != last_lifecycle:
+                    print(f"  [poll #{attempt}] build lifeCycleState: {lifecycle}/{state}")
+                    last_lifecycle = lifecycle
+
+                # Per-stage state changes — surface every transition so the
+                # user sees the moment a should-skip stage starts running.
+                stages_node = verify_blob.get("stages") or {}
+                stages_list = stages_node.get("stage") if isinstance(stages_node, dict) else []
+                if isinstance(stages_list, list):
+                    for s in stages_list:
+                        if not isinstance(s, dict):
+                            continue
+                        sname = s.get("name") or ""
+                        sstate = s.get("state") or "?"
+                        if sname and last_stage_states.get(sname) != sstate:
+                            print(f"  [poll #{attempt}] stage {sname!r}: {sstate}")
+                            last_stage_states[sname] = sstate
+                            # Loud alert: a should-skip stage moved out of Unknown.
+                            if (sname in expected_skip and sstate not in ("Unknown", "NotBuilt", "")
+                                    and sname not in early_alert_for):
+                                early_alert_for.add(sname)
+                                print()
+                                print(f"  !!! ALERT — stage {sname!r} (which should be SKIPPED) ")
+                                print(f"  !!! has transitioned to state={sstate}. Bamboo's bound ")
+                                print(f"  !!! semantic appears VIOLATED. STOP THE BUILD NOW from ")
+                                print(f"  !!! {build_url} if it would cause harm.")
+                                print()
+
+                terminal = lifecycle in ("Finished", "NotBuilt")
+                if terminal:
+                    break
+                time.sleep(poll_interval_s)
+        except KeyboardInterrupt:
+            print("\n\n  [probe] Ctrl+C — interrupting poll. Reading current build state once more.")
+            attempt += 1
+            self._get(
+                name=f"stage_bound_verify_{attempt:02d}",
+                description=f"Stage states for {new_result_key} (post-Ctrl+C snapshot)",
+                path=f"/rest/api/latest/result/{new_result_key}?expand=stages.stage.results.result",
+                category="probe_stage_bound",
+            )
+            verify_blob = _read_raw_body(
+                self.raw_dir / f"stage_bound_verify_{attempt:02d}.json"
+            )
+            terminal = bool(verify_blob and verify_blob.get("lifeCycleState") in ("Finished", "NotBuilt"))
+
+        # === PHASE E — verdict (manual when not terminal, automatic when terminal) ===
+        print("\n=== PHASE E — verdict ===\n")
+        stages_node = (verify_blob or {}).get("stages") or {}
+        stages_list = stages_node.get("stage") if isinstance(stages_node, dict) else []
+        ran_stages: list[tuple[str, str]] = []  # (name, state)
+        for s in stages_list if isinstance(stages_list, list) else []:
+            if not isinstance(s, dict):
+                continue
+            n = s.get("name") or ""
+            st = s.get("state") or "?"
+            ran_stages.append((n, st))
+        if ran_stages:
+            print(f"  Build {new_result_key} stages observed (final snapshot):")
+            for n, st in ran_stages:
+                marker = ""
+                if n == bound_stage:
+                    marker = " <- bound"
+                print(f"    {n!r}: state={st}{marker}")
+
+        if not terminal:
+            print()
+            print(f"  Build did not reach terminal state by the time you interrupted ")
+            print(f"  the probe. The snapshot above is what Bamboo last reported. ")
+            print(f"  You probably saw more in the Bamboo UI than the snapshot shows.")
+            print(f"  Inspect: {build_url}")
+            print()
+            print(f"  Tell the probe what you observed in the UI:")
+            print(f"    Did stages {', '.join(repr(s) for s in expected_run)} all start? ")
+            print(f"    Did any stage in {[s for s in expected_skip] or '(none)'} start? ")
+            try:
+                bound_ok = input(
+                    f"    Bamboo ran exactly the expected {len(expected_run)} stage(s) "
+                    f"and skipped the {len(expected_skip)} after the bound? [y/N]: "
+                ).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                bound_ok = ""
+            if bound_ok == "y":
+                print(f"\n  >>> PASS (manual) — semantic verified by user observation.")
+                print(f"      Plugin fix: pass selectedStages.last() (in plan order) as ?stage=.")
+                return 0
+            else:
+                print(f"\n  >>> FAIL (manual) — semantic does not match documented behaviour.")
+                print(f"      Inspect raw/stage_bound_verify_*.json for full request/response trail.")
+                return 1
+
+        # Terminal — automatic verdict from the final stage states.
+        # A stage is "considered run" if its state is not Unknown/NotBuilt.
+        # Bamboo emits state=Unknown for stages that never executed.
+        actually_ran = [n for n, st in ran_stages if st not in ("Unknown", "NotBuilt", "")]
+        actually_skipped = [n for n, st in ran_stages if st in ("Unknown", "NotBuilt", "")]
+
+        print()
+        print(f"  Actually RAN ({len(actually_ran)}): {', '.join(actually_ran) or '(none)'}")
+        print(f"  Actually SKIPPED ({len(actually_skipped)}): "
+              f"{', '.join(actually_skipped) or '(none)'}")
+        print()
+        print(f"  Documented expectation:")
+        print(f"    EXPECTED RAN ({len(expected_run)}): {', '.join(expected_run)}")
+        print(f"    EXPECTED SKIPPED ({len(expected_skip)}): "
+              f"{', '.join(expected_skip) if expected_skip else '(none)'}")
+        print()
+
+        # If the user stopped the build mid-stage, the bound stage may show as
+        # Failed/Stopped — still counts as "ran" for the bound semantic. The
+        # critical assertion is "no should-skip stage entered a non-Unknown state".
+        bound_ran = bound_stage in actually_ran
+        no_skip_started = all(s not in actually_ran for s in expected_skip)
+        all_pre_bound_ran = all(s in actually_ran for s in expected_run if s != bound_stage)
+
+        if bound_ran and no_skip_started and all_pre_bound_ran:
+            print(f"  >>> PASS — Bamboo ran stages up to and including {bound_stage!r} ")
+            print(f"      and did NOT start any of the should-skip stages.")
+            print(f"      Plugin fix: BambooApiClient.queueBuildWithStageSelection ")
+            print(f"      should pass the LAST selected stage (in plan order) as ?stage=, ")
+            print(f"      not the first.")
+            return 0
+        elif not no_skip_started:
+            offenders = [s for s in expected_skip if s in actually_ran]
+            print(f"  >>> FAIL — should-skip stage(s) ran: {', '.join(offenders)}.")
+            print(f"      The bound semantic is NOT honoured by this Bamboo. Do not ship ")
+            print(f"      the .last() fix until we figure out what went wrong. Inspect ")
+            print(f"      raw/stage_bound_verify_*.json.")
+            return 1
+        else:
+            print(f"  >>> INCONCLUSIVE — bound stage may not have completed (you may ")
+            print(f"      have stopped the build before {bound_stage!r} ran). Re-run with a ")
+            print(f"      shorter bound stage if you want a clean automatic verdict, or ")
+            print(f"      use the manual verdict path (Ctrl+C during polling).")
+            return 1
+
     # -- skip helper for endpoints that need missing CLI args -----------------
 
     def _skip(self, name: str, description: str, category: str) -> None:
@@ -2221,6 +2587,18 @@ def main() -> int:
                    help="(write-test) Poll until the build reaches a terminal "
                         "state (timeout 30 min). Otherwise polls for up to 5 "
                         "min and reports as soon as variables are observable.")
+    p.add_argument("--probe-stage-bound", nargs="?", const="__INTERACTIVE__",
+                   metavar="STAGE_NAME",
+                   help="Stage-trigger semantic verification. Triggers ONE "
+                        "build with ?stage=<chosen>&executeAllStages=false "
+                        "and reports which stages actually executed. Use this "
+                        "to empirically verify Bamboo's documented 'runs up "
+                        "to and including <chosen>' behaviour on this server. "
+                        "Requires --plan-key. Pass --probe-stage-bound with "
+                        "no value to enter interactive mode (probe lists the "
+                        "real plan stages and prompts you to pick one by "
+                        "number); pass an explicit STAGE_NAME (case-sensitive, "
+                        "must match a real plan stage) to skip the prompt.")
     p.add_argument("--out", default=str(Path(__file__).parent),
                    help="Parent dir for Result_N/ output (default: alongside the script)")
     args = p.parse_args()
@@ -2230,9 +2608,10 @@ def main() -> int:
         return 2
 
     mode_flags = sum([bool(args.discover), bool(args.versions_only),
-                      bool(args.write_test)])
+                      bool(args.write_test), bool(args.probe_stage_bound)])
     if mode_flags > 1:
-        print("ERROR: --discover, --versions-only, --write-test are mutually exclusive.",
+        print("ERROR: --discover, --versions-only, --write-test, --probe-stage-bound "
+              "are mutually exclusive.",
               file=sys.stderr)
         return 2
 
@@ -2246,6 +2625,10 @@ def main() -> int:
             print(f"ERROR: --write-test requires {', '.join(missing)}",
                   file=sys.stderr)
             return 2
+
+    if args.probe_stage_bound and not args.plan_key:
+        print("ERROR: --probe-stage-bound requires --plan-key", file=sys.stderr)
+        return 2
 
     if args.project_key and "-" in args.project_key:
         derived = args.project_key.split("-", 1)[0]
@@ -2276,6 +2659,8 @@ def main() -> int:
         mode_label = "versions-only"
     elif args.write_test:
         mode_label = "write-test"
+    elif args.probe_stage_bound:
+        mode_label = f"probe-stage-bound (stage={args.probe_stage_bound})"
     else:
         mode_label = "full sweep"
     print(f"[probe] target: {args.url}")
@@ -2316,6 +2701,11 @@ def main() -> int:
             variable_value=args.variable_value,
             let_build_finish=args.let_build_finish,
         )
+    elif args.probe_stage_bound:
+        write_test_exit_code = probe.run_stage_bound_probe(
+            plan_key=args.plan_key,
+            bound_stage=args.probe_stage_bound,
+        )
     else:
         probe.run_full_sweep(
             plan_key=args.plan_key,
@@ -2329,6 +2719,9 @@ def main() -> int:
     if args.discover:
         print(f"[probe] done — open {results_dir / 'discover.md'} for copy-paste IDs.")
     elif args.write_test:
+        print(f"[probe] done — open {results_dir / 'summary.md'} for the audit trail.")
+        return write_test_exit_code or 0
+    elif args.probe_stage_bound:
         print(f"[probe] done — open {results_dir / 'summary.md'} for the audit trail.")
         return write_test_exit_code or 0
     else:
