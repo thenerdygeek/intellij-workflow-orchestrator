@@ -2,6 +2,7 @@ package com.workflow.orchestrator.automation.ui
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
 import com.intellij.ui.ColorUtil
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -11,12 +12,18 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.automation.model.RegistryStatus
 import com.workflow.orchestrator.automation.model.TagEntry
 import com.workflow.orchestrator.automation.model.TagSource
+import com.workflow.orchestrator.automation.service.TagBuilderService
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.ui.ClipboardUtil
 import com.intellij.ui.components.JBScrollPane
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Component
 import java.awt.Font
+import java.awt.datatransfer.DataFlavor
 import javax.swing.*
 import javax.swing.table.AbstractTableModel
 import javax.swing.table.DefaultTableCellRenderer
@@ -24,6 +31,8 @@ import javax.swing.table.DefaultTableCellRenderer
 class TagStagingPanel(
     private val project: Project
 ) : JPanel(BorderLayout()), Disposable {
+
+    private val tagBuilderService by lazy { project.getService(TagBuilderService::class.java) }
 
     private val tableModel = TagTableModel()
     private val table = JBTable(tableModel)
@@ -35,6 +44,23 @@ class TagStagingPanel(
         border = JBUI.Borders.emptyTop(40)
     }
 
+    /** Baseline snapshot set by AutomationPanel whenever a baseline-source update arrives. */
+    private var baselineSnapshot: List<TagEntry>? = null
+
+    // Action buttons
+    private val copyButton = JButton("Copy").apply {
+        toolTipText = "Copy current docker tags as JSON to clipboard"
+        isEnabled = false
+    }
+    private val pasteButton = JButton("Paste").apply {
+        toolTipText = "Replace table with dockerTagsAsJson from clipboard"
+        isEnabled = true
+    }
+    private val revertButton = JButton("Revert").apply {
+        toolTipText = "Restore auto-detected baseline tags"
+        isEnabled = false
+    }
+
     init {
         border = JBUI.Borders.emptyTop(4)
 
@@ -44,9 +70,7 @@ class TagStagingPanel(
             rowHeight = JBUI.scale(28)
             columnModel.getColumn(0).preferredWidth = JBUI.scale(150)
             columnModel.getColumn(1).preferredWidth = JBUI.scale(250)
-            columnModel.getColumn(2).preferredWidth = JBUI.scale(100)
-            columnModel.getColumn(3).preferredWidth = JBUI.scale(80)
-            columnModel.getColumn(4).preferredWidth = JBUI.scale(100)
+            columnModel.getColumn(2).preferredWidth = JBUI.scale(120)
 
             columnModel.getColumn(1).cellEditor = DefaultCellEditor(JTextField())
             setDefaultRenderer(Any::class.java, TagTableCellRenderer())
@@ -90,12 +114,80 @@ class TagStagingPanel(
         }
         add(headerPanel, BorderLayout.NORTH)
 
+        // Button row: Copy | Paste | Revert
+        val buttonRow = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+            border = JBUI.Borders.empty(2, 0, 4, 0)
+            isOpaque = false
+            add(copyButton)
+            add(pasteButton)
+            add(revertButton)
+        }
+
+        // North compound: title/subtitle + button row
+        val northPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(headerPanel)
+            add(buttonRow)
+        }
+        // Remove original headerPanel add — we replaced it with northPanel
+        remove(headerPanel)
+        add(northPanel, BorderLayout.NORTH)
+
         cardPanel.add(JBScrollPane(table), "table")
         cardPanel.add(emptyLabel, "empty")
         cardLayout.show(cardPanel, "empty")
         add(cardPanel, BorderLayout.CENTER)
+
+        wireButtons()
     }
 
+    private fun wireButtons() {
+        copyButton.addActionListener {
+            val json = tagBuilderService.buildJsonPayload(tableModel.entries)
+            ClipboardUtil.copyToClipboard(json)
+        }
+
+        pasteButton.addActionListener {
+            val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
+            val text = try {
+                clipboard.getData(DataFlavor.stringFlavor) as? String
+            } catch (_: Exception) {
+                null
+            }
+            if (text == null) {
+                Messages.showWarningDialog(
+                    project,
+                    "Clipboard does not contain text.",
+                    "Paste Failed"
+                )
+                return@addActionListener
+            }
+            val parsed = DockerTagsJsonParser.parse(text)
+            if (parsed == null) {
+                Messages.showWarningDialog(
+                    project,
+                    "Clipboard text is not a valid dockerTagsAsJson object.\n\nExpected format: {\"service-name\": \"tag\", ...}",
+                    "Paste Failed"
+                )
+                return@addActionListener
+            }
+            updateTags(parsed)
+        }
+
+        revertButton.addActionListener {
+            val snapshot = baselineSnapshot ?: return@addActionListener
+            updateTags(snapshot)
+        }
+    }
+
+    /**
+     * Updates the table with [tags].
+     *
+     * This does NOT update [baselineSnapshot] — only [setBaseline] does that.
+     * User edits via the cell editor or via Paste flow through here and must
+     * not overwrite the baseline that Revert restores.
+     */
     fun updateTags(tags: List<TagEntry>) {
         val oldEntries = tableModel.entries
 
@@ -116,17 +208,39 @@ class TagStagingPanel(
             }
         }
         cardLayout.show(cardPanel, if (tags.isEmpty()) "empty" else "table")
+        refreshButtonStates()
+    }
+
+    /**
+     * Called by [AutomationPanel] whenever the displayed tags originate from a
+     * baseline-source update (auto-selected build or user-picked alternative).
+     * Caches the list as the revert target and then updates the table.
+     */
+    fun setBaseline(tags: List<TagEntry>) {
+        baselineSnapshot = tags
+        updateTags(tags)
     }
 
     /** Get current tag entries (may have user edits). */
     fun getCurrentTags(): List<TagEntry> = tableModel.entries
 
+    private fun refreshButtonStates() {
+        val hasTags = tableModel.entries.isNotEmpty()
+        copyButton.isEnabled = hasTags
+        val snapshot = baselineSnapshot
+        revertButton.isEnabled = snapshot != null && tableModel.entries != snapshot
+    }
+
     override fun dispose() {}
+
+    // -----------------------------------------------------------------------
+    // Table model — 3 columns: Service | Docker Tag | Status
+    // -----------------------------------------------------------------------
 
     private class TagTableModel : AbstractTableModel() {
         var entries: List<TagEntry> = emptyList()
 
-        private val columns = arrayOf("Service", "Docker Tag", "Latest", "Registry", "Status")
+        private val columns = arrayOf("Service", "Docker Tag", "Status")
 
         override fun getRowCount() = entries.size
         override fun getColumnCount() = columns.size
@@ -137,19 +251,11 @@ class TagStagingPanel(
             return when (col) {
                 0 -> entry.serviceName
                 1 -> entry.currentTag
-                2 -> entry.latestReleaseTag ?: ""
-                3 -> when (entry.registryStatus) {
-                    RegistryStatus.VALID -> "\u2713"
-                    RegistryStatus.NOT_FOUND -> "\u2717"
-                    RegistryStatus.CHECKING -> "..."
-                    RegistryStatus.UNKNOWN -> ""
-                    RegistryStatus.ERROR -> "!"
-                }
-                4 -> when {
+                2 -> when {
                     entry.isCurrentRepo -> "Your branch"
-                    entry.isDrift -> "\u26A0 Drift"
-                    entry.registryStatus == RegistryStatus.VALID -> "\u2713 OK"
-                    entry.registryStatus == RegistryStatus.NOT_FOUND -> "\u2717 Missing"
+                    entry.isDrift -> "⚠ Drift"
+                    entry.registryStatus == RegistryStatus.VALID -> "✓ OK"
+                    entry.registryStatus == RegistryStatus.NOT_FOUND -> "✗ Missing"
                     else -> ""
                 }
                 else -> ""
@@ -172,6 +278,10 @@ class TagStagingPanel(
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Cell renderer — 2 data columns (monospace) + 1 status column (coloured)
+    // -----------------------------------------------------------------------
+
     private class TagTableCellRenderer : DefaultTableCellRenderer() {
         override fun getTableCellRendererComponent(
             table: JTable, value: Any?, isSelected: Boolean,
@@ -181,23 +291,21 @@ class TagStagingPanel(
                 table, value, isSelected, hasFocus, row, col
             )
 
-            // Stitch: monospace for tag/key columns
-            if (col == 0 || col == 1 || col == 2) {
+            // Stitch: monospace for service/tag columns
+            if (col == 0 || col == 1) {
                 font = Font(Font.MONOSPACED, font.style, font.size)
             }
 
-            // Stitch: outline-style status indicators in Registry/Status columns
-            if (col == 3 || col == 4) {
+            // Stitch: outline-style status indicator in Status column (col 2)
+            if (col == 2) {
                 val model = table.model as TagTableModel
                 if (row < model.entries.size) {
                     val entry = model.entries[row]
                     foreground = when {
-                        col == 3 && entry.registryStatus == RegistryStatus.VALID -> StatusColors.SUCCESS
-                        col == 3 && entry.registryStatus == RegistryStatus.NOT_FOUND -> StatusColors.ERROR
-                        col == 4 && entry.isCurrentRepo -> StatusColors.LINK
-                        col == 4 && entry.isDrift -> StatusColors.WARNING
-                        col == 4 && entry.registryStatus == RegistryStatus.VALID -> StatusColors.SUCCESS
-                        col == 4 && entry.registryStatus == RegistryStatus.NOT_FOUND -> StatusColors.ERROR
+                        entry.isCurrentRepo -> StatusColors.LINK
+                        entry.isDrift -> StatusColors.WARNING
+                        entry.registryStatus == RegistryStatus.VALID -> StatusColors.SUCCESS
+                        entry.registryStatus == RegistryStatus.NOT_FOUND -> StatusColors.ERROR
                         else -> StatusColors.SECONDARY_TEXT
                     }
                 }
@@ -211,12 +319,46 @@ class TagStagingPanel(
                     background = when {
                         entry.isCurrentRepo -> StatusColors.SUCCESS_BG
                         entry.isDrift -> StatusColors.WARNING_BG
-                        entry.registryStatus == RegistryStatus.NOT_FOUND -> JBColor(ColorUtil.withAlpha(StatusColors.ERROR, 0.1), ColorUtil.withAlpha(StatusColors.ERROR, 0.1))
+                        entry.registryStatus == RegistryStatus.NOT_FOUND -> JBColor(
+                            ColorUtil.withAlpha(StatusColors.ERROR, 0.1),
+                            ColorUtil.withAlpha(StatusColors.ERROR, 0.1)
+                        )
                         else -> table.background
                     }
                 }
             }
             return component
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Paste parser — isolated so it is testable without a Project/Service
+    // -----------------------------------------------------------------------
+
+    internal object DockerTagsJsonParser {
+        private val json = Json { ignoreUnknownKeys = true }
+
+        /**
+         * Parses a dockerTagsAsJson string into a [TagEntry] list.
+         * Returns `null` if [text] is not valid JSON or not a JSON object.
+         */
+        fun parse(text: String): List<TagEntry>? {
+            return try {
+                val obj = json.decodeFromString<JsonObject>(text)
+                obj.entries.map { (service, tagElement) ->
+                    TagEntry(
+                        serviceName = service,
+                        currentTag = tagElement.jsonPrimitive.content,
+                        latestReleaseTag = null,
+                        source = TagSource.USER_EDIT,
+                        registryStatus = RegistryStatus.UNKNOWN,
+                        isDrift = false,
+                        isCurrentRepo = false
+                    )
+                }
+            } catch (_: Exception) {
+                null
+            }
         }
     }
 }

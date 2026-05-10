@@ -249,7 +249,7 @@ class AutomationPanel(
             val pick = currentBaselineAlternatives.firstOrNull { it.buildNumber == item.buildNumber }
                 ?: return@addActionListener
             log.info("[Automation:UI] Baseline manually swapped to build #${pick.buildNumber} (score=${pick.score})")
-            tagStagingPanel.updateTags(tagBuilderService.tagsForRun(pick))
+            tagStagingPanel.setBaseline(tagBuilderService.tagsForRun(pick))
         }
 
         // Subscribe to BuildLogReady events from the Build tab
@@ -394,7 +394,7 @@ class AutomationPanel(
                 log.info("[Automation:UI] Dropping stale baseline result (gen=$token, current=$loadGeneration)")
                 return@invokeLater
             }
-            tagStagingPanel.updateTags(tags)
+            tagStagingPanel.setBaseline(tags)
 
             if (!varsResult.isError) {
                 val vars = varsResult.data!!
