@@ -40,6 +40,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.random.Random
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -484,6 +485,35 @@ class AgentLoop(
         private const val MAX_RETRY_DELAY_MS = 30_000L
         /** Timeout errors — worth fewer retries than rate limits / server errors. */
         private val TIMEOUT_ERRORS = setOf(ErrorType.NETWORK_ERROR, ErrorType.TIMEOUT)
+
+        /**
+         * Computes a jittered backoff delay for retry pacing.
+         *
+         * Full-jitter shape (AWS pattern): returns a random value in [0, computed], where
+         * `computed = min(baseMs * 2^(attempt-1), capMs)` unless `retryAfterMs` overrides
+         * it (capped to capMs, still jittered).
+         *
+         * Used by all four retry sites: Layer 1 (API error), Layer 2 (compaction-on-timeout),
+         * Layer 3 (empty response, Case C), Layer 4 (text-only nudge, Case B).
+         *
+         * `internal` (not `private`) so AgentLoopBackoffHelperTest can call it directly.
+         *
+         * @param attempt 1-based retry attempt number.
+         * @param baseMs initial delay; defaults to INITIAL_RETRY_DELAY_MS = 1000ms.
+         * @param capMs maximum *computed* (pre-jitter) delay; defaults to MAX_RETRY_DELAY_MS = 30_000ms.
+         * @param retryAfterMs server-provided override (Retry-After header), capped to capMs.
+         */
+        internal fun computeBackoffMs(
+            attempt: Int,
+            baseMs: Long = INITIAL_RETRY_DELAY_MS,
+            capMs: Long = MAX_RETRY_DELAY_MS,
+            retryAfterMs: Long? = null,
+        ): Long {
+            val computed = retryAfterMs?.coerceAtMost(capMs)
+                ?: (baseMs * (1L shl (attempt - 1).coerceAtMost(30))).coerceAtMost(capMs)
+            return Random.nextLong(computed + 1)
+        }
+
         /**
          * Nudge for text-only responses (no tool calls).
          * Ported from Cline's formatResponse.noToolsUsed() in responses.ts.
