@@ -33,8 +33,10 @@ import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
+import com.workflow.orchestrator.agent.tools.docs.Relationship
 import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
 import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.util.BuildToolExecutableResolver
@@ -173,6 +175,77 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         }
         whatLLMSees(description)
         sideEffect(SideEffectKind.PROCESS_SPAWN)
+        counterfactual(
+            "Without java_runtime_exec the LLM falls back to `run_command mvn test` or `./gradlew test`. " +
+                "That works for whole-module runs but loses: IDE JUnit XML parsing and structured pass/fail counts, " +
+                "native Test Results tool-window integration (user sees nothing appear), per-method targeting without " +
+                "writing Maven Surefire `-Dtest=` or Gradle `--tests` flags by hand, BuildSystemValidator pre-flight " +
+                "that catches main-source classes before the JVM is even started, the compile-before-run guard " +
+                "(commit 9b164bf3) that prevents `initializationError`, and the RunInvocation disposal contract " +
+                "that prevents Run-tab leaks across repeated agent runs."
+        )
+        verdict {
+            keep(
+                "Test running is the most irreplaceable action in the agentic TDD loop. The native runner path " +
+                    "uniquely provides structured test results, IDE Run-tab integration, multi-method batching via " +
+                    "JUnit 5 PATTERNS, and compile-before-run safety. No shell command reproduces all four at once. " +
+                    "Registered only when the Java plugin is present so PyCharm users never see it.",
+                VerdictSeverity.STRONG
+            )
+        }
+        llmMistake(
+            "Passes a simple class name instead of a fully qualified one — e.g. 'MyServiceTest' instead of " +
+                "'com.example.MyServiceTest'. The validator rejects it immediately; the LLM should call test_finder " +
+                "first to get the fully qualified name."
+        )
+        llmMistake(
+            "Passes method names containing '#' or '.' — e.g. 'MyServiceTest#testFoo' instead of just 'testFoo'. " +
+                "METHOD_NAME_REGEX rejects these; the full outer\$inner path belongs in class_name, not in method."
+        )
+        llmMistake(
+            "Calls run_tests when compile_module has already returned errors, expecting it to succeed. " +
+                "Fix the compile errors first — run_tests calls ProjectTaskManager.build() before launching and will " +
+                "return per-file compile errors again instead of test results."
+        )
+        llmMistake(
+            "Calls rerun_failed_tests immediately after calling run_tests in the same tool-call sequence, " +
+                "before the first run has completed and populated RunContentManager. The descriptor won't be there yet; " +
+                "await the run_tests result first."
+        )
+        llmMistake(
+            "Passes more than 50 method names in a single 'method' string, hitting the MAX_METHODS_PER_RUN cap. " +
+                "Split into multiple run_tests calls or omit the method parameter to run the whole class."
+        )
+        llmMistake(
+            "Relies on run_tests to detect a TestNG class with 2+ methods via the native runner — TestNG has no " +
+                "PATTERNS equivalent, so the tool silently routes to the Maven/Gradle shell fallback. JUnit 5 is " +
+                "needed for native multi-method targeting."
+        )
+        downside(
+            "PATTERNS reflection: multi-method JUnit 5 native routing reflects into the JUnit 5 PATTERNS field " +
+                "at runtime. If the IntelliJ platform renames or removes this field in a future release, the reflection " +
+                "will throw and the native runner will fall back to shell — which is safe but silently downgrades the UX."
+        )
+        downside(
+            "compile_module has a hard 120s timeout enforced by withTimeoutOrNull. Very large projects (millions of " +
+                "source lines) may time out even on a fast machine. No incremental-only option — CompilerManager.make " +
+                "always runs whatever the compiler decides is dirty."
+        )
+        downside(
+            "rerun_failed_tests resolves descriptors from RunContentManager.allDescriptors, which includes tabs the " +
+                "user closed but didn't terminate. If a stale descriptor happens to sort as 'most recent', the rerun " +
+                "target is wrong. Pass session_id to disambiguate."
+        )
+        downside(
+            "BuildSystemValidator pre-flight adds a smartReadAction round-trip before every run_tests dispatch. " +
+                "On cold IDE startup (before indexing completes) this adds latency and may block up to 60s on DUMB_MODE."
+        )
+        related("python_runtime_exec", Relationship.ALTERNATIVE, "Use instead for pytest classes on PyCharm — same concept, Python runner path. Parallel tool: both exist side by side, Java vs Python.")
+        related("runtime_exec", Relationship.COMPLEMENT, "Use runtime_exec to observe the output of a JUnit run that is already live (get_run_output, get_test_results), or to launch any existing run configuration (run_config). java_runtime_exec creates and launches ephemeral configs; runtime_exec reads the results.")
+        related("coverage", Relationship.COMPOSE_WITH, "Use coverage(action=run_with_coverage) after a successful run_tests to collect line/branch coverage for the same class. coverage uses the same JUnit 5 PATTERNS reflection and RunInvocation pattern as java_runtime_exec.")
+        related("test_finder", Relationship.COMPLEMENT, "Use test_finder to discover the fully qualified class name before calling run_tests. java_runtime_exec requires a FQCN; test_finder is the lookup path.")
+        observation("compile_module could plausibly merge with the build meta-tool's compile action, but CompilerManager.make semantics (per-module scope, includeDependents) are different from Gradle/Maven task dispatch — the overlap is shallow.")
+        observation("rerun_failed_tests has no per-action timeout parameter; it inherits the run_tests default (300s). A dedicated timeout param for rerun would add clarity at low cost.")
         actions {
             action("run_tests") {
                 description {
@@ -240,6 +313,14 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                     param("method", "testFoo,testBar,testBaz")
                     outcome("All three methods run in one JUnit 5 PATTERNS launch; aggregated output returned as a single ToolResult.")
                 }
+                verdict {
+                    keep(
+                        "Core TDD action — the LLM calls this dozens of times per coding session. " +
+                            "No practical substitute that also gives structured pass/fail results, " +
+                            "multi-method batching, and native IDE integration.",
+                        VerdictSeverity.STRONG
+                    )
+                }
             }
             action("compile_module") {
                 description {
@@ -285,6 +366,15 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                     param("check_dependents", "true")
                     outcome("Compiles myapp.api plus every module that depends on it — surfaces any downstream ABI breakage.")
                 }
+                verdict {
+                    keep(
+                        "Pre-run compile verification is critical when the LLM edits source and immediately wants to " +
+                            "run tests. CompilerManager.make respects IntelliJ's module graph and facet settings; " +
+                            "`run_command ./gradlew compileJava` doesn't see Kotlin sources and misses annotation processors. " +
+                            "The check_dependents flag is uniquely valuable after upstream API changes.",
+                        VerdictSeverity.NORMAL
+                    )
+                }
             }
             action("rerun_failed_tests") {
                 description {
@@ -321,6 +411,15 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                     param("action", "rerun_failed_tests")
                     param("session_id", "MyServiceTest")
                     outcome("Reruns failures from the descriptor whose name contains 'MyServiceTest'.")
+                }
+                verdict {
+                    keep(
+                        "Saves significant token cost and wall-clock time on large test classes — reruns only " +
+                            "the FAILED/ERROR subset rather than the full class. The alternative is manually listing " +
+                            "failed methods and passing them as a comma-separated 'method' string to run_tests, " +
+                            "which the LLM often gets wrong under long-context pressure.",
+                        VerdictSeverity.NORMAL
+                    )
                 }
             }
         }
