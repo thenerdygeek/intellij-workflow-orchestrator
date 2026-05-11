@@ -696,16 +696,40 @@ class JavaKotlinProvider(private val project: Project) : LanguageIntelligencePro
     // Structural Search
     // ---------------------------------------------------------------------------
 
+    /** This provider supports SSR for Java and Kotlin source files. */
+    override fun supportsStructuralSearch(): Boolean = true
+
     /**
      * Search for structural patterns.
      * Extracted from [StructuralSearchTool]: MatchOptions + Matcher.
+     *
+     * The file type is resolved from the [langId] parameter so that Kotlin
+     * SSR patterns run against Kotlin files instead of Java files.
+     * For [langId] = "kotlin" or "kt", uses the Kotlin file type (looked up
+     * via [com.intellij.openapi.fileTypes.FileTypeManager] to avoid a compile-
+     * time dependency on the optional Kotlin plugin JAR).
+     * For any other langId (including "JAVA" and null), falls back to
+     * [com.intellij.ide.highlighter.JavaFileType.INSTANCE].
      */
     override fun structuralSearch(
         project: Project,
         pattern: String,
         scope: SearchScope
     ): List<StructuralMatchInfo>? {
-        val fileType = com.intellij.ide.highlighter.JavaFileType.INSTANCE
+        return structuralSearch(project, pattern, scope, langId = null)
+    }
+
+    /**
+     * Extended entry point used by the dispatch site to pass the user-specified
+     * language ID so the correct file type is selected.
+     */
+    fun structuralSearch(
+        project: Project,
+        pattern: String,
+        scope: SearchScope,
+        langId: String?
+    ): List<StructuralMatchInfo>? {
+        val fileType = resolveFileTypeForSsr(langId)
         val globalScope = if (scope is GlobalSearchScope) scope
         else GlobalSearchScope.projectScope(project)
 
@@ -744,6 +768,29 @@ class JavaKotlinProvider(private val project: Project) : LanguageIntelligencePro
     // =========================================================================
     // Private helpers
     // =========================================================================
+
+    /**
+     * Resolve the file type to use for Structural Search based on the user-supplied
+     * language ID.  Uses [com.intellij.openapi.fileTypes.FileTypeManager] for the
+     * Kotlin lookup so the code compiles without a hard dependency on the optional
+     * Kotlin plugin JAR.
+     *
+     * - "kotlin" / "kt" → Kotlin file type (e.g. `KotlinFileType.INSTANCE`)
+     * - everything else  → `JavaFileType.INSTANCE`
+     *
+     * [MatchOptions.setFileType] requires a [com.intellij.openapi.fileTypes.LanguageFileType];
+     * we cast via `as?` and fall back to Java on mismatch (should never happen for the
+     * Kotlin file type, but guards against future platform changes).
+     */
+    private fun resolveFileTypeForSsr(langId: String?): com.intellij.openapi.fileTypes.LanguageFileType {
+        if (langId != null && langId.lowercase() in setOf("kotlin", "kt")) {
+            val kotlinFileType = com.intellij.openapi.fileTypes.FileTypeManager.getInstance()
+                .findFileTypeByName("Kotlin")
+            val asLanguageFileType = kotlinFileType as? com.intellij.openapi.fileTypes.LanguageFileType
+            if (asLanguageFileType != null) return asLanguageFileType
+        }
+        return com.intellij.ide.highlighter.JavaFileType.INSTANCE
+    }
 
     private fun extractDocComment(element: PsiElement): String? {
         val docComment = when (element) {

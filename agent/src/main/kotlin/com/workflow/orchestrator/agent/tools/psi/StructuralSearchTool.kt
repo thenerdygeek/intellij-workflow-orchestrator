@@ -35,7 +35,7 @@ class StructuralSearchTool(
             ),
             "file_type" to ParameterProperty(
                 type = "string",
-                description = "Language: \"java\", \"kotlin\", or \"python\" (default: tries all available)"
+                description = "Language: \"java\" or \"kotlin\" (default: tries all SSR-capable providers). Python is not supported."
             ),
             "scope" to ParameterProperty(
                 type = "string",
@@ -92,21 +92,16 @@ class StructuralSearchTool(
         )
         llmMistake(
             "Passes `file_type = \"python\"` expecting Python structural search results. " +
-                "`PythonProvider.structuralSearch()` always returns null (line 849 of PythonProvider.kt). " +
-                "When `file_type = \"python\"` is specified and Python IS registered, " +
-                "`providersToTry` is set to `listOf(PythonProvider)` (StructuralSearchTool.kt line 91), " +
-                "`firstNotNullOfOrNull` gets null from the only provider, `results` is null, and the " +
-                "tool returns `\"Error: structural search failed — provider returned null\"` — which " +
-                "looks like a tool bug rather than 'Python SSR is not supported'. The LLM must use " +
-                "`search_code` for Python pattern matching instead."
+                "Python SSR is unsupported — the dispatch site checks `supportsStructuralSearch()` " +
+                "and returns a clear 'SSR not supported for language Python' error immediately. " +
+                "The LLM must use `search_code` for Python pattern matching instead."
         )
         llmMistake(
             "Writes a Kotlin-specific SSR pattern (e.g., `val \$x\$ = \$y\$`) and omits `file_type`. " +
-                "`JavaKotlinProvider.structuralSearch()` always uses `JavaFileType.INSTANCE` (line 708 " +
-                "of JavaKotlinProvider.kt), so the Matcher runs against Java file type regardless of " +
-                "which language the pattern targets. A Kotlin-only pattern may produce no Java matches " +
-                "and an empty result — not because the pattern is wrong but because the file type " +
-                "filter is hard-wired to Java in the current implementation."
+                "While `JavaKotlinProvider` now correctly selects the Kotlin file type when " +
+                "`file_type = \"kotlin\"` is provided, omitting `file_type` causes the Matcher to " +
+                "run with the Java file type by default. Always specify `file_type = \"kotlin\"` " +
+                "when the pattern targets Kotlin-only syntax."
         )
         llmMistake(
             "Calls structural_search during IDE indexing. `PsiToolUtils.isDumb(project)` at entry " +
@@ -150,23 +145,22 @@ class StructuralSearchTool(
                 humanReadable(
                     "Restricts the provider used. Maps `\"java\"` → `\"JAVA\"`, `\"kotlin\"`/`\"kt\"` → " +
                         "`\"kotlin\"`, `\"python\"`/`\"py\"` → `\"Python\"`. " +
-                        "WARNING: Python SSR is not supported — specifying `\"python\"` will produce a " +
-                        "misleading error (see commonLLMMistakes). Also note that `JavaKotlinProvider` " +
-                        "hard-wires `JavaFileType.INSTANCE`, so Kotlin patterns matched against Java " +
-                        "files may return empty results even when specified."
+                        "WARNING: Python SSR is not supported — specifying `\"python\"` returns a clear " +
+                        "'SSR not supported for language Python' error. " +
+                        "For Kotlin patterns, always specify `file_type = \"kotlin\"` so the Matcher " +
+                        "runs against Kotlin sources (not Java)."
                 )
                 whenPresent(
-                    "Calls `registry.forLanguageId(langId)`. If the provider is found, `providersToTry` " +
-                        "is `listOf(that provider)`. If the language ID is unrecognised and no provider " +
-                        "is found, falls back to `allProviders()`. Python IS registered as a provider " +
-                        "when the Python plugin is present, so `file_type=\"python\"` always ends up " +
-                        "calling `PythonProvider.structuralSearch()` which returns null."
+                    "Calls `registry.forLanguageId(langId)`. The dispatch site then checks " +
+                        "`provider.supportsStructuralSearch()` — if false (e.g. PythonProvider), " +
+                        "the tool returns an immediate 'SSR not supported' error. If true " +
+                        "(JavaKotlinProvider), the langId is forwarded so the correct file type " +
+                        "(Kotlin or Java) is selected inside the Matcher."
                 )
                 whenAbsent(
-                    "Tries all registered providers in iteration order via `firstNotNullOfOrNull`. " +
-                        "In practice `JavaKotlinProvider` is always first and always returns non-null " +
-                        "(it catches exceptions and returns null only on error), so `PythonProvider` " +
-                        "is never tried when `file_type` is absent."
+                    "Filters `allProviders()` to those where `supportsStructuralSearch()` is true " +
+                        "(currently only JavaKotlinProvider) and tries them in order. " +
+                        "PythonProvider is excluded even when registered."
                 )
                 enumValue("java", "kotlin", "kt", "python", "py")
                 example("java")
@@ -224,11 +218,10 @@ class StructuralSearchTool(
             drop(
                 "Niche within niche: the LLM rarely reaches for SSR unprompted because most " +
                     "'find all X' tasks are adequately served by `search_code` + manual filtering. " +
-                    "Python support is completely absent (silent null return with misleading error). " +
+                    "Python support is absent (clear error returned). " +
                     "The SSR template syntax has a steep learning curve — the LLM frequently writes " +
-                    "regex instead and gets empty results. The provider's Java-file-type hardwiring " +
-                    "means Kotlin patterns may silently miss Kotlin files. For the typical agentic " +
-                    "workflow (read, edit, test), structural search is rarely the bottleneck.",
+                    "regex instead and gets empty results. For the typical agentic workflow " +
+                    "(read, edit, test), structural search is rarely the bottleneck.",
                 VerdictSeverity.NORMAL,
             )
         }
@@ -246,19 +239,8 @@ class StructuralSearchTool(
             "tool for 'who implements this interface'; structural_search is the right tool for 'find " +
             "all call sites that match this call shape'. Different questions, different engines.")
         downside(
-            "Java file type hardwired — `JavaKotlinProvider.structuralSearch()` always calls " +
-                "`MatchOptions.setFileType(JavaFileType.INSTANCE)` (line 708 of JavaKotlinProvider.kt). " +
-                "Kotlin-only patterns (e.g., `val \$x\$ = \$y\$`) are run against Java file type and " +
-                "may return no results even in a pure-Kotlin project. There is no `file_type = \"kotlin\"` " +
-                "workaround — the parameter routes to the provider but the provider ignores it and " +
-                "always uses Java file type internally."
-        )
-        downside(
-            "Python SSR completely unsupported — `PythonProvider.structuralSearch()` always returns " +
-                "null (PythonProvider.kt line 849). When `file_type = \"python\"` is specified, the tool " +
-                "returns `\"Error: structural search failed — provider returned null\"` which looks like " +
-                "a tool crash rather than an expected capability gap. The LLM must use `search_code` " +
-                "for Python pattern matching."
+            "Python SSR unsupported — returns a clear 'SSR not supported for language Python' error " +
+                "immediately. The LLM must use `search_code` for Python pattern matching."
         )
         downside(
             "Double cap with unequal enforcement — the provider hard-caps at 50 raw matches before " +
@@ -271,15 +253,13 @@ class StructuralSearchTool(
             "Complex block patterns are unreliable — SSR is optimised for expression- and " +
                 "statement-level templates. Multi-statement block patterns (matching a sequence of " +
                 "statements across an arbitrary method body) can silently time out inside the " +
-                "Matcher and surface as a caught exception returning null (which the tool then " +
-                "reports as the generic `\"Error: structural search failed — provider returned null\"`). " +
-                "The LLM gets no signal distinguishing 'timeout' from 'Python not supported'."
+                "Matcher and surface as a caught exception returning null. " +
+                "Simpler expression patterns are more reliable."
         )
         downside(
             "Module scope fallback is silent — if `scope` names a non-existent module, " +
-                "`resolveScope()` falls back to project scope with no warning " +
-                "(StructuralSearchTool.kt lines 141-153). The LLM receives full-project results " +
-                "and has no way to know the narrowing was ignored."
+                "`resolveScope()` falls back to project scope with no warning. " +
+                "The LLM receives full-project results and has no way to know the narrowing was ignored."
         )
         downside(
             "Requires full project indexing — `PsiToolUtils.isDumb(project)` at entry and " +
@@ -287,17 +267,15 @@ class StructuralSearchTool(
                 "On first project open, the tool is unavailable until indexing finishes."
         )
         observation(
-            "FALLBACK BUG VERIFIED — StructuralSearchTool.kt line 91: `if (specific != null) " +
-                "listOf(specific) else allProviders`. When `file_type = \"python\"` is specified AND " +
-                "the Python plugin is installed, `registry.forLanguageId(\"Python\")` returns the " +
-                "PythonProvider (non-null), so `providersToTry = listOf(PythonProvider)`. The " +
-                "tool does NOT fall back to allProviders. `PythonProvider.structuralSearch()` returns " +
-                "null, `firstNotNullOfOrNull` returns null, and the tool emits the misleading " +
-                "`\"Error: structural search failed — provider returned null\"`. The fallback at " +
-                "line 91 only triggers when the language ID is UNRECOGNISED (no provider at all), " +
-                "not when the registered provider is a no-op stub. Fix: check `structuralSearch` " +
-                "capability before including a provider in `providersToTry`, or add a dedicated " +
-                "`supportsStructuralSearch()` flag to `LanguageIntelligenceProvider`."
+            "Bug 12 + Bug 13 fixed (Batch 22 swarm). " +
+                "Bug 12: dispatch now checks `provider.supportsStructuralSearch()` before adding " +
+                "a provider to `providersToTry`. When `file_type = \"python\"`, the tool returns " +
+                "'SSR not supported for language Python' instead of the misleading " +
+                "'provider returned null'. " +
+                "Bug 13: `JavaKotlinProvider.structuralSearch()` now picks the Kotlin file type " +
+                "(via `FileTypeManager.findFileTypeByName(\"Kotlin\")`) when the caller passes " +
+                "`langId = \"kotlin\"`, instead of always hardwiring `JavaFileType.INSTANCE`. " +
+                "Regression tests: StructuralSearchToolTest and JavaKotlinProviderStructuralSearchTest."
         )
     }
 
@@ -335,6 +313,7 @@ class StructuralSearchTool(
             )
         }
 
+        val resolvedLangId: String?
         val providersToTry = if (fileType != null) {
             // Map common file type names to language IDs
             val langId = when (fileType.lowercase()) {
@@ -343,18 +322,40 @@ class StructuralSearchTool(
                 "python", "py" -> "Python"
                 else -> fileType
             }
+            resolvedLangId = langId
             val specific = registry.forLanguageId(langId)
-            if (specific != null) listOf(specific) else allProviders
+            if (specific != null && !specific.supportsStructuralSearch()) {
+                return ToolResult.error(
+                    "Structural search is not supported for language '$langId'. " +
+                    "SSR is currently Java/Kotlin only."
+                )
+            }
+            val candidates = if (specific != null) listOf(specific) else allProviders
+            candidates.filter { it.supportsStructuralSearch() }
         } else {
-            allProviders
+            resolvedLangId = null
+            allProviders.filter { it.supportsStructuralSearch() }
+        }
+
+        if (providersToTry.isEmpty()) {
+            return ToolResult.error(
+                "No registered language provider supports structural search. " +
+                "Install the Java/Kotlin plugin."
+            )
         }
 
         val content = try {
             val results = ReadAction.nonBlocking<List<com.workflow.orchestrator.agent.ide.StructuralMatchInfo>?> {
                 val scope = resolveScope(project, scopeName)
-                // Try each provider until one returns non-null results
+                // Try each SSR-capable provider until one returns non-null results.
+                // For JavaKotlinProvider, pass the resolved langId so Kotlin patterns
+                // use the Kotlin file type instead of hardwired JavaFileType.
                 providersToTry.firstNotNullOfOrNull { provider ->
-                    provider.structuralSearch(project, pattern, scope)
+                    if (provider is com.workflow.orchestrator.agent.ide.JavaKotlinProvider) {
+                        provider.structuralSearch(project, pattern, scope, resolvedLangId)
+                    } else {
+                        provider.structuralSearch(project, pattern, scope)
+                    }
                 }
             }.inSmartMode(project).executeSynchronously()
 

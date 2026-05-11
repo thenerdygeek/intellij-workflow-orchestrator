@@ -78,6 +78,17 @@ interface LanguageIntelligenceProvider {
 
     // --- Structural Search ---
 
+    /**
+     * True if this provider can fulfill [structuralSearch] requests. The
+     * dispatch site in StructuralSearchTool filters out providers that
+     * return false, so that languages without SSR support (currently Python)
+     * report "SSR not supported for {language}" instead of routing into
+     * a provider whose structuralSearch() always returns null.
+     *
+     * Default false. Java/Kotlin overrides to true.
+     */
+    fun supportsStructuralSearch(): Boolean = false
+
     /** Search for structural patterns (e.g., $Type$.$method$($args$)) */
     fun structuralSearch(project: Project, pattern: String, scope: SearchScope): List<StructuralMatchInfo>?
 }
