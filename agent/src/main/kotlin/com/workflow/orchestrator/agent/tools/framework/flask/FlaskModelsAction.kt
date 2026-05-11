@@ -25,6 +25,18 @@ private val COLUMN_PATTERN = Regex(
     RegexOption.MULTILINE
 )
 
+/**
+ * Regex that detects any .py file that likely defines SQLAlchemy model classes.
+ * We check for the presence of at least one class extending db.Model, Model, or
+ * BaseModel (imported from flask_sqlalchemy or sqlalchemy) rather than relying on
+ * the filename.  This allows split-model projects (user_model.py, orders/schema.py,
+ * auth/models/user.py, etc.) to be discovered correctly.
+ */
+private val FILE_CONTAINS_MODEL_PATTERN = Regex(
+    """class\s+\w+\s*\([^)]*(?:db\.Model|(?<![.\w])Model(?![.\w])|BaseModel)[^)]*\)""",
+    RegexOption.MULTILINE
+)
+
 internal suspend fun executeModels(params: JsonObject, project: Project): ToolResult {
     val filter = params["model"]?.jsonPrimitive?.content
         ?: params["filter"]?.jsonPrimitive?.content
@@ -39,13 +51,19 @@ internal suspend fun executeModels(params: JsonObject, project: Project): ToolRe
     return try {
         withContext(Dispatchers.IO) {
             val baseDir = File(basePath)
-            val modelFiles = PythonFileScanner.scanPythonFiles(baseDir) {
-                it.name == "models.py"
+            // Scan ALL .py files and keep only those that contain at least one
+            // db.Model / Model / BaseModel class definition — this way split-model
+            // projects (user_model.py, orders/schema.py, etc.) are found even when
+            // there is no file literally named models.py.
+            val modelFiles = PythonFileScanner.scanPythonFiles(baseDir) { file ->
+                file.extension == "py" &&
+                    runCatching { FILE_CONTAINS_MODEL_PATTERN.containsMatchIn(file.readText()) }
+                        .getOrDefault(false)
             }
 
             if (modelFiles.isEmpty()) {
                 return@withContext ToolResult(
-                    "No models.py files found in project.",
+                    "No SQLAlchemy model files found in project.",
                     "No model files found",
                     5
                 )

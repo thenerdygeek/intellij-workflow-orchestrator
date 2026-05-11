@@ -26,6 +26,18 @@ private val FIELD_PATTERN = Regex(
     RegexOption.MULTILINE
 )
 
+/**
+ * Regex that detects any .py file that likely defines WTForms / Flask-WTF form classes.
+ * We check for the presence of at least one class extending FlaskForm or Form (imported
+ * from flask_wtf or wtforms) rather than relying on the filename.  This allows
+ * split-form projects (auth/login.py, forms/registration.py, etc.) to be discovered
+ * correctly even when there is no file literally named forms.py or form.py.
+ */
+private val FILE_CONTAINS_FORM_PATTERN = Regex(
+    """class\s+\w+\s*\([^)]*(?:FlaskForm|(?<![.\w])Form(?![.\w]))[^)]*\)""",
+    RegexOption.MULTILINE
+)
+
 internal suspend fun executeForms(params: JsonObject, project: Project): ToolResult {
     val filter = params["filter"]?.jsonPrimitive?.content
     val basePath = project.basePath
@@ -39,13 +51,18 @@ internal suspend fun executeForms(params: JsonObject, project: Project): ToolRes
     return try {
         withContext(Dispatchers.IO) {
             val baseDir = File(basePath)
-            val formFiles = PythonFileScanner.scanPythonFiles(baseDir) {
-                it.name == "forms.py" || it.name == "form.py"
+            // Scan ALL .py files and keep only those that contain at least one
+            // FlaskForm / Form subclass — split-form projects (auth/login.py,
+            // views/forms/registration.py, etc.) are found even without forms.py.
+            val formFiles = PythonFileScanner.scanPythonFiles(baseDir) { file ->
+                file.extension == "py" &&
+                    runCatching { FILE_CONTAINS_FORM_PATTERN.containsMatchIn(file.readText()) }
+                        .getOrDefault(false)
             }
 
             if (formFiles.isEmpty()) {
                 return@withContext ToolResult(
-                    "No forms.py files found in project.",
+                    "No Flask-WTF form files found in project.",
                     "No form files found",
                     5
                 )

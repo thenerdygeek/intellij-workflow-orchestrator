@@ -516,6 +516,148 @@ class FlaskToolTest {
     }
 
     // ────────────────────────────────────────────────────────────────────────
+    // Tier 4b — Split-file regression (bug: filename-hardcoding)
+    //
+    // Projects that do NOT have a file literally named models.py / forms.py
+    // must still have their models and forms detected.  The bug surfaced by
+    // Phase 5 tool-docs swarm Batch 17 caused silent empty results for any
+    // project that splits models across per-module files such as:
+    //   app/user_model.py, orders/schema.py, forms/login.py
+    // ────────────────────────────────────────────────────────────────────────
+
+    @Nested
+    inner class SplitFileRegression {
+
+        /**
+         * Creates the canonical "no models.py / no forms.py anywhere" project:
+         *
+         *   fake-project/
+         *   ├── app/
+         *   │   └── user_model.py   — contains: class User(db.Model): ...
+         *   ├── orders/
+         *   │   └── schema.py       — contains: class Order(db.Model): ...
+         *   └── forms/
+         *       └── login.py        — contains: class LoginForm(FlaskForm): ...
+         */
+        private fun writeSplitProject(tempDir: Path) {
+            val app = tempDir.resolve("app").toFile().also { it.mkdirs() }
+            app.resolve("user_model.py").writeText(
+                """
+                from flask_sqlalchemy import SQLAlchemy
+                db = SQLAlchemy()
+
+                class User(db.Model):
+                    id = db.Column(db.Integer, primary_key=True)
+                    username = db.Column(db.String(80), unique=True)
+                    email = db.Column(db.String(120))
+                """.trimIndent()
+            )
+
+            val orders = tempDir.resolve("orders").toFile().also { it.mkdirs() }
+            orders.resolve("schema.py").writeText(
+                """
+                from extensions import db
+
+                class Order(db.Model):
+                    id = db.Column(db.Integer, primary_key=True)
+                    total = db.Column(db.Float)
+                """.trimIndent()
+            )
+
+            val forms = tempDir.resolve("forms").toFile().also { it.mkdirs() }
+            forms.resolve("login.py").writeText(
+                """
+                from flask_wtf import FlaskForm
+                from wtforms import StringField, PasswordField, SubmitField
+
+                class LoginForm(FlaskForm):
+                    username = StringField('Username')
+                    password = PasswordField('Password')
+                    submit = SubmitField('Login')
+                """.trimIndent()
+            )
+        }
+
+        @Test
+        fun `models action finds User class in user_model dot py`(@TempDir tempDir: Path) = runTest {
+            every { project.basePath } returns tempDir.toString()
+            writeSplitProject(tempDir)
+            val result = tool.execute(buildJsonObject { put("action", "models") }, project)
+            assertFalse(result.isError, "models action must not error: ${result.content}")
+            assertTrue(
+                result.content.contains("User"),
+                "Expected 'User' in models output but got:\n${result.content}"
+            )
+        }
+
+        @Test
+        fun `models action finds Order class in orders-schema dot py`(@TempDir tempDir: Path) = runTest {
+            every { project.basePath } returns tempDir.toString()
+            writeSplitProject(tempDir)
+            val result = tool.execute(buildJsonObject { put("action", "models") }, project)
+            assertFalse(result.isError, "models action must not error: ${result.content}")
+            assertTrue(
+                result.content.contains("Order"),
+                "Expected 'Order' in models output but got:\n${result.content}"
+            )
+        }
+
+        @Test
+        fun `models action finds both User and Order when no models dot py exists`(@TempDir tempDir: Path) = runTest {
+            every { project.basePath } returns tempDir.toString()
+            writeSplitProject(tempDir)
+            // Verify no models.py exists in the tree
+            val modelsDotPy = tempDir.toFile().walkTopDown().filter { it.name == "models.py" }.toList()
+            assertTrue(modelsDotPy.isEmpty(), "Precondition: test project must not contain models.py")
+            val result = tool.execute(buildJsonObject { put("action", "models") }, project)
+            assertFalse(result.isError, "models action must not error: ${result.content}")
+            assertTrue(result.content.contains("User"), "Must find User: ${result.content}")
+            assertTrue(result.content.contains("Order"), "Must find Order: ${result.content}")
+        }
+
+        @Test
+        fun `forms action finds LoginForm in forms-login dot py`(@TempDir tempDir: Path) = runTest {
+            every { project.basePath } returns tempDir.toString()
+            writeSplitProject(tempDir)
+            val result = tool.execute(buildJsonObject { put("action", "forms") }, project)
+            assertFalse(result.isError, "forms action must not error: ${result.content}")
+            assertTrue(
+                result.content.contains("LoginForm"),
+                "Expected 'LoginForm' in forms output but got:\n${result.content}"
+            )
+        }
+
+        @Test
+        fun `forms action succeeds when no forms dot py or form dot py exists`(@TempDir tempDir: Path) = runTest {
+            every { project.basePath } returns tempDir.toString()
+            writeSplitProject(tempDir)
+            // Verify no forms.py / form.py exists
+            val formFiles = tempDir.toFile().walkTopDown()
+                .filter { it.name == "forms.py" || it.name == "form.py" }.toList()
+            assertTrue(formFiles.isEmpty(), "Precondition: test project must not contain forms.py/form.py")
+            val result = tool.execute(buildJsonObject { put("action", "forms") }, project)
+            assertFalse(result.isError, "forms action must not error: ${result.content}")
+            assertTrue(result.content.contains("LoginForm"), "Must find LoginForm: ${result.content}")
+        }
+
+        @Test
+        fun `models action model filter still works with split files`(@TempDir tempDir: Path) = runTest {
+            every { project.basePath } returns tempDir.toString()
+            writeSplitProject(tempDir)
+            val result = tool.execute(
+                buildJsonObject { put("action", "models"); put("model", "Order") },
+                project
+            )
+            assertFalse(result.isError, "models action must not error: ${result.content}")
+            assertTrue(result.content.contains("Order"), "Filter=Order must include Order: ${result.content}")
+            assertFalse(
+                result.content.contains("User"),
+                "Filter=Order must exclude User: ${result.content}"
+            )
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
     // Tier 5 — Action routing smoke tests
     // ────────────────────────────────────────────────────────────────────────
 
