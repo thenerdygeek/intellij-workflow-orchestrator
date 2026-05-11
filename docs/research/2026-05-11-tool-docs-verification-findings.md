@@ -262,3 +262,88 @@ Patterns observed (B4):
 - **Cross-tool reciprocity gaps** (java_runtime_exec missing the `method` divergence callout that python_runtime_exec already has).
 - **`background_process` enum vs action count** — one of the documented actions isn't in the schema's enum.
 - **Mechanism names drifting** (render_artifact `suspendCancellableCoroutine` vs actual `CompletableDeferred.await`).
+
+## Batch B5 — 2026-05-12 (database + integration)
+
+Sub-batches B5.1/B5.2/B5.3 dispatched in parallel.
+
+### B5.1 — database (6 tools)
+
+- **`db_list_profiles`, `db_query`, `db_explain`** — ✅ matches.
+- **`db_list_databases`** — ⚠ minor drift. `mergeOpportunity` reads as if `db_schema(profile="x")` already returns a database list (it doesn't — current Level 1 lists schemas).
+- **`db_schema`** — ⚠ minor drift. `params.profile.constraint` says *"must match an id in PluginSettings.databaseProfiles"* — there's no such field. The storage is `DatabaseSettings.getInstance(project).getProfiles()`. Also names "DbProfileResolver" rather than the actual function `lookupDbProfile`.
+- **`db_stats`** — 🚨 material drift. `downside` says *"Profile-only mode is hard-capped at 50 tables"* — only PostgreSQL and MySQL queries have `LIMIT 50`; the Generic JDBC path has no cap. Doc overstates the cap as universal.
+
+### B5.2 — integration A (3 tools)
+
+- **`jira`** — ⚠ minor drift. `get_ticket` doc doesn't mention `projectKey` resolving to `null` when key has no `-`. `get_linked_prs` / `get_dev_branches` constraints say "must match Jira issue-key format" but actual guard is `validateNotBlank`. 17 actions ↔ source ↔ CLAUDE.md all agree.
+- **`bamboo_builds`** — ⚠ minor drift. `observation` says `stop_build` + `cancel_build` accept legacy `result_key` alias — `get_artifacts` ALSO accepts it (line 902) but isn't mentioned. Also: `download_artifact` doesn't use `SessionDownloadDir` (storage tier violation per CLAUDE.md §Storage Tiers) — landed bytes invisible to agent read tools.
+- **`bamboo_plans`** — ⚠ minor drift. `observation` says *"CLAUDE.md table says '8'. Source is authoritative. CLAUDE.md should be updated"* — CLAUDE.md was already updated to 10 by `7eb703cca`. Observation describes a past state.
+
+### B5.3 — integration B (4 tools)
+
+- **`sonar`** — ⚠ minor drift. Class KDoc header says "14 actions" (source has 18); `observation` says CLAUDE.md documents 13 (already corrected to 18 by `7eb703cca`).
+- **`bitbucket_pr`** — ✅ matches. 19 actions ↔ source ↔ CLAUDE.md all agree. §1 cleanup candidates correctly surfaced.
+- **`bitbucket_repo`** — ⚠ minor drift. Class KDoc header lists only 6 actions (source has 8 — `get_commit_build_stats` + `get_commit_pull_requests` were added later). `commit_id` `llmSeesIt` says "for get_build_statuses" but it's also used by 2 other actions.
+- **`bitbucket_review`** — ⚠ minor drift. `observation` claims `bitbucket_pr` has 18 actions and "total is 30 actions" — bitbucket_pr now has 19, total should be 31.
+
+### Batch B5 — totals
+
+**4 tools clean**, **8 minor drifts**, **1 material drift** across 13 tools.
+
+Patterns observed (B5):
+- **Stale CLAUDE.md observations after the `7eb703cca` sweep** is the dominant pattern (bamboo_plans, sonar both reference a state that no longer exists).
+- **Class KDoc count headers lag source** (sonar 14→18, bitbucket_repo 6→8) — non-LLM-visible but still a source-of-truth issue.
+- **Cross-tool observation references** drift when one tool's action count changes (bitbucket_review citing bitbucket_pr's count).
+- **Source-side gap surfaced:** bamboo_builds `download_artifact` skips `SessionDownloadDir` — downloaded artifacts land in `java.io.tmpdir` and are invisible to agent read tools. Storage tier violation per CLAUDE.md §Storage Tiers (jira's `download_attachment` does it correctly).
+
+---
+
+# 🎯 Phase 6 Verification Swarm — CLOSE-OUT SUMMARY
+
+## Coverage
+
+**79 tools batched + 1 implicit (debug_step Phase 5 pilot, assumed pinned) = 80/80 coverage**, matching Phase 5.
+
+## Aggregate findings
+
+| Batch | Tools | Clean | Minor drifts | Material drifts |
+|---|---|---|---|---|
+| B1 (recently-touched) | 15 | 5 | 7 | 2 (structural_search, flask) |
+| B2 (builtin) | 15 | 8 | 6 | 0 |
+| B3 (tasks + PSI) | 20 | 9 | 11 | 0 |
+| B4 (ide quality + runtime + misc) | 16 | 8 | 6 | 2 (coverage, ai_review) |
+| B5 (database + integration) | 13 | 4 | 8 | 1 (db_stats) |
+| **TOTAL** | **79** | **34** | **38** | **5** |
+
+## 5 material drifts (highest priority)
+
+1. **`structural_search.llmSeesIt(file_type)`** advertises `"python"` as a valid value — schema description says "Python is not supported."
+2. **`flask` documentation** has 7 references to filename-scoped scanning (`models.py`, `forms.py`) — commit `2519bb65f` switched to class-base scanning.
+3. **`db_stats.downside`** claims a universal 50-table cap — only PostgreSQL/MySQL have `LIMIT 50`; Generic JDBC has no cap.
+4. **`coverage` registration gate** (edition == ULTIMATE || PROFESSIONAL) is not documented anywhere — IntelliJ Community users will see tool absent without explanation.
+5. **`ai_review.downside`** claims plan-mode blocking via WRITE_TOOLS membership — `ai_review` is NOT in WRITE_TOOLS, and the same documentation's observation correctly says so. Internal contradiction.
+
+## Top minor-drift patterns
+
+- **Stale line-number references** (8+ tools, PSI cluster especially) pointing into the `documentation()` block rather than `execute()`.
+- **Stale post-sweep observations** referring to the pre-`7eb703cca` CLAUDE.md state (debug_breakpoints, bamboo_plans, sonar, build).
+- **Stale narrative/observation references to phantom 5-action `agent` API** (already reconciled by `7eb703cca`).
+- **Class KDoc count headers lag** (sonar 14→18, bitbucket_repo 6→8, django "replacing 13" should be 14).
+- **Cross-tool reciprocity gaps** (java_runtime_exec missing the method-param-divergence callout that python_runtime_exec has).
+
+## Source-side bugs / gaps surfaced
+
+1. **`runtime_config.delete_run_config` runtime error string** says "containing [Agent]" but guard is `startsWith("[Agent]")` — error text misleads users.
+2. **`bamboo_builds.download_artifact`** doesn't use `SessionDownloadDir` — artifact bytes invisible to agent read tools (storage tier violation; jira's download_attachment is the correct pattern).
+3. **`background_process` enum** missing `"list"` value — documented as a first-class action but the schema's enum excludes it.
+4. **`run_command.description` param** required in `FunctionParameters.required` but doc DSL says `optional(...)`.
+5. **`SpillingWiringTest`** missing assertion for `list_quickfixes` despite CLAUDE.md claiming coverage.
+6. **`AskUserInputTool` / `SendStdinTool`** share identical inline monitor loops; a `ProcessToolHelpers.monitorAfterWrite` helper would deduplicate.
+
+## Process learnings (Phase 6)
+
+- **Read-only verification finds different bugs than authoring** — Phase 5's swarm caught implementation bugs (13 real defects); Phase 6 catches documentation/contract drift (5 material + 38 minor).
+- **Stale observations age fastest** when a sweep corrects underlying state — multiple observations reference CLAUDE.md's pre-sweep counts.
+- **Cross-tool callouts decay** — every documented "X also has this issue" needs to track when X is fixed.
+- **Subagent format compliance was excellent** — all 15 dispatches returned ready-to-paste Markdown without conversational prose.
