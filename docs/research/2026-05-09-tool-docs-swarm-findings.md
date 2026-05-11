@@ -1171,3 +1171,39 @@ Tools: `ask_user_input`, `discard_plan`, `endpoints`.
 
 - **Two more long-session reliability concerns:** `ask_user_input`'s callback null-check gap + `pendingInput` single-slot. Joining `ask_followup_question`'s identical pattern. **Both could be fixed in one PR** by extracting a shared "request-from-user" coordinator.
 - **`endpoints` is a multi-tool merge that's already done right** — the `includeEndpointActions` flag is a runtime kill-switch for the Spring sibling. Good pattern worth replicating.
+
+---
+
+## Batch 25 — 2026-05-11 (runtime cluster, sonnet)
+
+Tools: `runtime_config`, `java_runtime_exec`, `python_runtime_exec`. Closes the runtime tool family.
+
+### `runtime_config` — commit `69ef75bdb` — STRONG keep, 69 lines added
+
+#### 🚨🚨 REAL BUG #13: mutating actions bypass plan-mode + approval gate
+
+`runtime_config.create_run_config / modify_run_config / delete_run_config` mutate IDE state but are **NOT in `AgentLoop.WRITE_TOOLS`** (line 579) and **NOT in `APPROVAL_TOOLS`**:
+- Run in plan mode without being blocked (no execution guard at AgentLoop.run() line 1618).
+- No user approval gate.
+- **Only safety: hard-coded `[Agent]`-prefix check on `delete_run_config`** (and modify_run_config has asymmetric no-prefix-guard).
+
+**Joins `project_structure` (Batch 16) as the second tool with this same defect — IDE-state-mutating actions outside `WRITE_TOOLS`.** Single fix PR can add both.
+
+### `java_runtime_exec` — commit `b0053949c` — STRONG keep (run_tests), NORMAL (compile_module + rerun_failed_tests), 99 lines added
+
+- 6 LLM-mistake patterns: simple class names, `#`-smuggled paths, running tests with compile errors present, calling rerun before run completes, >50 methods, TestNG 2+ silently routed to shell.
+- 4 downsides: PATTERNS reflection fragility, 120s compile timeout, stale RunContentManager descriptors on rerun, smartReadAction latency on cold startup.
+- Test runner is the highest-call-frequency action in agentic TDD — irreplaceable.
+
+### `python_runtime_exec` — commit `f2c6eedda3` — STRONG keep, 68 lines added
+
+#### 🚨 `method` param naming inconsistency
+
+`python_runtime_exec.method` uses pytest `-k` boolean expression syntax (`test_foo or test_bar`, `test_foo and not slow`). **But `java_runtime_exec.method` uses comma-separated list (`testFoo,testBar`).** Same param name, opposite semantics. **Root cause of the most common Python test-running LLM mistake.**
+
+**Action item:** rename `python_runtime_exec.method` to `k_expr` or `pytest_keyword` to match the underlying CLI flag.
+
+### Cross-cutting from Batch 25
+
+- **Real bug count: 13 defects.** `runtime_config` plan-mode bypass joins `project_structure` as the second instance of "IDE-state-mutating actions not in WRITE_TOOLS." Single PR can fix both.
+- **Per-language `method` param semantics divergence** is a confusing-by-design API. Standard cross-language toolkits usually unify on one convention (typically comma-separated since `-k` is pytest-specific).
