@@ -141,7 +141,7 @@ class StructuralSearchTool(
                 example("""new ${'$'}Type${'$'}()""")
             }
             optional("file_type", "string") {
-                llmSeesIt("""Language: "java", "kotlin", or "python" (default: tries all available)""")
+                llmSeesIt("""Language: "java" or "kotlin" (default: tries all SSR-capable providers). Python is not supported.""")
                 humanReadable(
                     "Restricts the provider used. Maps `\"java\"` → `\"JAVA\"`, `\"kotlin\"`/`\"kt\"` → " +
                         "`\"kotlin\"`, `\"python\"`/`\"py\"` → `\"Python\"`. " +

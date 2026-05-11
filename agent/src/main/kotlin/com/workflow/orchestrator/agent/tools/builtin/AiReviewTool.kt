@@ -588,9 +588,11 @@ Actions:
                 "multi-session accumulation manually."
         )
         downside(
-            "FILE_WRITE classification means this tool is blocked in plan mode (plan mode blocks all " +
-                "WRITE_TOOLS). A code-reviewer persona running in plan mode cannot stage findings — it would " +
-                "have to switch to act mode first. In practice the code-reviewer persona always runs in act mode."
+            "`sideEffect = FILE_WRITE` reflects the local disk write to the findings store. It is NOT a " +
+                "plan-mode signal: `ai_review` is deliberately excluded from `AgentLoop.WRITE_TOOLS` (see " +
+                "the observation below), so the plan-mode execution guard does not block it. A code-reviewer " +
+                "persona CAN stage findings during plan mode. The FILE_WRITE classification only drives the " +
+                "tool-call UI chip and the documentation-page blast-radius indicator."
         )
         downside(
             "The tool is hook-exempt (bypasses PreToolUse/PostToolUse) which means no hook can veto or " +

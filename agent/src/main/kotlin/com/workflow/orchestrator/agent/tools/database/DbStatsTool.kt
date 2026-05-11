@@ -238,9 +238,10 @@ class DbStatsTool : AgentTool {
         )
         downside("SQLite is unsupported — no row count or storage size API is available via standard JDBC for SQLite. The tool returns an error immediately without opening a connection.")
         downside(
-            "Profile-only mode is hard-capped at 50 tables ordered by total size. Databases with " +
-            "hundreds of small tables will silently omit everything beyond rank 50 — no indication " +
-            "of how many tables were cut. Narrow with schema to see beyond the cap."
+            "Profile-only mode caps at 50 tables on PostgreSQL and MySQL (ORDER BY size DESC LIMIT 50). " +
+            "The Generic JDBC fallback path has no LIMIT clause — it returns the full information_schema.tables " +
+            "list ordered by table name. Narrow with `schema=` to control output size on Generic profiles; on " +
+            "PG/MySQL the cap silently omits beyond rank 50."
         )
         downside(
             "The `database` parameter is silently ignored for SQLite and Generic JDBC profiles — " +

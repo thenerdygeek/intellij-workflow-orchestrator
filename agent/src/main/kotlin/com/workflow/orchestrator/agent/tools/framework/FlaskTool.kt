@@ -163,15 +163,16 @@ Actions and their parameters:
                 "The `blueprint` param is meaningful only for `routes` and `blueprints`."
         )
         llmMistake(
-            "Calls `models` without first checking whether the project uses models.py files. The action " +
-                "scans only files literally named `models.py`; models defined in other files (e.g. " +
-                "`user_model.py`, `db/schema.py`) are silently omitted. When the scan returns empty, " +
-                "follow up with `search_code` for `db.Model`."
+            "Assumes `models` requires a file literally named `models.py`. Post-commit 2519bb65f, the action " +
+                "scans ALL `.py` files (via FILE_CONTAINS_MODEL_PATTERN) for any class extending `db.Model`, " +
+                "`Model`, or `BaseModel`. Empty results mean no matching SQLAlchemy class exists — not that " +
+                "the file name is wrong."
         )
         llmMistake(
-            "Calls `forms` expecting to find forms in any .py file. The action only scans `forms.py` and " +
-                "`form.py` — forms defined elsewhere are invisible. If the scan returns empty on a project " +
-                "with Flask-WTF, check where forms are actually defined with `search_code` for `FlaskForm`."
+            "Assumes `forms` requires a file named `forms.py` or `form.py`. Post-commit 2519bb65f, the action " +
+                "scans ALL `.py` files (via FILE_CONTAINS_FORM_PATTERN) for any class extending `FlaskForm` " +
+                "or `Form`. Empty results mean no matching Flask-WTF class exists — not that the file name " +
+                "is wrong."
         )
         llmMistake(
             "Calls `extensions` and expects it to find all Flask extensions. Detection is limited to a " +
@@ -194,9 +195,12 @@ Actions and their parameters:
                 "routes (e.g., routes registered via `add_url_rule` or in a loop) are invisible."
         )
         downside(
-            "`models` and `forms` scope to filename conventions (`models.py`, `forms.py`). Projects that " +
-                "use different file naming (e.g., per-module `user_models.py`) produce empty results even " +
-                "when models or forms exist."
+            "`models` and `forms` use regex-gated file scanning across all `.py` files (post-commit " +
+                "2519bb65f), not filename matching. A file is included if it contains a class line matching " +
+                "`db.Model|Model|BaseModel` (for `models`) or `FlaskForm|Form` (for `forms`). " +
+                "Implementation gap: MODEL_CLASS_PATTERN extracts only `db.Model` / `Model` subclasses, so a " +
+                "file whose only model class is a `BaseModel` subclass passes the gate but its class is not " +
+                "rendered. Surface this in `search_code` if results look incomplete."
         )
         downside(
             "Blueprint prefix composition works only when both the `Blueprint()` constructor (with " +
@@ -486,14 +490,15 @@ Actions and their parameters:
             action("models") {
                 description {
                     technical(
-                        "Scans files literally named `models.py` for classes that extend `db.Model` or `Model`. " +
+                        "Scans ALL `.py` files (gated via `FILE_CONTAINS_MODEL_PATTERN`, post-commit 2519bb65f) " +
+                            "for classes that extend `db.Model`, `Model`, or `BaseModel`. " +
                             "Extracts column definitions (`db.Column`, `db.relationship`, `db.backref`) with " +
                             "column name, type, and arguments. Caps column display at 10 per model with a " +
                             "count of additional columns. Filters by model name or file path substring."
                     )
                     plain(
                         "Shows Flask-SQLAlchemy database models — the tables, columns, and relationships — " +
-                            "from models.py files. Like a schema inspector that reads Python instead of SQL."
+                            "from anywhere in the project. Like a schema inspector that reads Python instead of SQL."
                     )
                 }
                 whenLLMUses(
@@ -505,7 +510,7 @@ Actions and their parameters:
                         llmSeesIt("Filter by SQLAlchemy model name — for models")
                         humanReadable("Case-insensitive substring filter applied to model class name and source file path.")
                         whenPresent("Only models whose class name or file path contains the substring are returned.")
-                        whenAbsent("All models from all models.py files are returned.")
+                        whenAbsent("All models across the project are returned.")
                         example("User")
                         example("Order")
                         example("auth/models")
@@ -519,19 +524,19 @@ Actions and their parameters:
                 }
                 rejectsParam("blueprint", "Models are not blueprint-scoped — this param is ignored.")
                 rejectsParam("extension", "Models are not extensions — this param is ignored.")
-                precondition("Project must have at least one file named models.py. Models in other files are not scanned.")
+                precondition("Project must contain at least one `.py` file with a `db.Model`/`Model`/`BaseModel` subclass anywhere in the source tree.")
                 onSuccess(
                     "Grouped by file: each model class shown with its db.Model base, followed by up to 10 " +
                         "column/relationship entries with type and arguments. Summary: '{N} SQLAlchemy models across {M} file(s)'."
                 )
                 onFailure(
-                    "No models.py files exist",
-                    "Returns 'No models.py files found in project.' — use `search_code` with pattern `db\\.Model` " +
-                        "to find models in non-standard files."
+                    "No SQLAlchemy model classes found anywhere in the project",
+                    "Returns 'No SQLAlchemy model files found in project.' — fall back to `search_code` with " +
+                        "pattern `db\\.Model|class .*Model` if you suspect detection missed a non-standard base class."
                 )
                 example("Show all SQLAlchemy models") {
                     param("action", "models")
-                    outcome("All db.Model subclasses from models.py files with their column definitions.")
+                    outcome("All db.Model / Model / BaseModel subclasses across the project with their column definitions.")
                 }
                 example("Show columns for the User model") {
                     param("action", "models")
@@ -539,10 +544,11 @@ Actions and their parameters:
                     outcome("Only the User model with its Column and relationship fields.")
                 }
                 verdict {
-                    keep("Provides structured column + relationship output that `search_code` returns as raw source lines without grouping or truncation.")
+                    keep("Provides structured column + relationship output that `search_code` returns as raw source lines without grouping or truncation. Class-base scanning (post-2519bb65f) covers any file naming convention.")
                     drop(
-                        "Filename-only scoping (models.py) is a significant blind spot. Many Flask projects " +
-                            "split models across per-module files. A `search_code` scan for `db.Model` covers more ground.",
+                        "MODEL_CLASS_PATTERN extracts only `db.Model` / `Model` subclasses (not `BaseModel`), " +
+                            "so files gated in by FILE_CONTAINS_MODEL_PATTERN that only declare `BaseModel` " +
+                            "subclasses pass the gate but render no classes. `search_code` for `db.Model|BaseModel` covers this gap.",
                         VerdictSeverity.NORMAL
                     )
                 }
@@ -721,9 +727,10 @@ Actions and their parameters:
             action("forms") {
                 description {
                     technical(
-                        "Scans files literally named `forms.py` or `form.py` for classes extending FlaskForm " +
-                            "or Form. Extracts field definitions matching WTForms field class names " +
-                            "(StringField, SelectField, BooleanField, etc.). Caps field display at 10 per form."
+                        "Scans ALL `.py` files (gated via `FILE_CONTAINS_FORM_PATTERN`, post-commit 2519bb65f) " +
+                            "for classes extending `FlaskForm` or `Form`. Extracts field definitions matching " +
+                            "WTForms field class names (StringField, SelectField, BooleanField, etc.). " +
+                            "Caps field display at 10 per form."
                     )
                     plain(
                         "Shows all Flask-WTF form classes and their fields — like reading the form definition " +
@@ -739,7 +746,7 @@ Actions and their parameters:
                         llmSeesIt("General filter by name/pattern — for any action")
                         humanReadable("Case-insensitive substring filter applied to form class name and source file path.")
                         whenPresent("Only forms whose class name or file path contains the substring are returned.")
-                        whenAbsent("All forms from all forms.py/form.py files are returned.")
+                        whenAbsent("All forms across the project are returned.")
                         example("Login")
                         example("Registration")
                         example("auth/")
@@ -748,19 +755,19 @@ Actions and their parameters:
                 rejectsParam("blueprint", "Forms are not blueprint-scoped in this action — use `filter` with a path substring instead.")
                 rejectsParam("extension", "Not relevant for forms — this param is ignored.")
                 rejectsParam("model", "Not relevant for forms — this param is ignored.")
-                precondition("Project must have at least one file named forms.py or form.py.")
+                precondition("Project must contain at least one `.py` file with a `FlaskForm` or `Form` subclass anywhere in the source tree.")
                 onSuccess(
                     "Grouped by file: each form class with its base (FlaskForm/Form) and up to 10 field entries " +
                         "'fieldName: FieldType'. Summary: '{N} forms'."
                 )
                 onFailure(
-                    "No forms.py or form.py files found",
-                    "Returns 'No forms.py files found in project.' — forms may be defined inline in views or " +
-                        "using a non-standard filename. Use `search_code` for `FlaskForm` as a fallback."
+                    "No Flask-WTF form classes found anywhere in the project",
+                    "Returns 'No Flask-WTF form files found in project.' — forms may use a non-standard base class. " +
+                        "Use `search_code` for `FlaskForm|Form\\b` as a fallback."
                 )
                 example("List all Flask-WTF forms") {
                     param("action", "forms")
-                    outcome("All FlaskForm/Form subclasses from forms.py files with their field definitions.")
+                    outcome("All FlaskForm/Form subclasses across the project with their field definitions.")
                 }
                 example("Show the LoginForm fields") {
                     param("action", "forms")
@@ -768,12 +775,11 @@ Actions and their parameters:
                     outcome("Only the LoginForm class with its StringField, PasswordField, etc. definitions.")
                 }
                 verdict {
-                    keep("Provides structured field output; `search_code` returns raw class source without grouping.")
+                    keep("Provides structured field output; `search_code` returns raw class source without grouping. Class-base scanning (post-2519bb65f) covers any file naming convention.")
                     drop(
-                        "Filename-only scoping misses forms in any file not named forms.py or form.py. " +
-                            "Same limitation as the `models` action — both could be broadened by scanning for " +
-                            "the base class name instead of the filename.",
-                        VerdictSeverity.NORMAL
+                        "Custom base classes outside FlaskForm/Form (e.g. a project-local `BaseForm`) are not detected. " +
+                            "`search_code` for the project's specific base-class name is the workaround.",
+                        VerdictSeverity.WEAK
                     )
                 }
             }
