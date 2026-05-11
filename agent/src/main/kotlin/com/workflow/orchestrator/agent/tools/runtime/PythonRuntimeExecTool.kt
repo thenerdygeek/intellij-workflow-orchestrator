@@ -131,6 +131,74 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         }
         whatLLMSees(description)
         sideEffect(SideEffectKind.PROCESS_SPAWN)
+        verdict {
+            keep(
+                "Irreplaceable on Python projects: integrates pytest with IntelliJ's TestResultsViewer so the agent " +
+                    "and the user see pass/fail counts in the IDE's standard test panel — not buried in shell stdout. " +
+                    "compile_module provides a fast, interpreter-portable syntax sweep that catches SyntaxErrors " +
+                    "before slow test invocations. Registered only when the Python plugin is present, so it never " +
+                    "pollutes Java-only IDEs.",
+                VerdictSeverity.STRONG,
+            )
+        }
+        counterfactual(
+            "Without this tool, the LLM falls back to run_command with `pytest` — which works, but loses the " +
+                "native PyTestConfigurationType integration (no TestResultsViewer, no IDE test history, no " +
+                "per-test re-run button). compile_module has no run_command equivalent; the LLM would have to " +
+                "synthesise `python -m py_compile` itself, walk the file tree manually, and handle interpreter " +
+                "resolution — fragile and verbose."
+        )
+        llmMistake(
+            "Using a comma separator in `method` (e.g. `test_foo,test_bar`) as if it were java_runtime_exec. " +
+                "The `method` param is a pytest -k keyword expression, not a comma-separated list. " +
+                "Correct: `test_foo or test_bar`. The comma form is silently passed as a literal -k expression " +
+                "and pytest will match nothing (or mis-match) without raising an obvious error."
+        )
+        llmMistake(
+            "Passing a bare Python method name (e.g. `test_login`) to `class_name` instead of a pytest path " +
+                "(e.g. `tests/test_api.py::test_login`). `class_name` is a pytest node id or file path, not a " +
+                "Python qualified name. Using a method name there causes pytest to interpret it as a file path " +
+                "and fail with 'file not found'."
+        )
+        llmMistake(
+            "Passing a markers expression to `method` or a keyword expression to `markers`. " +
+                "`method` feeds pytest `-k`; `markers` feeds pytest `-m`. Swapping them silently changes " +
+                "which tests run (or skips all tests if the wrong expression is used with the wrong flag)."
+        )
+        llmMistake(
+            "Calling run_tests before the Python plugin is confirmed present, or on an IntelliJ IDEA project " +
+                "with no Python facet. The tool is not registered in that environment and will return an " +
+                "unknown-tool error. Use tool_search to verify `python_runtime_exec` is available before calling."
+        )
+        downside(
+            "pytest output reconciliation is heuristic: verbose PASSED/FAILED/ERROR counts are reconciled " +
+                "against the summary line, and a warning is emitted when the suite reports passes with " +
+                "near-zero duration and no stdout (a common sign of a mis-configured test collection or " +
+                "import error). The heuristic may misfire on heavily parametrised suites."
+        )
+        downside(
+            "compile_module uses the first interpreter found on PATH (python3 → python) and does not consult " +
+                "IntelliJ's configured Python SDK. If the project's venv interpreter differs from PATH, " +
+                "py_compile may succeed against a different standard-library version than the IDE expects, " +
+                "masking f-string or walrus-operator compatibility issues."
+        )
+        downside(
+            "run_tests falls back to the shell-based executePytestRun silently when PyTestConfigurationType is " +
+                "not registered (e.g. IntelliJ IDEA Community with Python plugin but no PyCharm). The fallback " +
+                "does not integrate with the TestResultsViewer, so IDE test history is not updated."
+        )
+        downside(
+            "No `rerun_failed_tests` action (unlike java_runtime_exec). The LLM must re-invoke run_tests " +
+                "with the failed test node ids or a -k expression. A pytest --lf-based rerun action is " +
+                "tracked in TODO at the top of the tool file."
+        )
+        observation(
+            "The `method` param name mirrors java_runtime_exec (where it means a Java method name), but its " +
+                "semantics are entirely different here (a pytest -k keyword expression). This naming " +
+                "inconsistency is the root cause of the most frequent LLM mistake with this tool. A future " +
+                "rename to `keyword` or `filter` would reduce confusion, but would break any persisted " +
+                "prompts that already use `method`."
+        )
         actions {
             action("run_tests") {
                 description {
