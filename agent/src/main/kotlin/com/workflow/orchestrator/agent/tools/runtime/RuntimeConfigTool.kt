@@ -15,8 +15,10 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.docs.Relationship
 import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
 import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -134,6 +136,73 @@ description optional: for approval dialog on create/modify/delete.
             plain("Lets the LLM manage the IDE's saved Run/Debug configurations the way a user does via Edit Configurations. Creates a new entry, tweaks env vars or VM options on an existing one, or removes a config the agent created earlier. Agent-created configs are prefixed [Agent] so the tool can never delete a user-owned configuration.")
         }
         sideEffect(SideEffectKind.IDE_MUTATION)
+        whatLLMSees(description)
+        verdict {
+            keep(
+                "Programmatic run-config CRUD is the only way for the LLM to create and launch a named " +
+                    "configuration without asking the user to manually open Edit Configurations. Pairs with " +
+                    "runtime_exec.run_config to form the full 'create → run → clean up' cycle. The [Agent]-prefix " +
+                    "safety guard and the reflect-based per-property failure reporting make it safe and debuggable.",
+                VerdictSeverity.STRONG,
+            )
+        }
+        counterfactual(
+            "Without this tool, the LLM has no way to programmatically create or modify run configurations. " +
+                "The only alternative is to ask the user to open Edit Configurations and set them up manually, " +
+                "which breaks autonomous debugging and test-isolation workflows. runtime_exec.run_config can " +
+                "only launch configurations that already exist; it cannot create them.",
+        )
+        llmMistake(
+            "Providing `name` without the '[Agent] ' prefix when calling modify_run_config or delete_run_config. " +
+                "On create, the prefix is added automatically; on modify/delete the caller must use the full " +
+                "prefixed name (e.g. '[Agent] Run MyApp Dev').",
+        )
+        llmMistake(
+            "Calling create_run_config with type=application or type=spring_boot without supplying main_class. " +
+                "The tool returns an immediate error in that case — the LLM must use find_definition or " +
+                "search_code to resolve the fully qualified class name first.",
+        )
+        llmMistake(
+            "Creating a new config every iteration of a debug loop instead of reusing or modifying the " +
+                "existing [Agent]-prefixed config. Results in a proliferation of stale configs visible in " +
+                "the user's Run dropdown. Call get_run_configurations first to check if the config exists.",
+        )
+        llmMistake(
+            "Assuming modify_run_config replaces env vars by default. The default is MERGE — existing keys " +
+                "are preserved. Supply replace_env_vars=true only when a full replacement is intended.",
+        )
+        downside(
+            "Mutates persistent IDE state (RunManager XML) — created configs survive IDE restart and remain " +
+                "visible to the user in the Run dropdown. The [Agent]-prefix guard prevents delete on user-owned " +
+                "configs, but create and modify have no equivalent guard for non-[Agent] configs (modify accepts " +
+                "any existing config name).",
+        )
+        downside(
+            "Spring Boot, JUnit, Gradle, and remote_debug configuration types are resolved via reflection " +
+                "(`Class.forName`). If the required plugin is not installed, the factory resolution returns " +
+                "null and create_run_config fails with a descriptive error — but there is no pre-flight check " +
+                "before attempting the create.",
+        )
+        downside(
+            "runtime_config is NOT in AgentLoop.WRITE_TOOLS. This means create_run_config, modify_run_config, " +
+                "and delete_run_config are NOT blocked in plan mode and do NOT trigger the write-tool execution " +
+                "guard. They are also not in APPROVAL_TOOLS, so they bypass the user approval gate. " +
+                "The only safety mechanism is the [Agent]-prefix guard on delete.",
+        )
+        related("runtime_exec", Relationship.COMPOSE_WITH, "Use runtime_exec.run_config to launch the configuration after creating it with create_run_config.")
+        related("debug_breakpoints", Relationship.COMPLEMENT, "Set breakpoints before launching a debug configuration; debug_breakpoints.attach_to_process attaches to an already-running process instead of creating a config.")
+        related("debug_step", Relationship.SEE_ALSO, "Once a debug session is running (started via runtime_exec with mode=debug), use debug_step to control execution.")
+        observation(
+            "modify_run_config accepts any existing configuration name (not just [Agent]-prefixed ones). " +
+                "This asymmetry with delete_run_config is intentional (tweaking existing configs is low risk) " +
+                "but could surprise users who expect the same guard on all mutating actions.",
+        )
+        observation(
+            "The tool dispatches via ApplicationManager.invokeAndWait for RunManager mutations on create and " +
+                "modify — both call addConfiguration on the EDT. This means the suspend execute() method can " +
+                "briefly block a Dispatchers.IO thread on EDT round-trips. Low risk in practice (RunManager " +
+                "writes are fast) but worth noting.",
+        )
         actions {
             action("get_run_configurations") {
                 description {
