@@ -1133,3 +1133,41 @@ Tools: `refactor_rename`, `read_write_access`, `project_context`.
 
 - **3-way merge candidate is the largest yet:** `refactor_rename` + `format_code` + `optimize_imports`. Single `refactor(kind)` would save 3 schema slots.
 - **`project_context`'s never-invalidated cache** joins the growing list of long-session bugs (companion to `ask_followup_question`'s `pendingQuestions` single-slot field).
+
+---
+
+## Batch 24 — 2026-05-11 (utility cluster, sonnet)
+
+Tools: `ask_user_input`, `discard_plan`, `endpoints`.
+
+### `ask_user_input` — commit `5bbde7671` — STRONG keep, 213 lines
+
+**🚨 NOT redundant with `ask_followup_question`** despite name overlap. Different concerns:
+- `ask_followup_question` logs the answer; `ask_user_input` PIPES to stdin and never stores (credential-safe).
+- `ask_user_input` requires a live `process_id` validated against `ProcessRegistry`; the other doesn't.
+- **`ask_user_input` is the ONLY tool that can handle a password prompt safely** without leaking the credential into conversation history.
+
+**🚨 Findings:**
+1. **`showInputCallback` null-check gap** — unlike `AskQuestionsTool`, no early-return guard; deferred hangs until timeout kills the process.
+2. **`pendingInput` single-slot companion-object race** — same structural risk as `pendingQuestions`. Safe today under single-threaded loop.
+3. **Post-write monitor loop is a copy of `SendStdinTool`'s** — drift risk.
+4. **On timeout, the process is killed unconditionally** with no rollback.
+
+### `discard_plan` — commit `a78535777` — NORMAL keep, 140 lines
+
+- Only primitive that programmatically invalidates a stale plan: (a) rewrites prior `plan_mode_respond` entry in `api_conversation_history` to `"[Plan discarded — do not reference]"`, (b) fires UI callback to clear the card.
+- **Does NOT flip `planModeActive`** — session stays in plan mode after call (correct: agent continues exploring).
+- Schema-filtered out of act mode (paired with `plan_mode_respond`).
+
+### `endpoints` — commit `fa972c267` — STRONG keep, 489 lines
+
+**🚨 Overlap with `spring.endpoints` / `fastapi.routes` / `flask.routes` analyzed in depth — NOT redundant:**
+
+- **`spring(action=endpoints)`**: PSI-based, requires Spring + Java plugin. When `endpoints` (the tool) is registered, `SpringTool.includeEndpointActions=false` and both Spring endpoint actions return an explicit redirect error. **Mutually exclusive at runtime.**
+- **`fastapi/flask routes`**: file-scan regex via `PythonFileScanner`, zero IDE plugin dep, works in any IDE. `endpoints` uses Python microservices provider (requires PyCharm Pro). Different data sources, different availability gates.
+- **Unique capabilities `endpoints` provides that no other tool replicates:** `find_usages` (URL→callers via `UrlResolverManager`), `list_async` (Kafka/RabbitMQ/JMS topology), `export_openapi` (OAS synthesis), HTTP-Client endpoint type.
+
+### Cross-cutting from Batch 24
+
+- **Two more long-session reliability concerns:** `ask_user_input`'s callback null-check gap + `pendingInput` single-slot. Joining `ask_followup_question`'s identical pattern. **Both could be fixed in one PR** by extracting a shared "request-from-user" coordinator.
+- **`endpoints` is a multi-tool merge that's already done right** — the `includeEndpointActions` flag is a runtime kill-switch for the Spring sibling. Good pattern worth replicating.
