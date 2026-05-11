@@ -1105,3 +1105,31 @@ When `file_type = "python"` AND Python plugin installed: `registry.forLanguageId
 - **Real bug count from swarm: 11 defects.** Two new in structural_search (Python misroute + Kotlin file type hardwire).
 - **Database tool family complete.** 6 tools documented (`db_query`, `db_schema`, `db_list_databases`, `db_explain`, `db_list_profiles`, `db_stats`).
 - **No race in 10 consecutive batches.**
+
+---
+
+## Batch 23 — 2026-05-11 (refactor + PSI + context, sonnet)
+
+Tools: `refactor_rename`, `read_write_access`, `project_context`.
+
+### `refactor_rename` — commit `e21e2cc71` — STRONG keep, 265 lines
+
+- 3-phase pipeline: ReadAction.nonBlocking element find → ReadAction.nonBlocking findUsages + classifyUsage → EDT WriteCommandAction. PSI/VFS state stable across phases.
+- **🚨 `RenameSafetyAnalyzer` hard library block is unconditional** — `confirm_cross_module=true` cannot bypass it. LLM must know this to avoid futile retries.
+- **🚨 MERGE_OPPORTUNITY (3-way):** `refactor_rename` + `format_code` + `optimize_imports` share ~80% scaffold (DumbService → ReadAction → EDT WriteCommandAction → no-op detect → ToolResult). Could become a `refactor` meta-tool with `kind: rename|format|optimize_imports`.
+
+### `read_write_access` — commit `5d4bd32e3` — STRONG keep, 228 lines
+
+- ✅ No fallback bug — uses `registry.forFile(psiFile)`.
+- Unique value: READ_WRITE compound bucket (compound assignments `+=`, `++` etc.) that `find_references` + manual classification systematically misses.
+
+### `project_context` — commit `b98f891ba` — STRONG keep, 150 lines
+
+- Collapses 6-12 tool calls (glob build files, git log via run_command, each integration tool separately) into one mission briefing with graceful degradation.
+- **🚨 In-process cache never invalidated.** Stale-while-revalidate; LLM may get stale data after long sessions.
+- **🚨 MERGE_OPPORTUNITY:** Bamboo/Sonar summary sections overlap with dedicated integration tools. Future `sections` parameter could let LLM skip those when integration tools will be called anyway.
+
+### Cross-cutting from Batch 23
+
+- **3-way merge candidate is the largest yet:** `refactor_rename` + `format_code` + `optimize_imports`. Single `refactor(kind)` would save 3 schema slots.
+- **`project_context`'s never-invalidated cache** joins the growing list of long-session bugs (companion to `ask_followup_question`'s `pendingQuestions` single-slot field).
