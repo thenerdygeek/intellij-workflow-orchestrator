@@ -17,6 +17,11 @@ import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.PathValidator
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -41,6 +46,174 @@ class ProblemViewTool : AgentTool {
         required = emptyList()
     )
     override val allowedWorkers = setOf(WorkerType.ANALYZER, WorkerType.CODER, WorkerType.REVIEWER)
+
+    override fun documentation(): ToolDocumentation = toolDoc("problem_view") {
+        summary {
+            technical(
+                "Reads the IDE's in-memory Problems panel state — aggregates Wolf-flagged files and " +
+                "DocumentMarkupModel HighlightInfo entries (HighlightSeverity.ERROR / WARNING) from all " +
+                "currently open editors; optional `file` param scopes to a single open file, optional " +
+                "`severity` param filters ERROR or WARNING; full structured DiagnosticEntry list spills " +
+                "to disk above 30K; DumbService guard prevents misleading zero-problem results during indexing."
+            )
+            plain(
+                "Like opening the Problems panel in IntelliJ and reading what's already highlighted in red " +
+                "and yellow — zero extra analysis, just the issues the IDE has already found while the files " +
+                "were open. Instant, no indexing wait, but only covers files you have actually opened."
+            )
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.READ_ONLY)
+        counterfactual(
+            "Without problem_view the LLM would iterate diagnostics per file to get a project-wide error " +
+            "snapshot — calling it N times across N files the agent has been editing. Each call dispatches " +
+            "ReadAction.nonBlocking + inSmartMode (heavier PSI walk), produces its own token payload, and " +
+            "risks missing Wolf-flagged files the LLM does not think to probe. problem_view sweeps ALL open " +
+            "files in one call and surfaces both the structured HighlightInfo list and the Wolf flag in a " +
+            "single result — particularly useful when the agent needs a quick triage of its whole edit " +
+            "session after a batch of writes rather than checking each file individually."
+        )
+        llmMistake(
+            "Expects results for files that are not open in the editor. problem_view reads " +
+            "DocumentMarkupModel, which is only populated when the file has been opened in an editor tab. " +
+            "A file that exists on disk but has never been opened returns 'No problems' (or a Wolf-flag " +
+            "placeholder at best). For unopened files, use diagnostics — it walks PSI directly and does " +
+            "not require the file to be in the editor."
+        )
+        llmMistake(
+            "Treats the result as a live, fresh analysis equivalent to diagnostics or run_inspections. " +
+            "It is not — it reflects what the IDE daemon has highlighted so far in the currently open " +
+            "documents. If the editor has just opened the file and the background daemon hasn't finished " +
+            "its pass yet, problem_view may return zero problems even though errors exist. Especially " +
+            "misleading at project open time before the daemon has run its initial pass."
+        )
+        llmMistake(
+            "Confuses problem_view severity categories with the full IntelliJ inspection severity vocabulary. " +
+            "The tool only surfaces ERROR and WARNING from HighlightSeverity; INFO, WEAK_WARNING, and " +
+            "INFORMATION entries are silently dropped (continue skip). The LLM should not assume silence " +
+            "means no lower-severity findings exist."
+        )
+        llmMistake(
+            "Reads isError=false as 'no problems found'. WRONG — isError=false means the tool ran " +
+            "successfully; the problem list IS the payload. 'No problems in X.' is a clean-file success " +
+            "result, while 'N problems in X' is also a success result (isError=false). Only invalid " +
+            "severity enum, path validation failure, missing file, DumbService block, and uncaught " +
+            "exceptions return isError=true."
+        )
+        llmMistake(
+            "Passes a file path for a file that IS open in the editor but gets back 'Flagged but no " +
+            "details for X (file flagged as problematic by IDE but no HighlightInfo — file may not be " +
+            "open in editor).' This happens when Wolf has marked the file but DocumentMarkupModel has no " +
+            "HighlightInfo yet — typically a race between the Wolf update and the daemon highlight pass. " +
+            "The LLM should not retry immediately; a brief wait or falling back to diagnostics is correct."
+        )
+        params {
+            optional("file", "string") {
+                llmSeesIt("Specific file to check (e.g., 'src/main/kotlin/MyService.kt'). Lists all problem files if omitted.")
+                humanReadable(
+                    "Which file to inspect. Scopes the result to a single file's problems. " +
+                    "Omit to get a sweep of all currently open editor tabs."
+                )
+                whenPresent(
+                    "Path is resolved via PathValidator, VFS entry is looked up, and problems are read " +
+                    "from that file's DocumentMarkupModel. Returns 'No problems', 'Flagged but no details', " +
+                    "or a structured N-problem list for that file only."
+                )
+                whenAbsent(
+                    "All open editor tabs are swept. Returns 'No open files', 'No problems found in N " +
+                    "open file(s)', or an aggregated per-file problem list."
+                )
+                constraint("must point inside the project root — path traversal is rejected via PathValidator")
+                constraint("must refer to a file currently tracked in the VFS; if the file does not exist, returns isError=true 'File not found'")
+                constraint("file need not be the active tab, but it must have been opened at some point during this IDE session for HighlightInfo to be available")
+                example("src/main/kotlin/com/example/OrderService.kt")
+                example("automation/src/main/kotlin/com/workflow/orchestrator/automation/service/QueueService.kt")
+            }
+            optional("severity", "string") {
+                llmSeesIt("Filter by severity: 'error', 'warning', or 'all' (default: 'all')")
+                humanReadable(
+                    "Which severity levels to include in the result. 'error' returns only ERROR-level " +
+                    "entries; 'warning' returns only WARNING-level; 'all' (default) returns both."
+                )
+                whenPresent("Only HighlightInfo entries matching the requested severity are included in the output.")
+                whenAbsent("Defaults to 'all' — both ERROR and WARNING entries are returned.")
+                constraint("must be one of: 'error', 'warning', 'all' — any other value returns isError=true before any IDE call")
+                enumValue("error", "warning", "all")
+                example("error")
+                example("all")
+            }
+        }
+        verdict {
+            keep(
+                "Provides a uniquely cheap project-wide snapshot of already-computed IDE highlighting: " +
+                "zero PSI re-walk, zero build cost, instant result, covers ALL open files in one call. " +
+                "Distinct from diagnostics (single-file, fresh PSI walk, works for unopened files) and " +
+                "run_inspections (explicit on-demand scope sweep). Best used after a batch edit session " +
+                "when the agent needs a quick triage without spawning a build or N separate diagnostics calls. " +
+                "The Wolf-flag integration surfaces problems that might otherwise require explicit per-file probing.",
+                VerdictSeverity.NORMAL,
+            )
+        }
+        related(
+            "diagnostics",
+            Relationship.ALTERNATIVE,
+            "Use diagnostics instead when the target file has not been opened in the editor, when you need " +
+            "a guaranteed fresh analysis rather than cached IDE state, or when you need per-file line-precise " +
+            "PSI errors for a specific file after an edit. diagnostics walks PSI directly and works for any " +
+            "file in the project regardless of whether it is currently open."
+        )
+        related(
+            "run_inspections",
+            Relationship.ALTERNATIVE,
+            "Use run_inspections for an explicit on-demand inspection sweep across a scope (file, module, " +
+            "project) that respects the active inspection profile — it surfaces style, performance, and " +
+            "deprecation issues beyond compiler-level errors that problem_view and diagnostics both miss."
+        )
+        related(
+            "list_quickfixes",
+            Relationship.COMPOSE_WITH,
+            "Once problem_view surfaces a line-level ERROR or WARNING, list_quickfixes returns IDE-suggested " +
+            "quick fixes for that location — the natural next step before the LLM decides whether to fix " +
+            "manually or apply an IDE action."
+        )
+        downside(
+            "Only covers files that have been opened in the editor during this IDE session. Any file that " +
+            "exists on disk but has never been opened returns no HighlightInfo — the LLM gets 'No problems' " +
+            "even if the file has compile errors. This is a fundamental constraint of the DocumentMarkupModel " +
+            "approach and cannot be worked around without switching to diagnostics."
+        )
+        downside(
+            "Results reflect IDE daemon state at the time of the call, not necessarily current file " +
+            "content. After a large batch of edits the daemon may not have completed its re-highlight pass " +
+            "yet, so problem_view can return a stale snapshot. DumbService blocks during active indexing " +
+            "and returns isError=true, but mid-session partial staleness (daemon not yet done) is not " +
+            "detected — there is no reliable way to query 'is the daemon finished'."
+        )
+        downside(
+            "Severity vocabulary is narrowed: only HighlightSeverity.ERROR and HighlightSeverity.WARNING " +
+            "are forwarded; INFO / WEAK_WARNING / INFORMATION are silently dropped. The structured " +
+            "DiagnosticEntry severity field uses only 'ERROR' or 'WARNING' — a two-value subset of the " +
+            "three-value canonical vocabulary (which includes 'INFO')."
+        )
+        downside(
+            "hasQuickFix is pinned to false in all DiagnosticEntry output — HighlightInfo.hasHint() and " +
+            "HighlightInfo.quickFixActionRanges require impl-level access or an Editor instance unavailable " +
+            "for unopened files. Use list_quickfixes to discover available fixes after the diagnostic is found."
+        )
+        downside(
+            "Wolf-flagged files with no HighlightInfo produce a synthetic placeholder entry " +
+            "(severity=WARNING, line=0, toolId='wolf') rather than a real structured diagnostic — the LLM " +
+            "must fall back to diagnostics if it needs line-precise details for these files."
+        )
+        observation(
+            "problem_view vs diagnostics(scope=project) vs run_inspections — the three look similar but " +
+            "serve different needs. problem_view: instant, pre-computed, open-files-only, zero PSI walk. " +
+            "diagnostics: fresh per-file PSI walk, any file, requires path, one file per call. " +
+            "run_inspections: explicit full-scope sweep, respects inspection profile, slowest but most complete. " +
+            "They are NOT redundant: problem_view is the cheapest project-wide triage; diagnostics is the " +
+            "precise per-file verifier; run_inspections is the thoroughness sweep."
+        )
+    }
 
     /**
      * ## `isError` semantics (Task 5.6 / F6 invariant)
