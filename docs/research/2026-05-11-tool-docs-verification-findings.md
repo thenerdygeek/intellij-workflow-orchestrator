@@ -118,3 +118,76 @@ Patterns observed:
 - **Phase-5 fix-but-no-docs-update is the most common pattern** (flask, structural_search llmSeesIt, find_references "hardcoded" prose, debug_breakpoints stale observation, read_document flowchart).
 - **CLAUDE.md vs source drift is the secondary pattern** (spring 15→16, build observation describing past state, django KDoc 13→14).
 - **One source-side bug surfaced** (runtime_config "containing" vs `startsWith` in the runtime error string).
+
+## Batch B2 — 2026-05-11 (builtin tools)
+
+Sub-batches B2.1/B2.2/B2.3 dispatched in parallel.
+
+### B2.1 — file ops (read_file, edit_file, search_code, glob_files, run_command)
+
+#### `read_file` — ✅ matches
+- Phase 5 pilot; full alignment between doc and source. DEFAULT_LIMIT=200, MAX_LINE_CHARS=2000, MAX_FILE_SIZE=10M all match doc claims.
+
+#### `edit_file` — ✅ matches
+- Phase 5 pilot; all params, write paths (Document/VFS/I-O), and syntax validation gate match doc.
+
+#### `search_code` — ✅ matches (1 cosmetic gap)
+- All matches. Minor: `context_lines.whenPresent` doesn't redundantly mention the `output_mode='content'` precondition that the constraint does — emphasis gap only.
+
+#### `glob_files` — ✅ matches
+- `max_results * 2` early-termination, SKIP_DIRS, mtime-DESC sort all confirmed.
+
+#### `run_command` — ⚠ minor drift
+- **Drift:** `description` param is marked `optional` in the DSL but `FunctionParameters.required` includes it (in BOTH single-shell and multi-shell schemas). The `whenAbsent` text self-acknowledges the mismatch — authoring oversight.
+- **Drift (count):** `BLOCKED_ENV_VARS` source count is 28, doc says "~25". Three off.
+- **Re-author:** flip `description` to `required(...)` and remove `whenAbsent`; update BLOCKED_ENV_VARS count to "28".
+
+### B2.2 — control flow (attempt_completion, task_report, agent, new_task, tool_search)
+
+#### `attempt_completion` — ✅ matches
+- ORCHESTRATOR-only allowedWorkers and three-kind dispatch (done/review/heads_up) all verified.
+
+#### `task_report` — ✅ matches
+- {CODER, REVIEWER, ANALYZER, TOOLER} allowedWorkers (ORCHESTRATOR excluded) and auto-injection logic in SpawnAgentTool both confirmed.
+
+#### `agent` — ⚠ minor drift
+- **Drift:** `SpawnAgentTool.documentation().observation` (lines 528-532) still says *"CLAUDE.md describes resume/kill/send/run_in_background actions; one of the two needs to be reconciled"* — but commit `7eb703cca` already reconciled CLAUDE.md (now correctly says "No LLM-callable resume/kill/send"). Stale self-reference.
+- **Drift:** `agent.md` narrative (lines 190-194) has the same stale "biggest action item is reconciling docs" paragraph. Action was already done.
+- **Re-author:** remove or update both stale references.
+
+#### `new_task` — ✅ matches
+- 5-section handoff guard + sessionHandoff return + ORCHESTRATOR allowedWorkers all verified.
+
+#### `tool_search` — ✅ matches
+- `select:` prefix dispatch + keyword fallback + max_results=5 default all confirmed.
+
+### B2.3 — auxiliary (think, current_time, ask_followup_question, ask_user_input, plan_mode_respond)
+
+#### `think` — ⚠ minor drift
+- **Drift:** `counterfactual` references `MAX_NO_TOOL_NUDGES=4` — that named constant does NOT exist in source. The actual limit is a local `val maxConsecutiveMistakes = 3` at `AgentLoop.kt:676`.
+- **Re-author:** replace with "maxConsecutiveMistakes=3 (inline val at AgentLoop.kt:676)".
+
+#### `current_time` — ⚠ minor drift
+- **Drift:** Technical summary lists Local/UTC/Day outputs but the source `execute()` (line 68) also emits a fourth field `Timezone: ${now.zone}` (IANA zone ID). Doc undercounts.
+- **Re-author:** extend summary to include the IANA timezone field.
+
+#### `ask_followup_question` — ✅ matches
+- All 4 params, two execution paths (simple/wizard), 5-min timeout + 10s UI watchdog confirmed.
+
+#### `ask_user_input` — ⚠ minor drift
+- **Drift:** `observation` says *"A shared helper (ProcessToolHelpers.monitorAfterWrite) already exists — verify both tools delegate to it and have not drifted"* — but `monitorAfterWrite` does NOT exist. The shared layer is only `collectNewOutput` + `buildIdleContent`; the full monitor loop is inlined separately in `AskUserInputTool` and `SendStdinTool`.
+- **Re-author:** rewrite the observation to honestly say the helper doesn't exist yet but extracting one would pin the invariants.
+- **Note (audit, source-side):** `sideEffect(AGENT_CONTROL)` arguably belongs in `PROCESS_SPAWN` — the tool writes to a live process's stdin and can kill it. Not a doc-vs-source drift; classification audit item.
+
+#### `plan_mode_respond` — ✅ matches
+- All params, boolean coercion path, `userInputChannel.receive()` suspension, schema filter behavior all verified.
+
+### Batch B2 — totals
+
+**8 tools clean**, **6 minor drifts**, **0 material drifts** across 15 tools.
+
+Patterns observed (B2):
+- **Phase 5 pilots (read_file, edit_file) remain accurate** — drift is concentrated in non-pilot tools that were authored faster.
+- **Stale self-referential observations are appearing** (`agent.observation` claiming CLAUDE.md drift exists when it's been fixed; `ask_user_input.observation` claiming a helper exists when it doesn't). These are notable because they read confidently in the JCEF UI even though they're wrong.
+- **Constant references decay** (`MAX_NO_TOOL_NUDGES=4` non-existent, BLOCKED_ENV_VARS 25→28 undercount).
+- **Required-vs-optional schema mismatch** in run_command — easy to miss because `whenAbsent` papers over it.
