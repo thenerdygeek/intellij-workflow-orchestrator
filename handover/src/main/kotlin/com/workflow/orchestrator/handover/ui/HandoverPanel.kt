@@ -2,6 +2,7 @@ package com.workflow.orchestrator.handover.ui
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.components.JBTabbedPane
@@ -59,6 +60,7 @@ class HandoverPanel private constructor(
     private val edtDispatcher: kotlin.coroutines.CoroutineContext,
 ) : JPanel(BorderLayout()), Disposable {
 
+    private val log = Logger.getInstance(HandoverPanel::class.java)
     private val tabs = JBTabbedPane()
 
     init {
@@ -97,6 +99,13 @@ class HandoverPanel private constructor(
     }
 
     private fun applyState(state: HandoverState) {
+        log.info(
+            "[Handover:Panel] applyState ticket=${state.ticketId} " +
+                "prCreated=${state.prCreated} build=${state.buildStatus?.let { "${it.planKey}#${it.buildNumber}:${it.status}" } ?: "—"} " +
+                "quality=${state.qualityGatePassed} health=${state.healthCheckPassed} suites=${state.suiteResults.size} " +
+                "copyrightFixed=${state.copyrightFixed} jiraComment=${state.jiraCommentPosted} workLogged=${state.todayWorkLogged} " +
+                "failedChecks=${failedFromState(state).size}"
+        )
         header.updateState(state)
         checksTab.updateState(state)
         banner.setFailures(failedFromState(state))

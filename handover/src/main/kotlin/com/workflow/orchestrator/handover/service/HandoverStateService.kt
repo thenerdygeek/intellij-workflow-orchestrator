@@ -144,48 +144,101 @@ class HandoverStateService {
      * - [WorkflowEvent.AutomationTriggered] / [WorkflowEvent.AutomationFinished]: always in-scope for
      *   now — automation suites are separate Bamboo plans with no direct chainKey link to `focusBuild`.
      *   This is a known limitation; see queue item in phase7-handover-context-plan.md.
+     *
+     * Returns a [ScopeDecision] so callers can log *which* key mismatched without recomputing.
      */
-    private fun isInScope(event: WorkflowEvent): Boolean {
+    private data class ScopeDecision(val inScope: Boolean, val reason: String)
+
+    private fun checkScope(event: WorkflowEvent): ScopeDecision {
         val ctx = workflowService.state.value
         return when (event) {
-            is WorkflowEvent.BuildFinished ->
-                ctx.focusBuild?.planKey == event.planKey
+            is WorkflowEvent.BuildFinished -> {
+                val focus = ctx.focusBuild?.planKey
+                ScopeDecision(
+                    inScope = focus == event.planKey,
+                    reason = "event.planKey=${event.planKey} focusBuild.planKey=$focus"
+                )
+            }
 
-            is WorkflowEvent.QualityGateResult ->
-                ctx.focusQualityScope?.sonarProjectKey == event.projectKey
+            is WorkflowEvent.QualityGateResult -> {
+                val focus = ctx.focusQualityScope?.sonarProjectKey
+                ScopeDecision(
+                    inScope = focus == event.projectKey,
+                    reason = "event.projectKey=${event.projectKey} focusQualityScope.sonarProjectKey=$focus"
+                )
+            }
 
-            is WorkflowEvent.PullRequestCreated ->
-                ctx.activeTicket?.key == event.ticketId
+            is WorkflowEvent.PullRequestCreated -> {
+                val activeKey = ctx.activeTicket?.key
+                ScopeDecision(
+                    inScope = activeKey == event.ticketId,
+                    reason = "event.ticketId=${event.ticketId} activeTicket.key=$activeKey"
+                )
+            }
 
-            is WorkflowEvent.JiraCommentPosted ->
-                ctx.activeTicket?.key == event.ticketId
+            is WorkflowEvent.JiraCommentPosted -> {
+                val activeKey = ctx.activeTicket?.key
+                ScopeDecision(
+                    inScope = activeKey == event.ticketId,
+                    reason = "event.ticketId=${event.ticketId} activeTicket.key=$activeKey"
+                )
+            }
 
             // HealthCheckFinished, AutomationTriggered, AutomationFinished — unfiltered.
             // HealthCheckFinished has no key in payload.
             // Automation events lack a direct focusBuild.chainKey link (tracked in queue).
-            else -> true
+            else -> ScopeDecision(inScope = true, reason = "unfiltered")
         }
     }
 
+    private fun eventSummary(event: WorkflowEvent): String = when (event) {
+        is WorkflowEvent.BuildFinished ->
+            "planKey=${event.planKey} build#${event.buildNumber} status=${event.status}"
+        is WorkflowEvent.QualityGateResult ->
+            "projectKey=${event.projectKey} passed=${event.passed}"
+        is WorkflowEvent.HealthCheckFinished ->
+            "passed=${event.passed} durationMs=${event.durationMs} checks=${event.results.size}"
+        is WorkflowEvent.AutomationTriggered ->
+            "suitePlanKey=${event.suitePlanKey} resultKey=${event.buildResultKey} triggeredBy=${event.triggeredBy}"
+        is WorkflowEvent.AutomationFinished ->
+            "suitePlanKey=${event.suitePlanKey} resultKey=${event.buildResultKey} passed=${event.passed} durationMs=${event.durationMs}"
+        is WorkflowEvent.PullRequestCreated ->
+            "ticketId=${event.ticketId} prNumber=${event.prNumber} prUrl=${event.prUrl}"
+        is WorkflowEvent.JiraCommentPosted ->
+            "ticketId=${event.ticketId} commentId=${event.commentId}"
+        else -> event::class.simpleName.orEmpty()
+    }
+
     private fun handleEvent(event: WorkflowEvent) {
-        if (!isInScope(event)) {
-            log.debug("[Handover:State] Event out of scope, skipping: ${event::class.simpleName}")
+        val name = event::class.simpleName
+        val scope = checkScope(event)
+        if (!scope.inScope) {
+            log.info("[Handover:State] Dropping $name — out of scope (${scope.reason})")
             return
         }
-        log.debug("[Handover:State] Handling event: ${event::class.simpleName}")
+        log.info("[Handover:State] Handling $name (${eventSummary(event)})")
         val current = _stateFlow.value
         val next = when (event) {
-            is WorkflowEvent.BuildFinished -> current.copy(
-                buildStatus = BuildSummary(
-                    buildNumber = event.buildNumber,
-                    status = event.status,
-                    planKey = event.planKey
+            is WorkflowEvent.BuildFinished -> {
+                log.info("[Handover:State] buildStatus → plan=${event.planKey} build#${event.buildNumber} status=${event.status}")
+                current.copy(
+                    buildStatus = BuildSummary(
+                        buildNumber = event.buildNumber,
+                        status = event.status,
+                        planKey = event.planKey
+                    )
                 )
-            )
+            }
 
-            is WorkflowEvent.QualityGateResult -> current.copy(qualityGatePassed = event.passed)
+            is WorkflowEvent.QualityGateResult -> {
+                log.info("[Handover:State] qualityGatePassed: ${current.qualityGatePassed} → ${event.passed}")
+                current.copy(qualityGatePassed = event.passed)
+            }
 
-            is WorkflowEvent.HealthCheckFinished -> current.copy(healthCheckPassed = event.passed)
+            is WorkflowEvent.HealthCheckFinished -> {
+                log.info("[Handover:State] healthCheckPassed: ${current.healthCheckPassed} → ${event.passed}")
+                current.copy(healthCheckPassed = event.passed)
+            }
 
             is WorkflowEvent.AutomationTriggered -> {
                 val bambooUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/')
@@ -201,24 +254,43 @@ class HandoverStateService {
                 // Replace existing entry for same suite plan key (latest run wins)
                 val updated = current.suiteResults
                     .filter { it.suitePlanKey != event.suitePlanKey } + newSuite
+                log.info(
+                    "[Handover:State] suiteResults: triggered ${event.suitePlanKey} (resultKey=${event.buildResultKey}); " +
+                        "total suites=${updated.size}"
+                )
                 current.copy(suiteResults = updated)
             }
 
             is WorkflowEvent.AutomationFinished -> {
+                val before = current.suiteResults.firstOrNull { it.buildResultKey == event.buildResultKey }
                 val updated = current.suiteResults.map { suite ->
                     if (suite.buildResultKey == event.buildResultKey) {
                         suite.copy(passed = event.passed, durationMs = event.durationMs)
                     } else suite
                 }
+                if (before == null) {
+                    log.warn(
+                        "[Handover:State] AutomationFinished resultKey=${event.buildResultKey} not found in " +
+                            "${current.suiteResults.size} known suites — finished event arrived without a prior triggered event"
+                    )
+                } else {
+                    log.info(
+                        "[Handover:State] suiteResults: ${before.suitePlanKey} (resultKey=${event.buildResultKey}) " +
+                            "passed=${before.passed} → ${event.passed}"
+                    )
+                }
                 current.copy(suiteResults = updated)
             }
 
-            is WorkflowEvent.PullRequestCreated -> current.copy(
-                prUrl = event.prUrl,
-                prCreated = true
-            )
+            is WorkflowEvent.PullRequestCreated -> {
+                log.info("[Handover:State] prCreated=true prUrl=${event.prUrl}")
+                current.copy(prUrl = event.prUrl, prCreated = true)
+            }
 
-            is WorkflowEvent.JiraCommentPosted -> current.copy(jiraCommentPosted = true)
+            is WorkflowEvent.JiraCommentPosted -> {
+                log.info("[Handover:State] jiraCommentPosted=true (commentId=${event.commentId})")
+                current.copy(jiraCommentPosted = true)
+            }
 
             else -> return // Ignore events we don't care about (TicketChanged is now handled by activeTicketFlow)
         }
