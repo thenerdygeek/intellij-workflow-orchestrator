@@ -31,4 +31,90 @@ Append-only log of subagent findings from the Phase 6 verification swarm. Each b
 
 ---
 
-(Batches will be appended below as subagents complete and the dispatcher aggregates results.)
+## Batch B1 — 2026-05-11 (recently-touched tools)
+
+Sub-batches B1.1/B1.2/B1.3 dispatched in parallel.
+
+### B1.1 — capability-flag fixes (find_definition, find_references, revert_file, create_file, read_document)
+
+#### `find_definition` — ✅ matches
+- All `whatLLMSees` / params / capability-flag observations align with source.
+- Verdict + related-tools + sideEffect all check out.
+
+#### `find_references` — ⚠ minor drift
+- **Drift:** `params.symbol.whenPresent` still says "hardcoded `JAVA`/`kotlin` provider lookup runs" — but commit `3918e3d7b` replaced that with `registry.allProviders().firstNotNullOfOrNull`. The `observation` blocks correctly describe the fix; the `params` prose contradicts it.
+- **Drift:** `downside` references "lines 144-147" but the fallback now lives in `resolveSearchTarget()` at lines 221-224 — stale line numbers.
+- **Re-author:** replace the "hardcoded" prose with the allProviders() iteration; replace stale line numbers with the method reference.
+
+#### `revert_file` — ✅ matches
+- PathValidator + VFS refresh fixes from commit `8a8712f2d` are explicitly documented.
+
+#### `create_file` — ✅ matches
+- Both charset-symmetry and overwrite-diff fixes from commit `7a5b679b0` are documented with source line confirmation.
+
+#### `read_document` — ⚠ minor drift
+- **Drift:** flowchart (lines 279-298 of `documentation()`) does NOT model the new `offset` branching: no negative-offset rejection branch, no offset-past-end end-of-document branch, no slice-with-continuation-hint branch. The `params` block and `llmMistake` entries cover offset in text, but the flowchart — first thing rendered in the UI — is stale relative to the post-commit `0bdb145a9` execution graph.
+- **Drift (minor clarity):** `offset.whenPresent` doesn't explicitly say the extractor is invoked with budget `offset + max_chars` (the implementation detail readers may want to know).
+- **Re-author:** extend flowchart with three new branches reflecting the offset paths; clarify the budget calculation in `whenPresent`.
+
+### B1.2 — plan-mode guards + capability flags (debug_breakpoints, debug_inspect, structural_search, project_structure, runtime_config)
+
+#### `debug_breakpoints` — ⚠ minor drift
+- **Drift:** `observation` block (line 766) says *"The KDoc comment on the class says '8 actions covering breakpoint CRUD and session lifecycle initiation'"* — but the KDoc has already been updated (commit `a1550c500` / `7eb703cca`) and now says **"7 actions"**. The observation is itself stale: it describes a problem that has been fixed.
+- **Re-author:** replace the stale observation with a note that `start_session` was removed; the role is now `runtime_exec(action=run_config, mode=debug)`.
+- **Note (out of scope but flagged):** `DebugInspectTool.kt:925` source comment still references removed `start_debug_session` — for cleanup pass.
+
+#### `debug_inspect` — ✅ matches
+- `drop_frame` PC-only-rewind semantics from commit `a1550c500` are fully and correctly documented in `description`, `documentation().actions.drop_frame`, and `llmMistakes`.
+- All 9 actions match dispatch.
+
+#### `structural_search` — 🚨 material drift
+- **Drift (material):** `llmSeesIt` for `file_type` says *`Language: "java", "kotlin", or "python" (default: tries all available)`* but the actual `ParameterProperty.description` says *`Language: "java" or "kotlin" (default: tries all SSR-capable providers). Python is not supported.`* These are not character-equal — and the doc misleads readers into thinking Python is a schema-valid option when the schema explicitly says it isn't.
+- **Re-author:** sync `llmSeesIt` to the actual `ParameterProperty.description` verbatim.
+- `supportsStructuralSearch()` capability flag from commit `c78264e89` is well-covered.
+
+#### `project_structure` — ✅ matches
+- `isWriteAction()` override (commit `25235b6bd`) correctly enumerated as 8 write actions in `observation` + `verdict.keep`.
+- All 14 actions match dispatch.
+
+#### `runtime_config` — ⚠ minor drift
+- **Drift:** `delete_run_config.onFailure` quotes the runtime error message verbatim: *"only agent-created configurations (containing [Agent] in name) can be deleted"* — but the actual guard is `startsWith("[Agent]")`. Both the runtime error text and the doc say "containing" while the actual check is "starts with." Source-side bug surfaced by doc verification.
+- **Re-author:** fix runtime error text + doc `onFailure` to say "starting with '[Agent]'".
+
+### B1.3 — framework tools (flask, django, fastapi, spring, build)
+
+#### `flask` — 🚨 material drift
+- **Drift (material, multiple touch points):** commit `2519bb65f` changed both `models` and `forms` actions from filename-scoped scanning (`models.py`, `forms.py`) to class-base scanning across all `.py` files. The `documentation()` block was NOT updated. Seven distinct claims still describe the old behavior:
+  - `models.action.technical(...)` says "Scans files literally named `models.py`"
+  - `forms.action.technical(...)` says "Scans files literally named `forms.py` or `form.py`"
+  - Two `llmMistake(...)` entries claim filename-only scoping
+  - One `downside(...)` says "scope to filename conventions"
+  - Two `precondition(...)` blocks claim a specific filename file must exist
+  - Two `onFailure` strings diverge from actual error messages (`"No SQLAlchemy model files found in project."` and `"No Flask-WTF form files found in project."`)
+- **Re-author:** rewrite all 7 references to reflect class-base scanning via `FILE_CONTAINS_MODEL_PATTERN` / `FILE_CONTAINS_FORM_PATTERN`.
+- **Implementation inconsistency noted:** `MODEL_CLASS_PATTERN` uses `(?:db\.Model|Model)` but `FILE_CONTAINS_MODEL_PATTERN` includes `BaseModel` — files containing only `BaseModel` subclasses are file-gated in but their classes aren't extracted. Source-side issue, future cleanup.
+
+#### `django` — ⚠ minor drift
+- **Drift:** Class-level KDoc comment (DjangoTool.kt line 34) says *"replacing 13 individual Django analysis tools"* but the dispatcher has 14 actions. The `documentation().observation` self-notes the discrepancy, but the source KDoc was not corrected.
+- **Re-author:** fix the KDoc comment to 14 (or drop the count).
+
+#### `fastapi` — ✅ matches
+- All 10 actions and contracts match source.
+
+#### `spring` — ⚠ minor drift
+- **Drift:** CLAUDE.md line 146 says `spring | 15` but actual source dispatch is 16 actions (added `annotated_methods`). The `documentation()` summary correctly says 16; CLAUDE.md was not updated alongside.
+- **Re-author:** update CLAUDE.md to `spring | 16`; optionally add `annotated_methods` to the documentation summary enumeration explicitly.
+
+#### `build` — ✅ matches with stale observation
+- All 26 actions match source + CLAUDE.md (post-`7eb703cca` correction).
+- **Stale observation:** `observation` at line 331 still says *"CLAUDE.md lists `build` as an 11-action tool"* — that correction has been applied (commit `7eb703cca`); the observation describes a past state.
+- **Re-author:** remove the stale observation or rewrite it to acknowledge the correction.
+
+### Batch B1 — totals
+
+**5 tools clean**, **3 minor drifts**, **2 material drifts** across 15 tools.
+
+Patterns observed:
+- **Phase-5 fix-but-no-docs-update is the most common pattern** (flask, structural_search llmSeesIt, find_references "hardcoded" prose, debug_breakpoints stale observation, read_document flowchart).
+- **CLAUDE.md vs source drift is the secondary pattern** (spring 15→16, build observation describing past state, django KDoc 13→14).
+- **One source-side bug surfaced** (runtime_config "containing" vs `startsWith` in the runtime error string).
