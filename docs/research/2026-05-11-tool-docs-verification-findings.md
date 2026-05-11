@@ -191,3 +191,39 @@ Patterns observed (B2):
 - **Stale self-referential observations are appearing** (`agent.observation` claiming CLAUDE.md drift exists when it's been fixed; `ask_user_input.observation` claiming a helper exists when it doesn't). These are notable because they read confidently in the JCEF UI even though they're wrong.
 - **Constant references decay** (`MAX_NO_TOOL_NUDGES=4` non-existent, BLOCKED_ENV_VARS 25→28 undercount).
 - **Required-vs-optional schema mismatch** in run_command — easy to miss because `whenAbsent` papers over it.
+
+## Batch B3 — 2026-05-11 (tasks + plan + PSI)
+
+Sub-batches B3.1/B3.2/B3.3 dispatched in parallel.
+
+### B3.1 — tasks + plan + skills (7 tools)
+
+- **`task_create`, `task_update`, `task_list`, `use_skill`, `discard_plan`** — ✅ matches. TaskStatus enum (pending/in_progress/completed/deleted) correctly documented per the `7eb703cca` drift sweep. `blocks`/`blockedBy` correctly absent from task_create params.
+- **`task_get`** — ⚠ minor drift. `removableParam` audit note claims `task_update` uses `id` as its param — actually it uses `taskId` (same as task_get). Author premise is factually wrong.
+- **`enable_plan_mode`** — ⚠ minor drift. Technical summary references the deprecated `enablePlanMode=true` boolean field rather than the canonical `ToolResultType.PlanModeToggle` dispatch path.
+
+### B3.2 — PSI navigation (6 tools)
+
+All six use the correct `allProviders().firstNotNullOfOrNull` or `registry.forFile(psiFile)` pattern — the hardcoded JAVA/kotlin fallback bug is **absent** from this group. Dominant drift class: **stale line-number references** in observation/downside blocks pointing into the doc block itself (e.g., "line 49 of XxxTool.kt") instead of the actual execute() body.
+
+- **`call_hierarchy`** — ✅ matches.
+- **`find_implementations`, `file_structure`, `type_hierarchy`, `type_inference`, `dataflow_analysis`** — ⚠ minor drift (stale line refs + one DSL misuse in `dataflow_analysis` where a positive verification statement was placed in `downside()` rather than `observation()`).
+- **`type_hierarchy`** also missing spill-to-disk documentation (unlike `call_hierarchy` which documents `spillOrFormat`).
+
+### B3.3 — PSI metadata + diagnostics (7 tools)
+
+The diagnostics family (`diagnostics`, `get_build_problems`, `problem_view`) correctly implements and documents the `isError=false-when-problems-found` contract.
+
+- **`test_finder`, `diagnostics`, `get_build_problems`** — ✅ matches.
+- **`get_method_body`, `get_annotations`, `read_write_access`** — ⚠ minor drift (stale line numbers pointing into doc block instead of execute body).
+- **`problem_view`** — ⚠ minor drift. `llmMistake` quotes `"Flagged but no details for X"` but actual `ToolResult.content` is `"No detailed problems available for X"` — the doc was quoting the `summary` field instead of the `content` field, but the LLM sees `content`.
+
+### Batch B3 — totals
+
+**9 tools clean**, **11 minor drifts**, **0 material drifts** across 20 tools.
+
+Patterns observed (B3):
+- **Stale line-number references is the dominant B3 pattern** — line numbers from before the `documentation()` block was inserted point into the doc block itself, not execute(). 6 of 20 tools affected.
+- **Capability-flag fix coverage is excellent** for PSI tools — `allProviders()` pattern is correctly applied across all 6 PSI navigation tools.
+- **One audit-note premise was factually wrong** (`task_get` claiming `task_update` uses `id`).
+- **One LLM-visible quoted-message-text drift** (`problem_view` quotes the summary instead of the content).
