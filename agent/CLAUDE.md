@@ -45,7 +45,7 @@ AgentController (UI entry point, owns AgentCefPanel + JCEF bridges)
 - **ToolRegistry** (`tools/ToolRegistry.kt`, ~229 lines) — Three-tier registry: core (always sent to LLM), deferred (available via `tool_search`), active-deferred (loaded during session). Reduces per-call schema tokens from ~10K to ~4K.
 - **SystemPrompt** (`prompt/SystemPrompt.kt`, ~507 lines) — Builds the system prompt per turn. 11 sections following Cline's generic variant template: Agent Role → Task Management → Editing Files → Act vs Plan Mode → Capabilities → Skills → Deferred Tool Catalog → Rules → System Info → Objective → Memory → User Instructions.
 - **InstructionLoader** (`prompt/InstructionLoader.kt`, ~453 lines) — Loads skill and agent config files from resources and disk. Handles YAML frontmatter parsing, substitution variable expansion (`$ARGUMENTS`, `$1`-`$N`, `${CLAUDE_SKILL_DIR}`). Dynamic injection via `` !`command` `` for preprocessing.
-- **SpawnAgentTool** (`tools/builtin/SpawnAgentTool.kt`) — Primary tool for spawning subagents. Only `description` and `prompt` required. Optional `name` makes agents addressable for resume/send. `subagent_type` selects built-in or custom agents. Defaults to general-purpose. Explorer type restricted to read-only tools.
+- **SpawnAgentTool** (`tools/builtin/SpawnAgentTool.kt`) — Primary tool for spawning subagents. Only `description` and `prompt` required. `agent_type` selects built-in or custom agents. Defaults to general-purpose. Explorer type restricted to read-only tools. Parallel fan-out via `prompt_2..5` + `description_2..5` (read-only agents only).
 - **SubagentRunner** (`tools/subagent/SubagentRunner.kt`) — Executes subagent with isolated context and budget. Routes prompt construction through `buildComposedSystemPrompt()`, which delegates unconditionally to `SubagentSystemPromptBuilder`. Appends `COMPLETING_YOUR_TASK_SECTION` so all personas call `task_report`, not `attempt_completion`.
 - **SubagentSystemPromptBuilder** (`tools/subagent/SubagentSystemPromptBuilder.kt`) — Stateless façade that calls the shared `SystemPrompt.build()` with sub-agent-scoped flags (`includeTaskManagement=false`, `includePlanModeSection=false`, `includeSubagentDelegationInRules=false`, `agentRoleOverride=<persona body>`), then appends the `COMPLETING_YOUR_TASK_SECTION` footer. Per-persona section overrides are read from `AgentConfig.promptSections`.
 - **ModelFallbackManager** (`loop/ModelFallbackManager.kt`) — Opt-in model fallback. On NETWORK_ERROR/TIMEOUT, advances through fallback chain (Opus thinking → Opus → Sonnet thinking → Sonnet). After 3 successful iterations on fallback, attempts escalation back to primary. **Phase 6 + Phase 7 — vision-aware fallback**: when the in-flight payload contains image parts, both the L1 fallback path (when `fallbackManager` is non-null) AND the L2 tier-escalation path (Phase 7 followup F-P6FU-3, when `fallbackManager == null` and same-tier recycles ≥ MAX) skip non-vision-capable models in the chain via `ModelCatalogService.supportsVision()`. Cold-catalog safety: L1 falls back to the unfiltered chain with a warning so the loop keeps making progress; L2 surfaces a user-visible "no vision-capable fallback available, retry on primary or remove image" error and aborts. Pinned by `AgentLoopVisionFallbackTest` (4 cases: L1 mixed-vision skip, L1 all-non-vision exhausted, text-only no engagement, L2 mixed-vision skip).
@@ -112,7 +112,7 @@ Registered in `AgentService.registerAllTools()`:
 | `find_references` | FindReferencesTool | PSI find usages |
 | `diagnostics` | SemanticDiagnosticsTool | IDE error/warning diagnostics |
 | `tool_search` | ToolSearchTool | Search and activate deferred tools |
-| `agent` | SpawnAgentTool | Spawn/resume/send/kill subagents |
+| `agent` | SpawnAgentTool | Spawn subagents (single or parallel fan-out) |
 
 ### Deferred Tools (loaded via `tool_search`)
 
@@ -144,14 +144,14 @@ These tools consolidate multiple operations behind an `action` enum:
 | **debug_step** | 10 | get_state, step_over, step_into, step_out, force_step_into, force_step_over, resume, pause, run_to_cursor, stop |
 | **debug_inspect** | 9 | evaluate, get_stack_frames, get_variables, set_value, thread_dump, memory_view, hotswap, force_return, drop_frame |
 | **spring** | 15 | context, endpoints, bean_graph, config, version_info, profiles, etc. |
-| **build** | 11 | maven_dependencies, gradle_tasks, project_modules, module_dependency_graph, etc. |
+| **build** | 26 | maven_dependencies, maven_properties, maven_plugins, maven_profiles, maven_dependency_tree, maven_effective_pom, gradle_dependencies, gradle_tasks, gradle_properties, project_modules, module_dependency_graph, pip_list, pip_outdated, pip_show, pip_dependencies, poetry_list, poetry_outdated, poetry_show, poetry_lock_status, poetry_scripts, uv_list, uv_outdated, uv_lock_status, pytest_discover, pytest_run, pytest_fixtures |
 | **project_structure** | 14 | resolve_file, module_detail, topology, list_sdks, list_libraries, list_facets, refresh_external_project, add_source_root, set_module_dependency, remove_module_dependency, set_module_sdk, set_language_level, add_content_root, remove_content_root |
 | **jira** | 17 | get_ticket, search_issues, transition, comment, log_work, etc. |
 | **bamboo_builds** | 11 | build_status, trigger_build, get_build_log, get_test_results, etc. |
-| **bamboo_plans** | 8 | get_plans, search_plans, get_plan_branches, rerun_failed_jobs, etc. |
-| **sonar** | 13 | issues, quality_gate, coverage, branch_quality_report, local_analysis, etc. |
-| **bitbucket_pr** | 18 | create/approve/merge/decline_pr, get_pr_detail, check_merge_status, get_pr_participants (R-SWAP-5), get_blocker_comment_count (R-SWAP-4), get_linked_jira_issues (R-ADD-11), get_required_builds (R-ADD-15), etc. |
-| **bitbucket_review** | 6 | add_pr_comment, add_inline_comment, reply_to_comment, etc. |
+| **bamboo_plans** | 10 | get_projects, get_plans, get_project_plans, search_plans, get_plan_branches, get_build_variables, get_plan_variables, rerun_failed_jobs, trigger_stage, auto_detect_plan |
+| **sonar** | 18 | issues, quality_gate, coverage, branch_quality_report, local_analysis, issue_facets, quality_gates_list, hotspot_detail, rule, current_user, security_hotspots, issues_paged, project_measures, source_lines, duplications, branches, analysis_tasks, search_projects |
+| **bitbucket_pr** | 19 | create_pr, get_pr_detail, get_pr_commits, get_pr_activities, get_pr_changes, get_pr_diff, check_merge_status, approve_pr, merge_pr, decline_pr, update_pr_title, update_pr_description, get_my_prs, get_reviewing_prs, get_pr_participants, get_blocker_comment_count, get_linked_jira_issues, get_required_builds, get_prs_for_branch |
+| **bitbucket_review** | 12 | add_pr_comment, add_inline_comment, reply_to_comment, add_reviewer, remove_reviewer, set_reviewer_status, list_comments, get_comment, edit_comment, delete_comment, resolve_comment, reopen_comment |
 | **bitbucket_repo** | 8 | get_branches, create_branch, search_users, get_file_content, get_build_statuses, get_commit_build_stats (R-ADD-12), get_commit_pull_requests (R-ADD-5), list_repos. |
 
 ### runtime_exec Launch Actions — Implementation Notes
@@ -351,8 +351,8 @@ Four hook-exempt tools let the LLM manage typed tasks within a session:
 
 | Tool | Purpose |
 |---|---|
-| `task_create` | Create a task with title, description, optional `blocks`/`blockedBy` dependencies |
-| `task_update` | Update status (`TODO`/`IN_PROGRESS`/`DONE`/`BLOCKED`), title, or description |
+| `task_create` | Create a task with title (`subject`), description, and `activeForm` (active-spinner text). Dependency edges (blocks/blockedBy) are added separately via task_update. |
+| `task_update` | Update status (`pending`/`in_progress`/`completed`/`deleted`), title, or description |
 | `task_list` | Minimal summary list (id, title, status) — low token cost |
 | `task_get` | Full task detail including dependency edges |
 
@@ -425,7 +425,6 @@ try {
 - **Context overflow**: Compress via `ContextManager` + REPLAY the failed request (OpenCode pattern)
 - **Task system**: Managed via `TaskStore` (four tools: `task_create`, `task_update`, `task_list`, `task_get`). Tasks are hook-exempt (bypass PreToolUse/PostToolUse). Progress rendered into system prompt Section 2 from `ContextManager.attachTaskStore`.
 - **Dumb mode checks**: `OptimizeImportsTool` and `FormatCodeTool` check `DumbService.isDumb(project)` before operating — prevents removing used imports during indexing
-- **Session-scoped state**: `EditFileTool.lastEditLineRanges` keyed by `sessionId:canonicalPath` to prevent cross-session contamination of diagnostics edit ranges
 - **Middle-truncation**: Runtime/build/coverage tools use first-60% + last-40% truncation (via shared `truncateOutput()`) instead of head-biased `.take(N)` — preserves error messages and stack traces at end of output. Exception: `run_command` uses **tail-biased** truncation (`OutputCollector.processOutputTailBiased`) — keeps the last N lines and drops the head — because build/test output has exit summaries and failure traces at the tail.
 - **No-op detection**: `FormatCodeTool` and `OptimizeImportsTool` compare before/after text and report "no changes needed" when nothing changed
 - **Debug session unification**: All debug tools (step, inspect, breakpoints) resolve sessions via `IdeStateProbe.debugState()` — both agent-started and user-started sessions are visible
@@ -640,13 +639,13 @@ Variant files live alongside `SKILL.md` in the same skill directory (bundled cla
 
 ## Agent Tool (Subagent Management)
 
-The `agent` tool spawns, resumes, and manages subagent workers:
+The `agent` tool spawns subagents:
 
-**Spawn:** `agent(description="...", prompt="...", subagent_type="coder")`
-**Background:** `agent(description="...", prompt="...", run_in_background=true)` — returns immediately with agentId
-**Resume:** `agent(resume="agentId", prompt="continue with authorization module")` — continues with full previous context
-**Kill:** `agent(kill="agentId")` — cancels a running background agent
-**Send:** `agent(send="agentId", message="focus on service layer")` — sends instruction to running worker
+**Single sub-agent:** `agent(description="...", prompt="...", agent_type="coder")`
+**Parallel fan-out (read-only agents only):** `agent(description="overall", prompt="task 1", prompt_2="task 2", prompt_3="task 3", description_2="...", description_3="...")`
+**Model override:** `agent(prompt="...", model="claude-sonnet-...")`
+
+**No LLM-callable resume/kill/send.** The UI Kill button in the chat panel cancels a running agent via `AgentController.cancelAgent(agentId)` — there is no equivalent LLM tool path. There is no `run_in_background`, `resume`, `kill`, or `send` parameter on the `agent` tool; those were aspirational and were never built.
 
 **Built-in types:** general-purpose, explorer (PSI-powered, read-only, thoroughness: quick/medium/very thorough), coder, reviewer, tooler
 **Bundled specialist agents** (from `agent/src/main/resources/agents/`): code-reviewer, architect-reviewer, test-automator, spring-boot-engineer, refactoring-specialist, devops-engineer, security-auditor, performance-engineer — overridable by user/project agents

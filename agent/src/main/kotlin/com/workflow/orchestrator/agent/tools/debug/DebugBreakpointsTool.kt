@@ -57,9 +57,12 @@ import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
 
 /**
- * Breakpoint management + debug session start/attach.
+ * Breakpoint management + remote process attach.
  *
- * 8 actions covering breakpoint CRUD and session lifecycle initiation.
+ * 7 actions covering breakpoint CRUD (add_breakpoint, method_breakpoint, exception_breakpoint,
+ * field_watchpoint, remove_breakpoint, list_breakpoints) plus attach_to_process.
+ * The removed `start_session` action's role is now handled by
+ * `runtime_exec(action=run_config, mode=debug)`.
  */
 class DebugBreakpointsTool(private val controller: AgentDebugController) : AgentTool {
 
