@@ -7,6 +7,11 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolOutputConfig
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.core.api.DocumentExtractor
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.model.ExtractOptions
@@ -81,6 +86,167 @@ class DocumentTool(
 
     /** Spill to disk when output exceeds 30K chars (matches expected size for big docs). */
     override val outputConfig = ToolOutputConfig(maxChars = ToolOutputConfig.COMMAND_MAX_CHARS)
+
+    override fun documentation(): ToolDocumentation = toolDoc("read_document") {
+        summary {
+            technical(
+                "Extract Markdown text from binary/structured document files (PDF, DOCX, XLSX, PPTX, RTF, ODT, EPUB, HTML, CSV) " +
+                    "via Apache Tika/POI; PDF tables extracted via Tabula lattice algorithm; returns Markdown with pipe tables; " +
+                    "200K char cap with truncation marker; scanned image PDFs unsupported (no OCR)."
+            )
+            plain(
+                "Like read_file, but for binary documents — hand this tool a PDF or Word file and it converts the content to " +
+                    "readable Markdown (tables and all), the same way a document viewer shows you a nicely laid-out page instead " +
+                    "of raw bytes."
+            )
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.READ_ONLY)
+        counterfactual(
+            "Without read_document the LLM cannot open binary documents at all — read_file explicitly rejects PDF, DOC, DOCX, " +
+                "XLS, XLSX, and similar extensions and returns a binary-file error. The only alternative is run_command with " +
+                "`pdftotext`/`pandoc`/`unzip`, which (a) depends on those tools being installed on the host machine, " +
+                "(b) produces unstructured plain text that loses table layout, and (c) bypasses the 200K safety cap, " +
+                "potentially flooding the context with hundreds of KB of raw extraction output."
+        )
+        llmMistake(
+            "Calls read_document on a plain-text file (e.g. a `.txt` or `.csv` opened directly). read_document can handle CSV " +
+                "and HTML, but for files read_file already supports the line-number-prefixed output of read_file is strictly " +
+                "better for subsequent edit_file references. The LLM should reserve read_document for formats read_file " +
+                "explicitly rejects."
+        )
+        llmMistake(
+            "Passes a relative path and gets an InvalidPathException because DocumentTool does not resolve relative paths " +
+                "through the project root the way read_file does. Always supply an absolute path."
+        )
+        llmMistake(
+            "Expects page-by-page output and tries to use max_chars=10000 to 'page' through a large PDF, then calls " +
+                "read_document again with the same path expecting the next chunk. The tool has no cursor — it always " +
+                "re-extracts from page 1. Use max_chars to cap total output size, not as a pagination cursor."
+        )
+        llmMistake(
+            "Calls read_document on a scanned image PDF (no embedded text layer) and interprets the empty or near-empty " +
+                "result as an empty document. The tool returns an explicit error for scanned-image PDFs in v1; the LLM " +
+                "should surface that error to the user instead of proceeding on an empty result."
+        )
+        params {
+            required("path", "string") {
+                llmSeesIt("Absolute path to the document file. Must be readable.")
+                humanReadable(
+                    "The full filesystem path to the document — e.g. `/Users/me/Downloads/spec.pdf`. " +
+                        "Unlike read_file, relative paths are NOT resolved against the project root; they will throw " +
+                        "an InvalidPathException. Always use an absolute path."
+                )
+                whenPresent(
+                    "The path is parsed, the file is located and opened by TikaDocumentExtractor, and the " +
+                        "extracted Markdown is returned."
+                )
+                constraint("must be an absolute path — relative paths throw InvalidPathException before any I/O")
+                constraint("file must be readable by the JVM process — permissions errors are surfaced as an extraction error")
+                example("/Users/me/Downloads/requirements.pdf")
+                example("/home/dev/project/docs/design.docx")
+                example("/tmp/build-report.xlsx")
+            }
+            optional("max_chars", "integer") {
+                llmSeesIt("Override max extracted characters (default 200000).")
+                humanReadable(
+                    "A hard cap on how many characters of Markdown are returned. Think of it as the 'page limit' " +
+                        "on the extraction — content beyond this cap is replaced with a truncation marker so the LLM " +
+                        "knows there is more. Lowering it keeps the response token-efficient for large documents; " +
+                        "raising it (up to ~500K is reasonable) gives more coverage of very long documents."
+                )
+                whenPresent("Extraction halts and inserts a `[... truncated at N chars ...]` marker when this limit is reached.")
+                whenAbsent("Defaults to 200 000 characters — roughly 60-80 pages of dense text or ~50K tokens.")
+                constraint("must be a positive integer; very small values (< 500) may produce a truncation marker before any content arrives")
+                example("50000")
+                example("500000")
+            }
+        }
+        verdict {
+            keep(
+                "Uniquely necessary: the only way for the LLM to read binary office documents and PDFs without shelling out " +
+                    "to host tools that may not be installed. read_file explicitly rejects these formats, and the table-preserving " +
+                    "Markdown output is meaningfully better than raw pdftotext/pandoc for structured analysis tasks " +
+                    "(e.g. reading a Jira PDF export, a requirements spec, or a test-results spreadsheet).",
+                VerdictSeverity.STRONG,
+            )
+        }
+        related(
+            "read_file",
+            Relationship.ALTERNATIVE,
+            "Use read_file for plain-text files (source code, configs, logs, Markdown). Use read_document when " +
+                "read_file returns a binary-file error — they handle complementary format sets with no overlap in the happy path.",
+        )
+        related(
+            "search_code",
+            Relationship.COMPLEMENT,
+            "After read_document extracts Markdown, use search_code on the spilled output file to find specific " +
+                "sections without re-extracting the whole document.",
+        )
+        related(
+            "run_command",
+            Relationship.ALTERNATIVE,
+            "Fallback if read_document fails or the host has pdftotext/pandoc installed and structured Markdown is not " +
+                "required — but run_command has no safety cap and no table preservation.",
+        )
+        downside(
+            "Tabula↔Tika page-mismatch (known edge case, v1.1): when a PDF mixes Tabula-extracted table pages with " +
+                "Tika-extracted text pages, the interleaving order can differ from the visual page order in a PDF viewer. " +
+                "Text content is complete, but a table on page 4 might appear after the text from page 5 in the Markdown output. " +
+                "Accepted limitation until a unified page-cursor is added in v2."
+        )
+        downside(
+            "Scanned image PDFs (no embedded text layer) return an error — OCR is not available in v1. " +
+                "The LLM must surface this to the user rather than proceeding on empty output."
+        )
+        downside(
+            "Extraction fidelity varies by format: DOCX/XLSX via Apache POI gives cell-perfect accuracy; " +
+                "older binary .doc/.xls formats go through Tika's HWPF/HSSF path which may lose some formatting. " +
+                "Complex PDF layouts (multi-column academic papers, rotated text, watermarks) may produce " +
+                "garbled or reordered text even when the text layer is present."
+        )
+        downside(
+            "Large documents (> 200K chars, ~60 pages) are silently truncated with a marker. The tool has no " +
+                "pagination cursor — there is no way to read 'the next chunk' without re-extracting from page 1 " +
+                "with a larger max_chars cap. For very large documents this means either accepting truncation or " +
+                "increasing max_chars enough to spill to disk (the 30K auto-spill threshold applies)."
+        )
+        downside(
+            "30 s per-call timeout is generous but not infinite — a 500-page PDF with dense Tabula lattice extraction " +
+                "can approach or exceed it on a slow JVM. The LLM sees a timeout error and should retry with a lower max_chars."
+        )
+        observation(
+            "read_document is registered in the deferred tier (loaded via tool_search), which is correct — " +
+                "the tool is niche enough that burning prompt tokens on it every iteration would be wasteful. " +
+                "However, the system prompt for file-heavy tasks should mention it in the deferred catalog entry " +
+                "so the LLM knows to search for it when read_file rejects a binary."
+        )
+        observation(
+            "The 'document' category name in AgentService.registerAllTools is distinct from the tool name 'read_document'. " +
+                "If a tool_search query is 'document' the tool is found; if the query is 'read_document' it is also found. " +
+                "No action required — both aliases work."
+        )
+        flowchart(
+            """
+            flowchart TD
+                A[LLM calls read_document] --> B{path param present?}
+                B -- no --> X1[Return 'path required' error]
+                B -- yes --> C{Path parseable?}
+                C -- no --> X2[Return InvalidPathException error]
+                C -- yes --> D[Build ExtractOptions with max_chars + timeoutMs]
+                D --> E[TikaDocumentExtractor.extract]
+                E --> F{Scanned image PDF?}
+                F -- yes --> X3[Return 'no embedded text layer' error]
+                F -- no --> G{Extraction succeeds?}
+                G -- no --> X4[Return extractor error summary]
+                G -- yes --> H{Output > max_chars?}
+                H -- yes --> I[Truncate + append truncation marker]
+                H -- no --> J[Return full Markdown]
+                I --> K[ToolResult with Markdown + TokenEstimator]
+                J --> K
+            """
+        )
+    }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val pathArg = params["path"]?.jsonPrimitive?.content
