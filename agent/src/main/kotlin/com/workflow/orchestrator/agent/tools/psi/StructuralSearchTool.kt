@@ -10,6 +10,11 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
@@ -44,6 +49,257 @@ class StructuralSearchTool(
         required = listOf("pattern")
     )
     override val allowedWorkers = setOf(WorkerType.ANALYZER, WorkerType.REVIEWER)
+
+    override fun documentation(): ToolDocumentation = toolDoc("structural_search") {
+        summary {
+            technical(
+                "IntelliJ Structural Search and Replace (SSR) over Java/Kotlin source — drives " +
+                    "`MatchOptions + Matcher + CollectingMatchResultSink` with user-supplied SSR template " +
+                    "patterns (e.g. `\$Instance\$.equals(\$Arg\$)`) against `GlobalSearchScope`. " +
+                    "Iterates `allProviders()` via `firstNotNullOfOrNull`; only `JavaKotlinProvider` " +
+                    "implements the operation — `PythonProvider.structuralSearch()` is a stub that " +
+                    "always returns null. Hard cap: `JavaKotlinProvider` takes at most 50 raw matches " +
+                    "before the tool applies its own `max_results` (default 20) truncation."
+            )
+            plain(
+                "Like grep, but it understands code structure. A regex for `equals` hits comments, " +
+                    "string literals, method names in docs, and every variant spelling. SSR lets the " +
+                    "agent write a template like `\$x\$.equals(\$y\$)` that matches the CALL as an " +
+                    "AST node — skipping comments, string contents, and unrelated identifiers. Think " +
+                    "of it as 'find all the places where this specific code shape appears', not just " +
+                    "'find this text'."
+            )
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.READ_ONLY)
+        counterfactual(
+            "Without structural_search, the LLM falls back to `search_code` with a regex. For " +
+                "structural patterns the gap is severe: a regex for `\\.equals\\(` matches inside " +
+                "string literals, Javadoc comments, method declarations named `equals`, and " +
+                "multi-line calls split across lines where the regex anchor fails. SSR's AST-level " +
+                "matching eliminates all of those false positives in a single tool call. The cost " +
+                "of regex fallback is manual filtering across potentially dozens of false-positive " +
+                "matches — and on patterns with template variables (e.g., capturing all arguments " +
+                "to a varargs call), regex simply cannot capture the structural binding; the LLM " +
+                "would need to hand-parse AST structure from read_file output."
+        )
+        llmMistake(
+            "Uses regex syntax instead of SSR template syntax — writes `\\.equals\\(.*\\)` instead " +
+                "of `\$x\$.equals(\$y\$)`. The Matcher parses the pattern as an SSR template, not a " +
+                "regex; the literal `\\.` and `.*` are treated as SSR text tokens and the search " +
+                "produces no matches or an exception. SSR variables use the `\$Name\$` dollar-sign " +
+                "convention, not regex anchors."
+        )
+        llmMistake(
+            "Passes `file_type = \"python\"` expecting Python structural search results. " +
+                "`PythonProvider.structuralSearch()` always returns null (line 849 of PythonProvider.kt). " +
+                "When `file_type = \"python\"` is specified and Python IS registered, " +
+                "`providersToTry` is set to `listOf(PythonProvider)` (StructuralSearchTool.kt line 91), " +
+                "`firstNotNullOfOrNull` gets null from the only provider, `results` is null, and the " +
+                "tool returns `\"Error: structural search failed — provider returned null\"` — which " +
+                "looks like a tool bug rather than 'Python SSR is not supported'. The LLM must use " +
+                "`search_code` for Python pattern matching instead."
+        )
+        llmMistake(
+            "Writes a Kotlin-specific SSR pattern (e.g., `val \$x\$ = \$y\$`) and omits `file_type`. " +
+                "`JavaKotlinProvider.structuralSearch()` always uses `JavaFileType.INSTANCE` (line 708 " +
+                "of JavaKotlinProvider.kt), so the Matcher runs against Java file type regardless of " +
+                "which language the pattern targets. A Kotlin-only pattern may produce no Java matches " +
+                "and an empty result — not because the pattern is wrong but because the file type " +
+                "filter is hard-wired to Java in the current implementation."
+        )
+        llmMistake(
+            "Calls structural_search during IDE indexing. `PsiToolUtils.isDumb(project)` at entry " +
+                "returns a hard dumb-mode error immediately. The `inSmartMode(project)` deferral " +
+                "applies only AFTER entry — it does not wait for indexing to finish at the call site. " +
+                "The LLM must retry after indexing completes, not immediately loop."
+        )
+        llmMistake(
+            "Writes a complex multi-statement SSR pattern expecting full method-body matching. " +
+                "The SSR engine excels at expression- and statement-level patterns; deep block-level " +
+                "patterns (matching a sequence of statements in an arbitrary method body) can silently " +
+                "time out or return no results without a clear error. Simpler expression patterns are " +
+                "more reliable."
+        )
+        params {
+            required("pattern", "string") {
+                llmSeesIt("SSR pattern with \$var\$ template variables")
+                humanReadable(
+                    "An IntelliJ SSR template string. `\$Var\$` placeholders are named template " +
+                        "variables that match any expression of the appropriate kind. Example: " +
+                        "`\$Instance\$.equals(\$Arg\$)` matches every call to `.equals()` on any receiver " +
+                        "with any argument. Typed constraints (e.g. `\$x\$:[exprtype( java.lang.String )]`) " +
+                        "narrow the match to a specific type. The pattern is parsed by IntelliJ's SSR " +
+                        "engine — not a regex, not a glob."
+                )
+                whenPresent(
+                    "Fed directly to `MatchOptions.setSearchPattern()`. The Matcher parses it as an " +
+                        "SSR template and runs the search. Invalid SSR syntax typically causes an exception " +
+                        "caught by the outer `try/catch`, returning `\"Error: structural search failed — <message>\"`."
+                )
+                constraint("SSR template syntax, not regex — `\$Name\$` for variables, not `.*`")
+                constraint("Must not be blank — blank pattern returns an immediate validation error")
+                constraint("Complex block patterns may time out or produce no results silently")
+                example("""${'$'}Instance${'$'}.equals(${'$'}Arg${'$'})""")
+                example("""System.out.println(${'$'}arg${'$'})""")
+                example("""if (${'$'}condition${'$'}) { ${'$'}body${'$'} }""")
+                example("""new ${'$'}Type${'$'}()""")
+            }
+            optional("file_type", "string") {
+                llmSeesIt("""Language: "java", "kotlin", or "python" (default: tries all available)""")
+                humanReadable(
+                    "Restricts the provider used. Maps `\"java\"` → `\"JAVA\"`, `\"kotlin\"`/`\"kt\"` → " +
+                        "`\"kotlin\"`, `\"python\"`/`\"py\"` → `\"Python\"`. " +
+                        "WARNING: Python SSR is not supported — specifying `\"python\"` will produce a " +
+                        "misleading error (see commonLLMMistakes). Also note that `JavaKotlinProvider` " +
+                        "hard-wires `JavaFileType.INSTANCE`, so Kotlin patterns matched against Java " +
+                        "files may return empty results even when specified."
+                )
+                whenPresent(
+                    "Calls `registry.forLanguageId(langId)`. If the provider is found, `providersToTry` " +
+                        "is `listOf(that provider)`. If the language ID is unrecognised and no provider " +
+                        "is found, falls back to `allProviders()`. Python IS registered as a provider " +
+                        "when the Python plugin is present, so `file_type=\"python\"` always ends up " +
+                        "calling `PythonProvider.structuralSearch()` which returns null."
+                )
+                whenAbsent(
+                    "Tries all registered providers in iteration order via `firstNotNullOfOrNull`. " +
+                        "In practice `JavaKotlinProvider` is always first and always returns non-null " +
+                        "(it catches exceptions and returns null only on error), so `PythonProvider` " +
+                        "is never tried when `file_type` is absent."
+                )
+                enumValue("java", "kotlin", "kt", "python", "py")
+                example("java")
+                example("kotlin")
+            }
+            optional("scope", "string") {
+                llmSeesIt("""Search scope: "project" (default) or a module name""")
+                humanReadable(
+                    "Controls which files the SSR engine scans. `\"project\"` maps to " +
+                        "`GlobalSearchScope.projectScope(project)`, excluding library JARs and JDK. " +
+                        "Any other string is treated as a module name — `ModuleManager.findModuleByName()` " +
+                        "is called and on a hit `GlobalSearchScope.moduleScope(module)` is used. " +
+                        "If the module name is not found, silently falls back to project scope."
+                )
+                whenPresent(
+                    "Passed to `resolveScope()`. A module name that matches an existing module " +
+                        "narrows the search to that module's source roots only."
+                )
+                whenAbsent("Defaults to `\"project\"` — whole-project scan.")
+                constraint(
+                    "Unrecognised module names silently fall back to project scope with no warning; " +
+                        "the LLM gets full-project results without knowing the narrowing failed"
+                )
+                example("project")
+                example("automation")
+                example("bamboo")
+            }
+            optional("max_results", "integer") {
+                llmSeesIt("Maximum number of results to return (default: 20)")
+                humanReadable(
+                    "Secondary cap applied AFTER `JavaKotlinProvider`'s own internal hard cap of 50 " +
+                        "raw matches. If the provider returns 50 and `max_results` is 20, the tool " +
+                        "shows 20 with a `... (30 more)` footer. If `max_results` > 50, the provider's " +
+                        "internal cap still limits the actual hit set to 50 regardless."
+                )
+                whenPresent("Applied via `results.take(maxResults)` after the provider returns.")
+                whenAbsent("Defaults to 20.")
+                constraint("Effective maximum is min(max_results, 50) due to provider's internal cap")
+                constraint("Values that fail to parse as integer silently default to 20")
+                example("10")
+                example("50")
+            }
+        }
+        verdict {
+            keep(
+                "Earns its slot for Java/Kotlin codebases where the LLM needs to find structural " +
+                    "patterns rather than text patterns. The canonical use cases — find all `.equals()` " +
+                    "calls that should be `==` in Kotlin, find all `new` expressions of a deprecated " +
+                    "type, find all `null` checks on a variable — are genuinely impossible to do " +
+                    "accurately with `search_code` regex without prohibitive false-positive filtering. " +
+                    "The schema cost is low (single-action, four params) and the tool is deferred, " +
+                    "so it only inflates context when the LLM explicitly loads it.",
+                VerdictSeverity.NORMAL,
+            )
+            drop(
+                "Niche within niche: the LLM rarely reaches for SSR unprompted because most " +
+                    "'find all X' tasks are adequately served by `search_code` + manual filtering. " +
+                    "Python support is completely absent (silent null return with misleading error). " +
+                    "The SSR template syntax has a steep learning curve — the LLM frequently writes " +
+                    "regex instead and gets empty results. The provider's Java-file-type hardwiring " +
+                    "means Kotlin patterns may silently miss Kotlin files. For the typical agentic " +
+                    "workflow (read, edit, test), structural search is rarely the bottleneck.",
+                VerdictSeverity.NORMAL,
+            )
+        }
+        related("search_code", Relationship.FALLBACK, "Use for Python files (SSR not supported), " +
+            "for JavaScript/TypeScript/Go/Rust (no provider registered), and when the SSR pattern " +
+            "is too complex or the LLM cannot express the structure in SSR template syntax. " +
+            "search_code regex is always available; structural_search is a precision upgrade for " +
+            "Java/Kotlin where regex false positives are a real problem.")
+        related("find_references", Relationship.COMPLEMENT, "find_references answers 'where is this " +
+            "symbol used?' (PSI index, zero false positives). structural_search answers 'where does " +
+            "this code SHAPE appear?' (pattern match, catches anonymous calls and literal expressions " +
+            "that find_references cannot index). Use together: find_references for a named symbol, " +
+            "structural_search for anonymous patterns around that symbol.")
+        related("find_implementations", Relationship.SEE_ALSO, "find_implementations is the right " +
+            "tool for 'who implements this interface'; structural_search is the right tool for 'find " +
+            "all call sites that match this call shape'. Different questions, different engines.")
+        downside(
+            "Java file type hardwired — `JavaKotlinProvider.structuralSearch()` always calls " +
+                "`MatchOptions.setFileType(JavaFileType.INSTANCE)` (line 708 of JavaKotlinProvider.kt). " +
+                "Kotlin-only patterns (e.g., `val \$x\$ = \$y\$`) are run against Java file type and " +
+                "may return no results even in a pure-Kotlin project. There is no `file_type = \"kotlin\"` " +
+                "workaround — the parameter routes to the provider but the provider ignores it and " +
+                "always uses Java file type internally."
+        )
+        downside(
+            "Python SSR completely unsupported — `PythonProvider.structuralSearch()` always returns " +
+                "null (PythonProvider.kt line 849). When `file_type = \"python\"` is specified, the tool " +
+                "returns `\"Error: structural search failed — provider returned null\"` which looks like " +
+                "a tool crash rather than an expected capability gap. The LLM must use `search_code` " +
+                "for Python pattern matching."
+        )
+        downside(
+            "Double cap with unequal enforcement — the provider hard-caps at 50 raw matches before " +
+                "mapping to `StructuralMatchInfo`; `max_results` is a second cap applied by the tool. " +
+                "If the project has 200 matches, the LLM can only ever see 50 regardless of " +
+                "`max_results`. The `... (N more)` footer reflects the PROVIDER'S reported total, " +
+                "which is also capped at 50, so the count can be misleading."
+        )
+        downside(
+            "Complex block patterns are unreliable — SSR is optimised for expression- and " +
+                "statement-level templates. Multi-statement block patterns (matching a sequence of " +
+                "statements across an arbitrary method body) can silently time out inside the " +
+                "Matcher and surface as a caught exception returning null (which the tool then " +
+                "reports as the generic `\"Error: structural search failed — provider returned null\"`). " +
+                "The LLM gets no signal distinguishing 'timeout' from 'Python not supported'."
+        )
+        downside(
+            "Module scope fallback is silent — if `scope` names a non-existent module, " +
+                "`resolveScope()` falls back to project scope with no warning " +
+                "(StructuralSearchTool.kt lines 141-153). The LLM receives full-project results " +
+                "and has no way to know the narrowing was ignored."
+        )
+        downside(
+            "Requires full project indexing — `PsiToolUtils.isDumb(project)` at entry and " +
+                "`inSmartMode(project)` wrapping the read action both require indexing to be complete. " +
+                "On first project open, the tool is unavailable until indexing finishes."
+        )
+        observation(
+            "FALLBACK BUG VERIFIED — StructuralSearchTool.kt line 91: `if (specific != null) " +
+                "listOf(specific) else allProviders`. When `file_type = \"python\"` is specified AND " +
+                "the Python plugin is installed, `registry.forLanguageId(\"Python\")` returns the " +
+                "PythonProvider (non-null), so `providersToTry = listOf(PythonProvider)`. The " +
+                "tool does NOT fall back to allProviders. `PythonProvider.structuralSearch()` returns " +
+                "null, `firstNotNullOfOrNull` returns null, and the tool emits the misleading " +
+                "`\"Error: structural search failed — provider returned null\"`. The fallback at " +
+                "line 91 only triggers when the language ID is UNRECOGNISED (no provider at all), " +
+                "not when the registered provider is a no-op stub. Fix: check `structuralSearch` " +
+                "capability before including a provider in `providersToTry`, or add a dedicated " +
+                "`supportsStructuralSearch()` flag to `LanguageIntelligenceProvider`."
+        )
+    }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val pattern = params["pattern"]?.jsonPrimitive?.content
