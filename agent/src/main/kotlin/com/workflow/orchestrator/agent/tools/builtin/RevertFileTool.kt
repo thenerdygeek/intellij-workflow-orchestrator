@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -11,6 +13,7 @@ import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
 import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
 import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -40,7 +43,7 @@ class RevertFileTool : AgentTool {
 
     override fun documentation(): ToolDocumentation = toolDoc("revert_file") {
         summary {
-            technical("Single-file revert via raw `git checkout -- <path>` shelled out from `ProcessBuilder` against the project root — restores the file to its committed HEAD state. Does NOT use IDE LocalHistory, file backups, or VFS refresh; uncommitted-but-not-yet-modified files (no diff vs HEAD) are no-ops, and the IDE editor view may show stale content until VFS picks up the on-disk change.")
+            technical("Single-file revert via raw `git checkout -- <path>` shelled out from `ProcessBuilder` against the project root — restores the file to its committed HEAD state. Path validated by PathValidator.resolveAndValidateForWrite before git is invoked. After a successful checkout, refreshes VFS (LocalFileSystem.refreshAndFindFileByPath + vf.refresh) and reloads any cached Document (FileDocumentManager.reloadFromDisk) so open editor tabs and subsequent read_file calls see the reverted content immediately. Does NOT use IDE LocalHistory or file backups; uncommitted-but-not-yet-modified files (no diff vs HEAD) are no-ops.")
             plain("Like `git checkout` for one file, but called from inside the IDE — wipes whatever the agent just did to a file and snaps it back to whatever git last remembered. Other files are left alone. If the file was never committed, there's nothing to go back to.")
         }
         whatLLMSees(description)
@@ -50,16 +53,15 @@ class RevertFileTool : AgentTool {
         )
         llmMistake("Tries to revert a freshly-created file that was never committed — `git checkout` either no-ops (file is untracked) or errors, and the agent loops trying again instead of using `run_command rm <path>`.")
         llmMistake("Expects revert to undo IDE-side state — open editor tabs, breakpoints, run-config edits, or LocalHistory entries. It only touches the on-disk file via git; nothing else is rolled back.")
-        llmMistake("Reverts a file with unsaved (Document-only) changes in the editor and assumes the editor buffer also reverts — the editor still shows the dirty buffer until the user reloads, because there's no `FileDocumentManager.reloadFiles` call after the checkout.")
-        llmMistake("Passes a path outside the project root expecting the same path-traversal rejection that read_file/edit_file enforce — revert_file does NOT call PathValidator (see audit note), so the only protection is `git checkout`'s own pathspec validation.")
+        llmMistake("Passes a path outside the project root expecting it to succeed — PathValidator rejects paths outside the project root and `{agentDir}/memory/` before git is ever invoked.")
         llmMistake("Forgets the required `description` parameter and gets a missing-param error before any git work runs.")
         params {
             required("file_path", "string") {
                 llmSeesIt("Path to the file to revert (absolute or relative to the project root). The file must be tracked by git.")
                 humanReadable("Which file to undo edits on — same path you'd type at the terminal. Can be relative (`src/Foo.kt`) or absolute (`/Users/me/proj/src/Foo.kt`).")
-                whenPresent("Path is naively resolved (absolute kept as-is, relative joined to `project.basePath`), canonicalised, then passed to `git checkout -- <canonicalPath>` running with the project root as cwd.")
+                whenPresent("Path is canonicalised and validated against the project root via PathValidator.resolveAndValidateForWrite, then passed to `git checkout -- <canonicalPath>` running with the project root as cwd.")
                 constraint("file must be tracked by git — untracked files produce a non-zero exit and a 'Revert failed' error")
-                constraint("path is NOT validated by PathValidator — naive `startsWith(\"/\")` check. A path outside the project will be checked out by git if and only if git considers it part of the working tree (rare, but a documented gap)")
+                constraint("path must be inside the project root or `{agentDir}/memory/` — traversal outside the project is rejected by PathValidator before git is invoked")
                 example("src/main/kotlin/Foo.kt")
                 example("/Users/me/proj/build.gradle")
             }
@@ -77,7 +79,7 @@ class RevertFileTool : AgentTool {
                 VerdictSeverity.NORMAL,
             )
             drop(
-                "Today this is a thin shell-out — same `git checkout` the LLM could call via run_command, no IDE integration (no VFS refresh, no LocalHistory, no editor reload, no PathValidator). If the destructive-git-policy layer never lands and run_command's approval UX is improved, this tool earns no behavioural keep — only a UX/approval-policy keep.",
+                "Today this is a thin shell-out — same `git checkout` the LLM could call via run_command; IDE integration (VFS refresh + Document reload) is present but LocalHistory is not. If the destructive-git-policy layer never lands and run_command's approval UX is improved, this tool earns no behavioural keep — only a UX/approval-policy keep.",
                 VerdictSeverity.WEAK,
             )
         }
@@ -86,11 +88,9 @@ class RevertFileTool : AgentTool {
         related("run_command", Relationship.ALTERNATIVE, "The fallback `git checkout -- <path>` does the same thing, but is approval-gated per-invocation rather than session-approvable, and routes through the broader command-safety analyzer.")
         related("changelist_shelve", Relationship.SEE_ALSO, "Also a 'save state' tool — shelves edits onto an IntelliJ changelist instead of discarding them. Use shelve when you might want the changes back; revert_file is for throwing them away.")
         downside("Revert source is git HEAD only — no LocalHistory, no per-session backup, no in-memory undo stack. If a file was never committed, the revert is a no-op or an error.")
-        downside("Does NOT refresh IntelliJ's VFS or reload editor Documents after the checkout. Open editor tabs may show stale content until the IDE notices the file changed on disk; the agent's own next read_file may also see Document-cached pre-revert text.")
-        downside("Does NOT call PathValidator — security-relevant audit gap. Read tools and other write tools enforce project-root containment via canonical-path comparison; revert_file relies entirely on git's pathspec semantics. In practice, git refuses paths outside the working tree, but this is defence-in-depth the tool isn't doing itself.")
         downside("Single file at a time — no glob, no list, no bulk revert. Reverting 12 bad edits costs 12 tool calls.")
-        downside("Doesn't preserve unsaved buffer changes — if the user has the file open with unsaved edits, those edits remain in the editor buffer (because the on-disk file changed underneath, but the Document was not reloaded).")
-        observation("Implementation does not use PathValidator (cf. read_file, edit_file, create_file). Either add `PathValidator.resolveAndValidateForWrite` for parity, or document the deliberate reliance on git's pathspec validation.")
+        downside("Doesn't preserve unsaved buffer changes — if the user has the file open with unsaved edits, `git checkout` restores the committed content on disk and `FileDocumentManager.reloadFromDisk` discards those unsaved edits from the editor buffer too.")
+        observation("Bug fixed: PathValidator.resolveAndValidateForWrite added (was naive startsWith('/') check); VFS refresh + FileDocumentManager.reloadFromDisk added after successful checkout. Surfaced by Phase 5 tool-docs swarm Batch 3.")
         mergeOpportunity("If a future destructive-git-policy meta-tool (CLAUDE.md → 'Revert Architecture') lands, revert_file is a natural action of that tool rather than a standalone — same pattern as `runtime_exec`/`debug_step` consolidating related verbs behind one schema.")
         observation("The `description` parameter is required and embedded into the audit trail / user-visible summary — unusual for write tools (edit_file/create_file have no analogous required justification). Worth keeping as a model for future destructive tools.")
     }
@@ -112,10 +112,10 @@ class RevertFileTool : AgentTool {
                 isError = true
             )
 
-        val resolvedPath = java.io.File(
-            if (filePath.startsWith("/")) filePath
-            else "${project.basePath}/$filePath"
-        ).canonicalPath
+        val memoryDir = project.basePath?.let { java.io.File(ProjectIdentifier.agentDir(it), "memory").absolutePath }
+        val (resolvedPathOrNull, pathError) = PathValidator.resolveAndValidateForWrite(filePath, project.basePath, memoryDir)
+        if (pathError != null) return pathError
+        val resolvedPath = resolvedPathOrNull!!
 
         // Use git checkout to revert
         return try {
@@ -127,6 +127,21 @@ class RevertFileTool : AgentTool {
             val exitCode = process.waitFor()
 
             if (exitCode == 0) {
+                // Refresh VFS and invalidate Document cache so open editor tabs and
+                // subsequent read_file calls see the reverted on-disk content.
+                try {
+                    val vf = LocalFileSystem.getInstance().refreshAndFindFileByPath(resolvedPath)
+                    if (vf != null) {
+                        vf.refresh(false, false)
+                        val doc = FileDocumentManager.getInstance().getCachedDocument(vf)
+                        if (doc != null) {
+                            FileDocumentManager.getInstance().reloadFromDisk(doc)
+                        }
+                    }
+                } catch (_: Exception) {
+                    // VFS refresh is best-effort — a failure here must not block the success result
+                }
+
                 ToolResult(
                     content = "Successfully reverted $filePath. Reason: $description\n\n" +
                         "The file has been restored to its pre-edit state. Other file changes are preserved.",
