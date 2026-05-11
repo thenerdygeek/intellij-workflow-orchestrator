@@ -1450,6 +1450,7 @@ class AgentLoop(
                         // erase every earlier stall mid-run.
                         contextManager.pruneAllNudgePairs(TEXT_ONLY_NUDGE)
                         contextManager.addUserMessage(TEXT_ONLY_NUDGE)
+                        delay(computeBackoffMs(consecutiveMistakes))
                     }
                 }
 
