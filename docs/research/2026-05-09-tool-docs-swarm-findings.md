@@ -1057,3 +1057,51 @@ Tools: `run_inspections`, `problem_view`, `list_quickfixes`. Closes the diagnost
 
 - **The `isError=false` shared-API drift is now formally documented in all 4 family tools** (`diagnostics`, `run_inspections`, `problem_view`, `list_quickfixes`) — each has the same audit-note pattern, making the issue auditable for the eventual API-clarity fix.
 - **No race in 9 consecutive batches.** Sleep mitigation is mature.
+
+---
+
+## Batch 22 — 2026-05-11 (close DB family + structural_search, sonnet)
+
+Tools: `db_list_profiles`, `db_stats`, `structural_search`. Closes the database tool family.
+
+### `db_list_profiles` — commit `c5fe81ad1` — STRONG keep, 102 lines
+
+- Pure config read (no network); gateway tool for the entire `db_*` family. Without it, LLM has to guess profile ids and hits `NotFound` first.
+- Batch 12 merge-rejection rationale (profiles vs databases — different IO models) preserved as audit observation.
+
+### `db_stats` — commit `04e5ca35f` — STRONG keep, 211 lines
+
+- Cross-engine table-size/row-count stats: avoids 4 different engine-specific catalog dialects (PG `pg_stat_user_tables`, MySQL `INFORMATION_SCHEMA.TABLES`, MSSQL `sys.dm_db_partition_stats`, SQLite `PRAGMA page_count`).
+- **🚨 `table` without `schema` is silently ignored** — 4-param design has implicit-scope-by-params trap.
+- **50-table cap with no overflow hint** — LLM doesn't know it's seeing a slice.
+
+### `structural_search` — commit `429c5d0b8` — NORMAL keep / NORMAL drop, 256 lines
+
+#### 🚨 REAL BUG #11 surfaced — Python misroute
+
+`StructuralSearchTool.kt:91`:
+```kotlin
+val specific = registry.forLanguageId(langId)
+if (specific != null) listOf(specific) else allProviders
+```
+
+When `file_type = "python"` AND Python plugin installed: `registry.forLanguageId("Python")` returns `PythonProvider` (non-null) → `providersToTry = [PythonProvider]`. `PythonProvider.structuralSearch()` always returns null. Result: `"Error: structural search failed — provider returned null"` — misleading generic error instead of "Python SSR not supported."
+
+**Fix:** add a `supportsStructuralSearch()` capability flag to `LanguageIntelligenceProvider` OR check for null before including a provider in `providersToTry`.
+
+#### Other findings
+1. **🚨 `JavaKotlinProvider` hardwires `JavaFileType.INSTANCE` at line 708** — Kotlin patterns run against Java file type regardless of `file_type` param. Kotlin SSR may silently miss Kotlin files.
+2. **Double cap:** provider internal cap of 50, then tool `max_results` (default 20). Effective max is always `min(max_results, 50)`.
+
+### Action items surfaced by Batch 22
+
+- [ ] **🚨 Fix `structural_search` Python misroute** — add `supportsStructuralSearch()` capability check or null-filter providers.
+- [ ] **🚨 Fix `JavaKotlinProvider.structuralSearch()` Kotlin handling** — currently uses `JavaFileType.INSTANCE` for both langs.
+- [ ] Surface `db_stats` 50-table truncation explicitly in result metadata.
+- [ ] Make `db_stats` `table` param require `schema` (currently silent-ignore).
+
+### Cross-cutting observations from Batch 22
+
+- **Real bug count from swarm: 11 defects.** Two new in structural_search (Python misroute + Kotlin file type hardwire).
+- **Database tool family complete.** 6 tools documented (`db_query`, `db_schema`, `db_list_databases`, `db_explain`, `db_list_profiles`, `db_stats`).
+- **No race in 10 consecutive batches.**
