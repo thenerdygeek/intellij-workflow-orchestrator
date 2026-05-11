@@ -57,6 +57,11 @@ class DocumentTool(
         OCR is not available in v1.
 
         Default cap is 200 K characters; oversized documents are truncated with a marker.
+        max_chars is a total output cap, not a page cursor — re-calling read_document with
+        the same path always returns the same prefix. To read subsequent chunks of a long
+        document, pass `offset` (number of characters to skip from the start of the
+        extracted Markdown); the response ends with a continuation hint telling you the
+        next offset to use.
     """.trimIndent()
 
     override val parameters = FunctionParameters(
@@ -67,7 +72,15 @@ class DocumentTool(
             ),
             "max_chars" to ParameterProperty(
                 type = "integer",
-                description = "Override max extracted characters (default 200000).",
+                description = "Total characters returned in this call (default 200000). " +
+                    "Not a page cursor — use `offset` to read subsequent chunks of a longer document.",
+            ),
+            "offset" to ParameterProperty(
+                type = "integer",
+                description = "Number of characters to skip from the start of the extracted Markdown " +
+                    "(default 0). Pair with max_chars to paginate through documents longer than the cap. " +
+                    "The response ends with `[... N more characters available; call read_document(offset=X) " +
+                    "to continue ...]` whenever there is more content past the slice.",
             ),
         ),
         required = listOf("path"),
@@ -120,9 +133,11 @@ class DocumentTool(
                 "through the project root the way read_file does. Always supply an absolute path."
         )
         llmMistake(
-            "Expects page-by-page output and tries to use max_chars=10000 to 'page' through a large PDF, then calls " +
-                "read_document again with the same path expecting the next chunk. The tool has no cursor — it always " +
-                "re-extracts from page 1. Use max_chars to cap total output size, not as a pagination cursor."
+            "Tries to use max_chars=10000 to 'page' through a large PDF and re-calls with the same path expecting " +
+                "the next chunk. max_chars is a total output cap, not a page cursor — re-calling without `offset` " +
+                "always returns the same prefix. To paginate, capture the `offset=N` value from the continuation hint " +
+                "(`[... 12345 more characters available; call read_document(offset=200000) to continue ...]`) and pass " +
+                "it on the next call."
         )
         llmMistake(
             "Calls read_document on a scanned image PDF (no embedded text layer) and interprets the empty or near-empty " +
@@ -148,18 +163,51 @@ class DocumentTool(
                 example("/tmp/build-report.xlsx")
             }
             optional("max_chars", "integer") {
-                llmSeesIt("Override max extracted characters (default 200000).")
+                llmSeesIt(
+                    "Total characters returned in this call (default 200000). " +
+                        "Not a page cursor — use `offset` to read subsequent chunks of a longer document."
+                )
                 humanReadable(
-                    "A hard cap on how many characters of Markdown are returned. Think of it as the 'page limit' " +
-                        "on the extraction — content beyond this cap is replaced with a truncation marker so the LLM " +
-                        "knows there is more. Lowering it keeps the response token-efficient for large documents; " +
-                        "raising it (up to ~500K is reasonable) gives more coverage of very long documents."
+                    "A hard cap on how many characters of Markdown are returned in this call. This is a total " +
+                        "output cap, NOT a page cursor — re-calling read_document with the same path always returns " +
+                        "the same prefix. To read past the cap, pair it with `offset`. Lowering max_chars keeps " +
+                        "the response token-efficient for large documents; raising it (up to ~500K is reasonable) " +
+                        "gives more coverage in a single response."
                 )
                 whenPresent("Extraction halts and inserts a `[... truncated at N chars ...]` marker when this limit is reached.")
                 whenAbsent("Defaults to 200 000 characters — roughly 60-80 pages of dense text or ~50K tokens.")
                 constraint("must be a positive integer; very small values (< 500) may produce a truncation marker before any content arrives")
                 example("50000")
                 example("500000")
+            }
+            optional("offset", "integer") {
+                llmSeesIt(
+                    "Number of characters to skip from the start of the extracted Markdown (default 0). " +
+                        "Pair with max_chars to paginate through documents longer than the cap. " +
+                        "The response ends with `[... N more characters available; call read_document(offset=X) " +
+                        "to continue ...]` whenever there is more content past the slice."
+                )
+                humanReadable(
+                    "The continuation cursor for paging through a long document. On the first call you typically " +
+                        "omit it; if the response ends with a `[... N more characters available; call " +
+                        "read_document(offset=X) ...]` hint, capture X and pass it as `offset` on the next call " +
+                        "to read the next slice. The slice is a pure string offset into the extracted Markdown " +
+                        "(not a PDF page number) — the underlying extractor still re-parses the whole document, " +
+                        "but the LLM sees a fresh window of content rather than the same prefix."
+                )
+                whenPresent(
+                    "Extraction yields the full Markdown up to offset+max_chars, then this tool slices " +
+                        "[offset, offset+max_chars) and appends a continuation hint if any content remains."
+                )
+                whenAbsent("Defaults to 0 — returns the first max_chars characters from the document.")
+                constraint("must be non-negative; negative offsets return an error without re-extracting")
+                constraint(
+                    "when offset >= extracted document length, returns an `[offset N is at or beyond extracted " +
+                        "document length M; end of document reached, no more content to read]` message — NOT an " +
+                        "error. The LLM should stop paging at that point."
+                )
+                example("0")
+                example("200000")
             }
         }
         verdict {
@@ -206,10 +254,12 @@ class DocumentTool(
                 "garbled or reordered text even when the text layer is present."
         )
         downside(
-            "Large documents (> 200K chars, ~60 pages) are silently truncated with a marker. The tool has no " +
-                "pagination cursor — there is no way to read 'the next chunk' without re-extracting from page 1 " +
-                "with a larger max_chars cap. For very large documents this means either accepting truncation or " +
-                "increasing max_chars enough to spill to disk (the 30K auto-spill threshold applies)."
+            "Large documents (> 200K chars, ~60 pages) are truncated at the max_chars boundary on the first call. " +
+                "The `offset` parameter provides a continuation cursor — the response ends with a hint like " +
+                "`[... N more characters available; call read_document(offset=X) to continue ...]` so the LLM can " +
+                "page through the rest. Under the hood every call still re-parses the whole document via Tika " +
+                "(there is no streaming-resume capability), but the LLM sees a fresh content window each time " +
+                "instead of an identical prefix."
         )
         downside(
             "30 s per-call timeout is generous but not infinite — a 500-page PDF with dense Tabula lattice extraction " +
@@ -274,8 +324,31 @@ class DocumentTool(
             null
         }
 
-        // Read timeout per-call from settings (mirrors HttpClientFactory.timeoutsFromSettings).
-        val options = ExtractOptions(maxChars = maxChars, timeoutMs = timeoutMsProvider())
+        val offset: Int = try {
+            params["offset"]?.jsonPrimitive?.int ?: 0
+        } catch (_: Exception) {
+            0
+        }
+
+        if (offset < 0) {
+            return ToolResult(
+                content = "Error: 'offset' must be non-negative (got $offset).",
+                summary = "Error: negative offset",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true,
+            )
+        }
+
+        val outputBudget = maxChars ?: DEFAULT_MAX_CHARS
+        val extractBudget: Int? = if (offset == 0) {
+            maxChars
+        } else {
+            (offset.toLong() + outputBudget.toLong())
+                .coerceAtMost(Int.MAX_VALUE.toLong())
+                .toInt()
+        }
+
+        val options = ExtractOptions(maxChars = extractBudget, timeoutMs = timeoutMsProvider())
         val result = extractor.extract(path, options)
 
         return if (result.isError) {
@@ -286,13 +359,44 @@ class DocumentTool(
                 isError = true,
             )
         } else {
-            val markdown = result.data!!.markdown
-            ToolResult(
-                content = markdown,
-                summary = result.summary,
-                tokenEstimate = TokenEstimator.estimate(markdown),
-                isError = false,
-            )
+            val fullMarkdown = result.data!!.markdown
+            if (offset == 0) {
+                ToolResult(
+                    content = fullMarkdown,
+                    summary = result.summary,
+                    tokenEstimate = TokenEstimator.estimate(fullMarkdown),
+                    isError = false,
+                )
+            } else if (offset >= fullMarkdown.length) {
+                val msg = "[offset $offset is at or beyond extracted document length " +
+                    "${fullMarkdown.length}; end of document reached, no more content to read]"
+                ToolResult(
+                    content = msg,
+                    summary = "End of document reached at offset $offset (length ${fullMarkdown.length})",
+                    tokenEstimate = TokenEstimator.estimate(msg),
+                    isError = false,
+                )
+            } else {
+                val slice = fullMarkdown.substring(offset).take(outputBudget)
+                val consumedEnd = offset + slice.length
+                val remaining = fullMarkdown.length - consumedEnd
+                val content = if (remaining > 0) {
+                    "$slice\n\n[... $remaining more characters available; call read_document(offset=$consumedEnd) to continue ...]"
+                } else {
+                    slice
+                }
+                ToolResult(
+                    content = content,
+                    summary = "${result.summary} (offset=$offset, slice=${slice.length} chars, remaining=$remaining)",
+                    tokenEstimate = TokenEstimator.estimate(content),
+                    isError = false,
+                )
+            }
         }
+    }
+
+    companion object {
+        /** Mirrors `TikaDocumentExtractor.maxCharsProvider` default — the contract the description documents. */
+        private const val DEFAULT_MAX_CHARS = 200_000
     }
 }
