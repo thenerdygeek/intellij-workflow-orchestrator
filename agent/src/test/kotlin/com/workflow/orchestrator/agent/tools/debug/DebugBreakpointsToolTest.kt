@@ -437,6 +437,170 @@ class DebugBreakpointsToolTest {
         )
     }
 
+    // ── Bug 1 — remove_breakpoint must handle breakpoint_id for non-line bps ──
+    //
+    // Exception breakpoints have no file:line anchor. The LLM gets a silent
+    // "No breakpoint found" when trying remove_breakpoint with only file+line
+    // for them. Fix: list_breakpoints now emits an id field (bp-{index}) for
+    // every breakpoint, and remove_breakpoint accepts an optional breakpoint_id
+    // param that bypasses the file+line lookup.
+    //
+    // These tests MUST fail before the fix and pass after.
+
+    @Test
+    fun `remove_breakpoint with breakpoint_id removes exception breakpoint by index`() = runTest {
+        // Arrange: one line bp (index 0) + one exception bp (index 1).
+        val lineBp = mockk<XLineBreakpoint<*>>(relaxed = true).apply {
+            every { fileUrl } returns "file:///proj/src/Foo.java"
+            every { line } returns 9
+            every { isEnabled } returns true
+            every { isTemporary } returns false
+            every { suspendPolicy } returns SuspendPolicy.ALL
+            every { conditionExpression } returns null
+            every { logExpressionObject } returns null
+            every { properties } returns mockk(relaxed = true)
+        }
+
+        val exceptionProps = JavaExceptionBreakpointProperties("java.lang.RuntimeException").apply {
+            NOTIFY_CAUGHT = true
+            NOTIFY_UNCAUGHT = false
+        }
+        val exceptionType = mockk<JavaExceptionBreakpointType>(relaxed = true)
+        val exceptionBp = mockk<XBreakpoint<*>>(relaxed = true).apply {
+            @Suppress("UNCHECKED_CAST")
+            every { type } returns exceptionType as XBreakpointType<XBreakpoint<Nothing>, *>
+            every { isEnabled } returns true
+            every { conditionExpression } returns null
+            every { properties } returns exceptionProps
+        }
+
+        val bpManager = mockk<XBreakpointManager>(relaxed = true)
+        every { bpManager.allBreakpoints } returns arrayOf(lineBp, exceptionBp)
+
+        val xDebuggerManager = mockk<XDebuggerManager>(relaxed = true)
+        every { xDebuggerManager.breakpointManager } returns bpManager
+
+        mockkStatic(XDebuggerManager::class)
+        every { XDebuggerManager.getInstance(project) } returns xDebuggerManager
+
+        // Act: remove by breakpoint_id — the exception bp is at index 1, so id="bp-1".
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "remove_breakpoint")
+                put("breakpoint_id", "bp-1")
+            },
+            project
+        )
+
+        // Assert: success — the exception breakpoint was removed.
+        assertFalse(
+            result.isError,
+            "remove_breakpoint(breakpoint_id='bp-1') must succeed; got: ${result.content}"
+        )
+        assertTrue(
+            result.content.contains("removed", ignoreCase = true),
+            "Success message must mention 'removed'; got: ${result.content}"
+        )
+        // The manager's removeBreakpoint must have been called with the exception bp.
+        io.mockk.verify(exactly = 1) { bpManager.removeBreakpoint(exceptionBp) }
+    }
+
+    @Test
+    fun `remove_breakpoint with unknown breakpoint_id returns error`() = runTest {
+        val bpManager = mockk<XBreakpointManager>(relaxed = true)
+        every { bpManager.allBreakpoints } returns emptyArray()
+
+        val xDebuggerManager = mockk<XDebuggerManager>(relaxed = true)
+        every { xDebuggerManager.breakpointManager } returns bpManager
+
+        mockkStatic(XDebuggerManager::class)
+        every { XDebuggerManager.getInstance(project) } returns xDebuggerManager
+
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "remove_breakpoint")
+                put("breakpoint_id", "bp-99")
+            },
+            project
+        )
+
+        assertTrue(result.isError, "Unknown breakpoint_id must return an error; got: ${result.content}")
+        assertTrue(
+            result.content.contains("bp-99") || result.content.contains("not found", ignoreCase = true),
+            "Error must reference the unknown id or say not found; got: ${result.content}"
+        )
+    }
+
+    @Test
+    fun `list_breakpoints emits id field for every breakpoint`() = runTest {
+        // Arrange: line bp + exception bp.
+        val exceptionProps = JavaExceptionBreakpointProperties("java.io.IOException").apply {
+            NOTIFY_CAUGHT = true
+            NOTIFY_UNCAUGHT = true
+        }
+        val exceptionType = mockk<JavaExceptionBreakpointType>(relaxed = true)
+        val exceptionBp = mockk<XBreakpoint<*>>(relaxed = true).apply {
+            @Suppress("UNCHECKED_CAST")
+            every { type } returns exceptionType as XBreakpointType<XBreakpoint<Nothing>, *>
+            every { isEnabled } returns true
+            every { conditionExpression } returns null
+            every { properties } returns exceptionProps
+        }
+
+        val lineBp = mockk<XLineBreakpoint<*>>(relaxed = true).apply {
+            every { fileUrl } returns "file:///proj/src/Bar.java"
+            every { line } returns 19
+            every { isEnabled } returns true
+            every { isTemporary } returns false
+            every { suspendPolicy } returns SuspendPolicy.ALL
+            every { conditionExpression } returns null
+            every { logExpressionObject } returns null
+            every { properties } returns mockk(relaxed = true)
+        }
+
+        val bpManager = mockk<XBreakpointManager>(relaxed = true)
+        // line bp first (index 0), exception bp second (index 1)
+        every { bpManager.allBreakpoints } returns arrayOf(lineBp, exceptionBp)
+
+        val xDebuggerManager = mockk<XDebuggerManager>(relaxed = true)
+        every { xDebuggerManager.breakpointManager } returns bpManager
+
+        mockkStatic(XDebuggerManager::class)
+        every { XDebuggerManager.getInstance(project) } returns xDebuggerManager
+
+        val result = tool.execute(
+            buildJsonObject { put("action", "list_breakpoints") },
+            project
+        )
+
+        assertFalse(result.isError, "list_breakpoints must succeed; got: ${result.content}")
+
+        val content = result.content
+        // Every entry must carry an id that the LLM can pass back to remove_breakpoint.
+        assertTrue(
+            content.contains("id: bp-0"),
+            "First bp must carry 'id: bp-0'; got:\n$content"
+        )
+        assertTrue(
+            content.contains("id: bp-1"),
+            "Second bp must carry 'id: bp-1'; got:\n$content"
+        )
+    }
+
+    @Test
+    fun `parameters schema includes optional breakpoint_id field`() {
+        val bpIdProp = tool.parameters.properties["breakpoint_id"]
+        assertNotNull(
+            bpIdProp,
+            "Schema must declare 'breakpoint_id' parameter for remove_breakpoint"
+        )
+        // Must NOT be in required list — it is optional
+        assertFalse(
+            "breakpoint_id" in (tool.parameters.required ?: emptyList()),
+            "'breakpoint_id' must be optional, not required"
+        )
+    }
+
     // ── Task 11 — C7: canPutBreakpointAt pre-check ──────────────────────────
 
     @Test

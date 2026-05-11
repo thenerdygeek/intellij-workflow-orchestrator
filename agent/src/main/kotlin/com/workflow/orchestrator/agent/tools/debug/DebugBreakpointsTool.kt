@@ -76,8 +76,8 @@ Actions:
 - method_breakpoint(class_name, method_name, watch_entry?, watch_exit?) → Add method breakpoint
 - exception_breakpoint(exception_class, caught?, uncaught?, condition?) → Break on exception
 - field_watchpoint(class_name, field_name, file?, watch_read?, watch_write?) → Watch field access/modification
-- remove_breakpoint(file, line) → Remove breakpoint at file:line
-- list_breakpoints(file?) → List all breakpoints (line, method, exception, field), optionally filtered by file
+- remove_breakpoint(breakpoint_id?, file?, line?) → Remove a breakpoint. Use breakpoint_id (from list_breakpoints) to remove any type including exception/method/field. Falls back to file+line for line breakpoints only.
+- list_breakpoints(file?) → List all breakpoints (line, method, exception, field) with their ids, optionally filtered by file
 - attach_to_process(port, host?, name?) → Attach debugger to remote JVM. Target must be listening on the JDWP port.
 
 All breakpoint actions modify IDE state. attach_to_process creates a debug session.
@@ -175,6 +175,11 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
                 type = "string",
                 description = "Display name for the debug configuration — for attach_to_process"
             ),
+            "breakpoint_id" to ParameterProperty(
+                type = "string",
+                description = "Breakpoint id from list_breakpoints output (e.g. 'bp-0') — for remove_breakpoint. " +
+                    "Removes any breakpoint type including exception, method, and field watchpoints that have no file:line anchor."
+            ),
         ),
         required = listOf("action")
     )
@@ -214,10 +219,10 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
             "the nearest executable statement."
         )
         llmMistake(
-            "Uses remove_breakpoint to clear a method breakpoint or exception breakpoint. " +
-            "remove_breakpoint only matches XLineBreakpoint entries by file:line. Method and exception " +
-            "breakpoints have no file:line association in the IDE; remove_breakpoint will always return " +
-            "'No breakpoint found' for them. list_breakpoints first to understand what's there."
+            "Tries to remove an exception or method breakpoint using file:line instead of breakpoint_id. " +
+            "Exception breakpoints have no file:line anchor; remove_breakpoint(file=..., line=...) will " +
+            "always return 'No breakpoint found' for them. Use list_breakpoints first to get the 'id: bp-N' " +
+            "value, then call remove_breakpoint(breakpoint_id='bp-N')."
         )
         llmMistake(
             "Passes exception_class as a simple name ('NullPointerException') instead of fully " +
@@ -558,16 +563,19 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
             action("remove_breakpoint") {
                 description {
                     technical(
-                        "Finds and removes an XLineBreakpoint at the given file:line by scanning " +
-                        "bpManager.allBreakpoints.filterIsInstance<XLineBreakpoint<*>>() and matching " +
-                        "on fileUrl + zero-based line. Only removes line-type breakpoints (including " +
-                        "method breakpoints created via addLineBreakpoint). Cannot remove exception " +
-                        "breakpoints (no file:line anchor). Runs in a WriteAction on EDT."
+                        "Two removal paths: (1) breakpoint_id='bp-N' (preferred) — looks up the " +
+                        "breakpoint by its sequential index from bpManager.allBreakpoints.toList() " +
+                        "and removes it via bpManager.removeBreakpoint(). Works for ALL types including " +
+                        "exception, method, and field watchpoints. (2) file+line (legacy) — scans " +
+                        "bpManager.allBreakpoints.filterIsInstance<XLineBreakpoint<*>>() matching on " +
+                        "fileUrl + zero-based line. Only works for line-type breakpoints. Both paths " +
+                        "run in a WriteAction on EDT."
                     )
                     plain(
-                        "Remove a specific breakpoint by saying which file and line it's on. " +
-                        "Works for line breakpoints, method breakpoints, and field watchpoints. " +
-                        "Exception breakpoints cannot be removed this way because they have no line."
+                        "Remove any breakpoint the IDE knows about. For exception, method, or field " +
+                        "watchpoint breakpoints that have no file:line anchor, call list_breakpoints first " +
+                        "to get the 'id: bp-N' value, then pass breakpoint_id='bp-N'. For plain line " +
+                        "breakpoints you may use either breakpoint_id or the legacy file+line form."
                     )
                 }
                 whenLLMUses(
@@ -575,35 +583,49 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
                     "or when a breakpoint is in the wrong place and needs to be repositioned."
                 )
                 params {
-                    required("file", "string") {
+                    optional("breakpoint_id", "string") {
+                        llmSeesIt("Breakpoint id from list_breakpoints output (e.g. 'bp-0') — for remove_breakpoint. Removes any breakpoint type including exception, method, and field watchpoints that have no file:line anchor.")
+                        humanReadable("The 'id: bp-N' value shown in list_breakpoints output. Use this to remove exception/method/field breakpoints that have no file:line anchor.")
+                        whenPresent("Looks up the breakpoint at index N from the full allBreakpoints list and removes it. Index is stable as long as no breakpoints are added/removed between list_breakpoints and this call.")
+                        whenAbsent("Falls back to file+line lookup for line breakpoints.")
+                        example("bp-1")
+                    }
+                    optional("file", "string") {
                         llmSeesIt("File path relative to project or absolute — for add_breakpoint, remove_breakpoint, list_breakpoints, field_watchpoint")
-                        humanReadable("Which file the breakpoint is in. Must match the file used when adding the breakpoint.")
+                        humanReadable("Which file the breakpoint is in. Only used when breakpoint_id is not provided.")
                         whenPresent("Resolved to a VirtualFile; its URL is used to match against bp.fileUrl.")
+                        whenAbsent("Must provide breakpoint_id instead.")
                         example("src/main/kotlin/com/example/UserService.kt")
                     }
-                    required("line", "integer") {
+                    optional("line", "integer") {
                         llmSeesIt("1-based line number — for add_breakpoint, remove_breakpoint")
-                        humanReadable("Which line the breakpoint is on. Must be the exact 1-based line as it was added.")
+                        humanReadable("Which line the breakpoint is on. Only used when breakpoint_id is not provided.")
                         whenPresent("Converted to zero-based for matching against XLineBreakpoint.line.")
+                        whenAbsent("Must provide breakpoint_id instead.")
                         constraint("must be ≥ 1")
                         example("87")
                     }
                 }
-                rejectsParam("condition", "Not relevant to removal — identifies by position only.")
-                rejectsParam("class_name", "Not used by remove_breakpoint — method/exception/watchpoint removal is not supported; only XLineBreakpoints can be removed by file:line.")
-                precondition("a line-type breakpoint must exist at exactly file:line — removal of method/exception breakpoints requires list_breakpoints to identify them and currently has no remove path")
-                onSuccess("Returns 'Breakpoint removed from {file}:{line}'.")
+                rejectsParam("condition", "Not relevant to removal — identifies by id or position only.")
+                precondition("either breakpoint_id OR (file + line) must be provided")
+                precondition("for breakpoint_id: the index must be within range of the current allBreakpoints list")
+                onSuccess("breakpoint_id path: 'Breakpoint removed: {label} (id: {breakpoint_id})'. file:line path: 'Breakpoint removed from {file}:{line}'.")
+                onFailure("breakpoint_id out of range", "Returns error mentioning the id and how many breakpoints exist. Call list_breakpoints again to get fresh ids.")
                 onFailure("no breakpoint at file:line", "Returns 'No breakpoint found at {file}:{line}'. Call list_breakpoints first to see what's actually there.")
                 onFailure("file not found", "Returns 'File not found: {path}'.")
-                example("clean up after debugging") {
+                example("remove exception breakpoint by id") {
+                    param("action", "remove_breakpoint")
+                    param("breakpoint_id", "bp-1")
+                    outcome("Removes the breakpoint at index 1 from list_breakpoints output — works even if it's an exception or method breakpoint with no file:line anchor.")
+                }
+                example("remove line breakpoint by file+line") {
                     param("action", "remove_breakpoint")
                     param("file", "src/main/kotlin/com/example/UserService.kt")
                     param("line", "87")
                     outcome("Breakpoint at UserService.kt:87 removed. The debugger will no longer pause there.")
                 }
                 verdict {
-                    keep("Needed for breakpoint cleanup. Without it, the user has to manually clear agent-set breakpoints after a debug session.", VerdictSeverity.NORMAL)
-                    drop("Cannot remove exception breakpoints or non-line-anchored breakpoints — the tool is incomplete for full breakpoint lifecycle management. A future 'remove by id' action (using breakpoint IDs from list_breakpoints) would be strictly superior.", VerdictSeverity.WEAK)
+                    keep("Essential for breakpoint cleanup. The breakpoint_id path closes the long-standing gap where exception/method breakpoints could not be removed programmatically.", VerdictSeverity.STRONG)
                 }
             }
 
@@ -744,8 +766,9 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
             "now runtime_exec(action=run_config, mode=debug). The KDoc is stale and should be updated."
         )
         observation(
-            "remove_breakpoint cannot remove exception breakpoints or non-line-anchored breakpoints. " +
-            "A future 'remove_breakpoint(id=...)' action reading IDs from list_breakpoints would close this gap."
+            "remove_breakpoint now accepts breakpoint_id='bp-N' (from list_breakpoints) to remove " +
+            "exception, method, and field watchpoint breakpoints that have no file:line anchor. " +
+            "The file:line path is retained for backward compatibility."
         )
         mergeOpportunity(
             "field_watchpoint could be folded into add_breakpoint with a 'type' enum param " +
@@ -759,9 +782,10 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
         related("runtime_exec", Relationship.COMPOSE_WITH, "Use runtime_exec(action=run_config, mode=debug) to launch a run configuration in debug mode — this is the canonical way to start a debug session (replaces the removed start_session action).")
 
         downside(
-            "remove_breakpoint only works on XLineBreakpoints (file:line). Exception breakpoints and " +
-            "non-file-anchored method breakpoints cannot be removed programmatically — the user must " +
-            "clear them via the IDE's Breakpoints dialog."
+            "remove_breakpoint(breakpoint_id=...) index stability: the bp-N id is based on " +
+            "allBreakpoints array order. If any breakpoint is added or removed between the list_breakpoints " +
+            "call and the remove_breakpoint call, indices shift and the wrong breakpoint may be targeted. " +
+            "Always call list_breakpoints immediately before remove_breakpoint when using breakpoint_id."
         )
         downside(
             "exception_breakpoint does not validate the exception class against the classpath. A typo " +
@@ -1204,6 +1228,16 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
     // ── remove_breakpoint ───────────────────────────────────────────────────
 
     private suspend fun executeRemoveBreakpoint(params: JsonObject, project: Project): ToolResult {
+        val breakpointId = params["breakpoint_id"]?.jsonPrimitive?.content
+
+        // If breakpoint_id is provided, look up the breakpoint by index across ALL types.
+        // This is the only way to remove exception/method/field breakpoints that have no
+        // file:line anchor.
+        if (breakpointId != null) {
+            return removeBreakpointById(breakpointId, project)
+        }
+
+        // Fall back to legacy file:line lookup for plain line breakpoints.
         val filePath = params["file"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("file")
         val line = params["line"]?.jsonPrimitive?.intOrNull ?: return ToolValidation.missingParam("line")
 
@@ -1255,6 +1289,74 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
         }
     }
 
+    /**
+     * Remove a breakpoint by its sequential index id (e.g. "bp-0") as emitted by list_breakpoints.
+     * Iterates allBreakpoints() in the same order list_breakpoints uses so the index is stable
+     * between a list_breakpoints call and a subsequent remove_breakpoint(breakpoint_id=...) call,
+     * as long as no breakpoints are added or removed in between.
+     */
+    private suspend fun removeBreakpointById(breakpointId: String, project: Project): ToolResult {
+        val prefix = "bp-"
+        if (!breakpointId.startsWith(prefix)) {
+            return ToolResult(
+                "Invalid breakpoint_id '$breakpointId'. Expected format: 'bp-<index>' as returned by list_breakpoints (e.g. 'bp-0').",
+                "Invalid id",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+        }
+        val index = breakpointId.removePrefix(prefix).toIntOrNull()
+            ?: return ToolResult(
+                "Invalid breakpoint_id '$breakpointId'. Index part is not an integer.",
+                "Invalid id",
+                ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true
+            )
+
+        return try {
+            val bpManager = XDebuggerManager.getInstance(project).breakpointManager
+            val all = bpManager.allBreakpoints.toList()
+            if (index < 0 || index >= all.size) {
+                return ToolResult(
+                    "Breakpoint '$breakpointId' not found. list_breakpoints currently shows ${all.size} breakpoint(s). " +
+                        "Call list_breakpoints again to get fresh ids.",
+                    "Not found",
+                    ToolResult.ERROR_TOKEN_ESTIMATE,
+                    isError = true
+                )
+            }
+            val bp = all[index]
+            val label = breakpointLabel(bp)
+            bpManager.removeBreakpoint(bp)
+            ToolResult(
+                "Breakpoint removed: $label (id: $breakpointId)",
+                "Removed $breakpointId",
+                ToolResult.ERROR_TOKEN_ESTIMATE
+            )
+        } catch (e: Exception) {
+            ToolResult("Error removing breakpoint '$breakpointId': ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+        }
+    }
+
+    /** Short human-readable label for a breakpoint, used in removal confirmation messages. */
+    private fun breakpointLabel(bp: com.intellij.xdebugger.breakpoints.XBreakpoint<*>): String {
+        if (bp is XLineBreakpoint<*>) {
+            val file = bp.fileUrl.substringAfterLast('/')
+            val line = bp.line + 1
+            val props = bp.properties
+            return when {
+                props is JavaMethodBreakpointProperties -> "Method: ${props.myClassPattern}.${props.myMethodName}"
+                props is JavaFieldBreakpointProperties -> "Field: ${props.myClassName}.${props.myFieldName}"
+                else -> "$file:$line"
+            }
+        }
+        val props = bp.properties
+        if (props is JavaExceptionBreakpointProperties) {
+            return "Exception: ${props.myQualifiedName ?: "Any Exception"}"
+        }
+        return bp.type.title ?: bp.type.id
+    }
+
     // ── list_breakpoints ────────────────────────────────────────────────────
 
     private suspend fun executeListBreakpoints(params: JsonObject, project: Project): ToolResult {
@@ -1276,32 +1378,38 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
                 null
             }
 
+            // allBreakpoints() defines the canonical ordering used for bp-{index} ids.
+            // The index assigned here is what remove_breakpoint(breakpoint_id=...) uses to
+            // look up the target. Preserve the array order exactly.
             val allBreakpoints = bpManager.allBreakpoints.toList()
 
-            // Separate breakpoints by type for type-specific formatting
-            val lineBreakpoints = mutableListOf<XLineBreakpoint<*>>()
-            val exceptionBreakpoints = mutableListOf<com.intellij.xdebugger.breakpoints.XBreakpoint<*>>()
-            val otherBreakpoints = mutableListOf<com.intellij.xdebugger.breakpoints.XBreakpoint<*>>()
+            // Classify breakpoints, keeping the global index from allBreakpoints so
+            // remove_breakpoint_by_id can reference the same index.
+            data class IndexedBp(val bp: com.intellij.xdebugger.breakpoints.XBreakpoint<*>, val globalIndex: Int)
 
-            for (bp in allBreakpoints) {
+            val lineBreakpoints = mutableListOf<IndexedBp>()
+            val exceptionBreakpoints = mutableListOf<IndexedBp>()
+            val otherBreakpoints = mutableListOf<IndexedBp>()
+
+            for ((idx, bp) in allBreakpoints.withIndex()) {
                 when {
                     bp is XLineBreakpoint<*> -> {
                         // Line breakpoints include method breakpoints and field watchpoints
                         // (both created via addLineBreakpoint)
                         if (filterFileUrl == null || bp.fileUrl == filterFileUrl) {
-                            lineBreakpoints.add(bp)
+                            lineBreakpoints.add(IndexedBp(bp, idx))
                         }
                     }
                     isJavaExceptionBreakpoint(bp) -> {
                         // Exception breakpoints have no file association — skip file filter
                         if (filterFileUrl == null) {
-                            exceptionBreakpoints.add(bp)
+                            exceptionBreakpoints.add(IndexedBp(bp, idx))
                         }
                     }
                     else -> {
                         // Any other breakpoint type not yet categorized
                         if (filterFileUrl == null) {
-                            otherBreakpoints.add(bp)
+                            otherBreakpoints.add(IndexedBp(bp, idx))
                         }
                     }
                 }
@@ -1315,17 +1423,20 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
 
             val sb = StringBuilder()
             sb.appendLine("Breakpoints ($totalCount):")
+            sb.appendLine("(Use 'id: bp-N' with remove_breakpoint(breakpoint_id=...) to remove any type including exception/method breakpoints.)")
             sb.appendLine()
 
             // Format line breakpoints (includes method breakpoints and field watchpoints)
-            for (bp in lineBreakpoints) {
+            for ((bp, globalIdx) in lineBreakpoints) {
+                bp as XLineBreakpoint<*>
                 val fileName = bp.fileUrl.substringAfterLast('/')
                 val oneBased = bp.line + 1
+                val id = "bp-$globalIdx"
 
                 val props = bp.properties
                 val javaFormatted = formatJavaBreakpointProperties(bp, props)
                 when {
-                    javaFormatted != null -> sb.appendLine(javaFormatted)
+                    javaFormatted != null -> sb.appendLine("$javaFormatted [id: $id]")
                     else -> {
                         // Standard line breakpoint
                         val traits = mutableListOf<String>()
@@ -1336,13 +1447,13 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
                         if (!logExpr.isNullOrBlank()) traits.add("log: $logExpr")
                         if (bp.isTemporary) traits.add("temporary")
                         if (bp.suspendPolicy == SuspendPolicy.NONE) traits.add("non-suspend")
-                        sb.appendLine("$fileName:$oneBased [${traits.joinToString(", ")}]")
+                        sb.appendLine("$fileName:$oneBased [${traits.joinToString(", ")}, id: $id]")
                     }
                 }
             }
 
             // Format exception breakpoints
-            for (bp in exceptionBreakpoints) {
+            for ((bp, globalIdx) in exceptionBreakpoints) {
                 val props = bp.properties
                 val traits = mutableListOf<String>()
                 val exceptionClass: String
@@ -1356,16 +1467,18 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
                 traits.add(if (bp.isEnabled) "enabled" else "disabled")
                 val bpCondition = bp.conditionExpression?.expression
                 if (!bpCondition.isNullOrBlank()) traits.add("conditional: $bpCondition")
-                sb.appendLine("Exception: $exceptionClass [${traits.joinToString(", ")}]")
+                val id = "bp-$globalIdx"
+                sb.appendLine("Exception: $exceptionClass [${traits.joinToString(", ")}, id: $id]")
             }
 
             // Format any other breakpoint types generically
-            for (bp in otherBreakpoints) {
+            for ((bp, globalIdx) in otherBreakpoints) {
                 val traits = mutableListOf<String>()
                 traits.add(if (bp.isEnabled) "enabled" else "disabled")
                 val bpCondition = bp.conditionExpression?.expression
                 if (!bpCondition.isNullOrBlank()) traits.add("conditional: $bpCondition")
-                sb.appendLine("${bp.type.title ?: bp.type.id}: [${traits.joinToString(", ")}]")
+                val id = "bp-$globalIdx"
+                sb.appendLine("${bp.type.title ?: bp.type.id}: [${traits.joinToString(", ")}, id: $id]")
             }
 
             val content = sb.toString().trimEnd()

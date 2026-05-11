@@ -104,4 +104,44 @@ class DebugInspectToolTest {
 
         unmockkStatic(XDebuggerManager::class)
     }
+
+    // ── Bug 2 — drop_frame description must be explicit about PC-only rewind ─
+    //
+    // The action name implies a full rewind, but only the program counter moves.
+    // Locals, fields, and any side effects already produced are NOT undone.
+    // Fix: the `description` field must say "program counter" explicitly, and
+    // `documentation().commonLLMMistakes` must have an entry about state not
+    // being undone.
+    //
+    // These tests MUST fail before the fix and pass after.
+
+    @Test
+    fun `drop_frame description explicitly mentions program counter`() {
+        // The tool-level description string is what the LLM sees. It must contain
+        // "program counter" so the LLM understands the rewind is PC-only.
+        assertTrue(
+            tool.description.contains("program counter", ignoreCase = true),
+            "drop_frame description must contain 'program counter' to signal PC-only semantics; " +
+                "got description:\n${tool.description}"
+        )
+    }
+
+    @Test
+    fun `drop_frame documentation commonLLMMistakes contains state-not-undone entry`() {
+        val doc = tool.documentation()
+        val mistakes = doc.commonLLMMistakes
+        val hasStateNotUndoneEntry = mistakes.any { entry ->
+            (entry.contains("drop_frame", ignoreCase = true) ||
+                entry.contains("side effect", ignoreCase = true)) &&
+                (entry.contains("not undo", ignoreCase = true) ||
+                    entry.contains("NOT undo", ignoreCase = false) ||
+                    entry.contains("state", ignoreCase = true))
+        }
+        assertTrue(
+            hasStateNotUndoneEntry,
+            "documentation().commonLLMMistakes must contain an entry explaining that " +
+                "drop_frame does not undo side effects / state. Entries found:\n" +
+                mistakes.joinToString("\n- ", prefix = "- ")
+        )
+    }
 }

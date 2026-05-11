@@ -64,7 +64,7 @@ Actions:
 - memory_view(class_name, session_id?, max_instances?) [SUSPENDED, Java/Kotlin only, requires canGetInstanceInfo] → Count/inspect live instances
 - hotswap(session_id?, compile_first?) [ANY, Java/Kotlin only] → Hot-reload changed classes
 - force_return(session_id?, return_value?, return_type?) [SUSPENDED, Java/Kotlin only, requires canForceEarlyReturn] → Force method to return immediately
-- drop_frame(session_id?, frame_index?) [SUSPENDED, Java/Kotlin only, requires canPopFrames] → Rewind execution to frame start. Variable state is NOT reset.
+- drop_frame(session_id?, frame_index?) [SUSPENDED, Java/Kotlin only, requires canPopFrames] → Rewinds the program counter to the start of the parent frame. Local variables, fields, and any side effects already produced are NOT undone — only the instruction pointer moves back.
 
 session_id defaults to the active/resolved session. If multiple sessions are open and none is uniquely paused, session_id is required.
 """.trimIndent()
@@ -196,6 +196,13 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
                 "or reset locals. The description says so explicitly but the name implies a full rewind."
         )
         llmMistake(
+            "Expects `drop_frame` to undo side effects (println, log writes, HTTP calls, DB mutations) " +
+                "produced by the frame. It only rewinds the program counter — the instruction pointer " +
+                "moves back to the method entry but state stays mutated. Re-running the frame will " +
+                "execute those side effects a second time, which can leave the application in an " +
+                "inconsistent state."
+        )
+        llmMistake(
             "Passes a bare integer string to `evaluate` expecting it to call a method — e.g. " +
                 "`evaluate(expression='myList.size')` works but `evaluate(expression='myList.size()')` " +
                 "is needed for Java (size is a method, not a property). Kotlin-style property access " +
@@ -221,11 +228,6 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
             "`hotswap` only works for body changes — adding/removing methods, fields, or changing " +
                 "class hierarchy causes the JDWP redefine to fail. Structural changes require a " +
                 "full session restart."
-        )
-        downside(
-            "`drop_frame` does NOT undo side effects (filesystem writes, network calls, DB mutations). " +
-                "It rewinds the program counter only. Misuse can leave the application in a " +
-                "half-executed, inconsistent state."
         )
         downside(
             "`memory_view` requires `canGetInstanceInfo` — not available on remote VMs, some JVM " +
@@ -823,14 +825,15 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
                         "Rewinds the program counter to the start of the method at `frame_index` " +
                             "via `ThreadReference.popFrames()`. Requires `vmProxy.canPopFrames()`. " +
                             "frame_index=0 rewinds the current method; frame_index=1 rewinds to the " +
-                            "caller. IMPORTANT: variable state is NOT reset — locals retain their " +
-                            "last-written values. Side effects are NOT undone. Python sessions are " +
-                            "rejected early."
+                            "caller. IMPORTANT: only the program counter (instruction pointer) moves — " +
+                            "local variables, fields, and any side effects already produced are NOT " +
+                            "undone. Python sessions are rejected early."
                     )
                     plain(
-                        "Like rewinding a video to the start of a scene — execution jumps back to " +
-                            "the beginning of the method, but any side effects it already caused " +
-                            "(writes to files, DB inserts, etc.) are NOT undone. Useful when you " +
+                        "Rewinds the program counter to the start of the current (or parent) frame. " +
+                            "Execution jumps back to the beginning of the method, but any side effects " +
+                            "already produced (writes to files, DB inserts, println, HTTP calls, etc.) " +
+                            "are NOT undone — only the instruction pointer moves back. Useful when you " +
                             "stepped past the interesting line and want to step through it again."
                     )
                 }
