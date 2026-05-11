@@ -1482,6 +1482,7 @@ class AgentLoop(
                     // stalls within the same in-memory session.
                     contextManager.pruneAllNudgePairs(EMPTY_RESPONSE_ERROR)
                     contextManager.addUserMessage(EMPTY_RESPONSE_ERROR)
+                    delay(computeBackoffMs(consecutiveEmpties))
                 }
             }
         }
