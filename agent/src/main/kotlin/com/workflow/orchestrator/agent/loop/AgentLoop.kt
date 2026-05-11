@@ -1124,9 +1124,10 @@ class AgentLoop(
                     }
                     // Use server-provided retry delay if available (ported from Cline's retry.ts),
                     // otherwise fall back to exponential backoff
-                    val delayMs = apiResult.retryAfterMs
-                        ?.coerceAtMost(MAX_RETRY_DELAY_MS)
-                        ?: (INITIAL_RETRY_DELAY_MS * (1L shl (apiRetryCount - 1)))
+                    val delayMs = computeBackoffMs(
+                        attempt = apiRetryCount,
+                        retryAfterMs = apiResult.retryAfterMs,
+                    )
                     val reason = when (apiResult.type) {
                         ErrorType.NETWORK_ERROR -> "Network error"
                         ErrorType.TIMEOUT -> "Request timeout"
