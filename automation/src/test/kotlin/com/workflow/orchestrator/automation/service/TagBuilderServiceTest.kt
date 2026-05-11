@@ -306,6 +306,73 @@ class TagBuilderServiceTest {
     }
 
     @Test
+    fun `detectDockerTag(chainKey) cache hit with no tag falls through to REST and recovers`() = runTest {
+        // Belt-and-suspenders for the "Unique Docker Tag never appears" bug.
+        // BuildMonitor's first BuildLogReady can land in the cache with a partial log
+        // that lacks the tag (publish job's log not yet flushed). The cache-first path
+        // would otherwise return noTagInLog forever. We re-validate via REST so a
+        // subsequent live fetch can recover the tag without requiring "Refresh All Tabs".
+        val cache = com.workflow.orchestrator.core.services.BuildLogCache()
+        val staleEvent = com.workflow.orchestrator.core.events.WorkflowEvent.BuildLogReady(
+            planKey = "CI-PLAN523",
+            buildNumber = 70,
+            resultKey = "CI-PLAN523-70",
+            status = com.workflow.orchestrator.core.events.WorkflowEvent.BuildEventStatus.SUCCESS,
+            logText = "Compiling...\nTests passed.\nDone.",  // no Unique Docker Tag line
+            chainKey = "CI-PLAN523",
+        )
+        cache.put(staleEvent)
+
+        // REST returns the now-flushed log containing the tag
+        coEvery { bambooService.getLatestBuild("CI-PLAN523") } returns ToolResult.success(
+            data = makeBuildResultData(70, "Successful", emptyList(), "CI-PLAN523"),
+            summary = "build found"
+        )
+        coEvery { bambooService.getBuildLog("CI-PLAN523-70") } returns ToolResult.success(
+            data = "Compiling...\nUnique Docker Tag : feature-recovered\nDone.",
+            summary = "log fetched"
+        )
+
+        val serviceWithCache = TagBuilderService(bambooService, buildLogCache = cache)
+        val result = serviceWithCache.detectDockerTag("CI-PLAN523")
+
+        assertTrue(result.detected)
+        assertEquals("feature-recovered", result.tag)
+    }
+
+    @Test
+    fun `detectDockerTag(chainKey) cache hit with no tag and REST also lacks tag returns noTagInLog`() = runTest {
+        // When the cache lacks the tag AND a fresh REST fetch also lacks it, accept
+        // that this build genuinely has no tag (no infinite REST loop).
+        val cache = com.workflow.orchestrator.core.services.BuildLogCache()
+        val cachedEvent = com.workflow.orchestrator.core.events.WorkflowEvent.BuildLogReady(
+            planKey = "CI-PLAN523",
+            buildNumber = 71,
+            resultKey = "CI-PLAN523-71",
+            status = com.workflow.orchestrator.core.events.WorkflowEvent.BuildEventStatus.SUCCESS,
+            logText = "Compiling...\nDone.",
+            chainKey = "CI-PLAN523",
+        )
+        cache.put(cachedEvent)
+
+        coEvery { bambooService.getLatestBuild("CI-PLAN523") } returns ToolResult.success(
+            data = makeBuildResultData(71, "Successful", emptyList(), "CI-PLAN523"),
+            summary = "build found"
+        )
+        coEvery { bambooService.getBuildLog("CI-PLAN523-71") } returns ToolResult.success(
+            data = "Compiling...\nNothing to publish.\nDone.",
+            summary = "log fetched"
+        )
+
+        val serviceWithCache = TagBuilderService(bambooService, buildLogCache = cache)
+        val result = serviceWithCache.detectDockerTag("CI-PLAN523")
+
+        assertFalse(result.detected)
+        assertNull(result.tag)
+        assertTrue(result.reason.contains("CI-PLAN523-71"))
+    }
+
+    @Test
     fun `detectDockerTag(chainKey) cache hit with FAILED build returns buildFailed`() = runTest {
         val cache = com.workflow.orchestrator.core.services.BuildLogCache()
         val failedEvent = com.workflow.orchestrator.core.events.WorkflowEvent.BuildLogReady(

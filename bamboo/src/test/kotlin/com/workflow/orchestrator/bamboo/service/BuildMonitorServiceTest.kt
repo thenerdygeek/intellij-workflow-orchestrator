@@ -229,10 +229,14 @@ class BuildMonitorServiceTest {
     }
 
     @Test
-    fun `pollOnce does not re-fetch log for same build number`() = runTest {
+    fun `pollOnce does not re-fetch log for same build number when first fetch was complete`() = runTest {
         val result = makeResult("Successful", "Finished")
         coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
-        mockJobLogs(job1Log = ApiResult.Success("log"))
+        // Both job logs return Success → fetch is "complete" → no retry
+        mockJobLogs(
+            job1Log = ApiResult.Success("Compiling..."),
+            job2Log = ApiResult.Success("Done.")
+        )
 
         val service = BuildMonitorService(apiClient, eventBus, this)
 
@@ -245,6 +249,46 @@ class BuildMonitorServiceTest {
             expectNoEvents()
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    @Test
+    fun `pollOnce re-fetches log on next poll when previous attempt had a job log error`() = runTest {
+        // Repro for the "Unique Docker Tag never appears" bug: when Bamboo reports
+        // a build as Successful slightly before all job logs are flushed, the per-job
+        // getBuildLog call for the publish job returns an error. The current code
+        // marked the build as fetched anyway, stranding the panel with a tag-less
+        // log forever. Fix: only mark as fetched when every job log returned Success.
+        val result = makeResult("Successful", "Finished")
+        coEvery { apiClient.getLatestResult("PROJ-BUILD", "main") } returns ApiResult.Success(result)
+
+        val service = BuildMonitorService(apiClient, eventBus, this, buildLogCache = buildLogCache)
+
+        // First poll: JOB2 (publish) log fetch fails → log is incomplete
+        mockJobLogs(
+            job1Log = ApiResult.Success("Compiling..."),
+            job2Log = ApiResult.Error(com.workflow.orchestrator.core.model.ErrorType.NETWORK_ERROR, "log not yet flushed")
+        )
+        service.pollOnce("PROJ-BUILD", "main")
+        val firstCached = buildLogCache.getLatest("PROJ-BUILD")
+        assertNotNull(firstCached)
+        assertFalse(firstCached!!.logText.contains("Unique Docker Tag"))
+
+        // Second poll: JOB2 log now succeeds with the tag — must re-emit and overwrite cache
+        mockJobLogs(
+            job1Log = ApiResult.Success("Compiling..."),
+            job2Log = ApiResult.Success("Publishing image\nUnique Docker Tag : feature-late-flush\nDone.")
+        )
+
+        eventBus.events.test {
+            service.pollOnce("PROJ-BUILD", "main")
+            val event = awaitItem() as WorkflowEvent.BuildLogReady
+            assertTrue(event.logText.contains("Unique Docker Tag : feature-late-flush"))
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        val secondCached = buildLogCache.getLatest("PROJ-BUILD")
+        assertNotNull(secondCached)
+        assertTrue(secondCached!!.logText.contains("Unique Docker Tag : feature-late-flush"))
     }
 
     @Test

@@ -300,20 +300,26 @@ class TagBuilderService {
 
         // Cache-first: the Bamboo poller already cached the latest BuildLogReady keyed
         // by chain key. Reuse it to avoid burning a Bamboo round-trip on panel mount.
+        // Only return the cached verdict when it's actionable — a SUCCESS event whose
+        // log lacks the tag line may be a partial fetch (Bamboo flushes job logs after
+        // it flips the build to Successful), so we fall through to a live REST fetch
+        // and recover. This pairs with BuildMonitor's per-job fetch retry to make sure
+        // a single bad first poll can't strand the UI.
         val cached = buildLogCache?.getLatest(chainKey)
         if (cached != null) {
             log.info("[Automation:Tags] Cache hit for chainKey='$chainKey' (build #${cached.buildNumber})")
-            return when (cached.status) {
+            when (cached.status) {
                 com.workflow.orchestrator.core.events.WorkflowEvent.BuildEventStatus.FAILED ->
-                    TagDetectionResult.buildFailed(cached.planKey, cached.buildNumber)
+                    return TagDetectionResult.buildFailed(cached.planKey, cached.buildNumber)
                 com.workflow.orchestrator.core.events.WorkflowEvent.BuildEventStatus.SUCCESS -> {
-                    if (cached.logText.isEmpty()) {
-                        TagDetectionResult.logFetchFailed(cached.resultKey)
-                    } else {
+                    if (cached.logText.isNotEmpty()) {
                         val tag = extractDockerTagFromLog(cached.logText)
-                        if (tag != null) TagDetectionResult.success(tag, cached.resultKey)
-                        else TagDetectionResult.noTagInLog(cached.resultKey)
+                        if (tag != null) return TagDetectionResult.success(tag, cached.resultKey)
+                        log.info("[Automation:Tags] Cached log for $chainKey has no tag — re-validating via REST")
+                    } else {
+                        log.info("[Automation:Tags] Cached log for $chainKey is empty — re-validating via REST")
                     }
+                    // fall through to REST fallback below
                 }
             }
         }
