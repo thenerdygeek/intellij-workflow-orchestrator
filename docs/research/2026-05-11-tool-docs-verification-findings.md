@@ -227,3 +227,38 @@ Patterns observed (B3):
 - **Capability-flag fix coverage is excellent** for PSI tools — `allProviders()` pattern is correctly applied across all 6 PSI navigation tools.
 - **One audit-note premise was factually wrong** (`task_get` claiming `task_update` uses `id`).
 - **One LLM-visible quoted-message-text drift** (`problem_view` quotes the summary instead of the content).
+
+## Batch B4 — 2026-05-12 (ide quality + runtime + misc)
+
+Sub-batches B4.1/B4.2/B4.3 dispatched in parallel.
+
+### B4.1 — ide quality (5 tools)
+
+- **`format_code`, `optimize_imports`, `run_inspections`** — ✅ matches. The §1 cleanup candidate #1 (3-way merge) is correctly documented via `mergeOpportunity` on all three write tools.
+- **`refactor_rename`** — ⚠ minor drift. `params.description.whenPresent` says "Shown verbatim in the user-facing approval gate before the mutation runs" — but `execute()` never reads `params["description"]`. The value is consumed by `AgentLoop`'s pre-dispatch approval gate, not the tool's own body.
+- **`list_quickfixes`** — ⚠ minor drift. CLAUDE.md claims `SpillingWiringTest` pins `list_quickfixes` but the test class has no equivalent assertion (only `run_inspections` is pinned). Source IS wired correctly; just the test contract is missing. Also: `outputConfig` asymmetry undocumented vs `run_inspections` COMMAND cap.
+
+### B4.2 — runtime exec (4 tools)
+
+- **`runtime_exec`, `java_runtime_exec`, `python_runtime_exec`** — ✅ matches. `rerun_failed_tests` post-Phase-5 addition correctly documented in java_runtime_exec.
+- **`java_runtime_exec`** — ⚠ minor drift. Cross-tool `method` param semantics callout is asymmetric: `python_runtime_exec` correctly documents the divergence ("comma-separated in java, pytest -k expression here"), but `java_runtime_exec` does NOT reciprocate.
+- **`coverage`** — 🚨 material drift. Tool is registered via `ToolRegistrationFilter.shouldRegisterCoverageTool` which gates on `edition == ULTIMATE || edition == PROFESSIONAL` — but neither `documentation()` nor CLAUDE.md mentions the edition restriction. On IntelliJ Community even with the Java plugin installed, this tool is NOT available — the doc misleads.
+
+### B4.3 — misc (7 tools)
+
+- **`changelist_shelve`, `project_context`** — ✅ matches.
+- **`endpoints`** — ⚠ minor drift. `summary.technical` lists "Quarkus, Helidon" as supported frameworks, but the LLM-facing `description` drops them behind "and more" — doc claims LLM sees a richer list than schema actually carries.
+- **`background_process`** — ⚠ minor drift. `enumValues` declares 5 values (excluding `list`) but `documentation().actions` includes a 6th `list` action. The LLM may think `action="list"` is invalid. Also: plan-mode blocking (tool is in `WRITE_TOOLS`) is not documented.
+- **`send_stdin`** — ✅ matches.
+- **`render_artifact`** — ⚠ minor drift. `observation` says the suspension mechanism is `suspendCancellableCoroutine` — but `ArtifactResultRegistry` actually uses `CompletableDeferred.await()` (with `withTimeoutOrNull` wrapper). Behavior described correctly; mechanism named wrong.
+- **`ai_review`** — 🚨 material drift. `downside` claims *"FILE_WRITE classification means this tool is blocked in plan mode (plan mode blocks all WRITE_TOOLS)"* — but `ai_review` is **NOT** in `WRITE_TOOLS` (AgentLoop.kt:579-584). The same documentation's `observation` block correctly states this. Internal contradiction; the downside is materially wrong — a code-reviewer persona CAN stage findings in plan mode.
+
+### Batch B4 — totals
+
+**8 tools clean**, **6 minor drifts**, **2 material drifts** across 16 tools.
+
+Patterns observed (B4):
+- **Two material edition/plan-mode gates undocumented or wrong** (coverage edition gate; ai_review plan-mode self-contradiction).
+- **Cross-tool reciprocity gaps** (java_runtime_exec missing the `method` divergence callout that python_runtime_exec already has).
+- **`background_process` enum vs action count** — one of the documented actions isn't in the schema's enum.
+- **Mechanism names drifting** (render_artifact `suspendCancellableCoroutine` vs actual `CompletableDeferred.await`).
