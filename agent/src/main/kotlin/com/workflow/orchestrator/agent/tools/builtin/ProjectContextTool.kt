@@ -10,6 +10,11 @@ import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.agent.tools.integration.ServiceLookup
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.settings.ConnectionSettings
@@ -54,6 +59,156 @@ class ProjectContextTool : AgentTool {
         WorkerType.CODER, WorkerType.REVIEWER,
         WorkerType.ANALYZER, WorkerType.ORCHESTRATOR, WorkerType.TOOLER
     )
+
+    override fun documentation(): ToolDocumentation = toolDoc("project_context") {
+        summary {
+            technical(
+                "Zero-parameter read-only snapshot of the entire project's state: git branch + recent commits + " +
+                "uncommitted changes, open editor files, configured service endpoints and keys (Jira/Bamboo/" +
+                "Bitbucket/Sonar), active Jira ticket, current PR (with commits), latest Bamboo build, " +
+                "Sonar quality gate, and build-system / framework detection (Maven/Gradle, Spring Boot, " +
+                "Quarkus, Kotlin, IntelliJ Plugin, …). Network sections use stale-while-revalidate caching " +
+                "with a 3-second fresh-data window. Uses `runBlockingCancellable` so cancellation propagates."
+            )
+            plain(
+                "Like asking the IDE 'give me the full briefing on this project' — one call and you learn " +
+                "what branch you're on, what's changed, what's open in the editor, which services are wired up, " +
+                "whether the latest build passed, and what tech stack the project uses. " +
+                "Think of it as the morning stand-up report the agent reads before touching anything."
+            )
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.READ_ONLY)
+        counterfactual(
+            "Without `project_context`, the LLM must manually glob build files (`glob_files('**/pom.xml')`, " +
+            "`glob_files('**/build.gradle.kts')`), read each one, run `git status` and `git log` via " +
+            "`run_command`, inspect PluginSettings via other tools, and separately call Bamboo + Sonar + " +
+            "Bitbucket integration tools. That manual route takes 6-12 tool calls, produces inconsistent " +
+            "formatting, misses unsaved editor changes and in-memory VCS state, and is fragile if any single " +
+            "call times out. `project_context` collapses this to one call with stale-while-revalidate " +
+            "fallbacks so partial failures degrade gracefully rather than blocking."
+        )
+        llmMistake(
+            "Expects per-file context (e.g. 'show me the contents of build.gradle') — " +
+            "`project_context` returns a project-level summary, not file contents. " +
+            "Use `read_file` afterwards to get the raw text of a specific file."
+        )
+        llmMistake(
+            "Calls `project_context` repeatedly inside a tight loop to poll build status, " +
+            "triggering repeated network fetches to Bamboo/Sonar. The tool has an in-process " +
+            "`sectionCache` keyed by project path, but repeated calls inside the same session still " +
+            "consume context tokens. For build polling, use `bamboo_builds` directly."
+        )
+        llmMistake(
+            "Assumes all sections are always populated. If Bamboo/Sonar keys are not configured, " +
+            "those sections are omitted entirely — the LLM must not treat an absent section as " +
+            "'build passed' or 'quality gate OK'."
+        )
+        llmMistake(
+            "Treats 'Recent Commits (last 10)' as the full commit history. " +
+            "The tool only fetches the last 10 commits on the current branch via `git log --oneline -10`. " +
+            "For deeper history or cross-branch comparisons, use `run_command git log ...`."
+        )
+        llmMistake(
+            "Uses `project_context` to decide which files to edit without checking whether the reported " +
+            "'Open Files' list is what the user currently has open. The list is a VFS snapshot — it " +
+            "reflects what was open when the tool was called, which may already be stale by the next iteration."
+        )
+        llmMistake(
+            "Interprets the 'Default Target Branch' field as the currently checked-out branch. " +
+            "`Default Target Branch` is the merge target (typically `develop` or `main`) resolved by " +
+            "`DefaultBranchResolver` — it is distinct from `Current Branch`. Confusing them causes " +
+            "the LLM to target the wrong branch when constructing a PR."
+        )
+        verdict {
+            keep(
+                "Acts as a 'mission briefing' that prevents the LLM from making blind assumptions about " +
+                "git state, configured integrations, and build status. A single call replaces 6-12 " +
+                "fragile one-off tool calls and is the canonical preamble before any integration workflow " +
+                "(PR creation, Bamboo trigger, Sonar check, Jira transition). Removing it would force " +
+                "every integration workflow to re-invent the same information-gathering sequence — " +
+                "inconsistently and with no fallback caching.",
+                VerdictSeverity.STRONG,
+            )
+        }
+        related(
+            "build", Relationship.COMPLEMENT,
+            "Use `build` (Gradle/Maven actions) when you need precise dependency graphs or task lists " +
+            "that go beyond the build-system type detection `project_context` provides."
+        )
+        related(
+            "project_structure", Relationship.COMPLEMENT,
+            "Use `project_structure` when you need SDK details, content roots, facets, or module " +
+            "dependency topology that `project_context` only summarises."
+        )
+        related(
+            "glob_files", Relationship.FALLBACK,
+            "Use `glob_files` as a fallback when `project_context` is unavailable (no IDE state) " +
+            "or when you need exact paths to build files beyond what the summary exposes."
+        )
+        related(
+            "bamboo_builds", Relationship.COMPLEMENT,
+            "Use `bamboo_builds` for detailed per-job build log access, test results, or triggering " +
+            "a new build — `project_context` only returns the latest build summary."
+        )
+        related(
+            "sonar", Relationship.COMPLEMENT,
+            "Use `sonar` for per-issue listings, coverage details, or branch quality reports — " +
+            "`project_context` only reports the overall quality gate pass/fail."
+        )
+        related(
+            "bitbucket_pr", Relationship.COMPLEMENT,
+            "Use `bitbucket_pr` for PR mutations (approve, merge, comment) and detailed participant info — " +
+            "`project_context` only shows the current open PR's summary and commits."
+        )
+        downside(
+            "Network sections (PR, Bamboo, Sonar) have a hard 3-second timeout per section. " +
+            "On a slow network or a large Bamboo queue, these sections may return stale cached data " +
+            "or be omitted entirely on the first call (cold cache). The LLM cannot distinguish " +
+            "'build is passing' from 'build section timed out and was omitted'."
+        )
+        downside(
+            "Framework detection is heuristic: it scans build file text for string markers " +
+            "(`spring-boot`, `io.quarkus`, etc.) and optionally reflects into the Maven plugin. " +
+            "A project that puts Spring Boot in a profile or a custom BOM may not be detected. " +
+            "The LLM should treat the framework list as a hint, not a guarantee."
+        )
+        downside(
+            "The tool depends on IntelliJ IDE state: `ChangeListManager`, `FileEditorManager`, " +
+            "`GitRepositoryManager`, `PluginSettings`. If any service is unavailable (e.g. during " +
+            "IDE startup or indexing), that section is silently skipped rather than returning an error. " +
+            "The LLM receives a partial snapshot with no indication of which sections were dropped."
+        )
+        downside(
+            "Uncommitted changes are capped at 30 files; untracked files at 15. In a large " +
+            "working tree, the LLM may miss modified files beyond those caps. " +
+            "The output does include a '... and N more' line, but the LLM cannot see which files were cut."
+        )
+        downside(
+            "Multi-repo output can be verbose. In a project with 4+ repositories, each emitting " +
+            "its own git log, PR, Bamboo, and Sonar sections, the tool output can easily exceed " +
+            "5K tokens. Context budget should be monitored when `project_context` is called in a " +
+            "multi-repo workspace."
+        )
+        observation(
+            "The 3-second network timeout and stale-while-revalidate cache are purely in-process " +
+            "(ConcurrentHashMap). The cache is never invalidated between calls — a build that " +
+            "completes mid-session will only be visible once its 3-second window succeeds. " +
+            "This is intentional for latency, but worth surfacing for debugging unexpected stale data."
+        )
+        observation(
+            "`project_context` is deferred (not in the core tool set sent on every iteration). " +
+            "The LLM must call `tool_search` with keyword 'project_context' or 'context' to activate it. " +
+            "The system prompt's Capabilities section has a one-liner hint pointing here."
+        )
+        mergeOpportunity(
+            "The Bamboo and Sonar summary sections in `project_context` overlap with the single-section " +
+            "outputs of `bamboo_builds(action=build_status)` and `sonar(action=quality_gate)`. " +
+            "They are retained here because the colocation of all signals in one call is the primary " +
+            "value proposition, but if context-token cost becomes a concern, the network sections " +
+            "could be made opt-in via a future `sections` parameter."
+        )
+    }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val sb = StringBuilder()
