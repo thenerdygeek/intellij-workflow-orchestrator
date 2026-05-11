@@ -526,9 +526,11 @@ Tips:
             )
         }
         observation(
-            "The CLAUDE.md docs describe `resume`, `kill`, `send`, and `run_in_background` actions, but NONE of these are exposed as parameters in the source. " +
-            "`cancelAgent(agentId)` exists but is called from the UI Kill button via `AgentController`, not from the LLM. There is no resume, no inter-agent message send, no background-detached spawn. " +
-            "Either the docs are aspirational or these features were removed; one of the two needs to be reconciled."
+            "Historical note: a phantom 5-action LLM API (`spawn`/`resume`/`kill`/`send`/`run_in_background`) " +
+            "was previously described in CLAUDE.md and never existed in source. CLAUDE.md was reconciled in " +
+            "commit 7eb703cca to reflect the actual schema: only `description`, `prompt`, `prompt_2..5`, " +
+            "`agent_type`, and `model` are LLM-callable. `cancelAgent(agentId)` exists in `AgentController` " +
+            "but is wired exclusively to the UI Kill button — no equivalent LLM tool path."
         )
         observation(
             "5 prompt slots inflates the schema by ~10 properties (prompt_2..5 + description_2..5) on a Core tool. If telemetry shows parallel mode is used <5% of the time, this is meaningful budget for a rare path. " +

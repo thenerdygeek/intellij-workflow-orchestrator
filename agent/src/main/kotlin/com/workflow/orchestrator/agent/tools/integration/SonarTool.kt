@@ -1160,7 +1160,7 @@ class SonarTool : AgentTool {
         downside("The `issues` action is hard-capped at 500 results — no paging parameter. Large projects silently truncate.")
         downside("Protected branch names (main, master, develop, release/*, hotfix/*, trunk) in local_analysis are silently redirected; the LLM must read the branch-redirect note in the result to know the published branch name.")
         downside("canChangeStatus=false on security hotspots means the agent cannot mark hotspots reviewed via API — the only remediation path requires code changes and CI re-analysis.")
-        observation("CLAUDE.md documents 13 actions but source has 18: issue_facets, current_user, quality_gates_list, hotspot_detail, and rule are all present in the when-block and enum list but were undercounted. Update CLAUDE.md.")
+        observation("18 actions total — CLAUDE.md was reconciled to 18 in commit 7eb703cca. The 5 actions that historically caused the undercount are: issue_facets, current_user, quality_gates_list, hotspot_detail, and rule.")
         mergeOpportunity("`issues` and `issues_paged` could be unified into one action with an optional `page` param — the current two-action split is a minor schema-budget inefficiency since `issues_paged` is strictly more general.")
         observation("local_analysis is the most complex action (350+ lines): branch resolution, Maven multi-module scoping, ProcessBuilder security, CE-task polling, parallel per-file fan-out, inline rule/hotspot caches, and range-collapse output formatting.")
         verdict {

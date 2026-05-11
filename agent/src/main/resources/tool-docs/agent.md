@@ -36,10 +36,9 @@ The actual parameters are:
 
 That's it. There is `cancelAgent(agentId)` on the class, but it is called from the
 UI Kill button via `AgentController` — the LLM cannot kill agents, send messages, or
-resume detached background workers. Either the docs are aspirational design notes
-that never landed, or these features were removed and the docs weren't updated. The
-documentation block flags this as an `observation` audit note so it doesn't get lost
-again.
+resume detached background workers. CLAUDE.md was reconciled to this reality in
+commit `7eb703cca`; the phantom 5-action API it previously described never existed
+in source.
 
 ## Two modes, one entry point
 
@@ -187,8 +186,11 @@ parallel mode into a separate deferred-tier `agent_parallel` tool would cut the 
 schema by ~10 properties without losing functionality. That call is a WEAK drop on
 the parallel mode specifically — defer until usage data is in.
 
-**The biggest action item is reconciling the docs.** `agent/CLAUDE.md` describes
-`resume`, `kill`, `send`, and `run_in_background` actions that don't exist. Either
-build them (genuine value for long-running background research) or delete the docs.
-The current state — phantom features in the canonical module doc — is the worst of
-both worlds.
+**Historical note (resolved).** CLAUDE.md previously described a phantom
+5-action API (`spawn`/`resume`/`kill`/`send`/`run_in_background`) that never
+existed in source. The doc was reconciled in commit `7eb703cca` to reflect
+the actual schema: the LLM calls `agent` with `description` + `prompt` (and
+optionally `prompt_2..5` for parallel fan-out, `agent_type`, `model`). The
+UI Kill button calls `AgentController.cancelAgent(agentId)` directly — there
+is no equivalent LLM tool path, and building one would still need genuine
+long-running-background motivation before being added.

@@ -328,9 +328,9 @@ Actions and their parameters:
                 "`./gradlew dependencyUpdates` for version-update reports). Slower and noisier.")
 
         observation(
-            "CLAUDE.md lists `build` as an 11-action tool. The actual source has 26 actions " +
-                "(6 Maven + 3 Gradle + 2 IntelliJ module + 4 pip + 5 Poetry + 3 uv + 3 pytest). " +
-                "CLAUDE.md is outdated and should be updated."
+            "26 actions total (6 Maven + 3 Gradle + 2 IntelliJ module + 4 pip + 5 Poetry + 3 uv + 3 pytest). " +
+                "CLAUDE.md was reconciled to 26 in commit 7eb703cca; the historical 11-action count predated " +
+                "the Python ecosystem additions."
         )
         mergeOpportunity(
             "`pip_list`, `poetry_list`, and `uv_list` all return installed package lists with " +

@@ -472,7 +472,7 @@ description optional: for approval dialog on create/modify/delete.
                     }
                 }
                 onSuccess("Returns 'Deleted run configuration '<name>''.")
-                onFailure("name lacks [Agent] prefix", "Returns 'Cannot delete '<name>': only agent-created configurations (containing [Agent] in name) can be deleted. This is a safety constraint to protect user-created configurations.' with isError=true.")
+                onFailure("name lacks [Agent] prefix", "Returns 'Cannot delete '<name>': only agent-created configurations (with name starting with '[Agent]') can be deleted. This is a safety constraint to protect user-created configurations.' with isError=true.")
                 onFailure("configuration not found", "Returns 'Configuration '<name>' not found. Use get_run_configurations to list available configs.' with isError=true.")
                 example("clean up an agent config") {
                     param("action", "delete_run_config")
@@ -1078,7 +1078,7 @@ description optional: for approval dialog on create/modify/delete.
 
         if (!configName.startsWith("[Agent]")) {
             return ToolResult(
-                "Cannot delete '$configName': only agent-created configurations (containing [Agent] in name) can be deleted. " +
+                "Cannot delete '$configName': only agent-created configurations (with name starting with '[Agent]') can be deleted. " +
                     "This is a safety constraint to protect user-created configurations.",
                 "Error: cannot delete non-agent config", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
             )

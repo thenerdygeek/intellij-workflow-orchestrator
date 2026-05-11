@@ -764,9 +764,10 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
         }
 
         observation(
-            "The KDoc comment on the class says '8 actions covering breakpoint CRUD and session lifecycle " +
-            "initiation' but there are only 7 actions. The start_session action was removed — its role is " +
-            "now runtime_exec(action=run_config, mode=debug). The KDoc is stale and should be updated."
+            "Historical note: an 8th `start_session` action existed pre-Phase-5 and was removed. Its role is " +
+            "now `runtime_exec(action=run_config, mode=debug)` — that path goes through the same RunInvocation " +
+            "infrastructure with full readiness detection and port discovery. The KDoc and CLAUDE.md were " +
+            "reconciled to 7 actions in commits a1550c500 and 7eb703cca."
         )
         observation(
             "remove_breakpoint now accepts breakpoint_id='bp-N' (from list_breakpoints) to remove " +

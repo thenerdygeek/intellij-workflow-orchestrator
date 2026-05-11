@@ -668,10 +668,9 @@ description optional: for approval dialog on rerun_failed_jobs/trigger_stage.
             "action-level usage data shows frequent alternation between the two within a single task."
         )
         observation(
-            "Action count discrepancy: source has 10 actions (get_projects, get_plans, get_project_plans, " +
-            "search_plans, get_plan_branches, get_build_variables, get_plan_variables, rerun_failed_jobs, " +
-            "trigger_stage, auto_detect_plan). CLAUDE.md agent module table says '8'. The source is authoritative. " +
-            "CLAUDE.md should be updated to reflect 10 actions."
+            "10 actions (get_projects, get_plans, get_project_plans, search_plans, get_plan_branches, " +
+            "get_build_variables, get_plan_variables, rerun_failed_jobs, trigger_stage, auto_detect_plan). " +
+            "CLAUDE.md was reconciled to 10 in commit 7eb703cca."
         )
         observation(
             "get_build_variables operates on a result_key (3-segment, e.g. PROJ-PLAN-123) — it belongs " +

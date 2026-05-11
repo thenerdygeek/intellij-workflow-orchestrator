@@ -214,9 +214,9 @@ Common optional: repo_name for multi-repo projects. description for approval dia
             "then bitbucket_review.add_inline_comment to annotate a specific line."
         )
         observation(
-            "AUDIT: Split between bitbucket_pr (18 actions) and bitbucket_review (12 actions) was intentional — " +
-            "PR lifecycle ops vs review conversation ops. Total is 30 actions. A merge into a single 'bitbucket_pr' " +
-            "with 30 actions would exceed a sensible meta-tool size (Jira is 17, bamboo_builds is 11). More critically, " +
+            "AUDIT: Split between bitbucket_pr (19 actions) and bitbucket_review (12 actions) was intentional — " +
+            "PR lifecycle ops vs review conversation ops. Total is 31 actions. A merge into a single 'bitbucket_pr' " +
+            "with 31 actions would exceed a sensible meta-tool size (Jira is 17, bamboo_builds is 11). More critically, " +
             "the registration condition is the same for both (Bitbucket URL configured), so there is no conditional " +
             "split reason. The main argument for merging is LLM discoverability (the LLM currently has to know both " +
             "tool names exist); the main argument against is token cost — merging would send ~30 action descriptions " +
