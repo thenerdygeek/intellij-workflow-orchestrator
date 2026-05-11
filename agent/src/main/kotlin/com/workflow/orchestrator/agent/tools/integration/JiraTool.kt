@@ -126,7 +126,8 @@ description optional: for approval dialog on write actions.
             ),
             "type" to ParameterProperty(
                 type = "string",
-                description = "Board type filter: 'scrum' or 'kanban' — for get_boards"
+                description = "Board type filter: 'scrum' or 'kanban' — for get_boards",
+                enumValues = listOf("scrum", "kanban")
             ),
             "name_filter" to ParameterProperty(
                 type = "string",
@@ -146,7 +147,8 @@ description optional: for approval dialog on write actions.
             ),
             "current_user_only" to ParameterProperty(
                 type = "string",
-                description = "Filter to current user's tickets only: 'true' (default) or 'false' — for search_issues"
+                description = "Filter to current user's tickets only: 'true' (default) or 'false' — for search_issues",
+                enumValues = listOf("true", "false")
             ),
             "attachment_id" to ParameterProperty(
                 type = "string",
@@ -167,7 +169,7 @@ description optional: for approval dialog on write actions.
             "include_dev_status" to ParameterProperty(
                 type = "boolean",
                 description = "When true, get_ticket also embeds the full dev panel (branches, PRs, commits, builds, deployments, reviews) " +
-                    "in the response. Default false. Use for broad questions like 'has this been deployed' or 'what\\'s the status of this ticket'."
+                    "in the response. Default false. Use for broad questions like 'has this been deployed' or 'what's the status of this ticket'."
             ),
             "include_remote_links" to ParameterProperty(
                 type = "boolean",

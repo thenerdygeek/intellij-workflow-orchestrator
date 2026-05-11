@@ -15,6 +15,9 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.booleanOrNull
@@ -124,6 +127,288 @@ description optional: for approval dialog on create/modify/delete.
     override val allowedWorkers = setOf(
         WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER, WorkerType.ORCHESTRATOR, WorkerType.TOOLER
     )
+
+    override fun documentation(): ToolDocumentation = toolDoc("runtime_config") {
+        summary {
+            technical("CRUD over IntelliJ's RunManager: list/create/modify/delete RunConfiguration entries across application, spring_boot, junit, gradle, and remote_debug factories. Create/modify use a mix of typed setters (ApplicationConfiguration) and reflection-based setters (Spring Boot, JUnit persistent data fields, Gradle, remote debug PORT/HOST/SERVER_MODE) so the tool can drive config types whose APIs aren't on the compile-time classpath. Per-property failures are collected and reported alongside the success result; delete is gated to [Agent]-prefixed configs only.")
+            plain("Lets the LLM manage the IDE's saved Run/Debug configurations the way a user does via Edit Configurations. Creates a new entry, tweaks env vars or VM options on an existing one, or removes a config the agent created earlier. Agent-created configs are prefixed [Agent] so the tool can never delete a user-owned configuration.")
+        }
+        sideEffect(SideEffectKind.IDE_MUTATION)
+        actions {
+            action("get_run_configurations") {
+                description {
+                    technical("Lists RunManager.allSettings, optionally filtered by type id/displayName substring. Marks the currently selected configuration with [SELECTED] and extracts main class, module, VM options, and redacted env-var keys via reflection.")
+                    plain("'What run configurations exist in this project?' — same content as the run-config dropdown next to the green Run arrow.")
+                }
+                whenLLMUses("Before create/modify/delete to discover existing config names; to find the currently selected configuration; to filter to a specific type (e.g. all Spring Boot configs).")
+                params {
+                    optional("type_filter", "string") {
+                        llmSeesIt("Filter by configuration type — for get_run_configurations")
+                        humanReadable("Restrict the list to one configuration kind.")
+                        whenPresent("Only configs whose type id or display name contains the filter token are returned.")
+                        whenAbsent("All configurations are returned.")
+                        enumValue("application", "spring_boot", "junit", "gradle", "remote_debug")
+                        example("spring_boot")
+                    }
+                }
+                onSuccess("Returns 'Run Configurations (N total):' followed by per-config blocks (name + [SELECTED] marker, Type, optional Main class, Module, VM options, Env vars with redacted values).")
+                onFailure("internal exception", "Returns 'Error listing run configurations: <msg>' with isError=true.")
+                example("list all configs") {
+                    param("action", "get_run_configurations")
+                    outcome("LLM sees every saved run configuration with the selected one marked.")
+                }
+                example("list only Spring Boot configs") {
+                    param("action", "get_run_configurations")
+                    param("type_filter", "spring_boot")
+                    outcome("Returns only Spring Boot configurations.")
+                }
+            }
+            action("create_run_config") {
+                description {
+                    technical("Creates a new RunConfiguration via the type's ConfigurationFactory (resolved by reflection for spring_boot, junit, gradle, remote_debug — only application is direct). The created config name is auto-prefixed with '[Agent] '. Per-type setters apply: ApplicationConfiguration uses typed setters; Spring Boot/Gradle/JUnit use reflection (setMainClassName/setVMParameters/setProgramParameters/setActiveProfiles/JUnit persistent data TEST_OBJECT+MAIN_CLASS_NAME+METHOD_NAME); remote_debug sets PORT/HOST/SERVER_MODE fields. Module is resolved via ModuleManager.findModuleByName. Failures per property are collected and surfaced as warnings in the result rather than aborting the create.")
+                    plain("Builds a brand-new Run/Debug configuration in the IDE. The LLM picks the type (application, Spring Boot, JUnit, Gradle, remote debug) and supplies the relevant fields; the tool wires them in. The new config shows up in the Run dropdown with an [Agent] prefix so it's clearly distinguishable.")
+                }
+                whenLLMUses("To set up a launch configuration the project doesn't have yet — e.g. a Spring Boot run with custom profiles, a JUnit single-test config, a remote-debug attach config — before launching it via runtime_exec.run_config.")
+                params {
+                    required("name", "string") {
+                        llmSeesIt("Configuration name — for create_run_config (auto-prefixed with [Agent]), modify_run_config, delete_run_config")
+                        humanReadable("The configuration's display name. Auto-prefixed with '[Agent] ' on create.")
+                        whenPresent("Used as the new config's name after '[Agent] ' prefix is added.")
+                        constraint("must not collide with an existing config of the same prefixed name")
+                        example("Run UserService Tests")
+                    }
+                    required("type", "string") {
+                        llmSeesIt("Configuration type — for create_run_config")
+                        humanReadable("Which kind of run configuration to create.")
+                        whenPresent("Selects the ConfigurationFactory and per-type setter pipeline.")
+                        enumValue("application", "spring_boot", "junit", "gradle", "remote_debug")
+                        example("spring_boot")
+                    }
+                    optional("main_class", "string") {
+                        llmSeesIt("Fully qualified main class (required for application/spring_boot) — for create_run_config")
+                        humanReadable("Fully qualified class name with a main() method (or @SpringBootApplication).")
+                        whenPresent("Set on the configuration via setMainClassName.")
+                        whenAbsent("Required when type is application or spring_boot — create_run_config returns an error in those cases.")
+                        constraint("required when type is application or spring_boot")
+                        example("com.example.MyApp")
+                    }
+                    optional("test_class", "string") {
+                        llmSeesIt("Fully qualified test class (required for junit) — for create_run_config")
+                        humanReadable("Fully qualified test class name.")
+                        whenPresent("Written into the JUnit configuration's persistent data MAIN_CLASS_NAME field with TEST_OBJECT=class (or method if test_method also set).")
+                        whenAbsent("Required when type is junit — create_run_config returns an error in that case.")
+                        constraint("required when type is junit")
+                        example("com.example.UserServiceTest")
+                    }
+                    optional("test_method", "string") {
+                        llmSeesIt("Specific test method name (junit only) — for create_run_config")
+                        humanReadable("A single test method to run within test_class.")
+                        whenPresent("Writes METHOD_NAME on the JUnit persistent data and flips TEST_OBJECT to method.")
+                        whenAbsent("The whole test_class is run.")
+                        example("testCreateUser")
+                    }
+                    optional("module", "string") {
+                        llmSeesIt("Module name — for create_run_config (auto-detected if omitted)")
+                        humanReadable("Module to bind the configuration to (classpath/working-dir context).")
+                        whenPresent("Resolved via ModuleManager.findModuleByName; failure lists available module names.")
+                        whenAbsent("Module is left at the IDE's default.")
+                        example("myapp.main")
+                    }
+                    optional("env_vars", "object") {
+                        llmSeesIt("Environment variables as key-value pairs — for create_run_config, modify_run_config. In modify_run_config, these are MERGED with existing env vars by default (use replace_env_vars=true for full replacement)")
+                        humanReadable("Environment variables to set on the launched process, as a JSON object of string keys to string values.")
+                        whenPresent("Applied via setEnvs (typed for ApplicationConfiguration, reflective otherwise).")
+                        whenAbsent("No environment variables set on the new config.")
+                        example("""{"SPRING_PROFILES_ACTIVE": "dev", "LOG_LEVEL": "DEBUG"}""")
+                    }
+                    optional("vm_options", "string") {
+                        llmSeesIt("JVM options — for create_run_config, modify_run_config")
+                        humanReadable("JVM arguments passed to the process (heap, system properties, agent flags).")
+                        whenPresent("Set via setVMParameters / setVmParameters / setVmOptions (whichever the config type exposes).")
+                        whenAbsent("No VM options set on the new config (IDE defaults apply).")
+                        example("-Xmx2g -Dspring.profiles.active=dev")
+                    }
+                    optional("program_args", "string") {
+                        llmSeesIt("Program arguments — for create_run_config, modify_run_config")
+                        humanReadable("Arguments passed to main() (or the equivalent entry point).")
+                        whenPresent("Set via setProgramParameters; for Gradle, set via setRawCommandLine.")
+                        whenAbsent("No program arguments set on the new config.")
+                        example("--server.port=9090")
+                    }
+                    optional("working_dir", "string") {
+                        llmSeesIt("Working directory — for create_run_config, modify_run_config")
+                        humanReadable("Directory the process is launched from.")
+                        whenPresent("Set via setWorkingDirectory.")
+                        whenAbsent("Defaults to project.basePath on create.")
+                        example("/path/to/project")
+                    }
+                    optional("active_profiles", "string") {
+                        llmSeesIt("Spring Boot active profiles, comma-separated — for create_run_config, modify_run_config")
+                        humanReadable("Spring Boot active profiles list, comma-separated.")
+                        whenPresent("Set via setActiveProfiles (reflective; Spring Boot configs only).")
+                        whenAbsent("No Spring profiles set explicitly.")
+                        example("dev,local")
+                    }
+                    optional("port", "integer") {
+                        llmSeesIt("Remote debug port (default 5005) — for create_run_config")
+                        humanReadable("Port number for remote_debug configurations.")
+                        whenPresent("Written into the PORT field along with HOST=localhost and SERVER_MODE=false.")
+                        whenAbsent("Defaults to 5005.")
+                        example("5005")
+                    }
+                    optional("description", "string") {
+                        llmSeesIt("Brief description of what this action does and why (shown to user in approval dialog) — for create_run_config, modify_run_config, delete_run_config")
+                        humanReadable("One-line rationale shown to the user in the approval dialog.")
+                        whenPresent("Surfaced in the approval gate so the user knows why the agent is creating this config.")
+                        whenAbsent("Falls back to a generic 'create_run_config <name>' summary in the approval dialog.")
+                        example("Run UserServiceTest in isolation to debug NPE")
+                    }
+                }
+                onSuccess("Returns 'Created run configuration '[Agent] <name>'' with Type, Main class / Test class / Module / VM options / Program args / Env var keys / Active profiles / Debug port as applicable. If some properties failed to apply, a WARNING block lists them but the config is still created.")
+                onFailure("name collides with existing config", "Returns 'Configuration '[Agent] <name>' already exists. Use modify_run_config to update it.' with isError=true.")
+                onFailure("type is application/spring_boot without main_class", "Returns 'Parameter 'main_class' is required for type '<type>'' with isError=true.")
+                onFailure("type=junit without test_class", "Returns 'Parameter 'test_class' is required for type 'junit'' with isError=true.")
+                onFailure("ConfigurationFactory not resolvable (plugin missing)", "Returns 'Could not resolve configuration factory for type '<type>'. The required plugin may not be installed.' with isError=true.")
+                onFailure("type not in enum", "Returns 'Invalid type '<type>'. Must be one of: application, spring_boot, junit, gradle, remote_debug' with isError=true.")
+                example("Spring Boot config with profiles") {
+                    param("action", "create_run_config")
+                    param("name", "Run MyApp Dev")
+                    param("type", "spring_boot")
+                    param("main_class", "com.example.MyApp")
+                    param("active_profiles", "dev,local")
+                    outcome("Creates '[Agent] Run MyApp Dev' as a Spring Boot config with the given profiles.")
+                }
+                example("JUnit single method") {
+                    param("action", "create_run_config")
+                    param("name", "Debug testCreateUser")
+                    param("type", "junit")
+                    param("test_class", "com.example.UserServiceTest")
+                    param("test_method", "testCreateUser")
+                    outcome("Creates '[Agent] Debug testCreateUser' targeted at a single JUnit method.")
+                }
+                example("remote debug attach") {
+                    param("action", "create_run_config")
+                    param("name", "Attach to App")
+                    param("type", "remote_debug")
+                    param("port", "5005")
+                    outcome("Creates '[Agent] Attach to App' with PORT=5005, HOST=localhost, SERVER_MODE=false.")
+                }
+            }
+            action("modify_run_config") {
+                description {
+                    technical("Mutates an existing RunConfiguration's env_vars / vm_options / program_args / working_dir / active_profiles in place. env_vars merge with existing by default (read via getEnvs reflection or typed accessor, then putAll new); replace_env_vars=true replaces entirely. Per-property failures are collected and surfaced. Requires at least one of the modifiable fields. Existing config may be user-owned (not [Agent]-prefixed) — the tool does not gate modify by prefix.")
+                    plain("Tweaks an existing run configuration without recreating it. Add an env var, change VM options, switch profiles. Env vars default to merging with what's there (so the LLM doesn't accidentally erase the user's settings); pass replace_env_vars=true to overwrite the whole set.")
+                }
+                whenLLMUses("To adjust an existing config — turn on a profile, add an env var, raise the heap — without losing the rest of the config's state.")
+                params {
+                    required("name", "string") {
+                        llmSeesIt("Configuration name — for create_run_config (auto-prefixed with [Agent]), modify_run_config, delete_run_config")
+                        humanReadable("Exact name of the configuration to modify (no auto-prefix on modify).")
+                        whenPresent("Looked up via RunManager.findConfigurationByName.")
+                        constraint("must match an existing configuration's exact name")
+                        example("[Agent] Run MyApp Dev")
+                    }
+                    optional("env_vars", "object") {
+                        llmSeesIt("Environment variables as key-value pairs — for create_run_config, modify_run_config. In modify_run_config, these are MERGED with existing env vars by default (use replace_env_vars=true for full replacement)")
+                        humanReadable("Environment variables to merge (default) or replace.")
+                        whenPresent("Merged with existing env_vars unless replace_env_vars=true.")
+                        whenAbsent("Existing env vars are left unchanged.")
+                        example("""{"LOG_LEVEL": "TRACE"}""")
+                    }
+                    optional("replace_env_vars", "boolean") {
+                        llmSeesIt("If true, replace ALL existing env vars instead of merging — for modify_run_config only (default: false)")
+                        humanReadable("Flip merge semantics to full replace.")
+                        whenPresent("If true, env_vars completely replaces the existing env set.")
+                        whenAbsent("Defaults to false — merge.")
+                        example("true")
+                    }
+                    optional("vm_options", "string") {
+                        llmSeesIt("JVM options — for create_run_config, modify_run_config")
+                        humanReadable("New JVM options string (replaces the existing one entirely).")
+                        whenPresent("Set via setVMParameters / setVmParameters / setVmOptions.")
+                        whenAbsent("Existing VM options are left unchanged.")
+                        example("-Xmx4g")
+                    }
+                    optional("program_args", "string") {
+                        llmSeesIt("Program arguments — for create_run_config, modify_run_config")
+                        humanReadable("New program arguments string (replaces the existing one entirely).")
+                        whenPresent("Set via setProgramParameters / setRawCommandLine.")
+                        whenAbsent("Existing program arguments are left unchanged.")
+                        example("--debug")
+                    }
+                    optional("working_dir", "string") {
+                        llmSeesIt("Working directory — for create_run_config, modify_run_config")
+                        humanReadable("New working directory.")
+                        whenPresent("Set via setWorkingDirectory.")
+                        whenAbsent("Existing working directory is left unchanged.")
+                        example("/tmp/run")
+                    }
+                    optional("active_profiles", "string") {
+                        llmSeesIt("Spring Boot active profiles, comma-separated — for create_run_config, modify_run_config")
+                        humanReadable("New Spring Boot active profiles list.")
+                        whenPresent("Set via setActiveProfiles.")
+                        whenAbsent("Existing Spring profiles are left unchanged.")
+                        example("dev,debug")
+                    }
+                    optional("description", "string") {
+                        llmSeesIt("Brief description of what this action does and why (shown to user in approval dialog) — for create_run_config, modify_run_config, delete_run_config")
+                        humanReadable("One-line rationale shown to the user in the approval dialog.")
+                        whenPresent("Surfaced in the approval gate.")
+                        whenAbsent("Falls back to a generic 'modify_run_config <name>' summary in the approval dialog.")
+                        example("Bump heap to 4g to test OOM threshold")
+                    }
+                }
+                precondition("at least one of env_vars, vm_options, program_args, working_dir, active_profiles must be provided")
+                onSuccess("Returns 'Modified configuration '<name>'' with Changes applied summary and the new field values. Warnings listed if any per-property reflection failed.")
+                onFailure("no modifications provided", "Returns 'No modifications specified. Provide at least one of: env_vars, vm_options, program_args, working_dir, active_profiles' with isError=true.")
+                onFailure("configuration not found", "Returns 'Configuration '<name>' not found. Use get_run_configurations to list available configs.' with isError=true.")
+                example("add an env var without losing the others") {
+                    param("action", "modify_run_config")
+                    param("name", "[Agent] Run MyApp Dev")
+                    param("env_vars", """{"LOG_LEVEL": "TRACE"}""")
+                    outcome("Merges LOG_LEVEL=TRACE into the config's existing env vars.")
+                }
+                example("replace all env vars") {
+                    param("action", "modify_run_config")
+                    param("name", "[Agent] Run MyApp Dev")
+                    param("env_vars", """{"SPRING_PROFILES_ACTIVE": "prod"}""")
+                    param("replace_env_vars", "true")
+                    outcome("Wipes existing env vars and sets only SPRING_PROFILES_ACTIVE=prod.")
+                }
+            }
+            action("delete_run_config") {
+                description {
+                    technical("Removes a configuration from RunManager via removeConfiguration. Gated to names starting with '[Agent]' — this is a hard safety constraint to protect user-created configurations from accidental deletion.")
+                    plain("Deletes a run configuration the agent created. Refuses to delete anything that doesn't have an [Agent] prefix so user-owned configs are safe.")
+                }
+                whenLLMUses("After finishing with an agent-created config (e.g. a one-shot JUnit single-method config used during a debug session) or to clean up leftover configs from a previous session.")
+                params {
+                    required("name", "string") {
+                        llmSeesIt("Configuration name — for create_run_config (auto-prefixed with [Agent]), modify_run_config, delete_run_config")
+                        humanReadable("Exact name of the configuration to delete.")
+                        whenPresent("Looked up via RunManager.findConfigurationByName and removed.")
+                        constraint("must start with '[Agent]' — user-owned configs cannot be deleted by this tool")
+                        example("[Agent] Run MyApp Dev")
+                    }
+                    optional("description", "string") {
+                        llmSeesIt("Brief description of what this action does and why (shown to user in approval dialog) — for create_run_config, modify_run_config, delete_run_config")
+                        humanReadable("One-line rationale shown to the user in the approval dialog.")
+                        whenPresent("Surfaced in the approval gate.")
+                        whenAbsent("Falls back to a generic 'delete_run_config <name>' summary in the approval dialog.")
+                        example("Cleaning up one-shot debug config")
+                    }
+                }
+                onSuccess("Returns 'Deleted run configuration '<name>''.")
+                onFailure("name lacks [Agent] prefix", "Returns 'Cannot delete '<name>': only agent-created configurations (containing [Agent] in name) can be deleted. This is a safety constraint to protect user-created configurations.' with isError=true.")
+                onFailure("configuration not found", "Returns 'Configuration '<name>' not found. Use get_run_configurations to list available configs.' with isError=true.")
+                example("clean up an agent config") {
+                    param("action", "delete_run_config")
+                    param("name", "[Agent] Run MyApp Dev")
+                    outcome("Removes the configuration from RunManager.")
+                }
+            }
+        }
+    }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         coroutineContext.ensureActive()

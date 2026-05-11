@@ -37,7 +37,8 @@ class TaskUpdateTool(
             "taskId" to ParameterProperty(type = "string", description = "ID of the task to update."),
             "status" to ParameterProperty(
                 type = "string",
-                description = "New status — one of: pending, in_progress, completed, deleted."
+                description = "New status — one of: pending, in_progress, completed, deleted.",
+                enumValues = listOf("pending", "in_progress", "completed", "deleted")
             ),
             "subject" to ParameterProperty(type = "string", description = "New subject (imperative form)."),
             "description" to ParameterProperty(type = "string", description = "New description."),

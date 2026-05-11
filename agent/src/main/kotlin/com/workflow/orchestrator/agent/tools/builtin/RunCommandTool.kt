@@ -186,16 +186,16 @@ class RunCommandTool(
             }
             optional("timeout", "integer") {
                 llmSeesIt(
-                    "Timeout in seconds. Default: 120. The hard upper bound is configurable in plugin settings " +
+                    "Timeout in seconds. Default: 300. The hard upper bound is configurable in plugin settings " +
                         "(Process Tools → Run-command max timeout); default ceiling is 600 (10 min). Values exceeding " +
                         "the configured ceiling are clamped."
                 )
                 humanReadable(
-                    "How long the command can run before being killed. Defaults to two minutes; the user-configurable " +
+                    "How long the command can run before being killed. Defaults to five minutes; the user-configurable " +
                         "ceiling is ten minutes. For longer-running things use background=true."
                 )
                 whenPresent("Clamped into [1, AgentSettings.runCommandMaxTimeoutMinutes * 60]. Process is force-killed at the limit and partial output is returned with a [TIMEOUT] marker.")
-                whenAbsent("Defaults to 120s.")
+                whenAbsent("Defaults to 300s.")
                 constraint("must be >= 1; values above the configured ceiling clamp silently")
                 example("300")
             }
@@ -456,7 +456,7 @@ class RunCommandTool(
 
     companion object {
         private val LOG = Logger.getInstance(RunCommandTool::class.java)
-        private const val DEFAULT_TIMEOUT_SECONDS = 120L
+        private const val DEFAULT_TIMEOUT_SECONDS = 300L
         // Max is configurable in settings (Process Tools → "Run-command max
         // timeout"). Default: 10 minutes. Read at execution time so changes
         // apply to subsequent tool calls without restarting the session.
@@ -527,7 +527,7 @@ class RunCommandTool(
                 ),
                 "timeout" to ParameterProperty(
                     type = "integer",
-                    description = "Timeout in seconds. Default: 120. The hard upper bound is configurable in plugin settings (Process Tools → Run-command max timeout); default ceiling is 600 (10 min). Values exceeding the configured ceiling are clamped."
+                    description = "Timeout in seconds. Default: 300. The hard upper bound is configurable in plugin settings (Process Tools → Run-command max timeout); default ceiling is 600 (10 min). Values exceeding the configured ceiling are clamped."
                 ),
                 "idle_timeout" to ParameterProperty(
                     type = "integer",
@@ -548,7 +548,7 @@ class RunCommandTool(
                 "on_idle" to ParameterProperty(
                     type = "string",
                     description = "Foreground-only (ignored when background=true). What to do when the process produces no output for idle_timeout seconds. 'notify' (default) emits an inline idle signal with classification and keeps waiting. 'wait' ignores idle entirely and blocks until exit or total timeout.",
-                    enumValues = listOf("wait", "notify")
+                    enumValues = listOf("notify", "wait")
                 )
             )
 

@@ -33,6 +33,9 @@ import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.util.BuildToolExecutableResolver
 import kotlinx.coroutines.CancellableContinuation
@@ -162,6 +165,166 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER, WorkerType.ORCHESTRATOR, WorkerType.TOOLER
     )
     override val outputConfig = ToolOutputConfig.COMMAND
+
+    override fun documentation(): ToolDocumentation = toolDoc("java_runtime_exec") {
+        summary {
+            technical("Java/Kotlin runtime execution meta-tool wrapping IntelliJ's JUnit/TestNG native runner, CompilerManager-driven module compilation, and a failed-tests rerun path. Registered only when the Java plugin is present (ToolRegistrationFilter.shouldRegisterJavaBuildTools). run_tests routes through a native-runner-first / Maven-Gradle-shell-fallback dispatcher with a BuildSystemValidator pre-flight and a per-launch RunInvocation for deterministic disposal.")
+            plain("How the agent runs Java/Kotlin tests and compiles modules without shelling out. It clicks the green Run arrow on JUnit/TestNG tests, compiles a module the way the Build menu would, and reruns only the tests that just failed — using IntelliJ's own machinery so results show up in the Test Results tool window the user is used to seeing.")
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.PROCESS_SPAWN)
+        actions {
+            action("run_tests") {
+                description {
+                    technical("Runs JUnit/TestNG tests for a specific class. Native runner path uses IntelliJ's JUnit configuration + ProgramRunnerUtil; falls back to Maven/Gradle shell when native setup fails or use_native_runner=false. Multi-method via JUnit 5 PATTERNS field; TestNG with 2+ methods auto-routes to shell. Pre-flight BuildSystemValidator catches main-source classes, zero @Test methods, missing settings.gradle entries. RunInvocation guarantees process+listener disposal on every exit path.")
+                    plain("Runs the specified test class (and optionally specific methods inside it). Uses the IDE's real test runner so results appear in the Test Results panel; falls back to `mvn test` / `./gradlew test` if the native runner can't be set up.")
+                }
+                whenLLMUses("To execute a specific JUnit/TestNG test class after writing or fixing tests, to verify a change, or to drive a TDD red-green loop. Use test_finder first if the class name isn't known.")
+                params {
+                    required("class_name", "string") {
+                        llmSeesIt("Fully qualified test class name (required for run_tests — use test_finder to discover classes)")
+                        humanReadable("Fully qualified test class — the one the test runner should target.")
+                        whenPresent("Resolved against the project; module is auto-detected from this class.")
+                        constraint("must be a fully qualified Java/Kotlin class name")
+                        example("com.example.MyServiceTest")
+                    }
+                    optional("method", "string") {
+                        llmSeesIt("Test method name(s) — for run_tests. Single: 'testFoo'. " +
+                            "Multiple methods from the same class in one launch: 'testFoo,testBar,testBaz' " +
+                            "(comma-separated, whitespace around commas is trimmed). JUnit 5 and " +
+                            "Maven/Gradle shell support multi-method natively; TestNG auto-falls back to shell.")
+                        humanReadable("Optional method (or comma-separated methods) to scope the run to. Omit to run the whole class.")
+                        whenPresent("Only the named methods run; multi-method uses JUnit 5 PATTERNS on the native runner, or shell fallback for TestNG.")
+                        whenAbsent("All test methods in the class run.")
+                        constraint("each name must be a bare Java identifier (no '#', '.', whitespace, or ';'); MAX_METHODS_PER_RUN=50")
+                        example("testFoo")
+                        example("testFoo,testBar,testBaz")
+                    }
+                    optional("timeout", "integer") {
+                        llmSeesIt("Seconds before test process is killed (default: 300, max: 900) — for run_tests")
+                        humanReadable("Wall-clock cap on the test run.")
+                        whenPresent("Test process is killed after this many seconds.")
+                        whenAbsent("Defaults to 300s.")
+                        constraint("clamped to [1, 900]")
+                        example("600")
+                    }
+                    optional("use_native_runner", "boolean") {
+                        llmSeesIt("Use IntelliJ native test runner (true) or Maven/Gradle shell (false). Default: true — for run_tests")
+                        humanReadable("Prefer the IDE's JUnit/TestNG runner, or go straight to Maven/Gradle shell.")
+                        whenPresent("If true, native runner is tried first; if false, dispatch goes straight to shell.")
+                        whenAbsent("Defaults to true.")
+                        example("false")
+                    }
+                    optional("description", "string") {
+                        llmSeesIt("Brief description of what this action does and why (shown to user in approval dialog) — for run_tests, compile_module, rerun_failed_tests")
+                        humanReadable("Short reason shown in the user's approval dialog.")
+                        whenPresent("Surfaced in the approval gate so the user sees why the agent wants to run.")
+                        whenAbsent("Approval dialog shows a generic label.")
+                        example("Verify MyServiceTest after refactor")
+                    }
+                }
+                onSuccess("Returns aggregated test output prefixed with a breadcrumb ('Running tests in module: X (Build path: Y, N test methods detected in Z)'); shell fallback parses Surefire/Gradle reports; empty suites return NO_TESTS_FOUND.")
+                onFailure("indexing didn't finish in 60s", "Returns DUMB_MODE — wait and retry shortly.")
+                onFailure("build/compile fails before tests run", "Returns per-file compile errors (path:line:col — message) via formatCompileErrors instead of a bare count.")
+                onFailure("native runner setup fails with use_native_runner=true", "Returns an error explaining the cause and the option to pass use_native_runner=false.")
+                onFailure("invalid method name", "Returns 'Error: invalid method name' with the bad token; nested class methods require class_name to include the outer\$inner path.")
+                example("run a single test method") {
+                    param("action", "run_tests")
+                    param("class_name", "com.example.MyServiceTest")
+                    param("method", "testFoo")
+                    outcome("Runs only testFoo on the IntelliJ JUnit runner; results appear in Test Results.")
+                }
+                example("run several methods in one launch") {
+                    param("action", "run_tests")
+                    param("class_name", "com.example.MyServiceTest")
+                    param("method", "testFoo,testBar,testBaz")
+                    outcome("All three methods run in one JUnit 5 PATTERNS launch; aggregated output returned as a single ToolResult.")
+                }
+            }
+            action("compile_module") {
+                description {
+                    technical("Compiles a module via CompilerManager.make on either a module compile scope (with optional includeDependents) or the whole project compile scope when module is omitted. Wraps in a 120s timeout; errors return per-file messages via formatCompileErrors.")
+                    plain("Triggers IntelliJ's Build for a module — same as Build > Build Module — and reports compile errors per file. Set check_dependents=true to also rebuild what depends on the module.")
+                }
+                whenLLMUses("After editing source in a module to verify it still compiles, or after an upstream module change to catch downstream ABI breakage in dependents.")
+                params {
+                    optional("module", "string") {
+                        llmSeesIt("Module name — for compile_module (compiles entire project if omitted)")
+                        humanReadable("Which module to compile. Omit to compile the entire project.")
+                        whenPresent("Compiles just that module's scope.")
+                        whenAbsent("Compiles the entire project.")
+                        example("myapp.core")
+                    }
+                    optional("check_dependents", "boolean") {
+                        llmSeesIt("When true (and `module` is set), also recompile modules that depend on the target — catches downstream ABI breakage after editing an upstream module. Default: false — for compile_module")
+                        humanReadable("Also recompile modules that depend on the target module.")
+                        whenPresent("Compile scope includes the target plus its dependents.")
+                        whenAbsent("Defaults to false — only the target module is compiled.")
+                        example("true")
+                    }
+                    optional("description", "string") {
+                        llmSeesIt("Brief description of what this action does and why (shown to user in approval dialog) — for run_tests, compile_module, rerun_failed_tests")
+                        humanReadable("Short reason shown in the user's approval dialog.")
+                        whenPresent("Surfaced in the approval gate so the user sees why the agent wants to compile.")
+                        whenAbsent("Approval dialog shows a generic label.")
+                        example("Compile core module after API change")
+                    }
+                }
+                onSuccess("Returns 'Compilation of <target> successful' (with warning count when non-zero), or per-file compile errors via formatCompileErrors when errors > 0.")
+                onFailure("module name does not match any module", "Returns 'Module \\'<name>\\' not found.' with the available module names.")
+                onFailure("compilation aborted", "Returns 'Compilation of <target> was aborted.' with isError=true.")
+                onFailure("compile takes longer than 120s", "Returns 'Compilation timed out after 120 seconds. The build may be stuck.' with isError=true.")
+                example("compile a single module") {
+                    param("action", "compile_module")
+                    param("module", "myapp.core")
+                    outcome("Returns 'Compilation of myapp.core successful: 0 errors.'")
+                }
+                example("compile module and its dependents") {
+                    param("action", "compile_module")
+                    param("module", "myapp.api")
+                    param("check_dependents", "true")
+                    outcome("Compiles myapp.api plus every module that depends on it — surfaces any downstream ABI breakage.")
+                }
+            }
+            action("rerun_failed_tests") {
+                description {
+                    technical("Re-runs only the failed/errored tests from a prior test session. Resolves the most-recent test descriptor via RunContentManager.allDescriptors (or one matching session_id), extracts FAILED/ERROR tests via collectTestResults, then builds a filtered JUnit/TestNG run configuration via reflection (pattern mode for multi-class, class mode for single-class) and launches it through the same RunInvocation path as run_tests.")
+                    plain("The 'Rerun Failed Tests' button — re-runs just the tests that just failed instead of the whole class. Returns a friendly informational message when there's nothing to rerun.")
+                }
+                whenLLMUses("After run_tests reports failures, to iterate quickly on just the failing subset without re-running the whole class.")
+                params {
+                    optional("session_id", "string") {
+                        llmSeesIt("Name or partial name of the prior test session to rerun failures from — for rerun_failed_tests. Defaults to most-recent test session when omitted.")
+                        humanReadable("Which prior test session to rerun. Omit to use the most recent one.")
+                        whenPresent("Selects the test descriptor whose displayName contains this string (case-insensitive).")
+                        whenAbsent("The most-recent test descriptor is used.")
+                        example("MyServiceTest")
+                    }
+                    optional("description", "string") {
+                        llmSeesIt("Brief description of what this action does and why (shown to user in approval dialog) — for run_tests, compile_module, rerun_failed_tests")
+                        humanReadable("Short reason shown in the user's approval dialog.")
+                        whenPresent("Surfaced in the approval gate so the user sees why the agent wants to rerun.")
+                        whenAbsent("Approval dialog shows a generic label.")
+                        example("Rerun failures after fix")
+                    }
+                }
+                onSuccess("Returns aggregated rerun output for the filtered configuration covering only the FAILED/ERROR tests; returns an informational (non-error) result when the prior session had 0 failures.")
+                onFailure("no prior test session", "Returns NO_PRIOR_TEST_SESSION — run run_tests first.")
+                onFailure("session has no test data", "Returns NO_PRIOR_TEST_SESSION with a hint that the session may not be a test run.")
+                onFailure("original run configuration cannot be resolved", "Returns CONFIGURATION_NOT_FOUND listing available configs.")
+                onFailure("indexing didn't finish in 60s", "Returns DUMB_MODE — wait and retry shortly.")
+                example("rerun the most recent failed tests") {
+                    param("action", "rerun_failed_tests")
+                    outcome("Reruns only the FAILED/ERROR tests from the last test session via a filtered [Rerun] configuration.")
+                }
+                example("rerun a specific named session") {
+                    param("action", "rerun_failed_tests")
+                    param("session_id", "MyServiceTest")
+                    outcome("Reruns failures from the descriptor whose name contains 'MyServiceTest'.")
+                }
+            }
+        }
+    }
 
     /** Resolve stream callback for live output. */
     private fun resolveStreamCallback(@Suppress("UNUSED_PARAMETER") project: Project): ((String, String) -> Unit)? {

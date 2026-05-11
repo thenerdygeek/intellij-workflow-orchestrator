@@ -28,7 +28,7 @@ class SearchCodeTool : AgentTool {
         properties = mapOf(
             "pattern" to ParameterProperty(type = "string", description = "The regular expression pattern to search for. Uses standard regex syntax. Literal strings are also accepted and will be auto-escaped if they contain invalid regex."),
             "path" to ParameterProperty(type = "string", description = "The path of the directory to search in (absolute or relative to the project root). May also point under ~/.workflow-orchestrator/ (e.g. agent session tool-output dir) to search spilled output. This directory will be recursively searched. Defaults to project root."),
-            "output_mode" to ParameterProperty(type = "string", description = "Output mode: 'files' (file paths only, default — lightweight for discovery), 'content' (matching lines with surrounding context), 'count' (match counts per file)."),
+            "output_mode" to ParameterProperty(type = "string", description = "Output mode: 'files' (file paths only, default — lightweight for discovery), 'content' (matching lines with surrounding context), 'count' (match counts per file).", enumValues = listOf("files", "content", "count")),
             "file_type" to ParameterProperty(type = "string", description = "File extension filter (e.g., 'kt' for Kotlin files, 'java' for Java files). If not provided, it will search all files."),
             "case_insensitive" to ParameterProperty(type = "boolean", description = "Case-insensitive search. Default: false."),
             "context_lines" to ParameterProperty(type = "integer", description = "Lines of context before and after each match (only for output_mode='content'). Default: 0."),

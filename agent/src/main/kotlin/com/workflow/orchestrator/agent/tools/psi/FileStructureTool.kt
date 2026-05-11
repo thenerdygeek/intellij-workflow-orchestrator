@@ -31,7 +31,8 @@ class FileStructureTool(
             "path" to ParameterProperty(type = "string", description = "Absolute or project-relative file path"),
             "detail" to ParameterProperty(
                 type = "string",
-                description = "Detail level: 'signatures' (default — class/method/field names only), 'full' (includes method bodies, annotations, field initializers), 'minimal' (class names + field/method counts only)"
+                description = "Detail level: 'signatures' (default — class/method/field names only), 'full' (includes method bodies, annotations, field initializers), 'minimal' (class names + field/method counts only)",
+                enumValues = listOf("signatures", "full", "minimal")
             )
         ),
         required = listOf("path")

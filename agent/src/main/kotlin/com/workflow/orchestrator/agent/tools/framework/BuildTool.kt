@@ -117,11 +117,12 @@ Actions and their parameters:
             ),
             "scope" to ParameterProperty(
                 type = "string",
-                description = "Filter by dependency scope (compile, test, runtime, provided) — for maven_dependencies"
+                description = "Filter by dependency scope (compile, test, runtime, provided) — for maven_dependencies",
+                enumValues = listOf("compile", "test", "runtime", "provided")
             ),
             "search" to ParameterProperty(
                 type = "string",
-                description = "Filter by name/value substring — for maven_dependencies, maven_properties, gradle_dependencies, gradle_tasks, gradle_properties"
+                description = "Filter by name/value substring — narrows the listing output for the maven/gradle/pip/poetry/uv listing actions."
             ),
             "artifact" to ParameterProperty(
                 type = "string",
@@ -133,7 +134,8 @@ Actions and their parameters:
             ),
             "configuration" to ParameterProperty(
                 type = "string",
-                description = "Filter by Gradle configuration (implementation, api, testImplementation, etc.) — for gradle_dependencies"
+                description = "Filter by Gradle configuration (implementation, api, testImplementation, etc.) — for gradle_dependencies",
+                enumValues = listOf("implementation", "api", "testImplementation", "runtimeOnly", "compileOnly", "annotationProcessor")
             ),
             "transitive" to ParameterProperty(
                 type = "boolean",
@@ -373,7 +375,7 @@ Actions and their parameters:
                         example("test")
                     }
                     optional("search", "string") {
-                        llmSeesIt("Filter by name/value substring — for maven_dependencies, maven_properties, gradle_dependencies, gradle_tasks, gradle_properties")
+                        llmSeesIt("Filter by name/value substring — narrows the listing output for the maven/gradle/pip/poetry/uv listing actions.")
                         humanReadable("Case-insensitive substring filter applied to dependency groupId:artifactId strings.")
                         whenPresent("Only dependencies whose coordinate contains the search string are returned.")
                         whenAbsent("All dependencies are returned.")
@@ -417,7 +419,7 @@ Actions and their parameters:
                         example("core")
                     }
                     optional("search", "string") {
-                        llmSeesIt("Filter by name/value substring — for maven_dependencies, maven_properties, gradle_dependencies, gradle_tasks, gradle_properties")
+                        llmSeesIt("Filter by name/value substring — narrows the listing output for the maven/gradle/pip/poetry/uv listing actions.")
                         humanReadable("Filters the property list to entries whose key or value contains the substring.")
                         whenPresent("Only matching properties are returned.")
                         whenAbsent("All properties are returned.")
@@ -587,7 +589,7 @@ Actions and their parameters:
                         example("testImplementation")
                     }
                     optional("search", "string") {
-                        llmSeesIt("Filter by name/value substring — for maven_dependencies, maven_properties, gradle_dependencies, gradle_tasks, gradle_properties")
+                        llmSeesIt("Filter by name/value substring — narrows the listing output for the maven/gradle/pip/poetry/uv listing actions.")
                         humanReadable("Case-insensitive substring filter on dependency coordinates.")
                         whenPresent("Only matching dependency lines are returned.")
                         whenAbsent("All dependencies are returned.")
@@ -625,7 +627,7 @@ Actions and their parameters:
                         example("agent")
                     }
                     optional("search", "string") {
-                        llmSeesIt("Filter by name/value substring — for maven_dependencies, maven_properties, gradle_dependencies, gradle_tasks, gradle_properties")
+                        llmSeesIt("Filter by name/value substring — narrows the listing output for the maven/gradle/pip/poetry/uv listing actions.")
                         humanReadable("Filters the task list by name or description substring.")
                         whenPresent("Only matching tasks are returned.")
                         whenAbsent("All tasks are returned.")
@@ -661,7 +663,7 @@ Actions and their parameters:
                         example("agent")
                     }
                     optional("search", "string") {
-                        llmSeesIt("Filter by name/value substring — for maven_dependencies, maven_properties, gradle_dependencies, gradle_tasks, gradle_properties")
+                        llmSeesIt("Filter by name/value substring — narrows the listing output for the maven/gradle/pip/poetry/uv listing actions.")
                         humanReadable("Filters to properties whose key or value contains the substring.")
                         whenPresent("Only matching properties are returned.")
                         whenAbsent("All properties are returned.")
@@ -768,7 +770,7 @@ Actions and their parameters:
                 whenLLMUses("When the LLM needs to check which Python packages are installed — e.g., to verify `requests` is available before importing it, or to find the installed version of `django`.")
                 params {
                     optional("search", "string") {
-                        llmSeesIt("Filter by name/value substring — for pip_list")
+                        llmSeesIt("Filter by name/value substring — narrows the listing output for the maven/gradle/pip/poetry/uv listing actions.")
                         humanReadable("Filters the package list by name substring (case-insensitive).")
                         whenPresent("Only packages whose name contains the search string are returned.")
                         whenAbsent("All installed packages are listed.")
@@ -841,7 +843,7 @@ Actions and their parameters:
                 whenLLMUses("When the LLM needs to understand what a Python project explicitly declares as its dependencies — distinct from pip_list which shows what's currently installed.")
                 params {
                     optional("search", "string") {
-                        llmSeesIt("Filter by name/value substring — for pip_dependencies")
+                        llmSeesIt("Filter by name/value substring — narrows the listing output for the maven/gradle/pip/poetry/uv listing actions.")
                         humanReadable("Filters the declared dependency list by name substring.")
                         whenPresent("Only declared dependencies matching the substring are returned.")
                         whenAbsent("All declared dependencies are returned.")
@@ -869,7 +871,7 @@ Actions and their parameters:
                 whenLLMUses("When the LLM is working in a Poetry project and needs to check installed packages — analogous to pip_list for Poetry environments.")
                 params {
                     optional("search", "string") {
-                        llmSeesIt("Filter by name/value substring — for poetry_list")
+                        llmSeesIt("Filter by name/value substring — narrows the listing output for the maven/gradle/pip/poetry/uv listing actions.")
                         humanReadable("Filters the package list by name substring.")
                         whenPresent("Only packages whose name contains the search string are returned.")
                         whenAbsent("All packages are returned.")
@@ -976,7 +978,7 @@ Actions and their parameters:
                 whenLLMUses("When the LLM is working in a uv-managed Python project and needs to check installed packages.")
                 params {
                     optional("search", "string") {
-                        llmSeesIt("Filter by name/value substring — for uv_list")
+                        llmSeesIt("Filter by name/value substring — narrows the listing output for the maven/gradle/pip/poetry/uv listing actions.")
                         humanReadable("Filters the package list by name substring.")
                         whenPresent("Only packages whose name contains the search string are returned.")
                         whenAbsent("All packages are returned.")

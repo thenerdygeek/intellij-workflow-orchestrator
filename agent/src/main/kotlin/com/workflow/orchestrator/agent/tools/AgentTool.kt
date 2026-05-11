@@ -179,6 +179,7 @@ interface AgentTool {
         val OUTPUT_FILTERABLE_TOOLS = setOf(
             "run_command", "search_code", "git", "sonar",
             "bamboo_builds", "bamboo_plans", "jira", "db_query",
+            "db_explain",
             "bitbucket_pr", "bitbucket_repo",
         )
 

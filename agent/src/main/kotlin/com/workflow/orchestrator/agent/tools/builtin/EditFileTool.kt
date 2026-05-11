@@ -75,7 +75,7 @@ class EditFileTool : AgentTool {
                 example("/Users/me/projects/myrepo/build.gradle")
             }
             required("old_string", "string") {
-                llmSeesIt("The exact text to find in the file. Must match character-for-character including whitespace, indentation, and line endings. Include just enough lines to uniquely match the section that needs to change. If the file content came from read_file with line numbers (e.g., '42\\tconst x = 1'), do NOT include the line number prefix — match only the raw file text.")
+                llmSeesIt("The exact text to find in the file. Must match character-for-character including whitespace, indentation, and line endings. Include just enough lines to uniquely match the section that needs to change. If the file content came from read_file with line numbers (e.g., '42\tconst x = 1'), do NOT include the line number prefix — match only the raw file text.")
                 humanReadable("The exact bytes you want replaced — copied verbatim from what `read_file` showed (without the `N\\t` line-number prefix). The matcher uses `String.indexOf` — there is no whitespace tolerance, no fuzzy matching, and no re-indentation. If a single character differs, the match fails with 0 occurrences.")
                 whenPresent("The file is searched for this exact byte sequence. Found exactly once: edit proceeds. Found zero times: error 'old_string not found'. Found 2+ times with `replace_all=false`: error 'old_string not unique'.")
                 constraint("character-for-character literal match — whitespace, tabs, CRLF/LF line endings all matter")

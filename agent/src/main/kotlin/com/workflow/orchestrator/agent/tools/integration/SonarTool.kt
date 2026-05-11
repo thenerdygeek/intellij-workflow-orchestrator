@@ -1274,7 +1274,8 @@ Common optional: repo_name for multi-repo projects.
             ),
             "min_severity" to ParameterProperty(
                 type = "string",
-                description = "Minimum issue severity to surface in output (BLOCKER | CRITICAL | MAJOR | MINOR | INFO). Lower-severity issues are dropped. Default: INFO (no filter) — for local_analysis"
+                description = "Minimum issue severity to surface in output (BLOCKER | CRITICAL | MAJOR | MINOR | INFO). Lower-severity issues are dropped. Default: INFO (no filter) — for local_analysis",
+                enumValues = listOf("BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO")
             ),
             "rule_key" to ParameterProperty(
                 type = "string",

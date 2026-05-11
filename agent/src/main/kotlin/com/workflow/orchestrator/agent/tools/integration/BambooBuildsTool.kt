@@ -383,7 +383,7 @@ description optional: for approval dialog on trigger/stop/cancel.
                         example("{\"docker.tag\": \"1.2.3\", \"run.smoke\": \"true\"}")
                     }
                     optional("stages", "array") {
-                        llmSeesIt("Optional list of stage names to run — for trigger_build. Omit to run all stages.")
+                        llmSeesIt("Optional list of stage names to run — for trigger_build. Omit to run all stages (Bamboo default). When provided, Bamboo runs from the first stage in the list forward (REST API limitation: only the first stage is passed). Example: [\"Build\", \"Unit Tests\"] triggers from 'Build' stage onward. Rejected with an error if the list is empty.")
                         humanReadable("Restrict the build to specific stages. Bamboo runs from the first stage in the list forward. Empty list is rejected.")
                         whenPresent("Parsed to a Set<String>; first element passed as stage=<name> with executeAllStages=false to the Bamboo REST queue endpoint.")
                         whenAbsent("All stages run (Bamboo default, executeAllStages=true).")

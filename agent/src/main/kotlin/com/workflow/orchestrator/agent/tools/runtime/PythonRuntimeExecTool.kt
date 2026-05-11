@@ -18,6 +18,11 @@ import com.workflow.orchestrator.agent.tools.TestConsoleUtils
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.agent.tools.framework.build.executePytestRun
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import kotlinx.coroutines.CoroutineScope
@@ -118,6 +123,101 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
     override val allowedWorkers = setOf(
         WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER, WorkerType.ORCHESTRATOR, WorkerType.TOOLER
     )
+
+    override fun documentation(): ToolDocumentation = toolDoc("python_runtime_exec") {
+        summary {
+            technical("Python-specific runtime execution with two actions: run_tests dispatches pytest via PytestNativeLauncher → PyTestConfigurationType (when available) with shell-based executePytestRun as fallback; compile_module byte-compiles .py files under the project root via `python -m py_compile`. Registered only when the Python plugin is present (ToolRegistrationFilter.shouldRegisterPythonBuildTools).")
+            plain("The Python counterpart to java_runtime_exec — runs pytest tests and syntax-checks Python sources. Mirrors java_runtime_exec's action names so the LLM picks the right tool for the IDE without mental gymnastics.")
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.PROCESS_SPAWN)
+        actions {
+            action("run_tests") {
+                description {
+                    technical("Runs pytest. Prefers IntelliJ's PyTestConfigurationType native runner (integrates with the test results pane) and falls back to shell-based executePytestRun when the native config type is unregistered or the AgentService is unavailable. Waits for smart mode (indexing) before dispatch; returns DUMB_MODE if indexing doesn't finish within 60s.")
+                    plain("Runs your pytest tests — either the whole suite, a file/node, or a -k keyword expression to slice across the suite.")
+                }
+                whenLLMUses("To run pytest tests after editing Python sources or to verify a fix against a specific test or marker.")
+                params {
+                    optional("class_name", "string") {
+                        llmSeesIt("Pytest path or node id (e.g. `tests/test_foo.py` or `tests/test_foo.py::test_bar`) — for run_tests. Optional.")
+                        humanReadable("Path or node id pytest should run. Omit to run all tests.")
+                        whenPresent("Passed to pytest as the test target (file path or path::nodeid).")
+                        whenAbsent("Pytest runs the full discovered test suite.")
+                        example("tests/test_api.py")
+                        example("tests/test_api.py::test_login")
+                    }
+                    optional("method", "string") {
+                        llmSeesIt("Pytest -k pattern (keyword expression, not a Python method name) — for run_tests. Single method: 'test_foo'. Multiple methods in one launch (pytest -k boolean): 'test_foo or test_bar or test_baz'. Also supports exclusion: 'test_foo and not slow'. Pytest runs everything matched in a single process and returns an aggregated result.")
+                        humanReadable("Pytest -k keyword expression. Boolean operators (and, or, not) compose multiple tests into one launch.")
+                        whenPresent("Forwarded to pytest as `-k <expression>`; matching tests run in a single process with aggregated results.")
+                        whenAbsent("No keyword filter is applied.")
+                        example("test_login")
+                        example("test_foo or test_bar")
+                    }
+                    optional("markers", "string") {
+                        llmSeesIt("Pytest -m expression (marker expression) — for run_tests")
+                        humanReadable("Pytest -m marker expression to select tests by their @pytest.mark.* tags.")
+                        whenPresent("Forwarded to pytest as `-m <expression>`.")
+                        whenAbsent("No marker filter is applied.")
+                        example("slow or integration")
+                    }
+                    optional("timeout", "integer") {
+                        llmSeesIt("Seconds before test process is killed (default: 300, max: 900) — for run_tests")
+                        humanReadable("How long to let pytest run before killing the process.")
+                        whenPresent("Caps the test run at this many seconds; on timeout, partial test results (if any) are returned with isError=true.")
+                        whenAbsent("Defaults to 300s.")
+                        constraint("clamped to [1, 900]")
+                        example("600")
+                    }
+                    optional("description", "string") {
+                        llmSeesIt("Brief description of what this action does and why (shown to user in approval dialog) — for run_tests, compile_module")
+                        humanReadable("Short explanation surfaced to the user in the approval dialog.")
+                        whenPresent("Displayed verbatim in the approval gate.")
+                        whenAbsent("Approval dialog shows only the action and parameters.")
+                        example("Run login regression tests after auth refactor")
+                    }
+                }
+                onSuccess("Returns aggregated pytest results (pass/fail/error/skip counts plus per-test detail) via interpretTestRoot. Empty suites return NO_TESTS_FOUND; failed runs propagate isError=true.")
+                onFailure("indexing didn't finish in 60s", "Returns DUMB_MODE — retry shortly.")
+                onFailure("timeout", "Returns '[TIMEOUT] pytest timed out after Ns' with partial results when available, isError=true.")
+                onFailure("native runner unavailable", "Falls back transparently to the shell-based executePytestRun.")
+            }
+            action("compile_module") {
+                description {
+                    technical("Walks the target directory (or project base path), filters .py files (excluding venv/.venv/__pycache__/.git/etc.), and invokes `python -m py_compile` via the first available interpreter on PATH (python3, then python). Output >30K is auto-spilled to disk via ToolOutputSpiller.")
+                    plain("Byte-compiles every .py file under a directory to catch SyntaxError without running the code — like a fast syntax sweep before committing.")
+                }
+                whenLLMUses("After bulk edits to Python sources, to check for syntax errors before invoking tests or running the app.")
+                params {
+                    optional("module", "string") {
+                        llmSeesIt("Directory path relative to project root for compile_module (defaults to project root if omitted)")
+                        humanReadable("Directory (relative to project root) to byte-compile. Omit to compile the entire project.")
+                        whenPresent("Resolved against the project base path and validated to stay inside it; all .py files under that directory are compiled.")
+                        whenAbsent("Compiles every .py file under the project base path.")
+                        constraint("must resolve inside the project base path")
+                        example("src/app")
+                    }
+                    optional("description", "string") {
+                        llmSeesIt("Brief description of what this action does and why (shown to user in approval dialog) — for run_tests, compile_module")
+                        humanReadable("Short explanation surfaced to the user in the approval dialog.")
+                        whenPresent("Displayed verbatim in the approval gate.")
+                        whenAbsent("Approval dialog shows only the action and parameters.")
+                        example("Syntax-check api module after import refactor")
+                    }
+                }
+                onSuccess("Returns 'Compilation of <target> successful: N file(s) byte-compiled, 0 errors.' when exit code is 0 and no SyntaxError appears in stderr.")
+                onFailure("syntax / compile error", "Returns 'Compilation of <target> failed (exit code N):' followed by py_compile stderr, isError=true.")
+                onFailure("path escapes project", "Returns 'Error: module path \"<m>\" resolves outside the project directory.' with isError=true.")
+                onFailure("path missing", "Returns 'Error: module path \"<m>\" does not exist.' with isError=true.")
+                onFailure("no .py files", "Returns 'No Python files found under <dir>.' (informational).")
+                onFailure("no interpreter on PATH", "Returns 'Error: no Python interpreter found on PATH (tried python3, python).' with isError=true.")
+            }
+        }
+        related("java_runtime_exec", Relationship.ALTERNATIVE, "Java/Kotlin counterpart — same action names (run_tests, compile_module) for the Java side. Registered only when the Java plugin is present.")
+        related("runtime_exec", Relationship.COMPLEMENT, "Universal observation/launch (get_running_processes, get_run_output, get_test_results, run_config, stop_run_config). Use runtime_exec.get_test_results to re-read results from a previous pytest run.")
+        related("coverage", Relationship.COMPOSE_WITH, "For coverage-instrumented runs, use coverage.run_with_coverage instead of run_tests.")
+    }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         coroutineContext.ensureActive()
