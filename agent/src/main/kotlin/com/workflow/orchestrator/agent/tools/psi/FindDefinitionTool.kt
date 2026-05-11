@@ -49,7 +49,7 @@ class FindDefinitionTool(
         llmMistake("Passes a snake_case identifier when the codebase uses camelCase (or vice versa) — the underlying `findSymbol` lookup is case- and style-sensitive, so `find_user_by_id` returns 'No definition found' even when `findUserById` exists. The LLM then often retries `search_code` blindly instead of fixing the casing.")
         llmMistake("Skips the `class_name` hint on overloaded methods — gets the first match plus a '(N other method(s) with same name)' note, then proceeds as if the first hit is canonical. The disambiguation hint fires only for `PsiMethod`, not for fields or top-level Python functions, so the LLM can silently land on the wrong overload.")
         llmMistake("Calls find_definition during indexing — gets a dumb-mode error and immediately retries without backoff, burning iterations until the index finishes. No internal wait/retry; the LLM should switch to `search_code` or wait one tool-call cycle.")
-        llmMistake("Calls find_definition in a pure-Python project (no Java plugin loaded) — the tool's hardcoded fallback resolves only `JAVA`/`kotlin` providers when no element context is available, so the very first call returns 'no language provider registered' even though `PythonProvider` IS in the registry. See downsides; this is a real registration bug, not LLM misuse.")
+        llmMistake("Calls find_definition in a pure-Python project without passing a file-scoped hint — the no-element-context path now iterates all registered providers via `registry.allProviders()`, so `PythonProvider` is found correctly even when no Java plugin is loaded. If a lookup still returns 'No definition found', the symbol name itself is likely wrong (wrong case, snake_case vs camelCase, etc.).")
         llmMistake("Searches for a Kotlin top-level function or extension function by bare name — `findSymbol` only walks `PsiShortNamesCache.getMethodsByName` (members of classes) and `getFieldsByName`, missing top-level `fun` declarations. The LLM gets 'No definition found' and falls back to `search_code`.")
         params {
             required("symbol", "string") {
@@ -83,7 +83,7 @@ class FindDefinitionTool(
         related("call_hierarchy", Relationship.COMPOSE_WITH, "After find_definition locates a method, call_hierarchy traces who calls it (callers) and what it calls (callees). find_definition → call_hierarchy is the standard 'how is this method wired into the codebase' pipeline.")
         related("find_implementations", Relationship.COMPOSE_WITH, "After find_definition locates an interface or abstract method, find_implementations enumerates concrete subtypes/overrides. Together they answer 'what's the contract and who satisfies it'.")
         related("file_structure", Relationship.ALTERNATIVE, "Use instead when you have a file path and want every declaration in it — no symbol name needed.")
-        downside("Hardcoded `JAVA`/`kotlin` fallback in the no-element-context path means find_definition is effectively unusable in pure-Python projects: the very first call returns 'no language provider registered' even though `PythonProvider` is registered in the registry. Workaround until fixed: drive Python lookups through `search_code`. Fix: iterate `registry.allProviders()` for the fallback or pick by language ID present in the registry.")
+        observation("Bug fixed — no-element-context fallback was `registry.forLanguageId(\"JAVA\") ?: registry.forLanguageId(\"kotlin\")`, which silently skipped `PythonProvider` in pure-Python projects. Switched to `registry.allProviders().firstNotNullOfOrNull { ... }`, matching the canonical pattern used by find_implementations, call_hierarchy, and type_hierarchy. Pure-Python projects now work correctly without a workaround. Surfaced by Phase 5 tool-docs swarm (Batch 2).")
         downside("Returns the FIRST match for ambiguous bare-name lookups — `findSymbol` walks class → `Class#member` → short-names cache and stops on the first hit. For overloaded methods (Java method overloading, Kotlin extension functions on different receivers), the disambiguation note fires only for `PsiMethod` and only via `PsiShortNamesCache.getMethodsByName`. Fields and Python functions get no warning.")
         downside("Requires indexing to be complete — `inSmartMode(project)` defers the read action until smart mode, but the `PsiToolUtils.isDumb(project)` guard at entry returns immediately with a dumb-mode error if indexing is in progress, so the LLM gets a hard fail (not a wait).")
         downside("Kotlin top-level functions and extension functions are not resolved by bare name — `findSymbol` for Java/Kotlin uses `PsiShortNamesCache.getMethodsByName`, which indexes class members only. Workaround: pass the FQN of the containing file class (`FooKt`) or use `search_code`.")
@@ -100,51 +100,52 @@ class FindDefinitionTool(
         val classNameHint = params["class_name"]?.jsonPrimitive?.content
 
         val content = ReadAction.nonBlocking<String> {
-            // Resolve provider from the file context of found symbols, falling back to hardcoded IDs
-            fun resolveProvider(element: com.intellij.psi.PsiElement? = null): com.workflow.orchestrator.agent.ide.LanguageIntelligenceProvider? {
-                // Prefer file-based resolution when we have an element
-                if (element != null) {
-                    val psiFile = element.containingFile
-                    if (psiFile != null) {
-                        registry.forFile(psiFile)?.let { return it }
-                    }
+            // Resolve provider from the file context of a found element (accurate, language-based)
+            fun resolveProviderForElement(element: com.intellij.psi.PsiElement): com.workflow.orchestrator.agent.ide.LanguageIntelligenceProvider? {
+                val psiFile = element.containingFile
+                if (psiFile != null) {
+                    registry.forFile(psiFile)?.let { return it }
                 }
-                // Fall back to hardcoded language IDs when no file context available
-                return registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
+                return null
             }
 
-            val fallbackProvider = resolveProvider()
-                ?: return@nonBlocking "Code intelligence not available — no language provider registered"
+            val allProviders = registry.allProviders()
+            if (allProviders.isEmpty()) {
+                return@nonBlocking "Code intelligence not available — no language provider registered"
+            }
 
             // If class_name hint provided, search within that class first using "class#symbol" syntax
             if (classNameHint != null) {
-                val element = fallbackProvider.findSymbol(project, "$classNameHint#$symbol")
-                if (element != null) {
-                    val provider = resolveProvider(element) ?: fallbackProvider
-                    val info = provider.getDefinitionInfo(element)
+                val (provider, element) = allProviders.firstNotNullOfOrNull { p ->
+                    p.findSymbol(project, "$classNameHint#$symbol")?.let { p to it }
+                } ?: null to null
+                if (element != null && provider != null) {
+                    val resolvedProvider = resolveProviderForElement(element) ?: provider
+                    val info = resolvedProvider.getDefinitionInfo(element)
                     if (info != null) {
                         return@nonBlocking formatDefinitionOutput(element, info, symbol)
                     }
                 }
             }
 
-            // General symbol lookup (handles FQN, Class#method, bare names)
-            val element = fallbackProvider.findSymbol(project, symbol)
-            if (element != null) {
-                val provider = resolveProvider(element) ?: fallbackProvider
-                val info = provider.getDefinitionInfo(element)
-                if (info != null) {
-                    // Check for disambiguation hint
-                    val disambiguationNote = if (element is PsiMethod) {
-                        val scope = GlobalSearchScope.projectScope(project)
-                        val cache = com.intellij.psi.search.PsiShortNamesCache.getInstance(project)
-                        val allMethods = cache.getMethodsByName(element.name, scope)
-                        if (allMethods.size > 1)
-                            "\n\n(${allMethods.size - 1} other method(s) with same name — provide class_name to disambiguate)"
-                        else ""
-                    } else ""
-                    return@nonBlocking formatDefinitionOutput(element, info, symbol) + disambiguationNote
-                }
+            // General symbol lookup (handles FQN, Class#method, bare names) — iterate all providers
+            val (provider, element) = allProviders.firstNotNullOfOrNull { p ->
+                p.findSymbol(project, symbol)?.let { p to it }
+            } ?: return@nonBlocking "No definition found for '$symbol'"
+
+            val resolvedProvider = resolveProviderForElement(element) ?: provider
+            val info = resolvedProvider.getDefinitionInfo(element)
+            if (info != null) {
+                // Check for disambiguation hint
+                val disambiguationNote = if (element is PsiMethod) {
+                    val scope = GlobalSearchScope.projectScope(project)
+                    val cache = com.intellij.psi.search.PsiShortNamesCache.getInstance(project)
+                    val allMethods = cache.getMethodsByName(element.name, scope)
+                    if (allMethods.size > 1)
+                        "\n\n(${allMethods.size - 1} other method(s) with same name — provide class_name to disambiguate)"
+                    else ""
+                } else ""
+                return@nonBlocking formatDefinitionOutput(element, info, symbol) + disambiguationNote
             }
 
             "No definition found for '$symbol'"

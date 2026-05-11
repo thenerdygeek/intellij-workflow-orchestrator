@@ -49,7 +49,7 @@ class FindReferencesTool(
         )
         llmMistake("Confuses the result with `find_definition` output — find_references returns USAGES (excluding the declaration itself, which lives elsewhere in the index), so the LLM sometimes claims 'this method has no callers' when the result is empty, when really the method IS the only thing named `foo` and just isn't called yet. Use find_definition first to confirm the target exists before drawing 'unused' conclusions.")
         llmMistake("Searches an overloaded method by bare name without the `file` hint — the resolver hits `PsiShortNamesCache.getMethodsByName(symbol).firstOrNull()`, which picks WHICHEVER overload the cache returns first. References for the wrong overload come back, and the LLM treats them as canonical. Pass `file` to scope the lookup to the declaring file.")
-        llmMistake("Calls find_references in a pure-Python project — the no-file-context path resolves only `JAVA`/`kotlin` providers (line 152), so even though `PythonProvider` is registered the global lookup goes through the wrong provider. The PsiShortNamesCache fallback may still find Python methods/fields by short name, but the result is incidental, not designed. Pass `file` pointing at a `.py` file and the file-scoped resolver picks `PythonProvider` correctly.")
+        llmMistake("Calls find_references in a pure-Python project without passing `file` — the no-file-context path now iterates all registered providers via `registry.allProviders()`, so `PythonProvider` is found correctly even when no Java plugin is loaded. Passing `file` still provides the most reliable file-scoped disambiguation, but is no longer required for basic symbol resolution in Python projects.")
         llmMistake("Calls find_references during indexing — gets a dumb-mode error from `PsiToolUtils.isDumb(project)` and immediately retries without backoff. No internal wait/retry; the LLM should pause one tool-call cycle or fall back to `search_code`.")
         llmMistake("Sets `context_lines` higher than 3 expecting more context — the value is silently coerced to `0..3` by `coerceIn(0, 3)`. Asking for `context_lines=10` returns the same output as `context_lines=3`, which can mislead the LLM into thinking it's seeing the full surrounding block.")
         llmMistake("Treats the 50-result cap as the true count — output truncation appends `... (showing first 50 of N)` only when `references.size > 50`, but the LLM sometimes drops the footer when summarising and reports '50 references' as the total. The header line `References to '<symbol>' (N total)` is the authoritative count.")
@@ -68,7 +68,7 @@ class FindReferencesTool(
                 llmSeesIt("Optional file path for disambiguation when multiple symbols share the same name")
                 humanReadable("Path to the file that DECLARES the symbol — used to pick the right one when multiple classes/methods share a name across the project. Validated against the project root by `PathValidator.resolveAndValidate` to prevent traversal.")
                 whenPresent("File-scoped resolution runs first: the resolver looks up the provider for that file's language, calls `findSymbol`, and accepts the result only if its containing file matches. Falls through to `(PsiJavaFile).classes.flatMap { methods }.firstOrNull { name == symbol }` for method-by-name within the file. If file-scoped resolution misses, the global path runs anyway — so `file` is a hint, not a hard filter.")
-                whenAbsent("Tool runs the global path: `registry.forLanguageId(\"JAVA\") ?: registry.forLanguageId(\"kotlin\")` (hardcoded fallback, see downsides), then `PsiShortNamesCache` short-name lookup. First hit wins regardless of which file declares it.")
+                whenAbsent("Tool runs the global path: iterates `registry.allProviders()` until one resolves the symbol via `findSymbol`, then falls back to `PsiShortNamesCache` short-name lookup. First hit wins regardless of which file declares it. All registered providers (Java/Kotlin and Python) are tried, so pure-Python projects work correctly.")
                 constraint("must resolve under the project root after `PathValidator.resolveAndValidate` — absolute paths outside the project return a path-error ToolResult before any PSI work runs")
                 example("src/main/kotlin/com/workflow/orchestrator/agent/AgentService.kt")
                 example("src/main/java/com/example/UserRepository.java")
@@ -96,14 +96,14 @@ class FindReferencesTool(
         related("call_hierarchy", Relationship.COMPOSE_WITH, "find_references gives you the flat list of usage sites; call_hierarchy walks the tree of who-calls-who. Use find_references to spot-check 'is this method used at all'; switch to call_hierarchy when you need to follow the chain through wrappers and indirections.")
         related("find_implementations", Relationship.SEE_ALSO, "For interfaces and abstract methods, `find_references` tends to return the implementations and call-through sites; `find_implementations` returns ONLY the concrete subtype/override declarations. Use the latter when you need a clean list of who satisfies a contract.")
         related("refactor_rename", Relationship.COMPOSE_WITH, "Run find_references before refactor_rename to preview the rename's blast radius, then rename. Skipping the preview risks renaming through a misidentified symbol when overloads collide.")
-        downside("Hardcoded `JAVA`/`kotlin` fallback at line 152 (`registry.forLanguageId(\"JAVA\") ?: registry.forLanguageId(\"kotlin\")`) — same bug shape as `find_definition`. In a pure-Python project (no Java plugin loaded), the no-file-context path skips `PythonProvider` entirely even though it IS registered, and falls through to `PsiShortNamesCache`, which returns Python results incidentally rather than by design. Workaround: always pass `file` pointing at a `.py` file, which routes through the file-scoped resolver and picks the correct provider. Fix: iterate `registry.allProviders()` for the global fallback or pick by language ID present in the registry.")
+        observation("Bug fixed — no-file-context global path was `registry.forLanguageId(\"JAVA\") ?: registry.forLanguageId(\"kotlin\")`, which silently skipped `PythonProvider` in pure-Python projects. Switched to `registry.allProviders().firstNotNullOfOrNull { ... }`, matching the canonical pattern used by find_implementations, call_hierarchy, and type_hierarchy. Pure-Python projects now work correctly without needing to pass `file`. Surfaced by Phase 5 tool-docs swarm (Batch 4).")
         downside("Hard 50-result cap with no pagination, sort key, or filter — `references.take(50)` truncates without sorting by file path, line number, or relevance. For a method called 200+ times across the codebase, the LLM sees an arbitrary slice of the first 50 in iteration order and can't widen the search. Workaround: pass a more specific symbol or use `file` to scope, then re-query for the remainder.")
         downside("Does NOT separate import-statement references from real call/use references — `ReferencesSearch.search` returns import references alongside actual usages. For Java/Kotlin classes with many imports and few real call sites, the result is dominated by import lines. The LLM has to filter visually. Workaround: ask the LLM to grep for the symbol name in the result lines, ignoring lines starting with `import`.")
         downside("Slow on large codebases — `ReferencesSearch.findAll()` is index-backed but still walks every file in `GlobalSearchScope.projectScope`. For symbols in large monorepos, expect multi-second latencies; the 120s default tool timeout can be hit on pathological symbols (every PSI element named `equals` / `hashCode` / `toString`).")
         downside("Requires indexing to be complete — `PsiToolUtils.isDumb(project)` guard at entry returns immediately with a dumb-mode error if indexing is in progress; the `inSmartMode(project)` on the read-action only defers WITHIN the action, not the entry check. LLM gets a hard fail and has to retry.")
         downside("File-scoped resolution's class-walk fallback (lines 144-147) only runs for `PsiJavaFile` — Kotlin files, Python files, and any other language with `file` set fall through to the global path even when file-scoped resolution should narrow them. Disambiguation via `file` is therefore most reliable for Java sources.")
         downside("Top-level Kotlin functions / extension functions are not findable by bare name in the no-file-context path — `findSymbol` walks `PsiShortNamesCache.getMethodsByName`, which indexes class members only. Workaround: pass `file` pointing at the containing `.kt` file, which uses provider resolution.")
-        observation("Same `JAVA`/`kotlin` hardcoded-fallback bug as `find_definition` (Batch 2 finding, see commit 6bf719d0). Both tools share the no-file-context resolution shortcut and both should be fixed together by switching to `registry.allProviders()` enumeration. Tracking as a single defect across the PSI tool family — do NOT fix here, log for separate triage.")
+        observation("Hardcoded-fallback bug is now fixed in both find_references and find_definition — both now use `registry.allProviders().firstNotNullOfOrNull` for the no-file-context path. Fixed together in the same commit; consistent with find_implementations, call_hierarchy, and type_hierarchy.")
         observation("`file` parameter does double duty as a path-validation entry point AND a disambiguation hint, but the file-scoped fallback only handles `PsiJavaFile.classes.methods` — non-Java files get path validation but no actual file-scoping benefit. Consider either dropping the Java-only fallback, generalizing it via the provider, or renaming the parameter to signal its Java-leaning behaviour.")
     }
 
@@ -190,8 +190,10 @@ class FindReferencesTool(
 
     /**
      * Resolve the PsiElement to search references for.
-     * Delegates symbol resolution to the language provider when available,
-     * falling back to direct PSI lookup for file-scoped disambiguation.
+     * Delegates symbol resolution to the language provider when available.
+     * When a file path is provided, file-scoped resolution runs first for disambiguation.
+     * Otherwise, iterates all registered providers via [LanguageProviderRegistry.allProviders]
+     * until one resolves the symbol — ensuring Python, Java, and Kotlin projects all work.
      */
     private fun resolveSearchTarget(
         project: Project,
@@ -223,11 +225,10 @@ class FindReferencesTool(
             }
         }
 
-        // Global resolution via provider (fall back to hardcoded language IDs when no file context)
-        val provider = registry.forLanguageId("JAVA") ?: registry.forLanguageId("kotlin")
-        if (provider != null) {
-            provider.findSymbol(project, symbol)?.let { return it }
-        }
+        // Global resolution via all registered providers — iterate until one resolves the symbol
+        registry.allProviders().firstNotNullOfOrNull { p ->
+            p.findSymbol(project, symbol)
+        }?.let { return it }
 
         // Final fallback via PsiShortNamesCache (in case provider didn't find it)
         val shortNameCache = com.intellij.psi.search.PsiShortNamesCache.getInstance(project)
