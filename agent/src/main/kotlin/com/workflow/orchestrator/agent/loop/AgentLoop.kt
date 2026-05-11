@@ -1154,6 +1154,7 @@ class AgentLoop(
                     } finally {
                         onCompactionState?.invoke(false, "")
                     }
+                    delay(computeBackoffMs(compactionRetries, baseMs = 200L))
                     apiRetryCount = 0 // Reset retry count for the fresh attempt
                     iteration-- // Don't count as iteration
                     continue
