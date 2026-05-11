@@ -1207,3 +1207,107 @@ Tools: `runtime_config`, `java_runtime_exec`, `python_runtime_exec`. Closes the 
 
 - **Real bug count: 13 defects.** `runtime_config` plan-mode bypass joins `project_structure` as the second instance of "IDE-state-mutating actions not in WRITE_TOOLS." Single PR can fix both.
 - **Per-language `method` param semantics divergence** is a confusing-by-design API. Standard cross-language toolkits usually unify on one convention (typically comma-separated since `-k` is pytest-specific).
+
+---
+
+## Batch 26 — 2026-05-11 (final batch — close-out, sonnet)
+
+Tools: `build_problems`, `read_document` (the binary doc reader), `ai_review`. **Closes Phase 5: 80 of 80 tools documented (100% coverage).**
+
+### `build_problems` — commit `6339edcd8` — NORMAL keep, 188 lines
+
+- Unique access to IDE's structured Build tool window model (typed problem categories: DEPENDENCY, REPOSITORY, PARENT, STRUCTURE, SYNTAX, SETTINGS, COMPILE, OTHER).
+- **✅ Shared `isError=false` contract VERIFIED** (line 272). Joins the diagnostics family — 5 tools now have the same audit-note pattern.
+- Artifact coordinate extraction for dependency errors is unique vs shell build output.
+
+### `read_document` — commit `074a0da86` — STRONG keep, 160 lines
+
+- Only path to read binary documents (PDF, DOCX, XLSX). `read_file` explicitly rejects these.
+- **🚨 No pagination cursor.** `max_chars` is a total extraction cap, not a page size. LLM cannot read "next chunk" — must re-extract from page 1 with larger cap. **Common LLM mistake.**
+- Tabula↔Tika page mismatch is the documented v1.1 audit edge case (accepted limitation).
+
+### `ai_review` — commit `3e6a9161e` — STRONG keep, 537 lines
+
+- `sideEffect = FILE_WRITE` confirmed (writes to `~/.workflow-orchestrator/{proj}/agent/pr-review-findings/`).
+- **HOOK_EXEMPT but NOT in `WRITE_TOOLS`** — same design as task_*. Intentional: it's an internal staging store, not a user-facing write. Hook-exempt comment in `AgentLoop.kt:575` documents this.
+- Only write path to the staging store backing the AI Review sub-tab.
+
+---
+
+# 🎉 Phase 5 Swarm — CLOSE-OUT SUMMARY
+
+## Coverage
+
+**80 of 80 tools = 100%** have `documentation()` blocks. (Per `:agent` CLAUDE.md's "~30 core + ~50 deferred = ~80 total" estimate.)
+
+## Commit footprint
+
+- **2 pilot commits** (read_file, debug_step from initial Phase 2)
+- **5 Phase 3 commits** (schema, JCEF editor, React UI, ToolTestingPanel, swarm prompt template)
+- **80 swarm commits** (one per tool documented, all on `fix/automation-handover-quality-tabs`)
+- **26 findings-log commits** (one per batch, plus consolidated)
+- **Total: ~110+ commits** of swarm-related work over 3 sessions
+
+## Real bugs surfaced (13)
+
+The most valuable Phase 5 output beyond the docs themselves:
+
+1. `find_definition` Java/kotlin hardcoded fallback breaks pure-Python projects (`FindDefinitionTool.kt:113`)
+2. `find_references` same bug pattern (`FindReferencesTool.kt:151`)
+3. `revert_file` bypasses `PathValidator` entirely (security regression)
+4. `revert_file` no VFS/Document refresh after git checkout (stale editor view)
+5. `create_file` charset asymmetry (VFS path vs I/O fallback diverge on non-UTF-8 projects)
+6. `create_file` `overwrite=true` shows misleading approval diff
+7. `project_structure` 8 write actions NOT in `AgentLoop.WRITE_TOOLS` (plan-mode bypassable)
+8. `flask.models` / `flask.forms` filename hardcoding (silent empty results)
+9. `debug_breakpoints.remove_breakpoint` cannot remove exception breakpoints (silent failure)
+10. `debug_inspect.drop_frame` rewinds PC only — state NOT undone (footgun)
+11. `structural_search` misroutes Python via `forLanguageId` (misleading error)
+12. `JavaKotlinProvider.structuralSearch` hardwires `JavaFileType.INSTANCE` (Kotlin patterns may miss Kotlin files)
+13. `runtime_config` mutating actions bypass `WRITE_TOOLS` + approval gate (joins #7)
+
+**Two are CRITICAL security/correctness defects** (#3, #5). **Six are silent-failure bugs** that wouldn't show up in tests — only surfaced via per-tool doc review.
+
+## Drop / merge candidates (8+)
+
+For Phase 7 cleanup PR:
+
+1. **`format_code` + `optimize_imports` → `transform(kind:imports|format)`** — one-line dispatch difference, ~80% shared scaffolding.
+2. **`format_code` + `optimize_imports` + `refactor_rename` → `refactor(kind)`** — the 3-way version. ~80% shared scaffold (DumbService → ReadAction → EDT WriteCommandAction → no-op detect → ToolResult).
+3. **`task_list` → fold into `EnvironmentDetailsBuilder.appendTasks`** — partially redundant; 3-line patch adds `owner` + `blockedBy` to the per-turn render.
+4. **`send_stdin` ↔ `background_process(action=send_stdin)`** — guard migration needed first.
+5. **`db_list_databases` → `db_schema` level-0** — natural hierarchy extension.
+6. **`bitbucket_pr` action drops:** `get_blocker_comment_count` (superseded), `get_required_builds` (rare), `update_pr_title` (rare).
+7. **`jira` action drops:** `get_worklogs`, `get_board_issues`, `get_dev_branches` + `get_linked_prs`.
+8. **`spring.scheduled_tasks` + `event_listeners`** — convenience wrappers around `annotated_methods`.
+9. **`bamboo_plans.get_build_variables`** → belongs in `bamboo_builds` (operates on result_key).
+10. **`build`'s pip/Poetry/uv triples** → `python_list(manager)` / `python_outdated(manager)` / `python_lock_status(manager)`.
+11. **`run_inspections` + `list_quickfixes`** → extract shared `InspectionWalker` utility (~60 LOC).
+
+## CLAUDE.md drift count: 10 instances
+
+Largest drift: **`build` is 26 actions, CLAUDE.md said 11** (Python ecosystem actions added but never doc-updated). Other notable: `sonar` 18 vs 13, `bitbucket_review` 12 vs 6, `bitbucket_pr` 19 vs 18, `bamboo_plans` 10 vs 8, `agent` doesn't have the 5-actions API CLAUDE.md describes, `edit_file.lastEditLineRanges` doesn't exist in source, missing `BLOCKED` task status, `debug_breakpoints` KDoc mentions removed `start_session`.
+
+**CLAUDE.md audit is a real backlog item** — recommend a dedicated sweep PR.
+
+## Process learnings
+
+- **Sonnet quality matches Opus** for well-planned mechanical execution. Faster + cheaper.
+- **3 in parallel + sleep-before-commit** is the working pattern. Race rate: 2/26 batches (both bundled correctly, work survived).
+- **Per-batch wall time:** ~5-7 min. Throughput: ~30 tools/hr.
+- **The dispatcher prompt has bugs too** — subagents corrected me 4 times (e.g. edit_file matcher is char-strict not whitespace-tolerant; task_create has no blocks/blockedBy params). Healthy dynamic.
+
+## Doc length stats
+
+- **Longest single-tool doc:** `bitbucket_pr` at 982 lines + 176 narrative MD.
+- **Longest meta-tool:** `sonar` at 1124 lines.
+- **Total lines of `documentation()` blocks added across the swarm:** ~17,000 lines.
+- **Total lines of narrative MD added:** ~2,500 lines across 12 narratives.
+
+## Next session entry points
+
+1. **Phase 6 verification swarm:** dispatch read-only subagents to cross-check each `documentation()` block against the source. Each verifier flags claims that don't match source.
+2. **Phase 7 cleanup PR:** execute the drop/merge candidates above. Start with the 3-way `format_code + optimize_imports + refactor_rename → refactor(kind)` merge (largest schema savings).
+3. **Bug-fix PR:** the 13 real bugs above. Two security/correctness defects (`revert_file` PathValidator bypass, `create_file` charset asymmetry) are the most urgent.
+4. **CLAUDE.md audit sweep:** 10+ instances of source/doc drift documented.
+5. **Compare Tools view:** consume the JSON aggregate of all `ToolDocumentation` blocks for the cross-tool heatmap + drop-candidate page (planned in Phase 7 of the original initiative).
