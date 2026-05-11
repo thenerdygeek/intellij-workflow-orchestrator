@@ -1013,3 +1013,47 @@ Tools: `file_structure`, `type_inference`, `dataflow_analysis`. Continued PSI bu
 - **PSI bug audit is now complete.** 8 PSI tools surveyed; 2 have the fallback bug (`find_definition`, `find_references`); 6 are correct (`call_hierarchy`, `type_hierarchy`, `find_implementations`, `file_structure`, `type_inference`, `dataflow_analysis`). The fix shape from `find_implementations` is the canonical reference. Single PR can close both bugs.
 - **No new CLAUDE.md drift this batch.** Drift count holds at 10.
 - **No race this batch (8 in a row).**
+
+---
+
+## Batch 20 — 2026-05-10 (PSI cluster — salvaged from interrupted dispatch)
+
+Tools: `get_method_body`, `get_annotations`, `test_finder`. Subagent dispatches were rejected mid-flight but completed `documentation()` blocks landed on disk; committed manually 2026-05-11.
+
+### `get_method_body` — commit `0aab8986d` — STRONG keep, 215 lines
+
+- PSI-backed method-body extractor: resolves class via `LanguageIntelligenceProvider.findSymbol`, runs `findMethodsByName` with inherited fallback.
+- **🚨 Surprising:** emits `// Source unavailable` on a null `getBody` result with NO secondary fallback. Compiled languages without sources surface as silent gaps.
+
+### `get_annotations` — commit `8a65dac68` — STRONG keep, 215 lines
+
+- **🚨 `include_inherited=true` on a FIELD member is silently overridden to false** (line 95 hardcodes `provider.getMetadata(field, false)`). LLM's explicit request is silently ignored. Technically correct (JVM fields don't inherit) but the silent override is the kind of behavior that surprises.
+
+### `test_finder` — commit `a000e14e4` — STRONG keep, 156 lines
+
+- ✅ Uses correct `registry.forFile` pattern — **closes the PSI cluster bug audit.** Bug stays isolated to `find_definition` + `find_references` only.
+
+---
+
+## Batch 21 — 2026-05-11 (IDE inspection cluster, sonnet)
+
+Tools: `run_inspections`, `problem_view`, `list_quickfixes`. Closes the diagnostics tool family.
+
+### `run_inspections` — commit `881809f56` — STRONG keep, 62 lines
+
+- Unique access to IntelliJ's full inspection profile on a single file at sub-5s latency; no static analysis shell tool replicates this fidelity without a full project build.
+
+### `problem_view` — commit `78af9e5567` — NORMAL keep, 167 lines
+
+- **🚨 Distinct value confirmed.** The three diagnostics-family tools are complementary, not redundant: `problem_view` = cheap triage after batch edit (zero PSI walk, reads pre-existing IDE daemon state); `diagnostics` = precise per-file verifier; `run_inspections` = thoroughness audit.
+- **Wolf-placeholder behavior:** synthetic WARNING at line 0 with `toolId='wolf'` requires `diagnostics` fallback for line-precise details.
+
+### `list_quickfixes` — commit `8ee8ccbc7` — NORMAL keep, 188 lines
+
+- **🚨 MERGE_OPPORTUNITY:** shares ~60 lines of identical inspection-walk boilerplate with `run_inspections` (`profile.getInspectionTools → LocalInspectionToolWrapper → HighlightDisplayKey.find → profile.isToolEnabled → buildVisitor → PsiRecursiveElementWalkingVisitor`). **Phase 8 refactor: extract shared `InspectionWalker` utility.**
+- **Architectural decision documented:** `list_quickfixes` does NOT apply fixes — separation is intentional. Applying would force `FILE_WRITE` classification (approval gate on every call), eliminate LLM inspection before commit, break read/write parallel-execution boundary.
+
+### Cross-cutting from Batch 21
+
+- **The `isError=false` shared-API drift is now formally documented in all 4 family tools** (`diagnostics`, `run_inspections`, `problem_view`, `list_quickfixes`) — each has the same audit-note pattern, making the issue auditable for the eventual API-clarity fix.
+- **No race in 9 consecutive batches.** Sleep mitigation is mature.
