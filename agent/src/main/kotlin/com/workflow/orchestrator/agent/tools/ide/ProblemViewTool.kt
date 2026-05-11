@@ -116,8 +116,8 @@ class ProblemViewTool : AgentTool {
                 )
                 whenPresent(
                     "Path is resolved via PathValidator, VFS entry is looked up, and problems are read " +
-                    "from that file's DocumentMarkupModel. Returns 'No problems', 'Flagged but no details', " +
-                    "or a structured N-problem list for that file only."
+                    "from that file's DocumentMarkupModel. Returns 'No problems in X', a `No detailed problems available for X` " +
+                    "message (when Wolf flags the file but no HighlightInfo is present), or a structured N-problem list for that file only."
                 )
                 whenAbsent(
                     "All open editor tabs are swept. Returns 'No open files', 'No problems found in N " +
@@ -240,8 +240,8 @@ class ProblemViewTool : AgentTool {
      *
      * **Per-file mode** (caller passed `file`):
      * - `"No problems in X"` — clean file.
-     * - `"Flagged but no details for X"` — Wolf flagged the file but no
-     *   `HighlightInfo` is available (file not open in editor).
+     * - `"No detailed problems available for X (file flagged as problematic by IDE but no HighlightInfo — file may not be open in editor)."` — Wolf flagged the file but no
+     *   `HighlightInfo` is available (file not open in editor). Summary field is `"Flagged but no details"`.
      * - `"N problems in X"` — full structured entry list attached.
      *
      * **All-open-files mode** (`file` omitted):

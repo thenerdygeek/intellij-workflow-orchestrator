@@ -275,10 +275,12 @@ Before calling render_artifact, load the frontend-design skill via use_skill("fr
                 "tool's own purity."
         )
         observation(
-            "render_artifact is one of the few tools that uses `suspendCancellableCoroutine` " +
-                "via ArtifactResultRegistry. If the user cancels the agent run mid-render, the " +
-                "deferred completes with cancellation and the iframe is left orphaned. The " +
-                "cleanup contract on AgentCefPanel handles disposal, but mid-flight render " +
+            "render_artifact is one of the few tools that suspends for an external async event. " +
+                "The mechanism is `CompletableDeferred<ArtifactRenderResult>` in `ArtifactResultRegistry` — " +
+                "`renderAndAwait()` calls `withTimeoutOrNull(timeoutMillis) { deferred.await() }` and the " +
+                "deferred completes when `reportResult()` is invoked from the JCEF bridge. If the user " +
+                "cancels the agent run mid-render, the deferred is cancelled and the iframe is left " +
+                "orphaned. The cleanup contract on AgentCefPanel handles disposal, but mid-flight render " +
                 "cancellation is a less-tested path than completion."
         )
         observation(

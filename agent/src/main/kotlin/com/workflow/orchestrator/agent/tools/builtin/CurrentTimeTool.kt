@@ -26,7 +26,7 @@ class CurrentTimeTool : AgentTool {
 
     override fun documentation(): ToolDocumentation = toolDoc("current_time") {
         summary {
-            technical("Returns the current wall-clock time as ISO-8601 offset-date-time in both the JVM's local zone and UTC, plus the day-of-week. No parameters; reads `ZonedDateTime.now()` directly with no caching.")
+            technical("Returns the current wall-clock time as four lines: ISO-8601 offset-date-time in the JVM's local zone (`Local:`), the same instant in UTC (`UTC:`), the day-of-week name (`Day:`), and the IANA timezone id (`Timezone:`, e.g. `Europe/London`). No parameters; reads `ZonedDateTime.now()` directly with no caching.")
             plain("Like glancing at the clock on the wall — the agent gets back today's date, the current time in two zones, and what day of the week it is. That's it.")
         }
         whatLLMSees(description)

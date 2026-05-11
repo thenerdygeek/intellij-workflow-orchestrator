@@ -160,8 +160,9 @@ class AskUserInputTool : AgentTool {
         observation(
             "The post-input monitor loop is a direct copy of SendStdinTool's monitor loop " +
                 "(MONITOR_POLL_MS=500, IDLE_AFTER_INPUT_MS=10s, MAX_WAIT_AFTER_INPUT_MS=60s). " +
-                "A shared helper (ProcessToolHelpers.monitorAfterWrite) already exists — verify both " +
-                "tools delegate to it and have not drifted."
+                "Both tools inline the same logic — only the lower-level helpers " +
+                "`ProcessToolHelpers.collectNewOutput` and `buildIdleContent` are shared. Extracting a " +
+                "`ProcessToolHelpers.monitorAfterWrite(...)` helper would pin the invariants in one place."
         )
         observation(
             "On timeout, the process is killed (ProcessRegistry.kill). This is the right default for " +

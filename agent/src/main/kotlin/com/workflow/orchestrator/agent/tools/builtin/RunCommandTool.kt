@@ -170,17 +170,14 @@ class RunCommandTool(
                 example("services/orders")
                 example("/Users/me/projects/myrepo")
             }
-            optional("description", "string") {
+            required("description", "string") {
                 llmSeesIt("A clear explanation of what the command does and why (shown to user in approval dialog).")
                 humanReadable(
                     "A short sentence shown to the user when they're asked to approve the command. The user sees " +
-                        "this — it's not LLM-internal — so it should be honest about side effects."
+                        "this — it's not LLM-internal — so it should be honest about side effects. " +
+                        "Note: this value is read by AgentLoop's pre-dispatch approval gate, not by RunCommandTool.execute()."
                 )
                 whenPresent("Rendered in the approval dialog and prepended to the result summary.")
-                whenAbsent(
-                    "Falls back to a generic summary using the first 80 chars of the command. The schema marks " +
-                        "description as required so this is rare in practice."
-                )
                 example("Run the agent module's unit tests")
                 example("List currently running Docker containers")
             }
