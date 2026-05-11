@@ -100,6 +100,18 @@ interface AgentTool {
     fun documentation(): com.workflow.orchestrator.agent.tools.docs.ToolDocumentation? = null
 
     /**
+     * For meta-tools that dispatch on an `action` parameter: returns true if this
+     * action mutates state. Default false (read-only / not a meta-tool). The
+     * plan-mode execution guard in [com.workflow.orchestrator.agent.loop.AgentLoop]
+     * combines this with `WRITE_TOOLS` to decide whether to block the call:
+     * ```
+     * if (planMode && (toolName in WRITE_TOOLS || tool.isWriteAction(action))) { block }
+     * ```
+     * Override in meta-tools that contain mutating actions not covered by [WRITE_TOOLS].
+     */
+    fun isWriteAction(action: String?): Boolean = false
+
+    /**
      * Invoked by write actions inside [execute] when they need user approval.
      * Default returns [ApprovalResult.APPROVED] — no gate (safe for read-only tools
      * and tests). The AgentLoop overrides this per-call via [ApprovalGatedTool] when

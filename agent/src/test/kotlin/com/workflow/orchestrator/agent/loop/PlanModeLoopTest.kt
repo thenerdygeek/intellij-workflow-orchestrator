@@ -10,12 +10,15 @@ import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.*
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import com.workflow.orchestrator.core.model.ModelPricingRegistry
 import io.mockk.mockk
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
@@ -30,6 +33,14 @@ class PlanModeLoopTest {
     fun setUp() {
         project = mockk(relaxed = true)
         contextManager = ContextManager(maxInputTokens = 100_000)
+    }
+
+    @AfterEach
+    fun stopModelPricingWatcher() {
+        // AgentLoop touches ModelPricingRegistry which starts a FileSystemWatcher;
+        // shut it down so macOS ThreadLeakTracker doesn't trip on the watcher
+        // thread after the test completes.
+        runCatching { ModelPricingRegistry.resetForTests() }
     }
 
     // ---- Helpers ----
@@ -342,6 +353,140 @@ class PlanModeLoopTest {
             channel.send("Approved. Implement it.")
 
             loopJob.join()
+        }
+
+        @Test
+        fun `plan mode blocks project_structure write actions but allows read actions`() = runTest {
+            val channel = Channel<String>(Channel.RENDEZVOUS)
+            val executeInvocations = mutableListOf<String>()
+
+            // Fake project_structure meta-tool: mirrors the real isWriteAction override.
+            val projectStructureTool: AgentTool = object : AgentTool {
+                override val name = "project_structure"
+                override val description = "Test project_structure"
+                override val parameters = FunctionParameters(properties = emptyMap())
+                override val allowedWorkers = setOf(WorkerType.CODER)
+
+                override fun isWriteAction(action: String?): Boolean = action in setOf(
+                    "add_source_root", "set_module_dependency", "remove_module_dependency",
+                    "set_module_sdk", "set_language_level", "add_content_root",
+                    "remove_content_root", "refresh_external_project"
+                )
+
+                override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+                    val action = params["action"]?.jsonPrimitive?.content ?: "unknown"
+                    executeInvocations.add(action)
+                    return ToolResult(content = "ok: $action", summary = "ok", tokenEstimate = 5)
+                }
+            }
+
+            val brain = sequenceBrain(
+                // LLM tries a write action (set_module_dependency) — must be blocked
+                toolCallResponse("project_structure" to """{"action":"set_module_dependency","module":"app","dependsOn":"core"}"""),
+                // LLM uses a read action (module_detail) — must be allowed
+                toolCallResponse("project_structure" to """{"action":"module_detail","module":"app"}"""),
+                // LLM presents plan — waits for user input
+                toolCallResponse("plan_mode_respond" to """{"response":"Project analysis done"}"""),
+                // After user approves, completes
+                toolCallResponse("attempt_completion" to """{"result":"Done"}""")
+            )
+
+            val completionTool = fakeTool("attempt_completion", ToolResult(
+                content = "Done", summary = "Done", tokenEstimate = 5, isCompletion = true
+            ))
+
+            val tools = listOf(projectStructureTool, PlanModeRespondTool(), completionTool)
+            val loop = buildLoop(
+                brain, tools,
+                planMode = true,
+                onPlanResponse = { _, _ -> },
+                userInputChannel = channel
+            )
+
+            val loopJob = launch {
+                val result = loop.run("Analyse project structure")
+                assertTrue(result is LoopResult.Completed, "loop should complete, got: $result")
+            }
+
+            channel.send("Approved.")
+            loopJob.join()
+
+            // set_module_dependency is a write action — execute() must NOT have been called for it
+            assertFalse(
+                "set_module_dependency" in executeInvocations,
+                "set_module_dependency must be blocked in plan mode; invocations: $executeInvocations"
+            )
+            // module_detail is a read action — execute() MUST have been called for it
+            assertTrue(
+                "module_detail" in executeInvocations,
+                "module_detail must be allowed in plan mode; invocations: $executeInvocations"
+            )
+        }
+
+        @Test
+        fun `plan mode blocks runtime_config create_run_config but allows get_run_configurations`() = runTest {
+            val channel = Channel<String>(Channel.RENDEZVOUS)
+            val executeInvocations = mutableListOf<String>()
+
+            // Fake runtime_config meta-tool: mirrors the real isWriteAction override.
+            val runtimeConfigTool: AgentTool = object : AgentTool {
+                override val name = "runtime_config"
+                override val description = "Test runtime_config"
+                override val parameters = FunctionParameters(properties = emptyMap())
+                override val allowedWorkers = setOf(WorkerType.CODER)
+
+                override fun isWriteAction(action: String?): Boolean = action in setOf(
+                    "create_run_config", "modify_run_config", "delete_run_config"
+                )
+
+                override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+                    val action = params["action"]?.jsonPrimitive?.content ?: "unknown"
+                    executeInvocations.add(action)
+                    return ToolResult(content = "ok: $action", summary = "ok", tokenEstimate = 5)
+                }
+            }
+
+            val brain = sequenceBrain(
+                // LLM tries create_run_config (write action) — must be blocked
+                toolCallResponse("runtime_config" to """{"action":"create_run_config","name":"MyApp","type":"application"}"""),
+                // LLM uses get_run_configurations (read action) — must be allowed
+                toolCallResponse("runtime_config" to """{"action":"get_run_configurations"}"""),
+                // LLM presents plan — waits for user input
+                toolCallResponse("plan_mode_respond" to """{"response":"Run config analysis done"}"""),
+                // After user approves, completes
+                toolCallResponse("attempt_completion" to """{"result":"Done"}""")
+            )
+
+            val completionTool = fakeTool("attempt_completion", ToolResult(
+                content = "Done", summary = "Done", tokenEstimate = 5, isCompletion = true
+            ))
+
+            val tools = listOf(runtimeConfigTool, PlanModeRespondTool(), completionTool)
+            val loop = buildLoop(
+                brain, tools,
+                planMode = true,
+                onPlanResponse = { _, _ -> },
+                userInputChannel = channel
+            )
+
+            val loopJob = launch {
+                val result = loop.run("Analyse run configurations")
+                assertTrue(result is LoopResult.Completed, "loop should complete, got: $result")
+            }
+
+            channel.send("Approved.")
+            loopJob.join()
+
+            // create_run_config is a write action — execute() must NOT have been called for it
+            assertFalse(
+                "create_run_config" in executeInvocations,
+                "create_run_config must be blocked in plan mode; invocations: $executeInvocations"
+            )
+            // get_run_configurations is a read action — execute() MUST have been called for it
+            assertTrue(
+                "get_run_configurations" in executeInvocations,
+                "get_run_configurations must be allowed in plan mode; invocations: $executeInvocations"
+            )
         }
 
         @Test

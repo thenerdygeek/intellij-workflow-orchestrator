@@ -130,6 +130,10 @@ description optional: for approval dialog on create/modify/delete.
         WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER, WorkerType.ORCHESTRATOR, WorkerType.TOOLER
     )
 
+    override fun isWriteAction(action: String?): Boolean = action in setOf(
+        "create_run_config", "modify_run_config", "delete_run_config"
+    )
+
     override fun documentation(): ToolDocumentation = toolDoc("runtime_config") {
         summary {
             technical("CRUD over IntelliJ's RunManager: list/create/modify/delete RunConfiguration entries across application, spring_boot, junit, gradle, and remote_debug factories. Create/modify use a mix of typed setters (ApplicationConfiguration) and reflection-based setters (Spring Boot, JUnit persistent data fields, Gradle, remote debug PORT/HOST/SERVER_MODE) so the tool can drive config types whose APIs aren't on the compile-time classpath. Per-property failures are collected and reported alongside the success result; delete is gated to [Agent]-prefixed configs only.")
@@ -183,11 +187,11 @@ description optional: for approval dialog on create/modify/delete.
                 "null and create_run_config fails with a descriptive error — but there is no pre-flight check " +
                 "before attempting the create.",
         )
-        downside(
-            "runtime_config is NOT in AgentLoop.WRITE_TOOLS. This means create_run_config, modify_run_config, " +
-                "and delete_run_config are NOT blocked in plan mode and do NOT trigger the write-tool execution " +
-                "guard. They are also not in APPROVAL_TOOLS, so they bypass the user approval gate. " +
-                "The only safety mechanism is the [Agent]-prefix guard on delete.",
+        observation(
+            "runtime_config is NOT in AgentLoop.WRITE_TOOLS but overrides AgentTool.isWriteAction() so the " +
+                "plan-mode execution guard blocks create_run_config, modify_run_config, and delete_run_config. " +
+                "Bug fixed: plan-mode bypass for the 3 mutating actions (Batches 16+25 of the Phase 5 swarm). " +
+                "Note: these actions are still not in APPROVAL_TOOLS — the only mutation guard is [Agent]-prefix on delete.",
         )
         related("runtime_exec", Relationship.COMPOSE_WITH, "Use runtime_exec.run_config to launch the configuration after creating it with create_run_config.")
         related("debug_breakpoints", Relationship.COMPLEMENT, "Set breakpoints before launching a debug configuration; debug_breakpoints.attach_to_process attaches to an already-running process instead of creating a config.")

@@ -1614,8 +1614,16 @@ class AgentLoop(
                 continue
             }
 
-            // Plan mode guard: block write tools even if the LLM hallucinates them
-            if (planMode && toolName in WRITE_TOOLS) {
+            // Plan mode guard: block write tools even if the LLM hallucinates them.
+            // For meta-tools that dispatch on an `action` parameter (e.g. project_structure,
+            // runtime_config), also consult AgentTool.isWriteAction(action) so per-action
+            // mutations are blocked even though the tool name is not in WRITE_TOOLS.
+            val planModeAction: String? = try {
+                json.decodeFromString<JsonObject>(call.function.arguments)["action"]?.jsonPrimitive?.contentOrNull
+            } catch (_: Exception) {
+                null
+            }
+            if (planMode && (toolName in WRITE_TOOLS || tool.isWriteAction(planModeAction))) {
                 val planModeBlockMsg = "Error: '$toolName' is blocked in plan mode. You can only read, search, and analyze code."
                 fileLogger?.logToolCall(
                     sessionId = sessionId ?: "",

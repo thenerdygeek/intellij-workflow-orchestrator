@@ -174,6 +174,12 @@ Actions and their parameters:
         }
     }
 
+    override fun isWriteAction(action: String?): Boolean = action in setOf(
+        "add_source_root", "set_module_dependency", "remove_module_dependency",
+        "set_module_sdk", "set_language_level", "add_content_root",
+        "remove_content_root", "refresh_external_project"
+    )
+
     override fun documentation(): ToolDocumentation = toolDoc("project_structure") {
         summary {
             technical(
@@ -220,8 +226,8 @@ Actions and their parameters:
         llmMistake(
             "Passes `scope` values from the topology/list_* enum (`project`, `application`, `all`) to set_module_dependency, where `scope` means dependency scope (`compile`, `test`, `runtime`, `provided`). The parameter is shared in the schema but has completely different semantics depending on action."
         )
-        downside(
-            "Write actions call requestApproval internally but `project_structure` is NOT in AgentLoop.WRITE_TOOLS. This means: (1) the tool is not blocked in plan mode — the execution guard in AgentLoop won't catch it; (2) the schema is not filtered from tool definitions in plan mode; (3) write actions depend entirely on their own per-action requestApproval calls for the user gate. If requestApproval is a no-op (e.g. in automated tests or when ALWAYS_APPROVE is set), mutations run without any gate."
+        observation(
+            "Write actions call requestApproval internally. `project_structure` is NOT in AgentLoop.WRITE_TOOLS but overrides AgentTool.isWriteAction() so the plan-mode execution guard catches per-action write calls. Bug fixed: plan-mode bypass for the 8 mutating actions (Batches 16+25 of the Phase 5 swarm)."
         )
         downside(
             "refresh_external_project is a fire-and-forget trigger — it enqueues a Gradle/Maven reimport in IntelliJ's background task queue but does not wait for it to finish. The LLM cannot determine whether the reimport succeeded within the same tool call; it must poll (via a subsequent module_detail or topology call) or rely on the user to verify."
@@ -245,7 +251,7 @@ Actions and their parameters:
         )
         verdict {
             keep(
-                "resolve_file, module_detail, and topology are genuinely non-substitutable IDE intelligence actions. The write actions fill the gap between 'read what the model says' and 'fix it' for non-external-system modules, which do exist in mixed IDE-managed/Gradle projects. The external-system guard prevents the most dangerous misuse. Keep the tool but add project_structure to WRITE_TOOLS or add an explicit plan-mode schema filter.",
+                "resolve_file, module_detail, and topology are genuinely non-substitutable IDE intelligence actions. The write actions fill the gap between 'read what the model says' and 'fix it' for non-external-system modules, which do exist in mixed IDE-managed/Gradle projects. The external-system guard prevents the most dangerous misuse. Plan-mode protection is provided via isWriteAction() — the 8 mutating actions are blocked by the AgentLoop guard.",
                 VerdictSeverity.STRONG
             )
         }
