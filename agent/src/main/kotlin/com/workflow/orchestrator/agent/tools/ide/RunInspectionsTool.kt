@@ -20,6 +20,11 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolOutputConfig
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.builtin.PathValidator
+import com.workflow.orchestrator.agent.tools.docs.Relationship
+import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
+import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
+import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
+import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -39,6 +44,63 @@ class RunInspectionsTool : AgentTool {
     )
     override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER)
     override val outputConfig = ToolOutputConfig.COMMAND
+
+    override fun documentation(): ToolDocumentation = toolDoc("run_inspections") {
+        summary {
+            technical("File-scoped IntelliJ inspection sweep via the active project inspection profile — iterates LocalInspectionToolWrapper entries gated by profile.isToolEnabled(), runs each tool's buildVisitor+PsiRecursiveElementWalkingVisitor walk under ReadAction.nonBlocking().inSmartMode(), collects ProblemDescriptors, applies an optional minimum-severity filter, builds structured DiagnosticEntry list (head-20 prose preview inline, full JSON spills to disk above 30K via ToolOutputSpiller), and returns isError=false even when problems are found.")
+            plain("Like running the IntelliJ 'Inspect Code' command on a single file and getting back a list of every warning and error the IDE can see — unused variables, null-safety issues, Spring misconfigurations, performance hints, deprecations — all scoped to the file you're working on, without launching a full build.")
+        }
+        whatLLMSees(description)
+        sideEffect(SideEffectKind.READ_ONLY)
+        counterfactual(
+            "Without run_inspections, the LLM falls back to static analysis shell tools (e.g. `./gradlew check`, `mvn verify`, standalone ktlint / checkstyle / spotbugs) via run_command. These take 30-120s per invocation, produce build-system noise the LLM must filter, do not respect the user's active IntelliJ inspection profile settings, and yield no line-precise structured output. run_inspections covers the same problem classes (unused code, null safety, performance, Spring misconfig) in <5s with 1-based line numbers ready for edit_file, using the exact same profile the user sees in their IDE."
+        )
+        llmMistake("Reads `isError=false` as 'no problems found'. WRONG — `isError=false` means the tool executed successfully; the problem list IS the payload. A file with 50 inspection warnings and a clean file both return `isError=false`. Only path validation failures, DumbService-blocked indexing, file-not-found, PSI parse failure, PSI invalidation mid-walk, and uncaught exceptions return `isError=true`. The LLM must read the content — 'No inspection problems found in X' vs 'N problem(s) in X:' — to determine whether a fix is needed. This is the shared F6 invariant across the diagnostics tool family (diagnostics, run_inspections, list_quickfixes, problem_view).")
+        llmMistake("Calls run_inspections on a project with a large inspection profile and expects instantaneous results. The tool iterates EVERY enabled LocalInspectionToolWrapper in the profile and runs a PSI visitor for each — on large files with many enabled inspections this can take several seconds. If latency is a concern, use `severity=ERROR` to limit the walk to error-level inspections only, or use `diagnostics` for a faster single-pass compilation check.")
+        llmMistake("Passes `severity=INFO` expecting only informational hints — INFO also includes WARNING and ERROR results because the filter is a minimum threshold (ordinal-based). 'ERROR' returns only errors; 'WARNING' returns warnings and errors; 'INFO' returns everything. The parameter name is misleading when read as a level filter rather than a floor.")
+        llmMistake("Expects run_inspections to catch all compilation errors. It does not — the tool runs LocalInspectionTools (style, lint, quality inspections) not the compiler front-end. Compilation errors (unresolved references, type mismatches) belong to `diagnostics`. run_inspections is for quality-of-code issues beyond what the compiler checks.")
+        llmMistake("Calls run_inspections immediately after edit_file and interprets problems that existed before the edit as regressions. The tool always reflects the current on-disk state; it does not diff against a baseline. The LLM should compare the problem list to what it knows was there before the edit, not assume all output is new.")
+        params {
+            required("path", "string") {
+                llmSeesIt("File path to inspect")
+                humanReadable("Which file to inspect — relative to the project root or absolute. Same path semantics as read_file and diagnostics.")
+                whenPresent("Path is canonicalised and validated by PathValidator, the VFS entry is resolved, PSI is built, and the full LocalInspectionToolWrapper iteration runs under inSmartMode.")
+                constraint("must point inside the project root or another allow-listed path root — traversal (../../etc/passwd) is rejected before any IDE call")
+                constraint("must point to a file, not a directory")
+                constraint("file must already exist in the VFS — unsaved scratch paths are not visible to findFileByIoFile")
+                example("src/main/kotlin/com/example/UserService.kt")
+                example("agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/ide/RunInspectionsTool.kt")
+            }
+            optional("severity", "string") {
+                llmSeesIt("Minimum severity filter: 'ERROR', 'WARNING', or 'INFO'. Optional, defaults to WARNING.")
+                humanReadable("The floor for which severity levels are included in the output. Think of it as a radio dial: ERROR returns only the most critical issues; WARNING returns warnings and errors; INFO returns everything the IDE can see.")
+                whenPresent("Only problems whose normalised severity ordinal is <= the requested level are included in the result list. The PSI walk still runs for all enabled inspections; filtering is applied to the collected ProblemDescriptors.")
+                whenAbsent("Defaults to WARNING — errors and warnings are returned; INFO-level hints are suppressed.")
+                enumValue("ERROR", "WARNING", "INFO")
+                constraint("case-insensitive; any unrecognised value is treated as WARNING")
+                example("ERROR")
+                example("WARNING")
+                example("INFO")
+            }
+        }
+        verdict {
+            keep(
+                "Unique access to IntelliJ's full inspection profile output on a single file — covers unused code, null safety, Spring misconfigurations, performance antipatterns, deprecations, and dozens of other quality checks that diagnostics (compiler front-end only) does not see. Respects the user's active inspection profile via profile.isToolEnabled(), so it reflects exactly what the user sees in their IDE. The 100K COMMAND output cap and ToolOutputSpiller integration make it safe for large files. No static analysis shell tool replicates this fidelity without a full project build.",
+                VerdictSeverity.STRONG,
+            )
+        }
+        related("diagnostics", Relationship.ALTERNATIVE, "Use diagnostics for fast per-file compilation checks (type errors, unresolved references) — it is faster and language-provider-based. Use run_inspections when you need the full inspection profile sweep (unused code, style, performance, Spring misconfig) that goes beyond what the compiler checks.")
+        related("list_quickfixes", Relationship.COMPOSE_WITH, "run_inspections surfaces problems with the inspection short name and available fix names already included in the output. For a specific line, list_quickfixes gives the full Alt+Enter menu — the natural next step when the LLM wants to apply a suggested fix.")
+        related("problem_view", Relationship.SEE_ALSO, "problem_view reads the IDE's existing Problems tool-window state without re-running inspections — faster but reflects what the IDE has already computed. Use run_inspections to force a fresh sweep; use problem_view to read cached results.")
+        downside("Depends on indexing being complete — returns 'IDE is still indexing. Try again shortly.' (isError=true) during DumbService periods. Retry after a delay or do other non-PSI work first.")
+        downside("Runs every enabled LocalInspectionToolWrapper in the profile sequentially — on files with many enabled inspections (300+) and a complex PSI tree the walk can take several seconds. The COMMAND output cap (100K) mitigates token cost, but latency is real for large files.")
+        downside("Does NOT cover compilation errors (unresolved references, type mismatches) — those are the compiler front-end's domain and belong to `diagnostics`. run_inspections and diagnostics are complementary, not equivalent.")
+        downside("Column numbers are -1 in DiagnosticEntry — ProblemDescriptor does not expose column through the current walk (Phase 7 follow-up). Line numbers are 1-based and correct.")
+        downside("Inspection profile gating via profile.isToolEnabled() means results vary across projects depending on the user's active profile. A problem visible in one project may be absent in another if the inspection is disabled in that profile.")
+        downside("Some inspections silently throw exceptions on certain file types and are skipped — the tool catches and suppresses per-inspection exceptions. This means the result list may omit problems from inspections that crash on the specific file.")
+        observation("isError=false on problems-found is shared across the diagnostics tool family (diagnostics T5, run_inspections T2, list_quickfixes T3, problem_view T4). This invariant is documented in agent/CLAUDE.md ('ToolResult.isError semantics') and each tool's execute() KDoc. A dedicated llmMistake entry above and the F6 KDoc block on execute() reinforce it. Any future diagnostics-family tool must follow the same contract.")
+        observation("profile.isToolEnabled() is intentionally used instead of isEnabledByDefault — this ensures the tool sweep matches what the user sees in the IDE editor. ListQuickFixesTool uses the same gating for the same reason.")
+    }
 
     /**
      * ## `isError` semantics (F6 invariant)
