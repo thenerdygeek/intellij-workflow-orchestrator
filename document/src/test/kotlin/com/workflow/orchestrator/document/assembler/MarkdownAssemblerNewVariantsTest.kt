@@ -70,4 +70,58 @@ class MarkdownAssemblerNewVariantsTest {
         )
         assertEquals("/session/downloads/document-abc/image-0-def.png", withPath.path)
     }
+
+    @Test
+    fun `Comment REVIEW renders as blockquote with author and anchor`() {
+        val block = DocumentBlock.Comment(
+            author = "Jane",
+            anchorText = "80ms",
+            text = "Confirm with the latest benchmark.",
+            kind = DocumentBlock.Comment.Kind.REVIEW,
+        )
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals(
+            "> **Comment by Jane** (anchor: \"80ms\"):\n> Confirm with the latest benchmark.\n\n",
+            md,
+        )
+    }
+
+    @Test
+    fun `Comment REVIEW with null author renders as Anonymous`() {
+        val block = DocumentBlock.Comment(
+            author = null,
+            anchorText = "section 3",
+            text = "Looks good.",
+            kind = DocumentBlock.Comment.Kind.REVIEW,
+        )
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals(
+            "> **Comment by Anonymous** (anchor: \"section 3\"):\n> Looks good.\n\n",
+            md,
+        )
+    }
+
+    @Test
+    fun `Comment REVIEW with null anchor omits anchor clause`() {
+        val block = DocumentBlock.Comment(
+            author = "Tom",
+            anchorText = null,
+            text = "Per slide overall.",
+            kind = DocumentBlock.Comment.Kind.REVIEW,
+        )
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals("> **Comment by Tom**:\n> Per slide overall.\n\n", md)
+    }
+
+    @Test
+    fun `Comment with multi-line text indents every continuation line with greater-than-space`() {
+        val block = DocumentBlock.Comment(
+            author = "Jane",
+            anchorText = null,
+            text = "Line one.\nLine two.",
+            kind = DocumentBlock.Comment.Kind.REVIEW,
+        )
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals("> **Comment by Jane**:\n> Line one.\n> Line two.\n\n", md)
+    }
 }

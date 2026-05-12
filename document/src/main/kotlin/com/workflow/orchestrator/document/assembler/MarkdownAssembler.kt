@@ -95,8 +95,8 @@ class MarkdownAssembler {
         is DocumentBlock.Table -> serializeTable(block)
         is DocumentBlock.PageMarker -> serializePageMarker(block)
         is DocumentBlock.EmbeddedFileRef -> serializeEmbeddedFileRef(block)
-        // TODO(Task 6): replace with proper Comment serializer arm.
-        else -> error("variant ${block::class.simpleName} not yet serialized")
+        is DocumentBlock.Comment -> serializeComment(block)
+        else -> error("variant ${block::class.simpleName} not yet serialized")  // KEEP — replaced in Tasks 8/9/10
     }
 
     private fun serializeHeading(block: DocumentBlock.Heading): String {
@@ -114,6 +114,33 @@ class MarkdownAssembler {
 
     private fun serializeEmbeddedFileRef(block: DocumentBlock.EmbeddedFileRef): String {
         return "[embedded: ${block.name} (${block.mimeType})]\n\n"
+    }
+
+    /**
+     * Serialises a [DocumentBlock.Comment] as a Markdown blockquote. The shape varies
+     * by kind so the LLM can distinguish review comments from tracked-change suggestions.
+     *
+     * Multi-line text is rendered with `> ` on every continuation line so the entire
+     * comment renders as one quoted block in standard Markdown viewers.
+     */
+    private fun serializeComment(block: DocumentBlock.Comment): String {
+        val author = block.author ?: "Anonymous"
+        val header = when (block.kind) {
+            DocumentBlock.Comment.Kind.REVIEW -> {
+                val anchor = block.anchorText?.let { " (anchor: \"$it\")" } ?: ""
+                "**Comment by $author**$anchor"
+            }
+            DocumentBlock.Comment.Kind.TRACKED_INSERTION ->
+                "**$author proposes inserting**"
+            DocumentBlock.Comment.Kind.TRACKED_DELETION ->
+                "**$author proposes deleting**: \"${block.anchorText ?: ""}\""
+            DocumentBlock.Comment.Kind.PDF_ANNOTATION -> {
+                val anchor = block.anchorText?.let { " (on: \"$it\")" } ?: ""
+                "**PDF annotation**$anchor"
+            }
+        }
+        val body = block.text.lineSequence().joinToString("\n") { "> $it" }
+        return if (body.isBlank()) "> $header\n\n" else "> $header:\n$body\n\n"
     }
 
     private fun serializeTable(block: DocumentBlock.Table): String {
