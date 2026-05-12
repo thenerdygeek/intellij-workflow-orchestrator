@@ -165,10 +165,12 @@ class DocxExtractorFormatGapsTest {
         assertEquals(listOf("First item", "Second item", "Third item"), texts,
             "Three list items become three flat Paragraphs — no bullet, no number, no nesting")
 
-        // Sanity: ensure the DocumentBlock sealed hierarchy still has no List variant.
+        // Sanity: ListBlock variant now exists in the model (Phase 0), but DocxTableExtractor
+        // doesn't yet emit it. Phase 3 will populate ListBlock from XWPFParagraph.numID;
+        // this gap test flips to a positive test then.
         val variants = DocumentBlock::class.sealedSubclasses.map { it.simpleName }
-        assertFalse("List" in variants,
-            "If a DocumentBlock.List variant is added, update this test and the extractors that flatten")
+        assertTrue("ListBlock" in variants,
+            "ListBlock should exist in the model after Phase 0")
     }
 
     // ── Body-only iteration boundary ──────────────────────────────────────────

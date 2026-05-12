@@ -65,12 +65,15 @@ class EmbeddedFileRefUnreachableTest {
     // ── DocumentBlock model surface (sentinel) ────────────────────────────────
 
     @Test
-    fun `DocumentBlock sealed hierarchy still has exactly 5 variants`() {
-        // If this number changes, the assembler and every gap test above
-        // must be reviewed for new opportunities to surface previously-dropped content.
+    fun `DocumentBlock sealed hierarchy has exactly 9 variants after Phase 0`() {
+        // Phase 0 added: Comment, ListBlock, Footnote, KeyValueGroup.
+        // If this set changes again, review every Format-Gaps test for new positive coverage.
         val variants = DocumentBlock::class.sealedSubclasses.map { it.simpleName }.toSet()
         assertEquals(
-            setOf("Heading", "Paragraph", "Table", "PageMarker", "EmbeddedFileRef"),
+            setOf(
+                "Heading", "Paragraph", "Table", "PageMarker", "EmbeddedFileRef",
+                "Comment", "ListBlock", "Footnote", "KeyValueGroup",
+            ),
             variants,
             "DocumentBlock variants changed. Review every Format-Gaps test for new positive coverage."
         )

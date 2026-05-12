@@ -77,8 +77,9 @@ class TikaXhtmlFormatGapsTest {
         // collapsed into one paragraph by Tika's XHTML emission. The exact arrangement
         // varies by Tika version; what we assert is "no list semantics survived".
         val variants = DocumentBlock::class.sealedSubclasses.map { it.simpleName }.toSet()
-        assertFalse("List" in variants, "Sentinel: DocumentBlock has no List variant")
-        assertFalse("ListItem" in variants, "Sentinel: DocumentBlock has no ListItem variant")
+        // ListBlock now exists in the model (Phase 0); DocumentBlockHandler doesn't emit it yet (Phase 3).
+        assertTrue("ListBlock" in variants, "Sentinel: ListBlock variant present after Phase 0")
+        assertFalse("ListItem" in variants, "Sentinel: DocumentBlock has no per-item ListItem variant (flat list only)")
 
         val flat = blocks.joinToString(" ") {
             when (it) {
@@ -144,14 +145,16 @@ class TikaXhtmlFormatGapsTest {
     // ── Model boundary ────────────────────────────────────────────────────────
 
     @Test
-    fun `the entire DocumentBlock sealed hierarchy has 5 variants — that is the expressivity ceiling`() {
+    fun `the entire DocumentBlock sealed hierarchy has 9 variants — that is the expressivity ceiling`() {
         val variants = DocumentBlock::class.sealedSubclasses.map { it.simpleName }.toSet()
         assertEquals(
-            setOf("Heading", "Paragraph", "Table", "PageMarker", "EmbeddedFileRef"),
+            setOf(
+                "Heading", "Paragraph", "Table", "PageMarker", "EmbeddedFileRef",
+                "Comment", "ListBlock", "Footnote", "KeyValueGroup",
+            ),
             variants,
-            "Any feature that doesn't fit one of these 5 variants is invisible to the LLM. " +
-                "Adding new structural concepts (List, Code, Quote, Image, Comment, Footnote) " +
-                "requires extending this hierarchy AND the MarkdownAssembler."
+            "Any feature that doesn't fit one of these 9 variants is invisible to the LLM. " +
+                "Adding new structural concepts requires extending this hierarchy AND the MarkdownAssembler."
         )
     }
 }
