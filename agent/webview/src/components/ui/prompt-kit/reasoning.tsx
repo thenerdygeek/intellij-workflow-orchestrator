@@ -122,6 +122,7 @@ function ReasoningContent({
   className,
   contentClassName,
   markdown = false,
+  style,
   ...props
 }: ReasoningContentProps) {
   const contentRef = useRef<HTMLDivElement>(null)
@@ -141,6 +142,8 @@ function ReasoningContent({
 
     if (isOpen) {
       contentRef.current.style.maxHeight = `${innerRef.current.scrollHeight}px`
+    } else {
+      contentRef.current.style.maxHeight = "0px"
     }
 
     return () => observer.disconnect()
@@ -160,6 +163,7 @@ function ReasoningContent({
         className
       )}
       style={{
+        ...style,
         maxHeight: isOpen ? contentRef.current?.scrollHeight : "0px",
       }}
       {...props}
