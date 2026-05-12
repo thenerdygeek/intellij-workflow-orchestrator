@@ -824,7 +824,69 @@ class DocxExtractorFormatGapsTest {
         }, "No header/footer policy → no header/footer Paragraph")
     }
 
+    // ── Vertical merge in DOCX tables (positive coverage after Phase 3) ───────
+
+    @Test
+    fun `vertical-merge continuation rows inherit value from the restart row`() {
+        val bytes = buildDocx { doc ->
+            val table = doc.createTable(4, 2)
+            // Row 0: headers
+            table.getRow(0).getCell(0).text = "Section"
+            table.getRow(0).getCell(1).text = "Item"
+            // Row 1: data row with vMerge=restart in column 0
+            table.getRow(1).getCell(0).text = "Risks"
+            setVMerge(table.getRow(1).getCell(0), org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge.RESTART)
+            table.getRow(1).getCell(1).text = "R-001"
+            // Row 2: vMerge=continue in column 0 (cell is "empty" but should inherit "Risks")
+            setVMerge(table.getRow(2).getCell(0), org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge.CONTINUE)
+            table.getRow(2).getCell(1).text = "R-002"
+            // Row 3: still continuing
+            setVMerge(table.getRow(3).getCell(0), org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge.CONTINUE)
+            table.getRow(3).getCell(1).text = "R-003"
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val table = blocks.filterIsInstance<DocumentBlock.Table>().single()
+        assertEquals(listOf("Section", "Item"), table.headers)
+        assertEquals(3, table.rows.size)
+        assertEquals(listOf("Risks", "R-001"), table.rows[0])
+        assertEquals(listOf("Risks", "R-002"), table.rows[1])
+        assertEquals(listOf("Risks", "R-003"), table.rows[2])
+    }
+
+    @Test
+    fun `cells with no vMerge use their own text — merge does not stick across non-merged cells`() {
+        val bytes = buildDocx { doc ->
+            val table = doc.createTable(4, 2)
+            table.getRow(0).getCell(0).text = "Col1"
+            table.getRow(0).getCell(1).text = "Col2"
+            // Row 1: restart in col 0
+            table.getRow(1).getCell(0).text = "Group-A"
+            setVMerge(table.getRow(1).getCell(0), org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge.RESTART)
+            table.getRow(1).getCell(1).text = "a1"
+            // Row 2: continue
+            setVMerge(table.getRow(2).getCell(0), org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge.CONTINUE)
+            table.getRow(2).getCell(1).text = "a2"
+            // Row 3: no vMerge — own text wins
+            table.getRow(3).getCell(0).text = "Group-B"
+            table.getRow(3).getCell(1).text = "b1"
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val table = blocks.filterIsInstance<DocumentBlock.Table>().single()
+        assertEquals(listOf("Group-A", "a1"), table.rows[0])
+        assertEquals(listOf("Group-A", "a2"), table.rows[1])
+        assertEquals(listOf("Group-B", "b1"), table.rows[2])
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private fun setVMerge(cell: org.apache.poi.xwpf.usermodel.XWPFTableCell,
+                          merge: org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge.Enum) {
+        val tcPr = cell.ctTc.tcPr ?: cell.ctTc.addNewTcPr()
+        val vMerge = tcPr.vMerge ?: tcPr.addNewVMerge()
+        vMerge.`val` = merge
+    }
 
     private fun buildDocx(build: (XWPFDocument) -> Unit): ByteArray {
         val doc = XWPFDocument()
