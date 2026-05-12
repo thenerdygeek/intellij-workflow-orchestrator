@@ -29,7 +29,13 @@ import org.xml.sax.helpers.DefaultHandler
  * - `<td>`/`<th>` end: append trimmed [currentCell] to [currentRow]; reset cell.
  * - `<table>` end: emit [DocumentBlock.Table]; exit table state.
  * - `<div class="page">` start: emit [DocumentBlock.PageMarker].
- * - `characters()`: route text to the active buffer (cell, heading, or body).
+ * - `<ul>`/`<ol>` start (outermost): flush pending body text; enter list state.
+ * - `<ul>`/`<ol>` start (nested): commit any buffered outer-item text; increment depth.
+ * - `<li>` start: clear item buffer; set `inListItem = true`.
+ * - `</li>` end: commit [currentItemBuffer] to [currentListItems] with `"  ".repeat(depth)` prefix.
+ * - `</ul>`/`</ol>` end (depth > 0): decrement depth; continue outer list.
+ * - `</ul>`/`</ol>` end (depth == 0): emit [DocumentBlock.ListBlock]; reset all list state.
+ * - `characters()`: route text to the active buffer (cell, heading, list item, or body).
  * - `endDocument()`: flush any remaining buffer as [DocumentBlock.Paragraph].
  *
  * ## Defensive design
@@ -89,6 +95,38 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
      */
     private val tableRows = mutableListOf<List<String>>()
 
+    // ── List state ────────────────────────────────────────────────────────────
+
+    /**
+     * True while inside the outermost `<ul>` or `<ol>` element.
+     * Nested lists increment [listNestingDepth] rather than re-entering this state.
+     */
+    private var inList: Boolean = false
+
+    /** True when the outermost list element is `<ol>` (ordered). */
+    private var currentListOrdered: Boolean = false
+
+    /** Items committed so far for the current list. */
+    private val currentListItems = mutableListOf<String>()
+
+    /**
+     * Text buffer for the `<li>` element currently being accumulated.
+     * Reused across items; cleared on every `<li>` start and committed on `</li>`.
+     */
+    private val currentItemBuffer = StringBuilder()
+
+    /**
+     * True while inside any `<li>` element (including nested list items).
+     * Drives routing of character data to [currentItemBuffer].
+     */
+    private var inListItem: Boolean = false
+
+    /**
+     * 0 = inside the outermost list, 1 = one level of nesting, etc.
+     * Items emitted at depth > 0 are prefixed with `"  ".repeat(listNestingDepth)`.
+     */
+    private var listNestingDepth: Int = 0
+
     // ── Page-marker state ─────────────────────────────────────────────────────
 
     /** 1-based page counter; incremented on each `<div class="page">` opening. */
@@ -144,6 +182,39 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
                 flushBufferAsParagraph()
                 handleImage(attrs)
             }
+
+            name == "ul" || name == "ol" -> {
+                if (!inList) {
+                    // Entering the outermost list — flush any pending body text and
+                    // initialise list state.
+                    flushBufferAsParagraph()
+                    inList = true
+                    currentListOrdered = (name == "ol")
+                    currentListItems.clear()
+                    currentItemBuffer.clear()
+                    listNestingDepth = 0
+                    inListItem = false
+                } else {
+                    // Nested list inside an outer <li>: commit the outer item's text
+                    // accumulated so far (before the nested list opened), then increase
+                    // depth so subsequent <li>s are indented.
+                    val outerText = currentItemBuffer.toString().trim()
+                    if (outerText.isNotEmpty()) {
+                        currentListItems += outerText
+                    }
+                    currentItemBuffer.clear()
+                    listNestingDepth++
+                }
+            }
+
+            name == "li" -> {
+                if (inList) {
+                    // Flush any leftover text from the previous item (defensive; shouldn't
+                    // normally be non-empty at the start of a new sibling <li>).
+                    currentItemBuffer.clear()
+                    inListItem = true
+                }
+            }
         }
     }
 
@@ -190,7 +261,42 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
                     currentCell.clear()
                     currentRow.clear()
                     tableRows.clear()
+                }
+            }
+
+            name == "li" -> {
+                if (inList && inListItem) {
+                    val itemText = currentItemBuffer.toString().trim()
+                    if (itemText.isNotEmpty()) {
+                        val indent = "  ".repeat(listNestingDepth)
+                        currentListItems += indent + itemText
                     }
+                    currentItemBuffer.clear()
+                    inListItem = false
+                }
+            }
+
+            name == "ul" || name == "ol" -> {
+                if (inList) {
+                    if (listNestingDepth > 0) {
+                        // Closing a nested list — pop the depth; the outer <li> continues.
+                        listNestingDepth--
+                        inListItem = true // back inside the outer <li>
+                    } else {
+                        // Closing the outermost list — emit the ListBlock.
+                        if (currentListItems.isNotEmpty()) {
+                            _blocks += DocumentBlock.ListBlock(
+                                ordered = currentListOrdered,
+                                items = currentListItems.toList(),
+                            )
+                        }
+                        inList = false
+                        inListItem = false
+                        currentListItems.clear()
+                        currentItemBuffer.clear()
+                        listNestingDepth = 0
+                    }
+                }
             }
         }
     }
@@ -201,7 +307,8 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
         when {
             inTable && inCell -> currentCell.append(text)
             headingLevel > 0 -> currentBuffer.append(text)
-            !inTable -> currentBuffer.append(text)
+            inListItem -> currentItemBuffer.append(text)
+            !inTable && !inList -> currentBuffer.append(text)
         }
     }
 

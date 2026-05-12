@@ -3,6 +3,7 @@ package com.workflow.orchestrator.document.pipeline
 import com.workflow.orchestrator.core.model.DocumentBlock
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -58,10 +59,10 @@ class TikaXhtmlFormatGapsTest {
             "href is lost — DocumentBlockHandler never reads attributes on <a>")
     }
 
-    // ── Lists ────────────────────────────────────────────────────────────────
+    // ── Lists (positive coverage after Phase 3) ───────────────────────────────
 
     @Test
-    fun `gap HTML lists are flattened — no bullet, no number, no nesting metadata`() {
+    fun `HTML unordered list emits one ListBlock with ordered=false`() {
         val html = """
             <html><body>
             <ul>
@@ -73,26 +74,79 @@ class TikaXhtmlFormatGapsTest {
         """.trimIndent()
 
         val blocks = pipeline.extract(ByteArrayInputStream(html.toByteArray()), "text/html")
+        val list = blocks.filterIsInstance<DocumentBlock.ListBlock>().singleOrNull()
+        assertNotNull(list, "Expected one ListBlock from <ul>")
+        assertEquals(false, list!!.ordered)
+        assertEquals(listOf("First", "Second", "Third"), list.items)
+    }
 
-        // No DocumentBlock.List variant exists; <li> content surfaces somewhere — usually
-        // collapsed into one paragraph by Tika's XHTML emission. The exact arrangement
-        // varies by Tika version; what we assert is "no list semantics survived".
-        val variants = DocumentBlock::class.sealedSubclasses.map { it.simpleName }.toSet()
-        // ListBlock now exists in the model (Phase 0); DocumentBlockHandler doesn't emit it yet (Phase 3).
-        assertTrue("ListBlock" in variants, "Sentinel: ListBlock variant present after Phase 0")
-        assertFalse("ListItem" in variants, "Sentinel: DocumentBlock has no per-item ListItem variant (flat list only)")
+    @Test
+    fun `HTML ordered list emits one ListBlock with ordered=true`() {
+        val html = """
+            <html><body>
+            <ol>
+              <li>Alpha</li>
+              <li>Beta</li>
+            </ol>
+            </body></html>
+        """.trimIndent()
 
-        val flat = blocks.joinToString(" ") {
-            when (it) {
-                is DocumentBlock.Paragraph -> it.text
-                is DocumentBlock.Heading -> it.text
-                else -> ""
-            }
-        }
-        assertTrue(flat.contains("First") && flat.contains("Second") && flat.contains("Third"),
-            "List item text survives as plain content")
-        assertFalse(Regex("""^\s*[•\-*]\s""").containsMatchIn(flat),
-            "No bullet markers reintroduced — extractor preserves no list type info")
+        val blocks = pipeline.extract(ByteArrayInputStream(html.toByteArray()), "text/html")
+        val list = blocks.filterIsInstance<DocumentBlock.ListBlock>().singleOrNull()
+        assertNotNull(list)
+        assertEquals(true, list!!.ordered)
+        assertEquals(listOf("Alpha", "Beta"), list.items)
+    }
+
+    @Test
+    fun `nested HTML list flattens to one ListBlock with indent prefixes on nested items`() {
+        val html = """
+            <html><body>
+            <ul>
+              <li>Top1
+                <ul>
+                  <li>Sub1</li>
+                  <li>Sub2</li>
+                </ul>
+              </li>
+              <li>Top2</li>
+            </ul>
+            </body></html>
+        """.trimIndent()
+
+        val blocks = pipeline.extract(ByteArrayInputStream(html.toByteArray()), "text/html")
+        val list = blocks.filterIsInstance<DocumentBlock.ListBlock>().singleOrNull()
+        assertNotNull(list)
+        // Top1 keeps no indent; Sub1/Sub2 get "  "; Top2 returns to no indent.
+        // Whitespace around the inner ul may vary; assert presence + indent pattern.
+        val items = list!!.items.map { it.trim() to it.startsWith("  ") }
+        assertTrue(items.any { it.first == "Top1" && !it.second }, "Top1 should not be indented; got: ${list.items}")
+        assertTrue(items.any { it.first == "Sub1" && it.second }, "Sub1 should be indented; got: ${list.items}")
+        assertTrue(items.any { it.first == "Sub2" && it.second }, "Sub2 should be indented; got: ${list.items}")
+        assertTrue(items.any { it.first == "Top2" && !it.second }, "Top2 should not be indented; got: ${list.items}")
+    }
+
+    @Test
+    fun `consecutive ul and ol emit two separate ListBlocks`() {
+        val html = """
+            <html><body>
+            <ul><li>A</li><li>B</li></ul>
+            <p>between</p>
+            <ol><li>1</li><li>2</li></ol>
+            </body></html>
+        """.trimIndent()
+
+        val blocks = pipeline.extract(ByteArrayInputStream(html.toByteArray()), "text/html")
+        val lists = blocks.filterIsInstance<DocumentBlock.ListBlock>()
+        assertEquals(2, lists.size, "Two distinct lists with prose between → two ListBlocks")
+        assertEquals(false, lists[0].ordered)
+        assertEquals(true, lists[1].ordered)
+        // Order: list1, paragraph, list2.
+        val firstList = blocks.indexOfFirst { it is DocumentBlock.ListBlock }
+        val between = blocks.indexOfFirst { it is DocumentBlock.Paragraph && (it as DocumentBlock.Paragraph).text.contains("between") }
+        val secondList = blocks.indexOfLast { it is DocumentBlock.ListBlock }
+        assertTrue(firstList >= 0 && between > firstList && secondList > between,
+            "Expected ListBlock, Paragraph(between), ListBlock order; got: ${blocks.map { it::class.simpleName }}")
     }
 
     // ── Images (positive coverage after Phase 2) ──────────────────────────────
