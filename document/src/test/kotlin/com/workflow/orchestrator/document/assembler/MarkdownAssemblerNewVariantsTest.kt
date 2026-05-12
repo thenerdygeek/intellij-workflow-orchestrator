@@ -39,4 +39,11 @@ class MarkdownAssemblerNewVariantsTest {
         assertEquals(listOf("a", "b"), unordered.items)
         assertEquals(true, ordered.ordered)
     }
+
+    @Test
+    fun `Footnote has marker and text`() {
+        val f = DocumentBlock.Footnote(marker = "1", text = "See appendix A.")
+        assertEquals("1", f.marker)
+        assertEquals("See appendix A.", f.text)
+    }
 }

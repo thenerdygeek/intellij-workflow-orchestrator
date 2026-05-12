@@ -125,4 +125,18 @@ sealed class DocumentBlock {
         val ordered: Boolean,
         val items: List<String>,
     ) : DocumentBlock()
+
+    /**
+     * A footnote or endnote. Extractors MUST emit all footnote blocks at the END of
+     * their returned `List<DocumentBlock>` so they serialize as a contiguous final
+     * Markdown block. The `MarkdownAssembler` does NOT reorder blocks — ordering is
+     * the extractor's responsibility.
+     *
+     * @param marker Display marker (e.g. "1", "2", "a", "*").
+     * @param text   Plain-text body of the footnote.
+     */
+    data class Footnote(
+        val marker: String,
+        val text: String,
+    ) : DocumentBlock()
 }
