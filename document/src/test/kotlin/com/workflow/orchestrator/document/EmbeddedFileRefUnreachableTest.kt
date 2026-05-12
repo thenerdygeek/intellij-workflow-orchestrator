@@ -30,7 +30,7 @@ class EmbeddedFileRefUnreachableTest {
     // ── PDF: the only explicit image gate in the codebase ────────────────────
 
     @Test
-    fun `hardenedPdfConfig explicitly disables inline image extraction and OCR`() {
+    fun `hardenedPdfConfig explicitly disables inline image extraction and OCR and Tika annotation text`() {
         val cfg = hardenedPdfConfig()
 
         assertFalse(cfg.isExtractInlineImages,
@@ -39,6 +39,10 @@ class EmbeddedFileRefUnreachableTest {
         assertEquals(PDFParserConfig.OCR_STRATEGY.NO_OCR, cfg.ocrStrategy,
             "OCR is explicitly OFF — flipping this without adding an OCR parser will break TikaDocumentExtractor's " +
                 "init-block 'no OCR parser registered' assertion.")
+        // P4b: Tika annotation extraction is OFF — PdfMetadataExtractor is the SOLE annotation source.
+        assertFalse(cfg.isExtractAnnotationText,
+            "Annotation extraction is OFF — PdfMetadataExtractor is the SOLE annotation source post-Phase-4b. " +
+                "Re-enabling this would re-introduce duplicate annotation Paragraphs alongside the typed Comment blocks.")
     }
 
     // ── EmbeddedFileRef constructor: exactly the known Phase-2 producers ─────
