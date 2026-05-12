@@ -4,6 +4,7 @@ import com.workflow.orchestrator.core.model.DocumentBlock
 import com.workflow.orchestrator.document.poi.DocxTableExtractor
 import com.workflow.orchestrator.document.poi.PptxExtractor
 import com.workflow.orchestrator.document.poi.XlsxTableExtractor
+import com.workflow.orchestrator.document.service.ImageExtractionService
 import java.io.InputStream
 
 /**
@@ -28,27 +29,50 @@ import java.io.InputStream
  * share across threads.
  *
  * @param xlsx Extractor for XLSX files (default: [XlsxTableExtractor]).
- * @param docx Extractor for DOCX files (default: [DocxTableExtractor]).
  * @param pptx Extractor for PPTX files (default: [PptxExtractor]).
  */
 class OfficePipeline(
     private val xlsx: XlsxTableExtractor = XlsxTableExtractor(),
-    private val docx: DocxTableExtractor = DocxTableExtractor(),
     private val pptx: PptxExtractor = PptxExtractor(),
 ) {
 
     /**
      * Extracts [DocumentBlock] values from [stream] based on the given [mime] type.
      *
-     * @param stream Raw document bytes. The caller is responsible for closing the stream.
-     * @param mime   Exact MIME type string from [OFFICE_MIMES].
+     * For DOCX files, an [ImageExtractionService] and [docKey] may be supplied so that
+     * [com.workflow.orchestrator.document.poi.visitor.ImageExtractionVisitor] is wired into
+     * the paragraph visitor chain. A new [DocxTableExtractor] is constructed per call so
+     * each extraction gets its own [imageService] + [docKey] binding.
+     *
+     * @param stream       Raw document bytes. The caller is responsible for closing the stream.
+     * @param mime         Exact MIME type string from [OFFICE_MIMES].
+     * @param imageService Optional service that saves extracted images to disk. When non-null,
+     *                     inline images in DOCX files are emitted as
+     *                     [com.workflow.orchestrator.core.model.DocumentBlock.EmbeddedFileRef]
+     *                     with an on-disk path. When null (legacy / non-agent callers), images
+     *                     are silently dropped.
+     * @param docKey       Stable key for the source document (typically its absolute path).
+     *                     Passed through to [ImageExtractionService.save] for per-doc directory
+     *                     keying; ignored when [imageService] is null.
      * @return Ordered list of document blocks.
      * @throws IllegalArgumentException if [mime] is not one of [OFFICE_MIMES].
      */
-    fun extract(stream: InputStream, mime: String): List<DocumentBlock> {
+    fun extract(
+        stream: InputStream,
+        mime: String,
+        imageService: ImageExtractionService? = null,
+        docKey: String = "anonymous",
+    ): List<DocumentBlock> {
         return when (mime) {
             MIME_XLSX -> xlsx.extract(stream)
-            MIME_DOCX -> docx.extract(stream)
+            MIME_DOCX -> {
+                val extractor = if (imageService != null) {
+                    DocxTableExtractor(imageService = imageService, docKey = docKey)
+                } else {
+                    DocxTableExtractor()
+                }
+                extractor.extract(stream)
+            }
             MIME_PPTX -> pptx.extract(stream)
             else -> throw IllegalArgumentException(
                 "OfficePipeline does not handle MIME type '$mime'. " +

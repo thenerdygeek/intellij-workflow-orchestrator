@@ -3,11 +3,13 @@ package com.workflow.orchestrator.document.poi
 import com.workflow.orchestrator.core.model.DocumentBlock
 import com.workflow.orchestrator.document.poi.visitor.CommentExtractionVisitor
 import com.workflow.orchestrator.document.poi.visitor.DefaultHeadingParagraphVisitor
+import com.workflow.orchestrator.document.poi.visitor.ImageExtractionVisitor
 import com.workflow.orchestrator.document.poi.visitor.TrackedChangeVisitor
 import com.workflow.orchestrator.document.poi.visitor.DefaultTableVisitor
 import com.workflow.orchestrator.document.poi.visitor.ParagraphVisitor
 import com.workflow.orchestrator.document.poi.visitor.PostBodyVisitor
 import com.workflow.orchestrator.document.poi.visitor.TableVisitor
+import com.workflow.orchestrator.document.service.ImageExtractionService
 import org.apache.poi.xwpf.usermodel.IBodyElement
 import org.apache.poi.xwpf.usermodel.XWPFDocument
 import org.apache.poi.xwpf.usermodel.XWPFParagraph
@@ -40,21 +42,41 @@ import java.io.InputStream
  * it via `use { }`. Visitor instances may be shared across calls if they are stateless
  * (the defaults are).
  *
- * @param paragraphVisitors Visitors run for every body paragraph. Default: a single
- *                          [DefaultHeadingParagraphVisitor] preserving pre-refactor behaviour.
+ * @param paragraphVisitors Visitors run for every body paragraph. Default chain includes
+ *                          [DefaultHeadingParagraphVisitor], [CommentExtractionVisitor],
+ *                          [TrackedChangeVisitor], and (when [imageService] is non-null)
+ *                          [ImageExtractionVisitor].
  * @param tableVisitors     Visitors run for every body table. Default: a single
  *                          [DefaultTableVisitor] preserving pre-refactor behaviour.
  * @param postBodyVisitors  Visitors run once after body iteration. Default: empty.
  */
 class DocxTableExtractor(
-    private val paragraphVisitors: List<ParagraphVisitor> = listOf(
-        DefaultHeadingParagraphVisitor(),
-        CommentExtractionVisitor(),
-        TrackedChangeVisitor(),
-    ),
+    private val paragraphVisitors: List<ParagraphVisitor>,
     private val tableVisitors: List<TableVisitor> = listOf(DefaultTableVisitor()),
     private val postBodyVisitors: List<PostBodyVisitor> = emptyList(),
 ) {
+
+    /**
+     * Convenience constructor preserving the Phase 0/1 default visitor set. When
+     * [imageService] is non-null, an [ImageExtractionVisitor] is appended to the chain.
+     */
+    constructor(
+        imageService: ImageExtractionService? = null,
+        docKey: String = "anonymous",
+        tableVisitors: List<TableVisitor> = listOf(DefaultTableVisitor()),
+        postBodyVisitors: List<PostBodyVisitor> = emptyList(),
+    ) : this(
+        paragraphVisitors = buildList {
+            add(DefaultHeadingParagraphVisitor())
+            add(CommentExtractionVisitor())
+            add(TrackedChangeVisitor())
+            if (imageService != null) {
+                add(ImageExtractionVisitor(imageService, docKey))
+            }
+        },
+        tableVisitors = tableVisitors,
+        postBodyVisitors = postBodyVisitors,
+    )
 
     init {
         PoiHardening.applyOnce()

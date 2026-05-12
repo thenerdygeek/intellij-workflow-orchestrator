@@ -4,6 +4,7 @@ import com.workflow.orchestrator.core.api.DocumentExtractor
 import com.workflow.orchestrator.core.model.DocumentBlock
 import com.workflow.orchestrator.core.model.DocumentContent
 import com.workflow.orchestrator.core.model.ExtractOptions
+import com.workflow.orchestrator.core.services.SessionDownloadDir
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.document.assembler.MarkdownAssembler
 import com.workflow.orchestrator.document.pipeline.OfficePipeline
@@ -120,12 +121,15 @@ class TikaDocumentExtractor(
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    private fun doExtract(path: Path, options: ExtractOptions): DocumentContent {
+    private suspend fun doExtract(path: Path, options: ExtractOptions): DocumentContent {
         val mime = mimeDetector.detect(path)
+        val downloadsRoot = SessionDownloadDir.current()
+        val imageService = ImageExtractionService(downloadsRoot = downloadsRoot)
+        val docKey = path.toAbsolutePath().toString()
         val blocks: List<DocumentBlock> = when {
             mime == "application/pdf" -> pdfPipeline.extract(path)
             mime in OfficePipeline.OFFICE_MIMES -> {
-                Files.newInputStream(path).use { officePipeline.extract(it, mime) }
+                Files.newInputStream(path).use { officePipeline.extract(it, mime, imageService, docKey) }
             }
             else -> Files.newInputStream(path).use { tikaXhtml.extract(it, mime) }
         }

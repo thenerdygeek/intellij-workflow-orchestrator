@@ -39,27 +39,27 @@ class EmbeddedFileRefUnreachableTest {
                 "init-block 'no OCR parser registered' assertion.")
     }
 
-    // ── EmbeddedFileRef constructor: no caller across all extractor code ─────
+    // ── EmbeddedFileRef constructor: exactly the known Phase-2 producers ─────
 
     @Test
-    fun `no extractor source file constructs DocumentBlock EmbeddedFileRef`() {
+    fun `only known Phase-2 producers construct DocumentBlock EmbeddedFileRef`() {
         val mainRoot = Path.of("src/main/kotlin/com/workflow/orchestrator/document")
         val kotlinFiles = Files.walk(mainRoot)
             .filter { Files.isRegularFile(it) && it.extension == "kt" }
             .toList()
 
-        val offenders = kotlinFiles.filter { file ->
+        val producers = kotlinFiles.filter { file ->
             val text = Files.readString(file)
-            // Anything that mentions EmbeddedFileRef other than:
-            // - The MarkdownAssembler which serialises the variant (consumer, not producer).
             text.contains("EmbeddedFileRef(") &&
                 !file.toString().endsWith("MarkdownAssembler.kt")
-        }
+        }.map { it.fileName.toString() }.sorted()
 
-        assertEquals(emptyList<Path>(), offenders,
-            "Some extractor now constructs DocumentBlock.EmbeddedFileRef — great! Update this test " +
-                "to assert the *positive* behaviour (e.g. that PptxExtractor emits one per picture shape). " +
-                "Offending files: $offenders")
+        // Phase 2 wires ImageExtractionVisitor as the first EmbeddedFileRef producer.
+        // When P2T3/P2T4/P2T5 add XLSX/PPTX/HTML image support, add those filenames here.
+        val expected = listOf("ImageExtractionVisitor.kt")
+        assertEquals(expected, producers,
+            "EmbeddedFileRef producer set changed — update this list to reflect the new positive behaviour. " +
+                "Current producers: $producers")
     }
 
     // ── DocumentBlock model surface (sentinel) ────────────────────────────────

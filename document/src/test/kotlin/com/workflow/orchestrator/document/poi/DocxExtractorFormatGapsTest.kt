@@ -72,10 +72,12 @@ class DocxExtractorFormatGapsTest {
             "Hyperlink target URI is dropped — extractor never reads w:hyperlink relations")
     }
 
-    // ── Embedded images ───────────────────────────────────────────────────────
+    // ── Embedded images (positive coverage after Phase 2) ─────────────────────
 
     @Test
-    fun `gap embedded inline image produces no DocumentBlock — no EmbeddedFileRef, no placeholder`() {
+    fun `inline image emits EmbeddedFileRef with on-disk path when ImageExtractionService is wired`(
+        @org.junit.jupiter.api.io.TempDir downloads: java.nio.file.Path,
+    ) {
         // PoiHardening caps IOUtils byte-array allocations at 50 MB; XWPFRun.addPicture asks POI
         // to pre-size for up to 100 MB. Temporarily raise the cap for fixture creation, then
         // restore the hardening value so the extractor under test still sees a hardened POI.
@@ -100,18 +102,51 @@ class DocxExtractorFormatGapsTest {
             IOUtils.setByteArrayMaxOverride(50_000_000)
         }
 
-        runImageGapAssertions(bytes)
-    }
-
-    private fun runImageGapAssertions(bytes: ByteArray) {
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        val extractor = DocxTableExtractor(imageService = imageService, docKey = "test-doc.docx")
         val blocks = extractor.extract(ByteArrayInputStream(bytes))
 
         assertTrue(blocks.any { it is DocumentBlock.Paragraph && it.text.contains("Before image") })
         assertTrue(blocks.any { it is DocumentBlock.Paragraph && it.text.contains("After image") })
+        val imageRef = blocks.filterIsInstance<DocumentBlock.EmbeddedFileRef>().singleOrNull()
+        assertNotNull(imageRef, "Expected exactly one EmbeddedFileRef for the inline image")
+        // XWPFPictureData.getFileName() returns the internal part name (e.g. "image1.png"),
+        // not the suggested name passed to XWPFRun.addPicture. Both contain the ".png" extension.
+        assertTrue(imageRef!!.name.endsWith(".png"),
+            "Expected a PNG filename but got: ${imageRef.name}")
+        assertEquals("image/png", imageRef.mimeType)
+        assertNotNull(imageRef.path, "path should be non-null when ImageExtractionService is wired")
+        assertTrue(java.nio.file.Files.exists(java.nio.file.Path.of(imageRef.path!!)),
+            "Saved file should exist on disk at the reported path")
+    }
+
+    @Test
+    fun `inline image without ImageExtractionService wired emits no EmbeddedFileRef — legacy behaviour preserved`() {
+        // PoiHardening dance for in-memory fixture
+        IOUtils.setByteArrayMaxOverride(200_000_000)
+        val pngBytes = tinyPng()
+        val bytes = try {
+            buildDocx { doc ->
+                val p = doc.createParagraph()
+                p.createRun().apply {
+                    setText("Body. ")
+                    addPicture(
+                        ByteArrayInputStream(pngBytes),
+                        XWPFDocument.PICTURE_TYPE_PNG,
+                        "tiny.png",
+                        Units.toEMU(10.0),
+                        Units.toEMU(10.0),
+                    )
+                }
+            }
+        } finally {
+            IOUtils.setByteArrayMaxOverride(50_000_000)
+        }
+
+        // No imageService → legacy behaviour: image is silently dropped (Phase 0/1 baseline).
+        val blocks = DocxTableExtractor().extract(ByteArrayInputStream(bytes))
         assertTrue(blocks.none { it is DocumentBlock.EmbeddedFileRef },
-            "Extractor never emits EmbeddedFileRef for inline images — silent drop")
-        assertFalse(blocks.any { (it as? DocumentBlock.Paragraph)?.text?.contains("tiny.png") == true },
-            "Image filename is not surfaced anywhere")
+            "Without ImageExtractionService, ImageExtractionVisitor is not in the chain → no image emission")
     }
 
     // ── Custom heading styles ─────────────────────────────────────────────────
@@ -390,12 +425,13 @@ class DocxExtractorFormatGapsTest {
 
     /**
      * Source-scan gate: confirms that [DocxTableExtractor] still does NOT touch
-     * footnotes, endnotes, header/footer policy, or embedded pictures. Comments are now
-     * legitimately read (Phase 1 — [CommentExtractionVisitor]), so `.comments` and
-     * `getComments(` are intentionally absent from the forbidden list.
+     * footnotes, endnotes, or header/footer policy directly. Comments and images are now
+     * legitimately read via Phase 1/2 visitors ([CommentExtractionVisitor],
+     * [com.workflow.orchestrator.document.poi.visitor.ImageExtractionVisitor]), so those
+     * needles are intentionally absent from the forbidden list.
      */
     @Test
-    fun `gap extractor still skips footnotes endnotes headers and pictures — comments are now extracted in Phase 1`() {
+    fun `gap extractor still skips footnotes endnotes and headers — comments and images extracted via visitors in Phase 1 and 2`() {
         val source = javaClass.classLoader
             .getResource("../../main/kotlin/com/workflow/orchestrator/document/poi/DocxTableExtractor.kt")
             ?.readText()
@@ -413,8 +449,6 @@ class DocxExtractorFormatGapsTest {
             ".endnotes",
             "getEndnotes(",
             "HeaderFooterPolicy",
-            "embeddedPictures",
-            "XWPFPicture",
         ).forEach { needle ->
             assertFalse(text!!.contains(needle),
                 "DocxTableExtractor must NOT touch '$needle' until the gap is fixed; if it does, " +
@@ -444,3 +478,4 @@ class DocxExtractorFormatGapsTest {
         return out.toByteArray()
     }
 }
+// DIAGNOSTIC ONLY - remove after debugging
