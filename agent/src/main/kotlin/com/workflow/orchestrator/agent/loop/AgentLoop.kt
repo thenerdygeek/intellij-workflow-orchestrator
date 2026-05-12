@@ -784,6 +784,17 @@ class AgentLoop(
             val currentToolNames = toolNameProvider?.invoke() ?: brain.toolNameSet
             val currentParamNames = paramNameProvider?.invoke() ?: brain.paramNameSet
 
+            // Parser-leak diagnostic — if a deferred tool the LLM is likely to call
+            // is missing from this snapshot, AssistantMessageParser cannot recognize
+            // its XML and the call body leaks as raw text into the assistant bubble.
+            // See AssistantMessageParserReadDocumentReproTest for the failure mode.
+            // Remove once the live root cause is pinned down.
+            val parserExpectedTools = setOf("read_document", "read_file", "edit_file")
+            val missingFromParser = parserExpectedTools - currentToolNames
+            if (missingFromParser.isNotEmpty()) {
+                LOG.warn("[parser] iteration $iteration toolNames snapshot is missing $missingFromParser (size=${currentToolNames.size}); these tool calls will leak as TextContent if the LLM emits them now")
+            }
+
             // Persist api_req_started UI message before the LLM call (Cline pattern, I7 fix).
             // AgentLoop runs on Dispatchers.IO — all messageStateHandler calls are awaited inline.
             messageStateHandler?.addToClineMessages(UiMessage(
