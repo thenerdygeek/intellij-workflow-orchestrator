@@ -85,8 +85,43 @@ object SystemPrompt {
         /** When non-null, replaces the output of agentRole(ideContext) in section 1. */
         agentRoleOverride: String? = null,
         /** When false, omits the "# Subagent Delegation" subsection from Rules. */
-        includeSubagentDelegationInRules: Boolean = true
+        includeSubagentDelegationInRules: Boolean = true,
+        /**
+         * When true, prepends a one-time `<system-reminder>` (Claude-Code style)
+         * to the prompt — fired by `MessageStateHandler.consumeDialectDriftFlag`
+         * after a dialect-drift event (write-time guard rejected a turn OR
+         * `redactDialectXmlInHistory` rewrote one). The reminder gives the model
+         * a concrete `<read_file>` example so it stops reverting to
+         * `<function_calls><invoke>` or `<tool_call>{json}` formats. Dynamic
+         * (one-shot per detection) rather than static because static prompts
+         * lose attention over long context — see JetBrains Koog blog
+         * ("structure beats instructions") and Claude Code's `<system-reminder>`
+         * pattern.
+         */
+        dialectDriftDetected: Boolean = false
     ): String = buildString {
+
+        // 0. DIALECT-DRIFT CORRECTIVE REMINDER (primacy zone, one-shot)
+        if (dialectDriftDetected) {
+            appendLine("<system-reminder>")
+            appendLine("CRITICAL — TOOL-CALL FORMAT CORRECTION")
+            appendLine()
+            appendLine("Your previous response used an incompatible tool-call format that DID NOT execute.")
+            appendLine("Specifically, do NOT use any of these shapes:")
+            appendLine("  - `<function_calls><invoke name=\"X\">…</invoke></function_calls>` (Anthropic protocol)")
+            appendLine("  - `<invoke name=\"X\">…</invoke>` (bare Anthropic invoke)")
+            appendLine("  - `<tool_call>{\"tool_name\":\"X\", …}</tool_call>` (Hermes JSON-in-XML)")
+            appendLine()
+            appendLine("The ONLY format the host parser accepts is the tool's own tag as the outermost wrapper, with each parameter as a child tag:")
+            appendLine()
+            appendLine("<read_file>")
+            appendLine("<path>src/main/kotlin/Example.kt</path>")
+            appendLine("</read_file>")
+            appendLine()
+            appendLine("Use this exact shape for every tool call from now on. Tool calls in any other format will be rejected and you will be retried.")
+            appendLine("</system-reminder>")
+            append(SECTION_SEP)
+        }
 
         // 1. AGENT ROLE
         append(agentRoleOverride ?: agentRole(ideContext))

@@ -193,7 +193,13 @@ export const ChatFooter = memo(function ChatFooter() {
               border: '1px solid var(--border)',
             }}
             onClick={() => {
-              useChatStore.setState({ retryState: null });
+              // Set busy:true immediately so the working indicator + stop button
+              // appear during the Kotlin-side cleanup window (cancelCurrentTask +
+              // cleanEmptyArtifactsBeforeRetry + invokeLater dispatch). Without
+              // this, the UI sat in limbo — retry banner gone, no spinner, no
+              // stop button — for the multi-hundred-millisecond gap before
+              // executeTask("continue", …) flips busy:true itself.
+              useChatStore.setState({ retryState: null, busy: true });
               import('@/bridge/jcef-bridge').then(({ kotlinBridge }) => {
                 kotlinBridge.retryLastTask();
               });

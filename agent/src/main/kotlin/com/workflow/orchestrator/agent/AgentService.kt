@@ -29,6 +29,7 @@ import com.workflow.orchestrator.agent.prompt.InstructionLoader
 import com.workflow.orchestrator.agent.prompt.SystemPrompt
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.agent.session.AtomicFileWriter
+import com.workflow.orchestrator.agent.session.DialectDriftDetector
 import com.workflow.orchestrator.agent.session.TaskStore
 import com.workflow.orchestrator.agent.session.Session
 import com.workflow.orchestrator.agent.session.SessionStatus
@@ -1211,7 +1212,16 @@ class AgentService(
         if (diskRemoved > 0) {
             log.info("[AgentService] retry cleanup: $diskRemoved on-disk empty-assistant turn(s) removed")
         }
-        return diskRemoved
+        // Dialect-drift cleanup: redact any contaminated assistant turns in the
+        // persisted history before the retry replays it. Mirrors the empty-turn
+        // pattern above. If anything is redacted, MessageStateHandler raises the
+        // one-shot dialect-drift flag so the next system prompt picks up the
+        // corrective <system-reminder>.
+        val dialectRewritten = handler.redactDialectXmlInHistory()
+        if (dialectRewritten > 0) {
+            log.info("[AgentService] retry cleanup: $dialectRewritten on-disk assistant turn(s) had dialect tool-call XML redacted")
+        }
+        return diskRemoved + dialectRewritten
     }
 
     /**
@@ -1663,6 +1673,13 @@ class AgentService(
                 val memoryIndexContent = com.workflow.orchestrator.agent.memory.MemoryIndex.load(memoryDirPath)
                 val memoryIndexPath = memoryDirPath.resolve("MEMORY.md").toString()
 
+                // Forward-reference holder for [messageState] (declared further down in
+                // this function): the systemPromptBuilder lambda is defined before
+                // `messageState` and `ctx` are created, but the lambda is only INVOKED
+                // after both exist. We populate this holder once `messageState` is built;
+                // until then `consumeDialectDriftFlag()` returns false via the elvis.
+                var messageStateRef: MessageStateHandler? = null
+
                 // Build system prompt — XML tool definitions added dynamically below
                 val systemPromptBuilder = { toolDefsMarkdown: String? ->
                     SystemPrompt.build(
@@ -1679,7 +1696,11 @@ class AgentService(
                         memoryIndexPath = memoryIndexPath,
                         ideContext = ideContext,
                         availableShells = allowedShells,
-                        availableModels = formatModelsForPrompt(ModelCache.getCached())
+                        availableModels = formatModelsForPrompt(ModelCache.getCached()),
+                        // One-shot — fires once per drift detection, then resets.
+                        // True when the write-time guard rejected an assistant turn OR
+                        // `redactDialectXmlInHistory` rewrote one at resume / retry.
+                        dialectDriftDetected = messageStateRef?.consumeDialectDriftFlag() ?: false
                     )
                 }
                 // Set initial system prompt (XML defs added on first toolDefinitionProvider call)
@@ -1820,6 +1841,10 @@ class AgentService(
 
                 // Expose active handler so AgentController.dismissPlan() can rewrite history.
                 activeMessageStateHandler = messageState
+                // Wire the forward-reference holder so the systemPromptBuilder lambda
+                // (defined above before messageState existed) can consume the
+                // dialect-drift flag on each rebuild.
+                messageStateRef = messageState
 
                 // Initialise session-scoped task store alongside the message state handler.
                 // loadFromDisk() runs inside a coroutine scope so it is safe to call here.
@@ -2249,6 +2274,31 @@ class AgentService(
             log.info("[AgentService] resume cleanup: dropped $droppedEmpties trailing empty-assistant turn(s) from history")
         }
 
+        // Dialect-drift cleanup on resume — redact incompatible-format tool-call
+        // XML (Anthropic <invoke>, Hermes <tool_call>{json}) inline on the
+        // in-memory list before we seed it into the handler below. Same rationale
+        // as the retry path in cleanEmptyArtifactsBeforeRetry — see
+        // DialectDriftDetector header. The persisted file is updated when the
+        // handler runs its first save (the resumption user-message append at the
+        // bottom of this function will overwrite the file with the cleaned list).
+        var dialectDriftDetectedOnResume = false
+        val redactedHistory = activeApiHistory.map { msg ->
+            if (msg.role != ApiRole.ASSISTANT) return@map msg
+            var changed = false
+            val newContent = msg.content.map { block ->
+                if (block !is ContentBlock.Text) return@map block
+                val r = DialectDriftDetector.redactDialectMarkers(block.text)
+                if (r.modified) { changed = true; ContentBlock.Text(r.text) } else block
+            }
+            if (changed) msg.copy(content = newContent) else msg
+        }
+        val redactedCount = activeApiHistory.zip(redactedHistory).count { (orig, new) -> orig !== new }
+        if (redactedCount > 0) {
+            log.info("[AgentService] resume cleanup: redacted dialect tool-call XML in $redactedCount assistant turn(s)")
+            dialectDriftDetectedOnResume = true
+            activeApiHistory = redactedHistory
+        }
+
         // Build task resumption preamble
         val lastActivityTs = savedUiMessages.lastOrNull()?.ts ?: System.currentTimeMillis()
         val agoText = ResumeHelper.formatTimeAgo(lastActivityTs)
@@ -2352,7 +2402,11 @@ class AgentService(
                 planModeEnabled = planModeActive.get(),
                 ideContext = ideContext,
                 availableShells = allowedShells,
-                availableModels = formatModelsForPrompt(ModelCache.getCached())
+                availableModels = formatModelsForPrompt(ModelCache.getCached()),
+                // One-shot — fires only if the resume-path cleanup above redacted turns.
+                // (executeTask's own systemPromptBuilder will consume the flag for any
+                // further drift caught at write-time during this session.)
+                dialectDriftDetected = dialectDriftDetectedOnResume
             )
             ctx.setSystemPrompt(systemPrompt)
 

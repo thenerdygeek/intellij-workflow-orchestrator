@@ -46,6 +46,15 @@ class MessageStateHandler(
     private val uiMessages: MutableList<UiMessage> = mutableListOf()
     private val apiHistory: MutableList<ApiMessage> = mutableListOf()
 
+    /**
+     * One-shot flag: true once [DialectDriftDetector] has flagged drift in this
+     * session (either at write-time on a new assistant turn, or during the
+     * one-pass [redactDialectXmlInHistory] on resume / retry). Consumed by
+     * [consumeDialectDriftFlag] when building the next system prompt so the
+     * `<system-reminder>` is injected exactly once per drift event.
+     */
+    private val dialectDriftFlag = java.util.concurrent.atomic.AtomicBoolean(false)
+
     /** Throttle global index updates to at most once per second during streaming. */
     @Volatile private var lastGlobalIndexUpdateMs = 0L
     @Volatile private var globalIndexDirty = false
@@ -88,6 +97,19 @@ class MessageStateHandler(
             // already in-memory only via ContextManager.
             return@withLock
         }
+        if (hasDialectDrift(message)) {
+            // Assistant emitted tool calls in an incompatible dialect (Anthropic
+            // <function_calls><invoke> or Hermes <tool_call>{json}). The host parser
+            // doesn't recognize these, so the tool didn't run — persisting the turn
+            // would teach the model the dialect "worked" via in-context learning on
+            // the next call (the same self-reinforcing loop documented as "context
+            // poisoning" / "agent drift" in arxiv 2601.04170). Reject the turn and
+            // flag the session so the next system prompt carries a corrective
+            // <system-reminder>; AgentLoop will see no persisted turn and retry the
+            // call.
+            dialectDriftFlag.set(true)
+            return@withLock
+        }
         apiHistory.add(message)
         saveApiHistoryInternal()
     }
@@ -110,6 +132,68 @@ class MessageStateHandler(
             saveApiHistoryInternal()
         }
         removed
+    }
+
+    /**
+     * One-pass cleanup that redacts dialect-format tool-call XML from every
+     * assistant turn in the persisted history. Mirrors the
+     * [pruneTrailingEmptyAssistants] shape: called from `AgentService` at the
+     * resume and retry entry points so a contaminated session can recover
+     * without forcing the user to start a new chat.
+     *
+     * Per the contamination research (see [DialectDriftDetector] header) the
+     * span is **redacted with a marker**, not translated. Translation would
+     * make the bad turn look successful to the LLM on the next call and
+     * re-anchor the dialect via in-context learning. The redaction marker
+     * gives the model a placeholder with no format-like content to copy.
+     *
+     * Flags [dialectDriftFlag] when any redaction occurred so the next system
+     * prompt picks up the corrective `<system-reminder>`.
+     *
+     * @return number of assistant turns rewritten.
+     */
+    suspend fun redactDialectXmlInHistory(): Int = mutex.withLock {
+        var rewritten = 0
+        for (i in apiHistory.indices) {
+            val msg = apiHistory[i]
+            if (msg.role != ApiRole.ASSISTANT) continue
+
+            var msgChanged = false
+            val newContent = msg.content.map { block ->
+                if (block !is ContentBlock.Text) return@map block
+                val result = DialectDriftDetector.redactDialectMarkers(block.text)
+                if (result.modified) {
+                    msgChanged = true
+                    ContentBlock.Text(result.text)
+                } else block
+            }
+            if (msgChanged) {
+                apiHistory[i] = msg.copy(content = newContent)
+                rewritten++
+            }
+        }
+        if (rewritten > 0) {
+            dialectDriftFlag.set(true)
+            saveApiHistoryInternal()
+        }
+        rewritten
+    }
+
+    /**
+     * Consumes the one-shot dialect-drift flag — returns true exactly once per
+     * detection event, then resets. Called from `AgentService.systemPromptBuilder`
+     * so the corrective `<system-reminder>` is injected on the immediately-next
+     * LLM call and not on every call thereafter (per the research finding that
+     * static prompt updates lose attention over long context; dynamic reminders
+     * fired on state transitions steer better).
+     */
+    fun consumeDialectDriftFlag(): Boolean = dialectDriftFlag.getAndSet(false)
+
+    private fun hasDialectDrift(message: ApiMessage): Boolean {
+        if (message.role != ApiRole.ASSISTANT) return false
+        return message.content.any { block ->
+            block is ContentBlock.Text && DialectDriftDetector.hasDialectMarker(block.text)
+        }
     }
 
     @Suppress("DEPRECATION")  // legacy ContentBlock.Image still has to exhaust the when
