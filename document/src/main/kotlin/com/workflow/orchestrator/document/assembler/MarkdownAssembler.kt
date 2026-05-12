@@ -96,6 +96,7 @@ class MarkdownAssembler {
         is DocumentBlock.PageMarker -> serializePageMarker(block)
         is DocumentBlock.EmbeddedFileRef -> serializeEmbeddedFileRef(block)
         is DocumentBlock.Comment -> serializeComment(block)
+        is DocumentBlock.ListBlock -> serializeListBlock(block)
         else -> error("variant ${block::class.simpleName} not yet serialized")  // KEEP — replaced in Tasks 8/9/10
     }
 
@@ -141,6 +142,25 @@ class MarkdownAssembler {
         }
         val body = block.text.lineSequence().joinToString("\n") { "> $it" }
         return if (block.text.isBlank()) "> $header\n\n" else "> $header:\n$body\n\n"
+    }
+
+    /**
+     * Serialises a [DocumentBlock.ListBlock] as a bulleted or numbered Markdown list.
+     *
+     * Empty `items` produces an empty string — callers that build empty lists get a
+     * silent no-op rather than a stray `\n\n`.
+     */
+    private fun serializeListBlock(block: DocumentBlock.ListBlock): String {
+        if (block.items.isEmpty()) return ""
+        val sb = StringBuilder()
+        for ((i, item) in block.items.withIndex()) {
+            val marker = if (block.ordered) "${i + 1}. " else "- "
+            sb.append(marker)
+            sb.append(item)
+            sb.append("\n")
+        }
+        sb.append("\n")
+        return sb.toString()
     }
 
     private fun serializeTable(block: DocumentBlock.Table): String {

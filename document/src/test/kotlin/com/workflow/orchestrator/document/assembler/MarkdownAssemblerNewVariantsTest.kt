@@ -164,4 +164,36 @@ class MarkdownAssemblerNewVariantsTest {
             md,
         )
     }
+
+    @Test
+    fun `ListBlock unordered renders with dashes`() {
+        val block = DocumentBlock.ListBlock(ordered = false, items = listOf("apple", "banana", "cherry"))
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals("- apple\n- banana\n- cherry\n\n", md)
+    }
+
+    @Test
+    fun `ListBlock ordered renders with 1-indexed numbers`() {
+        val block = DocumentBlock.ListBlock(ordered = true, items = listOf("first", "second"))
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals("1. first\n2. second\n\n", md)
+    }
+
+    @Test
+    fun `ListBlock empty items renders nothing for the body but keeps trailing newlines absent`() {
+        val block = DocumentBlock.ListBlock(ordered = false, items = emptyList())
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals("", md)
+    }
+
+    @Test
+    fun `ListBlock items containing newlines preserve the newline inside the item text`() {
+        // Nested-level encoding: caller puts "  sub-item" inside an item to indicate nesting.
+        val block = DocumentBlock.ListBlock(
+            ordered = false,
+            items = listOf("top\n  sub-item-a\n  sub-item-b", "another top"),
+        )
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals("- top\n  sub-item-a\n  sub-item-b\n- another top\n\n", md)
+    }
 }
