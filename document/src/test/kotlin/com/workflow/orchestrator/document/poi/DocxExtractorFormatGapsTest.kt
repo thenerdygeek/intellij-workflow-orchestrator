@@ -3,6 +3,7 @@ package com.workflow.orchestrator.document.poi
 import com.workflow.orchestrator.core.model.DocumentBlock
 import org.apache.poi.util.IOUtils
 import org.apache.poi.util.Units
+import org.apache.poi.xwpf.usermodel.XWPFAbstractNum
 import org.apache.poi.xwpf.usermodel.XWPFDocument
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -10,6 +11,8 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTAbstractNum
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.STNumberFormat
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.math.BigInteger
@@ -280,31 +283,170 @@ class DocxExtractorFormatGapsTest {
             "Subtitle-styled text degrades to a Paragraph")
     }
 
-    // ── Lists ────────────────────────────────────────────────────────────────
+    // ── Lists (positive coverage after Phase 3) ──────────────────────────────
+
+    /**
+     * Creates a numbering definition using POI's XWPFNumbering API.
+     *
+     * Chain: CTAbstractNum.Factory.newInstance() → set abstractNumId + addLvl with numFmt →
+     * wrap in XWPFAbstractNum → numbering.addAbstractNum → numbering.addNum(abstractNumId).
+     *
+     * [CTAbstractNum.Factory] is the xmlbeans-generated static factory; it creates a
+     * properly typed instance without requiring access to the package-private
+     * `ctNumbering` field of [org.apache.poi.xwpf.usermodel.XWPFNumbering].
+     */
+    private fun buildDocxWithList(
+        items: List<Pair<String, Int>>,   // (text, ilvl)
+        numFmtEnum: STNumberFormat.Enum,
+        extraParagraphsBefore: List<String> = emptyList(),
+        extraParagraphsAfter: List<String> = emptyList(),
+    ): ByteArray {
+        return buildDocx { doc ->
+            for (text in extraParagraphsBefore) {
+                doc.createParagraph().createRun().setText(text)
+            }
+
+            val numbering = doc.createNumbering()
+            val ctAbstractNum: CTAbstractNum = CTAbstractNum.Factory.newInstance()
+            ctAbstractNum.abstractNumId = BigInteger.ZERO
+            ctAbstractNum.addNewLvl().addNewNumFmt().`val` = numFmtEnum
+
+            val abstractNumId = numbering.addAbstractNum(XWPFAbstractNum(ctAbstractNum))
+            val numId = numbering.addNum(abstractNumId)
+
+            for ((text, ilvl) in items) {
+                val p = doc.createParagraph()
+                p.numID = numId
+                p.setNumILvl(BigInteger.valueOf(ilvl.toLong()))
+                p.createRun().setText(text)
+            }
+
+            for (text in extraParagraphsAfter) {
+                doc.createParagraph().createRun().setText(text)
+            }
+        }
+    }
 
     @Test
-    fun `gap bulleted list items become individual Paragraphs with no marker, no nesting`() {
-        // We can't easily wire a numbering definition in a synthetic doc without packing
-        // numbering.xml by hand, but a list always renders as one paragraph per item.
-        // This pins the "no DocumentBlock.List variant exists" architectural fact.
+    fun `consecutive bulleted list items emit one ListBlock with ordered false`() {
+        val bytes = buildDocxWithList(
+            items = listOf("Apple" to 0, "Banana" to 0, "Cherry" to 0),
+            numFmtEnum = STNumberFormat.BULLET,
+        )
+
+        val blocks = DocxTableExtractor().extract(ByteArrayInputStream(bytes))
+        val listBlocks = blocks.filterIsInstance<DocumentBlock.ListBlock>()
+
+        assertEquals(1, listBlocks.size, "Expected exactly one ListBlock from three consecutive list items")
+        val lb = listBlocks.single()
+        assertFalse(lb.ordered, "Bullet numFmt should produce ordered=false")
+        assertEquals(listOf("Apple", "Banana", "Cherry"), lb.items)
+        // No spurious Paragraphs for the list items.
+        val paragraphs = blocks.filterIsInstance<DocumentBlock.Paragraph>()
+        assertTrue(paragraphs.none { it.text in listOf("Apple", "Banana", "Cherry") },
+            "List-item text must NOT also appear as Paragraph blocks (double-emission)")
+    }
+
+    @Test
+    fun `consecutive ordered list items emit one ListBlock with ordered true`() {
+        val bytes = buildDocxWithList(
+            items = listOf("Step 1" to 0, "Step 2" to 0, "Step 3" to 0),
+            numFmtEnum = STNumberFormat.DECIMAL,
+        )
+
+        val blocks = DocxTableExtractor().extract(ByteArrayInputStream(bytes))
+        val listBlocks = blocks.filterIsInstance<DocumentBlock.ListBlock>()
+
+        assertEquals(1, listBlocks.size, "Expected exactly one ListBlock")
+        assertTrue(listBlocks.single().ordered, "Decimal numFmt should produce ordered=true")
+        assertEquals(listOf("Step 1", "Step 2", "Step 3"), listBlocks.single().items)
+    }
+
+    @Test
+    fun `list items interspersed with normal paragraphs emit ListBlock then Paragraph then ListBlock`() {
         val bytes = buildDocx { doc ->
-            doc.createParagraph().createRun().setText("First item")
-            doc.createParagraph().createRun().setText("Second item")
-            doc.createParagraph().createRun().setText("Third item")
+            val numbering = doc.createNumbering()
+            val ctAbstract: CTAbstractNum = CTAbstractNum.Factory.newInstance()
+            ctAbstract.abstractNumId = BigInteger.ZERO
+            ctAbstract.addNewLvl().addNewNumFmt().`val` = STNumberFormat.BULLET
+            val abstractNumId = numbering.addAbstractNum(XWPFAbstractNum(ctAbstract))
+            val numId = numbering.addNum(abstractNumId)
+
+            // First list
+            for (text in listOf("A", "B")) {
+                val p = doc.createParagraph()
+                p.numID = numId
+                p.setNumILvl(BigInteger.ZERO)
+                p.createRun().setText(text)
+            }
+            // Interlude paragraph
+            doc.createParagraph().createRun().setText("Middle prose.")
+            // Second list
+            for (text in listOf("X", "Y")) {
+                val p = doc.createParagraph()
+                p.numID = numId
+                p.setNumILvl(BigInteger.ZERO)
+                p.createRun().setText(text)
+            }
         }
 
-        val blocks = extractor.extract(ByteArrayInputStream(bytes))
-        val texts = blocks.filterIsInstance<DocumentBlock.Paragraph>().map { it.text }
+        val blocks = DocxTableExtractor().extract(ByteArrayInputStream(bytes))
+        val listBlocks = blocks.filterIsInstance<DocumentBlock.ListBlock>()
+        assertEquals(2, listBlocks.size, "Expected two ListBlocks split by the prose paragraph")
+        assertEquals(listOf("A", "B"), listBlocks[0].items)
+        assertEquals(listOf("X", "Y"), listBlocks[1].items)
 
-        assertEquals(listOf("First item", "Second item", "Third item"), texts,
-            "Three list items become three flat Paragraphs — no bullet, no number, no nesting")
+        val middleIdx = blocks.indexOfFirst { it is DocumentBlock.Paragraph && (it as DocumentBlock.Paragraph).text.contains("Middle prose") }
+        assertTrue(middleIdx >= 0, "Middle prose paragraph should be present")
+        val firstListIdx = blocks.indexOf(listBlocks[0])
+        val secondListIdx = blocks.indexOf(listBlocks[1])
+        assertTrue(firstListIdx < middleIdx, "First list must precede the middle paragraph")
+        assertTrue(middleIdx < secondListIdx, "Middle paragraph must precede the second list")
+    }
 
-        // Sanity: ListBlock variant now exists in the model (Phase 0), but DocxTableExtractor
-        // doesn't yet emit it. Phase 3 will populate ListBlock from XWPFParagraph.numID;
-        // this gap test flips to a positive test then.
-        val variants = DocumentBlock::class.sealedSubclasses.map { it.simpleName }
-        assertTrue("ListBlock" in variants,
-            "ListBlock should exist in the model after Phase 0")
+    @Test
+    fun `list items at end of document are flushed via PostBodyVisitor`() {
+        // The list is the LAST content in the document — no trailing non-list paragraph to
+        // trigger flush during the body walk; the PostBodyVisitor must flush it.
+        val bytes = buildDocxWithList(
+            items = listOf("Last1" to 0, "Last2" to 0),
+            numFmtEnum = STNumberFormat.BULLET,
+            extraParagraphsBefore = listOf("Intro."),
+        )
+
+        val blocks = DocxTableExtractor().extract(ByteArrayInputStream(bytes))
+        val listBlock = blocks.filterIsInstance<DocumentBlock.ListBlock>().singleOrNull()
+        assertNotNull(listBlock, "Expected one ListBlock from the trailing list items")
+        assertEquals(listOf("Last1", "Last2"), listBlock!!.items)
+    }
+
+    @Test
+    fun `nested list items encode nesting as leading two-space indent per level`() {
+        val bytes = buildDocxWithList(
+            items = listOf("Parent" to 0, "Child" to 1, "Grandchild" to 2),
+            numFmtEnum = STNumberFormat.BULLET,
+        )
+
+        val blocks = DocxTableExtractor().extract(ByteArrayInputStream(bytes))
+        val listBlock = blocks.filterIsInstance<DocumentBlock.ListBlock>().singleOrNull()
+        assertNotNull(listBlock, "Expected one ListBlock with nested items")
+        assertEquals(listOf("Parent", "  Child", "    Grandchild"), listBlock!!.items,
+            "Level 0 → no indent, level 1 → '  ', level 2 → '    '")
+    }
+
+    @Test
+    fun `prose before list then list at end emits Paragraph then ListBlock in order`() {
+        val bytes = buildDocxWithList(
+            items = listOf("Item 1" to 0, "Item 2" to 0),
+            numFmtEnum = STNumberFormat.BULLET,
+            extraParagraphsBefore = listOf("Introduction text."),
+        )
+
+        val blocks = DocxTableExtractor().extract(ByteArrayInputStream(bytes))
+        val introIdx = blocks.indexOfFirst { it is DocumentBlock.Paragraph }
+        val listIdx = blocks.indexOfFirst { it is DocumentBlock.ListBlock }
+        assertTrue(introIdx >= 0 && listIdx > introIdx,
+            "Paragraph must appear before the ListBlock in extracted order")
     }
 
     // ── Comments (positive coverage after Phase 1) ─────────────────────────────

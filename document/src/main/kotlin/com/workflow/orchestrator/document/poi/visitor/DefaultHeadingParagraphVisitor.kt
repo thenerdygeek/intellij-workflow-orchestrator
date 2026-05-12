@@ -20,6 +20,10 @@ import org.apache.poi.xwpf.usermodel.XWPFParagraph
 class DefaultHeadingParagraphVisitor : ParagraphVisitor {
 
     override fun visit(paragraph: XWPFParagraph, doc: XWPFDocument): List<DocumentBlock> {
+        // List-item paragraphs are handled exclusively by ListAccumulatorVisitor so that
+        // they do not double-emit as plain Paragraph blocks.
+        if (paragraph.numID != null) return emptyList()
+
         val text = paragraph.text.trim()
         if (text.isEmpty()) return emptyList()
 
