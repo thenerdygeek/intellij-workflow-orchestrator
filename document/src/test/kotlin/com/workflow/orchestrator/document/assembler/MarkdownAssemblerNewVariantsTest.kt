@@ -46,4 +46,15 @@ class MarkdownAssemblerNewVariantsTest {
         assertEquals("1", f.marker)
         assertEquals("See appendix A.", f.text)
     }
+
+    @Test
+    fun `KeyValueGroup has title and pairs`() {
+        val kv = DocumentBlock.KeyValueGroup(
+            title = "Document properties",
+            pairs = listOf("Author" to "Jane", "Title" to "Spec v3"),
+        )
+        assertEquals("Document properties", kv.title)
+        assertEquals(2, kv.pairs.size)
+        assertEquals("Jane", kv.pairs[0].second)
+    }
 }

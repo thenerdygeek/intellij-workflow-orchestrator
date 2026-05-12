@@ -139,4 +139,19 @@ sealed class DocumentBlock {
         val marker: String,
         val text: String,
     ) : DocumentBlock()
+
+    /**
+     * A titled list of key-value pairs. Used for flat metadata: PDF bookmarks, AcroForm
+     * fields, document properties, XLSX defined names.
+     *
+     * Order is preserved as given. Empty `pairs` is allowed (renders as a title with
+     * no body) but uncommon.
+     *
+     * @param title Section heading rendered above the pairs.
+     * @param pairs Key-value pairs in display order. Values are plain text.
+     */
+    data class KeyValueGroup(
+        val title: String,
+        val pairs: List<Pair<String, String>>,
+    ) : DocumentBlock()
 }
