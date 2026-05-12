@@ -30,4 +30,13 @@ class MarkdownAssemblerNewVariantsTest {
             names,
         )
     }
+
+    @Test
+    fun `ListBlock has ordered and items fields, single-level only`() {
+        val unordered = DocumentBlock.ListBlock(ordered = false, items = listOf("a", "b"))
+        val ordered = DocumentBlock.ListBlock(ordered = true, items = listOf("first", "second"))
+        assertEquals(false, unordered.ordered)
+        assertEquals(listOf("a", "b"), unordered.items)
+        assertEquals(true, ordered.ordered)
+    }
 }

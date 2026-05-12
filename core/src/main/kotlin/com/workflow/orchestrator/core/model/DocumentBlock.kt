@@ -110,4 +110,19 @@ sealed class DocumentBlock {
     ) : DocumentBlock() {
         enum class Kind { REVIEW, TRACKED_INSERTION, TRACKED_DELETION, PDF_ANNOTATION }
     }
+
+    /**
+     * A flat single-level list. Bulleted (`ordered = false`) or numbered (`ordered = true`).
+     *
+     * Nesting is NOT a model concept: nested items are encoded in-string with leading
+     * `  ` indents inside the item text. This keeps the model flat and makes
+     * `MarkdownAssembler` serialization straightforward.
+     *
+     * @param ordered True for numbered (1. 2. 3.), false for bulleted (- - -).
+     * @param items   Item text in document order. Non-empty for a valid list block.
+     */
+    data class ListBlock(
+        val ordered: Boolean,
+        val items: List<String>,
+    ) : DocumentBlock()
 }
