@@ -478,4 +478,3 @@ class DocxExtractorFormatGapsTest {
         return out.toByteArray()
     }
 }
-// DIAGNOSTIC ONLY - remove after debugging
