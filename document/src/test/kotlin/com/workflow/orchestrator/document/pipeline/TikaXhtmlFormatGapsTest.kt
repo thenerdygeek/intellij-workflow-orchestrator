@@ -133,11 +133,10 @@ class TikaXhtmlFormatGapsTest {
 
     @Test
     fun `HTML img with data URI — Tika strips the src attribute so handler falls back to octet-stream placeholder`() {
-        // Tika's HtmlParser sanitises <img src="data:…"> and drops the data: URI from the
-        // SAX attribute stream for security reasons (prevents large base64 blobs / SSRF).
-        // The handler therefore receives an empty src and emits a safe placeholder.
-        // guessImageMimeFromSrc() still handles data: URIs correctly when called directly
-        // (see DocumentBlockHandlerTest), but in the Tika pipeline path the src is absent.
+        // Tika's HtmlParser truncates <img src="data:…"> to just "data:" in the SAX
+        // attribute stream. The handler therefore cannot recover the declared MIME via
+        // the pipeline path and emits a safe placeholder. The unit-level test at
+        // DocumentBlockHandlerHelpersTest covers the data: URI extraction logic directly.
         val html = """<html><body><p><img src="data:image/webp;base64,aGVsbG8="/></p></body></html>"""
         val blocks = pipeline.extract(ByteArrayInputStream(html.toByteArray()), "text/html")
         val ref = blocks.filterIsInstance<DocumentBlock.EmbeddedFileRef>().single()
@@ -153,6 +152,37 @@ class TikaXhtmlFormatGapsTest {
         val ref = blocks.filterIsInstance<DocumentBlock.EmbeddedFileRef>().single()
         assertEquals("image", ref.name)
         assertEquals("application/octet-stream", ref.mimeType)
+    }
+
+    @Test
+    fun `multiple HTML img tags emit one EmbeddedFileRef each in document order`() {
+        val html = """
+            <html><body>
+            <p>Intro.</p>
+            <p><img src="https://example.com/first.png" alt="First"/></p>
+            <p>Middle text.</p>
+            <p><img src="https://example.com/second.jpg"/></p>
+            <p>Outro.</p>
+            </body></html>
+        """.trimIndent()
+
+        val blocks = pipeline.extract(ByteArrayInputStream(html.toByteArray()), "text/html")
+        val refs = blocks.filterIsInstance<DocumentBlock.EmbeddedFileRef>()
+
+        assertEquals(2, refs.size, "Expected one EmbeddedFileRef per <img>")
+        assertEquals("First", refs[0].name, "First image's alt becomes its name")
+        assertEquals("image/png", refs[0].mimeType)
+        assertEquals("second.jpg", refs[1].name, "Second image with no alt falls back to filename")
+        assertEquals("image/jpeg", refs[1].mimeType)
+
+        // Document order: First img comes before Middle text which comes before Second img.
+        val firstImgIdx = blocks.indexOfFirst { it is DocumentBlock.EmbeddedFileRef }
+        val middleTextIdx = blocks.indexOfFirst {
+            it is DocumentBlock.Paragraph && (it).text.contains("Middle text")
+        }
+        val secondImgIdx = blocks.indexOfLast { it is DocumentBlock.EmbeddedFileRef }
+        assertTrue(firstImgIdx < middleTextIdx && middleTextIdx < secondImgIdx,
+            "Images and text should interleave in document order; got img@$firstImgIdx middle@$middleTextIdx img2@$secondImgIdx")
     }
 
     // ── Nested tables ─────────────────────────────────────────────────────────

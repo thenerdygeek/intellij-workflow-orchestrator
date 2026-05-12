@@ -392,8 +392,13 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
      * - `data:image/webp;base64,…` → `"image/webp"` (extracts the declared type)
      * - `photo.jpg?v=2#anchor` → `"image/jpeg"` (strips query + fragment before extension lookup)
      * - Unknown or missing extension → `"application/octet-stream"`
+     *
+     * Visible as `internal` (module-scoped) so a same-module test can exercise the
+     * `data:` URI branch directly. Tika's HtmlParser truncates `data:` URI src
+     * attributes before they reach this handler, so the pipeline-level test cannot
+     * cover that branch — see `DocumentBlockHandlerHelpersTest` for direct coverage.
      */
-    private fun guessImageMimeFromSrc(src: String): String {
+    internal fun guessImageMimeFromSrc(src: String): String {
         if (src.isBlank()) return "application/octet-stream"
         // data: URIs encode the MIME type — extract it.
         if (src.startsWith("data:", ignoreCase = true)) {
