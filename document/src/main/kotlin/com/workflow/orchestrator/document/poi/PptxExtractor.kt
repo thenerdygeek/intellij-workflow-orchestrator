@@ -65,9 +65,16 @@ class PptxExtractor(
     /**
      * Extracts [DocumentBlock] values from a PPTX [stream], one set of blocks per slide.
      *
+     * After all slide blocks are emitted, any SmartArt data-model parts found in the
+     * presentation's OPC package are extracted via [SmartArtExtractor] and appended as
+     * flat [DocumentBlock.ListBlock] values. SmartArt in PPTX is stored in the same
+     * diagramData content type as DOCX, so the extractor is shared. Visual hierarchy is
+     * dropped — text-only extraction per the P5a-4 spec.
+     *
      * @param stream Raw bytes of the `.pptx` file. The caller is responsible for closing the stream.
      * @return Ordered list of blocks in slide order. Within each slide, content appears in
      *         shape-index order followed by speaker notes and then slide-level review comments.
+     *         SmartArt ListBlocks are appended after all slides.
      */
     fun extract(stream: InputStream): List<DocumentBlock> {
         val blocks = mutableListOf<DocumentBlock>()
@@ -76,6 +83,13 @@ class PptxExtractor(
             presentation.slides.forEachIndexed { idx, slide ->
                 val slideNumber = idx + 1
                 blocks += slideToBlocks(slide, slideNumber)
+            }
+
+            // P5a-4: SmartArt text extraction. Each diagramData part becomes one flat ListBlock.
+            try {
+                blocks += SmartArtExtractor.extract(presentation.getPackage())
+            } catch (_: Exception) {
+                // Package access failure — SmartArt extraction is non-critical.
             }
         }
 

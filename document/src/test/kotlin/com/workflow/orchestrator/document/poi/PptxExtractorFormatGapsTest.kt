@@ -242,6 +242,45 @@ class PptxExtractorFormatGapsTest {
             "Recursion must handle arbitrary nesting depth; got texts: $texts")
     }
 
+    // ── SmartArt (P5a-4) ─────────────────────────────────────────────────────
+
+    /**
+     * P5a-4: a PPTX containing a SmartArt diagramData part emits a
+     * [DocumentBlock.ListBlock] with the SmartArt text items.
+     *
+     * We inject a minimal `diagramData+xml` part into the ZIP after the base PPTX is
+     * serialised by POI — identical strategy to the DOCX SmartArt test and to the PPTX
+     * comment injection in [buildPptxWithComment].
+     *
+     * [SmartArtExtractor] queries the OPC package by content type (package-wide), so no
+     * slide-level relationship is required for the extractor to find the part.
+     */
+    @Test
+    fun `PPTX SmartArt diagramData part is extracted as a flat ListBlock`() {
+        val bytes = buildPptxWithSmartArt(listOf("Idea", "Plan", "Execute"))
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val listBlocks = blocks.filterIsInstance<DocumentBlock.ListBlock>()
+        assertTrue(listBlocks.isNotEmpty(),
+            "Expected at least one ListBlock from PPTX SmartArt; got: ${blocks.map { it::class.simpleName }}")
+        val items = listBlocks.flatMap { it.items }
+        assertTrue(items.containsAll(listOf("Idea", "Plan", "Execute")),
+            "All SmartArt text items should appear; got items: $items")
+    }
+
+    @Test
+    fun `PPTX with no SmartArt emits no ListBlocks`() {
+        val bytes = buildPptx { ppt ->
+            ppt.createSlide().createTextBox().apply {
+                anchor = java.awt.Rectangle(50, 30, 500, 50)
+                setText("Just text")
+            }
+        }
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        assertTrue(blocks.none { it is DocumentBlock.ListBlock },
+            "No SmartArt → no ListBlocks")
+    }
+
     @Test
     fun `mixed top-level and group-shape text emits in declaration order`() {
         val bytes = buildPptx { ppt ->
@@ -397,6 +436,70 @@ class PptxExtractorFormatGapsTest {
         val img = java.awt.image.BufferedImage(16, 16, java.awt.image.BufferedImage.TYPE_INT_RGB)
         val out = ByteArrayOutputStream()
         javax.imageio.ImageIO.write(img, "PNG", out)
+        return out.toByteArray()
+    }
+
+    /**
+     * Builds a PPTX ZIP with a SmartArt diagramData part injected after the base bytes.
+     *
+     * [SmartArtExtractor] queries the OPC package by content type; no relationship entry
+     * is needed for the extractor to find the part.
+     */
+    private fun buildPptxWithSmartArt(items: List<String>): ByteArray {
+        val baseBytes = buildPptx { ppt ->
+            ppt.createSlide().createTextBox().apply {
+                anchor = java.awt.Rectangle(50, 30, 500, 50)
+                setText("Slide with SmartArt")
+            }
+        }
+
+        val dgmNs = "http://schemas.openxmlformats.org/drawingml/2008/diagram"
+        val aNs = "http://schemas.openxmlformats.org/drawingml/2006/main"
+        val ptElements = items.joinToString("\n") { item ->
+            """    <dgm:pt type="node" xmlns:dgm="$dgmNs">
+      <dgm:t xmlns:dgm="$dgmNs">
+        <a:bodyPr xmlns:a="$aNs"/>
+        <a:p xmlns:a="$aNs"><a:r xmlns:a="$aNs"><a:t xmlns:a="$aNs">$item</a:t></a:r></a:p>
+      </dgm:t>
+    </dgm:pt>"""
+        }
+        val diagramXml = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<dgm:dataModel xmlns:dgm="$dgmNs" xmlns:a="$aNs">
+  <dgm:ptLst>
+$ptElements
+  </dgm:ptLst>
+</dgm:dataModel>""".trimIndent()
+
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out).use { zout ->
+            ZipInputStream(ByteArrayInputStream(baseBytes)).use { zin ->
+                var entry = zin.nextEntry
+                while (entry != null) {
+                    val name = entry.name
+                    val bytes = zin.readBytes()
+                    when {
+                        name == "[Content_Types].xml" -> {
+                            val updated = String(bytes, Charsets.UTF_8).replace(
+                                "</Types>",
+                                """  <Override PartName="/ppt/diagrams/data1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.diagramData+xml"/>
+</Types>""",
+                            )
+                            zout.putNextEntry(ZipEntry(name))
+                            zout.write(updated.toByteArray(Charsets.UTF_8))
+                        }
+                        else -> {
+                            zout.putNextEntry(ZipEntry(name))
+                            zout.write(bytes)
+                        }
+                    }
+                    zout.closeEntry()
+                    entry = zin.nextEntry
+                }
+            }
+            zout.putNextEntry(ZipEntry("ppt/diagrams/data1.xml"))
+            zout.write(diagramXml.toByteArray(Charsets.UTF_8))
+            zout.closeEntry()
+        }
         return out.toByteArray()
     }
 }

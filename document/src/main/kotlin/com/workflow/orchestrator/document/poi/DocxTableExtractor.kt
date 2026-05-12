@@ -111,8 +111,13 @@ class DocxTableExtractor(
     /**
      * Extracts [DocumentBlock] values from a DOCX [stream] in document order.
      *
+     * After body iteration and post-body visitors, any SmartArt data-model parts found
+     * in the document's OPC package are extracted via [SmartArtExtractor] and appended
+     * as flat [DocumentBlock.ListBlock] values. Visual hierarchy (arrows, levels) is
+     * dropped — text-only extraction per the P5a-4 spec.
+     *
      * @param stream Raw bytes of the `.docx` file. The caller is responsible for closing the stream.
-     * @return Ordered list of blocks in document order, with post-body blocks appended.
+     * @return Ordered list of blocks in document order, with post-body and SmartArt blocks appended.
      */
     fun extract(stream: InputStream): List<DocumentBlock> {
         val blocks = mutableListOf<DocumentBlock>()
@@ -139,6 +144,14 @@ class DocxTableExtractor(
 
             for (visitor in postBodyVisitors) {
                 blocks += visitor.visit(doc)
+            }
+
+            // P5a-4: SmartArt text extraction. Each diagramData part in the package
+            // becomes one flat ListBlock. Appended at end so body content comes first.
+            try {
+                blocks += SmartArtExtractor.extract(doc.getPackage())
+            } catch (_: Exception) {
+                // Package access failure — SmartArt extraction is non-critical.
             }
         }
 
