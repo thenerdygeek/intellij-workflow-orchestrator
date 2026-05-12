@@ -63,7 +63,9 @@ class MarkdownAssembler {
                 val m = totalIfNoTruncation
                 val x = renderedCount
                 val y = blocks.size
-                sb.append("\n\n*[Document truncated at $n characters of $m total characters; $x of $y blocks rendered]*\n")
+                val droppedFootnotes = blocks.drop(x).count { it is DocumentBlock.Footnote }
+                val footnoteClause = if (droppedFootnotes > 0) " ($droppedFootnotes footnotes dropped)" else ""
+                sb.append("\n\n*[Document truncated at $n characters of $m total characters; $x of $y blocks rendered$footnoteClause]*\n")
                 return Pair(sb.toString(), true)
             }
 
@@ -79,7 +81,9 @@ class MarkdownAssembler {
                 // renderedCount is 1 here (the oversize block was just appended).
                 val x = renderedCount
                 val y = blocks.size
-                sb.append("\n\n*[Document truncated at $n characters of $m total characters; $x of $y blocks rendered]*\n")
+                val droppedFootnotes = blocks.drop(x).count { it is DocumentBlock.Footnote }
+                val footnoteClause = if (droppedFootnotes > 0) " ($droppedFootnotes footnotes dropped)" else ""
+                sb.append("\n\n*[Document truncated at $n characters of $m total characters; $x of $y blocks rendered$footnoteClause]*\n")
                 return Pair(sb.toString(), true)
             }
         }

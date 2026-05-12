@@ -2,6 +2,7 @@ package com.workflow.orchestrator.document.assembler
 
 import com.workflow.orchestrator.core.model.DocumentBlock
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -280,6 +281,41 @@ class MarkdownAssemblerNewVariantsTest {
         assertEquals(
             "[image: /session/abc/downloads/document-xyz/image-0-def.png] (image/png)\n\n",
             md,
+        )
+    }
+
+    @Test
+    fun `Truncation marker mentions dropped footnotes when any Footnote was skipped`() {
+        // Paragraph "x"*40 serializes to 42 chars (40 + "\n\n").
+        // Each footnote "[^N]: A\n" is 8 chars.
+        // At maxChars = 50: paragraph (42) + footnote 1 (8) = 50 fits exactly.
+        // Footnote 2 would push to 58 → truncates here. Footnotes 2 and 3 drop.
+        val blocks = listOf(
+            DocumentBlock.Paragraph("x".repeat(40)),
+            DocumentBlock.Footnote("1", "A"),
+            DocumentBlock.Footnote("2", "B"),
+            DocumentBlock.Footnote("3", "C"),
+        )
+        val (md, truncated) = assembler.assemble(blocks, maxChars = 50)
+        assertTrue(truncated)
+        assertTrue(
+            md.contains("(2 footnotes dropped)"),
+            "Expected '(2 footnotes dropped)' in marker, got: ${md.takeLast(150)}"
+        )
+    }
+
+    @Test
+    fun `Truncation marker omits footnote clause when no Footnote was dropped`() {
+        // 50-char paragraphs only, no Footnote blocks.
+        val blocks = listOf(
+            DocumentBlock.Paragraph("a".repeat(50)),
+            DocumentBlock.Paragraph("b".repeat(50)),
+        )
+        val (md, truncated) = assembler.assemble(blocks, maxChars = 60)
+        assertTrue(truncated)
+        assertFalse(
+            md.contains("footnotes dropped"),
+            "Marker should NOT mention footnotes when none were dropped, got: ${md.takeLast(150)}"
         )
     }
 }
