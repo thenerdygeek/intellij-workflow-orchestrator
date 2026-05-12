@@ -1,6 +1,7 @@
 @import './styles/theme-bridge.css';
 @import "tailwindcss";
 @import './styles/streaming.css';
+@import './styles/animations.css';
 @plugin "tailwindcss-animate";
 
 @theme inline {

@@ -1,7 +1,6 @@
 import { StrictMode, useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
-import './styles/animations.css';
 import { Button } from './components/ui/button';
 import { Check, RotateCcw, Loader2 } from 'lucide-react';
 import { PlanDocumentViewer } from './components/plan/PlanDocumentViewer';
