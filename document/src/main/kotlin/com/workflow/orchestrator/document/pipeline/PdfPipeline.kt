@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.document.pipeline
 
 import com.workflow.orchestrator.core.model.DocumentBlock
+import com.workflow.orchestrator.document.pdf.PdfMetadataExtractor
 import com.workflow.orchestrator.document.pdf.PdfProseExtractor
 import com.workflow.orchestrator.document.pdf.PdfTableExtractor
 import com.workflow.orchestrator.document.pdf.PositionedBlock
@@ -20,7 +21,14 @@ import java.nio.file.Path
  *    headings, paragraphs, and page markers. Each block gets a synthetic Y-coordinate
  *    that preserves intra-page document order (Tika XHTML does not expose PDF bboxes).
  *
- * 3. **Merge** — Table and prose blocks are combined and sorted by `(page, top)`.
+ * 3. **Annotation extraction** — [PdfMetadataExtractor] walks each page's annotation
+ *    array via PDFBox and emits [DocumentBlock.Comment] blocks with
+ *    [DocumentBlock.Comment.Kind.PDF_ANNOTATION]. Each block receives real PDF coordinates
+ *    translated to reading-order Y (smaller = closer to top of page). Tika's
+ *    `isExtractAnnotationText` flag remains `true` in Phase 1; the old untyped Paragraph
+ *    leakage and the new typed Comment blocks coexist until Phase 4b dedupes them.
+ *
+ * 4. **Merge** — Table, prose, and annotation blocks are combined and sorted by `(page, top)`.
  *    Because Tabula table bboxes are real PDF units and prose bboxes are synthetic
  *    counters starting at 1.0, a table at `top = 320.0` on page 2 will sort correctly
  *    after prose blocks at `top = 1, 2, 3` if those prose blocks are on pages ≤ 2 with
@@ -34,24 +42,26 @@ import java.nio.file.Path
  *    tables in Tika's parse order and receive smaller `top` values. Phase 6 can improve
  *    accuracy by extracting real text-block bboxes from PDFBox's `PDFTextStripper`.
  *
- * 4. **Overlap suppression** — [suppressOverlaps] drops Tabula table blocks that spatially
+ * 5. **Overlap suppression** — [suppressOverlaps] drops Tabula table blocks that spatially
  *    overlap already-emitted prose paragraphs by > 70% vertically. In lattice-only mode
  *    this guard almost never fires (ruled tables are correctly bounded); it is defence in
  *    depth against any Tabula misclassification, especially when stream mode is enabled.
  *
- * ## Double file open
+ * ## Triple file open
  *
- * [tableExtractor] and [proseExtractor] each open the file independently (different PDFBox
- * `PDDocument` instances). This is safer than sharing a `PDDocument` because Tabula mutates
- * page state during extraction, which could corrupt the Tika parse if they ran on the same
- * open document. The performance cost (two OS-level file opens) is acceptable for v1.
+ * [tableExtractor], [proseExtractor], and [metadataExtractor] each open the file independently
+ * (different PDFBox `PDDocument` instances). This is safer than sharing a `PDDocument` because
+ * Tabula mutates page state during extraction, which could corrupt the other parsers if they ran
+ * on the same open document. The performance cost (three OS-level file opens) is acceptable for v1.
  *
- * @param tableExtractor Source of lattice/stream Tabula tables. Default: lattice-only.
- * @param proseExtractor Source of Tika XHTML prose blocks. Default: [PdfProseExtractor].
+ * @param tableExtractor     Source of lattice/stream Tabula tables. Default: lattice-only.
+ * @param proseExtractor     Source of Tika XHTML prose blocks. Default: [PdfProseExtractor].
+ * @param metadataExtractor  Source of PDFBox markup annotations. Default: [PdfMetadataExtractor].
  */
 class PdfPipeline(
     private val tableExtractor: PdfTableExtractor = PdfTableExtractor(),
     private val proseExtractor: PdfProseExtractor = PdfProseExtractor(),
+    private val metadataExtractor: PdfMetadataExtractor = PdfMetadataExtractor(),
 ) {
 
     /**
@@ -65,6 +75,7 @@ class PdfPipeline(
     fun extract(file: Path): List<DocumentBlock> {
         val tables: List<PositionedBlock<DocumentBlock.Table>> = tableExtractor.extract(file)
         val prose: List<PositionedBlock<DocumentBlock>> = proseExtractor.extract(file)
+        val metadata: List<PositionedBlock<DocumentBlock>> = metadataExtractor.extract(file)
 
         // Dedup pass: when Tabula extracted a Table, the same cell content also appears in
         // Tika's prose stream as flat whitespace-separated lines. Drop the prose paragraphs
@@ -74,7 +85,7 @@ class PdfPipeline(
 
         @Suppress("UNCHECKED_CAST")
         val merged: List<PositionedBlock<DocumentBlock>> =
-            (tables.map { it as PositionedBlock<DocumentBlock> } + dedupedProse)
+            (tables.map { it as PositionedBlock<DocumentBlock> } + dedupedProse + metadata)
                 .sortedWith(compareBy({ it.page }, { it.top }))
 
         val deChromed = stripRepeatedPageChrome(merged)

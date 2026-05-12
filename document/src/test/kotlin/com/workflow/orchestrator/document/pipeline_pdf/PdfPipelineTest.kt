@@ -5,6 +5,7 @@ import com.workflow.orchestrator.document.assembler.MarkdownAssembler
 import com.workflow.orchestrator.document.pipeline.PdfPipeline
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.nio.file.Paths
@@ -223,5 +224,63 @@ class PdfPipelineTest {
         // assert tables.isNotEmpty(). For now we only verify the pipeline runs cleanly.
         val blocks = pipeline.extract(fixture("tabula-eu-002.pdf"))
         assertTrue(blocks.isNotEmpty(), "Pipeline must produce at least one block")
+    }
+
+    // ── P1T5. PDF markup annotation emits DocumentBlock.Comment(PDF_ANNOTATION) ─
+
+    @Test
+    fun `pdf with sticky-note annotation emits DocumentBlock Comment PDF_ANNOTATION`() {
+        // Build a minimal PDF in-memory with one page and one PDAnnotationText (sticky note).
+        val pdfBytes = run {
+            val doc = org.apache.pdfbox.pdmodel.PDDocument()
+            val page = org.apache.pdfbox.pdmodel.PDPage()
+            doc.addPage(page)
+
+            // Minimal text content stream so PdfProseExtractor has something to parse.
+            val contentStream = org.apache.pdfbox.pdmodel.PDPageContentStream(doc, page)
+            contentStream.beginText()
+            contentStream.setFont(
+                org.apache.pdfbox.pdmodel.font.PDType1Font(
+                    org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA,
+                ),
+                12f,
+            )
+            contentStream.newLineAtOffset(100f, 700f)
+            contentStream.showText("Body text on the page.")
+            contentStream.endText()
+            contentStream.close()
+
+            // Add a sticky-note annotation (PDAnnotationText extends PDAnnotationMarkup).
+            val annotation = org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationText()
+            annotation.contents = "Confirm this benchmark."
+            annotation.titlePopup = "Jane"
+            annotation.rectangle = org.apache.pdfbox.pdmodel.common.PDRectangle(120f, 695f, 20f, 20f)
+            page.annotations.add(annotation)
+
+            val out = java.io.ByteArrayOutputStream()
+            doc.save(out)
+            doc.close()
+            out.toByteArray()
+        }
+
+        // PDFBox requires random-access file I/O, so write to a temp file.
+        val tempFile = java.nio.file.Files.createTempFile("p1t5-pdf-", ".pdf")
+        java.nio.file.Files.write(tempFile, pdfBytes)
+        try {
+            val blocks = PdfPipeline().extract(tempFile)
+
+            val annotationComment = blocks
+                .filterIsInstance<DocumentBlock.Comment>()
+                .firstOrNull { it.kind == DocumentBlock.Comment.Kind.PDF_ANNOTATION }
+
+            assertNotNull(
+                annotationComment,
+                "Expected a PDF_ANNOTATION Comment in the merged output; blocks=${blocks.map { it::class.simpleName }}",
+            )
+            assertEquals("Jane", annotationComment!!.author)
+            assertEquals("Confirm this benchmark.", annotationComment.text)
+        } finally {
+            java.nio.file.Files.deleteIfExists(tempFile)
+        }
     }
 }
