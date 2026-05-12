@@ -533,19 +533,25 @@ class AgentLoop(
          * separate from text-only (model mistakes).
          *
          * NOTE: Must include the tool-use directive. Without it, the model reads
-         * "Please retry" and responds with a text-only explanation of the error,
-         * which drops into Case B (TEXT_ONLY_NUDGE). Case B does NOT reset
-         * consecutiveEmpties (except in plan-mode conversational branches where a
-         * text-only response is a genuine exchange, not a stall) — without this
-         * guard the alternating text-only ↔ empty cycle would continue indefinitely.
+         * the message and responds with a text-only acknowledgement, which drops
+         * into Case B (TEXT_ONLY_NUDGE). Case B does NOT reset consecutiveEmpties
+         * (except in plan-mode conversational branches where a text-only response
+         * is a genuine exchange, not a stall) — without this guard the alternating
+         * text-only ↔ empty cycle would continue indefinitely.
+         *
+         * 2026-05-12 polish: dropped the leading `[ERROR]` framing and "Invalid
+         * API Response" prefix. Anthropic's stop-reason docs warn that adding
+         * error-shaped text after a tool result can prime the model to keep
+         * emitting empty `end_turn` responses, and few-shot priming on `[ERROR]`
+         * patterns is real (research report §2.1). The new wording is a neutral
+         * "please continue" with no error framing.
          */
         private const val EMPTY_RESPONSE_ERROR =
-            "Invalid API Response: The provider returned an empty or unparsable response. " +
-            "This is a provider-side issue where the model failed to generate valid output. " +
-            "Please retry using a tool call.\n\n" +
-            "If you have completed the task, use the attempt_completion tool. " +
-            "If you need more information, use the ask_followup_question tool. " +
-            "Otherwise proceed with the next step using an appropriate tool. " +
+            "The previous response had no visible output. " +
+            "Please continue your task by calling the appropriate tool.\n\n" +
+            "If you have completed the task, call the attempt_completion tool. " +
+            "If you need more information, call the ask_followup_question tool. " +
+            "Otherwise proceed with the next step using whichever tool fits. " +
             "(This is an automated message — do not respond to it conversationally.)"
         /**
          * Prefix for mid-turn steering messages injected from the user's queued input.

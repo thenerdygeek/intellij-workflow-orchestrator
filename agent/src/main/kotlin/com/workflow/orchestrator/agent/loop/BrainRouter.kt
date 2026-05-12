@@ -21,6 +21,7 @@ import com.workflow.orchestrator.core.ai.dto.hasImageParts
 import com.workflow.orchestrator.core.model.ApiResult
 import kotlinx.serialization.json.JsonElement
 import java.util.Base64
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Routes LLM calls across two Sourcegraph backends based on whether the turn
@@ -74,6 +75,16 @@ class BrainRouter(
     private val log = Logger.getInstance(BrainRouter::class.java)
 
     /**
+     * Fix C (2026-05-12) — endpoint downgrade. Tracks consecutive empty responses
+     * received on the OpenAI-compat path for text-only turns. After
+     * [DOWNGRADE_THRESHOLD] empties, the next text-only call is routed through
+     * `/.api/completions/stream` (the Cody-native endpoint) instead, on the same
+     * model. format_lab probe (api-version=9) confirmed `/stream` supports text-
+     * only with tools. A successful (non-empty) response anywhere resets this.
+     */
+    private val consecutiveTextOnlyEmpties = AtomicInteger(0)
+
+    /**
      * Exposes the wrapped OpenAI-compat brain for Phase-2 setApiDebugDir /
      * setSharedApiCallCounter / temperature-reset call sites that were
      * already wired against the underlying type. Test fakes return a generic
@@ -83,6 +94,16 @@ class BrainRouter(
      * OpenAiCompatBrain hooks fire whether or not the brain has been wrapped.
      */
     val underlyingOpenAiCompat: LlmBrain get() = openAiCompatBrain
+
+    companion object {
+        /**
+         * Empties threshold at which BrainRouter switches text-only traffic from
+         * `/.api/llm/chat/completions` to `/.api/completions/stream`. The agent
+         * loop's `MAX_CONSECUTIVE_EMPTIES` is 3, so this fires once — on the
+         * third attempt within the same loop run.
+         */
+        private const val DOWNGRADE_THRESHOLD = 2
+    }
 
     /**
      * Mirrors [openAiCompatBrain.modelId] so the agent loop's logging,
@@ -135,13 +156,20 @@ class BrainRouter(
         toolChoice: JsonElement?,
     ): ApiResult<ChatCompletionResponse> {
         val hasImage = messages.any { it.hasImageParts() }
-        val route = if (hasImage) "image-or-mixed" else "text-only"
-        log.info("[multimodal] BrainRouter.chat decision: hasImage=$hasImage → route=$route")
-        return if (hasImage) {
+        val downgrade = shouldDowngradeTextOnly(hasImage)
+        val route = when {
+            hasImage -> "image-or-mixed"
+            downgrade -> "text-only-downgrade-to-stream"
+            else -> "text-only"
+        }
+        log.info("[multimodal] BrainRouter.chat decision: hasImage=$hasImage downgrade=$downgrade → route=$route")
+        val result = if (hasImage || downgrade) {
             imageBearingNonStreaming(messages, tools, maxTokens)
         } else {
             openAiCompatBrain.chat(messages, tools, maxTokens, toolChoice)
         }
+        updateEmptyCounter(hasImage, result)
+        return result
     }
 
     override suspend fun chatStream(
@@ -151,12 +179,61 @@ class BrainRouter(
         onChunk: suspend (StreamChunk) -> Unit,
     ): ApiResult<ChatCompletionResponse> {
         val hasImage = messages.any { it.hasImageParts() }
-        val route = if (hasImage) "image-or-mixed-stream" else "text-only"
-        log.info("[multimodal] BrainRouter.chatStream decision: hasImage=$hasImage → route=$route")
-        return if (hasImage) {
+        val downgrade = shouldDowngradeTextOnly(hasImage)
+        val route = when {
+            hasImage -> "image-or-mixed-stream"
+            downgrade -> "text-only-downgrade-to-stream"
+            else -> "text-only"
+        }
+        log.info("[multimodal] BrainRouter.chatStream decision: hasImage=$hasImage downgrade=$downgrade → route=$route")
+        val result = if (hasImage || downgrade) {
             imageBearingStreaming(messages, tools, maxTokens, onChunk)
         } else {
             openAiCompatBrain.chatStream(messages, tools, maxTokens, onChunk)
+        }
+        updateEmptyCounter(hasImage, result)
+        return result
+    }
+
+    /**
+     * Fix C — route a text-only turn through `/stream` once the counter hits the
+     * threshold. Image turns always use `/stream` regardless and don't engage
+     * this gate. Returns true ONLY for text-only turns at or above threshold.
+     */
+    private fun shouldDowngradeTextOnly(hasImage: Boolean): Boolean {
+        if (hasImage) return false
+        val empties = consecutiveTextOnlyEmpties.get()
+        if (empties >= DOWNGRADE_THRESHOLD) {
+            log.warn("[BrainRouter] $empties consecutive empties on /chat/completions — downgrading next text-only call to /completions/stream (same model, same token)")
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Fix C — update the consecutive-empty counter after each call. Only text-only
+     * turns participate; image turns can't safely indicate health of the OpenAI-
+     * compat path because they don't use it.
+     */
+    private fun updateEmptyCounter(
+        hasImage: Boolean,
+        result: ApiResult<ChatCompletionResponse>,
+    ) {
+        if (hasImage) return
+        if (result !is ApiResult.Success) {
+            // Errors don't increment — they have their own retry/timeout logic.
+            // But also don't reset — an error during the empty cycle shouldn't
+            // grant the next text-only turn a fresh start on the same buggy path.
+            return
+        }
+        val msg = result.data.choices.firstOrNull()?.message
+        val isEmpty = msg?.content.isNullOrBlank() && msg?.toolCalls.isNullOrEmpty()
+        if (isEmpty) {
+            val n = consecutiveTextOnlyEmpties.incrementAndGet()
+            log.info("[BrainRouter] text-only empty response — consecutive=$n")
+        } else if (consecutiveTextOnlyEmpties.get() != 0) {
+            consecutiveTextOnlyEmpties.set(0)
+            log.info("[BrainRouter] non-empty text-only response — empty counter reset")
         }
     }
 

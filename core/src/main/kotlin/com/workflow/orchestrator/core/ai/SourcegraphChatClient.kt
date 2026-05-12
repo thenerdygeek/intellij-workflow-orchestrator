@@ -14,11 +14,17 @@ import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -54,7 +60,17 @@ class SourcegraphChatClient(
     private val model: String,
     connectTimeoutSeconds: Long = 30,
     readTimeoutSeconds: Long = 120,
-    httpClientOverride: OkHttpClient? = null
+    httpClientOverride: OkHttpClient? = null,
+    /**
+     * Maximum time the SSE read loop will wait between events before treating
+     * the stream as upstream_timeout (Fix A, 2026-05-12). Probe `sse_keepalive`
+     * confirmed Sourcegraph emits no keep-alive bytes, so a silent stall is the
+     * LiteLLM #20347-class "200 OK + clean TCP close" pattern. 90s is a safe
+     * default: first-byte latency on tiny/medium/large prompts measured at
+     * 1.4-1.8s by `pregeneration_silence` probe. Test code overrides with a
+     * short value (e.g. 200ms) so the watchdog can be exercised quickly.
+     */
+    private val sseIdleTimeoutMs: Long = 90_000L,
 ) {
     private val log = Logger.getInstance(SourcegraphChatClient::class.java)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
@@ -417,57 +433,112 @@ class SourcegraphChatClient(
                 // synthesize a tool-result error (Continue.dev pattern).
                 var upstreamTimeout = false
 
-                // Read SSE lines with cancellation check on every line.
-                // When cancelActiveRequest() is called, call.cancel() closes the socket,
-                // causing readLine() to throw IOException — breaking out instantly.
-                // The ensureActive() is a secondary guard for coroutine-level cancellation.
-                var line = reader.readLine()
-                while (line != null) {
-                    coroutineContext.ensureActive()
-                    if (shouldInterruptStream) {
-                        log.info("[Agent:API] Stream interrupted by caller (mid-stream tool execution)")
-                        break
-                    }
+                // Fix A — SSE idle watchdog. Probe `sse_keepalive`: NO_KEEPALIVE.
+                // A stalled upstream (LiteLLM #20347 / Cloudflare 524 / TCP FIN)
+                // closes the stream cleanly with zero events. Without this watchdog
+                // the OkHttp `readTimeout` only fires after total inactivity, by which
+                // point the loop has already wasted retries. The watchdog cancels the
+                // call as soon as `sseIdleTimeoutMs` of no events elapses, and we map
+                // the resulting IOException to upstream_timeout — same recovery branch
+                // as the explicit gateway error frame.
+                val lastEventNanos = AtomicLong(System.nanoTime())
+                val idleTimeoutFired = AtomicBoolean(false)
 
-                    rawSseBuf?.appendLine(line)
-
-                    if (GatewayErrorDetector.isUpstreamTimeoutFrame(line)) {
-                        log.warn("[Agent:API] Sourcegraph gateway emitted mid-stream timeout frame; will surface as upstream_timeout")
-                        upstreamTimeout = true
-                        // Keep reading until EOF — the gateway closes the socket
-                        // right after, but we want any tail bytes captured in
-                        // rawSseBuf for the api-debug dump.
-                    } else if (line.startsWith("data: ") && line != "data: [DONE]") {
-                        val chunkJson = line.removePrefix("data: ")
-                        try {
-                            val chunk = json.decodeFromString<StreamChunk>(chunkJson)
-                            onChunk(chunk)
-
-                            chunk.choices.firstOrNull()?.let { choice ->
-                                // Capture finish_reason from the final chunk
-                                val fr = choice.finishReason
-                                if (!fr.isNullOrBlank() && fr != "") {
-                                    finishReason = fr
-                                }
-                                choice.delta.let { delta ->
-                                    delta.role?.let { role = it }
-                                    delta.content?.let { contentBuilder.append(it) }
-                                    delta.toolCalls?.forEach { tc ->
-                                        val builder = toolCallBuilders.getOrPut(tc.index) { ToolCallBuilder() }
-                                        tc.id?.let { builder.id.append(it) }
-                                        tc.function?.name?.let { builder.name.append(it) }
-                                        tc.function?.arguments?.let { builder.arguments.append(it) }
-                                        log.debug("[Agent:API] SSE tool delta: idx=${tc.index} id=${tc.id} name=${tc.function?.name} args=${tc.function?.arguments?.take(50)}")
-                                    }
-                                }
+                coroutineScope {
+                    val watchdog = launch {
+                        // Poll at no more than 1Hz, and never sleep longer than half
+                        // the idle budget so detection is timely with short test
+                        // overrides (200ms) and cheap with the production default (90s).
+                        val pollMs = minOf(1000L, sseIdleTimeoutMs / 2).coerceAtLeast(50L)
+                        while (isActive) {
+                            delay(pollMs)
+                            val elapsedMs = (System.nanoTime() - lastEventNanos.get()) / 1_000_000L
+                            if (elapsedMs >= sseIdleTimeoutMs) {
+                                log.warn("[Agent:API] SSE idle for ${elapsedMs}ms (>= ${sseIdleTimeoutMs}ms) — cancelling stream as upstream_timeout")
+                                idleTimeoutFired.set(true)
+                                activeCall.get()?.cancel()
+                                break
                             }
-                            // Capture usage from the final chunk (Sourcegraph sends it with finish_reason)
-                            chunk.usage?.let { streamUsage = it }
-                        } catch (e: Exception) {
-                            log.debug("[Agent:API] Skipping malformed SSE chunk: ${e.message}")
                         }
                     }
-                    line = reader.readLine()
+
+                    try {
+                        // Read SSE lines with cancellation check on every line.
+                        // When cancelActiveRequest() is called, call.cancel() closes the socket,
+                        // causing readLine() to throw IOException — breaking out instantly.
+                        // The ensureActive() is a secondary guard for coroutine-level cancellation.
+                        var line: String? = null
+                        try {
+                            line = reader.readLine()
+                        } catch (e: IOException) {
+                            // Idle watchdog (or user) cancelled the call mid-read.
+                            // Re-throw unless it was idle; idle drops into the post-loop
+                            // upstream_timeout mapping below.
+                            if (!idleTimeoutFired.get()) throw e
+                        }
+                        while (line != null) {
+                            coroutineContext.ensureActive()
+                            if (shouldInterruptStream) {
+                                log.info("[Agent:API] Stream interrupted by caller (mid-stream tool execution)")
+                                break
+                            }
+
+                            rawSseBuf?.appendLine(line)
+                            lastEventNanos.set(System.nanoTime())
+
+                            if (GatewayErrorDetector.isUpstreamTimeoutFrame(line)) {
+                                log.warn("[Agent:API] Sourcegraph gateway emitted mid-stream timeout frame; will surface as upstream_timeout")
+                                upstreamTimeout = true
+                                // Keep reading until EOF — the gateway closes the socket
+                                // right after, but we want any tail bytes captured in
+                                // rawSseBuf for the api-debug dump.
+                            } else if (line.startsWith("data: ") && line != "data: [DONE]") {
+                                val chunkJson = line.removePrefix("data: ")
+                                try {
+                                    val chunk = json.decodeFromString<StreamChunk>(chunkJson)
+                                    onChunk(chunk)
+
+                                    chunk.choices.firstOrNull()?.let { choice ->
+                                        // Capture finish_reason from the final chunk
+                                        val fr = choice.finishReason
+                                        if (!fr.isNullOrBlank() && fr != "") {
+                                            finishReason = fr
+                                        }
+                                        choice.delta.let { delta ->
+                                            delta.role?.let { role = it }
+                                            delta.content?.let { contentBuilder.append(it) }
+                                            delta.toolCalls?.forEach { tc ->
+                                                val builder = toolCallBuilders.getOrPut(tc.index) { ToolCallBuilder() }
+                                                tc.id?.let { builder.id.append(it) }
+                                                tc.function?.name?.let { builder.name.append(it) }
+                                                tc.function?.arguments?.let { builder.arguments.append(it) }
+                                                log.debug("[Agent:API] SSE tool delta: idx=${tc.index} id=${tc.id} name=${tc.function?.name} args=${tc.function?.arguments?.take(50)}")
+                                            }
+                                        }
+                                    }
+                                    // Capture usage from the final chunk (Sourcegraph sends it with finish_reason)
+                                    chunk.usage?.let { streamUsage = it }
+                                } catch (e: Exception) {
+                                    // Promoted from debug → warn (2026-05-12 Fix-Polish): a chunk-decode
+                                    // failure means a real upstream byte was dropped silently. If this fires
+                                    // repeatedly, the gateway has drifted from our `StreamChunk` shape and
+                                    // every retry will return empty. Log at warn so it shows up in agent logs.
+                                    log.warn("[Agent:API] Skipping malformed SSE chunk (decode failed): ${e.message} — raw=${chunkJson.take(200)}")
+                                }
+                            }
+                            try {
+                                line = reader.readLine()
+                            } catch (e: IOException) {
+                                if (idleTimeoutFired.get()) break else throw e
+                            }
+                        }
+                    } finally {
+                        watchdog.cancel()
+                    }
+                }
+
+                if (idleTimeoutFired.get()) {
+                    upstreamTimeout = true
                 }
                 shouldInterruptStream = false  // Reset for next call
 
@@ -575,6 +646,26 @@ class SourcegraphChatClient(
                         finalFinishReason
                     }
 
+                // Fix B (2026-05-12) — `length` with no content and no tool calls is
+                // the thinking-budget-exhaustion shape: the model consumed all of
+                // max_tokens inside extended thinking without emitting any visible
+                // output. Treating this as a normal `length` truncation pollutes
+                // context with an empty assistant turn AND nudges the model to
+                // "continue from where you left off" — but there's nothing to
+                // continue from. Route through `upstream_timeout` instead so Stage
+                // 3.6's chunk-smaller recovery fires, matching Anthropic's stop-
+                // reason guidance and the LiteLLM #20347-class pattern.
+                val finishReasonAfterEmptyLengthPromotion =
+                    if (finishReasonWithPartialXmlPromotion == "length"
+                        && textOnlyContent.isNullOrBlank()
+                        && finalToolCalls.isNullOrEmpty()
+                    ) {
+                        log.warn("[Agent:API] finish_reason=length with empty content and no tool calls — promoting to upstream_timeout (thinking-budget exhaustion pattern)")
+                        "upstream_timeout"
+                    } else {
+                        finishReasonWithPartialXmlPromotion
+                    }
+
                 val finalMessage = ChatMessage(
                     role = role,
                     content = textOnlyContent,
@@ -585,7 +676,7 @@ class SourcegraphChatClient(
 
                 val streamResponse = ChatCompletionResponse(
                     id = "stream-${System.nanoTime()}",
-                    choices = listOf(Choice(index = 0, message = finalMessage, finishReason = finishReasonWithPartialXmlPromotion)),
+                    choices = listOf(Choice(index = 0, message = finalMessage, finishReason = finishReasonAfterEmptyLengthPromotion)),
                     usage = streamUsage
                 )
                 dumpApiResponse(streamResponse, rawSseBuf?.toString())
@@ -698,8 +789,12 @@ class SourcegraphChatClient(
                                 }
                             }
 
-                            dumpApiResponse(parsed, body)
-                            ApiResult.Success(parsed)
+                            // Fix B (2026-05-12) — same `length+empty → upstream_timeout`
+                            // promotion as the streaming path. Keeps recovery paths
+                            // symmetric across endpoints.
+                            val finalParsed = promoteEmptyLengthToUpstreamTimeout(parsed)
+                            dumpApiResponse(finalParsed, body)
+                            ApiResult.Success(finalParsed)
                         }
                         else -> {
                             dumpApiError(response.code, body)
@@ -719,6 +814,24 @@ class SourcegraphChatClient(
             log.error("[Agent:API] Unexpected error: ${e.message}", e)
             ApiResult.Error(ErrorType.PARSE_ERROR, "Unexpected error: ${e.message}", e)
         }
+    }
+
+    /**
+     * Fix B — promote `finish_reason="length"` with no usable content/tool calls
+     * to `"upstream_timeout"` so AgentLoop Stage 3.6 fires (chunk-smaller nudge,
+     * no empty-assistant context pollution) instead of treating it as a normal
+     * length truncation that has nothing to "continue from". Same shape as the
+     * streaming-path promotion 50 lines above; extracted as a helper so both
+     * paths share one implementation.
+     */
+    private fun promoteEmptyLengthToUpstreamTimeout(parsed: ChatCompletionResponse): ChatCompletionResponse {
+        val choice = parsed.choices.firstOrNull() ?: return parsed
+        if (choice.finishReason != "length") return parsed
+        val content = choice.message.content
+        val toolCalls = choice.message.toolCalls
+        if (!content.isNullOrBlank() || !toolCalls.isNullOrEmpty()) return parsed
+        log.warn("[Agent:API] finish_reason=length with empty content and no tool calls — promoting to upstream_timeout (thinking-budget exhaustion pattern)")
+        return parsed.copy(choices = listOf(choice.copy(finishReason = "upstream_timeout")))
     }
 
     /**
