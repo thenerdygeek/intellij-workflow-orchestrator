@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.math.BigInteger
 
 /**
  * Characterization tests that pin the current scope of [DocxTableExtractor].
@@ -173,13 +174,65 @@ class DocxExtractorFormatGapsTest {
             "ListBlock should exist in the model after Phase 0")
     }
 
-    // ── Body-only iteration boundary ──────────────────────────────────────────
+    // ── Comments (positive coverage after Phase 1) ─────────────────────────────
 
     @Test
-    fun `gap extractor visits only body elements — comments() collection is never read`() {
-        // Source-scan: confirm the extractor never calls into doc.getComments()
-        // or doc.getFootnotes() / doc.getEndnotes() / doc.getHeaderFooterPolicy().
-        // Pinning by code-reading keeps the test independent of fixture quirks.
+    fun `comment anchored to a paragraph emits DocumentBlock Comment immediately after that paragraph`() {
+        val bytes = buildDocx { doc ->
+            val p = doc.createParagraph()
+            p.createRun().setText("The new caching layer reduces P99 latency to 80ms.")
+
+            // Create the comment in comments.xml
+            val comments = doc.createComments()
+            val xwpfComment = comments.createComment(BigInteger.valueOf(1))
+            xwpfComment.author = "Jane"
+            xwpfComment.initials = "J"
+            // setText sets the first paragraph of the comment's body
+            val commentPara = xwpfComment.createParagraph()
+            commentPara.createRun().setText("Confirm with the latest benchmark.")
+
+            // Insert w:commentRangeStart / End / Reference into the paragraph's CTP
+            val ctp = p.ctp
+            ctp.addNewCommentRangeStart().id = BigInteger.valueOf(1)
+            ctp.addNewCommentRangeEnd().id = BigInteger.valueOf(1)
+            ctp.addNewR().addNewCommentReference().id = BigInteger.valueOf(1)
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+
+        // Find the paragraph block and the comment block.
+        val paragraphIdx = blocks.indexOfFirst {
+            it is DocumentBlock.Paragraph && it.text.contains("caching layer")
+        }
+        assertTrue(paragraphIdx >= 0, "Expected the body paragraph in extracted blocks")
+
+        // The comment should appear immediately after the paragraph (no gap).
+        val commentIdx = blocks.subList(paragraphIdx + 1, blocks.size).indexOfFirst {
+            it is DocumentBlock.Comment
+        }.let { if (it >= 0) paragraphIdx + 1 + it else -1 }
+
+        assertTrue(commentIdx > paragraphIdx,
+            "Expected a Comment block after paragraph at $paragraphIdx; got: ${blocks.map { it::class.simpleName }}")
+        val comment = blocks[commentIdx] as DocumentBlock.Comment
+        assertEquals(DocumentBlock.Comment.Kind.REVIEW, comment.kind)
+        assertEquals("Jane", comment.author)
+        assertEquals("Confirm with the latest benchmark.", comment.text)
+        assertTrue(
+            comment.anchorText?.contains("caching layer") == true,
+            "Anchor text should include the anchored phrase; got: ${comment.anchorText}"
+        )
+    }
+
+    // ── Body-only iteration boundary ──────────────────────────────────────────
+
+    /**
+     * Source-scan gate: confirms that [DocxTableExtractor] still does NOT touch
+     * footnotes, endnotes, header/footer policy, or embedded pictures. Comments are now
+     * legitimately read (Phase 1 — [CommentExtractionVisitor]), so `.comments` and
+     * `getComments(` are intentionally absent from the forbidden list.
+     */
+    @Test
+    fun `gap extractor still skips footnotes endnotes headers and pictures — comments are now extracted in Phase 1`() {
         val source = javaClass.classLoader
             .getResource("../../main/kotlin/com/workflow/orchestrator/document/poi/DocxTableExtractor.kt")
             ?.readText()
@@ -192,8 +245,6 @@ class DocxExtractorFormatGapsTest {
 
         assertNotNull(text, "Could not locate DocxTableExtractor.kt source for inspection")
         listOf(
-            ".comments",
-            "getComments(",
             ".footnotes",
             "getFootnotes(",
             ".endnotes",

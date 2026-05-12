@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.document.poi
 
 import com.workflow.orchestrator.core.model.DocumentBlock
+import com.workflow.orchestrator.document.poi.visitor.CommentExtractionVisitor
 import com.workflow.orchestrator.document.poi.visitor.DefaultHeadingParagraphVisitor
 import com.workflow.orchestrator.document.poi.visitor.DefaultTableVisitor
 import com.workflow.orchestrator.document.poi.visitor.ParagraphVisitor
@@ -45,7 +46,10 @@ import java.io.InputStream
  * @param postBodyVisitors  Visitors run once after body iteration. Default: empty.
  */
 class DocxTableExtractor(
-    private val paragraphVisitors: List<ParagraphVisitor> = listOf(DefaultHeadingParagraphVisitor()),
+    private val paragraphVisitors: List<ParagraphVisitor> = listOf(
+        DefaultHeadingParagraphVisitor(),
+        CommentExtractionVisitor(),
+    ),
     private val tableVisitors: List<TableVisitor> = listOf(DefaultTableVisitor()),
     private val postBodyVisitors: List<PostBodyVisitor> = emptyList(),
 ) {
