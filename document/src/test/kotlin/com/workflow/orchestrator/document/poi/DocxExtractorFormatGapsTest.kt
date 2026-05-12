@@ -747,13 +747,15 @@ class DocxExtractorFormatGapsTest {
     // ── Body-only iteration boundary ──────────────────────────────────────────
 
     /**
-     * Source-scan gate: confirms that [DocxTableExtractor] still does NOT touch
-     * footnotes or endnotes directly. Comments, images, and header/footer policy are now
-     * legitimately read via Phase 1/2/3 visitors and [DocxTableExtractor.extractHeaderFooter],
-     * so those needles are intentionally absent from the forbidden list.
+     * Source-scan gate: confirms that [DocxTableExtractor] itself does NOT touch
+     * footnotes or endnotes directly — that work is delegated to
+     * [com.workflow.orchestrator.document.poi.visitor.FootnoteExtractionVisitor].
+     * Comments, images, and header/footer policy are legitimately read via Phase 1/2/3
+     * visitors and [DocxTableExtractor.extractHeaderFooter], so those needles are
+     * intentionally absent from the forbidden list.
      */
     @Test
-    fun `gap extractor still skips footnotes and endnotes — comments images and headers extracted via visitors in Phase 1 2 and 3`() {
+    fun `gap extractor delegates footnotes to FootnoteExtractionVisitor — comments images and headers extracted via visitors in Phase 1 2 and 3`() {
         val source = javaClass.classLoader
             .getResource("../../main/kotlin/com/workflow/orchestrator/document/poi/DocxTableExtractor.kt")
             ?.readText()
@@ -765,16 +767,71 @@ class DocxExtractorFormatGapsTest {
         )
 
         assertNotNull(text, "Could not locate DocxTableExtractor.kt source for inspection")
+        // DocxTableExtractor must NOT call footnote APIs directly — FootnoteExtractionVisitor owns that.
         listOf(
-            ".footnotes",
-            "getFootnotes(",
-            ".endnotes",
-            "getEndnotes(",
+            "doc.footnotes",
+            "doc.getFootnotes(",
+            "doc.endnotes",
+            "doc.getEndnotes(",
         ).forEach { needle ->
             assertFalse(text!!.contains(needle),
-                "DocxTableExtractor must NOT touch '$needle' until the gap is fixed; if it does, " +
-                    "update this test to assert the new positive behaviour")
+                "DocxTableExtractor must NOT touch '$needle' directly; delegate to FootnoteExtractionVisitor")
         }
+    }
+
+    // ── Footnotes (positive coverage after Phase 5a) ──────────────────────────
+
+    @Test
+    fun `DOCX footnotes are extracted as Footnote blocks at the end of the output`() {
+        val bytes = buildDocx { doc ->
+            doc.createParagraph().createRun().setText("Body text.")
+
+            val footnotesContainer = doc.createFootnotes()
+            val fn = footnotesContainer.createFootnote()
+            fn.ctFtnEdn.id = java.math.BigInteger.valueOf(1)
+            fn.createParagraph().createRun().setText("First footnote text.")
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val footnoteBlocks = blocks.filterIsInstance<DocumentBlock.Footnote>()
+
+        assertEquals(1, footnoteBlocks.size, "Expected one Footnote block")
+        assertEquals("1", footnoteBlocks.single().marker)
+        assertEquals("First footnote text.", footnoteBlocks.single().text)
+
+        // Footnote should appear AFTER body content.
+        val bodyIdx = blocks.indexOfFirst { it is DocumentBlock.Paragraph && (it as DocumentBlock.Paragraph).text.contains("Body text") }
+        val footnoteIdx = blocks.indexOfFirst { it is DocumentBlock.Footnote }
+        assertTrue(footnoteIdx > bodyIdx, "Footnote should land after body; got body@$bodyIdx footnote@$footnoteIdx")
+    }
+
+    @Test
+    fun `DOCX with no footnotes emits no Footnote blocks`() {
+        val bytes = buildDocx { doc ->
+            doc.createParagraph().createRun().setText("plain body")
+        }
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        assertTrue(blocks.none { it is DocumentBlock.Footnote })
+    }
+
+    @Test
+    fun `multiple DOCX footnotes emit all markers as a set`() {
+        val bytes = buildDocx { doc ->
+            doc.createParagraph().createRun().setText("body")
+            val footnotesContainer = doc.createFootnotes()
+            for (id in listOf(2, 1, 3)) {
+                val fn = footnotesContainer.createFootnote()
+                fn.ctFtnEdn.id = java.math.BigInteger.valueOf(id.toLong())
+                fn.createParagraph().createRun().setText("note-$id")
+            }
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val footnotes = blocks.filterIsInstance<DocumentBlock.Footnote>()
+        assertEquals(3, footnotes.size)
+        // POI iterates the list in document-insertion order. We accept either insertion-order or id-order
+        // — what matters is all three are present. Tighten if a sort guarantee is needed in the impl.
+        assertTrue(setOf("1", "2", "3") == footnotes.map { it.marker }.toSet())
     }
 
     // ── Header / Footer (positive coverage after Phase 3 T4) ──────────────────

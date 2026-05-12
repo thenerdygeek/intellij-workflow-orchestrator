@@ -4,6 +4,7 @@ import com.workflow.orchestrator.core.model.DocumentBlock
 import com.workflow.orchestrator.document.poi.visitor.CommentExtractionVisitor
 import com.workflow.orchestrator.document.poi.visitor.DefaultHeadingParagraphVisitor
 import com.workflow.orchestrator.document.poi.visitor.DefaultTableVisitor
+import com.workflow.orchestrator.document.poi.visitor.FootnoteExtractionVisitor
 import com.workflow.orchestrator.document.poi.visitor.ImageExtractionVisitor
 import com.workflow.orchestrator.document.poi.visitor.ListAccumulatorVisitor
 import com.workflow.orchestrator.document.poi.visitor.ParagraphVisitor
@@ -82,7 +83,10 @@ class DocxTableExtractor(
                 if (imageService != null) add(ImageExtractionVisitor(imageService, docKey))
             }
             val tableVisitors = listOf(DefaultTableVisitor())
-            val postBodyVisitors = listOf<PostBodyVisitor>(listAccumulator)
+            val postBodyVisitors = listOf<PostBodyVisitor>(
+                listAccumulator,
+                FootnoteExtractionVisitor(),
+            )
             return Triple(paragraphVisitors, tableVisitors, postBodyVisitors)
         }
     }
