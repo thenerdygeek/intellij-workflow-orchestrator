@@ -260,4 +260,26 @@ class MarkdownAssemblerNewVariantsTest {
         val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
         assertEquals("**Notes**\n- Detail: line one\nline two\n\n", md)
     }
+
+    @Test
+    fun `EmbeddedFileRef with null path keeps existing not-extracted format`() {
+        val block = DocumentBlock.EmbeddedFileRef(name = "screenshot.png", mimeType = "image/png")
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        // Existing format from MarkdownAssembler.serializeEmbeddedFileRef — unchanged.
+        assertEquals("[embedded: screenshot.png (image/png)]\n\n", md)
+    }
+
+    @Test
+    fun `EmbeddedFileRef with non-null path renders image marker with path and mime`() {
+        val block = DocumentBlock.EmbeddedFileRef(
+            name = "figure-1.png",
+            mimeType = "image/png",
+            path = "/session/abc/downloads/document-xyz/image-0-def.png",
+        )
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals(
+            "[image: /session/abc/downloads/document-xyz/image-0-def.png] (image/png)\n\n",
+            md,
+        )
+    }
 }

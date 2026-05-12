@@ -114,8 +114,19 @@ class MarkdownAssembler {
         return "<!-- page: ${block.pageNumber} -->\n"
     }
 
+    /**
+     * Serialises a [DocumentBlock.EmbeddedFileRef]. When [block.path] is non-null (the
+     * image was extracted to disk by `ImageExtractionService` in Phase 2+), renders as
+     * `[image: <path>] (<mime>)` so the LLM has an actionable file path for the
+     * `view_image` tool. When [block.path] is null, falls back to the original "not
+     * extracted" form so legacy callers and HTML `<img src=…>` paths still render.
+     */
     private fun serializeEmbeddedFileRef(block: DocumentBlock.EmbeddedFileRef): String {
-        return "[embedded: ${block.name} (${block.mimeType})]\n\n"
+        return if (block.path != null) {
+            "[image: ${block.path}] (${block.mimeType})\n\n"
+        } else {
+            "[embedded: ${block.name} (${block.mimeType})]\n\n"
+        }
     }
 
     /**
