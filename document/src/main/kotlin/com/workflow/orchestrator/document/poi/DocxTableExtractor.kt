@@ -1,7 +1,11 @@
 package com.workflow.orchestrator.document.poi
 
 import com.workflow.orchestrator.core.model.DocumentBlock
-import com.workflow.orchestrator.document.normaliseRow
+import com.workflow.orchestrator.document.poi.visitor.DefaultHeadingParagraphVisitor
+import com.workflow.orchestrator.document.poi.visitor.DefaultTableVisitor
+import com.workflow.orchestrator.document.poi.visitor.ParagraphVisitor
+import com.workflow.orchestrator.document.poi.visitor.PostBodyVisitor
+import com.workflow.orchestrator.document.poi.visitor.TableVisitor
 import org.apache.poi.xwpf.usermodel.IBodyElement
 import org.apache.poi.xwpf.usermodel.XWPFDocument
 import org.apache.poi.xwpf.usermodel.XWPFParagraph
@@ -11,29 +15,40 @@ import java.io.InputStream
 /**
  * Extracts content from DOCX files into [DocumentBlock] lists via Apache POI XWPF.
  *
- * Walks `XWPFDocument.bodyElements` in document order, preserving the interleaving of
- * paragraphs and tables. This is the key accuracy advantage over Tika's `BodyContentHandler`,
- * which separates prose from tables and loses positional context.
+ * Drives a composable visitor chain over `XWPFDocument.bodyElements` so subsequent
+ * phases (comments, images, lists) can add new visitors without touching the body
+ * iteration. Phase 0 ships the default chain that produces byte-for-byte the same
+ * output as the pre-refactor extractor — `DocxVisitorChainTest` and
+ * `DocxTableExtractorTest` are the regression net.
  *
- * ## Heading detection
+ * ## Iteration order
  *
- * Paragraph styles are matched by the string prefix `"Heading "`. POI exposes the style ID
- * (e.g. `"Heading1"`, `"Heading 1"`) rather than the display name, and style IDs vary across
- * Word installations. The implementation checks both `paragraph.style` (the style ID) and the
- * numeric suffix (`paragraph.numID` is irrelevant here — we parse the style string directly).
+ * 1. For each `IBodyElement` in document order:
+ *    - `XWPFParagraph` → every visitor in [paragraphVisitors] runs in declaration order;
+ *      each visitor's emitted blocks are appended.
+ *    - `XWPFTable` → every visitor in [tableVisitors] runs the same way.
+ *    - Other element types (SDT, drawing canvases) → skipped.
+ * 2. After body iteration completes, every visitor in [postBodyVisitors] runs once;
+ *    its emitted blocks are appended at the end. This is the canonical slot for
+ *    footnotes / endnotes / doc-summary key-value groups that must surface AFTER body.
  *
  * ## Thread safety
  *
- * Per-call instantiation only. `XWPFDocument` is NOT thread-safe. Never cache.
+ * Per-call instantiation only. `XWPFDocument` is NOT thread-safe; the extractor closes
+ * it via `use { }`. Visitor instances may be shared across calls if they are stateless
+ * (the defaults are).
  *
- * ## Table row/cell handling
- *
- * First row of each table → headers. If a subsequent row has fewer cells than the header
- * count, the row is padded with empty strings. If it has more, it is truncated to header
- * count. This matches the behaviour of [XlsxTableExtractor] and satisfies the
- * [DocumentBlock.Table] invariant.
+ * @param paragraphVisitors Visitors run for every body paragraph. Default: a single
+ *                          [DefaultHeadingParagraphVisitor] preserving pre-refactor behaviour.
+ * @param tableVisitors     Visitors run for every body table. Default: a single
+ *                          [DefaultTableVisitor] preserving pre-refactor behaviour.
+ * @param postBodyVisitors  Visitors run once after body iteration. Default: empty.
  */
-class DocxTableExtractor {
+class DocxTableExtractor(
+    private val paragraphVisitors: List<ParagraphVisitor> = listOf(DefaultHeadingParagraphVisitor()),
+    private val tableVisitors: List<TableVisitor> = listOf(DefaultTableVisitor()),
+    private val postBodyVisitors: List<PostBodyVisitor> = emptyList(),
+) {
 
     init {
         PoiHardening.applyOnce()
@@ -43,8 +58,7 @@ class DocxTableExtractor {
      * Extracts [DocumentBlock] values from a DOCX [stream] in document order.
      *
      * @param stream Raw bytes of the `.docx` file. The caller is responsible for closing the stream.
-     * @return Ordered list of blocks: headings, paragraphs, and tables in the order they appear
-     *         in the document body.
+     * @return Ordered list of blocks in document order, with post-body blocks appended.
      */
     fun extract(stream: InputStream): List<DocumentBlock> {
         val blocks = mutableListOf<DocumentBlock>()
@@ -53,71 +67,24 @@ class DocxTableExtractor {
             for (element: IBodyElement in doc.bodyElements) {
                 when (element) {
                     is XWPFParagraph -> {
-                        val block = paragraphToBlock(element) ?: continue
-                        blocks += block
+                        for (visitor in paragraphVisitors) {
+                            blocks += visitor.visit(element, doc)
+                        }
                     }
                     is XWPFTable -> {
-                        val block = tableToBlock(element) ?: continue
-                        blocks += block
+                        for (visitor in tableVisitors) {
+                            blocks += visitor.visit(element, doc)
+                        }
                     }
-                    // SDT (Structured Document Tag), drawing canvases, etc. — skip.
                     else -> continue
                 }
+            }
+
+            for (visitor in postBodyVisitors) {
+                blocks += visitor.visit(doc)
             }
         }
 
         return blocks
-    }
-
-    // ── Paragraph conversion ───────────────────────────────────────────────────
-
-    private fun paragraphToBlock(paragraph: XWPFParagraph): DocumentBlock? {
-        val text = paragraph.text.trim()
-        if (text.isEmpty()) return null
-
-        val level = headingLevel(paragraph)
-        return if (level != null) {
-            DocumentBlock.Heading(level, text)
-        } else {
-            DocumentBlock.Paragraph(text)
-        }
-    }
-
-    /**
-     * Returns the heading level (1–6) if [paragraph] has a heading style, or `null` otherwise.
-     *
-     * POI stores the style as the style ID (e.g. `"Heading1"`, `"Heading 1"`, `"heading1"`).
-     * Word-generated DOCX files use `"Heading1"` through `"Heading6"`. LibreOffice-generated
-     * files may use `"Heading_20_1"` (URL-encoded space). We handle the common forms.
-     */
-    private fun headingLevel(paragraph: XWPFParagraph): Int? {
-        val styleId = paragraph.style ?: return null
-        val normalized = styleId.lowercase().replace("_20_", " ").replace("_", " ")
-
-        // Match "heading 1" through "heading 6", or "heading1" through "heading6".
-        val withSpace = Regex("""^heading\s*(\d)$""").find(normalized)
-        if (withSpace != null) {
-            val level = withSpace.groupValues[1].toIntOrNull() ?: return null
-            if (level in 1..6) return level
-        }
-
-        return null
-    }
-
-    // ── Table conversion ───────────────────────────────────────────────────────
-
-    private fun tableToBlock(table: XWPFTable): DocumentBlock? {
-        val tableRows = table.rows
-        if (tableRows.isEmpty()) return null
-
-        val headerCells = tableRows[0].tableCells
-        val headers = headerCells.map { it.text.trim() }
-        if (headers.isEmpty()) return null
-
-        val dataRows = tableRows.drop(1).map { row ->
-            normaliseRow(row.tableCells.map { it.text.trim() }, headers.size)
-        }
-
-        return DocumentBlock.Table(headers, dataRows)
     }
 }
