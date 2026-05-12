@@ -138,6 +138,12 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
                     _blocks += DocumentBlock.PageMarker(pageNumber)
                 }
             }
+
+            name == "img" -> {
+                // Flush any pending body text first — the image is its own block.
+                flushBufferAsParagraph()
+                handleImage(attrs)
+            }
         }
     }
 
@@ -340,6 +346,85 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
         val headers = rows[0]
         val dataRows = rows.drop(1)
         return DocumentBlock.Table(headers = headers, rows = dataRows, caption = null)
+    }
+
+    /**
+     * Emits a [DocumentBlock.EmbeddedFileRef] for an HTML `<img>` element.
+     *
+     * The display name prefers [alt]; if absent, the last path segment of [src] is used;
+     * if both are empty the fallback is `"image"`. The MIME type is guessed from the [src]
+     * extension (`.png` → `image/png`, etc.) or extracted from a `data:` URI prefix.
+     *
+     * [DocumentBlock.EmbeddedFileRef.path] is **always null** for HTML img tags because
+     * the document reader does not fetch URI bytes — only the tag's attributes are
+     * available from the Tika XHTML SAX stream.
+     *
+     * TODO Phase 2 follow-up: for RTF/ODT/EPUB, wire Tika's EmbeddedDocumentExtractor so
+     * embedded image bytes flow to ImageExtractionService and `path` becomes non-null.
+     */
+    private fun handleImage(attrs: Attributes?) {
+        if (attrs == null) return
+        val src = attrs.getValue("src")?.trim().orEmpty()
+        val alt = attrs.getValue("alt")?.trim().orEmpty()
+
+        // Determine the display name — prefer alt for human readability, fall back to a
+        // sanitised src (last URL path segment) or "image" if both empty.
+        // Note: Tika's HtmlParser truncates data: URIs to just "data:" in the src attribute,
+        // so we treat a bare "data:" prefix as equivalent to an empty src for display purposes.
+        val srcForDisplay = if (src.startsWith("data:", ignoreCase = true)) "" else src
+        val displayName = when {
+            alt.isNotEmpty() -> alt
+            srcForDisplay.isNotEmpty() -> {
+                val lastSlash = srcForDisplay.indexOfLast { it == '/' || it == '\\' }
+                if (lastSlash >= 0 && lastSlash < srcForDisplay.length - 1) srcForDisplay.substring(lastSlash + 1) else srcForDisplay
+            }
+            else -> "image"
+        }
+
+        val mime = guessImageMimeFromSrc(src)
+
+        _blocks += DocumentBlock.EmbeddedFileRef(name = displayName, mimeType = mime, path = null)
+    }
+
+    /**
+     * Guesses the MIME type for an image from its [src] URL or `data:` URI.
+     *
+     * - `data:image/webp;base64,…` → `"image/webp"` (extracts the declared type)
+     * - `photo.jpg?v=2#anchor` → `"image/jpeg"` (strips query + fragment before extension lookup)
+     * - Unknown or missing extension → `"application/octet-stream"`
+     */
+    private fun guessImageMimeFromSrc(src: String): String {
+        if (src.isBlank()) return "application/octet-stream"
+        // data: URIs encode the MIME type — extract it.
+        if (src.startsWith("data:", ignoreCase = true)) {
+            val semi = src.indexOf(';')
+            val comma = src.indexOf(',')
+            val end = when {
+                semi > 0 && comma > 0 -> minOf(semi, comma)
+                semi > 0 -> semi
+                comma > 0 -> comma
+                else -> -1
+            }
+            if (end > 5) {
+                val candidate = src.substring(5, end).trim().lowercase()
+                if (candidate.isNotEmpty()) return candidate
+            }
+            return "application/octet-stream"
+        }
+        // Strip query string + fragment so file.png?v=2 still maps to .png.
+        val cleaned = src.substringBefore('?').substringBefore('#')
+        val dot = cleaned.lastIndexOf('.')
+        if (dot <= 0 || dot == cleaned.length - 1) return "application/octet-stream"
+        return when (cleaned.substring(dot + 1).lowercase()) {
+            "png" -> "image/png"
+            "jpg", "jpeg" -> "image/jpeg"
+            "gif" -> "image/gif"
+            "webp" -> "image/webp"
+            "bmp" -> "image/bmp"
+            "tiff", "tif" -> "image/tiff"
+            "svg" -> "image/svg+xml"
+            else -> "application/octet-stream"
+        }
     }
 
     /**

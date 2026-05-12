@@ -3,6 +3,7 @@ package com.workflow.orchestrator.document.pipeline
 import com.workflow.orchestrator.core.model.DocumentBlock
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayInputStream
@@ -94,10 +95,10 @@ class TikaXhtmlFormatGapsTest {
             "No bullet markers reintroduced — extractor preserves no list type info")
     }
 
-    // ── Images ────────────────────────────────────────────────────────────────
+    // ── Images (positive coverage after Phase 2) ──────────────────────────────
 
     @Test
-    fun `gap HTML img tag is dropped completely — no EmbeddedFileRef, no alt text fallback`() {
+    fun `HTML img tag emits EmbeddedFileRef with src-derived name and MIME — path is null because we do not fetch URI bytes`() {
         val html = """
             <html><body>
             <p>Caption above.</p>
@@ -107,14 +108,51 @@ class TikaXhtmlFormatGapsTest {
         """.trimIndent()
 
         val blocks = pipeline.extract(ByteArrayInputStream(html.toByteArray()), "text/html")
-        val texts = blocks.filterIsInstance<DocumentBlock.Paragraph>().map { it.text }
+        val refs = blocks.filterIsInstance<DocumentBlock.EmbeddedFileRef>()
 
+        assertEquals(1, refs.size, "Expected exactly one EmbeddedFileRef for the <img>")
+        val ref = refs.single()
+        assertEquals("Company Logo", ref.name, "Alt text preferred for the display name")
+        assertEquals("image/png", ref.mimeType, "MIME derived from .png extension in src")
+        assertNull(ref.path, "HTML img bytes are not fetched in Phase 2; path is always null")
+
+        // The surrounding text blocks still extract.
+        val texts = blocks.filterIsInstance<DocumentBlock.Paragraph>().map { it.text }
         assertTrue(texts.any { it.contains("Caption above") })
         assertTrue(texts.any { it.contains("Caption below") })
-        assertTrue(blocks.none { it is DocumentBlock.EmbeddedFileRef },
-            "No EmbeddedFileRef emitted for img tags")
-        assertFalse(texts.any { it.contains("Company Logo") },
-            "alt text is not even surfaced as a fallback caption")
+    }
+
+    @Test
+    fun `HTML img with no alt falls back to the src filename`() {
+        val html = """<html><body><p><img src="https://example.com/path/photo.jpg"/></p></body></html>"""
+        val blocks = pipeline.extract(ByteArrayInputStream(html.toByteArray()), "text/html")
+        val ref = blocks.filterIsInstance<DocumentBlock.EmbeddedFileRef>().single()
+        assertEquals("photo.jpg", ref.name)
+        assertEquals("image/jpeg", ref.mimeType)
+    }
+
+    @Test
+    fun `HTML img with data URI — Tika strips the src attribute so handler falls back to octet-stream placeholder`() {
+        // Tika's HtmlParser sanitises <img src="data:…"> and drops the data: URI from the
+        // SAX attribute stream for security reasons (prevents large base64 blobs / SSRF).
+        // The handler therefore receives an empty src and emits a safe placeholder.
+        // guessImageMimeFromSrc() still handles data: URIs correctly when called directly
+        // (see DocumentBlockHandlerTest), but in the Tika pipeline path the src is absent.
+        val html = """<html><body><p><img src="data:image/webp;base64,aGVsbG8="/></p></body></html>"""
+        val blocks = pipeline.extract(ByteArrayInputStream(html.toByteArray()), "text/html")
+        val ref = blocks.filterIsInstance<DocumentBlock.EmbeddedFileRef>().single()
+        assertEquals("image", ref.name, "Name falls back to 'image' when src is stripped by Tika")
+        assertEquals("application/octet-stream", ref.mimeType,
+            "MIME falls back to octet-stream when Tika strips the data: URI from src")
+    }
+
+    @Test
+    fun `HTML img with neither src nor alt still emits a placeholder so the LLM knows an image existed`() {
+        val html = """<html><body><p><img/></p></body></html>"""
+        val blocks = pipeline.extract(ByteArrayInputStream(html.toByteArray()), "text/html")
+        val ref = blocks.filterIsInstance<DocumentBlock.EmbeddedFileRef>().single()
+        assertEquals("image", ref.name)
+        assertEquals("application/octet-stream", ref.mimeType)
     }
 
     // ── Nested tables ─────────────────────────────────────────────────────────
