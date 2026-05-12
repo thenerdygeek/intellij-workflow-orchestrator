@@ -33,6 +33,10 @@ import org.apache.poi.xwpf.usermodel.XWPFParagraph
  * The deleted text goes in `anchorText` so [com.workflow.orchestrator.document.assembler.MarkdownAssembler]
  * can render it inline in the header as *"Tom proposes deleting: "old text""*; the body
  * is left blank to trigger the no-body branch in the assembler.
+ *
+ * Empty ins/del elements (no inserted/deleted text) emit nothing — there is no useful
+ * information to surface, and a body-less header-only blockquote is more confusing than
+ * helpful.
  */
 class TrackedChangeVisitor : ParagraphVisitor {
 
@@ -58,6 +62,9 @@ class TrackedChangeVisitor : ParagraphVisitor {
                         val text = obj.rArray.joinToString("") { run ->
                             run.tArray.joinToString("") { it.stringValue.orEmpty() }
                         }
+                        // Skip empty ins (no runs / all-blank <w:t>): a header-only
+                        // blockquote with nothing to insert is more noise than signal.
+                        if (text.isEmpty()) continue
                         result += DocumentBlock.Comment(
                             author = obj.author?.takeIf { it.isNotBlank() },
                             anchorText = null,
@@ -71,9 +78,12 @@ class TrackedChangeVisitor : ParagraphVisitor {
                         val deletedText = obj.rArray.joinToString("") { run ->
                             run.delTextArray.joinToString("") { it.stringValue.orEmpty() }
                         }
+                        // Symmetric guard: skip empty del (no runs / all-blank
+                        // <w:delText>) so we don't emit a content-less Comment.
+                        if (deletedText.isEmpty()) continue
                         result += DocumentBlock.Comment(
                             author = obj.author?.takeIf { it.isNotBlank() },
-                            anchorText = deletedText.takeIf { it.isNotEmpty() },
+                            anchorText = deletedText,
                             text = "",
                             kind = DocumentBlock.Comment.Kind.TRACKED_DELETION,
                         )

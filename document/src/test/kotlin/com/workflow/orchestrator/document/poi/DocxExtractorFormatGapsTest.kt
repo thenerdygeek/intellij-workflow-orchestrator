@@ -362,6 +362,30 @@ class DocxExtractorFormatGapsTest {
         assertEquals("second-added", tracked[1].text)
     }
 
+    @Test
+    fun `empty w-ins with no inserted text emits no TRACKED_INSERTION Comment`() {
+        val bytes = buildDocx { doc ->
+            val p = doc.createParagraph()
+            p.createRun().setText("Body prose.")
+            val ctp = p.ctp
+            // <w:ins> with author but NO child runs — the LLM should see nothing about this.
+            ctp.addNewIns().apply {
+                author = "Tom"
+                id = java.math.BigInteger.valueOf(1)
+                // intentionally no addNewR()
+            }
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val tracked = blocks.filterIsInstance<DocumentBlock.Comment>()
+            .filter { it.kind == DocumentBlock.Comment.Kind.TRACKED_INSERTION }
+
+        assertEquals(0, tracked.size,
+            "Empty w:ins (no text inside) should not emit a Comment block")
+        // The paragraph itself still extracts.
+        assertTrue(blocks.any { it is DocumentBlock.Paragraph && it.text.contains("Body prose") })
+    }
+
     // ── Body-only iteration boundary ──────────────────────────────────────────
 
     /**
