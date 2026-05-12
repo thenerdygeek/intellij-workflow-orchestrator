@@ -98,7 +98,7 @@ class MarkdownAssembler {
         is DocumentBlock.Comment -> serializeComment(block)
         is DocumentBlock.ListBlock -> serializeListBlock(block)
         is DocumentBlock.Footnote -> serializeFootnote(block)
-        else -> error("variant ${block::class.simpleName} not yet serialized")  // KEEP — replaced in Tasks 8/9/10
+        is DocumentBlock.KeyValueGroup -> serializeKeyValueGroup(block)
     }
 
     private fun serializeHeading(block: DocumentBlock.Heading): String {
@@ -172,6 +172,20 @@ class MarkdownAssembler {
      */
     private fun serializeFootnote(block: DocumentBlock.Footnote): String {
         return "[^${block.marker}]: ${block.text}\n"
+    }
+
+    /**
+     * Serialises a [DocumentBlock.KeyValueGroup] as a bold-titled section followed by
+     * a flat dash-list of `key: value` pairs.
+     */
+    private fun serializeKeyValueGroup(block: DocumentBlock.KeyValueGroup): String {
+        val sb = StringBuilder()
+        sb.append("**").append(block.title).append("**\n")
+        for ((k, v) in block.pairs) {
+            sb.append("- ").append(k).append(": ").append(v).append("\n")
+        }
+        sb.append("\n")
+        return sb.toString()
     }
 
     private fun serializeTable(block: DocumentBlock.Table): String {

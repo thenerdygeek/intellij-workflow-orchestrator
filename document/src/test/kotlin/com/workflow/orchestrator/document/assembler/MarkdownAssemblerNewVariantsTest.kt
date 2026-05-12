@@ -230,4 +230,34 @@ class MarkdownAssemblerNewVariantsTest {
         val (md, _) = assembler.assemble(blocks, maxChars = 10_000)
         assertEquals("Body prose.\n\n[^1]: Note A\n[^2]: Note B\n", md)
     }
+
+    @Test
+    fun `KeyValueGroup renders bold title and indented pairs`() {
+        val block = DocumentBlock.KeyValueGroup(
+            title = "Document properties",
+            pairs = listOf("Author" to "Jane", "Created" to "2026-05-12"),
+        )
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals(
+            "**Document properties**\n- Author: Jane\n- Created: 2026-05-12\n\n",
+            md,
+        )
+    }
+
+    @Test
+    fun `KeyValueGroup with empty pairs renders the title only`() {
+        val block = DocumentBlock.KeyValueGroup(title = "Bookmarks", pairs = emptyList())
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals("**Bookmarks**\n\n", md)
+    }
+
+    @Test
+    fun `KeyValueGroup pairs with multi-line values render the newline inside the value`() {
+        val block = DocumentBlock.KeyValueGroup(
+            title = "Notes",
+            pairs = listOf("Detail" to "line one\nline two"),
+        )
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals("**Notes**\n- Detail: line one\nline two\n\n", md)
+    }
 }
