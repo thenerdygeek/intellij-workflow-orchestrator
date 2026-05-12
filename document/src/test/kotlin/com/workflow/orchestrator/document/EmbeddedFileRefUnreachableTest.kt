@@ -16,8 +16,10 @@ import kotlin.streams.toList
  * [DocumentBlock.EmbeddedFileRef] variant.
  *
  * Today, every extractor either silently drops embedded images (POI extractors all do)
- * or relies on Tika's `isExtractInlineImages = false` config (PDF). No code path
- * constructs an [DocumentBlock.EmbeddedFileRef]. This test pins both facts so:
+ * or relies on Tika's `isExtractInlineImages = false` config (PDF). Phase 2 wired image
+ * extraction into DOCX/XLSX/PPTX/HTML, and Phase 4 Task 2 (P4T2) added PDF embedded
+ * attachments and image XObjects via [PdfMetadataExtractor]. This test pins the known
+ * producer set so:
  *
  * 1. Anyone adding image support will see *which* test to update.
  * 2. Anyone tweaking the hardened PDF config can't silently re-enable image extraction
@@ -56,7 +58,8 @@ class EmbeddedFileRefUnreachableTest {
 
         // Phase 2 wires image extraction into DOCX (P2T2), XLSX (P2T3), PPTX (P2T4),
         // and HTML <img> via the SAX handler (P2T5).
-        val expected = listOf("DocumentBlockHandler.kt", "ImageExtractionVisitor.kt", "PptxExtractor.kt", "XlsxTableExtractor.kt")
+        // Phase 4 Task 2 (P4T2) adds PDF embedded attachments + image XObjects.
+        val expected = listOf("DocumentBlockHandler.kt", "ImageExtractionVisitor.kt", "PdfMetadataExtractor.kt", "PptxExtractor.kt", "XlsxTableExtractor.kt")
         assertEquals(expected, producers,
             "EmbeddedFileRef producer set changed — update this list to reflect the new positive behaviour. " +
                 "Current producers: $producers")

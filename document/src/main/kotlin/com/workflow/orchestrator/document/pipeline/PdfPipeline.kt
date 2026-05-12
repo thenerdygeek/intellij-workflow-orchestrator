@@ -5,6 +5,7 @@ import com.workflow.orchestrator.document.pdf.PdfMetadataExtractor
 import com.workflow.orchestrator.document.pdf.PdfProseExtractor
 import com.workflow.orchestrator.document.pdf.PdfTableExtractor
 import com.workflow.orchestrator.document.pdf.PositionedBlock
+import com.workflow.orchestrator.document.service.ImageExtractionService
 import java.nio.file.Path
 
 /**
@@ -54,28 +55,39 @@ import java.nio.file.Path
  * Tabula mutates page state during extraction, which could corrupt the other parsers if they ran
  * on the same open document. The performance cost (three OS-level file opens) is acceptable for v1.
  *
- * @param tableExtractor     Source of lattice/stream Tabula tables. Default: lattice-only.
- * @param proseExtractor     Source of Tika XHTML prose blocks. Default: [PdfProseExtractor].
- * @param metadataExtractor  Source of PDFBox markup annotations. Default: [PdfMetadataExtractor].
+ * @param tableExtractor  Source of lattice/stream Tabula tables. Default: lattice-only.
+ * @param proseExtractor  Source of Tika XHTML prose blocks. Default: [PdfProseExtractor].
  */
 class PdfPipeline(
     private val tableExtractor: PdfTableExtractor = PdfTableExtractor(),
     private val proseExtractor: PdfProseExtractor = PdfProseExtractor(),
-    private val metadataExtractor: PdfMetadataExtractor = PdfMetadataExtractor(),
 ) {
 
     /**
      * Extracts all content from [file] as an ordered [List<DocumentBlock>] in reading order.
      *
-     * @param file Absolute path to the PDF file.
+     * A fresh [PdfMetadataExtractor] is constructed per call so that [imageService] and [docKey]
+     * can be threaded in without requiring the pipeline instance to be stateful. This mirrors the
+     * per-call extractor construction used by [OfficePipeline].
+     *
+     * @param file         Absolute path to the PDF file.
+     * @param imageService When non-null, embedded file attachments and image XObjects are
+     *                     extracted and saved via [ImageExtractionService]. When null, both
+     *                     P4T2 extraction passes are skipped.
+     * @param docKey       Stable identifier for the document passed to [ImageExtractionService.save].
      * @return Merged, overlap-suppressed list of document blocks in reading order.
      *         Never empty for a well-formed PDF with extractable text.
      * @throws org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException for encrypted PDFs.
      */
-    fun extract(file: Path): List<DocumentBlock> {
+    fun extract(
+        file: Path,
+        imageService: ImageExtractionService? = null,
+        docKey: String = "anonymous",
+    ): List<DocumentBlock> {
         val tables: List<PositionedBlock<DocumentBlock.Table>> = tableExtractor.extract(file)
         val prose: List<PositionedBlock<DocumentBlock>> = proseExtractor.extract(file)
-        val metadata: List<PositionedBlock<DocumentBlock>> = metadataExtractor.extract(file)
+        val metadata: List<PositionedBlock<DocumentBlock>> =
+            PdfMetadataExtractor(imageService = imageService, docKey = docKey).extract(file)
 
         // Dedup pass: when Tabula extracted a Table, the same cell content also appears in
         // Tika's prose stream as flat whitespace-separated lines. Drop the prose paragraphs

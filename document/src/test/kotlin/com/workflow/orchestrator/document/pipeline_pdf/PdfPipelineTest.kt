@@ -3,12 +3,14 @@ package com.workflow.orchestrator.document.pipeline_pdf
 import com.workflow.orchestrator.core.model.DocumentBlock
 import com.workflow.orchestrator.document.assembler.MarkdownAssembler
 import com.workflow.orchestrator.document.pipeline.PdfPipeline
+import com.workflow.orchestrator.document.service.ImageExtractionService
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.nio.file.Path
 import java.nio.file.Paths
 
 /**
@@ -482,5 +484,155 @@ class PdfPipelineTest {
         } finally {
             java.nio.file.Files.deleteIfExists(tempFile)
         }
+    }
+
+    // ── P4T2: PDF image XObjects and embedded file attachments ────────────────
+
+    /**
+     * Builds a minimal one-page PDF with a 16×16 image XObject drawn on the page via
+     * [LosslessFactory] + [PDPageContentStream.drawImage]. When [ImageExtractionService] is
+     * wired into [PdfPipeline.extract], the extractor must:
+     * 1. Walk `PDResources.xObjectNames` and find the [PDImageXObject].
+     * 2. Render it via `PDImageXObject.image` + `ImageIO.write(…, "PNG", …)`.
+     * 3. Save bytes via [ImageExtractionService.save].
+     * 4. Emit a [DocumentBlock.EmbeddedFileRef] with a non-null `path` pointing to the
+     *    saved file.
+     *
+     * PDFBox API quirk: `LosslessFactory.createFromImage` assigns no `suffix` to the
+     * XObject, so `PDImageXObject.suffix` returns null; the extractor defaults to `"image/png"`
+     * and renders via `BufferedImage` → PNG. This is the expected behaviour for JBIG2/CCITT
+     * inline images as well.
+     */
+    @Test
+    fun `pdf with image XObject emits EmbeddedFileRef when ImageExtractionService is wired`(
+        @org.junit.jupiter.api.io.TempDir downloads: Path,
+    ) {
+        val pdfBytes = buildPdfWithImageXObject()
+        val tempFile = java.nio.file.Files.createTempFile("p4t2-xobj-", ".pdf")
+        java.nio.file.Files.write(tempFile, pdfBytes)
+        try {
+            val imageService = ImageExtractionService(downloadsRoot = downloads)
+            val pipeline = PdfPipeline()
+            val blocks = pipeline.extract(tempFile, imageService = imageService, docKey = "test.pdf")
+
+            val ref = blocks.filterIsInstance<DocumentBlock.EmbeddedFileRef>().firstOrNull()
+            assertNotNull(ref, "Expected an EmbeddedFileRef for the image XObject; blocks=${blocks.map { it::class.simpleName }}")
+            assertNotNull(ref!!.path, "Path should be non-null when service is wired")
+            assertTrue(
+                java.nio.file.Files.exists(Path.of(ref.path!!)),
+                "Saved image file must exist on disk at ${ref.path}",
+            )
+        } finally {
+            java.nio.file.Files.deleteIfExists(tempFile)
+        }
+    }
+
+    /**
+     * Same fixture as above but [PdfPipeline.extract] is called without [ImageExtractionService].
+     * When no service is provided, [PdfMetadataExtractor.extractImageXObjects] returns early and
+     * no [DocumentBlock.EmbeddedFileRef] blocks are emitted.
+     */
+    @Test
+    fun `pdf with image XObject without ImageExtractionService emits no EmbeddedFileRef`() {
+        val pdfBytes = buildPdfWithImageXObject()
+        val tempFile = java.nio.file.Files.createTempFile("p4t2-xobj-noservice-", ".pdf")
+        java.nio.file.Files.write(tempFile, pdfBytes)
+        try {
+            val blocks = PdfPipeline().extract(tempFile)
+            assertTrue(
+                blocks.none { it is DocumentBlock.EmbeddedFileRef },
+                "Without ImageExtractionService wired, image XObjects must not emit EmbeddedFileRef; " +
+                    "got=${blocks.filterIsInstance<DocumentBlock.EmbeddedFileRef>()}",
+            )
+        } finally {
+            java.nio.file.Files.deleteIfExists(tempFile)
+        }
+    }
+
+    /**
+     * Builds a PDF with an embedded file attachment using `PDEmbeddedFile` / the PDF names tree.
+     * When [ImageExtractionService] is wired, the attachment bytes are saved to disk and an
+     * [DocumentBlock.EmbeddedFileRef] is emitted with a non-null path.
+     *
+     * PDFBox write-path note: attaching a file requires:
+     * 1. `PDEmbeddedFile` — wraps a `COSStream` with the embedded bytes.
+     * 2. `PDComplexFileSpecification` — wraps the `PDEmbeddedFile` and carries the filename.
+     * 3. `PDEmbeddedFilesNameTreeNode` — maps display names to file specifications.
+     * 4. `PDDocumentNameDictionary` — root container; set on `PDDocumentCatalog.names`.
+     *
+     * `PDEmbeddedFile.subtype` must be set explicitly; PDFBox does NOT infer it from bytes.
+     */
+    @Test
+    fun `pdf with embedded file attachment emits EmbeddedFileRef when ImageExtractionService is wired`(
+        @org.junit.jupiter.api.io.TempDir downloads: Path,
+    ) {
+        val attachmentContent = "attachment content for P4T2 test".toByteArray()
+        val pdfBytes = run {
+            val doc = org.apache.pdfbox.pdmodel.PDDocument()
+            doc.addPage(org.apache.pdfbox.pdmodel.PDPage())
+
+            // 1. Create the embedded file stream.
+            val embeddedFile = org.apache.pdfbox.pdmodel.common.filespecification.PDEmbeddedFile(doc)
+            embeddedFile.subtype = "text/plain"
+            embeddedFile.size = attachmentContent.size
+            embeddedFile.createOutputStream().use { it.write(attachmentContent) }
+
+            // 2. Wrap in a file specification.
+            val fileSpec = org.apache.pdfbox.pdmodel.common.filespecification.PDComplexFileSpecification()
+            fileSpec.file = "report.txt"
+            fileSpec.embeddedFile = embeddedFile
+
+            // 3. Build the names tree.
+            val namesTree = org.apache.pdfbox.pdmodel.PDEmbeddedFilesNameTreeNode()
+            namesTree.names = mapOf("report.txt" to fileSpec)
+
+            // 4. Attach to document catalog.
+            val nameDict = org.apache.pdfbox.pdmodel.PDDocumentNameDictionary(doc.documentCatalog)
+            nameDict.embeddedFiles = namesTree
+            doc.documentCatalog.names = nameDict
+
+            val out = java.io.ByteArrayOutputStream()
+            doc.save(out); doc.close()
+            out.toByteArray()
+        }
+
+        val tempFile = java.nio.file.Files.createTempFile("p4t2-attach-", ".pdf")
+        java.nio.file.Files.write(tempFile, pdfBytes)
+        try {
+            val imageService = ImageExtractionService(downloadsRoot = downloads)
+            val pipeline = PdfPipeline()
+            val blocks = pipeline.extract(tempFile, imageService = imageService, docKey = "test-attach.pdf")
+
+            val ref = blocks.filterIsInstance<DocumentBlock.EmbeddedFileRef>()
+                .firstOrNull { it.name == "report.txt" }
+            assertNotNull(ref, "Expected an EmbeddedFileRef for the embedded file attachment")
+            assertEquals("text/plain", ref!!.mimeType)
+            assertNotNull(ref.path, "Path must be non-null when service is wired and attachment fits within maxBytesPerImage")
+            assertTrue(
+                java.nio.file.Files.exists(Path.of(ref.path!!)),
+                "Saved attachment file must exist on disk at ${ref.path}",
+            )
+        } finally {
+            java.nio.file.Files.deleteIfExists(tempFile)
+        }
+    }
+
+    // ── P4T2 helpers ──────────────────────────────────────────────────────────
+
+    /** Builds a one-page PDF containing a single 16×16 RGB image XObject. */
+    private fun buildPdfWithImageXObject(): ByteArray {
+        val doc = org.apache.pdfbox.pdmodel.PDDocument()
+        val page = org.apache.pdfbox.pdmodel.PDPage()
+        doc.addPage(page)
+        val img = org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory.createFromImage(
+            doc,
+            java.awt.image.BufferedImage(16, 16, java.awt.image.BufferedImage.TYPE_INT_RGB),
+        )
+        val cs = org.apache.pdfbox.pdmodel.PDPageContentStream(doc, page)
+        cs.drawImage(img, 100f, 700f, 50f, 50f)
+        cs.close()
+        val out = java.io.ByteArrayOutputStream()
+        doc.save(out); doc.close()
+        return out.toByteArray()
     }
 }

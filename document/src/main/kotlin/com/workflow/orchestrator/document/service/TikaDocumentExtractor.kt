@@ -127,7 +127,7 @@ class TikaDocumentExtractor(
         val imageService = ImageExtractionService(downloadsRoot = downloadsRoot)
         val docKey = path.toAbsolutePath().toString()
         val blocks: List<DocumentBlock> = when {
-            mime == "application/pdf" -> pdfPipeline.extract(path)
+            mime == "application/pdf" -> pdfPipeline.extract(path, imageService, docKey)
             mime in OfficePipeline.OFFICE_MIMES -> {
                 Files.newInputStream(path).use { officePipeline.extract(it, mime, imageService, docKey) }
             }
