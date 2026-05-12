@@ -27,12 +27,8 @@ import java.io.InputStream
  * Each [extract] call creates a new POI document instance internally (per the contract of
  * the individual extractors). [OfficePipeline] itself holds no mutable state and is safe to
  * share across threads.
- *
- * @param pptx Extractor for PPTX files (default: [PptxExtractor]).
  */
-class OfficePipeline(
-    private val pptx: PptxExtractor = PptxExtractor(),
-) {
+class OfficePipeline {
 
     /**
      * Extracts [DocumentBlock] values from [stream] based on the given [mime] type.
@@ -81,7 +77,14 @@ class OfficePipeline(
                 }
                 extractor.extract(stream)
             }
-            MIME_PPTX -> pptx.extract(stream)
+            MIME_PPTX -> {
+                val extractor = if (imageService != null) {
+                    PptxExtractor(imageService = imageService, docKey = docKey)
+                } else {
+                    PptxExtractor()
+                }
+                extractor.extract(stream)
+            }
             else -> throw IllegalArgumentException(
                 "OfficePipeline does not handle MIME type '$mime'. " +
                     "Supported types: ${OFFICE_MIMES.joinToString()}"

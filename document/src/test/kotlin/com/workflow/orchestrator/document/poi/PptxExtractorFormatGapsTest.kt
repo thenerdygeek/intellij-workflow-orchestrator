@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 import java.awt.Rectangle
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -31,25 +32,20 @@ class PptxExtractorFormatGapsTest {
 
     private val extractor = PptxExtractor()
 
-    // ── Embedded images on a slide ────────────────────────────────────────────
+    // ── Embedded images on a slide (positive coverage after Phase 2) ──────────
 
     @Test
-    fun `gap picture shape on a slide is dropped — when branch has no handler for XSLFPictureShape`() {
-        // PoiHardening caps allocations at 50 MB; XMLSlideShow.addPicture pre-sizes for up to
-        // 100 MB. Raise the cap for fixture creation, then restore so the extractor still sees
-        // a hardened POI.
+    fun `picture shape on a slide is extracted as EmbeddedFileRef with on-disk path when ImageExtractionService is wired`(
+        @TempDir downloads: java.nio.file.Path,
+    ) {
         IOUtils.setByteArrayMaxOverride(200_000_000)
         val bytes = try {
             buildPptx { ppt ->
                 val slide = ppt.createSlide()
-
-                // Title placeholder via a text box (we don't rely on a master).
-                val title = slide.createTextBox().apply {
+                slide.createTextBox().apply {
                     anchor = Rectangle(50, 30, 500, 50)
                     setText("Slide with image")
                 }
-                check(title.text.startsWith("Slide"))
-
                 val picData = ppt.addPicture(tinyPng(), PictureData.PictureType.PNG)
                 slide.createPicture(picData).apply {
                     anchor = Rectangle(100, 100, 200, 200)
@@ -59,16 +55,96 @@ class PptxExtractorFormatGapsTest {
             IOUtils.setByteArrayMaxOverride(50_000_000)
         }
 
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        val extractor = PptxExtractor(imageService = imageService, docKey = "test.pptx")
         val blocks = extractor.extract(ByteArrayInputStream(bytes))
 
-        assertTrue(blocks.any { (it as? DocumentBlock.Paragraph)?.text?.contains("Slide with image") == true },
-            "Visible text shape survives")
+        val imageRefs = blocks.filterIsInstance<DocumentBlock.EmbeddedFileRef>()
+        assertEquals(1, imageRefs.size, "Expected exactly one EmbeddedFileRef for the picture shape")
+        val ref = imageRefs.single()
+        assertEquals("image/png", ref.mimeType)
+        assertNotNull(ref.path)
+        assertTrue(java.nio.file.Files.exists(java.nio.file.Path.of(ref.path!!)),
+            "Saved file should exist at the reported path")
+    }
+
+    @Test
+    fun `picture shape on a slide without ImageExtractionService is silently dropped (legacy)`() {
+        IOUtils.setByteArrayMaxOverride(200_000_000)
+        val bytes = try {
+            buildPptx { ppt ->
+                val slide = ppt.createSlide()
+                val picData = ppt.addPicture(tinyPng(), PictureData.PictureType.PNG)
+                slide.createPicture(picData).apply {
+                    anchor = Rectangle(100, 100, 200, 200)
+                }
+            }
+        } finally {
+            IOUtils.setByteArrayMaxOverride(50_000_000)
+        }
+
+        val blocks = PptxExtractor().extract(ByteArrayInputStream(bytes))
         assertTrue(blocks.none { it is DocumentBlock.EmbeddedFileRef },
-            "No EmbeddedFileRef for the picture shape")
-        assertFalse(blocks.any {
-            (it as? DocumentBlock.Paragraph)?.text?.contains("image", ignoreCase = false) == true &&
-                (it as? DocumentBlock.Paragraph)?.text?.contains(".png") == true
-        }, "Picture metadata is not surfaced")
+            "Without ImageExtractionService wired, picture shapes are skipped (legacy behaviour)")
+    }
+
+    @Test
+    fun `multi-slide PPTX attaches each slides image to its own slide range`(
+        @TempDir downloads: java.nio.file.Path,
+    ) {
+        IOUtils.setByteArrayMaxOverride(200_000_000)
+        val png1 = tinyPng()
+        val png2 = tinyPng() + byteArrayOf(0xFF.toByte(), 0xEE.toByte())  // different bytes
+        val bytes = try {
+            buildPptx { ppt ->
+                val s1 = ppt.createSlide()
+                s1.createTextBox().apply {
+                    anchor = Rectangle(50, 30, 500, 50); setText("slide-1-title")
+                }
+                val pic1 = ppt.addPicture(png1, PictureData.PictureType.PNG)
+                s1.createPicture(pic1).apply { anchor = Rectangle(100, 100, 50, 50) }
+
+                val s2 = ppt.createSlide()
+                s2.createTextBox().apply {
+                    anchor = Rectangle(50, 30, 500, 50); setText("slide-2-title")
+                }
+                val pic2 = ppt.addPicture(png2, PictureData.PictureType.PNG)
+                s2.createPicture(pic2).apply { anchor = Rectangle(100, 100, 50, 50) }
+            }
+        } finally {
+            IOUtils.setByteArrayMaxOverride(50_000_000)
+        }
+
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        val extractor = PptxExtractor(imageService = imageService, docKey = "multi.pptx")
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+
+        val s1Idx = blocks.indexOfFirst { it is DocumentBlock.Heading && (it as DocumentBlock.Heading).text.contains("Slide 1") }
+        val s2Idx = blocks.indexOfFirst { it is DocumentBlock.Heading && (it as DocumentBlock.Heading).text.contains("Slide 2") }
+        assertTrue(s1Idx >= 0 && s2Idx > s1Idx)
+
+        val s1Range = blocks.subList(s1Idx, s2Idx)
+        val s2Range = blocks.subList(s2Idx, blocks.size)
+        assertEquals(1, s1Range.count { it is DocumentBlock.EmbeddedFileRef },
+            "Slide 1 should own exactly one EmbeddedFileRef")
+        assertEquals(1, s2Range.count { it is DocumentBlock.EmbeddedFileRef },
+            "Slide 2 should own exactly one EmbeddedFileRef")
+    }
+
+    @Test
+    fun `PPTX with no picture shapes emits no EmbeddedFileRef even with imageService wired`(
+        @TempDir downloads: java.nio.file.Path,
+    ) {
+        val bytes = buildPptx { ppt ->
+            ppt.createSlide().createTextBox().apply {
+                anchor = Rectangle(50, 30, 500, 50)
+                setText("Just a text slide")
+            }
+        }
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        val extractor = PptxExtractor(imageService = imageService, docKey = "noimg.pptx")
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        assertTrue(blocks.none { it is DocumentBlock.EmbeddedFileRef })
     }
 
     // ── Inline formatting in text shapes ──────────────────────────────────────

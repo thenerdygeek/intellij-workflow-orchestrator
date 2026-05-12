@@ -1,7 +1,10 @@
 package com.workflow.orchestrator.document.poi
 
 import com.workflow.orchestrator.core.model.DocumentBlock
+import com.workflow.orchestrator.document.service.ImageExtractionService
 import org.apache.poi.xslf.usermodel.XSLFComment
+import org.apache.poi.xslf.usermodel.XSLFPictureData
+import org.apache.poi.xslf.usermodel.XSLFPictureShape
 import org.apache.poi.xslf.usermodel.XSLFShape
 import org.apache.poi.xslf.usermodel.XSLFSlide
 import org.apache.poi.xslf.usermodel.XSLFTable
@@ -20,6 +23,10 @@ import java.io.InputStream
  *    has non-empty speaker notes.
  * 5. [DocumentBlock.Comment] blocks (kind=REVIEW, anchorText=null) for each slide-level
  *    review comment — emitted after speaker notes, in POI list order.
+ * 6. [DocumentBlock.EmbeddedFileRef] for each [XSLFPictureShape] on the slide (P2T4) —
+ *    only when [imageService] is supplied. Bytes are streamed via
+ *    [XSLFPictureData.getInputStream] so PoiHardening's 50 MB IOUtils cap is bypassed
+ *    entirely; the [maxBytesPerImage] limit is enforced locally.
  *
  * ## Thread safety
  *
@@ -36,10 +43,17 @@ import java.io.InputStream
  * is the slide-number placeholder (a small numeric string), index 1 is the body. We skip
  * any placeholder whose text is numeric-only (slide-number placeholder) and emit the rest.
  */
-class PptxExtractor {
+class PptxExtractor(
+    private val imageService: ImageExtractionService? = null,
+    private val docKey: String = "anonymous",
+    private val maxBytesPerImage: Long = 25L * 1024 * 1024,
+) {
 
     init {
         PoiHardening.applyOnce()
+        require(maxBytesPerImage < Int.MAX_VALUE.toLong()) {
+            "maxBytesPerImage must fit in Int; got $maxBytesPerImage"
+        }
     }
 
     /**
@@ -87,6 +101,11 @@ class PptxExtractor {
                     val text = shape.text?.trim() ?: continue
                     if (text.isNotEmpty()) {
                         blocks += DocumentBlock.Paragraph(text)
+                    }
+                }
+                is XSLFPictureShape -> {
+                    if (imageService != null) {
+                        extractPictureBlock(shape)?.let { blocks += it }
                     }
                 }
             }
@@ -205,6 +224,76 @@ class PptxExtractor {
                 text = text,
                 kind = DocumentBlock.Comment.Kind.REVIEW,
             )
+        }
+    }
+
+    // ── Picture shape extraction (P2T4) ───────────────────────────────────────
+
+    /**
+     * Saves the picture's bytes via [imageService] and returns a
+     * [DocumentBlock.EmbeddedFileRef] with the on-disk path. Returns null when no service
+     * is wired (gated above too, defensive). Returns an [EmbeddedFileRef] with path=null
+     * when the picture exceeds [maxBytesPerImage] or when the save fails.
+     *
+     * Uses [XSLFPictureData.getInputStream] so byte materialisation respects the cap and
+     * avoids the PoiHardening IOUtils 50 MB allocation limit.
+     */
+    private fun extractPictureBlock(shape: XSLFPictureShape): DocumentBlock.EmbeddedFileRef? {
+        val service = imageService ?: return null
+        val pictureData = shape.pictureData ?: return null
+
+        val mime = pictureMime(pictureData)
+        val name = pictureData.fileName?.takeIf { it.isNotBlank() }
+            ?: "image.${pictureData.suggestFileExtension()?.lowercase() ?: "bin"}"
+
+        // Use streaming getInputStream + readNBytes(cap+1) to honour the size cap without
+        // ever loading more than `cap+1` bytes into memory.
+        val limit = (maxBytesPerImage + 1).toInt()
+        val bytes = try {
+            pictureData.inputStream.use { it.readNBytes(limit) }
+        } catch (_: Exception) {
+            return DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null)
+        }
+
+        if (bytes.size > maxBytesPerImage) {
+            // Oversize — emit placeholder so the LLM still sees an image existed.
+            return DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null)
+        }
+        if (bytes.isEmpty()) return null  // empty stream — skip entirely
+
+        val saved = try {
+            service.save(bytes, docKey, name, mime)
+        } catch (_: Exception) {
+            return DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null)
+        }
+        return DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = saved.toString())
+    }
+
+    /**
+     * Returns the MIME type string for an [XSLFPictureData].
+     *
+     * POI 5.4.1's `XSLFPictureData` exposes `getContentType()` (declared on
+     * `POIXMLDocumentPart`), which returns the OPC content-type string. We use that as
+     * the primary source; if it's empty or the generic octet-stream fallback, we derive
+     * from `suggestFileExtension()`.
+     *
+     * NOTE: `XSLFPictureData` does NOT have `getMimeType()` (that lives on `XSSFPictureData`
+     * via the `PictureData` interface's XSSF implementation). Use `getContentType()` here.
+     */
+    private fun pictureMime(pictureData: XSLFPictureData): String {
+        val raw = pictureData.contentType?.takeIf { it.isNotBlank() } ?: ""
+        if (raw.isNotEmpty() && raw != "application/octet-stream") return raw
+        // Fallback: derive from suggestFileExtension().
+        val ext = pictureData.suggestFileExtension()?.lowercase()
+        return when (ext) {
+            "png" -> "image/png"
+            "jpg", "jpeg" -> "image/jpeg"
+            "gif" -> "image/gif"
+            "webp" -> "image/webp"
+            "bmp" -> "image/bmp"
+            "tiff", "tif" -> "image/tiff"
+            "svg" -> "image/svg+xml"
+            else -> "application/octet-stream"
         }
     }
 }

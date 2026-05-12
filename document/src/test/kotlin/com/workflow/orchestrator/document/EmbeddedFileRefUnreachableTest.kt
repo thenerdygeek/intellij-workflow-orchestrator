@@ -54,9 +54,9 @@ class EmbeddedFileRefUnreachableTest {
                 !file.toString().endsWith("MarkdownAssembler.kt")
         }.map { it.fileName.toString() }.sorted()
 
-        // Phase 2 wires image extraction into DOCX (P2T2) and XLSX (P2T3).
-        // When P2T4/P2T5 add PPTX/HTML image support, add those filenames here.
-        val expected = listOf("ImageExtractionVisitor.kt", "XlsxTableExtractor.kt")
+        // Phase 2 wires image extraction into DOCX (P2T2), XLSX (P2T3), and PPTX (P2T4).
+        // When P2T5 adds HTML image support, add that filename here.
+        val expected = listOf("ImageExtractionVisitor.kt", "PptxExtractor.kt", "XlsxTableExtractor.kt")
         assertEquals(expected, producers,
             "EmbeddedFileRef producer set changed — update this list to reflect the new positive behaviour. " +
                 "Current producers: $producers")
