@@ -19,14 +19,21 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 /**
- * Characterization tests covering format-gap behaviour and positive coverage for [PptxExtractor].
+ * Characterization and positive-coverage tests for [PptxExtractor] format gaps.
  *
- * Gap tests: slide content is iterated via `slide.shapes` routed through a `when` block that
- * handles only `XSLFTable` and `XSLFTextShape`. Picture shapes and group shapes containing
- * pictures fall off the end of the `when` silently.
+ * Gap tests (inline formatting): bold/italic runs collapse to plain text — style metadata is
+ * not preserved.
  *
- * Positive tests: slide-level review comments are extracted via `XSLFSlide.getComments()` and
- * emitted as `DocumentBlock.Comment(REVIEW, author, anchorText=null, text)` blocks after notes.
+ * Positive tests (Phase 2): picture shapes extracted as [DocumentBlock.EmbeddedFileRef] when
+ * [com.workflow.orchestrator.document.service.ImageExtractionService] is wired.
+ *
+ * Positive tests (Phase 3): [org.apache.poi.xslf.usermodel.XSLFGroupShape] children are
+ * recursed into via [PptxExtractor]'s `handleShape()` helper, supporting arbitrary nesting
+ * depth. Text/tables/pictures inside grouped shapes now extract in declaration order alongside
+ * top-level content.
+ *
+ * Positive tests (slide comments): slide-level review comments extracted via
+ * `XSLFSlide.getComments()` and emitted as `DocumentBlock.Comment(REVIEW, …)`.
  */
 class PptxExtractorFormatGapsTest {
 
@@ -196,10 +203,10 @@ class PptxExtractorFormatGapsTest {
         )
     }
 
-    // ── Group shapes containing pictures ──────────────────────────────────────
+    // ── Group shape recursion (positive coverage after Phase 3) ───────────────
 
     @Test
-    fun `gap shapes nested inside a group shape are not recursed into`() {
+    fun `text inside a group shape is recursed into and extracted`() {
         val bytes = buildPptx { ppt ->
             val slide = ppt.createSlide()
             val group = slide.createGroup()
@@ -211,11 +218,57 @@ class PptxExtractorFormatGapsTest {
         }
 
         val blocks = extractor.extract(ByteArrayInputStream(bytes))
-        val text = blocks.filterIsInstance<DocumentBlock.Paragraph>().joinToString("\n") { it.text }
+        val texts = blocks.filterIsInstance<DocumentBlock.Paragraph>().map { it.text }
+        assertTrue(texts.any { it.contains("text-inside-a-group") },
+            "Group-shape children must be recursed into; got texts: $texts")
+    }
 
-        assertFalse(text.contains("text-inside-a-group"),
-            "Group-shape children are NOT recursed into — only top-level shapes on slide.shapes are visited. " +
-                "Decks that wrap text in a group lose all of that text.")
+    @Test
+    fun `nested group shapes (group inside group) are recursed into recursively`() {
+        val bytes = buildPptx { ppt ->
+            val slide = ppt.createSlide()
+            val outerGroup = slide.createGroup()
+            val innerGroup = outerGroup.createGroup()
+            val deepBox = innerGroup.createTextBox().apply {
+                anchor = Rectangle(0, 0, 300, 40)
+                setText("text-at-depth-2")
+            }
+            check(deepBox.text == "text-at-depth-2")
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val texts = blocks.filterIsInstance<DocumentBlock.Paragraph>().map { it.text }
+        assertTrue(texts.any { it.contains("text-at-depth-2") },
+            "Recursion must handle arbitrary nesting depth; got texts: $texts")
+    }
+
+    @Test
+    fun `mixed top-level and group-shape text emits in declaration order`() {
+        val bytes = buildPptx { ppt ->
+            val slide = ppt.createSlide()
+            slide.createTextBox().apply {
+                anchor = Rectangle(0, 0, 300, 40)
+                setText("top-level-text")
+            }
+            val group = slide.createGroup()
+            group.createTextBox().apply {
+                anchor = Rectangle(0, 0, 300, 40)
+                setText("group-text")
+            }
+            slide.createTextBox().apply {
+                anchor = Rectangle(0, 0, 300, 40)
+                setText("trailing-top-level")
+            }
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val texts = blocks.filterIsInstance<DocumentBlock.Paragraph>().map { it.text }
+        // Declaration order: top-level-text, then group's child (group-text), then trailing-top-level.
+        val topIdx = texts.indexOfFirst { it.contains("top-level-text") }
+        val groupIdx = texts.indexOfFirst { it.contains("group-text") }
+        val trailingIdx = texts.indexOfFirst { it.contains("trailing-top-level") }
+        assertTrue(topIdx >= 0 && groupIdx > topIdx && trailingIdx > groupIdx,
+            "Order should be: top → group child → trailing; got texts: $texts")
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

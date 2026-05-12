@@ -3,6 +3,7 @@ package com.workflow.orchestrator.document.poi
 import com.workflow.orchestrator.core.model.DocumentBlock
 import com.workflow.orchestrator.document.service.ImageExtractionService
 import org.apache.poi.xslf.usermodel.XSLFComment
+import org.apache.poi.xslf.usermodel.XSLFGroupShape
 import org.apache.poi.xslf.usermodel.XSLFPictureData
 import org.apache.poi.xslf.usermodel.XSLFPictureShape
 import org.apache.poi.xslf.usermodel.XSLFShape
@@ -27,6 +28,10 @@ import java.io.InputStream
  *    only when [imageService] is supplied. Bytes are streamed via
  *    [XSLFPictureData.getInputStream] so PoiHardening's 50 MB IOUtils cap is bypassed
  *    entirely; the [maxBytesPerImage] limit is enforced locally.
+ *
+ * Shape iteration (P3T5): each shape on [XSLFSlide] is dispatched via [handleShape], which
+ * recurses into [XSLFGroupShape] children at arbitrary depth so text/tables/pictures nested
+ * inside grouped shapes are extracted in declaration order alongside top-level content.
  *
  * ## Thread safety
  *
@@ -91,24 +96,7 @@ class PptxExtractor(
 
         for (shape: XSLFShape in slide.shapes) {
             if (shape === titleShape) continue
-
-            when (shape) {
-                is XSLFTable -> {
-                    val tableBlock = tableToBlock(shape) ?: continue
-                    blocks += tableBlock
-                }
-                is XSLFTextShape -> {
-                    val text = shape.text?.trim() ?: continue
-                    if (text.isNotEmpty()) {
-                        blocks += DocumentBlock.Paragraph(text)
-                    }
-                }
-                is XSLFPictureShape -> {
-                    if (imageService != null) {
-                        extractPictureBlock(shape)?.let { blocks += it }
-                    }
-                }
-            }
+            blocks += handleShape(shape)
         }
 
         // Speaker notes
@@ -122,6 +110,37 @@ class PptxExtractor(
         blocks += slideComments
 
         return blocks
+    }
+
+    // ── Per-shape dispatch (recursive for group shapes) ───────────────────────
+
+    /**
+     * Converts a single [shape] into zero or more [DocumentBlock] values.
+     *
+     * For [XSLFGroupShape] the method recurses into the group's children in their declared
+     * order, supporting arbitrary nesting depth (group-inside-group). All other shape types
+     * are handled by their respective extraction paths.
+     */
+    private fun handleShape(shape: XSLFShape): List<DocumentBlock> {
+        return when (shape) {
+            is XSLFTable -> {
+                val tableBlock = tableToBlock(shape) ?: return emptyList()
+                listOf(tableBlock)
+            }
+            is XSLFTextShape -> {
+                val text = shape.text?.trim() ?: return emptyList()
+                if (text.isNotEmpty()) listOf(DocumentBlock.Paragraph(text)) else emptyList()
+            }
+            is XSLFPictureShape -> {
+                if (imageService != null) extractPictureBlock(shape)?.let { listOf(it) } ?: emptyList()
+                else emptyList()
+            }
+            is XSLFGroupShape -> {
+                // Recurse into children in their declared order; handles arbitrary nesting depth.
+                shape.shapes.flatMap { child -> handleShape(child) }
+            }
+            else -> emptyList()
+        }
     }
 
     // ── Title placeholder detection ────────────────────────────────────────────
