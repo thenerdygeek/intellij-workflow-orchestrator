@@ -207,13 +207,14 @@ class DocxExtractorFormatGapsTest {
         assertTrue(paragraphIdx >= 0, "Expected the body paragraph in extracted blocks")
 
         // The comment should appear immediately after the paragraph (no gap).
-        val commentIdx = blocks.subList(paragraphIdx + 1, blocks.size).indexOfFirst {
-            it is DocumentBlock.Comment
-        }.let { if (it >= 0) paragraphIdx + 1 + it else -1 }
-
-        assertTrue(commentIdx > paragraphIdx,
-            "Expected a Comment block after paragraph at $paragraphIdx; got: ${blocks.map { it::class.simpleName }}")
-        val comment = blocks[commentIdx] as DocumentBlock.Comment
+        val nextBlock = blocks.getOrNull(paragraphIdx + 1)
+        assertTrue(
+            nextBlock is DocumentBlock.Comment,
+            "Expected the block IMMEDIATELY after the paragraph to be a Comment; " +
+                "got ${nextBlock?.let { it::class.simpleName } ?: "nothing"} at index ${paragraphIdx + 1}. " +
+                "All blocks: ${blocks.map { it::class.simpleName }}"
+        )
+        val comment = nextBlock as DocumentBlock.Comment
         assertEquals(DocumentBlock.Comment.Kind.REVIEW, comment.kind)
         assertEquals("Jane", comment.author)
         assertEquals("Confirm with the latest benchmark.", comment.text)
@@ -221,6 +222,62 @@ class DocxExtractorFormatGapsTest {
             comment.anchorText?.contains("caching layer") == true,
             "Anchor text should include the anchored phrase; got: ${comment.anchorText}"
         )
+    }
+
+    @Test
+    fun `multiple comments ending in the same paragraph emit in ascending w-id order`() {
+        val bytes = buildDocx { doc ->
+            val p = doc.createParagraph()
+            p.createRun().setText("Anchored text.")
+
+            val comments = doc.createComments()
+            // Create in REVERSE id order to verify the visitor sorts ascending.
+            for (id in listOf(3, 1, 2)) {
+                val c = comments.createComment(BigInteger.valueOf(id.toLong()))
+                c.author = "author-$id"
+                c.createParagraph().createRun().setText("body-$id")
+            }
+
+            val ctp = p.ctp
+            // Range markers in arbitrary order — visitor sorts by id.
+            for (id in listOf(3, 1, 2)) {
+                ctp.addNewCommentRangeStart().id = BigInteger.valueOf(id.toLong())
+                ctp.addNewCommentRangeEnd().id = BigInteger.valueOf(id.toLong())
+                ctp.addNewR().addNewCommentReference().id = BigInteger.valueOf(id.toLong())
+            }
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val commentBlocks = blocks.filterIsInstance<DocumentBlock.Comment>()
+        assertEquals(3, commentBlocks.size, "Expected 3 Comment blocks")
+        assertEquals(listOf("author-1", "author-2", "author-3"), commentBlocks.map { it.author },
+            "Comments should be emitted in ascending w:id order")
+        assertEquals(listOf("body-1", "body-2", "body-3"), commentBlocks.map { it.text })
+    }
+
+    @Test
+    fun `commentRangeEnd marker with no matching comment in comments-xml is silently skipped`() {
+        val bytes = buildDocx { doc ->
+            val p = doc.createParagraph()
+            p.createRun().setText("Anchored text.")
+            // Insert a commentRangeEnd with id=99 but DO NOT create comment 99 in comments.xml.
+            // Mix with a valid id=1 so we know the visitor doesn't fail-fast on the orphan.
+            doc.createComments().createComment(BigInteger.valueOf(1)).apply {
+                author = "Jane"
+                createParagraph().createRun().setText("real comment")
+            }
+            val ctp = p.ctp
+            ctp.addNewCommentRangeEnd().id = BigInteger.valueOf(99)
+            ctp.addNewCommentRangeEnd().id = BigInteger.valueOf(1)
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val commentBlocks = blocks.filterIsInstance<DocumentBlock.Comment>()
+        // Only id=1 has a body; id=99 is orphaned and skipped.
+        assertEquals(1, commentBlocks.size,
+            "Expected the orphaned marker (id=99) to be skipped, only the real id=1 comment emitted")
+        assertEquals("Jane", commentBlocks.single().author)
+        assertEquals("real comment", commentBlocks.single().text)
     }
 
     // ── Body-only iteration boundary ──────────────────────────────────────────
