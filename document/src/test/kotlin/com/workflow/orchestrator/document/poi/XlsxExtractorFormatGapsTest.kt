@@ -6,6 +6,7 @@ import org.apache.poi.ss.usermodel.Workbook
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayInputStream
@@ -106,6 +107,72 @@ class XlsxExtractorFormatGapsTest {
         assertEquals(listOf("A2", "B2", "A3"), comments.map { it.anchorText },
             "Comments should be emitted in row-major order: row 1 left-to-right (A2 then B2), then row 2 (A3)")
         assertEquals(listOf("one", "two", "three"), comments.map { it.text })
+    }
+
+    @Test
+    fun `each sheets comments appear immediately after that sheets own Table`() {
+        val bytes = buildXlsx { wb ->
+            val helper = wb.creationHelper
+
+            val s1 = wb.createSheet("Sheet1")
+            val d1 = s1.createDrawingPatriarch()
+            s1.createRow(0).createCell(0).setCellValue("s1-header")
+            val s1Cell = s1.createRow(1).createCell(0).apply { setCellValue("s1-val") }
+            s1Cell.cellComment = d1.createCellComment(
+                helper.createClientAnchor().apply { setCol1(0); setCol2(2); row1 = 1; row2 = 3 }
+            ).apply { string = helper.createRichTextString("s1-comment"); author = "alice" }
+
+            val s2 = wb.createSheet("Sheet2")
+            val d2 = s2.createDrawingPatriarch()
+            s2.createRow(0).createCell(0).setCellValue("s2-header")
+            val s2Cell = s2.createRow(1).createCell(0).apply { setCellValue("s2-val") }
+            s2Cell.cellComment = d2.createCellComment(
+                helper.createClientAnchor().apply { setCol1(0); setCol2(2); row1 = 1; row2 = 3 }
+            ).apply { string = helper.createRichTextString("s2-comment"); author = "bob" }
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+
+        // Expected order: Heading(Sheet1) → Table(Sheet1) → Comment(s1-comment) →
+        //                 Heading(Sheet2) → Table(Sheet2) → Comment(s2-comment)
+        val classes = blocks.map { it::class.simpleName!! }
+        val expectedShape = listOf("Heading", "Table", "Comment", "Heading", "Table", "Comment")
+        assertEquals(expectedShape, classes,
+            "Multi-sheet workbook: each sheet's comments must belong to its OWN Table. Got: $classes")
+
+        val comments = blocks.filterIsInstance<DocumentBlock.Comment>()
+        assertEquals("s1-comment", comments[0].text)
+        assertEquals("s2-comment", comments[1].text)
+    }
+
+    @Test
+    fun `comments on cells beyond header arity are still collected`() {
+        val bytes = buildXlsx { wb ->
+            val sheet = wb.createSheet("Sheet1")
+            val helper = wb.creationHelper
+            val drawing = sheet.createDrawingPatriarch()
+
+            // Headers only cover A and B
+            val headerRow = sheet.createRow(0)
+            headerRow.createCell(0).setCellValue("A")
+            headerRow.createCell(1).setCellValue("B")
+
+            // Data row 2 has a comment on column D (col=3, beyond header arity)
+            val dataRow = sheet.createRow(1)
+            dataRow.createCell(0).setCellValue("a-val")
+            dataRow.createCell(1).setCellValue("b-val")
+            val outerCell = dataRow.createCell(3).apply { setCellValue("extra") }
+            outerCell.cellComment = drawing.createCellComment(
+                helper.createClientAnchor().apply { setCol1(3); setCol2(5); row1 = 1; row2 = 3 }
+            ).apply { string = helper.createRichTextString("comment-out-of-band"); author = "alice" }
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val comment = blocks.filterIsInstance<DocumentBlock.Comment>().singleOrNull()
+        assertNotNull(comment, "Expected one Comment for the out-of-arity cell")
+        assertEquals("comment-out-of-band", comment!!.text)
+        assertEquals("D2", comment.anchorText,
+            "Anchor should be the out-of-band cell's A1 ref (D2), not coerced to a header column")
     }
 
     // ── Embedded images ───────────────────────────────────────────────────────

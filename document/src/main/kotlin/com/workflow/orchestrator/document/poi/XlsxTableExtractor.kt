@@ -87,6 +87,15 @@ class XlsxTableExtractor {
                     }
                     rows += cells
                     rowsRead++
+
+                    // Also collect comments from cells BEYOND the header arity — they're not part
+                    // of the Table but they still carry review context the LLM should see.
+                    val lastPhysical = row.lastCellNum.toInt()
+                    if (lastPhysical > headers.size) {
+                        for (col in headers.size until lastPhysical) {
+                            collectCellComment(row.getCell(col), sheetComments)
+                        }
+                    }
                 }
 
                 blocks += DocumentBlock.Table(headers, rows)
