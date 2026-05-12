@@ -78,14 +78,20 @@ sealed class DocumentBlock {
     }
 
     /**
-     * A reference to a file embedded inside the document (e.g. an image, attachment, or
-     * OLE object). In v1, embedded files are not extracted; this block acts as a placeholder
-     * so callers know that content exists but was not surfaced.
+     * A reference to a file embedded inside the document (image, attachment, OLE object).
      *
      * @param name      Display name or filename of the embedded file.
      * @param mimeType  MIME type as detected by the extraction pipeline (e.g. `image/png`).
+     * @param path      Absolute path under `{sessionDir}/downloads/document-{sha6}/` when
+     *                  the bytes were extracted to disk by `ImageExtractionService`
+     *                  (Phase 2+). Null when bytes were not extracted (size cap exceeded,
+     *                  HTML `<img src=…>` references with no fetchable body, etc.).
      */
-    data class EmbeddedFileRef(val name: String, val mimeType: String) : DocumentBlock()
+    data class EmbeddedFileRef(
+        val name: String,
+        val mimeType: String,
+        val path: String? = null,
+    ) : DocumentBlock()
 
     /**
      * A review comment, tracked change, or PDF annotation. Emitted by extractors that

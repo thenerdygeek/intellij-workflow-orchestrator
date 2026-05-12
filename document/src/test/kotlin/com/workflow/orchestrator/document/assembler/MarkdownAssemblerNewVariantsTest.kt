@@ -57,4 +57,17 @@ class MarkdownAssemblerNewVariantsTest {
         assertEquals(2, kv.pairs.size)
         assertEquals("Jane", kv.pairs[0].second)
     }
+
+    @Test
+    fun `EmbeddedFileRef path is optional and defaults to null for backward compat`() {
+        val noPath = DocumentBlock.EmbeddedFileRef(name = "foo.png", mimeType = "image/png")
+        assertEquals(null, noPath.path)
+
+        val withPath = DocumentBlock.EmbeddedFileRef(
+            name = "foo.png",
+            mimeType = "image/png",
+            path = "/session/downloads/document-abc/image-0-def.png",
+        )
+        assertEquals("/session/downloads/document-abc/image-0-def.png", withPath.path)
+    }
 }
