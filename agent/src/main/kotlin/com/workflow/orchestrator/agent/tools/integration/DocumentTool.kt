@@ -62,6 +62,9 @@ class DocumentTool(
         document, pass `offset` (number of characters to skip from the start of the
         extracted Markdown); the response ends with a continuation hint telling you the
         next offset to use.
+
+        Embedded images surface as `[image: <path>] (<mime>)` markers in the output.
+        To load any image into your vision context, call `view_image(path)`.
     """.trimIndent()
 
     override val parameters = FunctionParameters(

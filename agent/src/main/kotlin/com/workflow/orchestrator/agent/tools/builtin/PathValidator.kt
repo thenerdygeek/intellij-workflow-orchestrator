@@ -2,6 +2,8 @@ package com.workflow.orchestrator.agent.tools.builtin
 
 import com.workflow.orchestrator.agent.tools.ToolResult
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
 
 /**
  * Validates that file paths from LLM tool calls stay within allowed directories.
@@ -84,6 +86,45 @@ object PathValidator {
             "Write operations are restricted to the project directory and `{agentDir}/memory/`.",
             "Error: path outside project"
         )
+    }
+
+    /**
+     * Validates that [rawPath] resolves to a real file under `{sessionDir}/downloads/`,
+     * with no symlink escape, no `..` traversal, and a canonical path that startsWith
+     * the canonical session-downloads root.
+     *
+     * Stricter than [resolveAndValidateForRead]: that helper allows the entire
+     * `~/.workflow-orchestrator/` tree (covering memory, logs, attachments, sessions, etc.).
+     * `view_image` only needs access to images saved by `ImageExtractionService` —
+     * exclusively under `{sessionDir}/downloads/`.
+     *
+     * @return Validated [Path] when safe; throws [SecurityException] otherwise.
+     */
+    fun resolveAndValidateForSessionDownloads(
+        rawPath: String,
+        sessionDir: Path,
+    ): Path {
+        require(rawPath.isNotBlank()) { "Path must not be blank" }
+        val candidate = Path.of(rawPath).toAbsolutePath().normalize()
+        val downloadsRoot = sessionDir.resolve("downloads").toAbsolutePath().normalize()
+        if (!candidate.startsWith(downloadsRoot)) {
+            throw SecurityException(
+                "Path '$rawPath' is outside the current session's downloads/ directory ($downloadsRoot). " +
+                    "view_image only accepts images saved by read_document."
+            )
+        }
+        if (!Files.exists(candidate)) {
+            throw java.nio.file.NoSuchFileException(candidate.toString())
+        }
+        if (!Files.isRegularFile(candidate)) {
+            throw SecurityException("Path '$rawPath' is not a regular file")
+        }
+        // Defend against symlink-escape: re-canonicalise via toRealPath() and re-check the prefix.
+        val real = try { candidate.toRealPath() } catch (e: java.nio.file.NoSuchFileException) { throw e }
+        if (!real.startsWith(downloadsRoot.toRealPath())) {
+            throw SecurityException("Path '$rawPath' resolves outside downloads/ via symlinks")
+        }
+        return real
     }
 
     private fun resolveAndValidate(

@@ -1066,6 +1066,10 @@ class AgentService(
                 timeoutMsProvider = { PluginSettings.getInstance(project).state.documentTimeoutMs },
             )
         }
+        // view_image — load images surfaced by read_document into the LLM's vision context.
+        // Deferred so it is only discovered after the LLM has called read_document and seen
+        // [image: <path>] markers. Strictly confined to {sessionDir}/downloads/.
+        safeRegisterDeferred("File") { ViewImageTool() }
 
         // Debug tools (require AgentDebugController)
         // XDebugger-based tools work for both Java/Kotlin and Python debug sessions.
