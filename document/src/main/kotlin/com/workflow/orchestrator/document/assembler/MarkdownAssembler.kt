@@ -95,6 +95,8 @@ class MarkdownAssembler {
         is DocumentBlock.Table -> serializeTable(block)
         is DocumentBlock.PageMarker -> serializePageMarker(block)
         is DocumentBlock.EmbeddedFileRef -> serializeEmbeddedFileRef(block)
+        // TODO(Task 6): replace with proper Comment serializer arm.
+        else -> error("variant ${block::class.simpleName} not yet serialized")
     }
 
     private fun serializeHeading(block: DocumentBlock.Heading): String {

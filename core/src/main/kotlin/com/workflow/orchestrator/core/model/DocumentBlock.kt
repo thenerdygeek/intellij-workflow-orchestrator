@@ -86,4 +86,28 @@ sealed class DocumentBlock {
      * @param mimeType  MIME type as detected by the extraction pipeline (e.g. `image/png`).
      */
     data class EmbeddedFileRef(val name: String, val mimeType: String) : DocumentBlock()
+
+    /**
+     * A review comment, tracked change, or PDF annotation. Emitted by extractors that
+     * walk the document's comment/annotation channels in addition to the body.
+     *
+     * Ordering is the extractor's responsibility: a comment block appears immediately
+     * after the paragraph/cell/slide it anchors to.
+     *
+     * @param author     Display name of the comment author. Null for PDF annotations
+     *                   that lack a popup-title field.
+     * @param anchorText First ~60 chars of the text the comment anchors to. Null when
+     *                   the comment is doc-/slide-/sheet-level rather than text-anchored.
+     * @param text       Plain-text body of the comment.
+     * @param kind       Distinguishes review comments from tracked-change suggestions
+     *                   and PDF annotations.
+     */
+    data class Comment(
+        val author: String?,
+        val anchorText: String?,
+        val text: String,
+        val kind: Kind,
+    ) : DocumentBlock() {
+        enum class Kind { REVIEW, TRACKED_INSERTION, TRACKED_DELETION, PDF_ANNOTATION }
+    }
 }
