@@ -26,8 +26,9 @@ import java.nio.file.Path
  *
  * PDF user-space has origin at bottom-left; y increases upward. The merge pipeline expects
  * "reading order Y": smaller `top` = closer to the top of the page (read first). We translate
- * via `readingTop = mediaBoxHeight - pdfUpperRightY` so annotations near the page top get
- * small `top` values and sort before annotations near the bottom.
+ * by measuring the rect's offset from the media box's *lower-left* edge and subtracting from
+ * the media box's *height*, so PDFs with a non-zero `mediaBox.lowerLeftY` (cropped pages —
+ * e.g. business exports with media-box `[0 72 612 720]`) are handled correctly.
  *
  * @see PdfPipeline for the merge/sort step that consumes these blocks.
  */
@@ -54,7 +55,13 @@ class PdfMetadataExtractor {
                 } catch (_: Exception) {
                     emptyList()
                 }
-                val mediaTop = page.mediaBox.upperRightY.toDouble()
+                val mediaBox = page.mediaBox
+                // PDF user space is bottom-up; convert to a top-down "reading order Y" relative
+                // to the page's media box origin. Using `mediaBox.upperRightY - rect.upperRightY`
+                // directly would be wrong when `mediaBox.lowerLeftY != 0` (cropped pages — e.g.
+                // business exports with media-box `[0 72 612 720]`).
+                val boxHeight = (mediaBox.upperRightY - mediaBox.lowerLeftY).toDouble()
+                val boxBottom = mediaBox.lowerLeftY.toDouble()
                 for (annotation in annotations) {
                     val markup = annotation as? PDAnnotationMarkup ?: continue
                     val text = markup.contents?.trim().orEmpty()
@@ -67,11 +74,13 @@ class PdfMetadataExtractor {
                         text = text,
                         kind = DocumentBlock.Comment.Kind.PDF_ANNOTATION,
                     )
-                    // Translate from PDF bottom-up Y to reading-order top-down Y.
-                    // PDF: origin at bottom-left, y increases upward.
-                    // Pipeline: top < bottom, small top = earlier in reading order.
-                    val readingTop = mediaTop - rect.upperRightY.toDouble()
-                    val readingBottom = mediaTop - rect.lowerLeftY.toDouble()
+                    // Translate rect coords (bottom-up, in PDF user space) to reading-order Y
+                    // (top-down, relative to the media-box top). Measure each rect edge as an
+                    // offset from the box's lower-left, then flip to top-down with boxHeight.
+                    val rectTopFromBoxBottom = rect.upperRightY.toDouble() - boxBottom
+                    val rectBottomFromBoxBottom = rect.lowerLeftY.toDouble() - boxBottom
+                    val readingTop = boxHeight - rectTopFromBoxBottom
+                    val readingBottom = boxHeight - rectBottomFromBoxBottom
                     result += PositionedBlock(
                         page = pageNumber,
                         top = readingTop,

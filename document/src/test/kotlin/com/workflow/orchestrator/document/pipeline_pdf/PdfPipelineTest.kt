@@ -6,6 +6,7 @@ import com.workflow.orchestrator.document.pipeline.PdfPipeline
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.nio.file.Paths
@@ -279,6 +280,96 @@ class PdfPipelineTest {
             )
             assertEquals("Jane", annotationComment!!.author)
             assertEquals("Confirm this benchmark.", annotationComment.text)
+        } finally {
+            java.nio.file.Files.deleteIfExists(tempFile)
+        }
+    }
+
+    @Test
+    fun `pdf annotation with no titlePopup emits Comment with null author`() {
+        val pdfBytes = run {
+            val doc = org.apache.pdfbox.pdmodel.PDDocument()
+            val page = org.apache.pdfbox.pdmodel.PDPage()
+            doc.addPage(page)
+
+            val cs = org.apache.pdfbox.pdmodel.PDPageContentStream(doc, page)
+            cs.beginText()
+            cs.setFont(
+                org.apache.pdfbox.pdmodel.font.PDType1Font(
+                    org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA,
+                ),
+                12f,
+            )
+            cs.newLineAtOffset(100f, 700f)
+            cs.showText("Body.")
+            cs.endText()
+            cs.close()
+
+            val annotation = org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationText()
+            annotation.contents = "Anonymous note."
+            // intentionally NOT setting titlePopup
+            annotation.rectangle = org.apache.pdfbox.pdmodel.common.PDRectangle(120f, 695f, 20f, 20f)
+            page.annotations.add(annotation)
+
+            val out = java.io.ByteArrayOutputStream()
+            doc.save(out); doc.close()
+            out.toByteArray()
+        }
+
+        val tempFile = java.nio.file.Files.createTempFile("p1t5-pdf-anon-", ".pdf")
+        java.nio.file.Files.write(tempFile, pdfBytes)
+        try {
+            val pipeline = PdfPipeline()
+            val blocks = pipeline.extract(tempFile)
+            val c = blocks.filterIsInstance<DocumentBlock.Comment>()
+                .firstOrNull { it.kind == DocumentBlock.Comment.Kind.PDF_ANNOTATION }
+            assertNotNull(c, "Expected a PDF_ANNOTATION Comment even when titlePopup is null")
+            assertNull(c!!.author, "Anonymous PDF annotation should produce author=null")
+            assertEquals("Anonymous note.", c.text)
+        } finally {
+            java.nio.file.Files.deleteIfExists(tempFile)
+        }
+    }
+
+    @Test
+    fun `multi-page pdf with annotations on different pages — each uses its own page mediaBox`() {
+        val pdfBytes = run {
+            val doc = org.apache.pdfbox.pdmodel.PDDocument()
+            // Page 1: letter size, annotation near top
+            val p1 = org.apache.pdfbox.pdmodel.PDPage()
+            doc.addPage(p1)
+            val a1 = org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationText()
+            a1.contents = "page-1-note"
+            a1.titlePopup = "Alice"
+            a1.rectangle = org.apache.pdfbox.pdmodel.common.PDRectangle(100f, 750f, 20f, 20f)
+            p1.annotations.add(a1)
+
+            val p2 = org.apache.pdfbox.pdmodel.PDPage()
+            doc.addPage(p2)
+            val a2 = org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationText()
+            a2.contents = "page-2-note"
+            a2.titlePopup = "Bob"
+            a2.rectangle = org.apache.pdfbox.pdmodel.common.PDRectangle(100f, 750f, 20f, 20f)
+            p2.annotations.add(a2)
+
+            val out = java.io.ByteArrayOutputStream()
+            doc.save(out); doc.close()
+            out.toByteArray()
+        }
+
+        val tempFile = java.nio.file.Files.createTempFile("p1t5-pdf-multi-", ".pdf")
+        java.nio.file.Files.write(tempFile, pdfBytes)
+        try {
+            val pipeline = PdfPipeline()
+            val blocks = pipeline.extract(tempFile)
+            val annotations = blocks.filterIsInstance<DocumentBlock.Comment>()
+                .filter { it.kind == DocumentBlock.Comment.Kind.PDF_ANNOTATION }
+            assertEquals(2, annotations.size, "Expected one annotation per page")
+            val authors = annotations.map { it.author }
+            assertTrue(
+                "Alice" in authors && "Bob" in authors,
+                "Both authors should appear; got $authors",
+            )
         } finally {
             java.nio.file.Files.deleteIfExists(tempFile)
         }
