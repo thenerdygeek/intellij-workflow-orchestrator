@@ -749,13 +749,12 @@ class DocxExtractorFormatGapsTest {
 
     /**
      * Source-scan gate: confirms that [DocxTableExtractor] still does NOT touch
-     * footnotes, endnotes, or header/footer policy directly. Comments and images are now
-     * legitimately read via Phase 1/2 visitors ([CommentExtractionVisitor],
-     * [com.workflow.orchestrator.document.poi.visitor.ImageExtractionVisitor]), so those
-     * needles are intentionally absent from the forbidden list.
+     * footnotes or endnotes directly. Comments, images, and header/footer policy are now
+     * legitimately read via Phase 1/2/3 visitors and [DocxTableExtractor.extractHeaderFooter],
+     * so those needles are intentionally absent from the forbidden list.
      */
     @Test
-    fun `gap extractor still skips footnotes endnotes and headers — comments and images extracted via visitors in Phase 1 and 2`() {
+    fun `gap extractor still skips footnotes and endnotes — comments images and headers extracted via visitors in Phase 1 2 and 3`() {
         val source = javaClass.classLoader
             .getResource("../../main/kotlin/com/workflow/orchestrator/document/poi/DocxTableExtractor.kt")
             ?.readText()
@@ -772,12 +771,57 @@ class DocxExtractorFormatGapsTest {
             "getFootnotes(",
             ".endnotes",
             "getEndnotes(",
-            "HeaderFooterPolicy",
         ).forEach { needle ->
             assertFalse(text!!.contains(needle),
                 "DocxTableExtractor must NOT touch '$needle' until the gap is fixed; if it does, " +
                     "update this test to assert the new positive behaviour")
         }
+    }
+
+    // ── Header / Footer (positive coverage after Phase 3 T4) ──────────────────
+
+    @Test
+    fun `default header text emits as a leading Paragraph prefixed with Header colon`() {
+        val bytes = buildDocxWithHeaderFooter(headerText = "Confidential — Q4 Spec", footerText = null)
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val firstParagraph = blocks.firstOrNull() as? DocumentBlock.Paragraph
+        assertNotNull(firstParagraph, "Header should be the first block")
+        assertEquals("> Header: Confidential — Q4 Spec", firstParagraph!!.text)
+    }
+
+    @Test
+    fun `default footer text emits as a leading Paragraph prefixed with Footer colon`() {
+        val bytes = buildDocxWithHeaderFooter(headerText = null, footerText = "page X of Y")
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val first = blocks.firstOrNull() as? DocumentBlock.Paragraph
+        assertNotNull(first, "Footer should be the first block when no header is present")
+        assertEquals("> Footer: page X of Y", first!!.text)
+    }
+
+    @Test
+    fun `both header and footer emit header first then footer both before body content`() {
+        val bytes = buildDocxWithHeaderFooter(
+            headerText = "Doc title",
+            footerText = "footer text",
+            bodyText = "body paragraph",
+        )
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val paragraphs = blocks.filterIsInstance<DocumentBlock.Paragraph>()
+        assertTrue(paragraphs.size >= 3, "Expected header + footer + body paragraph at minimum")
+        assertEquals("> Header: Doc title", paragraphs[0].text)
+        assertEquals("> Footer: footer text", paragraphs[1].text)
+        assertTrue(paragraphs.any { it.text == "body paragraph" })
+    }
+
+    @Test
+    fun `empty header policy emits nothing — body iteration proceeds normally`() {
+        val bytes = buildDocx { doc ->
+            doc.createParagraph().createRun().setText("just a body paragraph")
+        }
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        assertTrue(blocks.none {
+            it is DocumentBlock.Paragraph && (it.text.startsWith("> Header:") || it.text.startsWith("> Footer:"))
+        }, "No header/footer policy → no header/footer Paragraph")
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -791,6 +835,37 @@ class DocxExtractorFormatGapsTest {
             return out.toByteArray()
         } finally {
             doc.close()
+        }
+    }
+
+    /**
+     * Builds an in-memory DOCX with optional header and footer text using POI's
+     * [org.apache.poi.xwpf.model.XWPFHeaderFooterPolicy]. Either or both can be null.
+     * [bodyText] is appended as a single body paragraph (default: "Body.").
+     *
+     * POI 5.4.1 note: `XWPFDocument.createHeaderFooterPolicy()` constructs a new
+     * [org.apache.poi.xwpf.model.XWPFHeaderFooterPolicy] tied to the document's
+     * `CTSectPr`. We call `createHeader`/`createFooter` with
+     * [org.apache.poi.xwpf.model.XWPFHeaderFooterPolicy.DEFAULT] (`STHdrFtr.DEFAULT`)
+     * which is a `STHdrFtr$Enum` constant — NOT a String or Int.
+     */
+    private fun buildDocxWithHeaderFooter(
+        headerText: String?,
+        footerText: String?,
+        bodyText: String = "Body.",
+    ): ByteArray {
+        return buildDocx { doc ->
+            doc.createParagraph().createRun().setText(bodyText)
+
+            val policy = doc.createHeaderFooterPolicy()
+            if (headerText != null) {
+                val hf = policy.createHeader(org.apache.poi.xwpf.model.XWPFHeaderFooterPolicy.DEFAULT)
+                hf.createParagraph().createRun().setText(headerText)
+            }
+            if (footerText != null) {
+                val ff = policy.createFooter(org.apache.poi.xwpf.model.XWPFHeaderFooterPolicy.DEFAULT)
+                ff.createParagraph().createRun().setText(footerText)
+            }
         }
     }
 

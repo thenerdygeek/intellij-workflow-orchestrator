@@ -11,6 +11,7 @@ import com.workflow.orchestrator.document.poi.visitor.PostBodyVisitor
 import com.workflow.orchestrator.document.poi.visitor.TableVisitor
 import com.workflow.orchestrator.document.poi.visitor.TrackedChangeVisitor
 import com.workflow.orchestrator.document.service.ImageExtractionService
+import org.apache.poi.xwpf.model.XWPFHeaderFooterPolicy
 import org.apache.poi.xwpf.usermodel.IBodyElement
 import org.apache.poi.xwpf.usermodel.XWPFDocument
 import org.apache.poi.xwpf.usermodel.XWPFParagraph
@@ -113,6 +114,9 @@ class DocxTableExtractor(
         val blocks = mutableListOf<DocumentBlock>()
 
         XWPFDocument(stream).use { doc ->
+            // Phase 3 T4: prepend header / footer paragraphs (one each, deduplicated).
+            blocks += extractHeaderFooter(doc)
+
             for (element: IBodyElement in doc.bodyElements) {
                 when (element) {
                     is XWPFParagraph -> {
@@ -135,5 +139,52 @@ class DocxTableExtractor(
         }
 
         return blocks
+    }
+
+    /**
+     * Extracts default header and footer text from [doc] via [XWPFHeaderFooterPolicy] and
+     * returns them as [DocumentBlock.Paragraph] blocks prefixed with `"> Header: "` /
+     * `"> Footer: "`. Both blocks land at the START of the output (before any body content)
+     * so the LLM sees the document's identity/classification metadata first.
+     *
+     * Per-page repetition is NOT emitted — one block per document, deduplicated.
+     *
+     * If the document has no header/footer policy, or if the default header/footer paragraphs
+     * are all blank, nothing is emitted.
+     */
+    private fun extractHeaderFooter(doc: XWPFDocument): List<DocumentBlock> {
+        val policy: XWPFHeaderFooterPolicy = try {
+            doc.headerFooterPolicy
+        } catch (_: Exception) {
+            null
+        } ?: return emptyList()
+
+        val out = mutableListOf<DocumentBlock>()
+
+        val headerText = try {
+            policy.defaultHeader?.paragraphs
+                ?.joinToString("\n") { it.text.trim() }
+                ?.trim()
+                .orEmpty()
+        } catch (_: Exception) {
+            ""
+        }
+        if (headerText.isNotEmpty()) {
+            out += DocumentBlock.Paragraph("> Header: $headerText")
+        }
+
+        val footerText = try {
+            policy.defaultFooter?.paragraphs
+                ?.joinToString("\n") { it.text.trim() }
+                ?.trim()
+                .orEmpty()
+        } catch (_: Exception) {
+            ""
+        }
+        if (footerText.isNotEmpty()) {
+            out += DocumentBlock.Paragraph("> Footer: $footerText")
+        }
+
+        return out
     }
 }
