@@ -107,8 +107,8 @@ Each extractor walks an expanded set of collections.
 | Source POI API | Emits | Notes |
 |---|---|---|
 | `doc.headerFooterPolicy` (default header & footer) | `Paragraph` prefixed `> Header:` / `> Footer:` once at start of doc | Per-page repetition NOT emitted; one block, deduplicated |
-| `doc.comments.comments` | `Comment(REVIEW, author, anchorText, text)` inline after the paragraph it anchors to | Anchor offset from `w:commentRangeStart`/`End` IDs |
-| `doc.footnotes.footnotes` + `doc.endnotes.endnotes` | `Footnote(marker, text)` collected and emitted at end of body | DOCX footnotes are page-anchored; we batch to doc-end for LLM simplicity |
+| `doc.comments` (`XWPFComment[]`) | `Comment(REVIEW, author, anchorText, text)` inline after the paragraph it anchors to | Anchor offset from `w:commentRangeStart`/`End` IDs |
+| `doc.footnotes` + `doc.endnotes` (`List<XWPFFootnote>` / `List<XWPFEndnote>`) | `Footnote(marker, text)` blocks emitted **last** in the extractor's `List<DocumentBlock>` return | Footnotes are page-anchored in DOCX; we batch to doc-end. **Ordering is the extractor's responsibility — `MarkdownAssembler` does NOT reorder blocks.** |
 | `XWPFParagraph` w/ `w:ins`/`w:del` runs | `Comment(TRACKED_INSERTION/DELETION, author, anchorText, text)` inline | Final-view text still surfaces as the Paragraph |
 | `XWPFParagraph.numId != null` (list item) | Accumulator → `ListBlock` when run of consecutive list items breaks | Reads `numbering.xml` for ordered vs bulleted; nested levels join with `  ` indent inside item |
 | `XWPFRun.embeddedPictures` | `EmbeddedFileRef(name, mime, path)` after `ImageExtractionService.save(...)` | Picture bytes via `XWPFPictureData.data` |
@@ -118,7 +118,7 @@ Each extractor walks an expanded set of collections.
 
 | Source POI API | Emits | Notes |
 |---|---|---|
-| `sheet.sheetVisibility != VISIBLE` | Heading text → `(hidden) <sheetName>` | Per the brainstorm decision (extract but flag) |
+| `wb.getSheetVisibility(wb.getSheetIndex(sheet)) != SheetVisibility.VISIBLE` | Heading text → `(hidden) <sheetName>` | Per the brainstorm decision (extract but flag). Visibility is a workbook-scoped lookup in POI 5.4.1, not a property on the sheet. |
 | `Cell.cellComment` | `Comment(REVIEW, author, anchorText="<cellRef>", text)` immediately after the Table | Cell ref like "B7" gives the LLM a coordinate |
 | `XSSFDrawing.shapes` filtered to `Picture` | `EmbeddedFileRef(name, mime, path)` after the Table | Bytes via `XSSFPictureData.data` |
 | `wb.allNames` (defined names) | `KeyValueGroup(title="Defined names", pairs)` once at top of output | Useful context for any formula the LLM sees later |
@@ -134,15 +134,15 @@ Each extractor walks an expanded set of collections.
 
 **PDF (`PdfPipeline` + `PdfProseExtractor` + new `PdfMetadataExtractor`)**:
 
-- `hardenedPdfConfig().isExtractAnnotationText` flips to `false` so Tika no longer leaks annotation prose into the paragraph stream.
 - A new `PdfMetadataExtractor` pulls annotations, bookmarks, AcroForm, doc properties, and image XObjects via PDFBox directly.
+- The `hardenedPdfConfig().isExtractAnnotationText` Tika flag flip from `true`→`false` lands **one release AFTER** `PdfMetadataExtractor` ships, NOT in the same PR. Rationale: until the new extractor is validated against annotated PDFs in the wild, flipping Tika's source-of-truth flag risks zero-annotation regressions on docs the new extractor doesn't handle. Dual-source (Tika + PDFBox) for one release, dedupe by annotation rectangle, then flip.
 
 | Source PDFBox API | Emits | Notes |
 |---|---|---|
 | `PDPage.annotations.filterIsInstance<PDAnnotationMarkup>()` | `Comment(PDF_ANNOTATION, author=titlePopup, anchorText=annotated text, text=contents)` | Replaces today's "untyped Paragraph leak" |
 | `PDDocumentOutline` (bookmarks) | `KeyValueGroup(title="Bookmarks", pairs=[(title, "p.<num>")])` once at top | TOC for the LLM |
 | `PDAcroForm.fields` | `KeyValueGroup(title="Form fields", pairs)` once at end | Skipped if form is empty |
-| `PDDocumentCatalog.documentInformation` | `KeyValueGroup(title="Document properties", pairs)` once at top | Gated on ≥1 non-blank field |
+| `PDDocument.documentInformation` (`PDDocumentInformation`) | `KeyValueGroup(title="Document properties", pairs)` once at top | Gated on ≥1 non-blank field. Lives on `PDDocument`, not `PDDocumentCatalog`. |
 | `PDEmbeddedFilesNameTreeNode` (attachments) | `EmbeddedFileRef(name, mime, path)` after saving attachment bytes | PDFs can carry XLSX/DOCX inside |
 | Image XObjects via `PDResources.xobjectNames` | `EmbeddedFileRef(name, mime, path)` | We walk image XObjects ourselves so we control where bytes land; Tika-side image dumping stays off |
 
@@ -152,7 +152,7 @@ Each extractor walks an expanded set of collections.
 - `<a href="…">` → URL preserved as `(<href>)` postfix on the inner text
 - `<img src="…" alt="…">` → `EmbeddedFileRef(name=alt-or-src, mime=guess-from-extension, path=null)`. For RTF/ODT/EPUB, wire Tika's `EmbeddedDocumentExtractor` ParseContext element so embedded image bytes flow to `ImageExtractionService`.
 
-**Math equations** (DOCX OMML): Phase 5a emits the plain-text fallback Word stores alongside OMML (no new dep). Phase 5b adds LaTeX via the `omml2mml` XSLT (small, bundleable). Separate PRs.
+**Math equations** (DOCX OMML): POI 5.4.1 does **not** expose `XWPFOMath` — only the low-level `CTOMath` XmlBean class. Phase 5a walks `CTOMath` via XmlBeans and emits the plain-text fallback Word stores alongside OMML; Phase 5b converts OMML→MathML→LaTeX via XSLT (`omml2mml.xsl` is ~30 KB, bundleable). Separate PRs.
 
 **SmartArt** (DOCX/PPTX): no rendering. SmartArt text-tree → flat `ListBlock` with indent levels encoded as leading `  ` inside each item. Visual relationships (arrows, hierarchy types) lost — acceptable degradation per the "no rendering" non-goal.
 
@@ -191,7 +191,7 @@ class ViewImageTool : AgentTool {
         properties = mapOf("path" to ParameterProperty("string", "Absolute path …")),
         required = listOf("path"),
     )
-    override val timeoutMs = 5_000L
+    override val timeoutMs = 30_000L  // matches read_document; 25 MB image hash+attach can exceed 5s
     override val allowedWorkers = setOf(ORCHESTRATOR, CODER, REVIEWER, ANALYZER)
 
     override suspend fun execute(args: JsonObject, project: Project): ToolResult { … }
@@ -220,7 +220,9 @@ class ViewImageTool : AgentTool {
 | `EmbeddedFileRef(name, mime, path != null)` | `[image: <path>] (<mime>)\n\n` |
 | `EmbeddedFileRef(name, mime, path == null)` | `[embedded: <name> (<mime>) — not extracted]\n\n` (current behavior) |
 
-Footnotes are bucketed: the assembler collects them during the first pass and emits one contiguous final block. If the character budget is exhausted before footnotes serialize, the truncation marker says so explicitly.
+**Block ordering is the extractor's responsibility, not the assembler's.** `MarkdownAssembler.assemble` is single-pass and atomic per block; it does NOT reorder. Therefore: each extractor that produces `Footnote` blocks MUST emit them last in its returned `List<DocumentBlock>` (the assembler then serializes them in order, naturally producing the contiguous final block). The DOCX extractor's visitor chain (Phase 0) introduces a `PostBodyVisitor` slot specifically for this — footnotes / endnotes / form-fields-summary blocks live there.
+
+If the character budget is exhausted before footnotes serialize, the truncation marker text is extended in Phase 0 from `"$x of $y blocks rendered"` to `"$x of $y blocks rendered ($f footnotes dropped)"` when any of the dropped blocks were `Footnote`. Specified in Phase 0 acceptance.
 
 ### Section 5 — Testing strategy
 
@@ -239,25 +241,31 @@ Six phases, each a shippable PR:
 
 | Phase | Scope | LOC | Blocks |
 |---|---|---|---|
-| **0. Model + assembler** | Add 5 new `DocumentBlock` variants; teach `MarkdownAssembler` every new arm; add `path` field to `EmbeddedFileRef`; lock serialization via assembler unit tests. **No extractor changes yet.** | ~200 | All later phases |
+| **0. Model + assembler + DOCX visitor chain** | Add 5 new `DocumentBlock` variants; teach `MarkdownAssembler` every new arm; add `path` field to `EmbeddedFileRef`; lock serialization via assembler unit tests. **Refactor `DocxTableExtractor` body-iteration into a composable visitor chain** (`ParagraphVisitor`, `TableVisitor`, `PostBodyVisitor`) so Phases 1/2/3 can add new visitors without touching the same `paragraphToBlock` method. **No extractor behavior changes** — visitors call existing logic. | ~300 | All later phases |
 | **1. Comments (all formats)** | DOCX `XWPFComments`, XLSX `Cell.cellComment`, PPTX `slide.comments`, PDF `PDAnnotationMarkup`. Plus DOCX tracked changes (`w:ins`/`w:del` → `Comment(TRACKED_*)`). | ~400 | Phase 0 |
 | **2. Image extraction + `view_image`** | `ImageExtractionService` in `:document`; emission wired in DOCX/XLSX/PPTX/Tika-XHTML extractors (PDF image XObjects land in Phase 4 alongside other PDF metadata); `ViewImageTool` in `:agent`; `read_document` description updated. | ~300 | Phase 0 |
 | **3. Structure (lists, headings, headers/footers, group recursion, merges)** | DOCX numbering map → `ListBlock`; HTML `<ul>`/`<ol>` → `ListBlock`; DOCX Title/Subtitle/Quote → `Heading`; DOCX `headerFooterPolicy` → top-of-doc prefix; PPTX `XSLFGroupShape` recursion; DOCX vertical-merge cells; XLSX hidden-sheet `(hidden)` heading prefix. | ~350 | Phase 0 |
 | **4. PDF metadata channels + XLSX defined names** | bookmarks, AcroForm, doc properties, PDF embedded attachments → `KeyValueGroup`/`EmbeddedFileRef`; XLSX `allNames` → `KeyValueGroup`. | ~250 | Phase 0 + Phase 2 |
 | **5. Rich content** | Phase 5a: charts in DOCX/XLSX/PPTX (`Table`), SmartArt in DOCX/PPTX (`ListBlock`), DOCX/XLSX/PPTX OMML math plain-text fallback, hyperlinks across all formats including Tika-XHTML's `<a href>` (URL postfix on Paragraph), DOCX footnotes/endnotes (`Footnote`). Phase 5b: OMML→LaTeX via XSLT (separate PR). | ~500 | Phase 0 |
 
-**Total ≈ 2000 LOC across 6-7 PRs.**
+**Total ≈ 2100 LOC across 7 PRs.**
 
-Phase 0 is the keystone. After it lands, Phases 1, 2, 3, 4 are independent and can ship in parallel via subagents. Phase 5a depends on Phase 0; Phase 5b depends on Phase 5a.
+Phase 0 is the keystone — its visitor refactor of `DocxTableExtractor` is what makes parallel work on Phases 1/2/3 possible. Without it, all three phases mutate `paragraphToBlock` and would conflict.
+
+After Phase 0 lands:
+- Phase 1, 2, 3 are independent (each adds new visitors to the chain) and can ship in parallel via subagents.
+- Phase 4 depends on Phase 0 + Phase 2 (`ImageExtractionService` for PDF embedded attachments and image XObjects).
+- Phase 4b (Tika annotation flag flip + dedupe) depends on Phase 4.
+- Phase 5a depends on Phase 0; Phase 5b depends on Phase 5a.
 
 ## Risks & mitigations
 
 - **POI API surface drift.** POI 5.4.1 is the current version; some new emission sites (e.g. `XWPFOMath`) live in newer minors. Mitigation: each extractor's new code is in a try/catch that degrades to "no emission" rather than failing the whole document. Pin the POI version explicitly in `build.gradle.kts` and add a version-assertion test.
 - **DOCX comment-anchor offsets are fragile.** `w:commentRangeStart`/`End` IDs can span multiple runs and even paragraphs. Mitigation: if the anchor span resolves to multiple paragraphs, emit the comment after the LAST anchored paragraph and use a synthetic anchor of `"<first paragraph quote first 60 chars>…"`.
 - **PDF annotation extraction order.** PDFBox returns annotations per-page in z-order, not reading order. Mitigation: sort by annotation rectangle's `(page, top, left)` before emission.
-- **Image-bytes memory pressure.** A DOCX with a 50 MB embedded PNG would OOM under PoiHardening's `IOUtils.setByteArrayMaxOverride(50_000_000)` even on the read path. Mitigation: stream image bytes to disk via `Files.copy(inputStream, path)` instead of materializing to `ByteArray`; bump `setMaxImageSize` per-doc only as high as a configurable ceiling (default 25 MB; setting in `PluginSettings.documentMaxImageSize`).
-- **`view_image` path validation.** A malicious LLM-emitted path could request files outside the session. Mitigation: `PathValidator.resolveAndValidateForRead` with the session's downloads/ as the only allowed root; canonical-path check; MIME-type allowlist (png/jpeg/webp/gif).
-- **Tika annotation flag flip.** Setting `isExtractAnnotationText=false` could regress PDFs where Tika was the only annotation source. Mitigation: the new `PdfMetadataExtractor` is the SOLE annotation source; tests run on both annotated and non-annotated fixtures to confirm parity.
+- **Image-bytes memory pressure.** POI 5.4.1's picture APIs (`XWPFPictureData.data`, `XSSFPictureData.data`) return `byte[]` — POI materializes the full picture in RAM, there is no streaming `InputStream` accessor on the DOCX/XLSX paths. Only `XSLFPictureData.inputStream` exists. PoiHardening's `IOUtils.setByteArrayMaxOverride(50_000_000)` cap therefore binds. Mitigation: **pre-check `PictureData.packagePart.size` before calling `.data`** and skip / emit a "size exceeded" `EmbeddedFileRef(path=null)` placeholder if it exceeds a configurable ceiling. Default ceiling: 25 MB (`PluginSettings.documentMaxImageSize`). For PPTX use the streaming `XSLFPictureData.inputStream` + `Files.copy`. Document that POI image extraction is inherently `byte[]`-bound on DOCX/XLSX.
+- **`view_image` path validation.** A malicious LLM-emitted path could request files outside the session. The existing `PathValidator.resolveAndValidateForRead` allows the entire `~/.workflow-orchestrator/` tree — broader than `view_image` wants. Mitigation: add a new helper `PathValidator.resolveAndValidateForSessionDownloads(sessionDir)` that restricts to `{sessionDir}/downloads/` only; canonical-path check; MIME-type allowlist (png/jpeg/webp/gif). Helper lands in Phase 2.
+- **Tika annotation flag flip.** Setting `isExtractAnnotationText=false` could regress PDFs where Tika was the only annotation source. Mitigation: dual-source for one release as described in Section 2 PDF — `PdfMetadataExtractor` ships in Phase 4, the Tika flag flips in a follow-up Phase 4b PR after telemetry confirms `PdfMetadataExtractor` covers every annotation Tika produced. Dedupe by annotation rectangle during the dual-source window.
 
 ## Open questions (resolved during brainstorm)
 
