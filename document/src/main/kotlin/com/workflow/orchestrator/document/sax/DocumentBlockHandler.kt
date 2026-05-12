@@ -127,6 +127,21 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
      */
     private var listNestingDepth: Int = 0
 
+    // ── Anchor / hyperlink state ──────────────────────────────────────────────
+
+    /**
+     * True while inside an `<a href="…">` element.
+     * Character data while in this state is routed to [currentAnchorTextBuffer] instead
+     * of [currentBuffer] to avoid double-counting.
+     */
+    private var inAnchor: Boolean = false
+
+    /** The `href` attribute value captured when the `<a>` was opened. */
+    private var currentAnchorHref: String? = null
+
+    /** Accumulates the visible text of the current anchor element. */
+    private val currentAnchorTextBuffer = StringBuilder()
+
     // ── Page-marker state ─────────────────────────────────────────────────────
 
     /** 1-based page counter; incremented on each `<div class="page">` opening. */
@@ -149,6 +164,16 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
                 // Tika sometimes emits `<p>` without closing the previous one — flush first.
                 flushBufferAsParagraph()
                 currentBuffer.clear()
+            }
+
+            name == "a" -> {
+                // Capture the href so we can append it as a parenthetical on </a>.
+                val hrefRaw = attrs?.getValue("href")?.trim()
+                if (!hrefRaw.isNullOrBlank()) {
+                    inAnchor = true
+                    currentAnchorHref = hrefRaw
+                    currentAnchorTextBuffer.clear()
+                }
             }
 
             name == "table" -> {
@@ -222,6 +247,24 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
         val name = (localName ?: qName ?: "").lowercase()
 
         when {
+            name == "a" -> {
+                if (inAnchor) {
+                    val anchorText = currentAnchorTextBuffer.toString()
+                    val href = currentAnchorHref
+                    // Append "visible text (url)" to the appropriate active buffer.
+                    val assembled = if (!href.isNullOrBlank()) "$anchorText ($href)" else anchorText
+                    when {
+                        inTable && inCell -> currentCell.append(assembled)
+                        headingLevel > 0 -> currentBuffer.append(assembled)
+                        inListItem -> currentItemBuffer.append(assembled)
+                        !inTable && !inList -> currentBuffer.append(assembled)
+                    }
+                    inAnchor = false
+                    currentAnchorHref = null
+                    currentAnchorTextBuffer.clear()
+                }
+            }
+
             name.isHeading() -> {
                 val text = currentBuffer.toString().trim()
                 if (text.isNotEmpty()) {
@@ -305,6 +348,9 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
         if (ch == null) return
         val text = String(ch, start, length)
         when {
+            // Anchor text is buffered separately to avoid double-counting; it will be
+            // appended to the active context buffer (with the URL postfix) on </a>.
+            inAnchor -> currentAnchorTextBuffer.append(text)
             inTable && inCell -> currentCell.append(text)
             headingLevel > 0 -> currentBuffer.append(text)
             inListItem -> currentItemBuffer.append(text)
@@ -589,12 +635,15 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
         )
 
         /**
-         * Matches a non-whitespace character immediately followed by a URL scheme,
+         * Matches a non-whitespace, non-paren character immediately followed by a URL scheme,
          * i.e. the boundary where Tika ate the space around a link annotation. Only the
          * leading direction is fixed — URL-followed-by-word is unsafe (URL-end detection
          * is fragile) and is left as a known v1.x limitation.
+         *
+         * `(` is excluded from the match so that hyperlink parentheticals like
+         * `"anchor text (https://...)"` are not rewritten to `"anchor text ( https://...)"`.
          */
-        val URL_BOUNDARY = Regex("(\\S)(https?://)")
+        val URL_BOUNDARY = Regex("([^\\s(])(https?://)")
 
         /**
          * Common Unicode bullet glyphs we accept at the start of a line. Anything not in

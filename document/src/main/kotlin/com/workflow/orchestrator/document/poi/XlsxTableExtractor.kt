@@ -101,7 +101,7 @@ class XlsxTableExtractor(
                 val headers = (0 until lastCellNum).map { col ->
                     val cell = headerRow.getCell(col)
                     collectCellComment(cell, sheetComments)
-                    CellFormatter.toCellString(cellOrMergedValue(cell, col, headerRow, xssfSheet, evaluator), evaluator)
+                    cellValueWithHyperlink(cellOrMergedValue(cell, col, headerRow, xssfSheet, evaluator), evaluator)
                 }
 
                 if (headers.isEmpty()) continue
@@ -115,7 +115,7 @@ class XlsxTableExtractor(
                     val cells = headers.indices.map { col ->
                         val cell = row.getCell(col)
                         collectCellComment(cell, sheetComments)
-                        CellFormatter.toCellString(cellOrMergedValue(cell, col, row, xssfSheet, evaluator), evaluator)
+                        cellValueWithHyperlink(cellOrMergedValue(cell, col, row, xssfSheet, evaluator), evaluator)
                     }
                     rows += cells
                     rowsRead++
@@ -170,6 +170,24 @@ class XlsxTableExtractor(
             key to value
         }
         return if (pairs.isNotEmpty()) DocumentBlock.KeyValueGroup("Defined names", pairs) else null
+    }
+
+    // ── Hyperlink-aware cell value ────────────────────────────────────────────
+
+    /**
+     * Converts [cell] to a [String] and appends the hyperlink URL as a parenthetical suffix
+     * when the cell has an associated [org.apache.poi.ss.usermodel.Hyperlink].
+     *
+     * Example: a cell displaying `"Docs"` with `hyperlink.address = "https://example.com/handbook"`
+     * produces `"Docs (https://example.com/handbook)"`.
+     *
+     * Falls back to plain [CellFormatter.toCellString] when the cell is null, has no hyperlink,
+     * or the hyperlink address is blank.
+     */
+    private fun cellValueWithHyperlink(cell: Cell?, evaluator: FormulaEvaluator): String {
+        val baseValue = CellFormatter.toCellString(cell, evaluator)
+        val url = cell?.hyperlink?.address?.takeIf { it.isNotBlank() } ?: return baseValue
+        return "$baseValue ($url)"
     }
 
     // ── Merged cell resolution ─────────────────────────────────────────────────

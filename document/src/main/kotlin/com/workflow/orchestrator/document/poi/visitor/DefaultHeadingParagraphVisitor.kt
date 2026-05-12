@@ -2,6 +2,7 @@ package com.workflow.orchestrator.document.poi.visitor
 
 import com.workflow.orchestrator.core.model.DocumentBlock
 import org.apache.poi.xwpf.usermodel.XWPFDocument
+import org.apache.poi.xwpf.usermodel.XWPFHyperlinkRun
 import org.apache.poi.xwpf.usermodel.XWPFParagraph
 
 /**
@@ -13,9 +14,13 @@ import org.apache.poi.xwpf.usermodel.XWPFParagraph
  *   [DocumentBlock.Heading] of the matching level.
  * - Otherwise → [DocumentBlock.Paragraph].
  *
+ * Hyperlink URLs are preserved inline as `"<visible text> (<url>)"` by walking
+ * `paragraph.runs` and resolving each [XWPFHyperlinkRun] via
+ * `XWPFHyperlinkRun.getHyperlink(doc).getURL()`. Non-hyperlink runs are appended as-is.
+ *
  * This visitor's behaviour must remain byte-for-byte identical to the pre-refactor
- * extractor — `DocxVisitorChainTest` (Task 18) regression-tests the round-trip against
- * the existing `design-doc.docx` fixture.
+ * extractor for non-hyperlink content — `DocxVisitorChainTest` (Task 18) regression-tests
+ * the round-trip against the existing `design-doc.docx` fixture.
  */
 class DefaultHeadingParagraphVisitor : ParagraphVisitor {
 
@@ -24,7 +29,7 @@ class DefaultHeadingParagraphVisitor : ParagraphVisitor {
         // they do not double-emit as plain Paragraph blocks.
         if (paragraph.numID != null) return emptyList()
 
-        val text = paragraph.text.trim()
+        val text = buildHyperlinkAwareText(paragraph, doc).trim()
         if (text.isEmpty()) return emptyList()
 
         val level = headingLevel(paragraph)
@@ -34,6 +39,36 @@ class DefaultHeadingParagraphVisitor : ParagraphVisitor {
             DocumentBlock.Paragraph(text)
         }
         return listOf(block)
+    }
+
+    /**
+     * Walks [paragraph.runs] and appends `" (<url>)"` after each [XWPFHyperlinkRun]'s text.
+     *
+     * [XWPFHyperlinkRun.getHyperlink] resolves the relationship ID to the target URL via
+     * the document's hyperlink table (no manual package-part navigation required). Returns
+     * plain concatenated text for paragraphs that contain no hyperlinks — identical to the
+     * previous `paragraph.text` output.
+     */
+    private fun buildHyperlinkAwareText(paragraph: XWPFParagraph, doc: XWPFDocument): String {
+        val sb = StringBuilder()
+        for (run in paragraph.runs) {
+            val runText = run.text() ?: ""
+            if (run is XWPFHyperlinkRun) {
+                val url = try {
+                    run.getHyperlink(doc)?.url
+                } catch (_: Exception) {
+                    null
+                }
+                if (!url.isNullOrBlank()) {
+                    sb.append(runText).append(" (").append(url).append(")")
+                } else {
+                    sb.append(runText)
+                }
+            } else {
+                sb.append(runText)
+            }
+        }
+        return sb.toString()
     }
 
     private fun headingLevel(paragraph: XWPFParagraph): Int? {

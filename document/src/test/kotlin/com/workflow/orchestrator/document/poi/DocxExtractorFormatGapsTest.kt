@@ -57,7 +57,7 @@ class DocxExtractorFormatGapsTest {
     // ── Hyperlinks ────────────────────────────────────────────────────────────
 
     @Test
-    fun `gap hyperlink URL is lost — only the visible link label survives`() {
+    fun `hyperlink URL is preserved as parenthetical suffix on the visible label`() {
         val bytes = buildDocx { doc ->
             val p = doc.createParagraph()
             // createHyperlinkRun returns an XWPFHyperlinkRun bound to the URI; the run text
@@ -70,10 +70,9 @@ class DocxExtractorFormatGapsTest {
         val blocks = extractor.extract(ByteArrayInputStream(bytes))
         val text = blocks.filterIsInstance<DocumentBlock.Paragraph>().joinToString("\n") { it.text }
 
-        assertTrue(text.contains("the spec"), "Visible label should survive")
-        assertTrue(text.contains("please read"), "Surrounding prose should survive")
-        assertFalse(text.contains("workflow.example.com"),
-            "Hyperlink target URI is dropped — extractor never reads w:hyperlink relations")
+        assertTrue(text.contains("the spec (https://workflow.example.com/spec)"),
+            "Hyperlink should appear as 'visible text (url)'; got: $text")
+        assertTrue(text.contains("— please read."), "Surrounding prose preserved")
     }
 
     // ── Embedded images (positive coverage after Phase 2) ─────────────────────

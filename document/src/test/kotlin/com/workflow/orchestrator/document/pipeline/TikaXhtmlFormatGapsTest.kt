@@ -43,7 +43,7 @@ class TikaXhtmlFormatGapsTest {
     // ── Hyperlinks ────────────────────────────────────────────────────────────
 
     @Test
-    fun `gap HTML anchor href is dropped — only display text remains`() {
+    fun `HTML anchor href is preserved as parenthetical suffix on the anchor text`() {
         val html = """
             <html><body>
             <p>See <a href="https://example.com/details">the details</a> for context.</p>
@@ -53,10 +53,9 @@ class TikaXhtmlFormatGapsTest {
         val blocks = pipeline.extract(ByteArrayInputStream(html.toByteArray()), "text/html")
         val text = blocks.filterIsInstance<DocumentBlock.Paragraph>().joinToString("\n") { it.text }
 
-        assertTrue(text.contains("the details"), "Anchor display text kept")
-        assertTrue(text.contains("for context"), "Surrounding prose kept")
-        assertFalse(text.contains("example.com"),
-            "href is lost — DocumentBlockHandler never reads attributes on <a>")
+        assertTrue(text.contains("the details (https://example.com/details)"),
+            "Anchor href should be appended as parenthetical; got: $text")
+        assertTrue(text.contains("for context"), "Surrounding prose preserved")
     }
 
     // ── Lists (positive coverage after Phase 3) ───────────────────────────────

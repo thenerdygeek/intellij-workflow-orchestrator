@@ -287,7 +287,7 @@ class XlsxExtractorFormatGapsTest {
     // ── Hyperlinks ────────────────────────────────────────────────────────────
 
     @Test
-    fun `gap hyperlink target is dropped — only the cell display value survives`() {
+    fun `hyperlink URL is appended to the cell display value as a parenthetical`() {
         val bytes = buildXlsx { wb ->
             val sheet = wb.createSheet("Sheet1")
             sheet.createRow(0).createCell(0).setCellValue("Link")
@@ -301,9 +301,8 @@ class XlsxExtractorFormatGapsTest {
         val blocks = extractor.extract(ByteArrayInputStream(bytes))
         val cells = blocks.filterIsInstance<DocumentBlock.Table>().flatMap { it.rows.flatten() }
 
-        assertTrue("Docs" in cells, "Display text survives")
-        assertFalse(cells.any { it.contains("example.com") },
-            "URL is dropped — XlsxTableExtractor never reads Cell.hyperlink")
+        assertTrue(cells.any { it.contains("Docs") && it.contains("https://example.com/handbook") },
+            "Hyperlink should appear as 'display (url)'; got: $cells")
     }
 
     // ── Formulas ──────────────────────────────────────────────────────────────
