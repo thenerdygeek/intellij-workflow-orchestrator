@@ -3,6 +3,7 @@ package com.workflow.orchestrator.document.poi
 import com.workflow.orchestrator.core.model.DocumentBlock
 import com.workflow.orchestrator.document.service.ImageExtractionService
 import org.apache.poi.xslf.usermodel.XSLFComment
+import org.apache.poi.xslf.usermodel.XSLFGraphicFrame
 import org.apache.poi.xslf.usermodel.XSLFGroupShape
 import org.apache.poi.xslf.usermodel.XSLFPictureData
 import org.apache.poi.xslf.usermodel.XSLFPictureShape
@@ -134,6 +135,21 @@ class PptxExtractor(
             is XSLFPictureShape -> {
                 if (imageService != null) extractPictureBlock(shape)?.let { listOf(it) } ?: emptyList()
                 else emptyList()
+            }
+            is XSLFGraphicFrame -> {
+                // P5a-3: chart extraction. PPTX charts are wrapped in XSLFGraphicFrame shapes;
+                // XSLFGraphicFrame.hasChart() detects them, getChart() returns the XSLFChart.
+                // XSLFChart extends XDDFChart, so ChartTableBuilder handles it uniformly.
+                if (shape.hasChart()) {
+                    try {
+                        val chart = shape.chart ?: return emptyList()
+                        ChartTableBuilder.toTable(chart)?.let { listOf(it) } ?: emptyList()
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                } else {
+                    emptyList()
+                }
             }
             is XSLFGroupShape -> {
                 // Recurse into children in their declared order; handles arbitrary nesting depth.

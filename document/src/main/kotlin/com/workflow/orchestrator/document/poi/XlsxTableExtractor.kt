@@ -7,6 +7,8 @@ import org.apache.poi.ss.usermodel.FormulaEvaluator
 import org.apache.poi.ss.usermodel.Row
 import org.apache.poi.ss.util.CellRangeAddress
 import org.apache.poi.ss.util.CellReference
+import org.apache.poi.xssf.usermodel.XSSFChart
+import org.apache.poi.xssf.usermodel.XSSFDrawing
 import org.apache.poi.xssf.usermodel.XSSFPicture
 import org.apache.poi.xssf.usermodel.XSSFPictureData
 import org.apache.poi.xssf.usermodel.XSSFSheet
@@ -140,6 +142,9 @@ class XlsxTableExtractor(
                 if (imageService != null) {
                     blocks += collectSheetImages(xssfSheet)
                 }
+
+                // P5a-3: chart extraction — emit Table blocks (one per chart) after images.
+                blocks += collectSheetCharts(xssfSheet)
 
                 if (rowIter.hasNext()) {
                     blocks += DocumentBlock.Paragraph("_(truncated at $MAX_ROWS_PER_SHEET rows)_")
@@ -346,6 +351,41 @@ class XlsxTableExtractor(
             "svg" -> "image/svg+xml"
             "webp" -> "image/webp"
             else -> raw ?: "application/octet-stream"
+        }
+    }
+
+    // ── Sheet chart extraction (P5a-3) ───────────────────────────────────────
+
+    /**
+     * Walks the sheet's [XSSFDrawing] for [XSSFChart] objects and converts each to a
+     * [DocumentBlock.Table] via [ChartTableBuilder]. Returns an empty list when:
+     * - The sheet has no drawing (`drawingPatriarch` is null).
+     * - The drawing has no charts.
+     * - All charts fail to produce a table (no series data).
+     *
+     * Uses `sheet.drawingPatriarch` (read-only accessor) — never `createDrawingPatriarch`,
+     * which mutates the sheet even when no drawing already exists.
+     *
+     * Chart data is exposed via the XDDF (`org.apache.poi.xddf.usermodel.chart`) family.
+     * Each chart is serialised as a `Table(headers, rows, caption)` — the LLM can reason
+     * about bar/line/pie chart series data from the tabular output.
+     */
+    private fun collectSheetCharts(sheet: XSSFSheet): List<DocumentBlock.Table> {
+        val drawing: XSSFDrawing = try {
+            sheet.drawingPatriarch as? XSSFDrawing
+        } catch (_: Exception) {
+            null
+        } ?: return emptyList()
+
+        val charts: List<XSSFChart> = try {
+            drawing.charts
+        } catch (_: Exception) {
+            return emptyList()
+        }
+        if (charts.isEmpty()) return emptyList()
+
+        return charts.mapNotNull { chart ->
+            try { ChartTableBuilder.toTable(chart) } catch (_: Exception) { null }
         }
     }
 

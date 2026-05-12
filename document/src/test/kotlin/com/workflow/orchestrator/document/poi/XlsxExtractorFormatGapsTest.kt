@@ -3,6 +3,9 @@ package com.workflow.orchestrator.document.poi
 import com.workflow.orchestrator.core.model.DocumentBlock
 import org.apache.poi.common.usermodel.HyperlinkType
 import org.apache.poi.ss.usermodel.Workbook
+import org.apache.poi.ss.util.CellRangeAddress
+import org.apache.poi.xddf.usermodel.chart.ChartTypes
+import org.apache.poi.xddf.usermodel.chart.XDDFDataSourcesFactory
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -406,6 +409,130 @@ class XlsxExtractorFormatGapsTest {
         }
         val blocks = extractor.extract(ByteArrayInputStream(bytes))
         assertTrue(blocks.filterIsInstance<DocumentBlock.KeyValueGroup>().none { it.title == "Defined names" })
+    }
+
+    // ── Chart extraction (P5a-3) ──────────────────────────────────────────────
+
+    /**
+     * Builds an in-memory XLSX with a simple bar chart (2 categories × 2 series),
+     * then asserts:
+     * 1. At least one [DocumentBlock.Table] is emitted after the sheet's data table.
+     * 2. The chart table has headers `["Category", "Sales", "Returns"]`.
+     * 3. Each row has the category label + the two series values.
+     * 4. The caption is the chart title "Monthly Metrics".
+     *
+     * Chart data layout (written to Sheet1, rows 0-2, cols 0-2):
+     *
+     * ```
+     * | Month | Sales | Returns |
+     * | Jan   | 100   | 20      |
+     * | Feb   | 150   | 30      |
+     * ```
+     *
+     * The chart is a BAR chart referencing those cell ranges. This exercises
+     * [ChartTableBuilder.toTable] end-to-end via [XlsxTableExtractor.collectSheetCharts].
+     */
+    @Test
+    fun `XLSX bar chart is extracted as Table with headers and rows`() {
+        val bytes = buildXlsx { wb ->
+            val sheet = wb.createSheet("Sheet1")
+
+            // Write chart data into the sheet so POI can reference it as cell ranges.
+            val catData = arrayOf("Jan", "Feb")
+            val salesData = arrayOf<Number>(100.0, 150.0)
+            val returnsData = arrayOf<Number>(20.0, 30.0)
+
+            // Row 0: headers (used for series titles via cell reference)
+            val hr = sheet.createRow(0)
+            hr.createCell(0).setCellValue("Month")
+            hr.createCell(1).setCellValue("Sales")
+            hr.createCell(2).setCellValue("Returns")
+
+            // Rows 1-2: data
+            val dr1 = sheet.createRow(1)
+            dr1.createCell(0).setCellValue(catData[0])
+            dr1.createCell(1).setCellValue(salesData[0].toDouble())
+            dr1.createCell(2).setCellValue(returnsData[0].toDouble())
+
+            val dr2 = sheet.createRow(2)
+            dr2.createCell(0).setCellValue(catData[1])
+            dr2.createCell(1).setCellValue(salesData[1].toDouble())
+            dr2.createCell(2).setCellValue(returnsData[1].toDouble())
+
+            // Create drawing + chart
+            val drawing = sheet.createDrawingPatriarch()
+            val anchor = wb.creationHelper.createClientAnchor().apply {
+                setCol1(4); row1 = 0; setCol2(10); row2 = 15
+            }
+            val chart = drawing.createChart(anchor)
+            chart.setTitleText("Monthly Metrics")
+            chart.setAutoTitleDeleted(false)
+
+            // Axes
+            val bottomAxis = chart.createCategoryAxis(org.apache.poi.xddf.usermodel.chart.AxisPosition.BOTTOM)
+            val leftAxis = chart.createValueAxis(org.apache.poi.xddf.usermodel.chart.AxisPosition.LEFT)
+
+            // Data sources from cell ranges
+            val categories = XDDFDataSourcesFactory.fromStringCellRange(sheet, CellRangeAddress(1, 2, 0, 0))
+            val salesValues = XDDFDataSourcesFactory.fromNumericCellRange(sheet, CellRangeAddress(1, 2, 1, 1))
+            val returnsValues = XDDFDataSourcesFactory.fromNumericCellRange(sheet, CellRangeAddress(1, 2, 2, 2))
+
+            // Bar chart data
+            val barData = chart.createData(ChartTypes.BAR, bottomAxis, leftAxis)
+            barData.setVaryColors(false)
+
+            val series1 = barData.addSeries(categories, salesValues)
+            series1.setTitle("Sales", null)
+
+            val series2 = barData.addSeries(categories, returnsValues)
+            series2.setTitle("Returns", null)
+
+            chart.plot(barData)
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+
+        // There should be at least 2 Table blocks: the sheet data table + the chart table.
+        val tables = blocks.filterIsInstance<DocumentBlock.Table>()
+        assertTrue(tables.size >= 2,
+            "Expected at least 2 Table blocks (sheet data + chart); got ${tables.size}. " +
+                "All blocks: ${blocks.map { it::class.simpleName }}")
+
+        // The chart table has caption "Monthly Metrics" — find it.
+        val chartTable = tables.firstOrNull { it.caption == "Monthly Metrics" }
+        assertNotNull(chartTable,
+            "Expected a Table with caption='Monthly Metrics'; found captions: ${tables.map { it.caption }}")
+
+        checkNotNull(chartTable)
+        assertEquals(listOf("Category", "Sales", "Returns"), chartTable.headers,
+            "Chart table headers must be Category + series titles")
+        assertEquals(2, chartTable.rows.size,
+            "Chart table should have one row per category point (2)")
+
+        // Row values: category + series numerics. The cell-range sources return the
+        // cached values from the XML — typically Double.toString() e.g. "100.0".
+        val row0 = chartTable.rows[0]
+        assertEquals("Jan", row0[0], "First category label should be Jan")
+        assertTrue(row0[1].isNotEmpty(), "Sales value for Jan must be non-empty")
+
+        val row1 = chartTable.rows[1]
+        assertEquals("Feb", row1[0], "Second category label should be Feb")
+        assertTrue(row1[1].isNotEmpty(), "Sales value for Feb must be non-empty")
+    }
+
+    @Test
+    fun `XLSX with no charts emits no extra Table beyond the sheet data table`() {
+        val bytes = buildXlsx { wb ->
+            val sheet = wb.createSheet("Sheet1")
+            sheet.createRow(0).createCell(0).setCellValue("Header")
+            sheet.createRow(1).createCell(0).setCellValue("data1")
+        }
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val tables = blocks.filterIsInstance<DocumentBlock.Table>()
+        assertEquals(1, tables.size,
+            "No chart in workbook — should have exactly one Table (the sheet data). Got: ${tables.size}")
+        assertFalse(tables.any { it.caption != null },
+            "Sheet data Table should have null caption; only chart Tables carry a caption")
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
