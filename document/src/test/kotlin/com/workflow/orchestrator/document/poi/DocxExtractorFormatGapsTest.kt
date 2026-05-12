@@ -7,6 +7,7 @@ import org.apache.poi.xwpf.usermodel.XWPFDocument
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayInputStream
@@ -118,6 +119,103 @@ class DocxExtractorFormatGapsTest {
         assertNotNull(imageRef.path, "path should be non-null when ImageExtractionService is wired")
         assertTrue(java.nio.file.Files.exists(java.nio.file.Path.of(imageRef.path!!)),
             "Saved file should exist on disk at the reported path")
+    }
+
+    @Test
+    fun `oversize image emits EmbeddedFileRef with null path — bytes never materialise into memory`(
+        @org.junit.jupiter.api.io.TempDir downloads: java.nio.file.Path,
+    ) {
+        // Build a "large" PNG by padding it with junk after the PNG signature — just enough
+        // size to exceed a tiny test-only cap. POI's hardening dance still applies.
+        IOUtils.setByteArrayMaxOverride(200_000_000)
+        val largeBytes = tinyPng() + ByteArray(2 * 1024 * 1024)  // ~2 MB total
+        val bytes = try {
+            buildDocx { doc ->
+                doc.createParagraph().createRun().apply {
+                    setText("Body. ")
+                    addPicture(
+                        ByteArrayInputStream(largeBytes),
+                        XWPFDocument.PICTURE_TYPE_PNG,
+                        "large.png",
+                        Units.toEMU(10.0),
+                        Units.toEMU(10.0),
+                    )
+                }
+            }
+        } finally {
+            IOUtils.setByteArrayMaxOverride(50_000_000)
+        }
+
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        // Use a tiny cap (1 MB) so the 2 MB image triggers the oversize branch.
+        val visitor = com.workflow.orchestrator.document.poi.visitor.ImageExtractionVisitor(
+            imageService = imageService,
+            docKey = "oversize-test.docx",
+            maxBytesPerImage = 1L * 1024 * 1024,
+        )
+        val extractor = DocxTableExtractor(
+            paragraphVisitors = listOf(
+                com.workflow.orchestrator.document.poi.visitor.DefaultHeadingParagraphVisitor(),
+                visitor,
+            ),
+        )
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val imageRef = blocks.filterIsInstance<DocumentBlock.EmbeddedFileRef>().singleOrNull()
+        assertNotNull(imageRef, "Oversize image still emits an EmbeddedFileRef placeholder so the LLM knows an image exists")
+        assertNull(imageRef!!.path, "Oversize image: path must be null — bytes never materialised in memory")
+        // The downloads dir should be empty — no oversized file was written.
+        val savedFiles = java.nio.file.Files.walk(downloads).filter { java.nio.file.Files.isRegularFile(it) }.toList()
+        assertTrue(savedFiles.isEmpty(),
+            "No file should have been written for the oversize image; got: $savedFiles")
+    }
+
+    @Test
+    fun `duplicate inline images share the same on-disk path via content addressing`(
+        @org.junit.jupiter.api.io.TempDir downloads: java.nio.file.Path,
+    ) {
+        IOUtils.setByteArrayMaxOverride(200_000_000)
+        val pngBytes = tinyPng()
+        val bytes = try {
+            buildDocx { doc ->
+                // Same image embedded twice in the same paragraph
+                val p = doc.createParagraph()
+                repeat(2) {
+                    p.createRun().apply {
+                        addPicture(
+                            ByteArrayInputStream(pngBytes),
+                            XWPFDocument.PICTURE_TYPE_PNG,
+                            "dup.png",
+                            Units.toEMU(10.0),
+                            Units.toEMU(10.0),
+                        )
+                    }
+                }
+            }
+        } finally {
+            IOUtils.setByteArrayMaxOverride(50_000_000)
+        }
+
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        val extractor = DocxTableExtractor(imageService = imageService, docKey = "dup-test.docx")
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val refs = blocks.filterIsInstance<DocumentBlock.EmbeddedFileRef>()
+        assertEquals(2, refs.size, "Two EmbeddedFileRef blocks for the two embedding sites")
+        assertEquals(refs[0].path, refs[1].path,
+            "Content-addressed: identical bytes within one doc share the same on-disk path")
+    }
+
+    @Test
+    fun `DOCX with no images emits no EmbeddedFileRef even with imageService wired`(
+        @org.junit.jupiter.api.io.TempDir downloads: java.nio.file.Path,
+    ) {
+        val bytes = buildDocx { doc ->
+            doc.createParagraph().createRun().setText("Just text, no images at all.")
+        }
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        val extractor = DocxTableExtractor(imageService = imageService, docKey = "noimg-test.docx")
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        assertTrue(blocks.none { it is DocumentBlock.EmbeddedFileRef },
+            "No images in the doc → visitor emits nothing")
     }
 
     @Test

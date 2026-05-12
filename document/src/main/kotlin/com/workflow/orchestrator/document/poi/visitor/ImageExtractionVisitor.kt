@@ -38,6 +38,15 @@ class ImageExtractionVisitor(
     private val maxBytesPerImage: Long = 25L * 1024 * 1024,
 ) : ParagraphVisitor {
 
+    init {
+        // readNBytes((maxBytesPerImage + 1).toInt()) Int-clamps; values >= Int.MAX_VALUE would
+        // silently truncate and let oversized streams slip through. Fail fast instead — 25 MB
+        // default is fine, anyone bumping past 2 GB is doing something wrong.
+        require(maxBytesPerImage < Int.MAX_VALUE.toLong()) {
+            "maxBytesPerImage must fit in Int (< 2 GB); got $maxBytesPerImage"
+        }
+    }
+
     override fun visit(paragraph: XWPFParagraph, doc: XWPFDocument): List<DocumentBlock> {
         val pictures = paragraph.runs.flatMap { it.embeddedPictures.orEmpty() }
         if (pictures.isEmpty()) return emptyList()
@@ -85,8 +94,14 @@ class ImageExtractionVisitor(
 
     /**
      * Maps POI's [org.apache.poi.common.usermodel.PictureType] enum to a MIME string.
-     * Uses `getPictureTypeEnum()` (available since POI 5.x) for a clean enum-based dispatch;
-     * falls back to `application/octet-stream` for unknown or `null` types.
+     * Uses `getPictureTypeEnum()` (available since POI 5.x) for a clean enum-based dispatch.
+     *
+     * For types not present in POI 5.4.1's `PictureType` enum (notably WebP — no
+     * `PictureType.WEBP` constant exists in this POI version), falls back to
+     * `XWPFPictureData.suggestFileExtension()` so newer formats embedded into a DOCX still
+     * resolve to a sensible MIME. Vector/proprietary formats (WMF/EMF/PICT/WPG/EPS/WDP) and
+     * truly unknown types degrade to `application/octet-stream` — the LLM can't render those
+     * via `view_image`, but the placeholder still tells it an image existed.
      */
     private fun pictureMime(pictureData: org.apache.poi.xwpf.usermodel.XWPFPictureData): String {
         return when (pictureData.pictureTypeEnum) {
@@ -98,7 +113,16 @@ class ImageExtractionVisitor(
             org.apache.poi.common.usermodel.PictureType.DIB -> "image/bmp"
             org.apache.poi.common.usermodel.PictureType.TIFF -> "image/tiff"
             org.apache.poi.common.usermodel.PictureType.SVG -> "image/svg+xml"
-            else -> "application/octet-stream"
+            else -> {
+                // Fall back to suggested filename extension for newer types (e.g. WebP — POI
+                // 5.4.1 has no PictureType.WEBP). Vector/legacy formats end up here too.
+                val ext = pictureData.suggestFileExtension()?.lowercase()
+                when (ext) {
+                    "webp" -> "image/webp"
+                    "svg" -> "image/svg+xml"
+                    else -> "application/octet-stream"
+                }
+            }
         }
     }
 }
