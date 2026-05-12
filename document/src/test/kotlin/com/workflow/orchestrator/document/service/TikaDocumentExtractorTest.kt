@@ -32,10 +32,13 @@ class TikaDocumentExtractorTest {
         val result = extractor.extract(fixturePath("data.csv"))
 
         assertFalse(result.isError, "Expected success but got error: ${result.summary}")
-        assertEquals("text/csv", result.data.mime, "MIME type must be text/csv")
-        assertFalse(result.data.truncated, "data.csv should not be truncated")
-        assertTrue(result.data.markdown.contains("Alice"),
-            "Extracted markdown must contain 'Alice'; got: ${result.data.markdown.take(500)}")
+        val content = requireNotNull(result.data) {
+            "Expected non-null content, got error: ${result.summary}"
+        }
+        assertEquals("text/csv", content.mime, "MIME type must be text/csv")
+        assertFalse(content.truncated, "data.csv should not be truncated")
+        assertTrue(content.markdown.contains("Alice"),
+            "Extracted markdown must contain 'Alice'; got: ${content.markdown.take(500)}")
     }
 
     // ── 2. bug-tracker.xlsx → success with BUG-001 and Q1 ─────────────────────
@@ -45,15 +48,18 @@ class TikaDocumentExtractorTest {
         val result = extractor.extract(fixturePath("bug-tracker.xlsx"))
 
         assertFalse(result.isError, "Expected success but got error: ${result.summary}")
+        val content = requireNotNull(result.data) {
+            "Expected non-null content, got error: ${result.summary}"
+        }
         assertEquals(
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            result.data.mime,
+            content.mime,
             "MIME type must be OOXML spreadsheet",
         )
-        assertTrue(result.data.markdown.contains("BUG-001"),
-            "Markdown must contain 'BUG-001'; snippet: ${result.data.markdown.take(500)}")
-        assertTrue(result.data.markdown.contains("Q1"),
-            "Markdown must contain merged cell value 'Q1'; snippet: ${result.data.markdown.take(1000)}")
+        assertTrue(content.markdown.contains("BUG-001"),
+            "Markdown must contain 'BUG-001'; snippet: ${content.markdown.take(500)}")
+        assertTrue(content.markdown.contains("Q1"),
+            "Markdown must contain merged cell value 'Q1'; snippet: ${content.markdown.take(1000)}")
     }
 
     // ── 3. spec-with-tables.pdf → success with FR-001, Approved, Test, Pass ────
@@ -63,9 +69,12 @@ class TikaDocumentExtractorTest {
         val result = extractor.extract(fixturePath("spec-with-tables.pdf"))
 
         assertFalse(result.isError, "Expected success but got error: ${result.summary}")
-        assertEquals("application/pdf", result.data.mime)
+        val content = requireNotNull(result.data) {
+            "Expected non-null content, got error: ${result.summary}"
+        }
+        assertEquals("application/pdf", content.mime)
 
-        val md = result.data.markdown
+        val md = content.markdown
         assertTrue(md.contains("FR-001"),
             "Markdown must contain 'FR-001' from the FR table; snippet: ${md.take(1000)}")
         // The Acceptance table has headers ["Test", "Expected", "Actual"] and a row ["Pass",...]
@@ -122,8 +131,11 @@ class TikaDocumentExtractorTest {
         // Either succeeds with text/plain, or fails with a clean error — must not throw.
         assertTrue(result.summary.isNotBlank(), "Summary must be non-blank regardless of outcome")
         if (!result.isError) {
+            val content = requireNotNull(result.data) {
+                "Expected non-null content, got error: ${result.summary}"
+            }
             // If it succeeds, Tika should have detected the real MIME type (text/plain).
-            assertEquals("text/plain", result.data.mime,
+            assertEquals("text/plain", content.mime,
                 "Plain-text file with .pdf extension should be detected as text/plain")
         }
     }
@@ -136,13 +148,16 @@ class TikaDocumentExtractorTest {
         val result = smallExtractor.extract(fixturePath("data.csv"))
 
         assertFalse(result.isError, "Expected success even with tiny maxChars; got: ${result.summary}")
-        assertTrue(result.data.truncated,
+        val content = requireNotNull(result.data) {
+            "Expected non-null content, got error: ${result.summary}"
+        }
+        assertTrue(content.truncated,
             "Markdown must be truncated when maxCharsProvider = 50")
-        assertTrue(result.data.markdown.length <= 50 + 300,
+        assertTrue(content.markdown.length <= 50 + 300,
             // The first block may exceed 50 chars (single-block oversizing rule in assembler),
             // but the rest of the document must be cut off. We allow assembler overhead for the
             // truncation marker text itself (~300 chars).
-            "Markdown length should be close to 50 chars budget; got ${result.data.markdown.length}",
+            "Markdown length should be close to 50 chars budget; got ${content.markdown.length}",
         )
     }
 
@@ -156,10 +171,13 @@ class TikaDocumentExtractorTest {
         val result = smallProviderExtractor.extract(fixturePath("data.csv"), options)
 
         assertFalse(result.isError, "Expected success; got: ${result.summary}")
+        val content = requireNotNull(result.data) {
+            "Expected non-null content, got error: ${result.summary}"
+        }
         // data.csv is tiny — well under 1000 chars. Should NOT be truncated at 1000.
-        assertFalse(result.data.truncated,
+        assertFalse(content.truncated,
             "Markdown must NOT be truncated when options.maxChars=1000 on a tiny CSV")
-        assertTrue(result.data.markdown.contains("Alice"),
+        assertTrue(content.markdown.contains("Alice"),
             "Full content must be present when options.maxChars=1000")
     }
 
@@ -176,12 +194,17 @@ class TikaDocumentExtractorTest {
         results.forEach { result ->
             assertFalse(result.isError,
                 "All concurrent extractions must succeed; error: ${result.summary}")
-            assertTrue(result.data.markdown.contains("Alice"),
+            val content = requireNotNull(result.data) {
+                "Expected non-null content, got error: ${result.summary}"
+            }
+            assertTrue(content.markdown.contains("Alice"),
                 "Each concurrent extraction must contain 'Alice'")
         }
 
         // All 4 must produce identical markdown (per-call instantiation + semaphore correctness).
-        val markdowns = results.map { it.data.markdown }.toSet()
+        val markdowns = results.map {
+            requireNotNull(it.data) { "Expected non-null content, got error: ${it.summary}" }.markdown
+        }.toSet()
         assertEquals(1, markdowns.size,
             "All 4 concurrent extractions must produce identical markdown; got ${markdowns.size} distinct outputs")
     }

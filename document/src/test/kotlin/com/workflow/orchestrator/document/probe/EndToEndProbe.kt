@@ -66,7 +66,9 @@ class EndToEndProbe {
                 Files.writeString(outFile, "# ERROR\n\n${result.summary}\n")
                 report.appendLine("| $name | ERROR | - | - | - | - | ${result.summary.take(80)} |")
             } else {
-                val content = result.data
+                val content = requireNotNull(result.data) {
+                    "Expected non-null content, got error: ${result.summary}"
+                }
                 Files.writeString(outFile, content.markdown)
                 val tableCount = "\\| ---".toRegex().findAll(content.markdown).count()
                 val firstChars = content.markdown.take(80).replace("\n", " ").replace("|", "\\|")
