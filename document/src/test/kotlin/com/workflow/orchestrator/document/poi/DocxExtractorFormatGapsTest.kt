@@ -280,6 +280,88 @@ class DocxExtractorFormatGapsTest {
         assertEquals("real comment", commentBlocks.single().text)
     }
 
+    // ── Tracked changes (positive coverage after Phase 1) ──────────────────────
+
+    @Test
+    fun `tracked insertion emits DocumentBlock Comment with TRACKED_INSERTION kind`() {
+        val bytes = buildDocx { doc ->
+            val p = doc.createParagraph()
+            p.createRun().setText("Before insertion. ")
+
+            val ctp = p.ctp
+            val ins = ctp.addNewIns()
+            ins.author = "Tom"
+            ins.id = java.math.BigInteger.valueOf(1)
+            val insRun = ins.addNewR()
+            insRun.addNewT().stringValue = "ADDED"
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val tracked = blocks.filterIsInstance<DocumentBlock.Comment>()
+            .filter { it.kind == DocumentBlock.Comment.Kind.TRACKED_INSERTION }
+
+        assertEquals(1, tracked.size, "Expected one TRACKED_INSERTION Comment")
+        assertEquals("Tom", tracked.single().author)
+        assertEquals("ADDED", tracked.single().text)
+    }
+
+    @Test
+    fun `tracked deletion emits DocumentBlock Comment with TRACKED_DELETION kind and deleted text in anchor`() {
+        val bytes = buildDocx { doc ->
+            val p = doc.createParagraph()
+            p.createRun().setText("Before deletion. ")
+
+            val ctp = p.ctp
+            val del = ctp.addNewDel()
+            del.author = "Tom"
+            del.id = java.math.BigInteger.valueOf(2)
+            val delRun = del.addNewR()
+            delRun.addNewDelText().stringValue = "REMOVED"
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val tracked = blocks.filterIsInstance<DocumentBlock.Comment>()
+            .filter { it.kind == DocumentBlock.Comment.Kind.TRACKED_DELETION }
+
+        assertEquals(1, tracked.size, "Expected one TRACKED_DELETION Comment")
+        assertEquals("Tom", tracked.single().author)
+        assertEquals("REMOVED", tracked.single().anchorText,
+            "Deleted text should be in anchorText so the assembler can render it in the header")
+        assertTrue(tracked.single().text.isBlank(),
+            "TRACKED_DELETION body should be blank — the deleted text is in the header")
+    }
+
+    @Test
+    fun `mixed ins and del in one paragraph emit in document order`() {
+        val bytes = buildDocx { doc ->
+            val p = doc.createParagraph()
+            p.createRun().setText("Start. ")
+
+            val ctp = p.ctp
+            ctp.addNewDel().apply {
+                author = "Tom"
+                id = java.math.BigInteger.valueOf(1)
+                addNewR().addNewDelText().stringValue = "first-removed"
+            }
+            ctp.addNewIns().apply {
+                author = "Tom"
+                id = java.math.BigInteger.valueOf(2)
+                addNewR().addNewT().stringValue = "second-added"
+            }
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val tracked = blocks.filterIsInstance<DocumentBlock.Comment>()
+            .filter { it.kind == DocumentBlock.Comment.Kind.TRACKED_INSERTION ||
+                      it.kind == DocumentBlock.Comment.Kind.TRACKED_DELETION }
+
+        assertEquals(2, tracked.size)
+        assertEquals(DocumentBlock.Comment.Kind.TRACKED_DELETION, tracked[0].kind)
+        assertEquals("first-removed", tracked[0].anchorText)
+        assertEquals(DocumentBlock.Comment.Kind.TRACKED_INSERTION, tracked[1].kind)
+        assertEquals("second-added", tracked[1].text)
+    }
+
     // ── Body-only iteration boundary ──────────────────────────────────────────
 
     /**

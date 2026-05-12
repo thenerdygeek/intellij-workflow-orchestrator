@@ -3,6 +3,7 @@ package com.workflow.orchestrator.document.poi
 import com.workflow.orchestrator.core.model.DocumentBlock
 import com.workflow.orchestrator.document.poi.visitor.CommentExtractionVisitor
 import com.workflow.orchestrator.document.poi.visitor.DefaultHeadingParagraphVisitor
+import com.workflow.orchestrator.document.poi.visitor.TrackedChangeVisitor
 import com.workflow.orchestrator.document.poi.visitor.DefaultTableVisitor
 import com.workflow.orchestrator.document.poi.visitor.ParagraphVisitor
 import com.workflow.orchestrator.document.poi.visitor.PostBodyVisitor
@@ -49,6 +50,7 @@ class DocxTableExtractor(
     private val paragraphVisitors: List<ParagraphVisitor> = listOf(
         DefaultHeadingParagraphVisitor(),
         CommentExtractionVisitor(),
+        TrackedChangeVisitor(),
     ),
     private val tableVisitors: List<TableVisitor> = listOf(DefaultTableVisitor()),
     private val postBodyVisitors: List<PostBodyVisitor> = emptyList(),
