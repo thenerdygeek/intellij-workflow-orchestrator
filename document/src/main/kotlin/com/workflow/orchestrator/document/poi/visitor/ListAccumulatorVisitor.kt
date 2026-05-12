@@ -42,6 +42,14 @@ class ListAccumulatorVisitor : ParagraphVisitor, PostBodyVisitor {
     private var currentNumId: BigInteger? = null
     private var currentOrdered: Boolean = false
 
+    /**
+     * Comments anchored to list-item paragraphs (paragraph.numID != null) that have been
+     * deferred via [addPendingComment] and are waiting for the next list flush. Drained
+     * (and cleared) inside [flush] so they emit AFTER the [DocumentBlock.ListBlock] in
+     * the output stream, preserving the sequential reading order.
+     */
+    private val pendingListItemComments = mutableListOf<DocumentBlock.Comment>()
+
     // ── ParagraphVisitor ──────────────────────────────────────────────────────
 
     override fun visit(paragraph: XWPFParagraph, doc: XWPFDocument): List<DocumentBlock> {
@@ -55,8 +63,7 @@ class ListAccumulatorVisitor : ParagraphVisitor, PostBodyVisitor {
             }
             numId == null -> {
                 // Run ended: flush the current list and let the next visitors handle this paragraph.
-                val flushed = flush()
-                flushed?.let { listOf(it) } ?: emptyList()
+                flush()
             }
             currentNumId == null || numId == currentNumId -> {
                 // Continue (or start) the current list.
@@ -77,16 +84,29 @@ class ListAccumulatorVisitor : ParagraphVisitor, PostBodyVisitor {
                 if (text.isNotEmpty()) {
                     items += indented(text, paragraph.numIlvl)
                 }
-                flushed?.let { listOf(it) } ?: emptyList()
+                flushed
             }
         }
     }
 
     // ── PostBodyVisitor ───────────────────────────────────────────────────────
 
-    override fun visit(doc: XWPFDocument): List<DocumentBlock> {
-        val flushed = flush()
-        return flushed?.let { listOf(it) } ?: emptyList()
+    override fun visit(doc: XWPFDocument): List<DocumentBlock> = flush()
+
+    // ── Cross-visitor side channel ────────────────────────────────────────────
+
+    /**
+     * Accepts a Comment block that anchors to a list-item paragraph. The comment is held
+     * until the current list run flushes, then emitted AFTER the [DocumentBlock.ListBlock]
+     * so the block stream reads ListBlock → Comment(s) → next-content, preserving the
+     * sequential contract of the list.
+     *
+     * Called by [CommentExtractionVisitor] (and conceptually by any other future visitor
+     * that wants to anchor adjunct content to a list item) instead of returning the
+     * Comment directly from its `visit()` method.
+     */
+    fun addPendingComment(comment: DocumentBlock.Comment) {
+        pendingListItemComments += comment
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────
@@ -97,20 +117,34 @@ class ListAccumulatorVisitor : ParagraphVisitor, PostBodyVisitor {
     }
 
     /**
-     * Flushes the current accumulator as a [DocumentBlock.ListBlock] and resets state.
-     * Returns null (and still resets) when the accumulator is empty.
+     * Flushes the current accumulator and any deferred list-item comments. Returns
+     * `[ListBlock, Comment*]` when items were buffered, or an empty list when the
+     * accumulator was empty. In both cases ALL state (items, numId, ordered flag,
+     * pending comments) is reset.
+     *
+     * Pending comments are only emitted when there is a ListBlock to anchor them to;
+     * when items is empty (no list run was in progress) any pending comments are
+     * dropped along with the rest of the state. In practice this never happens because
+     * [CommentExtractionVisitor] only routes comments here when `paragraph.numID != null`,
+     * which always coincides with a list run being active.
      */
-    private fun flush(): DocumentBlock.ListBlock? {
+    private fun flush(): List<DocumentBlock> {
         if (items.isEmpty()) {
             currentNumId = null
             currentOrdered = false
-            return null
+            pendingListItemComments.clear()
+            return emptyList()
         }
         val block = DocumentBlock.ListBlock(ordered = currentOrdered, items = items.toList())
         items.clear()
         currentNumId = null
         currentOrdered = false
-        return block
+        val emitted = buildList<DocumentBlock> {
+            add(block)
+            addAll(pendingListItemComments)
+        }
+        pendingListItemComments.clear()
+        return emitted
     }
 
     /**

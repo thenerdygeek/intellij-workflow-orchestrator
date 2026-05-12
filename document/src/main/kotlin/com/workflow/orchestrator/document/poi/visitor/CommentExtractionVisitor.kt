@@ -15,8 +15,22 @@ import org.apache.poi.xwpf.usermodel.XWPFParagraph
  * Multiple comments ending in the same paragraph are emitted in ascending
  * `w:id` order. Comments whose ID is not found in the document (orphaned
  * markers) are silently skipped.
+ *
+ * ## List-item anchoring
+ *
+ * When [listAccumulator] is non-null AND the visited paragraph is a list item
+ * (`paragraph.numID != null`), comments are routed into the accumulator's
+ * pending-comment buffer instead of being returned immediately. The accumulator
+ * emits them AFTER its [DocumentBlock.ListBlock] on flush, so the block stream
+ * reads `[..., ListBlock, Comment, ...]` rather than `[..., Comment, ..., ListBlock, ...]`.
+ *
+ * @param listAccumulator Optional accumulator shared with [ListAccumulatorVisitor];
+ *                        when null (e.g. test fixtures that don't use the default
+ *                        chain), comments emit synchronously as before.
  */
-class CommentExtractionVisitor : ParagraphVisitor {
+class CommentExtractionVisitor(
+    private val listAccumulator: ListAccumulatorVisitor? = null,
+) : ParagraphVisitor {
 
     override fun visit(paragraph: XWPFParagraph, doc: XWPFDocument): List<DocumentBlock> {
         val endingCommentIds = collectCommentRangeEndIds(paragraph)
@@ -24,7 +38,7 @@ class CommentExtractionVisitor : ParagraphVisitor {
 
         val anchorText = paragraph.text.trim().take(MAX_ANCHOR_LEN)
 
-        return endingCommentIds.mapNotNull { id ->
+        val comments = endingCommentIds.mapNotNull { id ->
             val comment = doc.getCommentByID(id) ?: return@mapNotNull null
             DocumentBlock.Comment(
                 author = comment.author?.takeIf { it.isNotBlank() },
@@ -33,6 +47,15 @@ class CommentExtractionVisitor : ParagraphVisitor {
                 kind = DocumentBlock.Comment.Kind.REVIEW,
             )
         }
+
+        // If this paragraph is a list item AND we have a listAccumulator, route the
+        // comments through it so they emit AFTER the ListBlock instead of mid-stream.
+        if (listAccumulator != null && paragraph.numID != null) {
+            comments.forEach(listAccumulator::addPendingComment)
+            return emptyList()
+        }
+
+        return comments
     }
 
     /**

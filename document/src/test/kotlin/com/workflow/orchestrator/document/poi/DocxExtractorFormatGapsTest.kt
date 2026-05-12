@@ -449,6 +449,61 @@ class DocxExtractorFormatGapsTest {
             "Paragraph must appear before the ListBlock in extracted order")
     }
 
+    @Test
+    fun `comment anchored to a list-item paragraph emits AFTER the ListBlock, not mid-stream`() {
+        // Build a DOCX with three list items where the SECOND item has a w:commentRangeEnd
+        // anchored to it. Without the deferred-comment side channel, the chain would emit
+        // [Comment, ListBlock] (because CommentExtractionVisitor runs before the accumulator
+        // flushes on the next non-list paragraph or post-body). The fix routes the Comment
+        // through the accumulator so it emits AFTER the ListBlock instead.
+        val bytes = buildDocx { doc ->
+            val numbering = doc.createNumbering()
+            val ctAbstract: CTAbstractNum = CTAbstractNum.Factory.newInstance()
+            ctAbstract.abstractNumId = BigInteger.ZERO
+            ctAbstract.addNewLvl().addNewNumFmt().`val` = STNumberFormat.BULLET
+            val abstractNumId = numbering.addAbstractNum(XWPFAbstractNum(ctAbstract))
+            val numId = numbering.addNum(abstractNumId)
+
+            // Item 1
+            val p1 = doc.createParagraph().apply { numID = numId }
+            p1.createRun().setText("item-one")
+
+            // Item 2 — anchor a comment here
+            val p2 = doc.createParagraph().apply { numID = numId }
+            p2.createRun().setText("item-two")
+            val comments = doc.createComments()
+            val c = comments.createComment(BigInteger.valueOf(1))
+            c.author = "Reviewer"
+            c.createParagraph().createRun().setText("inline comment on item-two")
+            val ctp = p2.ctp
+            ctp.addNewCommentRangeStart().id = BigInteger.valueOf(1)
+            ctp.addNewCommentRangeEnd().id = BigInteger.valueOf(1)
+            ctp.addNewR().addNewCommentReference().id = BigInteger.valueOf(1)
+
+            // Item 3
+            val p3 = doc.createParagraph().apply { numID = numId }
+            p3.createRun().setText("item-three")
+        }
+
+        val blocks = DocxTableExtractor().extract(ByteArrayInputStream(bytes))
+        val classes = blocks.map { it::class.simpleName!! }
+
+        val listIdx = blocks.indexOfFirst { it is DocumentBlock.ListBlock }
+        val commentIdx = blocks.indexOfFirst { it is DocumentBlock.Comment }
+        assertTrue(listIdx >= 0, "Expected a ListBlock in the output; got: $classes")
+        assertTrue(commentIdx > listIdx,
+            "Comment must emit AFTER the ListBlock, not between items. Got: $classes")
+
+        val list = blocks[listIdx] as DocumentBlock.ListBlock
+        assertEquals(listOf("item-one", "item-two", "item-three"), list.items,
+            "All three items should be in the ListBlock, regardless of comment anchoring")
+
+        val comment = blocks[commentIdx] as DocumentBlock.Comment
+        assertEquals("Reviewer", comment.author)
+        assertEquals("inline comment on item-two", comment.text)
+        assertEquals(DocumentBlock.Comment.Kind.REVIEW, comment.kind)
+    }
+
     // ── Comments (positive coverage after Phase 1) ─────────────────────────────
 
     @Test

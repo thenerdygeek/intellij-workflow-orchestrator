@@ -74,7 +74,9 @@ class DocxTableExtractor(
             val paragraphVisitors = buildList<ParagraphVisitor> {
                 add(listAccumulator)                     // FIRST: accumulate / flush list items
                 add(DefaultHeadingParagraphVisitor())
-                add(CommentExtractionVisitor())
+                // Share the accumulator so comments on list-item paragraphs are deferred
+                // until after the ListBlock flush (preserves [ListBlock, Comment] order).
+                add(CommentExtractionVisitor(listAccumulator = listAccumulator))
                 add(TrackedChangeVisitor())
                 if (imageService != null) add(ImageExtractionVisitor(imageService, docKey))
             }
