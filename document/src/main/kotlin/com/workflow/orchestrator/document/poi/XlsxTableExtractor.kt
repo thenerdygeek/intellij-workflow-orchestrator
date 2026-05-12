@@ -71,6 +71,9 @@ class XlsxTableExtractor(
         XSSFWorkbook(stream).use { wb ->
             val evaluator: FormulaEvaluator = wb.creationHelper.createFormulaEvaluator()
 
+            val definedNames = collectDefinedNames(wb)
+            if (definedNames != null) blocks += definedNames
+
             for (sheet in wb) {
                 val xssfSheet = sheet as? XSSFSheet ?: continue
 
@@ -145,6 +148,28 @@ class XlsxTableExtractor(
         }
 
         return blocks
+    }
+
+    // ── Workbook-level defined names ──────────────────────────────────────────
+
+    /**
+     * Emits `KeyValueGroup("Defined names", [(name, refersTo)])` for workbook-level
+     * named ranges (excludes sheet-scoped names since those are typically auto-generated
+     * print-area / filter ranges and would noise-flood the output).
+     *
+     * Returns null if there are no named ranges, so empty workbooks emit nothing.
+     */
+    private fun collectDefinedNames(wb: XSSFWorkbook): DocumentBlock.KeyValueGroup? {
+        val names = try { wb.allNames } catch (_: Exception) { return null }
+        val pairs = names.mapNotNull { name ->
+            // Skip sheet-scoped names — they're usually auto-generated print areas.
+            if (name.sheetIndex >= 0) return@mapNotNull null
+            val key = name.nameName?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val value = try { name.refersToFormula?.takeIf { it.isNotBlank() } } catch (_: Exception) { null }
+                ?: "(formula unavailable)"
+            key to value
+        }
+        return if (pairs.isNotEmpty()) DocumentBlock.KeyValueGroup("Defined names", pairs) else null
     }
 
     // ── Merged cell resolution ─────────────────────────────────────────────────

@@ -371,6 +371,44 @@ class XlsxExtractorFormatGapsTest {
             "Rich-text runs collapse to plain text — DocumentBlock.Table cells are flat strings")
     }
 
+    // ── Defined names (positive coverage after Phase 4) ───────────────────────
+
+    @Test
+    fun `workbook-scoped defined names emit as KeyValueGroup at top of output`() {
+        val bytes = buildXlsx { wb ->
+            val sheet = wb.createSheet("Data")
+            sheet.createRow(0).createCell(0).setCellValue("Header")
+            sheet.createRow(1).createCell(0).setCellValue("v1")
+
+            val name = wb.createName()
+            name.nameName = "MyRange"
+            name.refersToFormula = "Data!\$A\$1:\$A\$10"
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val kvg = blocks.filterIsInstance<DocumentBlock.KeyValueGroup>()
+            .firstOrNull { it.title == "Defined names" }
+        assertNotNull(kvg, "Expected a 'Defined names' KeyValueGroup at the top")
+        assertEquals(listOf("MyRange" to "Data!\$A\$1:\$A\$10"), kvg!!.pairs)
+
+        // Ordering: the defined-names block lives BEFORE the first sheet's Heading.
+        val kvgIdx = blocks.indexOf(kvg)
+        val firstHeadingIdx = blocks.indexOfFirst { it is DocumentBlock.Heading }
+        assertTrue(kvgIdx >= 0 && firstHeadingIdx > kvgIdx,
+            "Defined names should come before any sheet Heading; got kvg@$kvgIdx headings@$firstHeadingIdx")
+    }
+
+    @Test
+    fun `workbook with no defined names emits no Defined names KeyValueGroup`() {
+        val bytes = buildXlsx { wb ->
+            wb.createSheet("Data").apply {
+                createRow(0).createCell(0).setCellValue("only-data")
+            }
+        }
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        assertTrue(blocks.filterIsInstance<DocumentBlock.KeyValueGroup>().none { it.title == "Defined names" })
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun buildXlsx(build: (XSSFWorkbook) -> Unit): ByteArray {
