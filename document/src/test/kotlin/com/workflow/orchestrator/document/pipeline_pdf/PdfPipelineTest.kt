@@ -331,6 +331,115 @@ class PdfPipelineTest {
         }
     }
 
+    // ── P4T1. PDF metadata channels: document properties, bookmarks, AcroForm ──
+
+    @Test
+    fun `pdf with document properties emits KeyValueGroup with Title Author Subject fields`() {
+        val pdfBytes = run {
+            val doc = org.apache.pdfbox.pdmodel.PDDocument()
+            doc.addPage(org.apache.pdfbox.pdmodel.PDPage())
+            val info = doc.documentInformation
+            info.title = "My Spec"
+            info.author = "Jane"
+            info.subject = "Q4 plan"
+            val out = java.io.ByteArrayOutputStream()
+            doc.save(out); doc.close()
+            out.toByteArray()
+        }
+        val tempFile = java.nio.file.Files.createTempFile("p4t1-props-", ".pdf")
+        java.nio.file.Files.write(tempFile, pdfBytes)
+        try {
+            val blocks = PdfPipeline().extract(tempFile)
+            val kvg = blocks.filterIsInstance<DocumentBlock.KeyValueGroup>()
+                .firstOrNull { it.title == "Document properties" }
+            assertNotNull(kvg, "Expected Document properties KeyValueGroup")
+            val pairsMap = kvg!!.pairs.toMap()
+            assertEquals("My Spec", pairsMap["Title"])
+            assertEquals("Jane", pairsMap["Author"])
+            assertEquals("Q4 plan", pairsMap["Subject"])
+        } finally {
+            java.nio.file.Files.deleteIfExists(tempFile)
+        }
+    }
+
+    @Test
+    fun `pdf with no doc-info fields emits no Document properties KeyValueGroup`() {
+        val pdfBytes = run {
+            val doc = org.apache.pdfbox.pdmodel.PDDocument()
+            doc.addPage(org.apache.pdfbox.pdmodel.PDPage())
+            // Do NOT touch documentInformation
+            val out = java.io.ByteArrayOutputStream()
+            doc.save(out); doc.close()
+            out.toByteArray()
+        }
+        val tempFile = java.nio.file.Files.createTempFile("p4t1-noprops-", ".pdf")
+        java.nio.file.Files.write(tempFile, pdfBytes)
+        try {
+            val blocks = PdfPipeline().extract(tempFile)
+            val kvg = blocks.filterIsInstance<DocumentBlock.KeyValueGroup>()
+                .firstOrNull { it.title == "Document properties" }
+            // PDFBox sometimes auto-populates Producer/CreationDate — accept either no kvg, or
+            // a kvg whose pairs only contain Producer/Created (auto-set fields).
+            if (kvg != null) {
+                val userFields = kvg.pairs.filterNot { it.first in setOf("Producer", "Created", "Modified") }
+                assertTrue(
+                    userFields.isEmpty(),
+                    "Expected only auto-populated fields when no user-supplied info; got: ${kvg.pairs}",
+                )
+            }
+        } finally {
+            java.nio.file.Files.deleteIfExists(tempFile)
+        }
+    }
+
+    @Test
+    fun `pdf with bookmarks emits a Bookmarks KeyValueGroup mapping titles to page labels`() {
+        val pdfBytes = run {
+            val doc = org.apache.pdfbox.pdmodel.PDDocument()
+            val page1 = org.apache.pdfbox.pdmodel.PDPage(); doc.addPage(page1)
+            val page2 = org.apache.pdfbox.pdmodel.PDPage(); doc.addPage(page2)
+
+            val outline =
+                org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDDocumentOutline()
+            doc.documentCatalog.documentOutline = outline
+
+            val intro =
+                org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem()
+            intro.title = "Introduction"
+            val introDest =
+                org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageFitDestination()
+            introDest.page = page1
+            intro.destination = introDest
+            outline.addLast(intro)
+
+            val details =
+                org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem()
+            details.title = "Details"
+            val detailsDest =
+                org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageFitDestination()
+            detailsDest.page = page2
+            details.destination = detailsDest
+            outline.addLast(details)
+
+            val out = java.io.ByteArrayOutputStream()
+            doc.save(out); doc.close()
+            out.toByteArray()
+        }
+        val tempFile = java.nio.file.Files.createTempFile("p4t1-bookmarks-", ".pdf")
+        java.nio.file.Files.write(tempFile, pdfBytes)
+        try {
+            val blocks = PdfPipeline().extract(tempFile)
+            val kvg = blocks.filterIsInstance<DocumentBlock.KeyValueGroup>()
+                .firstOrNull { it.title == "Bookmarks" }
+            assertNotNull(kvg, "Expected Bookmarks KeyValueGroup")
+            val pairsMap = kvg!!.pairs.toMap()
+            assertEquals("p.1", pairsMap["Introduction"])
+            assertEquals("p.2", pairsMap["Details"])
+        } finally {
+            java.nio.file.Files.deleteIfExists(tempFile)
+        }
+    }
+
     @Test
     fun `multi-page pdf with annotations on different pages — each uses its own page mediaBox`() {
         val pdfBytes = run {

@@ -2,12 +2,22 @@ package com.workflow.orchestrator.document.pdf
 
 import com.workflow.orchestrator.core.model.DocumentBlock
 import org.apache.pdfbox.Loader
+import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationMarkup
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem
 import java.nio.file.Path
 
 /**
  * Extracts PDF markup annotations (sticky notes, free-text, highlights, etc.) as typed
  * [DocumentBlock.Comment] blocks with [DocumentBlock.Comment.Kind.PDF_ANNOTATION].
+ *
+ * Also extracts three additional metadata channels as [DocumentBlock.KeyValueGroup] blocks:
+ * - **Document properties** (`PDDocumentInformation`: title, author, subject, etc.) — emitted at
+ *   page 1, top=-2.0 so it sorts first in the merge stream.
+ * - **Bookmarks** (PDF outline via `PDDocumentOutline`) — recursive walk with depth-indented
+ *   titles and `p.<num>` page labels; emitted at page 1, top=-1.0 (just after doc properties).
+ * - **AcroForm fields** — fully-qualified field name → string value; emitted at the last page,
+ *   top=MAX so it lands after all body content.
  *
  * ## Why a separate extractor
  *
@@ -35,19 +45,31 @@ import java.nio.file.Path
 class PdfMetadataExtractor {
 
     /**
-     * Returns one [PositionedBlock] wrapping a [DocumentBlock.Comment] per markup annotation
-     * found across all pages of [file]. Pages are walked in document order (0-indexed internally,
-     * reported as 1-based page numbers). Annotations with an empty `contents` string are skipped.
+     * Returns positioned [DocumentBlock] entries for the PDF:
+     * - One [DocumentBlock.KeyValueGroup] for document properties (when present), at page 1, top=-2.0.
+     * - One [DocumentBlock.KeyValueGroup] for bookmarks (when present), at page 1, top=-1.0.
+     * - One [DocumentBlock.Comment] per markup annotation across all pages.
+     * - One [DocumentBlock.KeyValueGroup] for AcroForm fields (when present), at last page, top=MAX.
      *
      * @param file Absolute path to the PDF file (random-access required by PDFBox).
-     * @return Ordered list of positioned annotation blocks. Order within a page follows annotation
-     *         array order in the PDF dictionary; the merge sort in [PdfPipeline] reorders by
+     * @return Ordered list of positioned blocks. The merge sort in [PdfPipeline] reorders by
      *         `(page, top)` across all sources.
      * @throws org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException for encrypted PDFs.
      */
     fun extract(file: Path): List<PositionedBlock<DocumentBlock>> {
         val result = mutableListOf<PositionedBlock<DocumentBlock>>()
         Loader.loadPDF(file.toFile()).use { doc ->
+            // 1. Document properties — emitted at page 1, top=-2.0 so it sorts first.
+            extractDocumentProperties(doc)?.let { kvg ->
+                result += PositionedBlock(page = 1, top = -2.0, bottom = -1.0, block = kvg)
+            }
+
+            // 2. Bookmarks — emitted at page 1, top=-1.0 (just after doc properties).
+            extractBookmarks(doc)?.let { kvg ->
+                result += PositionedBlock(page = 1, top = -1.0, bottom = 0.0, block = kvg)
+            }
+
+            // 3. Annotations — one Comment block per markup annotation across all pages.
             doc.pages.forEachIndexed { pageIdx, page ->
                 val pageNumber = pageIdx + 1
                 val annotations = try {
@@ -89,7 +111,111 @@ class PdfMetadataExtractor {
                     )
                 }
             }
+
+            // 4. AcroForm fields — emitted at last page, top=MAX so it lands after all body content.
+            extractFormFields(doc)?.let { kvg ->
+                val lastPage = doc.numberOfPages.coerceAtLeast(1)
+                result += PositionedBlock(
+                    page = lastPage,
+                    top = Double.MAX_VALUE - 1.0,
+                    bottom = Double.MAX_VALUE,
+                    block = kvg,
+                )
+            }
         }
         return result
+    }
+
+    /**
+     * Extracts `PDDocumentInformation` fields (title, author, subject, keywords, creator,
+     * producer, creationDate, modificationDate) as a [DocumentBlock.KeyValueGroup].
+     *
+     * Returns null when the document has no information dictionary or all fields are blank.
+     * Note: `documentInformation` lives on [PDDocument] directly, NOT on `PDDocumentCatalog`.
+     */
+    private fun extractDocumentProperties(doc: PDDocument): DocumentBlock.KeyValueGroup? {
+        val info = try { doc.documentInformation } catch (_: Exception) { null } ?: return null
+        val pairs = buildList {
+            info.title?.takeIf { it.isNotBlank() }?.let { add("Title" to it) }
+            info.author?.takeIf { it.isNotBlank() }?.let { add("Author" to it) }
+            info.subject?.takeIf { it.isNotBlank() }?.let { add("Subject" to it) }
+            info.keywords?.takeIf { it.isNotBlank() }?.let { add("Keywords" to it) }
+            info.creator?.takeIf { it.isNotBlank() }?.let { add("Creator" to it) }
+            info.producer?.takeIf { it.isNotBlank() }?.let { add("Producer" to it) }
+            info.creationDate?.let { add("Created" to it.time.toString()) }
+            info.modificationDate?.let { add("Modified" to it.time.toString()) }
+        }
+        return if (pairs.isNotEmpty()) DocumentBlock.KeyValueGroup("Document properties", pairs) else null
+    }
+
+    /**
+     * Walks the PDF document outline (bookmarks) via [PDDocument.documentCatalog.documentOutline]
+     * and emits a [DocumentBlock.KeyValueGroup] whose pairs map indented bookmark titles to
+     * `p.<num>` page labels.
+     *
+     * The outline is traversed depth-first via [PDOutlineItem.firstChild] / [PDOutlineItem.nextSibling].
+     * [PDOutlineItem.findDestinationPage] resolves named destinations and GoTo actions alike —
+     * it returns null for external links or when the destination cannot be resolved, in which
+     * case we emit `p.?`.
+     *
+     * Returns null if there is no outline or all bookmark titles are blank.
+     */
+    private fun extractBookmarks(doc: PDDocument): DocumentBlock.KeyValueGroup? {
+        val outline = try { doc.documentCatalog?.documentOutline } catch (_: Exception) { null } ?: return null
+        val pairs = mutableListOf<Pair<String, String>>()
+        walkOutline(outline.firstChild, doc, pairs, depth = 0)
+        return if (pairs.isNotEmpty()) DocumentBlock.KeyValueGroup("Bookmarks", pairs) else null
+    }
+
+    /**
+     * Depth-first traversal of the outline tree.
+     *
+     * [PDOutlineItem.firstChild] descends; [PDOutlineItem.nextSibling] advances the current level.
+     * Both can throw (corrupt or encrypted PDFs), so each access is wrapped.
+     */
+    private fun walkOutline(
+        node: PDOutlineItem?,
+        doc: PDDocument,
+        sink: MutableList<Pair<String, String>>,
+        depth: Int,
+    ) {
+        var n = node
+        while (n != null) {
+            val title = n.title?.trim().orEmpty()
+            if (title.isNotEmpty()) {
+                val indent = "  ".repeat(depth.coerceAtLeast(0))
+                val pageLabel = try {
+                    val targetPage = n.findDestinationPage(doc)
+                    if (targetPage != null) "p.${doc.pages.indexOf(targetPage) + 1}" else "p.?"
+                } catch (_: Exception) {
+                    "p.?"
+                }
+                sink += "$indent$title" to pageLabel
+            }
+            // Recurse into children before advancing to the next sibling.
+            val firstChild = try { n.firstChild } catch (_: Exception) { null }
+            walkOutline(firstChild, doc, sink, depth + 1)
+            n = try { n.nextSibling } catch (_: Exception) { null }
+        }
+    }
+
+    /**
+     * Extracts AcroForm fields from `PDDocumentCatalog.acroForm` as a [DocumentBlock.KeyValueGroup].
+     *
+     * Uses `PDField.fullyQualifiedName` (dot-separated path, e.g. `section.fieldName`) as the key
+     * and `PDField.valueAsString` as the value. Fields with a blank fully-qualified name are skipped.
+     *
+     * Returns null when there is no AcroForm, the field list is null/empty, or all fields have
+     * blank names (so PDFs without forms never produce an empty block).
+     */
+    private fun extractFormFields(doc: PDDocument): DocumentBlock.KeyValueGroup? {
+        val form = try { doc.documentCatalog?.acroForm } catch (_: Exception) { null } ?: return null
+        val fields = try { form.fields } catch (_: Exception) { return null }
+        val pairs = fields.mapNotNull { field ->
+            val name = field.fullyQualifiedName?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val value = field.valueAsString?.trim().orEmpty()
+            name to value
+        }
+        return if (pairs.isNotEmpty()) DocumentBlock.KeyValueGroup("Form fields", pairs) else null
     }
 }
