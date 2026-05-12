@@ -1,11 +1,14 @@
 package com.workflow.orchestrator.document.poi
 
 import com.workflow.orchestrator.core.model.DocumentBlock
+import com.workflow.orchestrator.document.service.ImageExtractionService
 import org.apache.poi.ss.usermodel.Cell
 import org.apache.poi.ss.usermodel.FormulaEvaluator
 import org.apache.poi.ss.usermodel.Row
 import org.apache.poi.ss.util.CellRangeAddress
 import org.apache.poi.ss.util.CellReference
+import org.apache.poi.xssf.usermodel.XSSFPicture
+import org.apache.poi.xssf.usermodel.XSSFPictureData
 import org.apache.poi.xssf.usermodel.XSSFSheet
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import java.io.InputStream
@@ -32,11 +35,27 @@ import java.io.InputStream
  *
  * Each sheet is capped at [MAX_ROWS_PER_SHEET] data rows. If the sheet has more, a
  * [DocumentBlock.Paragraph] truncation marker is appended.
+ *
+ * ## Embedded images (P2T3)
+ *
+ * When [imageService] is supplied, each sheet's `XSSFDrawing` is walked for [XSSFPicture]
+ * shapes. Each picture's bytes are saved via [imageService] and emitted as a
+ * [DocumentBlock.EmbeddedFileRef] after the sheet's Table and cell-comment blocks.
+ * Oversize images (> [maxBytesPerImage]) are emitted as `path=null` placeholders so the
+ * LLM still sees that an image exists. When [imageService] is null, image extraction is
+ * skipped entirely (legacy / non-agent callers).
  */
-class XlsxTableExtractor {
+class XlsxTableExtractor(
+    private val imageService: ImageExtractionService? = null,
+    private val docKey: String = "anonymous",
+    private val maxBytesPerImage: Long = 25L * 1024 * 1024,
+) {
 
     init {
         PoiHardening.applyOnce()
+        require(maxBytesPerImage < Int.MAX_VALUE.toLong()) {
+            "maxBytesPerImage must fit in Int; got $maxBytesPerImage"
+        }
     }
 
     /**
@@ -103,6 +122,11 @@ class XlsxTableExtractor {
                 // Drain per-sheet comments AFTER the Table so the LLM sees them
                 // immediately following the data they annotate, in row-major order.
                 blocks += sheetComments
+
+                // P2T3: image extraction — emit EmbeddedFileRef blocks after comments.
+                if (imageService != null) {
+                    blocks += collectSheetImages(xssfSheet)
+                }
 
                 if (rowIter.hasNext()) {
                     blocks += DocumentBlock.Paragraph("_(truncated at $MAX_ROWS_PER_SHEET rows)_")
@@ -184,6 +208,92 @@ class XlsxTableExtractor {
             text = text,
             kind = DocumentBlock.Comment.Kind.REVIEW,
         )
+    }
+
+    // ── Sheet image extraction (P2T3) ─────────────────────────────────────────
+
+    /**
+     * Walks the sheet's `XSSFDrawing` for [XSSFPicture] shapes and emits one
+     * [DocumentBlock.EmbeddedFileRef] per picture with the on-disk path returned by
+     * [imageService]. Same pre-check / oversize handling as the DOCX path: never
+     * materialise bytes larger than [maxBytesPerImage] into memory (PoiHardening caps
+     * allocations at 50 MB).
+     *
+     * Uses `sheet.drawingPatriarch` (read-side accessor) — never `createDrawingPatriarch`,
+     * which mutates the sheet even when no drawing exists.
+     *
+     * Skips shapes whose [XSSFPictureData] is null (defensive).
+     */
+    private fun collectSheetImages(sheet: XSSFSheet): List<DocumentBlock.EmbeddedFileRef> {
+        val drawing = try { sheet.drawingPatriarch } catch (_: Exception) { return emptyList() }
+            ?: return emptyList()
+
+        val pictures = drawing.shapes.filterIsInstance<XSSFPicture>()
+        if (pictures.isEmpty()) return emptyList()
+
+        val service = imageService ?: return emptyList()  // belt-and-suspenders; gated above too
+
+        return pictures.mapNotNull { picture ->
+            val pictureData = picture.pictureData ?: return@mapNotNull null
+            val name = pictureData.suggestFileExtension()?.let { "image.${it.lowercase()}" } ?: "image"
+            val mime = pictureMime(pictureData)
+
+            val partSize = try { pictureData.packagePart.size } catch (_: Exception) { -1L }
+
+            val bytes: ByteArray? = if (partSize in 0..maxBytesPerImage) {
+                try { pictureData.data } catch (_: Exception) { null }
+            } else {
+                // Stream-read up to (cap + 1) bytes; if the stream still has more, the picture
+                // is oversize — emit a placeholder and skip the disk write.
+                val limit = (maxBytesPerImage + 1).toInt()
+                try {
+                    val limited = pictureData.packagePart.inputStream.use { it.readNBytes(limit) }
+                    if (limited.size > maxBytesPerImage) null else limited
+                } catch (_: Exception) {
+                    null
+                }
+            }
+
+            if (bytes == null || bytes.isEmpty()) {
+                // Either oversize, unreadable, or empty — emit a placeholder so the LLM still
+                // knows an image existed here.
+                return@mapNotNull DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null)
+            }
+
+            val saved = try {
+                service.save(bytes, docKey, name, mime)
+            } catch (_: Exception) {
+                return@mapNotNull DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null)
+            }
+            DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = saved.toString())
+        }
+    }
+
+    /**
+     * Returns the MIME type string for an [XSSFPictureData].
+     *
+     * `XSSFPictureData` in POI 5.4.1 does NOT expose `getPictureTypeEnum()` (that method
+     * exists only on `XWPFPictureData`). Instead we call `getMimeType()` directly — it is
+     * declared on the `PictureData` interface and implemented by `XSSFPictureData`, returning
+     * standard MIME strings (e.g. "image/png", "image/jpeg"). For truly unknown formats it
+     * falls back to `suggestFileExtension()` for a best-effort MIME, then
+     * `application/octet-stream`.
+     */
+    private fun pictureMime(pictureData: XSSFPictureData): String {
+        val raw = try { pictureData.mimeType?.trim() } catch (_: Exception) { null }
+        if (!raw.isNullOrEmpty() && raw != "application/octet-stream") return raw
+        // mimeType was empty or generic — try to improve via file extension.
+        val ext = pictureData.suggestFileExtension()?.lowercase()
+        return when (ext) {
+            "png" -> "image/png"
+            "jpg", "jpeg" -> "image/jpeg"
+            "gif" -> "image/gif"
+            "bmp" -> "image/bmp"
+            "tiff", "tif" -> "image/tiff"
+            "svg" -> "image/svg+xml"
+            "webp" -> "image/webp"
+            else -> raw ?: "application/octet-stream"
+        }
     }
 
     companion object {

@@ -28,26 +28,27 @@ import java.io.InputStream
  * the individual extractors). [OfficePipeline] itself holds no mutable state and is safe to
  * share across threads.
  *
- * @param xlsx Extractor for XLSX files (default: [XlsxTableExtractor]).
  * @param pptx Extractor for PPTX files (default: [PptxExtractor]).
  */
 class OfficePipeline(
-    private val xlsx: XlsxTableExtractor = XlsxTableExtractor(),
     private val pptx: PptxExtractor = PptxExtractor(),
 ) {
 
     /**
      * Extracts [DocumentBlock] values from [stream] based on the given [mime] type.
      *
-     * For DOCX files, an [ImageExtractionService] and [docKey] may be supplied so that
-     * [com.workflow.orchestrator.document.poi.visitor.ImageExtractionVisitor] is wired into
-     * the paragraph visitor chain. A new [DocxTableExtractor] is constructed per call so
-     * each extraction gets its own [imageService] + [docKey] binding.
+     * For DOCX and XLSX files, an [ImageExtractionService] and [docKey] may be supplied so
+     * that embedded images are extracted. A new extractor is constructed per call so each
+     * extraction gets its own [imageService] + [docKey] binding.
+     *
+     * - DOCX: [com.workflow.orchestrator.document.poi.visitor.ImageExtractionVisitor] is
+     *   wired into the paragraph visitor chain.
+     * - XLSX: [XlsxTableExtractor] walks each sheet's `XSSFDrawing` for pictures.
      *
      * @param stream       Raw document bytes. The caller is responsible for closing the stream.
      * @param mime         Exact MIME type string from [OFFICE_MIMES].
      * @param imageService Optional service that saves extracted images to disk. When non-null,
-     *                     inline images in DOCX files are emitted as
+     *                     inline images in DOCX and XLSX files are emitted as
      *                     [com.workflow.orchestrator.core.model.DocumentBlock.EmbeddedFileRef]
      *                     with an on-disk path. When null (legacy / non-agent callers), images
      *                     are silently dropped.
@@ -64,7 +65,14 @@ class OfficePipeline(
         docKey: String = "anonymous",
     ): List<DocumentBlock> {
         return when (mime) {
-            MIME_XLSX -> xlsx.extract(stream)
+            MIME_XLSX -> {
+                val extractor = if (imageService != null) {
+                    XlsxTableExtractor(imageService = imageService, docKey = docKey)
+                } else {
+                    XlsxTableExtractor()
+                }
+                extractor.extract(stream)
+            }
             MIME_DOCX -> {
                 val extractor = if (imageService != null) {
                     DocxTableExtractor(imageService = imageService, docKey = docKey)

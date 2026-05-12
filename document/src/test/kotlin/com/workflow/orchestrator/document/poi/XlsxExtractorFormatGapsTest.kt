@@ -175,16 +175,17 @@ class XlsxExtractorFormatGapsTest {
             "Anchor should be the out-of-band cell's A1 ref (D2), not coerced to a header column")
     }
 
-    // ── Embedded images ───────────────────────────────────────────────────────
+    // ── Embedded images (positive coverage after Phase 2) ─────────────────────
 
     @Test
-    fun `gap embedded image on a sheet is dropped — no EmbeddedFileRef, no warning`() {
+    fun `embedded image is extracted as EmbeddedFileRef with on-disk path when ImageExtractionService is wired`(
+        @org.junit.jupiter.api.io.TempDir downloads: java.nio.file.Path,
+    ) {
         val pngBytes = tinyPng()
         val bytes = buildXlsx { wb ->
             val sheet = wb.createSheet("Sheet1")
             sheet.createRow(0).createCell(0).setCellValue("Header")
             sheet.createRow(1).createCell(0).setCellValue("data1")
-
             val picIdx = wb.addPicture(pngBytes, Workbook.PICTURE_TYPE_PNG)
             val drawing = sheet.createDrawingPatriarch()
             val anchor = wb.creationHelper.createClientAnchor().apply {
@@ -193,11 +194,94 @@ class XlsxExtractorFormatGapsTest {
             drawing.createPicture(anchor, picIdx)
         }
 
-        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        val imageExtractor = XlsxTableExtractor(imageService = imageService, docKey = "test-doc.xlsx")
+        val blocks = imageExtractor.extract(ByteArrayInputStream(bytes))
+
+        val imageRefs = blocks.filterIsInstance<DocumentBlock.EmbeddedFileRef>()
+        assertEquals(1, imageRefs.size, "Expected exactly one EmbeddedFileRef for the sheet picture")
+        val ref = imageRefs.single()
+        assertEquals("image/png", ref.mimeType)
+        assertNotNull(ref.path, "path should be non-null when ImageExtractionService is wired")
+        assertTrue(java.nio.file.Files.exists(java.nio.file.Path.of(ref.path!!)),
+            "Saved file should exist on disk at the reported path")
+        // Ordering: image appears AFTER the Table.
+        val tableIdx = blocks.indexOfFirst { it is DocumentBlock.Table }
+        val imageIdx = blocks.indexOfFirst { it is DocumentBlock.EmbeddedFileRef }
+        assertTrue(imageIdx > tableIdx, "Image must appear after the Table; got Table@$tableIdx Image@$imageIdx")
+    }
+
+    @Test
+    fun `embedded image without ImageExtractionService wired emits no EmbeddedFileRef — legacy behaviour preserved`() {
+        val pngBytes = tinyPng()
+        val bytes = buildXlsx { wb ->
+            val sheet = wb.createSheet("Sheet1")
+            sheet.createRow(0).createCell(0).setCellValue("Header")
+            sheet.createRow(1).createCell(0).setCellValue("data1")
+            val picIdx = wb.addPicture(pngBytes, Workbook.PICTURE_TYPE_PNG)
+            val drawing = sheet.createDrawingPatriarch()
+            val anchor = wb.creationHelper.createClientAnchor().apply {
+                setCol1(2); setCol2(4); row1 = 0; row2 = 5
+            }
+            drawing.createPicture(anchor, picIdx)
+        }
+        val blocks = XlsxTableExtractor().extract(ByteArrayInputStream(bytes))
         assertTrue(blocks.none { it is DocumentBlock.EmbeddedFileRef },
-            "No EmbeddedFileRef emitted for sheet pictures")
-        assertEquals(1, blocks.count { it is DocumentBlock.Table },
-            "Sheet still yields one Table — image is silently absent")
+            "Without ImageExtractionService, image emission is skipped")
+    }
+
+    @Test
+    fun `multi-sheet workbook attaches each sheets images to its own Table range`(
+        @org.junit.jupiter.api.io.TempDir downloads: java.nio.file.Path,
+    ) {
+        val pngBytes = tinyPng()
+        val bytes = buildXlsx { wb ->
+            val s1 = wb.createSheet("Sheet1")
+            s1.createRow(0).createCell(0).setCellValue("s1-h")
+            s1.createRow(1).createCell(0).setCellValue("s1-v")
+            val picIdx1 = wb.addPicture(pngBytes, Workbook.PICTURE_TYPE_PNG)
+            s1.createDrawingPatriarch().createPicture(
+                wb.creationHelper.createClientAnchor().apply { setCol1(2); setCol2(4); row1 = 0; row2 = 5 },
+                picIdx1,
+            )
+
+            val s2 = wb.createSheet("Sheet2")
+            s2.createRow(0).createCell(0).setCellValue("s2-h")
+            s2.createRow(1).createCell(0).setCellValue("s2-v")
+            // Different bytes so the test can tell which image belongs to which sheet.
+            val pngBytes2 = pngBytes + byteArrayOf(0xFF.toByte(), 0xEE.toByte())  // pad to differ
+            val picIdx2 = wb.addPicture(pngBytes2, Workbook.PICTURE_TYPE_PNG)
+            s2.createDrawingPatriarch().createPicture(
+                wb.creationHelper.createClientAnchor().apply { setCol1(2); setCol2(4); row1 = 0; row2 = 5 },
+                picIdx2,
+            )
+        }
+
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        val imageExtractor = XlsxTableExtractor(imageService = imageService, docKey = "multi-sheet.xlsx")
+        val blocks = imageExtractor.extract(ByteArrayInputStream(bytes))
+
+        // Expected shape: Heading(s1), Table(s1), EmbeddedFileRef(s1), Heading(s2), Table(s2), EmbeddedFileRef(s2)
+        val classes = blocks.map { it::class.simpleName!! }
+        assertEquals(
+            listOf("Heading", "Table", "EmbeddedFileRef", "Heading", "Table", "EmbeddedFileRef"),
+            classes,
+            "Multi-sheet ordering: each sheet's image belongs to its OWN Table range. Got: $classes",
+        )
+    }
+
+    @Test
+    fun `XLSX with no images emits no EmbeddedFileRef even with imageService wired`(
+        @org.junit.jupiter.api.io.TempDir downloads: java.nio.file.Path,
+    ) {
+        val bytes = buildXlsx { wb ->
+            val sheet = wb.createSheet("Sheet1")
+            sheet.createRow(0).createCell(0).setCellValue("only text")
+        }
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        val imageExtractor = XlsxTableExtractor(imageService = imageService, docKey = "noimg.xlsx")
+        val blocks = imageExtractor.extract(ByteArrayInputStream(bytes))
+        assertTrue(blocks.none { it is DocumentBlock.EmbeddedFileRef })
     }
 
     // ── Hyperlinks ────────────────────────────────────────────────────────────
