@@ -196,4 +196,38 @@ class MarkdownAssemblerNewVariantsTest {
         val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
         assertEquals("- top\n  sub-item-a\n  sub-item-b\n- another top\n\n", md)
     }
+
+    @Test
+    fun `Footnote renders as caret-marker line`() {
+        val block = DocumentBlock.Footnote(marker = "1", text = "See appendix A.")
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals("[^1]: See appendix A.\n", md)
+    }
+
+    @Test
+    fun `Multiple Footnote blocks render contiguously with single trailing newline each`() {
+        val blocks = listOf(
+            DocumentBlock.Footnote(marker = "1", text = "First note."),
+            DocumentBlock.Footnote(marker = "2", text = "Second note."),
+            DocumentBlock.Footnote(marker = "a", text = "Alpha note."),
+        )
+        val (md, _) = assembler.assemble(blocks, maxChars = 10_000)
+        assertEquals(
+            "[^1]: First note.\n[^2]: Second note.\n[^a]: Alpha note.\n",
+            md,
+        )
+    }
+
+    @Test
+    fun `Footnote ordering is the callers responsibility — assembler emits in list order`() {
+        // Extractors emit Footnote blocks LAST in their returned List<DocumentBlock>.
+        // The assembler renders in given order, producing a contiguous final block.
+        val blocks = listOf(
+            DocumentBlock.Paragraph("Body prose."),
+            DocumentBlock.Footnote("1", "Note A"),
+            DocumentBlock.Footnote("2", "Note B"),
+        )
+        val (md, _) = assembler.assemble(blocks, maxChars = 10_000)
+        assertEquals("Body prose.\n\n[^1]: Note A\n[^2]: Note B\n", md)
+    }
 }

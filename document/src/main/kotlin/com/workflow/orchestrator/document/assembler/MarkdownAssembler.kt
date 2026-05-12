@@ -97,6 +97,7 @@ class MarkdownAssembler {
         is DocumentBlock.EmbeddedFileRef -> serializeEmbeddedFileRef(block)
         is DocumentBlock.Comment -> serializeComment(block)
         is DocumentBlock.ListBlock -> serializeListBlock(block)
+        is DocumentBlock.Footnote -> serializeFootnote(block)
         else -> error("variant ${block::class.simpleName} not yet serialized")  // KEEP — replaced in Tasks 8/9/10
     }
 
@@ -161,6 +162,16 @@ class MarkdownAssembler {
         }
         sb.append("\n")
         return sb.toString()
+    }
+
+    /**
+     * Serialises a [DocumentBlock.Footnote] in GitHub Flavored Markdown footnote
+     * syntax: `[^marker]: text`. Single trailing newline so consecutive Footnote
+     * blocks compact into a contiguous final block (per the extractor-emit-last
+     * contract).
+     */
+    private fun serializeFootnote(block: DocumentBlock.Footnote): String {
+        return "[^${block.marker}]: ${block.text}\n"
     }
 
     private fun serializeTable(block: DocumentBlock.Table): String {
