@@ -124,4 +124,44 @@ class MarkdownAssemblerNewVariantsTest {
         val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
         assertEquals("> **Comment by Jane**:\n> Line one.\n> Line two.\n\n", md)
     }
+
+    @Test
+    fun `Comment TRACKED_INSERTION renders without anchor clause`() {
+        val block = DocumentBlock.Comment(
+            author = "Tom",
+            anchorText = null,
+            text = "proposed sentence",
+            kind = DocumentBlock.Comment.Kind.TRACKED_INSERTION,
+        )
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals("> **Tom proposes inserting**:\n> proposed sentence\n\n", md)
+    }
+
+    @Test
+    fun `Comment TRACKED_DELETION renders the deleted text inline in the header`() {
+        val block = DocumentBlock.Comment(
+            author = "Tom",
+            anchorText = "old text",
+            text = "",
+            kind = DocumentBlock.Comment.Kind.TRACKED_DELETION,
+        )
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        // text is blank so body is dropped — just the header line + double newline.
+        assertEquals("> **Tom proposes deleting**: \"old text\"\n\n", md)
+    }
+
+    @Test
+    fun `Comment PDF_ANNOTATION with null author renders as PDF annotation`() {
+        val block = DocumentBlock.Comment(
+            author = null,
+            anchorText = "paragraph quote",
+            text = "highlighted by user",
+            kind = DocumentBlock.Comment.Kind.PDF_ANNOTATION,
+        )
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals(
+            "> **PDF annotation** (on: \"paragraph quote\"):\n> highlighted by user\n\n",
+            md,
+        )
+    }
 }
