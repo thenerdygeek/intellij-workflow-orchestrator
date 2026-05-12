@@ -140,7 +140,7 @@ class MarkdownAssembler {
             }
         }
         val body = block.text.lineSequence().joinToString("\n") { "> $it" }
-        return if (body.isBlank()) "> $header\n\n" else "> $header:\n$body\n\n"
+        return if (block.text.isBlank()) "> $header\n\n" else "> $header:\n$body\n\n"
     }
 
     private fun serializeTable(block: DocumentBlock.Table): String {
