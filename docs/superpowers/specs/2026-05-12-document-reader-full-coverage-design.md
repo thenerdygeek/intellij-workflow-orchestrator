@@ -162,16 +162,19 @@ New service `ImageExtractionService` in `:document`:
 
 ```kotlin
 class ImageExtractionService(
-    private val downloadDirProvider: () -> Path? = { SessionDownloadDir.current() },
+    /** Pre-resolved downloads root. Caller resolves SessionDownloadDir.current() at the
+     * suspend boundary (TikaDocumentExtractor) and passes the result. Null → java.io.tmpdir. */
+    private val downloadsRoot: Path?,
 ) {
-    fun save(bytes: ByteArray, suggestedName: String, mime: String): Path
+    fun save(bytes: ByteArray, docKey: String, suggestedName: String, mime: String): Path
 }
 ```
 
-- Saves to `{sessionDir}/downloads/document-{sha6OfDocPath}/image-{ordinal}-{sha6OfBytes}.{ext}`.
+- Saves to `{sessionDir}/downloads/document-{sha6OfDocKey}/image-{sha6OfBytes}.{ext}`.
 - Doc-level directory keyed off the source document path's sha6.
-- Per-image name uses content hash so duplicate images inside one doc share a path (no wasted bytes).
-- `SessionDownloadDir.current() == null` (UI handler, tests) → falls back to `java.io.tmpdir`. Matches the `jira.download_attachment` pattern.
+- Filename is purely content-addressed (`image-{sha6OfBytes}.{ext}`, no ordinal) so identical bytes inside one doc share storage — reading order is conveyed by the surrounding `DocumentBlock` sequence, not by the path.
+- Service stays non-suspend so it can be called from non-suspend visitor chains (DOCX/PPTX `ParagraphVisitor.visit()`, Tika XHTML SAX handler). Caller resolves `SessionDownloadDir.current()` at the suspend boundary.
+- `downloadsRoot == null` (UI handler, tests) → falls back to `java.io.tmpdir`. Matches the `jira.download_attachment` pattern.
 
 New agent tool `view_image` in `:agent`:
 

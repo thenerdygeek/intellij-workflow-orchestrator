@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.document.service
 
-import com.workflow.orchestrator.core.services.SessionDownloadDir
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
@@ -13,33 +12,41 @@ import java.security.MessageDigest
  *
  * ## Path layout
  *
- * `{downloadsRoot}/document-{sha6OfDocKey}/image-{ordinal}-{sha6OfBytes}.{ext}`
+ * `{downloadsRoot}/document-{sha6OfDocKey}/image-{sha6OfBytes}.{ext}`
  *
- * - `downloadsRoot` comes from the [downloadDirProvider]; defaults to `SessionDownloadDir.current()`
- *   which returns `{sessionDir}/downloads/` for agent-wrapped calls and `null` otherwise.
- * - `sha6OfDocKey` is the first 6 hex chars of the SHA-256 of the [docKey] passed to [save].
+ * - `downloadsRoot` is pre-resolved by the caller and passed at construction. See
+ *   [downloadsRoot] for the rationale (non-suspend visitor chain).
+ * - `sha6OfDocKey` is the first 6 hex chars of the SHA-256 of the `docKey` passed to [save].
  *   Callers should pass a stable key (e.g. the document's absolute path) so re-extracting
  *   the same doc lands in the same dir.
- * - `ordinal` is incremented per save call WITHIN a single [ImageExtractionService] instance —
- *   it's NOT global. Tests construct a fresh instance per case.
- * - `sha6OfBytes` is the first 6 hex chars of SHA-256 of [bytes]; identical bytes reuse the
- *   same filename. The full filename also embeds the ordinal so order-of-encounter is preserved
- *   for the LLM's reading order, even when bytes hash-collide.
+ * - `sha6OfBytes` is the first 6 hex chars of SHA-256 of the bytes. The filename is
+ *   **purely content-addressed** — no ordinal — so identical bytes within one doc share
+ *   storage (the promised idempotency). Reading order is conveyed by the surrounding
+ *   `DocumentBlock` sequence, not by the path itself.
  *
  * ## Idempotency
  *
- * If the target file already exists (same bytes, same doc, same ordinal), [save] is a no-op
- * — it returns the existing path without rewriting. This makes the operation safe under
- * concurrent retries and across cached PDF re-reads.
+ * If the target file already exists (same bytes, same doc), [save] is a no-op — it returns
+ * the existing path without rewriting. Safe under concurrent retries and across cached
+ * PDF re-reads. Two `save()` calls with the same bytes within one doc produce the SAME path.
  *
  * ## Fallback
  *
- * When [downloadDirProvider] returns null (non-agent caller, unit test without
- * `SessionDownloadDir` installed), bytes land under `java.io.tmpdir/workflow-document-images/`
- * with the same sub-path. Matches the `jira.download_attachment` fallback behaviour.
+ * When [downloadsRoot] is null (non-agent caller, unit test without `SessionDownloadDir`
+ * installed), bytes land under `java.io.tmpdir/workflow-document-images/` with the same
+ * sub-path. Matches the `jira.download_attachment` fallback behaviour.
  */
 class ImageExtractionService(
-    private val downloadDirProvider: suspend () -> Path? = { SessionDownloadDir.current() },
+    /**
+     * Pre-resolved downloads root. Caller (typically `TikaDocumentExtractor` at the suspend
+     * boundary) calls `SessionDownloadDir.current()` once and constructs this service with
+     * the result. Null falls back to `java.io.tmpdir/workflow-document-images/`.
+     *
+     * Pre-resolved at construction so the service's [save] stays non-suspend, allowing it
+     * to be called from inside the non-suspend `ParagraphVisitor.visit()` chain (DOCX/PPTX
+     * visitors, Tika XHTML SAX handler, etc.) without illegal `runBlocking`.
+     */
+    private val downloadsRoot: Path?,
 ) {
 
     /**
@@ -55,26 +62,17 @@ class ImageExtractionService(
      * @return Absolute path of the written file.
      * @throws java.io.IOException on disk write failure.
      */
-    suspend fun save(bytes: ByteArray, docKey: String, suggestedName: String, mime: String): Path {
-        val root = downloadDirProvider() ?: fallbackRoot()
+    fun save(bytes: ByteArray, docKey: String, suggestedName: String, mime: String): Path {
+        val root = downloadsRoot ?: fallbackRoot()
         val docDir = root.resolve("document-${sha6(docKey.toByteArray())}")
         Files.createDirectories(docDir)
-        val ordinal = nextOrdinal(docDir)
         val ext = mimeToExtension(mime, suggestedName)
-        val filename = "image-%04d-%s.%s".format(ordinal, sha6(bytes), ext)
+        val filename = "image-${sha6(bytes)}.$ext"
         val target = docDir.resolve(filename)
         if (!Files.exists(target)) {
             Files.write(target, bytes)
         }
         return target.toAbsolutePath()
-    }
-
-    private fun nextOrdinal(docDir: Path): Int {
-        // Count existing image-* files under docDir; ordinal = that count + 1. Atomic enough for
-        // single-threaded extraction. Tests construct a fresh service so they don't interact.
-        return Files.list(docDir).use { stream ->
-            stream.filter { it.fileName.toString().startsWith("image-") }.count().toInt() + 1
-        }
     }
 
     private fun fallbackRoot(): Path {
