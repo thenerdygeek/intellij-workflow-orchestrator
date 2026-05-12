@@ -74,7 +74,17 @@ class XlsxTableExtractor(
             for (sheet in wb) {
                 val xssfSheet = sheet as? XSSFSheet ?: continue
 
-                blocks += DocumentBlock.Heading(2, sheet.sheetName)
+                val visibility = try {
+                    wb.getSheetVisibility(wb.getSheetIndex(xssfSheet))
+                } catch (_: Exception) {
+                    org.apache.poi.ss.usermodel.SheetVisibility.VISIBLE
+                }
+                val headingText = if (visibility != org.apache.poi.ss.usermodel.SheetVisibility.VISIBLE) {
+                    "(hidden) ${sheet.sheetName}"
+                } else {
+                    sheet.sheetName
+                }
+                blocks += DocumentBlock.Heading(2, headingText)
 
                 val rowIter = sheet.iterator()
                 if (!rowIter.hasNext()) continue

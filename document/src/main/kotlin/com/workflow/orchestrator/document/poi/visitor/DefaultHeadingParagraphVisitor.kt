@@ -40,12 +40,19 @@ class DefaultHeadingParagraphVisitor : ParagraphVisitor {
         val styleId = paragraph.style ?: return null
         val normalized = styleId.lowercase().replace("_20_", " ").replace("_", " ")
 
+        // Match "heading 1" through "heading 6".
         val withSpace = Regex("""^heading\s*(\d)$""").find(normalized)
         if (withSpace != null) {
             val level = withSpace.groupValues[1].toIntOrNull() ?: return null
             if (level in 1..6) return level
         }
 
-        return null
+        // Custom heading-equivalent styles. Tight allowlist — only the common Word built-ins.
+        return when (normalized) {
+            "title" -> 1
+            "subtitle" -> 2
+            "quote", "intensequote" -> 3
+            else -> null
+        }
     }
 }

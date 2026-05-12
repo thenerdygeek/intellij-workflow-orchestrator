@@ -250,37 +250,66 @@ class DocxExtractorFormatGapsTest {
             "Without ImageExtractionService, ImageExtractionVisitor is not in the chain → no image emission")
     }
 
-    // ── Custom heading styles ─────────────────────────────────────────────────
+    // ── Custom heading styles (positive coverage after Phase 3) ───────────────
 
     @Test
-    fun `gap Title and Subtitle styles are not recognised as headings — they become paragraphs`() {
+    fun `Title style is recognised as Heading level 1`() {
         val bytes = buildDocx { doc ->
             doc.createParagraph().apply {
                 style = "Title"
-                createRun().setText("This Is The Document Title")
+                createRun().setText("Document Title")
             }
+        }
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val heading = blocks.filterIsInstance<DocumentBlock.Heading>().single()
+        assertEquals(1, heading.level)
+        assertEquals("Document Title", heading.text)
+    }
+
+    @Test
+    fun `Subtitle style is recognised as Heading level 2`() {
+        val bytes = buildDocx { doc ->
             doc.createParagraph().apply {
                 style = "Subtitle"
                 createRun().setText("With a subtitle line")
             }
+        }
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val heading = blocks.filterIsInstance<DocumentBlock.Heading>().single()
+        assertEquals(2, heading.level)
+        assertEquals("With a subtitle line", heading.text)
+    }
+
+    @Test
+    fun `Quote and IntenseQuote styles are recognised as Heading level 3`() {
+        val bytes = buildDocx { doc ->
             doc.createParagraph().apply {
-                style = "Heading1"
-                createRun().setText("First Real Heading")
+                style = "Quote"
+                createRun().setText("a quoted passage")
+            }
+            doc.createParagraph().apply {
+                style = "IntenseQuote"
+                createRun().setText("an intense quote")
             }
         }
-
         val blocks = extractor.extract(ByteArrayInputStream(bytes))
         val headings = blocks.filterIsInstance<DocumentBlock.Heading>()
+        assertEquals(2, headings.size, "Expected both Quote-style paragraphs as headings")
+        assertTrue(headings.all { it.level == 3 })
+        assertEquals(listOf("a quoted passage", "an intense quote"), headings.map { it.text })
+    }
 
-        assertEquals(1, headings.size,
-            "Only Heading1 should be detected — Title/Subtitle regex match fails")
-        assertEquals("First Real Heading", headings.single().text)
-
-        val paragraphs = blocks.filterIsInstance<DocumentBlock.Paragraph>().map { it.text }
-        assertTrue("This Is The Document Title" in paragraphs,
-            "Title-styled text degrades to a Paragraph")
-        assertTrue("With a subtitle line" in paragraphs,
-            "Subtitle-styled text degrades to a Paragraph")
+    @Test
+    fun `unknown style still falls through to Paragraph`() {
+        val bytes = buildDocx { doc ->
+            doc.createParagraph().apply {
+                style = "MyCustomStyle"
+                createRun().setText("not a heading")
+            }
+        }
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        assertTrue(blocks.none { it is DocumentBlock.Heading })
+        assertTrue(blocks.any { it is DocumentBlock.Paragraph && (it).text == "not a heading" })
     }
 
     // ── Lists (positive coverage after Phase 3) ──────────────────────────────

@@ -325,7 +325,7 @@ class XlsxExtractorFormatGapsTest {
     // ── Hidden sheets ─────────────────────────────────────────────────────────
 
     @Test
-    fun `surprise hidden sheets are still extracted — no visibility filter`() {
+    fun `hidden sheets are extracted with (hidden) prefix on the Heading so the LLM knows the visibility state`() {
         val bytes = buildXlsx { wb ->
             wb.createSheet("Visible").apply {
                 createRow(0).createCell(0).setCellValue("v1")
@@ -334,14 +334,22 @@ class XlsxExtractorFormatGapsTest {
                 createRow(0).createCell(0).setCellValue("h1")
             }
             wb.setSheetHidden(wb.getSheetIndex(hidden), true)
+            val veryHidden = wb.createSheet("VeryHidden").apply {
+                createRow(0).createCell(0).setCellValue("vh1")
+            }
+            // Use the VERY_HIDDEN visibility for the third sheet
+            wb.setSheetVisibility(wb.getSheetIndex(veryHidden), org.apache.poi.ss.usermodel.SheetVisibility.VERY_HIDDEN)
         }
 
         val blocks = extractor.extract(ByteArrayInputStream(bytes))
         val sheetHeadings = blocks.filterIsInstance<DocumentBlock.Heading>().map { it.text }
 
-        assertEquals(listOf("Visible", "Hidden"), sheetHeadings,
-            "Hidden sheets ARE extracted today — sheet.sheetVisibility is never consulted. " +
-                "This may or may not be desired (auditor data leak risk vs. completeness).")
+        assertEquals(
+            listOf("Visible", "(hidden) Hidden", "(hidden) VeryHidden"),
+            sheetHeadings,
+            "Visibility state should be reflected in the Heading text so the LLM " +
+                "can tell when a sheet was hidden by the author"
+        )
     }
 
     // ── Inline formatting ─────────────────────────────────────────────────────
