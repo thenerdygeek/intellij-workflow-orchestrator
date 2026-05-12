@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.document.poi
 
 import com.workflow.orchestrator.core.model.DocumentBlock
+import org.apache.poi.xslf.usermodel.XSLFComment
 import org.apache.poi.xslf.usermodel.XSLFShape
 import org.apache.poi.xslf.usermodel.XSLFSlide
 import org.apache.poi.xslf.usermodel.XSLFTable
@@ -17,6 +18,8 @@ import java.io.InputStream
  * 3. A [DocumentBlock.Table] for each [XSLFTable] on the slide.
  * 4. A speaker-notes [DocumentBlock.Paragraph] (prefixed `> Notes: …`) when the slide
  *    has non-empty speaker notes.
+ * 5. [DocumentBlock.Comment] blocks (kind=REVIEW, anchorText=null) for each slide-level
+ *    review comment — emitted after speaker notes, in POI list order.
  *
  * ## Thread safety
  *
@@ -44,7 +47,7 @@ class PptxExtractor {
      *
      * @param stream Raw bytes of the `.pptx` file. The caller is responsible for closing the stream.
      * @return Ordered list of blocks in slide order. Within each slide, content appears in
-     *         shape-index order followed by speaker notes.
+     *         shape-index order followed by speaker notes and then slide-level review comments.
      */
     fun extract(stream: InputStream): List<DocumentBlock> {
         val blocks = mutableListOf<DocumentBlock>()
@@ -94,6 +97,10 @@ class PptxExtractor {
         if (notesBlock != null) {
             blocks += notesBlock
         }
+
+        // Slide-level review comments (PPTX comments are slide-level, not text-anchored)
+        val slideComments = extractSlideComments(slide)
+        blocks += slideComments
 
         return blocks
     }
@@ -167,5 +174,37 @@ class PptxExtractor {
 
         if (notesText.isEmpty()) return null
         return DocumentBlock.Paragraph("> Notes: $notesText")
+    }
+
+    // ── Slide-level review comments ────────────────────────────────────────────
+
+    /**
+     * Returns `Comment(REVIEW, author, anchorText=null, text)` blocks for each slide-level
+     * review comment on [slide]. PPTX comments don't anchor to specific text — they apply
+     * to the whole slide — so [DocumentBlock.Comment.anchorText] is always null.
+     *
+     * Empty/blank comments are skipped. If the POI call throws (malformed comments part),
+     * returns an empty list rather than failing the whole extraction.
+     *
+     * POI 5.4.1 exposes `XSLFSlide.getComments()` which returns `List<XSLFComment>`. Each
+     * [XSLFComment] carries `getAuthor()` (resolved from the comment-authors part) and
+     * `getText()`.
+     */
+    private fun extractSlideComments(slide: XSLFSlide): List<DocumentBlock.Comment> {
+        val comments: List<XSLFComment> = try {
+            slide.comments
+        } catch (_: Exception) {
+            return emptyList()
+        } ?: return emptyList()
+        return comments.mapNotNull { c ->
+            val text = c.text?.trim().orEmpty()
+            if (text.isEmpty()) return@mapNotNull null
+            DocumentBlock.Comment(
+                author = c.author?.takeIf { it.isNotBlank() },
+                anchorText = null,
+                text = text,
+                kind = DocumentBlock.Comment.Kind.REVIEW,
+            )
+        }
     }
 }
