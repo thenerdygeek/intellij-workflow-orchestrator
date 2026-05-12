@@ -98,18 +98,11 @@ class BrainRouter(
     companion object {
         /**
          * Empties threshold at which BrainRouter switches text-only traffic from
-         * `/.api/llm/chat/completions` to `/.api/completions/stream`.
-         *
-         * **Tightened 2026-05-12 (v0.85.12-alpha) from 2 → 1.** The user-reported
-         * shape — 200 OK with `finish_reason=stop`, empty content, no tool calls —
-         * is the LiteLLM #20347 / Anthropic empty-`end_turn` pattern: the gateway
-         * gave up silently. Waiting for a second empty on the same dead endpoint
-         * just wastes another call. Switching to `/stream` after the first empty
-         * matches the recovery cadence the user is asking for. Case C's
-         * `MAX_CONSECUTIVE_EMPTIES = 3` (in AgentLoop) remains the safety net
-         * if both endpoints fail consecutively.
+         * `/.api/llm/chat/completions` to `/.api/completions/stream`. The agent
+         * loop's `MAX_CONSECUTIVE_EMPTIES` is 3, so this fires once — on the
+         * third attempt within the same loop run.
          */
-        private const val DOWNGRADE_THRESHOLD = 1
+        private const val DOWNGRADE_THRESHOLD = 2
     }
 
     /**

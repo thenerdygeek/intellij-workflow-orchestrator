@@ -66,15 +66,12 @@ class BrainRouterEndpointDowngradeTest {
     )
 
     @Test
-    fun `after one empty on chat-completions, second text-only call downgrades to stream endpoint`() = runBlocking {
-        // Threshold tightened to 1 in v0.85.12-alpha — the LiteLLM #20347 pattern
-        // (stop+empty+no-tools) doesn't deserve a second wasted call on the same
-        // dead endpoint. The very next text-only call should switch to /stream.
-        val openAi = SequenceFakeBrain(listOf(emptyResponse(), textResponse("should not be reached")))
+    fun `after two empties on chat-completions, third text-only call downgrades to stream endpoint`() = runBlocking {
+        val openAi = SequenceFakeBrain(listOf(emptyResponse(), emptyResponse(), textResponse("should not be reached")))
         val stream = FakeStreamClient(text = "recovered via stream endpoint")
         val router = BrainRouter(openAi, stream, AttachmentStore(tempDir), { "test::model" }, null)
 
-        // Call 1 — empty
+        // Call 1 — empty, no downgrade yet
         val r1 = router.chatStream(
             messages = listOf(ChatMessage(role = "user", content = "hi")),
             tools = emptyList(),
@@ -85,85 +82,80 @@ class BrainRouterEndpointDowngradeTest {
         assertEquals(1, openAi.callCount, "call 1 stays on chat/completions")
         assertEquals(0, stream.callCount)
 
-        // Call 2 — counter ≥ 1 → DOWNGRADE to /stream
+        // Call 2 — empty again, counter at 2 but downgrade fires NEXT call
         val r2 = router.chatStream(
+            messages = listOf(ChatMessage(role = "user", content = "again")),
+            tools = emptyList(),
+            maxTokens = 100,
+            onChunk = {},
+        )
+        assertTrue(r2 is ApiResult.Success)
+        assertEquals(2, openAi.callCount, "call 2 still on chat/completions")
+        assertEquals(0, stream.callCount)
+
+        // Call 3 — counter ≥ 2 → DOWNGRADE to /stream
+        val r3 = router.chatStream(
             messages = listOf(ChatMessage(role = "user", content = "please work")),
             tools = emptyList(),
             maxTokens = 100,
             onChunk = {},
         )
-        assertTrue(r2 is ApiResult.Success, "call 2 must succeed via stream endpoint")
-        assertEquals(1, openAi.callCount, "call 2 must NOT hit chat/completions")
-        assertEquals(1, stream.callCount, "call 2 must hit /completions/stream")
-        val text = (r2 as ApiResult.Success).data.choices.first().message.content
+        assertTrue(r3 is ApiResult.Success, "call 3 must succeed via stream endpoint")
+        assertEquals(2, openAi.callCount, "call 3 must NOT hit chat/completions")
+        assertEquals(1, stream.callCount, "call 3 must hit /completions/stream")
+        val text = (r3 as ApiResult.Success).data.choices.first().message.content
         assertEquals("recovered via stream endpoint", text)
     }
 
     @Test
     fun `successful response between empties resets the downgrade counter`() = runBlocking {
         val openAi = SequenceFakeBrain(listOf(
-            emptyResponse(),         // call 1 — empty, counter=1
-            textResponse("ok"),      // call 2 — DOWNGRADE fires (counter≥1), but this fake returns text-only so we need the stream to also return text
-            emptyResponse(),         // never reached because the downgrade goes through stream
-            textResponse("ok again"),// never reached
+            emptyResponse(),         // call 1
+            textResponse("ok"),      // call 2 — success, reset
+            emptyResponse(),         // call 3 — counter=1
+            textResponse("ok again") // call 4 — success
         ))
-        // The threshold-1 downgrade means call 2 goes through /stream. We need the
-        // stream client to return successfully so the counter resets afterward.
-        val stream = FakeStreamClient(text = "recovered")
+        val stream = FakeStreamClient(text = "should not be reached")
         val router = BrainRouter(openAi, stream, AttachmentStore(tempDir), { "test::model" }, null)
 
-        // Call 1: empty on chat/completions
-        router.chatStream(messages = listOf(ChatMessage(role = "user", content = "1")), tools = emptyList(), maxTokens = 100, onChunk = {})
-        // Call 2: downgrade → stream returns text → counter resets
-        router.chatStream(messages = listOf(ChatMessage(role = "user", content = "2")), tools = emptyList(), maxTokens = 100, onChunk = {})
+        repeat(4) {
+            router.chatStream(
+                messages = listOf(ChatMessage(role = "user", content = "msg")),
+                tools = emptyList(),
+                maxTokens = 100,
+                onChunk = {},
+            )
+        }
 
-        assertEquals(1, openAi.callCount, "only the first call hit chat/completions; the second downgraded")
-        assertEquals(1, stream.callCount, "downgrade engaged exactly once")
-
-        // Call 3 — counter was reset by successful stream recovery, should go back to chat/completions.
-        // (We only seeded openAi with 4 responses; the SequenceFakeBrain has 3 left after call 1.)
-        router.chatStream(messages = listOf(ChatMessage(role = "user", content = "3")), tools = emptyList(), maxTokens = 100, onChunk = {})
-        assertEquals(2, openAi.callCount, "after counter reset, call 3 goes back to chat/completions")
-        assertEquals(1, stream.callCount, "stream stays at 1 — no new downgrade")
+        assertEquals(4, openAi.callCount, "all 4 calls must stay on chat/completions — counter reset between empties")
+        assertEquals(0, stream.callCount, "stream endpoint never engaged when empties are non-consecutive")
     }
 
     @Test
-    fun `image-bearing turns never engage the downgrade counter`() = runBlocking {
-        // Image turns always use /stream regardless of counter. They should never
-        // touch the counter so they don't influence subsequent text-only routing.
-        val openAi = SequenceFakeBrain(listOf(textResponse("text-only ok")))
-        val stream = FakeStreamClient(text = "image processed")
-        val store = AttachmentStore(tempDir)
-        val ref = store.store("fake".toByteArray(), "image/png", null)
-        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
+    fun `successful response on stream downgrade resets the counter`() = runBlocking {
+        val openAi = SequenceFakeBrain(listOf(
+            emptyResponse(),         // 1: empty
+            emptyResponse(),         // 2: empty (counter=2)
+            // 3: downgrade fires → stream returns success → counter resets
+            textResponse("ok now"),  // 4: this should stay on chat/completions (counter=0 again)
+        ))
+        val stream = FakeStreamClient(text = "recovered")
+        val router = BrainRouter(openAi, stream, AttachmentStore(tempDir), { "test::model" }, null)
 
-        // Image turn — must use stream regardless of empties counter state
-        router.chatStream(
-            messages = listOf(
-                ChatMessage(
-                    role = "user",
-                    parts = listOf(
-                        com.workflow.orchestrator.core.ai.dto.ContentPart.Image(ref.sha256, "image/png", null),
-                        com.workflow.orchestrator.core.ai.dto.ContentPart.Text("?")
-                    ),
-                )
-            ),
-            tools = emptyList(),
-            maxTokens = 100,
-            onChunk = {},
-        )
-        assertEquals(1, stream.callCount, "image turn used /stream")
-        assertEquals(0, openAi.callCount, "image turn did NOT hit chat/completions")
+        // Calls 1, 2 — both empty
+        router.chatStream(messages = listOf(ChatMessage(role = "user", content = "1")), tools = emptyList(), maxTokens = 100, onChunk = {})
+        router.chatStream(messages = listOf(ChatMessage(role = "user", content = "2")), tools = emptyList(), maxTokens = 100, onChunk = {})
 
-        // Subsequent text-only turn — counter was never incremented by image turn, so stays on chat/completions
-        router.chatStream(
-            messages = listOf(ChatMessage(role = "user", content = "follow-up")),
-            tools = emptyList(),
-            maxTokens = 100,
-            onChunk = {},
-        )
-        assertEquals(1, stream.callCount, "stream stays at 1 — image turn didn't pollute counter")
-        assertEquals(1, openAi.callCount, "text-only follow-up goes to chat/completions (counter is 0)")
+        // Call 3 — downgrade
+        val r3 = router.chatStream(messages = listOf(ChatMessage(role = "user", content = "3")), tools = emptyList(), maxTokens = 100, onChunk = {})
+        assertTrue(r3 is ApiResult.Success)
+        assertEquals(1, stream.callCount, "downgrade should fire")
+
+        // Call 4 — counter reset after successful stream recovery
+        val r4 = router.chatStream(messages = listOf(ChatMessage(role = "user", content = "4")), tools = emptyList(), maxTokens = 100, onChunk = {})
+        assertTrue(r4 is ApiResult.Success)
+        assertEquals(3, openAi.callCount, "call 4 must return to chat/completions after the recovery reset")
+        assertEquals(1, stream.callCount, "stream endpoint stays at 1 — counter reset")
     }
 }
 
