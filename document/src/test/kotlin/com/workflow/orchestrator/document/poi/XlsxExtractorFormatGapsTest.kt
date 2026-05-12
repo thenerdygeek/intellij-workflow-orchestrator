@@ -1,0 +1,191 @@
+package com.workflow.orchestrator.document.poi
+
+import com.workflow.orchestrator.core.model.DocumentBlock
+import org.apache.poi.common.usermodel.HyperlinkType
+import org.apache.poi.ss.usermodel.Workbook
+import org.apache.poi.xssf.usermodel.XSSFWorkbook
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+
+/**
+ * Characterization tests pinning the scope of [XlsxTableExtractor].
+ *
+ * Each test builds a minimal in-memory XLSX with a specific feature (cell comment,
+ * embedded image, hyperlink, hidden sheet, formula text) and asserts that the
+ * extractor's per-row cell walk drops it. Documents the trade-off behind
+ * "we read cell *values* via the formula evaluator, nothing else."
+ */
+class XlsxExtractorFormatGapsTest {
+
+    private val extractor = XlsxTableExtractor()
+
+    // ── Cell comments ─────────────────────────────────────────────────────────
+
+    @Test
+    fun `gap cell comment is dropped — only the cell value reaches the Table`() {
+        val bytes = buildXlsx { wb ->
+            val sheet = wb.createSheet("Sheet1")
+            val helper = wb.creationHelper
+            val drawing = sheet.createDrawingPatriarch()
+
+            // Header row.
+            sheet.createRow(0).createCell(0).setCellValue("Item")
+            // Data row with a cell comment.
+            val cell = sheet.createRow(1).createCell(0)
+            cell.setCellValue("widget")
+            val anchor = helper.createClientAnchor().apply {
+                setCol1(0); setCol2(2); row1 = 1; row2 = 3
+            }
+            val comment = drawing.createCellComment(anchor).apply {
+                string = helper.createRichTextString("REVIEW NOTE: confirm SKU")
+                author = "alice"
+            }
+            cell.cellComment = comment
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val rendered = blocks.joinToString("\n") {
+            when (it) {
+                is DocumentBlock.Heading -> it.text
+                is DocumentBlock.Paragraph -> it.text
+                is DocumentBlock.Table -> (it.headers + it.rows.flatten()).joinToString(" | ")
+                else -> ""
+            }
+        }
+
+        assertTrue(rendered.contains("widget"), "Cell value still present")
+        assertFalse(rendered.contains("REVIEW NOTE"),
+            "Cell comment text is silently dropped — no DocumentBlock variant captures it")
+        assertFalse(rendered.contains("alice"),
+            "Comment author is dropped — extractor never calls Cell.getCellComment()")
+    }
+
+    // ── Embedded images ───────────────────────────────────────────────────────
+
+    @Test
+    fun `gap embedded image on a sheet is dropped — no EmbeddedFileRef, no warning`() {
+        val pngBytes = tinyPng()
+        val bytes = buildXlsx { wb ->
+            val sheet = wb.createSheet("Sheet1")
+            sheet.createRow(0).createCell(0).setCellValue("Header")
+            sheet.createRow(1).createCell(0).setCellValue("data1")
+
+            val picIdx = wb.addPicture(pngBytes, Workbook.PICTURE_TYPE_PNG)
+            val drawing = sheet.createDrawingPatriarch()
+            val anchor = wb.creationHelper.createClientAnchor().apply {
+                setCol1(2); setCol2(4); row1 = 0; row2 = 5
+            }
+            drawing.createPicture(anchor, picIdx)
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        assertTrue(blocks.none { it is DocumentBlock.EmbeddedFileRef },
+            "No EmbeddedFileRef emitted for sheet pictures")
+        assertEquals(1, blocks.count { it is DocumentBlock.Table },
+            "Sheet still yields one Table — image is silently absent")
+    }
+
+    // ── Hyperlinks ────────────────────────────────────────────────────────────
+
+    @Test
+    fun `gap hyperlink target is dropped — only the cell display value survives`() {
+        val bytes = buildXlsx { wb ->
+            val sheet = wb.createSheet("Sheet1")
+            sheet.createRow(0).createCell(0).setCellValue("Link")
+            val cell = sheet.createRow(1).createCell(0)
+            cell.setCellValue("Docs")
+            val link = wb.creationHelper.createHyperlink(HyperlinkType.URL)
+            link.address = "https://example.com/handbook"
+            cell.hyperlink = link
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val cells = blocks.filterIsInstance<DocumentBlock.Table>().flatMap { it.rows.flatten() }
+
+        assertTrue("Docs" in cells, "Display text survives")
+        assertFalse(cells.any { it.contains("example.com") },
+            "URL is dropped — XlsxTableExtractor never reads Cell.hyperlink")
+    }
+
+    // ── Formulas ──────────────────────────────────────────────────────────────
+
+    @Test
+    fun `formula text is intentionally dropped — only the evaluated value is extracted`() {
+        val bytes = buildXlsx { wb ->
+            val sheet = wb.createSheet("Sheet1")
+            sheet.createRow(0).createCell(0).setCellValue("X")
+            sheet.createRow(1).createCell(0).setCellFormula("1+2+3")
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val cell = blocks.filterIsInstance<DocumentBlock.Table>().first().rows[0][0]
+
+        assertEquals("6", cell, "Formula is evaluated; the LLM sees the answer, not the recipe")
+    }
+
+    // ── Hidden sheets ─────────────────────────────────────────────────────────
+
+    @Test
+    fun `surprise hidden sheets are still extracted — no visibility filter`() {
+        val bytes = buildXlsx { wb ->
+            wb.createSheet("Visible").apply {
+                createRow(0).createCell(0).setCellValue("v1")
+            }
+            val hidden = wb.createSheet("Hidden").apply {
+                createRow(0).createCell(0).setCellValue("h1")
+            }
+            wb.setSheetHidden(wb.getSheetIndex(hidden), true)
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val sheetHeadings = blocks.filterIsInstance<DocumentBlock.Heading>().map { it.text }
+
+        assertEquals(listOf("Visible", "Hidden"), sheetHeadings,
+            "Hidden sheets ARE extracted today — sheet.sheetVisibility is never consulted. " +
+                "This may or may not be desired (auditor data leak risk vs. completeness).")
+    }
+
+    // ── Inline formatting ─────────────────────────────────────────────────────
+
+    @Test
+    fun `gap rich text bold and color formatting is dropped on output`() {
+        val bytes = buildXlsx { wb ->
+            val sheet = wb.createSheet("Sheet1")
+            sheet.createRow(0).createCell(0).setCellValue("Status")
+            val cell = sheet.createRow(1).createCell(0)
+            val rich = wb.creationHelper.createRichTextString("CRITICAL")
+            // POI rich-text font application — only verifying the value path drops it.
+            cell.setCellValue(rich)
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val v = blocks.filterIsInstance<DocumentBlock.Table>().first().rows[0][0]
+        assertEquals("CRITICAL", v,
+            "Rich-text runs collapse to plain text — DocumentBlock.Table cells are flat strings")
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private fun buildXlsx(build: (XSSFWorkbook) -> Unit): ByteArray {
+        val wb = XSSFWorkbook()
+        try {
+            build(wb)
+            val out = ByteArrayOutputStream()
+            wb.write(out)
+            return out.toByteArray()
+        } finally {
+            wb.close()
+        }
+    }
+
+    private fun tinyPng(): ByteArray {
+        val img = java.awt.image.BufferedImage(16, 16, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        val out = ByteArrayOutputStream()
+        javax.imageio.ImageIO.write(img, "PNG", out)
+        return out.toByteArray()
+    }
+}
