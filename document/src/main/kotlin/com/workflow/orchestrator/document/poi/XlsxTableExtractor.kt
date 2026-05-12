@@ -5,6 +5,7 @@ import org.apache.poi.ss.usermodel.Cell
 import org.apache.poi.ss.usermodel.FormulaEvaluator
 import org.apache.poi.ss.usermodel.Row
 import org.apache.poi.ss.util.CellRangeAddress
+import org.apache.poi.ss.util.CellReference
 import org.apache.poi.xssf.usermodel.XSSFSheet
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import java.io.InputStream
@@ -59,11 +60,15 @@ class XlsxTableExtractor {
                 val rowIter = sheet.iterator()
                 if (!rowIter.hasNext()) continue
 
+                // Accumulates cell comments in row-major order as we walk cells.
+                val sheetComments = mutableListOf<DocumentBlock.Comment>()
+
                 // First row → headers
                 val headerRow = rowIter.next()
                 val lastCellNum = headerRow.lastCellNum.toInt().coerceAtLeast(0)
                 val headers = (0 until lastCellNum).map { col ->
                     val cell = headerRow.getCell(col)
+                    collectCellComment(cell, sheetComments)
                     CellFormatter.toCellString(cellOrMergedValue(cell, col, headerRow, xssfSheet, evaluator), evaluator)
                 }
 
@@ -77,6 +82,7 @@ class XlsxTableExtractor {
                     val row = rowIter.next()
                     val cells = headers.indices.map { col ->
                         val cell = row.getCell(col)
+                        collectCellComment(cell, sheetComments)
                         CellFormatter.toCellString(cellOrMergedValue(cell, col, row, xssfSheet, evaluator), evaluator)
                     }
                     rows += cells
@@ -84,6 +90,10 @@ class XlsxTableExtractor {
                 }
 
                 blocks += DocumentBlock.Table(headers, rows)
+
+                // Drain per-sheet comments AFTER the Table so the LLM sees them
+                // immediately following the data they annotate, in row-major order.
+                blocks += sheetComments
 
                 if (rowIter.hasNext()) {
                     blocks += DocumentBlock.Paragraph("_(truncated at $MAX_ROWS_PER_SHEET rows)_")
@@ -135,6 +145,36 @@ class XlsxTableExtractor {
         }
 
         return cell
+    }
+
+    // ── Cell comment collection ────────────────────────────────────────────────
+
+    /**
+     * If [cell] has a `cellComment`, appends a [DocumentBlock.Comment] to [sink] with
+     * the cell reference (e.g. "B7") as anchor text. The cell reference uses
+     * [CellReference.formatAsString] for portability across cell types, producing
+     * standard A1 notation without the sheet prefix (e.g. "A2", "B7").
+     *
+     * No-op when the cell is null, has no comment, or the comment string is blank.
+     * Cell-comment iteration order in the output matches the cell-walk order, which
+     * is row-major (top-to-bottom, left-to-right) — matching how a human reads a
+     * spreadsheet.
+     */
+    private fun collectCellComment(
+        cell: Cell?,
+        sink: MutableList<DocumentBlock.Comment>,
+    ) {
+        val cellComment = cell?.cellComment ?: return
+        val text = cellComment.string?.string?.trim() ?: return
+        if (text.isEmpty()) return
+        val author = cellComment.author?.takeIf { it.isNotBlank() }
+        val cellRef = CellReference(cell.rowIndex, cell.columnIndex).formatAsString()
+        sink += DocumentBlock.Comment(
+            author = author,
+            anchorText = cellRef,
+            text = text,
+            kind = DocumentBlock.Comment.Kind.REVIEW,
+        )
     }
 
     companion object {

@@ -15,26 +15,24 @@ import java.io.ByteArrayOutputStream
  * Characterization tests pinning the scope of [XlsxTableExtractor].
  *
  * Each test builds a minimal in-memory XLSX with a specific feature (cell comment,
- * embedded image, hyperlink, hidden sheet, formula text) and asserts that the
- * extractor's per-row cell walk drops it. Documents the trade-off behind
- * "we read cell *values* via the formula evaluator, nothing else."
+ * embedded image, hyperlink, hidden sheet, formula text) and asserts the extractor's
+ * behaviour. Cell comments are now extracted as [DocumentBlock.Comment] blocks emitted
+ * immediately after the sheet's Table (Phase 1).
  */
 class XlsxExtractorFormatGapsTest {
 
     private val extractor = XlsxTableExtractor()
 
-    // ── Cell comments ─────────────────────────────────────────────────────────
+    // ── Cell comments (positive coverage after Phase 1) ────────────────────────
 
     @Test
-    fun `gap cell comment is dropped — only the cell value reaches the Table`() {
+    fun `cell comment is extracted as DocumentBlock Comment with cell-ref anchor immediately after the Table`() {
         val bytes = buildXlsx { wb ->
             val sheet = wb.createSheet("Sheet1")
             val helper = wb.creationHelper
             val drawing = sheet.createDrawingPatriarch()
 
-            // Header row.
             sheet.createRow(0).createCell(0).setCellValue("Item")
-            // Data row with a cell comment.
             val cell = sheet.createRow(1).createCell(0)
             cell.setCellValue("widget")
             val anchor = helper.createClientAnchor().apply {
@@ -48,20 +46,66 @@ class XlsxExtractorFormatGapsTest {
         }
 
         val blocks = extractor.extract(ByteArrayInputStream(bytes))
-        val rendered = blocks.joinToString("\n") {
-            when (it) {
-                is DocumentBlock.Heading -> it.text
-                is DocumentBlock.Paragraph -> it.text
-                is DocumentBlock.Table -> (it.headers + it.rows.flatten()).joinToString(" | ")
-                else -> ""
+
+        // Find the Table for Sheet1.
+        val tableIdx = blocks.indexOfFirst { it is DocumentBlock.Table }
+        assertTrue(tableIdx >= 0, "Expected a Table block for Sheet1")
+
+        // The Comment should appear IMMEDIATELY after the Table.
+        val next = blocks.getOrNull(tableIdx + 1)
+        assertTrue(
+            next is DocumentBlock.Comment,
+            "Expected a Comment block immediately after the Table; got ${next?.let { it::class.simpleName }}. " +
+                "All blocks: ${blocks.map { it::class.simpleName }}"
+        )
+        val comment = next as DocumentBlock.Comment
+        assertEquals(DocumentBlock.Comment.Kind.REVIEW, comment.kind)
+        assertEquals("alice", comment.author)
+        assertEquals("REVIEW NOTE: confirm SKU", comment.text)
+        assertEquals("A2", comment.anchorText,
+            "Anchor should be the cell reference (column letter + 1-indexed row) so the LLM can map back to the cell")
+    }
+
+    @Test
+    fun `multiple cell comments emit in row-major order after the Table`() {
+        val bytes = buildXlsx { wb ->
+            val sheet = wb.createSheet("Sheet1")
+            val helper = wb.creationHelper
+            val drawing = sheet.createDrawingPatriarch()
+
+            sheet.createRow(0).createCell(0).setCellValue("Item")
+            sheet.createRow(0).createCell(1).setCellValue("Note")
+
+            // Cell B2 (col=1, row=1) — comment "two"
+            val b2 = sheet.createRow(1).createCell(1)
+            b2.setCellValue("b2-val")
+            val b2Anchor = helper.createClientAnchor().apply { setCol1(1); setCol2(3); row1 = 1; row2 = 3 }
+            b2.cellComment = drawing.createCellComment(b2Anchor).apply {
+                string = helper.createRichTextString("two"); author = "bob"
+            }
+            // Cell A2 (col=0, row=1) — comment "one"
+            val a2 = sheet.getRow(1).createCell(0)
+            a2.setCellValue("a2-val")
+            val a2Anchor = helper.createClientAnchor().apply { setCol1(0); setCol2(2); row1 = 1; row2 = 3 }
+            a2.cellComment = drawing.createCellComment(a2Anchor).apply {
+                string = helper.createRichTextString("one"); author = "alice"
+            }
+            // Cell A3 (col=0, row=2) — comment "three"
+            val a3 = sheet.createRow(2).createCell(0)
+            a3.setCellValue("a3-val")
+            val a3Anchor = helper.createClientAnchor().apply { setCol1(0); setCol2(2); row1 = 2; row2 = 4 }
+            a3.cellComment = drawing.createCellComment(a3Anchor).apply {
+                string = helper.createRichTextString("three"); author = "carol"
             }
         }
 
-        assertTrue(rendered.contains("widget"), "Cell value still present")
-        assertFalse(rendered.contains("REVIEW NOTE"),
-            "Cell comment text is silently dropped — no DocumentBlock variant captures it")
-        assertFalse(rendered.contains("alice"),
-            "Comment author is dropped — extractor never calls Cell.getCellComment()")
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val comments = blocks.filterIsInstance<DocumentBlock.Comment>()
+
+        assertEquals(3, comments.size)
+        assertEquals(listOf("A2", "B2", "A3"), comments.map { it.anchorText },
+            "Comments should be emitted in row-major order: row 1 left-to-right (A2 then B2), then row 2 (A3)")
+        assertEquals(listOf("one", "two", "three"), comments.map { it.text })
     }
 
     // ── Embedded images ───────────────────────────────────────────────────────
