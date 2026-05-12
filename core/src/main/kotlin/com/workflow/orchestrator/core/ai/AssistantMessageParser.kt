@@ -198,4 +198,83 @@ object AssistantMessageParser {
         val body = afterOpen.removePrefix("</").removePrefix("<")
         return body.isEmpty() || body.matches(Regex("^[a-zA-Z_0-9]*$"))
     }
+
+    /**
+     * Tag names the LLM occasionally emits in visible text but that are NOT registered
+     * tools. These are pretraining-echo artefacts from other agent protocols — Anthropic's
+     * `<function_calls><invoke>`, deprecated `<tool_use>`/`<tool_calls>` wrappers, and
+     * the literal `<tool_name>`/`<parameter_name>` placeholder shape seen in many tool-use
+     * teaching examples online. None match a registered tool in [toolNames], so [parse]
+     * passes them straight through as TextContent and they render as raw XML.
+     */
+    private val LEAKED_TAG_NAMES = listOf(
+        "tool",
+        "tool_use",
+        "tool_calls",
+        "tool_name",
+        "parameter_name",
+        "function_calls",
+        "invoke"
+    )
+
+    /**
+     * Strip pretraining-echo tool-use XML from visible assistant text. Two passes:
+     *
+     * 1. Remove balanced pairs `<name>...</name>` (including attribute-bearing open
+     *    tags like `<invoke name="foo">`) for every name in [LEAKED_TAG_NAMES].
+     * 2. Truncate at the earliest unclosed open tag of the same names — this is the
+     *    streaming hold-back: prevents `<tool>` flashing in then disappearing once
+     *    `</tool>` arrives a few chunks later.
+     *
+     * Real tool tags (those in `currentToolNames`) are not in [LEAKED_TAG_NAMES] and
+     * are unaffected — they remain the responsibility of [parse]. Call site is the
+     * streaming presentation layer in `AgentLoop`, right after [stripPartialTag].
+     */
+    fun stripLeakedToolXml(text: String): String {
+        if (text.isEmpty()) return text
+        var result = text
+
+        for (name in LEAKED_TAG_NAMES) {
+            val pattern = Regex(
+                "<$name(?:\\s[^>]*)?>[\\s\\S]*?</$name>",
+                RegexOption.IGNORE_CASE
+            )
+            result = pattern.replace(result, "")
+        }
+
+        var earliest = -1
+        for (name in LEAKED_TAG_NAMES) {
+            val openPattern = Regex("<$name(?:\\s[^>]*)?>", RegexOption.IGNORE_CASE)
+            val match = openPattern.find(result) ?: continue
+            if (earliest < 0 || match.range.first < earliest) {
+                earliest = match.range.first
+            }
+        }
+        if (earliest >= 0) {
+            result = result.substring(0, earliest).trimEnd()
+        }
+
+        return result
+    }
+
+    /**
+     * Returns true if [text] contains an open tag from [LEAKED_TAG_NAMES] that has
+     * not yet been closed. Used by the streaming presentation layer's skip-parse fast
+     * path to suppress text appends while a leaked-tag body is mid-flight, mirroring
+     * the existing [endsWithIncompleteTag] / `hasPendingTool` guard.
+     *
+     * Without this, when chunk A delivers `<tool>partial`, chunk B delivers a `<`/`>`-free
+     * payload like ` more text`, and chunk C closes with `</tool>`, the chunk-B payload
+     * would briefly leak into the visible bubble before chunk C's re-parse cleans it up.
+     */
+    fun hasUnclosedLeakedTag(text: String): Boolean {
+        if (text.isEmpty()) return false
+        for (name in LEAKED_TAG_NAMES) {
+            val opens = Regex("<$name(?:\\s[^>]*)?>", RegexOption.IGNORE_CASE).findAll(text).count()
+            if (opens == 0) continue
+            val closes = Regex("</$name>", RegexOption.IGNORE_CASE).findAll(text).count()
+            if (opens > closes) return true
+        }
+        return false
+    }
 }

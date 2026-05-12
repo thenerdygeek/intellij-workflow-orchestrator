@@ -48,13 +48,16 @@ object ToolPromptBuilder {
     private val FORMAT_INSTRUCTIONS = """
 # Tool Use Format
 
-You have tools to assist you. To use a tool, write the XML tag for that tool with its parameters as child tags:
+You have tools to assist you. To call a tool, write its name as an XML tag with each parameter as a child tag. For example, to read a file:
 
-<tool_name>
-<parameter_name>value</parameter_name>
-</tool_name>
+<read_file>
+<path>src/main/kotlin/Example.kt</path>
+</read_file>
+
+The exact tag names and parameters for each available tool are defined in the catalog below.
 
 - Always use the XML format shown above — do not use JSON or code blocks for tool calls.
+- The tool's own tag is the outermost wrapper — never nest the call inside any other container tag.
 - You may use multiple tools in one response.
 - For parameters containing code (content, new_string, old_string, diff), write the code directly — no escaping needed.
 - Even for large code blocks (100+ lines), use the appropriate tool with XML tags.

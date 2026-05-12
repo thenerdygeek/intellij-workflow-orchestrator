@@ -826,8 +826,13 @@ class AgentLoop(
                         // (TextContent.content is trimmed by the parser, which loses trailing spaces at chunk boundaries)
                         val hasToolCalls = blocks.any { it is ToolUseContent }
                         val base = if (hasToolCalls) visibleText else accumulatedText.toString()
-                        AssistantMessageParser.stripPartialTag(base)
-                            .also { cachedStrippedText = it }
+                        // stripPartialTag handles incomplete <real_tool tags at chunk boundaries.
+                        // stripLeakedToolXml handles pretraining-echo wrappers (<tool>, <tool_use>,
+                        // <function_calls>, <invoke>, <tool_name> placeholder, etc.) that aren't
+                        // registered tools and would otherwise render as raw XML in the chat UI.
+                        AssistantMessageParser.stripLeakedToolXml(
+                            AssistantMessageParser.stripPartialTag(base)
+                        ).also { cachedStrippedText = it }
                     } else {
                         // Skip-parse path: only append plain text when no tool call is in flight.
                         //
@@ -845,8 +850,13 @@ class AgentLoop(
                         // it has no `<` or `>` to force a re-parse, and the leading "<read"
                         // was already stripped by stripPartialTag().
                         val endsInIncompleteTag = AssistantMessageParser.endsWithIncompleteTag(accumulatedText.toString())
-                        if (hasPendingTool || endsInIncompleteTag) {
-                            cachedStrippedText  // tool tag in flight — don't leak its body to the display
+                        // Symmetric guard for pretraining-echo wrappers spanning chunks: when
+                        // chunk A delivers `<tool>partial`, chunk B is `<`/`>`-free prose, and
+                        // chunk C closes with `</tool>`, the B payload would leak into the bubble
+                        // before C re-parses and cleans it. hasUnclosedLeakedTag suppresses B.
+                        val hasPendingLeakedTag = AssistantMessageParser.hasUnclosedLeakedTag(accumulatedText.toString())
+                        if (hasPendingTool || endsInIncompleteTag || hasPendingLeakedTag) {
+                            cachedStrippedText  // tool tag (real or leaked) in flight — don't leak its body to the display
                         } else {
                             (cachedStrippedText + text).also { cachedStrippedText = it }
                         }

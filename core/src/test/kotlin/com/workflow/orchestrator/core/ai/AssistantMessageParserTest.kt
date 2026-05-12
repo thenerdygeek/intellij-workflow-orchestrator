@@ -474,6 +474,97 @@ println(closeTag)</new_string>
         assertFalse(AssistantMessageParser.endsWithIncompleteTag("Use the < operator with spaces"))
     }
 
+    // ---- stripLeakedToolXml: pretraining-echo wrapper hygiene ----
+
+    @Test
+    fun `stripLeakedToolXml removes balanced tool wrapper from prose`() {
+        val input = "Working on it.\n<tool>\nlet me think\n</tool>\nDone."
+        val out = AssistantMessageParser.stripLeakedToolXml(input)
+        assertEquals("Working on it.\n\nDone.", out)
+    }
+
+    @Test
+    fun `stripLeakedToolXml removes Anthropic function_calls invoke wrapper with attributes`() {
+        val input = "Here goes.\n<function_calls>\n<invoke name=\"read_file\">\n<parameter name=\"path\">a.kt</parameter>\n</invoke>\n</function_calls>\nDone."
+        val out = AssistantMessageParser.stripLeakedToolXml(input)
+        // Both <function_calls>...</function_calls> AND the inner <invoke ...>...</invoke>
+        // pair get stripped — outer pass removes the whole block in one shot.
+        assertEquals("Here goes.\n\nDone.", out)
+    }
+
+    @Test
+    fun `stripLeakedToolXml removes placeholder tool_name parameter_name echo`() {
+        val input = "<tool_name>\n<parameter_name>x</parameter_name>\n</tool_name>"
+        val out = AssistantMessageParser.stripLeakedToolXml(input)
+        assertEquals("", out)
+    }
+
+    @Test
+    fun `stripLeakedToolXml truncates at unclosed open tag for streaming holdback`() {
+        // Mid-stream: <tool> has arrived, </tool> hasn't yet. Truncate so the partial
+        // body doesn't flash in then disappear when the close finally arrives.
+        val input = "I'll start.\n<tool>partial content arrived"
+        val out = AssistantMessageParser.stripLeakedToolXml(input)
+        assertEquals("I'll start.", out)
+    }
+
+    @Test
+    fun `stripLeakedToolXml truncates at earliest unclosed leaked tag`() {
+        // Two unclosed openings of different leaked tags — truncate at the earlier one.
+        val input = "Prefix\n<function_calls>some\nthen <tool>more"
+        val out = AssistantMessageParser.stripLeakedToolXml(input)
+        assertEquals("Prefix", out)
+    }
+
+    @Test
+    fun `stripLeakedToolXml preserves prose with stray less-than`() {
+        val input = "Use the < operator carefully, and List<String> is fine."
+        val out = AssistantMessageParser.stripLeakedToolXml(input)
+        assertEquals(input, out)
+    }
+
+    @Test
+    fun `stripLeakedToolXml leaves real tool tags alone`() {
+        // Real registered tool tags are handled by parse(), not by this helper.
+        // The helper must not touch them — read_file is not in the leaked-tag list.
+        val input = "<read_file><path>a.kt</path></read_file>"
+        val out = AssistantMessageParser.stripLeakedToolXml(input)
+        assertEquals(input, out)
+    }
+
+    @Test
+    fun `stripLeakedToolXml removes multiple leaked blocks`() {
+        val input = "A\n<tool>x</tool>\nB\n<tool_use>y</tool_use>\nC"
+        val out = AssistantMessageParser.stripLeakedToolXml(input)
+        assertEquals("A\n\nB\n\nC", out)
+    }
+
+    @Test
+    fun `stripLeakedToolXml handles empty input`() {
+        assertEquals("", AssistantMessageParser.stripLeakedToolXml(""))
+    }
+
+    @Test
+    fun `hasUnclosedLeakedTag detects mid-stream open without close`() {
+        assertTrue(AssistantMessageParser.hasUnclosedLeakedTag("prefix <tool>body so far"))
+    }
+
+    @Test
+    fun `hasUnclosedLeakedTag returns false when pair is balanced`() {
+        assertFalse(AssistantMessageParser.hasUnclosedLeakedTag("<tool>x</tool> trailing prose"))
+    }
+
+    @Test
+    fun `hasUnclosedLeakedTag returns false when no leaked tag is present`() {
+        assertFalse(AssistantMessageParser.hasUnclosedLeakedTag("nothing tag-shaped here at all"))
+        assertFalse(AssistantMessageParser.hasUnclosedLeakedTag("<read_file><path>a.kt</path></read_file>"))
+    }
+
+    @Test
+    fun `hasUnclosedLeakedTag detects attribute-bearing invoke open`() {
+        assertTrue(AssistantMessageParser.hasUnclosedLeakedTag("text <invoke name=\"foo\">partial"))
+    }
+
     @Test
     fun `edit_file where new_string contains tool-like XML tags`() {
         // The code being inserted contains XML that looks like tool tags
