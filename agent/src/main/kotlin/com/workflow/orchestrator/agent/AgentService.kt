@@ -82,6 +82,7 @@ import com.workflow.orchestrator.core.util.ProjectIdentifier
 import com.workflow.orchestrator.document.service.TikaDocumentExtractor
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -2080,6 +2081,18 @@ class AgentService(
 
                 onComplete(result)
             } catch (e: CancellationException) {
+                session = session.copy(
+                    status = SessionStatus.CANCELLED,
+                    lastMessageAt = System.currentTimeMillis()
+                )
+                fileLogger.logSessionEnd(sid, 0, 0, System.currentTimeMillis() - sessionStartTime)
+                onComplete(LoopResult.Cancelled(iterations = 0))
+            } catch (e: ClosedReceiveChannelException) {
+                // Defense-in-depth: AgentController now closes userInputChannel with a
+                // CancellationException cause, so this branch should be unreachable.
+                // Keep it in case a future close site forgets the cause — without this,
+                // a bare channel close surfaces as "task execution failed" instead of
+                // Cancelled.
                 session = session.copy(
                     status = SessionStatus.CANCELLED,
                     lastMessageAt = System.currentTimeMillis()

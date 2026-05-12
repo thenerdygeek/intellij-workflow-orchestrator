@@ -2220,8 +2220,12 @@ class AgentController(
             dashboard.setSteeringMode(false)
             dashboard.focusInput()
             currentJob = null
-            // Reset channel state — the loop has finished
-            userInputChannel?.close()
+            // Reset channel state — the loop has finished.
+            // Close with a CancellationException cause so any straggling receive() in
+            // the loop throws CancellationException (handled by AgentService) instead
+            // of ClosedReceiveChannelException (which falls through to the catch-all
+            // and surfaces as "task execution failed").
+            userInputChannel?.close(CancellationException("agent loop completed"))
             userInputChannel = null
             loopWaitingForInput = false
             // Clear any orphaned steering messages that were queued after the last drain
@@ -2255,7 +2259,11 @@ class AgentController(
     private fun clearActiveLoopState() {
         currentJob = null
         pendingApprovalChoice = false
-        userInputChannel?.close()
+        // Close with a CancellationException cause so a suspended receive() in the loop
+        // throws CancellationException (handled by AgentService) instead of
+        // ClosedReceiveChannelException (which falls through to the catch-all and
+        // surfaces as "task execution failed").
+        userInputChannel?.close(CancellationException("agent loop cancelled by user"))
         userInputChannel = null
         loopWaitingForInput = false
         pendingUiMessageOverride.set(null)
