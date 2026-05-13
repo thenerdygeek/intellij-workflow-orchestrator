@@ -1,19 +1,20 @@
 package com.workflow.orchestrator.agent.tools.framework.build
 
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.framework.MavenUtils
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import kotlinx.serialization.json.JsonObject
 
-internal fun executeMavenProfiles(params: JsonObject, project: Project): ToolResult {
-    return try {
+internal suspend fun executeMavenProfiles(params: JsonObject, project: Project): ToolResult = readAction {
+    try {
         val manager = MavenUtils.getMavenManager(project)
-            ?: return MavenUtils.noMavenError()
+            ?: return@readAction MavenUtils.noMavenError()
 
         val mavenProjects = MavenUtils.getMavenProjects(manager)
         if (mavenProjects.isEmpty()) {
-            return ToolResult("No Maven projects found.", "No Maven projects", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+            return@readAction ToolResult("No Maven projects found.", "No Maven projects", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
         val activeProfiles = getExplicitProfiles(manager, enabled = true)

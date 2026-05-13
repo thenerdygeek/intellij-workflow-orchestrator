@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.framework.spring
 
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.framework.MavenUtils
@@ -27,11 +28,12 @@ internal suspend fun executeVersionInfo(params: JsonObject, project: Project): T
     return try {
         val moduleFilter = params["module"]?.jsonPrimitive?.content
 
-        // Try Maven first
-        val manager = MavenUtils.getMavenManager(project)
-        if (manager != null) {
-            return executeMavenVersionInfo(manager, moduleFilter)
+        // Try Maven first — Maven plugin model access requires a read action.
+        val mavenResult = readAction {
+            val manager = MavenUtils.getMavenManager(project) ?: return@readAction null
+            executeMavenVersionInfo(manager, moduleFilter)
         }
+        if (mavenResult != null) return mavenResult
 
         // Fallback to Gradle
         val basePath = project.basePath

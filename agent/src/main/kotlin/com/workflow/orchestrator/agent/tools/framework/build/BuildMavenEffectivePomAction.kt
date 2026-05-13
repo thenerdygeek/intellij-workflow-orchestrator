@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.framework.build
 
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.framework.MavenUtils
@@ -23,21 +24,21 @@ private data class PluginConfigInfo(
     val executions: List<ExecutionInfo>
 )
 
-internal fun executeMavenEffectivePom(params: JsonObject, project: Project): ToolResult {
-    return try {
+internal suspend fun executeMavenEffectivePom(params: JsonObject, project: Project): ToolResult = readAction {
+    try {
         val moduleFilter = params["module"]?.jsonPrimitive?.content
         val pluginFilter = params["plugin"]?.jsonPrimitive?.content?.lowercase()
 
         val manager = MavenUtils.getMavenManager(project)
-            ?: return MavenUtils.noMavenError()
+            ?: return@readAction MavenUtils.noMavenError()
 
         val mavenProjects = MavenUtils.getMavenProjects(manager)
         if (mavenProjects.isEmpty()) {
-            return ToolResult("No Maven projects found.", "No Maven projects", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+            return@readAction ToolResult("No Maven projects found.", "No Maven projects", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
         val targetProject = MavenUtils.findMavenProject(mavenProjects, manager, moduleFilter)
-            ?: return ToolResult(
+            ?: return@readAction ToolResult(
                 "Module '${moduleFilter}' not found. Available: ${MavenUtils.getProjectNames(mavenProjects)}",
                 "Module not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
             )
@@ -52,7 +53,7 @@ internal fun executeMavenEffectivePom(params: JsonObject, project: Project): Too
 
         if (filtered.isEmpty()) {
             val filterDesc = if (pluginFilter != null) " matching '$pluginFilter'" else ""
-            return ToolResult("No plugin configurations found$filterDesc.", "No plugins", 5)
+            return@readAction ToolResult("No plugin configurations found$filterDesc.", "No plugins", 5)
         }
 
         val projectName = MavenUtils.getDisplayName(targetProject)

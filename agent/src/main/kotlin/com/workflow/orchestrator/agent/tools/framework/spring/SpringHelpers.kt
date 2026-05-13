@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.framework.spring
 
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModuleRootManager
@@ -127,23 +128,30 @@ internal fun scanSpringResourceFilesMatching(
         "src/test/resources",
     )
 
-    val found = linkedMapOf<String, SpringResourceFile>()
-    val modules = ModuleManager.getInstance(project).modules
+    // IDE module-model access requires a read action. Extract the content-root
+    // paths + module names inside it, then do the actual filesystem walk
+    // outside so we don't hold the read lock during I/O.
+    val moduleRoots: List<Pair<String, String?>> = ReadAction.nonBlocking<List<Pair<String, String?>>> {
+        val modules = ModuleManager.getInstance(project).modules
+        if (modules.isEmpty()) emptyList()
+        else modules.flatMap { module ->
+            ModuleRootManager.getInstance(module).contentRoots.map { it.path to module.name }
+        }
+    }.executeSynchronously()
 
-    if (modules.isEmpty()) {
+    val found = linkedMapOf<String, SpringResourceFile>()
+
+    if (moduleRoots.isEmpty()) {
         val basePath = project.basePath ?: return emptyList()
         val baseDir = File(basePath)
         collectFromRoot(baseDir, baseDir, searchDirs, accept, moduleName = null, found)
         return found.values.toList()
     }
 
-    for (module in modules) {
-        val contentRoots = ModuleRootManager.getInstance(module).contentRoots
-        for (root in contentRoots) {
-            val rootFile = File(root.path)
-            if (!rootFile.isDirectory) continue
-            collectFromRoot(rootFile, rootFile, searchDirs, accept, moduleName = module.name, found)
-        }
+    for ((rootPath, moduleName) in moduleRoots) {
+        val rootFile = File(rootPath)
+        if (!rootFile.isDirectory) continue
+        collectFromRoot(rootFile, rootFile, searchDirs, accept, moduleName = moduleName, found)
     }
 
     return found.values.toList()

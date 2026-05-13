@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.framework.build
 
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.framework.MavenUtils
@@ -7,22 +8,22 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-internal fun executeMavenDependencies(params: JsonObject, project: Project): ToolResult {
-    return try {
+internal suspend fun executeMavenDependencies(params: JsonObject, project: Project): ToolResult = readAction {
+    try {
         val moduleFilter = params["module"]?.jsonPrimitive?.content
         val scopeFilter = params["scope"]?.jsonPrimitive?.content?.lowercase()
         val searchFilter = params["search"]?.jsonPrimitive?.content?.lowercase()
 
         val manager = MavenUtils.getMavenManager(project)
-            ?: return MavenUtils.noMavenError()
+            ?: return@readAction MavenUtils.noMavenError()
 
         val mavenProjects = MavenUtils.getMavenProjects(manager)
         if (mavenProjects.isEmpty()) {
-            return ToolResult("No Maven projects found.", "No Maven projects", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+            return@readAction ToolResult("No Maven projects found.", "No Maven projects", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
         val targetProject = MavenUtils.findMavenProject(mavenProjects, manager, moduleFilter)
-            ?: return ToolResult(
+            ?: return@readAction ToolResult(
                 "Module '${moduleFilter}' not found. Available: ${MavenUtils.getProjectNames(mavenProjects)}",
                 "Module not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
             )
@@ -42,7 +43,7 @@ internal fun executeMavenDependencies(params: JsonObject, project: Project): Too
                 if (scopeFilter != null) append(" scope=$scopeFilter")
                 if (searchFilter != null) append(" search=$searchFilter")
             }
-            return ToolResult("No dependencies found matching:$filterDesc", "No matches", 5)
+            return@readAction ToolResult("No dependencies found matching:$filterDesc", "No matches", 5)
         }
 
         val grouped = filtered.groupBy { it.scope.ifBlank { "compile" } }

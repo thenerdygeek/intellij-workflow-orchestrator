@@ -1,5 +1,7 @@
 package com.workflow.orchestrator.agent.tools.framework.spring
 
+import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.framework.MavenUtils
@@ -30,8 +32,25 @@ private val defaultActuatorEndpoints = listOf(
 
 internal suspend fun executeBootActuator(params: JsonObject, project: Project): ToolResult {
     return try {
+        // Maven plugin model access requires a read action, which the
+        // coroutine-friendly `readAction { }` builder can only supply from a
+        // suspend context — so we do the Maven detection here, before
+        // dropping into the non-suspend file-scan path.
+        // Result: null = no Maven (fall back to file scan), true/false = Maven answer.
+        val mavenActuator: Boolean? = readAction {
+            val manager = MavenUtils.getMavenManager(project) ?: return@readAction null
+            val mavenProjects = MavenUtils.getMavenProjects(manager)
+            if (mavenProjects.isEmpty()) return@readAction null
+            for (mavenProject in mavenProjects) {
+                val deps = MavenUtils.getDependencies(mavenProject)
+                if (deps.any { it.artifactId == "spring-boot-starter-actuator" }) {
+                    return@readAction true
+                }
+            }
+            false
+        }
         withContext(Dispatchers.IO) {
-            analyzeActuator(project)
+            analyzeActuator(project, mavenActuator)
         }
     } catch (e: Exception) {
         ToolResult(
@@ -43,8 +62,8 @@ internal suspend fun executeBootActuator(params: JsonObject, project: Project): 
     }
 }
 
-private fun analyzeActuator(project: Project): ToolResult {
-    val actuatorDetected = checkActuatorDependency(project)
+private fun analyzeActuator(project: Project, mavenActuator: Boolean?): ToolResult {
+    val actuatorDetected = mavenActuator ?: checkActuatorDependency(project)
 
     val mgmtProps = readManagementProperties(project)
 
@@ -140,21 +159,10 @@ private fun analyzeActuator(project: Project): ToolResult {
     )
 }
 
+// File-scan fallback used when no Maven project is present. The Maven branch
+// has been hoisted to `executeBootActuator` because it must run inside a
+// read action (which the suspend-only `readAction { }` builder provides).
 private fun checkActuatorDependency(project: Project): Boolean {
-    try {
-        val manager = MavenUtils.getMavenManager(project)
-        if (manager != null) {
-            val mavenProjects = MavenUtils.getMavenProjects(manager)
-            for (mavenProject in mavenProjects) {
-                val deps = MavenUtils.getDependencies(mavenProject)
-                if (deps.any { it.artifactId == "spring-boot-starter-actuator" }) {
-                    return true
-                }
-            }
-            if (mavenProjects.isNotEmpty()) return false
-        }
-    } catch (_: Exception) { /* fall through to file-based check */ }
-
     val buildFileNames = listOf("build.gradle", "build.gradle.kts", "pom.xml")
     val roots = collectModuleContentRoots(project)
 
@@ -172,16 +180,23 @@ private fun checkActuatorDependency(project: Project): Boolean {
 }
 
 private fun collectModuleContentRoots(project: Project): List<File> {
-    val modules = com.intellij.openapi.module.ModuleManager.getInstance(project).modules
-    if (modules.isEmpty()) {
+    // IDE module-model access requires a read action; extract paths inside it
+    // and do the filesystem isDirectory check outside.
+    val rootPaths: List<String> = ReadAction.nonBlocking<List<String>> {
+        val modules = com.intellij.openapi.module.ModuleManager.getInstance(project).modules
+        if (modules.isEmpty()) emptyList()
+        else modules.flatMap { module ->
+            com.intellij.openapi.roots.ModuleRootManager.getInstance(module).contentRoots.map { it.path }
+        }
+    }.executeSynchronously()
+
+    if (rootPaths.isEmpty()) {
         return listOfNotNull(project.basePath?.let { File(it) })
     }
     val out = linkedSetOf<File>()
-    for (module in modules) {
-        for (root in com.intellij.openapi.roots.ModuleRootManager.getInstance(module).contentRoots) {
-            val f = File(root.path)
-            if (f.isDirectory) out.add(f)
-        }
+    for (path in rootPaths) {
+        val f = File(path)
+        if (f.isDirectory) out.add(f)
     }
     return out.toList()
 }

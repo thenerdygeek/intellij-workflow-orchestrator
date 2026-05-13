@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.framework.build
 
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.framework.MavenUtils
@@ -9,21 +10,21 @@ import kotlinx.serialization.json.jsonPrimitive
 
 private const val MAX_TREE_DEPTH = 5
 
-internal fun executeMavenDependencyTree(params: JsonObject, project: Project): ToolResult {
-    return try {
+internal suspend fun executeMavenDependencyTree(params: JsonObject, project: Project): ToolResult = readAction {
+    try {
         val moduleFilter = params["module"]?.jsonPrimitive?.content
         val artifactFilter = params["artifact"]?.jsonPrimitive?.content?.lowercase()
 
         val manager = MavenUtils.getMavenManager(project)
-            ?: return MavenUtils.noMavenError()
+            ?: return@readAction MavenUtils.noMavenError()
 
         val mavenProjects = MavenUtils.getMavenProjects(manager)
         if (mavenProjects.isEmpty()) {
-            return ToolResult("No Maven projects found.", "No Maven projects", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+            return@readAction ToolResult("No Maven projects found.", "No Maven projects", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
         val targetProject = MavenUtils.findMavenProject(mavenProjects, manager, moduleFilter)
-            ?: return ToolResult(
+            ?: return@readAction ToolResult(
                 "Module '${moduleFilter}' not found. Available: ${MavenUtils.getProjectNames(mavenProjects)}",
                 "Module not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
             )
