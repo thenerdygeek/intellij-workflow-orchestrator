@@ -129,6 +129,13 @@ function remarkCodeMeta() {
  */
 const SANITIZE_SCHEMA = {
   ...defaultSchema,
+  // Allow the symbol: URI scheme so PSI symbol links survive sanitization.
+  // Without this, rehype-sanitize strips symbol: hrefs (only http/https/mailto
+  // are whitelisted by default) and scanAndSymbolLinkify never finds them.
+  protocols: {
+    ...defaultSchema.protocols,
+    href: [...(defaultSchema.protocols?.href ?? []), 'symbol'],
+  },
   attributes: {
     ...defaultSchema.attributes,
     pre: [
