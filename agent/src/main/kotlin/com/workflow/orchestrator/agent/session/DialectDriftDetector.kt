@@ -49,6 +49,21 @@ object DialectDriftDetector {
         "<tool_call>\\s*\\{"
     )
 
+    /** Generic `<tool>` wrapper — flagged only when followed by content (not empty `<tool/>`). */
+    private val GENERIC_TOOL = Regex("<tool>\\s*[^<\\s]")
+
+    /** Generic `<tool_use>` wrapper — same shape, distinct from Hermes `<tool_call>`. */
+    private val GENERIC_TOOL_USE = Regex("<tool_use>\\s*<")
+
+    /** Generic `<function>` wrapper. */
+    private val GENERIC_FUNCTION = Regex("<function>\\s*[^<\\s]")
+
+    /** Generic `<function_use>` wrapper. */
+    private val GENERIC_FUNCTION_USE = Regex("<function_use>\\s*<")
+
+    /** Anthropic singular `<function_call name="...">` (cousin of `<invoke name=...>`). */
+    private val ANTHROPIC_FUNCTION_CALL_SINGULAR = Regex("<function_call\\s+name\\s*=\\s*\"[^\"]+\"")
+
     /** Triple-backtick fenced code blocks (non-greedy, multiline). */
     private val TRIPLE_FENCE = Regex("```[\\s\\S]*?```")
 
@@ -65,7 +80,12 @@ object DialectDriftDetector {
         val proseOnly = stripCodeBlocks(text)
         return ANTHROPIC_INVOKE.containsMatchIn(proseOnly) ||
             ANTHROPIC_FUNCTION_CALLS.containsMatchIn(proseOnly) ||
-            HERMES_TOOL_CALL.containsMatchIn(proseOnly)
+            ANTHROPIC_FUNCTION_CALL_SINGULAR.containsMatchIn(proseOnly) ||
+            HERMES_TOOL_CALL.containsMatchIn(proseOnly) ||
+            GENERIC_TOOL.containsMatchIn(proseOnly) ||
+            GENERIC_TOOL_USE.containsMatchIn(proseOnly) ||
+            GENERIC_FUNCTION.containsMatchIn(proseOnly) ||
+            GENERIC_FUNCTION_USE.containsMatchIn(proseOnly)
     }
 
     /**
@@ -107,6 +127,21 @@ object DialectDriftDetector {
             REDACTION_MARKER,
             protectedRanges,
         ) { wasReplaced -> if (wasReplaced) modified = true }
+
+        // Anthropic singular `<function_call name="...">…</function_call>` blocks
+        result = replaceOutsideRanges(result, Regex("<function_call\\s+name\\s*=\\s*\"[^\"]+\"[\\s\\S]*?</function_call>", RegexOption.IGNORE_CASE), REDACTION_MARKER, protectedRanges) { if (it) modified = true }
+
+        // Generic `<tool>…</tool>` blocks
+        result = replaceOutsideRanges(result, Regex("<tool>[\\s\\S]*?</tool>", RegexOption.IGNORE_CASE), REDACTION_MARKER, protectedRanges) { if (it) modified = true }
+
+        // Generic `<tool_use>…</tool_use>` blocks
+        result = replaceOutsideRanges(result, Regex("<tool_use>[\\s\\S]*?</tool_use>", RegexOption.IGNORE_CASE), REDACTION_MARKER, protectedRanges) { if (it) modified = true }
+
+        // Generic `<function>…</function>` blocks
+        result = replaceOutsideRanges(result, Regex("<function>[\\s\\S]*?</function>", RegexOption.IGNORE_CASE), REDACTION_MARKER, protectedRanges) { if (it) modified = true }
+
+        // Generic `<function_use>…</function_use>` blocks
+        result = replaceOutsideRanges(result, Regex("<function_use>[\\s\\S]*?</function_use>", RegexOption.IGNORE_CASE), REDACTION_MARKER, protectedRanges) { if (it) modified = true }
 
         return RedactionResult(result, modified = modified)
     }

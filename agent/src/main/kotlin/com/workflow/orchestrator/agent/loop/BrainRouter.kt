@@ -212,20 +212,62 @@ class BrainRouter(
      * SVG and unsupported document shapes — all dead ends previously rendered
      * as empty replies.
      *
-     * Tool calls assembled by the stream client (from `delta_tool_calls`
-     * frames) are attached to the assistant message so the agent loop's tool
-     * dispatcher sees them — same shape it gets from the OpenAI-compat path.
+     * XML-in-content migration 2026-05-13: tool calls are parsed from the
+     * accumulated text via [AssistantMessageParser] — the delta_tool_calls
+     * native channel is no longer used (tools=null on the wire).
      */
     private fun buildRouterResponse(
         r: com.workflow.orchestrator.core.ai.dto.CompletionStreamResult,
     ): ApiResult<ChatCompletionResponse> {
         val rejection = r.rejectionReason
-        val finalText = if (!rejection.isNullOrBlank() && r.text.isBlank()) {
+        val rawText = if (!rejection.isNullOrBlank() && r.text.isBlank()) {
             "Sourcegraph rejected this attachment: $rejection. " +
                 "Supported image formats: PNG, JPEG, WebP."
         } else {
             r.text
         }
+
+        // Parse content blocks via AssistantMessageParser — the only path to tool calls
+        // after the XML-in-content migration (tools=null on the wire).
+        val parsedBlocks = com.workflow.orchestrator.core.ai.AssistantMessageParser.parse(
+            rawText, toolNameSet, paramNameSet
+        ).takeIf { blocks -> blocks.any { it is com.workflow.orchestrator.core.ai.ToolUseContent } }
+
+        val xmlToolCalls = parsedBlocks
+            ?.filterIsInstance<com.workflow.orchestrator.core.ai.ToolUseContent>()
+            ?.filter { !it.partial }
+            ?.map { block ->
+                val argsJson = kotlinx.serialization.json.buildJsonObject {
+                    block.params.forEach { (k, v) ->
+                        put(k, kotlinx.serialization.json.JsonPrimitive(v))
+                    }
+                }.toString()
+                com.workflow.orchestrator.core.ai.dto.ToolCall(
+                    id = "xmltool_router_${System.nanoTime()}",
+                    function = com.workflow.orchestrator.core.ai.dto.FunctionCall(
+                        name = block.name,
+                        arguments = argsJson
+                    )
+                )
+            }
+            ?.ifEmpty { null }
+
+        // After XML-in-content migration: ChatMessage.content carries the FULL raw
+        // response (XML inline + prose). The agent loop reads toolCalls for dispatch
+        // but writes content to history — keeping the XML visible in future turns
+        // reinforces the per-tool-tag format via in-context learning.
+        val textOnlyContent = rawText.ifEmpty { null }
+
+        val baseFinishReason = when (r.stopReason) {
+            null -> "stop"
+            "end_turn", "stop_sequence" -> "stop"
+            "length", "max_tokens" -> "length"
+            "tool_use", "tool_calls" -> "tool_calls"
+            else -> r.stopReason
+        }
+        val finishReason = if (xmlToolCalls != null && baseFinishReason == "stop") "tool_calls"
+                           else baseFinishReason
+
         return ApiResult.Success(
             ChatCompletionResponse(
                 id = "router-stream",
@@ -234,16 +276,10 @@ class BrainRouter(
                         index = 0,
                         message = ChatMessage(
                             role = "assistant",
-                            content = finalText.ifEmpty { null },
-                            toolCalls = r.toolCalls.takeIf { it.isNotEmpty() },
+                            content = textOnlyContent,
+                            toolCalls = xmlToolCalls,
                         ),
-                        finishReason = when (r.stopReason) {
-                            null -> "stop"
-                            "end_turn", "stop_sequence" -> "stop"
-                            "length", "max_tokens" -> "length"
-                            "tool_use", "tool_calls" -> "tool_calls"
-                            else -> r.stopReason
-                        },
+                        finishReason = finishReason,
                     ),
                 ),
                 usage = null,
@@ -278,10 +314,8 @@ class BrainRouter(
         tools: List<ToolDefinition>?,
         maxTokens: Int?,
     ): CompletionStreamRequest {
-        // Sanitize before content-part transform so that assistant messages with
-        // empty content + toolCalls receive the U+200B placeholder. Without this,
-        // Anthropic rejects the request with "message content cannot be empty"
-        // and the agent loop counts each call as a text-only mistake (3 → hard stop).
+        // Sanitize before content-part transform so that empty-content messages are
+        // dropped (Phase 3) and role alternation is enforced (Phase 4).
         val sanitized = MessageSanitizer.sanitizeForAnthropic(messages)
         val streamMessages = sanitized.map { msg ->
             val parts = (msg.parts ?: listOf(ContentPart.Text(msg.content ?: ""))).map { part ->
@@ -308,7 +342,7 @@ class BrainRouter(
             // surface a tighter per-model cap once `ModelCatalogService` is
             // wired live; until then 8000 mirrors the Cody-default.
             maxTokensToSample = maxTokens ?: 8000,
-            tools = tools?.takeIf { it.isNotEmpty() },
+            tools = null,  // XML-in-content migration: tools live in system prompt only
         )
     }
 

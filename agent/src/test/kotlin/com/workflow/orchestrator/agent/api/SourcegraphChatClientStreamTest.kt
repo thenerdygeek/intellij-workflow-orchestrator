@@ -94,45 +94,6 @@ class SourcegraphChatClientStreamTest {
     }
 
     @Test
-    fun `tool call deltas are accumulated correctly`() = runTest {
-        val sseBody = """
-            data: {"id":"1","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":""}}]}}]}
-            data: {"id":"1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":"}}]}}]}
-            data: {"id":"1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"/src/Main.kt\"}"}}]}}]}
-            data: {"id":"1","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
-            data: [DONE]
-        """.trimIndent()
-
-        server.enqueue(MockResponse()
-            .setBody(sseBody)
-            .setHeader("Content-Type", "text/event-stream"))
-
-        val result = client.sendMessageStream(
-            messages = listOf(ChatMessage(role = "user", content = "Read file")),
-            tools = listOf(ToolDefinition(function = FunctionDefinition(
-                name = "read_file",
-                description = "Read a file",
-                parameters = FunctionParameters(
-                    properties = mapOf("path" to ParameterProperty(type = "string", description = "File path")),
-                    required = listOf("path")
-                )
-            ))),
-            onChunk = { /* no-op */ }
-        )
-
-        assertTrue(result.isSuccess)
-        val response = (result as ApiResult.Success).data
-        val toolCalls = response.choices.first().message.toolCalls
-        assertNotNull(toolCalls)
-        assertEquals(1, toolCalls!!.size)
-        assertEquals("call_1", toolCalls[0].id)
-        assertEquals("read_file", toolCalls[0].function.name)
-        assertEquals("{\"path\":\"/src/Main.kt\"}", toolCalls[0].function.arguments)
-        // Content should be null when only tool calls are present
-        assertNull(response.choices.first().message.content)
-    }
-
-    @Test
     fun `error response handled properly`() = runTest {
         server.enqueue(MockResponse().setResponseCode(429).setBody("Rate limited"))
 
@@ -214,32 +175,6 @@ class SourcegraphChatClientStreamTest {
         assertTrue(request.path!!.contains("/chat/completions"))
         val body = request.body.readUtf8()
         assertTrue(body.contains("\"stream\":true"))
-    }
-
-    @Test
-    fun `multiple tool calls accumulated from stream`() = runTest {
-        val sseBody = """
-            data: {"id":"1","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"a.kt\"}"}}]}}]}
-            data: {"id":"1","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_2","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"b.kt\"}"}}]}}]}
-            data: [DONE]
-        """.trimIndent()
-
-        server.enqueue(MockResponse()
-            .setBody(sseBody)
-            .setHeader("Content-Type", "text/event-stream"))
-
-        val result = client.sendMessageStream(
-            messages = listOf(ChatMessage(role = "user", content = "Read files")),
-            tools = null,
-            onChunk = { /* no-op */ }
-        )
-
-        assertTrue(result.isSuccess)
-        val toolCalls = (result as ApiResult.Success).data.choices.first().message.toolCalls
-        assertNotNull(toolCalls)
-        assertEquals(2, toolCalls!!.size)
-        assertEquals("call_1", toolCalls[0].id)
-        assertEquals("call_2", toolCalls[1].id)
     }
 
     @Test

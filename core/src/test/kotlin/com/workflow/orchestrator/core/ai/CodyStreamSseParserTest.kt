@@ -187,56 +187,6 @@ class CodyStreamSseParserTest {
         assertEquals("rate limit exceeded", errors.first().message)
     }
 
-    // --- delta_tool_calls frames (Sourcegraph forwards tool calls on /stream
-    //     at api-version=9 — verified by format_lab 2026-05-05) -------------
-
-    @Test
-    fun `surfaces delta_tool_calls frames as ToolCallDelta with id and name`() = runBlocking {
-        val sse = "event: completion\n" +
-            "data: {\"delta_tool_calls\":[{\"id\":\"toolu_01\",\"type\":\"function\"," +
-            "\"function\":{\"name\":\"must_call_this\",\"arguments\":\"\"}}]}\n\n" +
-            "event: done\ndata: {}\n\n"
-        val parts = mutableListOf<CodyStreamSseParser.ParseResult>()
-        parser.parse(reader(sse)) { parts.add(it) }
-        val toolDeltas = parts.filterIsInstance<CodyStreamSseParser.ParseResult.ToolCallDelta>()
-        assertEquals(1, toolDeltas.size)
-        val deltas = toolDeltas.first().deltas
-        assertEquals(1, deltas.size)
-        assertEquals("toolu_01", deltas.first().id)
-        assertEquals("function", deltas.first().type)
-        assertEquals("must_call_this", deltas.first().function?.name)
-    }
-
-    @Test
-    fun `surfaces continuation frames with empty id and incremental arguments`() = runBlocking {
-        // Continuation pattern observed from Haiku 4.5: first frame has id+name,
-        // subsequent frames have empty strings for both and append to arguments.
-        val sse = "event: completion\n" +
-            "data: {\"delta_tool_calls\":[{\"id\":\"\",\"type\":\"function\"," +
-            "\"function\":{\"name\":\"\",\"arguments\":\"{\\\"\"}}]}\n\n"
-        val parts = mutableListOf<CodyStreamSseParser.ParseResult>()
-        parser.parse(reader(sse)) { parts.add(it) }
-        val deltas = parts.filterIsInstance<CodyStreamSseParser.ParseResult.ToolCallDelta>()
-        assertEquals(1, deltas.size)
-        assertEquals("", deltas.first().deltas.first().id)
-        assertEquals("{\"", deltas.first().deltas.first().function?.arguments)
-    }
-
-    @Test
-    fun `frame with both deltaText and delta_tool_calls emits both`() = runBlocking {
-        // Defensive: the wire spec doesn't forbid a frame from carrying text
-        // AND a tool delta; the parser must surface both so callers can
-        // accumulate independently.
-        val sse = "event: completion\n" +
-            "data: {\"deltaText\":\"thinking\"," +
-            "\"delta_tool_calls\":[{\"id\":\"x\",\"type\":\"function\"," +
-            "\"function\":{\"name\":\"f\",\"arguments\":\"\"}}]}\n\n"
-        val parts = mutableListOf<CodyStreamSseParser.ParseResult>()
-        parser.parse(reader(sse)) { parts.add(it) }
-        assertTrue(parts.any { it is CodyStreamSseParser.ParseResult.TextDelta })
-        assertTrue(parts.any { it is CodyStreamSseParser.ParseResult.ToolCallDelta })
-    }
-
     @Test
     fun `error frame state does not leak into subsequent normal frames`() = runBlocking {
         // Hypothetical: gateway emits an error then continues with normal text

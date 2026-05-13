@@ -2,8 +2,6 @@ package com.workflow.orchestrator.agent.session
 
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.ai.dto.ContentPart
-import com.workflow.orchestrator.core.ai.dto.FunctionCall
-import com.workflow.orchestrator.core.ai.dto.ToolCall as CoreToolCall
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -79,8 +77,15 @@ data class ApiMessage(
 )
 
 /**
- * Lossless conversion from ApiMessage to ChatMessage.
- * Preserves tool_use blocks as ChatMessage.toolCalls and tool_result as role="tool".
+ * Converts ApiMessage to ChatMessage.
+ *
+ * Legacy [ContentBlock.ToolUse] blocks (on-disk sessions written before the
+ * 2026-05-13 XML-in-content migration) are rendered as inline XML in the
+ * assistant's text content via [ToolUseXmlRenderer]. After the migration, no
+ * new writes produce ContentBlock.ToolUse — but this read path must keep working
+ * for session resume across the cutover.
+ *
+ * [ChatMessage.toolCalls] is always null on outputs from this function.
  *
  * `UnsupportedContentBlock` (forward-compat fallback for unknown polymorphic
  * discriminators — see Phase 1 of multimodal-agent plan) is rendered as
@@ -89,21 +94,24 @@ data class ApiMessage(
  */
 @Suppress("DEPRECATION")  // we still need to render legacy ContentBlock.Image
 fun ApiMessage.toChatMessage(): ChatMessage {
-    val toolUses = content.filterIsInstance<ContentBlock.ToolUse>()
     val toolResults = content.filterIsInstance<ContentBlock.ToolResult>()
     val imageRefs = content.filterIsInstance<ContentBlock.ImageRef>()
 
+    // Inline legacy ContentBlock.ToolUse blocks as XML in the text content.
+    // After the 2026-05-13 XML-in-content migration, no new writes produce
+    // ContentBlock.ToolUse — but on-disk sessions from before the cutover
+    // still contain them, and resume must keep working.
     val textPieces = content.mapNotNull { block ->
         when (block) {
             is ContentBlock.Text -> block.text
+            is ContentBlock.ToolUse -> ToolUseXmlRenderer.render(block)
             is UnsupportedContentBlock -> "[unsupported attachment]"
             is ContentBlock.Image -> "[image: ${block.mediaType}]"
-            // ImageRef is now carried structurally on `parts`; do not stringify here.
-            is ContentBlock.ImageRef -> null
+            is ContentBlock.ImageRef -> null  // structural on `parts`
             else -> null
         }
     }
-    val textContent = textPieces.joinToString("\n").takeIf { it.isNotBlank() }
+    val textContent = textPieces.joinToString("\n\n").takeIf { it.isNotBlank() }
 
     // Build structured parts list whenever ImageRef is present. This is the signal
     // BrainRouter.hasImageParts() looks for; without it the request goes to the
@@ -121,26 +129,19 @@ fun ApiMessage.toChatMessage(): ChatMessage {
     } else null
 
     return when {
-        // Assistant message with tool calls
-        role == ApiRole.ASSISTANT && toolUses.isNotEmpty() -> ChatMessage(
-            role = "assistant",
-            content = textContent,
-            toolCalls = toolUses.map { tu ->
-                CoreToolCall(id = tu.id, function = FunctionCall(name = tu.name, arguments = tu.input))
-            },
-            parts = parts
-        )
-        // Tool result message (role="tool" in OpenAI format)
+        // Tool result message (role="tool" in OpenAI format) — sanitizer coerces to user
         toolResults.isNotEmpty() -> ChatMessage(
             role = "tool",
             content = toolResults.first().content,
             toolCallId = toolResults.first().toolUseId,
             parts = parts
         )
-        // Plain text message
+        // Plain assistant or user message (including assistant turns that originally
+        // had tool_use blocks — now rendered as inline XML in textContent).
         else -> ChatMessage(
             role = role.name.lowercase(),
             content = textContent ?: "",
+            toolCalls = null,  // toolCalls is dead after migration
             parts = parts
         )
     }
@@ -148,13 +149,18 @@ fun ApiMessage.toChatMessage(): ChatMessage {
 
 /**
  * Convert ChatMessage back to ApiMessage (for migration from old format).
+ *
+ * [ChatMessage.toolCalls] is deliberately ignored — after the XML-in-content
+ * migration (2026-05-13), ChatMessage.toolCalls is always null on the production
+ * path; any legacy input that still carries them would be re-coded as Text
+ * already by callers.
  */
 fun ChatMessage.toApiMessage(): ApiMessage {
     val blocks = mutableListOf<ContentBlock>()
     if (!content.isNullOrBlank()) blocks.add(ContentBlock.Text(content!!))
-    toolCalls?.forEach { tc ->
-        blocks.add(ContentBlock.ToolUse(id = tc.id, name = tc.function.name, input = tc.function.arguments))
-    }
+    // toolCalls deliberately ignored — after the XML-in-content migration,
+    // ChatMessage.toolCalls is always null on the production path; any legacy
+    // input that still carries them would be re-coded as Text already by callers.
     if (role == "tool" && toolCallId != null) {
         return ApiMessage(
             role = ApiRole.USER,

@@ -261,4 +261,64 @@ Continuing."""
         assertTrue(DialectDriftDetector.REDACTION_MARKER.startsWith("[redacted"))
         assertTrue(DialectDriftDetector.REDACTION_MARKER.length >= 40)
     }
+
+    // ── Phase E: new wrapper families ───────────────────────────────────
+
+    @Test
+    fun `detects generic tool wrapper with embedded content`() {
+        val text = "<tool>read_file path=src/Foo.kt</tool>"
+        assertTrue(DialectDriftDetector.hasDialectMarker(text))
+    }
+
+    @Test
+    fun `detects generic tool_use wrapper with embedded content`() {
+        val text = "<tool_use><name>read_file</name><path>x</path></tool_use>"
+        assertTrue(DialectDriftDetector.hasDialectMarker(text))
+    }
+
+    @Test
+    fun `detects function wrapper`() {
+        val text = "<function>read_file(path=\"foo\")</function>"
+        assertTrue(DialectDriftDetector.hasDialectMarker(text))
+    }
+
+    @Test
+    fun `detects function_use wrapper`() {
+        val text = "<function_use><name>read_file</name></function_use>"
+        assertTrue(DialectDriftDetector.hasDialectMarker(text))
+    }
+
+    @Test
+    fun `detects function_call with name attribute`() {
+        val text = "<function_call name=\"read_file\">{\"path\":\"x\"}</function_call>"
+        assertTrue(DialectDriftDetector.hasDialectMarker(text))
+    }
+
+    @Test
+    fun `ignores generic wrappers inside fenced code blocks`() {
+        val text = """
+            Here's the wrong format:
+            ```
+            <tool>read_file</tool>
+            ```
+            Don't use that.
+        """.trimIndent()
+        assertFalse(DialectDriftDetector.hasDialectMarker(text))
+    }
+
+    @Test
+    fun `ignores generic wrappers inside inline code`() {
+        val text = "Don't use `<tool>read_file</tool>` — it doesn't parse."
+        assertFalse(DialectDriftDetector.hasDialectMarker(text))
+    }
+
+    @Test
+    fun `redacts generic tool wrapper preserving surrounding prose`() {
+        val text = "OK, I'll read the file. <tool>read_file path=foo</tool> Done."
+        val result = DialectDriftDetector.redactDialectMarkers(text)
+        assertTrue(result.modified)
+        assert(!result.text.contains("<tool>"))
+        assert(result.text.contains("OK, I'll read the file."))
+        assert(result.text.contains("Done."))
+    }
 }

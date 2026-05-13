@@ -1245,15 +1245,11 @@ class AgentLoop(
             val rawAssistantMessage = choice.message
 
             // Normalise zero-width / format-character echoes to empty string before
-            // any classification or persistence. The LLM occasionally mirrors the
-            // U+200B placeholder we inject in `SourcegraphChatClient.sanitizeMessages`
-            // (Phase 3 Case 2) back as a "response" with no tool calls. Treated
-            // naively, that single zero-width char passes `!isBlank()` and the loop
-            // falls into Case B (text-only) — firing the "[ERROR] You did not use a
-            // tool" nudge. Persist the polluted turn alongside the nudge a few times
-            // and the model starts mimicking the empty-then-error pattern. Stripping
-            // the invisible chars here turns the response into a normal Case C empty
-            // and keeps the polluted turn out of context entirely.
+            // any classification or persistence. Strip handles stale U+200B placeholders
+            // only from pre-migration sessions; no new injects happen post-2026-05-13.
+            // A stale single zero-width char would otherwise pass `!isBlank()` and drop
+            // the loop into Case B (text-only), firing the "[ERROR] You did not use a
+            // tool" nudge and training the model to mimic the empty-then-error pattern.
             val assistantMessage = if (
                 StringUtils.isEffectivelyBlank(rawAssistantMessage.content)
                 && rawAssistantMessage.toolCalls.isNullOrEmpty()
@@ -2173,22 +2169,19 @@ class AgentLoop(
 
     /**
      * Convert a ChatMessage (assistant response) to ApiMessage ContentBlock list.
-     * Preserves text content and tool_use calls for lossless api_conversation_history (C2 fix).
+     *
+     * After the 2026-05-13 XML-in-content migration: tool calls live inline in the
+     * text content as per-tool-name XML (the format the model actually emitted).
+     * No separate ContentBlock.ToolUse — that shape is read-only for legacy sessions
+     * via ApiMessage.toChatMessage / ToolUseXmlRenderer.
+     *
+     * The msg.toolCalls field is the parsed dispatch target for THIS turn's execution;
+     * it is NOT persisted separately. The agent loop already has it; history only
+     * needs the raw text so the model sees its own format in future turns.
      */
     private fun buildApiContentBlocks(msg: ChatMessage): List<ContentBlock> {
-        val blocks = mutableListOf<ContentBlock>()
-        val textContent = msg.content
-        if (!textContent.isNullOrBlank()) {
-            blocks.add(ContentBlock.Text(textContent))
-        }
-        msg.toolCalls?.forEach { tc ->
-            blocks.add(ContentBlock.ToolUse(
-                id = tc.id,
-                name = tc.function.name,
-                input = tc.function.arguments
-            ))
-        }
-        return blocks.ifEmpty { listOf(ContentBlock.Text("")) }
+        val text = msg.content ?: ""
+        return listOf(ContentBlock.Text(text))
     }
 
     /**

@@ -117,62 +117,14 @@ class MessageSanitizerTest {
             "U+200B-only assistant echo must be dropped by isEffectivelyBlank")
     }
 
-    // ---- Phase 3 Case 2: empty-content assistant + toolCalls → placeholder ----
+    // ---- Phase 3 Case 2: empty-content assistant + toolCalls ----
+    // Note: U+200B placeholder tests deleted in Phase F migration — the
+    // XML-in-content migration (2026-05-13) removed the placeholder path.
+    // Sanitizer now preserves assistant messages with toolCalls as-is (no
+    // placeholder injected). The BrainRouter / SourcegraphChatClient no longer
+    // need empty-content protection because tool calls arrive as XML in content.
 
-    @Test
-    fun `assistant message with null content and toolCalls receives U+200B placeholder`() {
-        val toolCall = ToolCall(
-            id = "call_1",
-            type = "function",
-            function = FunctionCall(name = "view_image", arguments = "{}"),
-        )
-        val result = sanitize(
-            ChatMessage(role = "user", content = "Look at this"),
-            ChatMessage(role = "assistant", content = null, toolCalls = listOf(toolCall)),
-        )
-        val assistantMsg = result.firstOrNull { it.role == "assistant" }
-        assertNotNull(assistantMsg, "Assistant message must be preserved")
-        assertNotNull(assistantMsg!!.content, "Content must not be null after sanitization")
-        assertTrue(assistantMsg.content!!.isNotEmpty(),
-            "Content must be non-empty (placeholder substituted)")
-        // Verify the tool calls are preserved alongside the placeholder
-        assertEquals(listOf(toolCall), assistantMsg.toolCalls)
-    }
-
-    @Test
-    fun `assistant message with empty-string content and toolCalls receives U+200B placeholder`() {
-        // This is the primary bug trigger: LLM emits content="" (not null) when
-        // only tool_use is present. The sanitizer must treat "" the same as null.
-        val toolCall = ToolCall(
-            id = "call_1",
-            type = "function",
-            function = FunctionCall(name = "view_image", arguments = "{}"),
-        )
-        val result = sanitize(
-            ChatMessage(role = "user", content = "Look at this image"),
-            ChatMessage(
-                role = "assistant",
-                content = "",  // EMPTY — this is the bug trigger
-                toolCalls = listOf(toolCall),
-            ),
-            ChatMessage(role = "tool", content = "image attached", toolCallId = "call_1"),
-        )
-        val assistantMsg = result.firstOrNull { it.role == "assistant" }
-        assertNotNull(assistantMsg, "Assistant message must survive sanitization")
-        val content = assistantMsg!!.content
-        assertNotNull(content, "Content must not be null after sanitization")
-        assertTrue(content!!.isNotEmpty(),
-            "Empty content must be replaced by placeholder, not left empty. " +
-                "An empty assistant turn causes Anthropic to reject the request with " +
-                "'message content cannot be empty'.")
-        // The placeholder must be the U+200B zero-width space
-        assertEquals("\u200B", content,
-            "Placeholder must be exactly U+200B (zero-width space)")
-        assertEquals(listOf(toolCall), assistantMsg.toolCalls,
-            "Tool calls must be preserved alongside the placeholder")
-    }
-
-    @Test
+        @Test
     fun `assistant message with non-empty content and toolCalls is NOT modified`() {
         val toolCall = ToolCall(
             id = "call_1",
@@ -204,24 +156,4 @@ class MessageSanitizerTest {
             "Conversation must start with a user message")
     }
 
-    // ---- Integration: multi-turn tool-call sequence ----
-
-    @Test
-    fun `multi-turn assistant-with-tool-calls sequence sanitizes all empty turns`() {
-        val call1 = ToolCall("c1", "function", FunctionCall("tool_a", "{}"))
-        val call2 = ToolCall("c2", "function", FunctionCall("tool_b", "{}"))
-        val result = sanitize(
-            ChatMessage(role = "user", content = "Do both tools"),
-            ChatMessage(role = "assistant", content = null, toolCalls = listOf(call1)),
-            ChatMessage(role = "tool", content = "result_a", toolCallId = "c1"),
-            ChatMessage(role = "assistant", content = "", toolCalls = listOf(call2)),
-            ChatMessage(role = "tool", content = "result_b", toolCallId = "c2"),
-        )
-        val assistantMsgs = result.filter { it.role == "assistant" }
-        assertTrue(assistantMsgs.isNotEmpty(), "Both assistant messages must survive")
-        for (msg in assistantMsgs) {
-            assertTrue(msg.content?.isNotEmpty() == true,
-                "Every assistant message must have non-empty content after sanitization")
-        }
-    }
 }

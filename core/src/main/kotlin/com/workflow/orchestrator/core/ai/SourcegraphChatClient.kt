@@ -220,6 +220,7 @@ class SourcegraphChatClient(
      * streaming response format. Streaming may work but fall back to non-streaming
      * if the proxy doesn't support it.
      */
+    // param ignored — see XML-in-content migration 2026-05-13
     suspend fun sendMessageStream(
         messages: List<ChatMessage>,
         tools: List<ToolDefinition>?,
@@ -242,7 +243,7 @@ class SourcegraphChatClient(
             val request = ChatCompletionRequest(
                 model = model,
                 messages = sanitized,
-                tools = tools?.takeIf { it.isNotEmpty() },
+                tools = null,  // XML-in-content migration 2026-05-13: tools live in system prompt only
                 toolChoice = null,
                 temperature = temperature,
                 maxTokens = maxTokens,
@@ -283,7 +284,6 @@ class SourcegraphChatClient(
                     }
 
                 val contentBuilder = StringBuilder()
-                val toolCallBuilders = mutableMapOf<Int, ToolCallBuilder>()
                 var role = "assistant"
                 var finishReason = "stop"
                 var streamUsage: UsageInfo? = null
@@ -329,13 +329,6 @@ class SourcegraphChatClient(
                                 choice.delta.let { delta ->
                                     delta.role?.let { role = it }
                                     delta.content?.let { contentBuilder.append(it) }
-                                    delta.toolCalls?.forEach { tc ->
-                                        val builder = toolCallBuilders.getOrPut(tc.index) { ToolCallBuilder() }
-                                        tc.id?.let { builder.id.append(it) }
-                                        tc.function?.name?.let { builder.name.append(it) }
-                                        tc.function?.arguments?.let { builder.arguments.append(it) }
-                                        log.debug("[Agent:API] SSE tool delta: idx=${tc.index} id=${tc.id} name=${tc.function?.name} args=${tc.function?.arguments?.take(50)}")
-                                    }
                                 }
                             }
                             // Capture usage from the final chunk (Sourcegraph sends it with finish_reason)
@@ -348,84 +341,24 @@ class SourcegraphChatClient(
                 }
                 shouldInterruptStream = false  // Reset for next call
 
-                // Detect streaming drop: Sourcegraph occasionally sends finish_reason=tool_calls
-                // but omits the tool_call deltas entirely, leaving us with content-only "Using tools."
-                // and an empty toolCallBuilders map. Fall back to non-streaming to recover the tool calls.
-                if (finishReason == "tool_calls" && toolCallBuilders.isEmpty()) {
-                    log.warn("[Agent:API] Stream finished with finish_reason=tool_calls but no tool_call deltas received — falling back to non-streaming to recover tool calls")
-                    return@withContext sendMessage(
-                        messages = messages,
-                        tools = tools,
-                        maxTokens = maxTokens,
-                        temperature = temperature,
-                        knownToolNames = knownToolNames,
-                        knownParamNames = knownParamNames
-                    )
-                }
-
-                val toolCalls = if (toolCallBuilders.isNotEmpty()) {
-                    toolCallBuilders.entries
-                        .sortedBy { it.key }
-                        .flatMap { entry ->
-                            val tc = entry.value.toToolCall()
-                            // Detect concatenated JSON objects: {"a":"b"}{"c":"d"}
-                            // This happens when the Sourcegraph API merges parallel tool calls.
-                            val args = tc.function.arguments.trim()
-                            if (args.contains("}{")) {
-                                log.warn("[Agent:API] Detected concatenated JSON in tool call '${tc.function.name}', attempting to split")
-                                // Try to split on }{ boundary and keep only the first valid JSON object.
-                                // The rest are lost, but at least one tool call succeeds instead of zero.
-                                val firstJson = args.substringBefore("}{") + "}"
-                                try {
-                                    // Validate the extracted JSON is parseable
-                                    json.decodeFromString<kotlinx.serialization.json.JsonObject>(firstJson)
-                                    log.info("[Agent:API] Successfully extracted first tool call from concatenated JSON")
-                                    listOf(ToolCall(
-                                        id = tc.id,
-                                        function = FunctionCall(name = tc.function.name, arguments = firstJson)
-                                    ))
-                                } catch (_: Exception) {
-                                    log.warn("[Agent:API] Failed to extract valid JSON from concatenated tool call")
-                                    emptyList()
-                                }
-                            } else {
-                                listOf(tc)
-                            }
-                        }
-                        .filter { it.function.name.isNotBlank() } // Drop tool calls with empty names
-                        .ifEmpty { null }
-                } else null
-
-                // Log assembled tool calls for debugging
-                if (toolCallBuilders.isNotEmpty()) {
-                    toolCallBuilders.entries.sortedBy { it.key }.forEach { (idx, b) ->
-                        log.info("[Agent:API] Assembled tool call #$idx: name='${b.name}' id='${b.id}' args(${b.arguments.length} chars)='${b.arguments.toString().take(100)}'")
-                    }
-                    log.info("[Agent:API] Final valid tool calls: ${toolCalls?.size ?: 0}, finishReason=$finishReason")
-                }
-
-                // --- Parse content blocks via AssistantMessageParser ---
-                // Re-parse the full accumulated text to extract tool calls.
-                // In accumulate mode, this happens once at stream end.
+                // Parse content blocks via AssistantMessageParser — the only path to tool calls
+                // after the XML-in-content migration. Native tool_calls SSE frames are no longer
+                // requested (tools=null on the wire) and would be dropped if upstream emitted them.
                 val rawText = contentBuilder.toString()
-                val parsedBlocks = if (toolCalls == null || toolCalls.isEmpty()) {
-                    AssistantMessageParser.parse(rawText, knownToolNames, knownParamNames)
-                        .takeIf { blocks -> blocks.any { it is ToolUseContent } }
-                } else null
+                val parsedBlocks = AssistantMessageParser.parse(rawText, knownToolNames, knownParamNames)
+                    .takeIf { blocks -> blocks.any { it is ToolUseContent } }
 
-                val finalToolCalls = toolCalls ?: parsedBlocks
+                val finalToolCalls = parsedBlocks
                     ?.filterIsInstance<ToolUseContent>()
                     ?.filter { !it.partial }
                     ?.let(::xmlBlocksToToolCalls)
                     ?.ifEmpty { null }
 
-                val textOnlyContent = if (parsedBlocks != null) {
-                    parsedBlocks.filterIsInstance<TextContent>()
-                        .joinToString("\n\n") { it.content }
-                        .ifBlank { null }
-                } else {
-                    rawText.ifBlank { null }
-                }
+                // After XML-in-content migration: ChatMessage.content carries the FULL raw
+                // response (XML inline + prose). The agent loop reads toolCalls for dispatch
+                // but writes content to history — keeping the XML visible in future turns
+                // reinforces the per-tool-tag format via in-context learning.
+                val textOnlyContent = rawText.ifBlank { null }
 
                 // Order of precedence: a confirmed gateway timeout overrides any
                 // other finish reason. We trust the gateway's own signal more than
@@ -499,6 +432,7 @@ class SourcegraphChatClient(
      * is NOT sent to the Sourcegraph API (not in their OpenAPI spec). The model
      * will always use "auto" behavior when tools are provided.
      */
+    // param ignored — see XML-in-content migration 2026-05-13
     suspend fun sendMessage(
         messages: List<ChatMessage>,
         tools: List<ToolDefinition>?,
@@ -521,7 +455,7 @@ class SourcegraphChatClient(
             val request = ChatCompletionRequest(
                 model = model,
                 messages = sanitized,
-                tools = tools?.takeIf { it.isNotEmpty() },
+                tools = null,  // XML-in-content migration 2026-05-13: tools live in system prompt only
                 toolChoice = null,
                 temperature = temperature,
                 maxTokens = maxTokens
@@ -552,10 +486,11 @@ class SourcegraphChatClient(
                             val parsed = json.decodeFromString<ChatCompletionResponse>(body)
                             log.debug("[Agent:API] Response: ${parsed.usage?.totalTokens} tokens")
 
-                            // --- XML tool call fallback for non-streaming path ---
+                            // --- XML tool call parse for non-streaming path ---
+                            // tools=null on the wire (XML-in-content migration): always parse content
+                            // via AssistantMessageParser — there is no native tool_calls channel.
                             val choice = parsed.choices.firstOrNull()
-                            val requestHadNoTools = tools.isNullOrEmpty()
-                            if (requestHadNoTools && choice != null && choice.message.toolCalls.isNullOrEmpty()) {
+                            if (choice != null && choice.message.toolCalls.isNullOrEmpty()) {
                                 val content = choice.message.content
                                 if (content != null) {
                                     val parsedBlocks = AssistantMessageParser.parse(content, knownToolNames, knownParamNames)
@@ -563,10 +498,11 @@ class SourcegraphChatClient(
                                         .filter { !it.partial }
                                     if (xmlToolCalls.isNotEmpty()) {
                                         log.info("[Agent:API] Extracted ${xmlToolCalls.size} XML tool call(s) from non-streaming response")
-                                        val textOnly = parsedBlocks.filterIsInstance<TextContent>()
-                                            .joinToString("\n\n") { it.content }.ifBlank { null }
+                                        // After XML-in-content migration: keep the FULL raw content
+                                        // (XML inline + prose) so the model sees its own format in
+                                        // future turns for in-context format reinforcement.
                                         val toolCallDtos = xmlBlocksToToolCalls(xmlToolCalls)
-                                        val updatedMsg = choice.message.copy(content = textOnly, toolCalls = toolCallDtos)
+                                        val updatedMsg = choice.message.copy(content = content, toolCalls = toolCallDtos)
                                         val updatedFr = if (choice.finishReason == "stop") "tool_calls" else choice.finishReason
                                         val updatedResp = parsed.copy(choices = listOf(choice.copy(message = updatedMsg, finishReason = updatedFr)))
                                         dumpApiResponse(updatedResp, body)
@@ -657,17 +593,6 @@ class SourcegraphChatClient(
             // Delta seconds
             retryValue * 1000
         }
-    }
-
-    private class ToolCallBuilder {
-        val id = StringBuilder()
-        val name = StringBuilder()
-        val arguments = StringBuilder()
-
-        fun toToolCall() = ToolCall(
-            id = id.toString(),
-            function = FunctionCall(name = name.toString(), arguments = arguments.toString())
-        )
     }
 
     // ═══ API Debug Logging ═══

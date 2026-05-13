@@ -291,6 +291,90 @@ class MessageStateHandlerTest {
         assertEquals(0, h.getApiConversationHistory().size, "history should remain empty")
     }
 
+    // ── XML-in-content (new shape) rewrite tests ────────────────────────────
+
+    /**
+     * Post-migration: assistant turn is a single Text block with XML inline.
+     * [rewriteMostRecentToolResult] must find the tool by scanning for the
+     * XML tag in text content rather than filtering ContentBlock.ToolUse.
+     */
+    @Test
+    fun `rewriteMostRecentToolResult finds XML-in-content tool call and rewrites result (new shape)`() = runTest {
+        val h = handler()
+        // Post-migration assistant turn: raw XML inline in Text, NO ContentBlock.ToolUse
+        val xmlText = "I'll plan this.\n<plan_mode_respond><response>Step 1, Step 2.</response></plan_mode_respond>"
+        h.addToApiConversationHistory(ApiMessage(
+            role = ApiRole.ASSISTANT,
+            content = listOf(ContentBlock.Text(xmlText))
+        ))
+        // The USER turn still uses ToolResult (unchanged by migration)
+        h.addToApiConversationHistory(ApiMessage(
+            role = ApiRole.USER,
+            content = listOf(ContentBlock.ToolResult(toolUseId = "synth-xml-1", content = "Step 1, Step 2.", isError = false))
+        ))
+
+        val rewritten = h.rewriteMostRecentToolResult("plan_mode_respond", "[discarded]")
+
+        assertTrue(rewritten, "should return true when XML-in-content tool is found")
+        val history = h.getApiConversationHistory()
+        val userMsg = history.last { it.role == ApiRole.USER }
+        val toolResult = userMsg.content.filterIsInstance<ContentBlock.ToolResult>().first()
+        assertEquals("[discarded]", toolResult.content)
+    }
+
+    @Test
+    fun `rewriteMostRecentToolResult XML-in-content returns false when tool name not in text`() = runTest {
+        val h = handler()
+        h.addToApiConversationHistory(ApiMessage(
+            role = ApiRole.ASSISTANT,
+            content = listOf(ContentBlock.Text("I'll do something.\n<read_file><path>foo.kt</path></read_file>"))
+        ))
+        h.addToApiConversationHistory(ApiMessage(
+            role = ApiRole.USER,
+            content = listOf(ContentBlock.ToolResult(toolUseId = "synth-xml-2", content = "file content", isError = false))
+        ))
+
+        val rewritten = h.rewriteMostRecentToolResult("plan_mode_respond", "[discarded]")
+
+        assertFalse(rewritten, "should return false when the tool name is not in any text block")
+    }
+
+    @Test
+    fun `rewriteMostRecentToolResult XML-in-content most-recent match when multiple assistant turns`() = runTest {
+        val h = handler()
+        // First assistant + user pair (XML-in-content)
+        h.addToApiConversationHistory(ApiMessage(
+            role = ApiRole.ASSISTANT,
+            content = listOf(ContentBlock.Text("First plan.\n<plan_mode_respond><response>plan v1</response></plan_mode_respond>"))
+        ))
+        h.addToApiConversationHistory(ApiMessage(
+            role = ApiRole.USER,
+            content = listOf(ContentBlock.ToolResult(toolUseId = "synth-a", content = "plan v1", isError = false))
+        ))
+        // Second assistant + user pair (XML-in-content)
+        h.addToApiConversationHistory(ApiMessage(
+            role = ApiRole.ASSISTANT,
+            content = listOf(ContentBlock.Text("Revised plan.\n<plan_mode_respond><response>plan v2</response></plan_mode_respond>"))
+        ))
+        h.addToApiConversationHistory(ApiMessage(
+            role = ApiRole.USER,
+            content = listOf(ContentBlock.ToolResult(toolUseId = "synth-b", content = "plan v2", isError = false))
+        ))
+
+        val rewritten = h.rewriteMostRecentToolResult("plan_mode_respond", "[discarded]")
+
+        assertTrue(rewritten)
+        val history = h.getApiConversationHistory()
+
+        // Most recent USER message (synth-b) must be rewritten
+        val lastUserMsg = history.last { it.role == ApiRole.USER }
+        assertEquals("[discarded]", lastUserMsg.content.filterIsInstance<ContentBlock.ToolResult>().first().content)
+
+        // First USER message (synth-a) must be unchanged
+        val firstUserMsg = history.first { it.role == ApiRole.USER }
+        assertEquals("plan v1", firstUserMsg.content.filterIsInstance<ContentBlock.ToolResult>().first().content)
+    }
+
     @Test
     fun `rewriteMostRecentToolResult rewrites only the most recent match when multiple exist`() = runTest {
         val h = handler()

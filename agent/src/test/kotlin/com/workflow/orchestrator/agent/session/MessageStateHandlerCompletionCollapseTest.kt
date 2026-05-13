@@ -181,6 +181,102 @@ class MessageStateHandlerCompletionCollapseTest {
         assertEquals(sizeAfterFirst, handler.getApiConversationHistory().size)
     }
 
+    // ── XML-in-content (new shape) tests ──────────────────────────────────────
+
+    /**
+     * Assistant turn carries XML-in-content: a single Text block whose text
+     * contains the tool call inline. No ContentBlock.ToolUse is present —
+     * the legacy code returns false. The new-shape path must collapse the pair.
+     */
+    @Test
+    fun `collapses XML-in-content attempt_completion pair (new post-migration shape)`() = runTest {
+        val handler = newHandler("s-xml-1")
+        handler.addToApiConversationHistory(userMsg("do the work"))
+        // Post-migration assistant turn: raw XML inline in Text, no ToolUse block
+        val xmlText = "Done.\n<attempt_completion><result>All tests green.</result></attempt_completion>"
+        handler.setApiConversationHistory(handler.getApiConversationHistory() + listOf(
+            ApiMessage(
+                role = ApiRole.ASSISTANT,
+                content = listOf(ContentBlock.Text(xmlText)),
+                ts = 1_000L,
+            )
+        ))
+        handler.setApiConversationHistory(handler.getApiConversationHistory() + listOf(
+            ApiMessage(
+                role = ApiRole.USER,
+                content = listOf(ContentBlock.ToolResult(toolUseId = "synthetic-1", content = "All tests green.", isError = false)),
+                ts = 1_000L,
+            )
+        ))
+        handler.saveBoth()
+
+        val collapsed = handler.collapseLastCompletionToolPair()
+        assertTrue(collapsed, "XML-in-content attempt_completion pair must be collapsed")
+
+        val history = handler.getApiConversationHistory()
+        assertEquals(2, history.size, "pair must collapse from 3 to 2 messages")
+        assertEquals(ApiRole.ASSISTANT, history.last().role)
+        val text = (history.last().content.single() as ContentBlock.Text).text
+        // The XML tag is stripped; the prose prefix and result text are preserved
+        assertTrue(text.contains("Done."), "prose prefix must be preserved: got $text")
+        assertTrue(text.contains("All tests green."), "result text must be included: got $text")
+        assertFalse(text.contains("<attempt_completion"), "XML tag must be stripped from collapsed text: got $text")
+    }
+
+    @Test
+    fun `collapses XML-in-content task_report pair (new post-migration shape)`() = runTest {
+        val handler = newHandler("s-xml-2")
+        handler.addToApiConversationHistory(userMsg("explore"))
+        val xmlText = "<task_report><summary>Found 3 issues.</summary></task_report>"
+        handler.setApiConversationHistory(handler.getApiConversationHistory() + listOf(
+            ApiMessage(
+                role = ApiRole.ASSISTANT,
+                content = listOf(ContentBlock.Text(xmlText)),
+                ts = 1_000L,
+            )
+        ))
+        handler.setApiConversationHistory(handler.getApiConversationHistory() + listOf(
+            ApiMessage(
+                role = ApiRole.USER,
+                content = listOf(ContentBlock.ToolResult(toolUseId = "synthetic-2", content = "Found 3 issues.", isError = false)),
+                ts = 1_000L,
+            )
+        ))
+        handler.saveBoth()
+
+        assertTrue(handler.collapseLastCompletionToolPair())
+        val history = handler.getApiConversationHistory()
+        assertEquals(ApiRole.ASSISTANT, history.last().role)
+        val text = (history.last().content.single() as ContentBlock.Text).text
+        assertTrue(text.contains("Found 3 issues."), "result text must be in collapsed message: got $text")
+        assertFalse(text.contains("<task_report"), "XML tag must be stripped: got $text")
+    }
+
+    @Test
+    fun `XML-in-content non-completion tool leaves pair untouched`() = runTest {
+        val handler = newHandler("s-xml-3")
+        handler.addToApiConversationHistory(userMsg("read it"))
+        val xmlText = "<read_file><path>foo.kt</path></read_file>"
+        handler.setApiConversationHistory(handler.getApiConversationHistory() + listOf(
+            ApiMessage(
+                role = ApiRole.ASSISTANT,
+                content = listOf(ContentBlock.Text(xmlText)),
+                ts = 1_000L,
+            )
+        ))
+        handler.setApiConversationHistory(handler.getApiConversationHistory() + listOf(
+            ApiMessage(
+                role = ApiRole.USER,
+                content = listOf(ContentBlock.ToolResult(toolUseId = "synthetic-3", content = "// contents", isError = false)),
+                ts = 1_000L,
+            )
+        ))
+        handler.saveBoth()
+
+        assertFalse(handler.collapseLastCompletionToolPair(), "non-completion tool must not collapse")
+        assertEquals(3, handler.getApiConversationHistory().size)
+    }
+
     @Test
     fun `next user turn after collapse persists alongside (no merge yet — that runs at the wire layer)`() = runTest {
         // This pins what consumers can rely on: after the collapse, the next user

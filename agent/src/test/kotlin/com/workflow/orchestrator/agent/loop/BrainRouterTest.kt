@@ -14,7 +14,6 @@ import com.workflow.orchestrator.core.ai.dto.FunctionCall
 import com.workflow.orchestrator.core.ai.dto.FunctionDefinition
 import com.workflow.orchestrator.core.ai.dto.FunctionParameters
 import com.workflow.orchestrator.core.ai.dto.StreamChunk
-import com.workflow.orchestrator.core.ai.dto.StreamContentPart
 import com.workflow.orchestrator.core.ai.dto.hasImageParts
 import com.workflow.orchestrator.core.ai.dto.ToolCall
 import com.workflow.orchestrator.core.ai.dto.ToolDefinition
@@ -209,92 +208,13 @@ class BrainRouterTest {
     }
 
     @Test
-    fun `image+tools routes through stream client with tools field forwarded`() = runBlocking {
-        // 2026-05-05 simplification: format_lab probe verified Sourcegraph
-        // forwards the `tools` field on /.api/completions/stream at api-version=9.
-        // Image+tools turns now make a single round-trip through /stream — the
-        // prior two-step workaround (vision-summarize → tools call) is gone.
-        val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
-        val stream = FakeStreamClient(
-            text = "",
-            // The stream client now returns toolCalls assembled from
-            // delta_tool_calls SSE frames; FakeStreamClient mirrors that shape.
-            // (Real frame assembly tested in SourcegraphCompletionsStreamClientTest.)
-        )
-        val store = AttachmentStore(tempDir)
-        val ref = store.store("fake".toByteArray(), "image/png", null)
-        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
-        router.chat(
-            messages = listOf(
-                ChatMessage(
-                    role = "user",
-                    parts = listOf(
-                        ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = null),
-                        ContentPart.Text("call the tool"),
-                    ),
-                ),
-            ),
-            tools = listOf(fooTool),
-        )
-        assertEquals(1, stream.callCount,
-            "image+tools must route through the stream endpoint as a single round-trip")
-        assertEquals(0, openAi.chatCallCount,
-            "OpenAiCompat must NOT be called — the two-step workaround is removed")
-        // Verify the tools field was forwarded to /stream
-        val req = stream.lastRequest ?: error("stream client received no request")
-        assertEquals(listOf(fooTool), req.tools,
-            "tools field must be forwarded verbatim to the stream endpoint")
-    }
-
-    @Test
-    fun `image+tools surfaces stream client tool calls in assistant message`() = runBlocking {
-        // The stream client assembles delta_tool_calls into a list of ToolCall;
-        // BrainRouter must place them in the assistant ChatMessage so the agent
-        // loop's tool-call dispatcher sees them — same shape it gets from the
-        // OpenAiCompat path.
-        val openAi = FakeOpenAiCompatBrain(response = makeOk(""))
-        val expectedCall = ToolCall(
-            id = "toolu_01",
-            type = "function",
-            function = FunctionCall(name = "foo", arguments = "{\"x\":1}"),
-        )
-        val stream = FakeStreamClient(text = "calling foo", toolCalls = listOf(expectedCall))
-        val store = AttachmentStore(tempDir)
-        val ref = store.store("fake".toByteArray(), "image/png", null)
-        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
-        val resp = router.chat(
-            messages = listOf(
-                ChatMessage(
-                    role = "user",
-                    parts = listOf(
-                        ContentPart.Image(ref.sha256, "image/png", null),
-                        ContentPart.Text("describe and call foo"),
-                    ),
-                ),
-            ),
-            tools = listOf(fooTool),
-        )
-        val ok = resp as? ApiResult.Success<ChatCompletionResponse>
-            ?: error("expected Success, got: $resp")
-        val msg = ok.data.choices.first().message
-        assertEquals(listOf(expectedCall), msg.toolCalls,
-            "assistant message must carry the assembled tool calls from /stream")
-        assertEquals("calling foo", msg.content,
-            "assistant text content must accompany the tool calls")
-    }
-
-    @Test
     fun `image+tools via tool-result origin still routes through stream`() = runBlocking {
         // Tool-origin images (image bytes attached to a role=tool message via
         // jira.download_attachment etc.) must follow the same path as user-pasted
         // images. BrainRouter detects the image via `messages.any { it.hasImageParts() }`
         // — position-independent — and routes the entire conversation through /stream.
         val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
-        val expectedCall = ToolCall(
-            id = "toolu_02", type = "function",
-            function = FunctionCall(name = "foo", arguments = "{}"),
-        )
-        val stream = FakeStreamClient(text = "investigating", toolCalls = listOf(expectedCall))
+        val stream = FakeStreamClient(text = "investigating")
         val store = AttachmentStore(tempDir)
         val ref = store.store("fake".toByteArray(), "image/png", null)
         val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
@@ -410,68 +330,6 @@ class BrainRouterTest {
         assertEquals("d", chunks[1].choices.first().delta.content)
     }
 
-    // ---- Sanitization regression test ----
-
-    /**
-     * Regression pin for the "message content cannot be empty" Sourcegraph /stream
-     * rejection. When an assistant turn carries only tool_calls (no text), its
-     * content is null/empty. Prior to this fix, [BrainRouter.buildStreamRequest]
-     * serialised such a turn as `{"speaker":"assistant","content":[{"type":"text","text":""}]}`
-     * which Anthropic rejects with HTTP 200 + a stream error event.
-     *
-     * After the fix, [MessageSanitizer.sanitizeForAnthropic] substitutes a
-     * U+200B zero-width-space placeholder so the content field is always non-empty.
-     */
-    @Test
-    fun `buildStreamRequest sanitizes assistant message with empty content + toolCalls into placeholder text part`() = runBlocking {
-        val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
-        val stream = FakeStreamClient(text = "ok")
-        val store = AttachmentStore(tempDir)
-        // Store an image so the turn routes through /stream
-        val ref = store.store("fake".toByteArray(), "image/png", null)
-        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
-
-        val messages = listOf(
-            ChatMessage(role = "user", content = "Look at this image"),
-            ChatMessage(
-                role = "assistant",
-                content = "",  // EMPTY — this is the bug trigger
-                toolCalls = listOf(
-                    ToolCall(
-                        id = "call_1",
-                        type = "function",
-                        function = FunctionCall(name = "view_image", arguments = "{}"),
-                    ),
-                ),
-            ),
-            ChatMessage(role = "tool", content = "image attached", toolCallId = "call_1"),
-            // Image-bearing follow-up to force /stream routing
-            ChatMessage(
-                role = "user",
-                parts = listOf(
-                    ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = "img.png"),
-                    ContentPart.Text("What do you see?"),
-                ),
-            ),
-        )
-
-        val request = router.buildStreamRequestForTest(messages, tools = emptyList(), maxTokens = null)
-
-        // The serialized request must NOT contain an empty text part for the assistant turn
-        val assistantStreamMsg = request.messages.firstOrNull { it.speaker == "assistant" }
-        assertNotNull(assistantStreamMsg, "Assistant message must be present in stream request")
-
-        val textPart = assistantStreamMsg!!.content
-            .filterIsInstance<StreamContentPart.Text>()
-            .firstOrNull()
-        assertNotNull(textPart,
-            "Assistant message must have at least one Text content part after sanitization " +
-                "(empty content → U+200B placeholder substituted by MessageSanitizer)")
-        assertTrue(textPart!!.text.isNotEmpty(),
-            "Text part must be non-empty — an empty 'text' field causes Anthropic to reject " +
-                "the request with 'message content cannot be empty'. " +
-                "Got: ${textPart.text.map { it.code }.joinToString()}")
-    }
 }
 
 // ---- Test fakes ----

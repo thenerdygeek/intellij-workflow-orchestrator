@@ -153,12 +153,9 @@ class CodyStreamSseParser {
                                 frame.completion != null -> onResult(ParseResult.TextReplacement(frame.completion))
                                 // Frame with only stopReason / unknown shape: no text payload — fall through
                             }
-                            // Tool-call frames may piggy-back text + tool deltas in
-                            // the same SSE frame; emit both so the client can
-                            // accumulate independently.
-                            frame.deltaToolCalls?.takeIf { it.isNotEmpty() }?.let { deltas ->
-                                onResult(ParseResult.ToolCallDelta(deltas))
-                            }
+                            // delta_tool_calls frames are no longer requested (tools=null
+                            // on the wire, XML-in-content migration 2026-05-13). Drop any
+                            // such frames if upstream emits them defensively.
                             if (frame.stopReason != null) {
                                 onResult(ParseResult.StopReason(frame.stopReason))
                             }

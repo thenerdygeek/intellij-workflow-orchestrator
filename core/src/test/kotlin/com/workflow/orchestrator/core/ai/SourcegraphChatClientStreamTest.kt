@@ -72,86 +72,12 @@ class SourcegraphChatClientStreamTest {
     }
 
     @Test
-    fun `assembles single tool call from deltas`() = runTest {
-        val chunk1 = """{"id":"c1","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":""}}]},"finish_reason":null}]}"""
-        val chunk2 = """{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":"}}]},"finish_reason":null}]}"""
-        val chunk3 = """{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"src/Foo.kt\"}"}}]},"finish_reason":"tool_calls"}]}"""
-        val usageChunk = """{"id":"c1","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}}"""
-
-        server.enqueue(sseResponse(chunk1, chunk2, chunk3, usageChunk))
-
-        val result = client.sendMessageStream(
-            messages = listOf(ChatMessage(role = "user", content = "read the file")),
-            tools = null,
-            onChunk = {}
-        )
-
-        assertInstanceOf(ApiResult.Success::class.java, result)
-        val response = (result as ApiResult.Success).data
-        assertEquals("tool_calls", response.choices.first().finishReason)
-        val toolCalls = response.choices.first().message.toolCalls
-        assertNotNull(toolCalls)
-        assertEquals(1, toolCalls!!.size)
-        assertEquals("read_file", toolCalls[0].function.name)
-        assertEquals("call_1", toolCalls[0].id)
-        assertTrue(toolCalls[0].function.arguments.contains("src/Foo.kt"))
-    }
-
-    @Test
-    fun `falls back to non-streaming on tool_calls finish with zero deltas`() = runTest {
-        // Lab confirmed: gateway sometimes sends finish_reason=tool_calls with no deltas
-        // Code falls back to sendMessage() (non-streaming)
-        val streamChunk = """{"id":"c1","choices":[{"index":0,"delta":{"role":"assistant","content":"Using tools."},"finish_reason":"tool_calls"}]}"""
-
-        // First request: streaming — gets tool_calls finish but no deltas
-        server.enqueue(sseResponse(streamChunk))
-        // Second request: non-streaming fallback
-        val nonStreamResponse = """{"id":"c2","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"Foo.kt\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":50,"completion_tokens":10,"total_tokens":60}}"""
-        server.enqueue(MockResponse().setBody(nonStreamResponse).setHeader("Content-Type", "application/json"))
-
-        val result = client.sendMessageStream(
-            messages = listOf(ChatMessage(role = "user", content = "read")),
-            tools = listOf(ToolDefinition(
-                type = "function",
-                function = FunctionDefinition(
-                    name = "read_file",
-                    description = "Read a file",
-                    parameters = FunctionParameters(properties = emptyMap())
-                )
-            )),
-            onChunk = {}
-        )
-
-        assertInstanceOf(ApiResult.Success::class.java, result)
-        val toolCalls = (result as ApiResult.Success).data.choices.first().message.toolCalls
-        assertNotNull(toolCalls)
-        assertEquals("read_file", toolCalls!![0].function.name)
-    }
-
-    @Test
-    fun `handles concat JSON bug in parallel tool calls — keeps first`() = runTest {
-        // Lab confirmed: gateway concatenates parallel tool calls into index 0
-        val chunk1 = """{"id":"c1","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":""}}]},"finish_reason":null}]}"""
-        val chunk2 = """{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":\"A.kt\"}{\"path\":\"B.kt\"}"}}]},"finish_reason":"tool_calls"}]}"""
-        val usageChunk = """{"id":"c1","choices":[],"usage":{"prompt_tokens":50,"completion_tokens":20,"total_tokens":70}}"""
-
-        server.enqueue(sseResponse(chunk1, chunk2, usageChunk))
-
-        val result = client.sendMessageStream(
-            messages = listOf(ChatMessage(role = "user", content = "read both")),
-            tools = null,
-            onChunk = {}
-        )
-
-        assertInstanceOf(ApiResult.Success::class.java, result)
-        val toolCalls = (result as ApiResult.Success).data.choices.first().message.toolCalls
-        assertNotNull(toolCalls)
-        assertEquals(1, toolCalls!!.size) // Only first recovered from concat bug
-        assertTrue(toolCalls[0].function.arguments.contains("A.kt"))
-    }
-
-    @Test
     fun `parses XML tool calls from text content when no native tools in request`() = runTest {
+        // XML-in-content migration 2026-05-13: tool calls are parsed from the
+        // accumulated assistant text. The full raw text (prose + XML tags) is
+        // preserved in content for in-context learning; only toolCalls is
+        // extracted for dispatch. The prior behavior of stripping XML from content
+        // was removed — the content now includes the XML.
         val xmlContent = "Let me read that.\n\n<read_file>\n<path>Foo.kt</path>\n</read_file>"
         val escapedContent = xmlContent.replace("\"", "\\\"").replace("\n", "\\n")
         val chunk1 = """{"id":"c1","choices":[{"index":0,"delta":{"role":"assistant","content":"$escapedContent"},"finish_reason":"stop"}]}"""
@@ -159,7 +85,6 @@ class SourcegraphChatClientStreamTest {
 
         server.enqueue(sseResponse(chunk1, usageChunk))
 
-        // Create client with known tool names for the new parser
         val xmlClient = SourcegraphChatClient(
             baseUrl = server.url("/").toString(),
             tokenProvider = { "test-token" },
@@ -183,7 +108,13 @@ class SourcegraphChatClientStreamTest {
         assertEquals(1, toolCalls!!.size)
         assertEquals("read_file", toolCalls[0].function.name)
         assertTrue(toolCalls[0].function.arguments.contains("Foo.kt"))
-        assertEquals("Let me read that.", response.choices.first().message.content?.trim())
+        // Full raw content (XML inline + prose) is preserved — not stripped.
+        val rawContent = response.choices.first().message.content
+        assertNotNull(rawContent)
+        assertTrue(rawContent!!.contains("Let me read that."),
+            "Prose portion must survive in content")
+        assertTrue(rawContent.contains("<read_file>"),
+            "XML tool call must remain in content for in-context learning")
     }
 
     @Test
@@ -216,56 +147,6 @@ class SourcegraphChatClientStreamTest {
         assertEquals(2, toolCalls!!.size)
         assertTrue(toolCalls[0].function.arguments.contains("A.kt"))
         assertTrue(toolCalls[1].function.arguments.contains("B.kt"))
-    }
-
-    @Test
-    fun `assembles tool call when function name is split across deltas`() = runTest {
-        // Reproduces symptom: tool names like `search_code` arrive as two deltas
-        // (`search` + `_code`). Our builder must accumulate name fragments the same
-        // way it accumulates argument fragments; otherwise the last delta wins and
-        // the assembled name becomes `_code`.
-        val chunk1 = """{"id":"c1","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"search","arguments":""}}]},"finish_reason":null}]}"""
-        val chunk2 = """{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"_code"}}]},"finish_reason":null}]}"""
-        val chunk3 = """{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"pattern\":\"foo\"}"}}]},"finish_reason":"tool_calls"}]}"""
-        val usageChunk = """{"id":"c1","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"""
-
-        server.enqueue(sseResponse(chunk1, chunk2, chunk3, usageChunk))
-
-        val result = client.sendMessageStream(
-            messages = listOf(ChatMessage(role = "user", content = "search")),
-            tools = null,
-            onChunk = {}
-        )
-
-        assertInstanceOf(ApiResult.Success::class.java, result)
-        val toolCalls = (result as ApiResult.Success).data.choices.first().message.toolCalls
-        assertNotNull(toolCalls)
-        assertEquals(1, toolCalls!!.size)
-        assertEquals("search_code", toolCalls[0].function.name)
-    }
-
-    @Test
-    fun `assembles tool call when function name is split into three deltas`() = runTest {
-        // Extreme case: single-character-ish fragments. Accumulation must be
-        // stable regardless of how the upstream tokenizer chooses to split.
-        val chunk1 = """{"id":"c1","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"run","arguments":""}}]},"finish_reason":null}]}"""
-        val chunk2 = """{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"_comm"}}]},"finish_reason":null}]}"""
-        val chunk3 = """{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"and"}}]},"finish_reason":null}]}"""
-        val chunk4 = """{"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"command\":\"ls\"}"}}]},"finish_reason":"tool_calls"}]}"""
-
-        server.enqueue(sseResponse(chunk1, chunk2, chunk3, chunk4))
-
-        val result = client.sendMessageStream(
-            messages = listOf(ChatMessage(role = "user", content = "run ls")),
-            tools = null,
-            onChunk = {}
-        )
-
-        assertInstanceOf(ApiResult.Success::class.java, result)
-        val toolCalls = (result as ApiResult.Success).data.choices.first().message.toolCalls
-        assertNotNull(toolCalls)
-        assertEquals(1, toolCalls!!.size)
-        assertEquals("run_command", toolCalls[0].function.name)
     }
 
     @Test

@@ -159,9 +159,13 @@ data class CompletionStreamResult(
     val durationMs: Long,
     val rejectionReason: String? = null,
     /**
-     * Tool calls assembled from `delta_tool_calls` SSE frames. Empty list when
-     * the LLM didn't emit any tool calls. Each entry has the canonical
-     * (post-accumulation) shape: id + function.name + complete arguments JSON.
+     * @deprecated always empty since XML-in-content migration 2026-05-13.
+     *
+     * Previously assembled from `delta_tool_calls` SSE frames. The accumulator
+     * was removed when the `tools:[...]` request parameter was dropped — tool
+     * definitions now live in the system prompt only, and tool calls are
+     * extracted from raw text by [AssistantMessageParser]. Retained for
+     * binary compatibility with any existing callers.
      */
     val toolCalls: List<ToolCall> = emptyList()
 )

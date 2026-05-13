@@ -245,16 +245,38 @@ class MessageStateHandler(
 
         val penult = apiHistory[apiHistory.size - 2]
         if (penult.role != ApiRole.ASSISTANT) return@withLock false
-        val matchingToolUse = penult.content.filterIsInstance<ContentBlock.ToolUse>()
+
+        // Legacy path: ToolUse block with a matching id (pre-2026-05-13 sessions on disk).
+        val matchingToolUseName: String? = penult.content.filterIsInstance<ContentBlock.ToolUse>()
             .firstOrNull { it.id == toolUseId && it.name in COMPLETION_TOOL_NAMES_HERE }
-            ?: return@withLock false
+            ?.name
+
+        // New-shape path: single Text block whose text contains a completion-tool XML tag
+        // (post-2026-05-13 XML-in-content migration). No ToolUse block is present.
+        val matchingXmlToolName: String? = if (matchingToolUseName == null) {
+            COMPLETION_TOOL_NAMES_HERE.firstOrNull { name ->
+                penult.content.filterIsInstance<ContentBlock.Text>().any { block ->
+                    block.text.contains("<$name>") || block.text.contains("<$name ")
+                }
+            }
+        } else null
+
+        if (matchingToolUseName == null && matchingXmlToolName == null) return@withLock false
 
         // Preserve any streaming text the assistant emitted; combine it with the tool
         // result content (which is what the LLM passed as the `result` argument).
-        val streamingText = penult.content
+        val rawStreamingText = penult.content
             .filterIsInstance<ContentBlock.Text>()
             .joinToString("\n") { it.text }
             .trim()
+        // For the new XML-in-content shape, strip the tool call XML from the streaming text
+        // so the collapsed message contains only prose (the tool XML is ephemeral scaffolding,
+        // not user-visible content — same rationale as the ToolUse→text conversion on resume).
+        val streamingText = if (matchingXmlToolName != null) {
+            stripXmlToolCall(rawStreamingText, matchingXmlToolName)
+        } else {
+            rawStreamingText
+        }
         val resultText = tailToolResult.content
         val combined = when {
             streamingText.isNotBlank() && resultText.isNotBlank() -> "$streamingText\n\n$resultText"
@@ -278,6 +300,22 @@ class MessageStateHandler(
      */
     private val COMPLETION_TOOL_NAMES_HERE: Set<String> = setOf("attempt_completion", "task_report")
 
+    /**
+     * Removes the `<toolName>…</toolName>` XML block from [text], returning the
+     * remaining prose trimmed of leading/trailing whitespace.
+     *
+     * Used by [collapseLastCompletionToolPair]'s new-shape path to strip the
+     * ephemeral tool-call scaffolding before combining with the result text.
+     * If the tag is not present the original text is returned unchanged.
+     */
+    private fun stripXmlToolCall(text: String, toolName: String): String {
+        // Match the opening tag (with optional attributes), everything inside, and the closing tag.
+        // Regex.escape defends against future tool names containing regex metacharacters.
+        val escaped = Regex.escape(toolName)
+        val pattern = Regex("<$escaped(?:\\s[^>]*)?>.*?</$escaped>", RegexOption.DOT_MATCHES_ALL)
+        return pattern.replace(text, "").trim()
+    }
+
     suspend fun overwriteClineMessages(messages: List<UiMessage>) = mutex.withLock {
         uiMessages.clear()
         uiMessages.addAll(messages)
@@ -295,22 +333,56 @@ class MessageStateHandler(
      * @return true if a matching tool result was found and rewritten, false otherwise.
      */
     suspend fun rewriteMostRecentToolResult(toolName: String, newContent: String): Boolean = mutex.withLock {
-        // Find most recent assistant message with a ToolUse of this name
-        val toolUseId = apiHistory.lastOrNull { msg ->
+        // Legacy path (pre-2026-05-13 sessions): find most recent ASSISTANT message with a
+        // ContentBlock.ToolUse of this name, then find the corresponding USER ToolResult by id.
+        val legacyToolUseId = apiHistory.lastOrNull { msg ->
             msg.role == ApiRole.ASSISTANT && msg.content.any { it is ContentBlock.ToolUse && it.name == toolName }
         }?.content?.filterIsInstance<ContentBlock.ToolUse>()?.lastOrNull { it.name == toolName }?.id
-            ?: return@withLock false
 
-        // Find the most recent user message containing the matching ToolResult
-        val idx = apiHistory.indexOfLast { msg ->
-            msg.role == ApiRole.USER && msg.content.any { it is ContentBlock.ToolResult && it.toolUseId == toolUseId }
+        if (legacyToolUseId != null) {
+            // Legacy: find the most recent user message containing the matching ToolResult by id
+            val idx = apiHistory.indexOfLast { msg ->
+                msg.role == ApiRole.USER && msg.content.any { it is ContentBlock.ToolResult && it.toolUseId == legacyToolUseId }
+            }
+            if (idx >= 0) {
+                val msg = apiHistory[idx]
+                apiHistory[idx] = msg.copy(
+                    content = msg.content.map { block ->
+                        if (block is ContentBlock.ToolResult && block.toolUseId == legacyToolUseId) block.copy(content = newContent)
+                        else block
+                    }
+                )
+                saveApiHistoryInternal()
+                return@withLock true
+            }
         }
-        if (idx < 0) return@withLock false
 
-        val msg = apiHistory[idx]
-        apiHistory[idx] = msg.copy(
+        // New-shape path (post-2026-05-13 XML-in-content migration): assistant turns contain
+        // a single ContentBlock.Text whose raw text includes the tool call XML inline. No
+        // ToolUse block is present, so the legacy id-match above finds nothing.
+        // Find the most recent ASSISTANT message with a Text block containing <toolName>...</toolName>,
+        // then rewrite the ToolResult on the immediately-following USER turn.
+        val assistantIdx = apiHistory.indexOfLast { msg ->
+            msg.role == ApiRole.ASSISTANT && msg.content.filterIsInstance<ContentBlock.Text>().any { block ->
+                block.text.contains("<$toolName>") || block.text.contains("<$toolName ")
+            }
+        }
+        if (assistantIdx < 0) return@withLock false
+
+        // The corresponding tool result MUST be on the immediately-following USER turn —
+        // matching legacy id-pairing semantics. A non-adjacent ToolResult is a different
+        // exchange and must not be rewritten.
+        val userIdx = assistantIdx + 1
+        if (userIdx >= apiHistory.size) return@withLock false
+        val candidate = apiHistory[userIdx]
+        if (candidate.role != ApiRole.USER || candidate.content.none { it is ContentBlock.ToolResult }) {
+            return@withLock false
+        }
+
+        val msg = apiHistory[userIdx]
+        apiHistory[userIdx] = msg.copy(
             content = msg.content.map { block ->
-                if (block is ContentBlock.ToolResult && block.toolUseId == toolUseId) block.copy(content = newContent)
+                if (block is ContentBlock.ToolResult) block.copy(content = newContent)
                 else block
             }
         )

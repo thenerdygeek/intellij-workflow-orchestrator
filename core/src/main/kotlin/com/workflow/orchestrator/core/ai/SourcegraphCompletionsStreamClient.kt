@@ -3,9 +3,6 @@ package com.workflow.orchestrator.core.ai
 import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.core.ai.dto.CompletionStreamRequest
 import com.workflow.orchestrator.core.ai.dto.CompletionStreamResult
-import com.workflow.orchestrator.core.ai.dto.DeltaToolCall
-import com.workflow.orchestrator.core.ai.dto.FunctionCall
-import com.workflow.orchestrator.core.ai.dto.ToolCall
 import com.workflow.orchestrator.core.http.AuthInterceptor
 import com.workflow.orchestrator.core.http.AuthScheme
 import com.workflow.orchestrator.core.http.ChatHttpEventListener
@@ -139,7 +136,6 @@ open class SourcegraphCompletionsStreamClient(
             val accumulated = StringBuilder()
             var stopReason: String? = null
             var rejectionReason: String? = null
-            val toolCallAccumulator = ToolCallAccumulator()
             val reader: BufferedReader = resp.body!!.charStream().buffered()
             parser.parse(reader) { result ->
                 when (result) {
@@ -179,10 +175,9 @@ open class SourcegraphCompletionsStreamClient(
                         rejectionReason = result.message
                     }
                     is CodyStreamSseParser.ParseResult.ToolCallDelta -> {
-                        // Accumulate by id — first frame carries id+name, later
-                        // continuation frames append to arguments. Verified shape
-                        // by format_lab 2026-05-05 against api-version=9.
-                        toolCallAccumulator.append(result.deltas)
+                        // XML-in-content migration: delta_tool_calls frames are no longer
+                        // requested (tools=null on the wire). Drop any such frames if
+                        // upstream emits them defensively.
                     }
                 }
             }
@@ -191,7 +186,6 @@ open class SourcegraphCompletionsStreamClient(
                 stopReason = stopReason,
                 durationMs = System.currentTimeMillis() - started,
                 rejectionReason = rejectionReason,
-                toolCalls = toolCallAccumulator.assemble()
             )
         }
     }
@@ -202,53 +196,3 @@ open class SourcegraphCompletionsStreamClient(
     }
 }
 
-/**
- * Accumulates `delta_tool_calls` SSE frames into completed [ToolCall]s.
- *
- * Wire pattern (verified by format_lab 2026-05-05 against Haiku 4.5):
- *   1. First frame for tool N: `id=toolu_...`, `function.name=foo`,
- *      `function.arguments=""`
- *   2. Continuation frames: `id=""`, `function.name=""`,
- *      `function.arguments="<chunk>"` — appends to previous arguments.
- *
- * The first non-empty `id` we see anchors that tool's slot. Continuation
- * frames are matched by index (the order in `delta_tool_calls`) since the
- * gateway emits them empty-id'd. Multiple parallel tool calls work fine
- * because the first frame for each one carries a unique id and is in a
- * stable index position.
- *
- * Argument JSON is concatenated as raw strings — we do NOT validate it
- * mid-stream (the model can stream invalid JSON intermediates that only
- * become valid at the closing brace). The agent loop handles parse errors.
- */
-internal class ToolCallAccumulator {
-    private data class Slot(
-        var id: String = "",
-        var type: String = "function",
-        var name: String = "",
-        var arguments: StringBuilder = StringBuilder(),
-    )
-
-    private val slots = mutableListOf<Slot>()
-
-    fun append(deltas: List<DeltaToolCall>) {
-        deltas.forEachIndexed { index, delta ->
-            // Grow the slots list to fit this index; the gateway uses
-            // position-based identity for continuation frames.
-            while (slots.size <= index) slots.add(Slot())
-            val slot = slots[index]
-            delta.id?.takeIf { it.isNotEmpty() }?.let { slot.id = it }
-            delta.type?.takeIf { it.isNotEmpty() }?.let { slot.type = it }
-            delta.function?.name?.takeIf { it.isNotEmpty() }?.let { slot.name = it }
-            delta.function?.arguments?.takeIf { it.isNotEmpty() }?.let {
-                slot.arguments.append(it)
-            }
-        }
-    }
-
-    fun assemble(): List<ToolCall> = slots
-        .filter { it.id.isNotEmpty() && it.name.isNotEmpty() }
-        .map { ToolCall(id = it.id, type = it.type,
-                        function = FunctionCall(name = it.name,
-                                                arguments = it.arguments.toString())) }
-}

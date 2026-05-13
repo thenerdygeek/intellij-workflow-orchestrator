@@ -65,7 +65,10 @@ class SourcegraphChatClientTest {
     }
 
     @Test
-    fun `sendMessage does not include tool_choice in request body`() = runTest {
+    fun `sendMessage does not include tool_choice or tools in request body`() = runTest {
+        // XML-in-content migration 2026-05-13: tools are now embedded in the system
+        // prompt as XML schemas, not passed via the API tools field. Neither
+        // tool_choice nor tools should appear in the wire request body.
         server.enqueue(MockResponse().setBody("""
             {"id":"chatcmpl-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}]}
         """.trimIndent()))
@@ -83,8 +86,10 @@ class SourcegraphChatClientTest {
 
         val request = server.takeRequest()
         val body = request.body.readUtf8()
-        assertFalse(body.contains("tool_choice"), "Sourcegraph API does not support tool_choice. Body: $body")
-        assertTrue(body.contains("\"tools\""), "Should include tools in request body")
+        assertFalse(body.contains("tool_choice"),
+            "Sourcegraph API does not support tool_choice. Body: $body")
+        assertFalse(body.contains("\"tools\""),
+            "XML-in-content migration: tools must NOT be sent via API field (they live in system prompt). Body: $body")
     }
 
     @Test

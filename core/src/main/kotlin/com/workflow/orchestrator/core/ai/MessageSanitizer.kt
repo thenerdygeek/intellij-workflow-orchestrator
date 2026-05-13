@@ -38,12 +38,8 @@ object MessageSanitizer {
      * **Phase 3** — handle empty / null content:
      *   - Case 1: Messages with no content AND no tool calls → dropped entirely.
      *     [`isEffectivelyBlank`][StringUtils.isEffectivelyBlank] also catches
-     *     U+200B-only echoes (the placeholder we inject in Case 2) so that an
-     *     LLM that mirrors the placeholder back doesn't pollute future prompts.
-     *   - Case 2: Assistant messages with tool calls but null/empty content →
-     *     substitute a U+200B zero-width space placeholder. Requirements: not
-     *     natural language (avoids stuck-echo loops), not XML (avoids
-     *     `<tool_calls/>` hallucination), short and obviously structural.
+     *     U+200B-only echoes so that an LLM that mirrors a stale placeholder
+     *     back doesn't pollute future prompts.
      *
      * **Phase 4** — ensure the conversation starts with `user`.
      *
@@ -116,7 +112,7 @@ object MessageSanitizer {
         val merged = mutableListOf<ChatMessage>()
         for (msg in converted) {
             val last = merged.lastOrNull()
-            if (last != null && last.role == msg.role && last.toolCalls == null && msg.toolCalls == null) {
+            if (last != null && last.role == msg.role) {
                 // Merge into previous message
                 merged[merged.size - 1] = ChatMessage(
                     role = msg.role,
@@ -128,11 +124,10 @@ object MessageSanitizer {
         }
 
         // Phase 3: handle empty/null content (Anthropic rejects "message content cannot be empty")
-        // Case 1: Messages with no content AND no tool calls → drop entirely.
+        // Drop messages with no content AND no tool calls AND no parts.
         // `isEffectivelyBlank` (not `isNullOrBlank`) also catches U+200B-only echoes —
-        // the LLM occasionally mirrors the placeholder we inject in Case 2 below back as
-        // its own "response". If we don't drop those, they reach the next prompt and
-        // train the model to mimic the empty pattern further. See StringUtils.
+        // if the LLM mirrors a stale placeholder back as its own "response" it will be
+        // dropped here rather than reaching the next prompt. See StringUtils.
         // Exception: messages with non-text ContentPart entries in `parts` (e.g.
         // ContentPart.Image) carry real payload even when the text content is null/blank.
         // The /stream path reads `parts` directly to hydrate base64 URIs — dropping
@@ -141,25 +136,6 @@ object MessageSanitizer {
             StringUtils.isEffectivelyBlank(msg.content)
                 && msg.toolCalls.isNullOrEmpty()
                 && msg.parts.isNullOrEmpty()
-        }
-        // Case 2: Assistant messages with tool calls but null/empty content → set placeholder
-        // (LLM often returns content=null when making tool calls — this is normal)
-        // IMPORTANT: When the assistant makes tool calls, the API often returns content=null.
-        // But Anthropic/Sourcegraph rejects empty content in conversation history. We need a
-        // placeholder. Requirements:
-        // 1. Not natural language — LLM will echo it back as a response (known stuck loop)
-        // 2. Not XML that looks like tool syntax — LLM reproduces <tool_calls/> verbatim
-        // 3. Short and obviously structural — won't be mistaken for actual output
-        // Using a unicode marker that no LLM would generate as a natural response:
-        for (i in merged.indices) {
-            val msg = merged[i]
-            if (msg.role == "assistant" && msg.content.isNullOrBlank() && !msg.toolCalls.isNullOrEmpty()) {
-                merged[i] = ChatMessage(
-                    role = "assistant",
-                    content = "\u200B", // zero-width space — invisible, non-empty, impossible to echo
-                    toolCalls = msg.toolCalls
-                )
-            }
         }
 
         // Phase 4: ensure conversation starts with "user"
@@ -171,7 +147,7 @@ object MessageSanitizer {
         val result = mutableListOf<ChatMessage>()
         for (msg in merged) {
             val last = result.lastOrNull()
-            if (last != null && last.role == msg.role && last.toolCalls == null && msg.toolCalls == null) {
+            if (last != null && last.role == msg.role) {
                 result[result.size - 1] = ChatMessage(
                     role = msg.role,
                     content = "${last.content ?: ""}\n\n${msg.content ?: ""}"
