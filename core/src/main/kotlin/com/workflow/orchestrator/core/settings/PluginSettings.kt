@@ -223,7 +223,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         // ── Multimodal image-attachment settings (Phase 5) ────────────────────────────
         //
         // User-visible controls for image input. UI lives at
-        // Tools > Workflow Orchestrator > Multimodal (MultimodalSettingsConfigurable).
+        // Tools > Workflow Orchestrator > AI Agent > Multimodal (MultimodalSettingsConfigurable).
         // Defaults mirror the gateway's vision-capable model whitelist.
 
         /**

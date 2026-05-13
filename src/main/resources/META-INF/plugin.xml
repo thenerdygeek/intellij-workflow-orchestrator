@@ -123,9 +123,9 @@
             nonDefaultProject="true"/>
 
         <projectConfigurable
-            parentId="workflow.orchestrator"
+            parentId="workflow.orchestrator.agent"
             instance="com.workflow.orchestrator.core.settings.MultimodalSettingsConfigurable"
-            id="workflow.orchestrator.multimodal"
+            id="workflow.orchestrator.agent.multimodal"
             displayName="Multimodal"
             nonDefaultProject="true"/>
 

@@ -15,7 +15,7 @@ import javax.swing.JComponent
 
 /**
  * Settings page rendered under
- *   File ▸ Settings ▸ Tools ▸ Workflow Orchestrator ▸ Multimodal
+ *   File ▸ Settings ▸ Tools ▸ Workflow Orchestrator ▸ AI Agent ▸ Multimodal
  *
  * Exposes the Phase 5 image-input controls persisted on
  * [PluginSettings.State]. UI idiom matches the project's other configurables
@@ -27,7 +27,7 @@ class MultimodalSettingsConfigurable(private val project: Project) : SearchableC
     private val settings = PluginSettings.getInstance(project)
     private var dialogPanel: DialogPanel? = null
 
-    override fun getId(): String = "workflow.orchestrator.multimodal"
+    override fun getId(): String = "workflow.orchestrator.agent.multimodal"
     override fun getDisplayName(): String = "Multimodal"
 
     override fun createComponent(): JComponent {

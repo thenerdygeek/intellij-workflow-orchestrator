@@ -150,4 +150,4 @@ The history-strip path is intentionally not double-tested — it shares code wit
 
 - Ships on `fix/automation-handover-quality-tabs` alongside whatever else is on the branch.
 - Plugin version: bump the patch segment of `pluginVersion` in `gradle.properties`. Tag + GitHub release with the ZIP from `build/distributions/` per the standard release process.
-- Rollback path if visual support breaks again with master ON: `Settings → Tools → Workflow Orchestrator → Multimodal → uncheck "Enable visual support"`. No code rollback required.
+- Rollback path if visual support breaks again with master ON: `Settings → Tools → Workflow Orchestrator → AI Agent → Multimodal → uncheck "Enable visual support"`. No code rollback required.

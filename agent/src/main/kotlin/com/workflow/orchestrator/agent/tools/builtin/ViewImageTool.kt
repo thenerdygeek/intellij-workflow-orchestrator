@@ -85,7 +85,7 @@ class ViewImageTool : AgentTool {
         }
         if (!masterEnabled) {
             return ToolResult.error(
-                "Visual support is disabled in settings (Tools > Workflow Orchestrator > Multimodal).",
+                "Visual support is disabled in settings (Tools > Workflow Orchestrator > AI Agent > Multimodal).",
                 "Visual support disabled"
             )
         }
@@ -142,7 +142,7 @@ class ViewImageTool : AgentTool {
         if (!autoLoadEnabled) {
             val kb = bytes.size / 1024
             val content = "Image file '${validated.fileName}' ($kb KB, $mime) found on disk. " +
-                "Tool image autoload is disabled in settings (Tools > Workflow Orchestrator > Multimodal). " +
+                "Tool image autoload is disabled in settings (Tools > Workflow Orchestrator > AI Agent > Multimodal). " +
                 "Enable it to load images into your vision context."
             return ToolResult(
                 content = content,
