@@ -9,6 +9,7 @@ import { CopyButton } from '@/components/ui/copy-button';
 import { cn } from '@/lib/utils';
 import { PlanApprovedBubble } from './PlanApprovedBubble';
 import { scanAndLinkify } from '@/util/file-link-scanner';
+import { scanAndSymbolLinkify } from '@/util/symbol-link-scanner';
 
 // ── Mention chip rendering for user message bubbles ──
 
@@ -147,10 +148,16 @@ export const AgentMessage = memo(function AgentMessage({
     // back-to-back rAFs.
     const ric = (window as Window & { requestIdleCallback?: typeof requestIdleCallback }).requestIdleCallback;
     if (ric) {
-      const handle = ric(() => { void scanAndLinkify(node); }, { timeout: 200 });
+      const handle = ric(() => {
+        void scanAndLinkify(node);
+        void scanAndSymbolLinkify(node);
+      }, { timeout: 200 });
       return () => (window as Window & { cancelIdleCallback?: typeof cancelIdleCallback }).cancelIdleCallback?.(handle);
     }
-    const handle = requestAnimationFrame(() => { void scanAndLinkify(node); });
+    const handle = requestAnimationFrame(() => {
+      void scanAndLinkify(node);
+      void scanAndSymbolLinkify(node);
+    });
     return () => cancelAnimationFrame(handle);
   }, [isFinalized]);
 
