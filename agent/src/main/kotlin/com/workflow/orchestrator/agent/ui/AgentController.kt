@@ -493,6 +493,7 @@ class AgentController(
         )
         panel.setCefNavigationCallbacks(onNavigateToFile = ::navigateToFile)
         panel.onValidatePaths = ::handleValidatePaths
+        panel.onResolveSymbols = ::handleResolveSymbols
         panel.onSendMessage = ::executeTask
         panel.setOnCompactContext(::compactContext)
         // Phase 5: image-attachment upload path resolves the active session
@@ -3221,6 +3222,25 @@ class AgentController(
                 "[]"
             }
             // Push result to the one-shot JS callback (same pattern as validateTicket).
+            val cbJson = Json.encodeToString(callbackName)
+            val resJson = Json.encodeToString(resultJson)
+            invokeLater { dashboard.callJs("(window[$cbJson])($resJson)") }
+        }
+    }
+
+    private fun handleResolveSymbols(hrefsJson: String, callbackName: String) {
+        controllerScope.launch(Dispatchers.IO) {
+            val resultJson = try {
+                val hrefs = Json.decodeFromString<List<String>>(hrefsJson)
+                val resolver = com.workflow.orchestrator.core.util.SymbolLinkResolver(project)
+                val validated = resolver.resolveAll(hrefs).map {
+                    ValidatedPathJson(it.input, it.canonicalPath, it.line, it.column)
+                }
+                Json.encodeToString(validated)
+            } catch (e: Exception) {
+                LOG.warn("handleResolveSymbols: bad payload", e)
+                "[]"
+            }
             val cbJson = Json.encodeToString(callbackName)
             val resJson = Json.encodeToString(resultJson)
             invokeLater { dashboard.callJs("(window[$cbJson])($resJson)") }

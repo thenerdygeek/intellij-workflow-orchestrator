@@ -76,6 +76,7 @@ class AgentCefPanel(
     private var deactivateSkillQuery: JBCefJSQuery? = null
     private var navigateToFileQuery: JBCefJSQuery? = null
     private var validatePathsQuery: JBCefJSQuery? = null
+    private var resolveSymbolsQuery: JBCefJSQuery? = null
     private var cancelTaskQuery: JBCefJSQuery? = null
     private var newChatQuery: JBCefJSQuery? = null
     private var sendMessageQuery: JBCefJSQuery? = null
@@ -207,6 +208,8 @@ class AgentCefPanel(
 
     /** Callback when JS requests batch path validation. Params: (pathsJson, callbackName). */
     var onValidatePaths: ((String, String) -> Unit)? = null
+
+    var onResolveSymbols: ((String, String) -> Unit)? = null
 
     var onCancelTask: (() -> Unit)? = null
     var onRetryLastTask: (() -> Unit)? = null
@@ -454,6 +457,14 @@ class AgentCefPanel(
             val pathsJson = if (sepIdx > 0) data.substring(0, sepIdx) else "[]"
             val callbackName = if (sepIdx > 0) data.substring(sepIdx + 1) else ""
             onValidatePaths?.invoke(pathsJson, callbackName)
+            JBCefJSQuery.Response("ok")
+        }
+
+        resolveSymbolsQuery = registerQuery(b) { data ->
+            val sepIdx = data.lastIndexOf('|')
+            val hrefsJson = if (sepIdx > 0) data.substring(0, sepIdx) else "[]"
+            val callbackName = if (sepIdx > 0) data.substring(sepIdx + 1) else ""
+            onResolveSymbols?.invoke(hrefsJson, callbackName)
             JBCefJSQuery.Response("ok")
         }
 
@@ -708,6 +719,7 @@ class AgentCefPanel(
                     injectBridge("_deactivateSkill") { deactivateSkillQuery?.let { q -> js("window._deactivateSkill = function() { ${q.inject("'dismiss'")} }") } }
                     injectBridge("_navigateToFile") { navigateToFileQuery?.let { q -> js("window._navigateToFile = function(path) { ${q.inject("path")} }") } }
                     injectBridge("_validatePaths") { validatePathsQuery?.let { q -> js("window._validatePaths = function(pathsJson, cb) { ${q.inject("pathsJson + '|' + cb")} }") } }
+                    injectBridge("_resolveSymbols") { resolveSymbolsQuery?.let { q -> js("window._resolveSymbols = function(hrefsJson, cb) { ${q.inject("hrefsJson + '|' + cb")} }") } }
                     injectBridge("_cancelTask") { cancelTaskQuery?.let { q -> js("window._cancelTask = function() { ${q.inject("'cancel'")} }") } }
                     injectBridge("_newChat") { newChatQuery?.let { q -> js("window._newChat = function() { ${q.inject("'new'")} }") } }
                     injectBridge("_sendMessage") { sendMessageQuery?.let { q -> js("window._sendMessage = function(text) { ${q.inject("text")} }") } }

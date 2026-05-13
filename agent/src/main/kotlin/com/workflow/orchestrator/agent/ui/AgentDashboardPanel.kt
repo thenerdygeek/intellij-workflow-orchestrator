@@ -383,6 +383,10 @@ class AgentDashboardPanel(
         get() = cefPanel?.onValidatePaths
         set(value) { cefPanel?.onValidatePaths = value }
 
+    var onResolveSymbols: ((String, String) -> Unit)?
+        get() = cefPanel?.onResolveSymbols
+        set(value) { cefPanel?.onResolveSymbols = value }
+
     /**
      * Execute raw JavaScript in the JCEF browser, queueing it until the page is loaded.
      * Used to push async results (e.g. path validation) back to a named window callback.
