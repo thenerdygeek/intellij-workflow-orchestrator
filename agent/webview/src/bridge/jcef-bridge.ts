@@ -761,6 +761,43 @@ export const kotlinBridge = {
       }
     });
   },
+
+  async resolveSymbols(hrefs: string[]): Promise<ValidatedPath[]> {
+    const bridge = (window as any)._resolveSymbols;
+    if (typeof bridge !== 'function') return [];
+    return new Promise<ValidatedPath[]>((resolve) => {
+      const cbName = `__resolveSymbolsCb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try { delete (window as any)[cbName]; } catch { /* ignore */ }
+        resolve([]);
+      }, 2000);
+      (window as any)[cbName] = (resultJson: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try { delete (window as any)[cbName]; } catch { /* ignore */ }
+        try {
+          const parsed = JSON.parse(resultJson);
+          resolve(Array.isArray(parsed) ? parsed : []);
+        } catch {
+          resolve([]);
+        }
+      };
+      try {
+        bridge(JSON.stringify(hrefs), cbName);
+      } catch {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          try { delete (window as any)[cbName]; } catch { /* ignore */ }
+          resolve([]);
+        }
+      }
+    });
+  },
 };
 
 // ═══ Editor Tab Popout ═══
