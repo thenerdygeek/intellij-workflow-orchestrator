@@ -271,9 +271,15 @@ function AnchorNode({ href, children, ...props }: any) {
       className="text-[var(--link)] underline decoration-[var(--link)]/30 hover:decoration-[var(--link)]"
       onClick={(e: React.MouseEvent) => {
         e.preventDefault();
-        if (href) {
-          (window as any)._navigateToFile?.(href);
+        if (!href) return;
+        if (href.startsWith('symbol:')) {
+          const el = e.currentTarget as HTMLAnchorElement;
+          const canonical = el.dataset.canonical;
+          const line = parseInt(el.dataset.line ?? '0', 10);
+          if (canonical) (window as any)._navigateToFile?.(`${canonical}:${line + 1}`);
+          return;
         }
+        (window as any)._navigateToFile?.(href);
       }}
       {...props}
     >
