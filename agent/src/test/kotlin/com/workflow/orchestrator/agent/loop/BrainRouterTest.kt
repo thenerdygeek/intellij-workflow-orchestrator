@@ -409,6 +409,69 @@ class BrainRouterTest {
         assertEquals("re", chunks[0].choices.first().delta.content)
         assertEquals("d", chunks[1].choices.first().delta.content)
     }
+
+    // ---- Sanitization regression test ----
+
+    /**
+     * Regression pin for the "message content cannot be empty" Sourcegraph /stream
+     * rejection. When an assistant turn carries only tool_calls (no text), its
+     * content is null/empty. Prior to this fix, [BrainRouter.buildStreamRequest]
+     * serialised such a turn as `{"speaker":"assistant","content":[{"type":"text","text":""}]}`
+     * which Anthropic rejects with HTTP 200 + a stream error event.
+     *
+     * After the fix, [MessageSanitizer.sanitizeForAnthropic] substitutes a
+     * U+200B zero-width-space placeholder so the content field is always non-empty.
+     */
+    @Test
+    fun `buildStreamRequest sanitizes assistant message with empty content + toolCalls into placeholder text part`() = runBlocking {
+        val openAi = FakeOpenAiCompatBrain(response = makeOk("should not be used"))
+        val stream = FakeStreamClient(text = "ok")
+        val store = AttachmentStore(tempDir)
+        // Store an image so the turn routes through /stream
+        val ref = store.store("fake".toByteArray(), "image/png", null)
+        val router = BrainRouter(openAi, stream, store, { "test::model" }, null)
+
+        val messages = listOf(
+            ChatMessage(role = "user", content = "Look at this image"),
+            ChatMessage(
+                role = "assistant",
+                content = "",  // EMPTY — this is the bug trigger
+                toolCalls = listOf(
+                    ToolCall(
+                        id = "call_1",
+                        type = "function",
+                        function = FunctionCall(name = "view_image", arguments = "{}"),
+                    ),
+                ),
+            ),
+            ChatMessage(role = "tool", content = "image attached", toolCallId = "call_1"),
+            // Image-bearing follow-up to force /stream routing
+            ChatMessage(
+                role = "user",
+                parts = listOf(
+                    ContentPart.Image(sha256 = ref.sha256, mime = "image/png", originalFilename = "img.png"),
+                    ContentPart.Text("What do you see?"),
+                ),
+            ),
+        )
+
+        val request = router.buildStreamRequestForTest(messages, tools = emptyList(), maxTokens = null)
+
+        // The serialized request must NOT contain an empty text part for the assistant turn
+        val assistantStreamMsg = request.messages.firstOrNull { it.speaker == "assistant" }
+        assertNotNull(assistantStreamMsg, "Assistant message must be present in stream request")
+
+        val textPart = assistantStreamMsg!!.content
+            .filterIsInstance<StreamContentPart.Text>()
+            .firstOrNull()
+        assertNotNull(textPart,
+            "Assistant message must have at least one Text content part after sanitization " +
+                "(empty content → U+200B placeholder substituted by MessageSanitizer)")
+        assertTrue(textPart!!.text.isNotEmpty(),
+            "Text part must be non-empty — an empty 'text' field causes Anthropic to reject " +
+                "the request with 'message content cannot be empty'. " +
+                "Got: ${textPart.text.map { it.code }.joinToString()}")
+    }
 }
 
 // ---- Test fakes ----

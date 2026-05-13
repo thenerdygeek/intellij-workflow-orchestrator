@@ -4,6 +4,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.agent.session.AttachmentStore
 import com.workflow.orchestrator.core.ai.HttpException
 import com.workflow.orchestrator.core.ai.LlmBrain
+import com.workflow.orchestrator.core.ai.MessageSanitizer
 import com.workflow.orchestrator.core.ai.SourcegraphCompletionsStreamClient
 import com.workflow.orchestrator.core.ai.dto.ChatCompletionResponse
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
@@ -253,6 +254,16 @@ class BrainRouter(
     // ---- Wire-payload construction ----
 
     /**
+     * Expose for testing — allows the test module to call [buildStreamRequest] without
+     * routing through the full [chatStream] / [chat] dispatch path.
+     */
+    internal suspend fun buildStreamRequestForTest(
+        messages: List<ChatMessage>,
+        tools: List<ToolDefinition>?,
+        maxTokens: Int?,
+    ): CompletionStreamRequest = buildStreamRequest(messages, tools, maxTokens)
+
+    /**
      * Builds a [CompletionStreamRequest] (Cody Format B) from a list of
      * OpenAI-compat [ChatMessage]s. Image parts are resolved against
      * [attachmentStore] and emitted as base64 `data:` URIs per the Cody spec.
@@ -267,7 +278,12 @@ class BrainRouter(
         tools: List<ToolDefinition>?,
         maxTokens: Int?,
     ): CompletionStreamRequest {
-        val streamMessages = messages.map { msg ->
+        // Sanitize before content-part transform so that assistant messages with
+        // empty content + toolCalls receive the U+200B placeholder. Without this,
+        // Anthropic rejects the request with "message content cannot be empty"
+        // and the agent loop counts each call as a text-only mistake (3 → hard stop).
+        val sanitized = MessageSanitizer.sanitizeForAnthropic(messages)
+        val streamMessages = sanitized.map { msg ->
             val parts = (msg.parts ?: listOf(ContentPart.Text(msg.content ?: ""))).map { part ->
                 when (part) {
                     is ContentPart.Text -> StreamContentPart.Text(part.text)
