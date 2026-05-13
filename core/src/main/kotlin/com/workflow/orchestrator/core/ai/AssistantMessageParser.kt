@@ -14,8 +14,12 @@ object AssistantMessageParser {
     /**
      * Tags whose values can contain arbitrary code with XML-like strings.
      * Uses lastIndexOf for the closing tag (Cline pattern for HTML-in-code safety).
+     *
+     * Public so that [com.workflow.orchestrator.agent.session.DialectDriftDetector]
+     * can reference the same set when protecting code-carrying param values from
+     * dialect redaction.
      */
-    private val CODE_CARRYING_PARAMS = setOf("content", "new_string", "old_string", "diff", "code")
+    val CODE_CARRYING_PARAMS = setOf("content", "new_string", "old_string", "diff", "code")
 
     /**
      * Parse assistant message text into content blocks.

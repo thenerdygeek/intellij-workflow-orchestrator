@@ -321,4 +321,135 @@ Continuing."""
         assert(result.text.contains("OK, I'll read the file."))
         assert(result.text.contains("Done."))
     }
+
+    // ── Code-carrying param protection — hasDialectMarker ───────────────
+
+    @Test
+    fun `function_calls inside canonical content param is NOT flagged`() {
+        // The model writes a create_file whose <content> discusses Anthropic dialect.
+        // The detector must NOT flag this as a drift turn.
+        val text = """<create_file>
+<path>docs/function-calling.md</path>
+<content>
+Anthropic uses `<function_calls><invoke name="X">...</invoke></function_calls>`
+for tool calls in text. Don't use it.
+</content>
+</create_file>"""
+        assertFalse(DialectDriftDetector.hasDialectMarker(text))
+    }
+
+    @Test
+    fun `function_calls inside canonical diff param is NOT flagged`() {
+        val text = """<edit_file>
+<path>README.md</path>
+<diff>- Old: <function_calls><invoke name="foo"></invoke></function_calls>
++ New: use canonical XML tool calls instead</diff>
+</edit_file>"""
+        assertFalse(DialectDriftDetector.hasDialectMarker(text))
+    }
+
+    @Test
+    fun `function_calls inside canonical old_string and new_string params is NOT flagged`() {
+        val text = """<edit_file>
+<path>docs/api.md</path>
+<old_string><function_calls><invoke name="X">...</invoke></function_calls></old_string>
+<new_string><X>...</X></new_string>
+</edit_file>"""
+        assertFalse(DialectDriftDetector.hasDialectMarker(text))
+    }
+
+    @Test
+    fun `function_calls inside canonical code param is NOT flagged`() {
+        val text = """<create_file>
+<path>example.py</path>
+<code>
+# This is what Anthropic legacy format looks like:
+# <function_calls><invoke name="read_file"><parameter name="path">x</parameter></invoke></function_calls>
+print("done")
+</code>
+</create_file>"""
+        assertFalse(DialectDriftDetector.hasDialectMarker(text))
+    }
+
+    @Test
+    fun `Hermes tool_call JSON inside canonical content param is NOT flagged`() {
+        val text = """<create_file>
+<path>hermes-example.md</path>
+<content>
+Hermes models emit: <tool_call>{"tool_name":"read_file","parameters":{"path":"x"}}</tool_call>
+We detect and redact this format.
+</content>
+</create_file>"""
+        assertFalse(DialectDriftDetector.hasDialectMarker(text))
+    }
+
+    @Test
+    fun `generic tool wrapper inside canonical content param is NOT flagged`() {
+        val text = """<create_file>
+<path>docs/formats.md</path>
+<content>
+Some models use: <tool>read_file path=foo</tool>
+This is an unrecognized format.
+</content>
+</create_file>"""
+        assertFalse(DialectDriftDetector.hasDialectMarker(text))
+    }
+
+    @Test
+    fun `function_calls OUTSIDE canonical tool call IS still flagged (negative control)`() {
+        // A bare dialect emission in the model response — must still trip the detector
+        val text = """Let me call the tool.
+<function_calls>
+<invoke name="read_file">
+<parameter name="path">src/Foo.kt</parameter>
+</invoke>
+</function_calls>"""
+        assertTrue(DialectDriftDetector.hasDialectMarker(text))
+    }
+
+    @Test
+    fun `function_calls inside bare content tag NOT enclosed by canonical tool is still flagged`() {
+        // A top-level <content> block (not inside a recognized canonical tool outer tag)
+        // must NOT be protected — that would create a false-negative escape hatch.
+        val text = """<content>
+<function_calls>
+<invoke name="read_file">
+<parameter name="path">src/Foo.kt</parameter>
+</invoke>
+</function_calls>
+</content>"""
+        assertTrue(DialectDriftDetector.hasDialectMarker(text))
+    }
+
+    // ── Code-carrying param protection — redactDialectMarkers ───────────
+
+    @Test
+    fun `redactDialectMarkers preserves dialect text inside code-carrying param while redacting outside`() {
+        // The create_file content contains Anthropic dialect — must survive intact.
+        // The extra bare dialect outside must still be redacted.
+        val text = """<create_file>
+<path>docs/function-calling.md</path>
+<content>
+Anthropic uses <function_calls><invoke name="X">...</invoke></function_calls> for tool calls.
+</content>
+</create_file>
+
+Here is the wrong call:
+<function_calls>
+<invoke name="read_file">
+<parameter name="path">src/Foo.kt</parameter>
+</invoke>
+</function_calls>"""
+
+        val result = DialectDriftDetector.redactDialectMarkers(text)
+
+        // The bare dialect outside the tool call must be redacted
+        assertTrue(result.modified)
+        assertTrue(result.text.contains(DialectDriftDetector.REDACTION_MARKER))
+        // The content param value must remain intact
+        assertTrue(result.text.contains("<function_calls><invoke name=\"X\">...</invoke></function_calls>"))
+        // The create_file block structure must be preserved
+        assertTrue(result.text.contains("<create_file>"))
+        assertTrue(result.text.contains("<path>docs/function-calling.md</path>"))
+    }
 }
