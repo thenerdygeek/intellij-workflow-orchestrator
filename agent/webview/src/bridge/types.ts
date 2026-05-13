@@ -417,6 +417,8 @@ export interface UiMessage {
   planApprovalData?: UiMessagePlanApprovalData;
   /** Payload for `say='COMPACTION_MARKER'` divider message. */
   compactionMarker?: UiMessageCompactionMarker;
+  /** Wall-clock ms from first ThinkingDelta to ThinkingEnd. Undefined for pre-fix history entries. */
+  thinkingDurationMs?: number;
   /** Mentions attached to a USER_MESSAGE (ticket chips, file refs, etc.) */
   mentions?: Mention[];
   /**

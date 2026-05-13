@@ -233,6 +233,8 @@ class AgentController(
      * before the batcher and reset alongside it.
      */
     private val thinkingSplitter = ThinkingTagSplitter()
+    /** Epoch-ms when the first ThinkingDelta of the current block arrived; 0 when no block is active. */
+    private var thinkingBlockStartedAt: Long = 0L
 
     /** Routes per-tool-call process output chunks to the tool's own Terminal block in the chat UI. */
     private val toolStreamBatcher = PerToolStreamBatcher(
@@ -1722,8 +1724,15 @@ class AgentController(
     private fun dispatchSplitParts(parts: List<ThinkingTagSplitter.Part>) {
         for (part in parts) when (part) {
             is ThinkingTagSplitter.Part.Text -> streamBatcher.append(part.text)
-            is ThinkingTagSplitter.Part.ThinkingDelta -> dashboard.appendToThinking(part.text)
-            ThinkingTagSplitter.Part.ThinkingEnd -> dashboard.endThinking()
+            is ThinkingTagSplitter.Part.ThinkingDelta -> {
+                if (thinkingBlockStartedAt == 0L) thinkingBlockStartedAt = System.currentTimeMillis()
+                dashboard.appendToThinking(part.text)
+            }
+            ThinkingTagSplitter.Part.ThinkingEnd -> {
+                val durationMs = if (thinkingBlockStartedAt > 0L) System.currentTimeMillis() - thinkingBlockStartedAt else 0L
+                thinkingBlockStartedAt = 0L
+                dashboard.endThinking(durationMs)
+            }
         }
     }
 

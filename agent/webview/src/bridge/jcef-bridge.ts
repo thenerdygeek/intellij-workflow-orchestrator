@@ -183,8 +183,8 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   appendToThinking(text: string) {
     stores?.getChatStore().appendToThinking(text);
   },
-  endThinking() {
-    stores?.getChatStore().endThinking();
+  endThinking(durationMs: number = 0) {
+    stores?.getChatStore().endThinking(durationMs);
   },
   clearChat() {
     stores?.getChatStore().clearChat();

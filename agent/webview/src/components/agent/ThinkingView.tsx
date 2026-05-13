@@ -28,9 +28,11 @@ function useThinkingTimer(isStreaming: boolean): number {
   return elapsed;
 }
 
-function formatDuration(ms: number, isStreaming: boolean): string {
+function formatDuration(ms: number, isStreaming: boolean, durationMs?: number): string {
   if (isStreaming) return 'Thinking...';
-  const totalSec = Math.round(ms / 1000);
+  // Prefer the stamped duration from the message (survives component remount and session resume).
+  // Fall back to the internal timer only when no stamp is available (legacy history entries).
+  const totalSec = Math.round((durationMs ?? ms) / 1000);
   if (totalSec <= 0) return 'Thought for <1s';
   return `Thought for ${formatElapsedSeconds(totalSec)}`;
 }
@@ -40,9 +42,12 @@ function formatDuration(ms: number, isStreaming: boolean): string {
 interface ThinkingViewProps {
   content: string;
   isStreaming: boolean;
+  /** Stamped wall-clock ms from the Kotlin bridge. When present, used instead of
+   *  the internal timer so the label survives the ChatFooter→ChatView remount. */
+  durationMs?: number;
 }
 
-export function ThinkingView({ content, isStreaming }: ThinkingViewProps) {
+export function ThinkingView({ content, isStreaming, durationMs }: ThinkingViewProps) {
   const elapsed = useThinkingTimer(isStreaming);
   const [open, setOpen] = useState(true);
   const hasAutoCollapsed = useRef(false);
@@ -69,7 +74,7 @@ export function ThinkingView({ content, isStreaming }: ThinkingViewProps) {
   }, [isStreaming]);
 
   const handleOpenChange = useCallback((v: boolean) => setOpen(v), []);
-  const label = formatDuration(elapsed, isStreaming);
+  const label = formatDuration(elapsed, isStreaming, durationMs);
 
   return (
     <Reasoning

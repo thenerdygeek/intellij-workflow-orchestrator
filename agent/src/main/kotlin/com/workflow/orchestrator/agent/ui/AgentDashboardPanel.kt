@@ -561,13 +561,13 @@ class AgentDashboardPanel(
         broadcast { it.appendToThinking(text) }
     }
 
-    fun endThinking() {
-        cefPanel?.endThinking()
+    fun endThinking(durationMs: Long = 0L) {
+        cefPanel?.endThinking(durationMs)
         if (cefPanel == null && thinkingFallbackBuffer.isNotEmpty()) {
             fallbackPanel?.appendThinking(thinkingFallbackBuffer.toString())
             thinkingFallbackBuffer.setLength(0)
         }
-        broadcast { it.endThinking() }
+        broadcast { it.endThinking(durationMs) }
     }
 
     fun appendCompletionCard(data: CompletionData) {

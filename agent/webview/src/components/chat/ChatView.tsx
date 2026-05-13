@@ -143,7 +143,7 @@ export const ChatView = memo(function ChatView() {
     if (msg.say === 'REASONING') {
       return (
         <ErrorBoundary key={key}>
-          <ThinkingView content={msg.text ?? ''} isStreaming={false} />
+          <ThinkingView content={msg.text ?? ''} isStreaming={false} durationMs={msg.thinkingDurationMs} />
         </ErrorBoundary>
       );
     }

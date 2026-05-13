@@ -900,7 +900,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
    * `isStreaming={false}` — at which point ThinkingView's auto-collapse kicks
    * in after 600 ms. No-op if there is no active streaming thinking.
    */
-  endThinking() {
+  endThinking(durationMs: number = 0) {
     set(state => {
       if (state.streamingThinkingTs == null || state.streamingThinkingText == null) {
         return {};
@@ -910,6 +910,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         type: 'SAY',
         say: 'REASONING',
         text: state.streamingThinkingText,
+        ...(durationMs > 0 && { thinkingDurationMs: durationMs }),
       };
       return {
         messages: [...state.messages, finalized],

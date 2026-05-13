@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { UsageIndicator } from '@/components/input/UsageIndicator';
 import { ModelPickerRow } from '@/components/input/InputBar';
 import { ChipPreview } from '@/components/input/ChipPreview';
 import { AttachmentManager, type PendingAttachment } from '@/components/input/AttachmentManager';
+import { ThinkingView } from '@/components/agent/ThinkingView';
 
 /**
  * Playwright harness — renders the three Phase 7 / Phase 5 UI components in
@@ -107,6 +108,130 @@ function syntheticAttachments(): PendingAttachment[] {
       thumbnailUrl: tinyPng,
     },
   ];
+}
+
+// ── §5 ThinkingView lifecycle simulation ──────────────────────────────────────
+// Mirrors the exact ChatFooter → ChatView two-instance lifecycle that causes the
+// duration label bug. 'streaming' renders ThinkingView(isStreaming=true) from
+// one render branch; 'finalized' renders ThinkingView(isStreaming=false) from a
+// DIFFERENT branch (different key → fresh mount, elapsed resets to 0).
+type ThinkingPhase = 'idle' | 'streaming' | 'finalized';
+
+function ThinkingBugSection() {
+  const [phase, setPhase] = useState<ThinkingPhase>('idle');
+  const [wallClockMs, setWallClockMs] = useState(0);
+  const [finalizedAtMs, setFinalizedAtMs] = useState(0);
+  const streamStartRef = useRef<number>(0);
+  const CONTENT = 'Considering the problem from multiple angles...\n\nStep 1: Analyze the request.\nStep 2: Break it into sub-tasks.\nStep 3: Synthesize an answer.';
+
+  // Wall-clock ticker during streaming so we can show the true elapsed time
+  useEffect(() => {
+    if (phase !== 'streaming') return;
+    streamStartRef.current = Date.now();
+    setWallClockMs(0);
+    const id = setInterval(() => setWallClockMs(Date.now() - streamStartRef.current), 100);
+    return () => clearInterval(id);
+  }, [phase]);
+
+  const startAndFinalize = (durationMs: number) => {
+    setPhase('streaming');
+    setWallClockMs(0);
+    setTimeout(() => {
+      const actual = Date.now() - streamStartRef.current;
+      setFinalizedAtMs(actual);
+      setPhase('finalized');
+    }, durationMs);
+  };
+
+  return (
+    <section data-testid="section-thinking-bug" className="space-y-3">
+      <h2 className="text-sm font-semibold">
+        §5 ThinkingView duration label bug (two-instance lifecycle)
+      </h2>
+      <p className="text-[11px]" style={{ color: 'var(--fg-muted, #9ca3af)' }}>
+        Simulates the ChatFooter→ChatView handoff: streaming instance unmounts,
+        finalized instance mounts fresh (elapsed=0 → always shows &quot;&lt;1s&quot;).
+      </p>
+
+      <div className="flex gap-2 flex-wrap">
+        {(['idle', 'finalized'].includes(phase)) && (
+          <>
+            <button
+              data-testid="stream-2s"
+              onClick={() => startAndFinalize(2000)}
+              className="px-3 py-1.5 text-xs rounded border"
+              style={{ borderColor: 'var(--border, #2c2f33)' }}
+            >
+              Stream 2 s then finalize
+            </button>
+            <button
+              data-testid="stream-4s"
+              onClick={() => startAndFinalize(4000)}
+              className="px-3 py-1.5 text-xs rounded border"
+              style={{ borderColor: 'var(--border, #2c2f33)' }}
+            >
+              Stream 4 s then finalize
+            </button>
+          </>
+        )}
+        {phase !== 'idle' && (
+          <button
+            data-testid="reset-thinking"
+            onClick={() => { setPhase('idle'); setWallClockMs(0); }}
+            className="px-3 py-1.5 text-xs rounded border"
+            style={{ borderColor: 'var(--border, #2c2f33)' }}
+          >
+            Reset
+          </button>
+        )}
+      </div>
+
+      {/* Status row */}
+      {phase !== 'idle' && (
+        <div className="text-[11px] font-mono" style={{ color: 'var(--fg-muted, #9ca3af)' }}>
+          {phase === 'streaming' && (
+            <span data-testid="wall-clock">
+              ⏱ Wall-clock streaming: {(wallClockMs / 1000).toFixed(1)}s
+            </span>
+          )}
+          {phase === 'finalized' && (
+            <span data-testid="finalized-duration">
+              ✓ Stream lasted {(finalizedAtMs / 1000).toFixed(1)}s — label should say
+              &quot;Thought for {Math.round(finalizedAtMs / 1000)}s&quot; but shows:
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Branch A — ChatFooter equivalent: ThinkingView(isStreaming=true) */}
+      {phase === 'streaming' && (
+        <div
+          data-testid="thinking-streaming-branch"
+          className="border rounded p-2"
+          style={{ borderColor: 'var(--border, #2c2f33)' }}
+        >
+          <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: 'var(--fg-muted)' }}>
+            Branch A — ChatFooter (isStreaming=true, timer running)
+          </div>
+          <ThinkingView key="thinking-branch-a" content={CONTENT} isStreaming={true} />
+        </div>
+      )}
+
+      {/* Branch B — ChatView equivalent: fresh ThinkingView(isStreaming=false) */}
+      {phase === 'finalized' && (
+        <div
+          data-testid="thinking-finalized-branch"
+          className="border rounded p-2"
+          style={{ borderColor: 'var(--border, #2c2f33)' }}
+        >
+          <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: 'var(--fg-muted)' }}>
+            Branch B — ChatView (isStreaming=false, durationMs stamped → correct label)
+          </div>
+          <ThinkingView key="thinking-branch-b" content={CONTENT} isStreaming={false} durationMs={finalizedAtMs} />
+        </div>
+      )}
+    </section>
+  );
 }
 
 export function HarnessApp() {
@@ -368,6 +493,8 @@ export function HarnessApp() {
           </div>
         )}
       </section>
+
+      <ThinkingBugSection />
     </div>
   );
 }

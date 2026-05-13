@@ -166,4 +166,7 @@ data class UiMessage(
      * resource handler (read-only). Null/empty for text-only turns.
      */
     val attachments: List<ContentBlock.ImageRef>? = null,
+    /** Wall-clock ms from first ThinkingDelta to ThinkingEnd. Null for history messages
+     *  written before this field was added; those render "Thought for <1s". */
+    val thinkingDurationMs: Long? = null,
 )

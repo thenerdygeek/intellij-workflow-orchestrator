@@ -1012,8 +1012,8 @@ class AgentCefPanel(
         callJs("appendToThinking(${JsEscape.toJsString(text)})")
     }
 
-    fun endThinking() {
-        callJs("endThinking()")
+    fun endThinking(durationMs: Long = 0L) {
+        callJs("endThinking($durationMs)")
     }
 
     fun clear() {
