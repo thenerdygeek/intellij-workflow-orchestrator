@@ -34,7 +34,7 @@ const IMAGE_DEFAULT_SETTINGS = {
   // user customizations over via __applyImageSettings on settings save.
   mimeWhitelist: ['image/png', 'image/jpeg', 'image/webp'],
   maxPerTurn: 2,
-  enabled: true,
+  enabled: false,
 };
 
 // Phase 6 (F-P5-3): the model-list payload pushed by Kotlin's `updateModelList`
@@ -434,6 +434,7 @@ interface InputBarContentProps {
   // Phase 5: image-attachment props (only those InputBarContent itself uses)
   onPickImage: () => void;
   onPasteImage: (file: File) => Promise<boolean>;
+  imageEnabled: boolean;
 }
 
 function InputBarContent({
@@ -474,6 +475,7 @@ function InputBarContent({
   skillListRef,
   onPickImage,
   onPasteImage,
+  imageEnabled,
 }: InputBarContentProps) {
   // Focus on trigger from store
   const focusTrigger = useChatStore(s => s.focusInputTrigger);
@@ -622,12 +624,14 @@ function InputBarContent({
               </DropdownMenuItem>
               {/* Phase 5: image attachment via file picker. Paste + drag-drop
                   are wired separately (RichInput.handlePaste + the wrapping
-                  div's onDrop). */}
-              <DropdownMenuItem onSelect={guardedSelect(onPickImage)}>
-                <ImageIcon className="size-3.5" style={{ color: 'var(--accent-edit, #f59e0b)' }} />
-                <span>Image</span>
-                <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>file</span>
-              </DropdownMenuItem>
+                  div's onDrop). Hidden when visual support is disabled. */}
+              {imageEnabled && (
+                <DropdownMenuItem onSelect={guardedSelect(onPickImage)}>
+                  <ImageIcon className="size-3.5" style={{ color: 'var(--accent-edit, #f59e0b)' }} />
+                  <span>Image</span>
+                  <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>file</span>
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -690,6 +694,9 @@ export const InputBar = memo(function InputBar() {
   const [skillQuery, setSkillQuery] = useState('');
   const [ticketQuery, setTicketQuery] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  // Mirrors IMAGE_DEFAULT_SETTINGS.enabled; updated live via __applyImageSettings
+  // so the paperclip is hidden and drag-drop is inert without a page reload.
+  const [imageEnabled, setImageEnabled] = useState(IMAGE_DEFAULT_SETTINGS.enabled);
 
   // Phase 5/v1.1: oversize-image confirmation modal state. The
   // AttachmentManager calls `confirmCompress(...)` when a file exceeds the
@@ -740,6 +747,9 @@ export const InputBar = memo(function InputBar() {
         };
         console.log('[multimodal:attach] __applyImageSettings: applying', next);
         attachmentManagerRef.current?.updateSettings(next);
+        // Mirror enabled state into React so the attach button and drag-drop
+        // gate react immediately without waiting for the next settings push.
+        setImageEnabled(next.enabled);
       } catch (e) {
         console.warn('[multimodal:attach] __applyImageSettings: malformed JSON', e);
       }
@@ -778,6 +788,8 @@ export const InputBar = memo(function InputBar() {
   }, [handleAttachFile]);
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
+    // When visual support is disabled, let all drops fall through to native handlers.
+    if (!imageEnabled) return;
     if (!e.dataTransfer) return;
     // Only intercept image drops — let other drops (e.g. text) fall through to
     // the contenteditable's native handler.
@@ -789,9 +801,11 @@ export const InputBar = memo(function InputBar() {
     for (const file of files) {
       await handleAttachFile(file);
     }
-  }, [handleAttachFile]);
+  }, [handleAttachFile, imageEnabled]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
+    // When visual support is disabled, do not intercept drag-over events.
+    if (!imageEnabled) return;
     if (!e.dataTransfer) return;
     const hasImage = Array.from(e.dataTransfer.items ?? []).some(item =>
       item.kind === 'file' && item.type.startsWith('image/'),
@@ -800,10 +814,16 @@ export const InputBar = memo(function InputBar() {
   }, []);
 
   const handlePasteImage = useCallback(async (file: File): Promise<boolean> => {
+    // When visual support is disabled, decline the paste so the caller falls
+    // back to the contenteditable's native handler (text paste). The deeper
+    // AttachmentManager.attachFile check still rejects the file, but doing it
+    // here as well prevents the paste from silently disappearing — returning
+    // false tells RichInput to NOT preventDefault.
+    if (!imageEnabled) return false;
     if (!attachmentManagerRef.current) return false;
     const result = await attachmentManagerRef.current.attachFile(file);
     return result !== null;
-  }, []);
+  }, [imageEnabled]);
 
   // ── Flat item lists for keyboard navigation ──
   // MentionDropdown manages its own filtered list internally, so we keep a
@@ -1156,6 +1176,7 @@ export const InputBar = memo(function InputBar() {
           skillListRef={skillKbd.listRef}
           onPickImage={handlePickImage}
           onPasteImage={handlePasteImage}
+          imageEnabled={imageEnabled}
         />
       </div>
       {/* Phase 5/v1.1 — oversize-image compression confirmation modal */}

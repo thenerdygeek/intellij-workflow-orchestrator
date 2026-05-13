@@ -775,6 +775,9 @@ class AgentService(
             attachmentStore = attachmentStore,
             modelRefProvider = { brain.modelId },
             onAnalyzedImageBadge = onBadgeFire,
+            imageEnabledProvider = {
+                com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state.enableImageInput
+            },
         )
     }
 
@@ -1066,10 +1069,13 @@ class AgentService(
                 timeoutMsProvider = { PluginSettings.getInstance(project).state.documentTimeoutMs },
             )
         }
-        // view_image — load images surfaced by read_document into the LLM's vision context.
-        // Deferred so it is only discovered after the LLM has called read_document and seen
-        // [image: <path>] markers. Strictly confined to {sessionDir}/downloads/.
-        safeRegisterDeferred("File") { ViewImageTool() }
+        // view_image — registered only when visual support is enabled. When the master flag
+        // is off the tool never appears in the LLM's tool list, so it cannot be called.
+        // A defence-in-depth body guard inside ViewImageTool.execute() also short-circuits
+        // when master is off in case of a hot-reload race (mirrors plan-mode write-tool filtering).
+        if (com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state.enableImageInput) {
+            safeRegisterDeferred("File") { ViewImageTool() }
+        }
 
         // Debug tools (require AgentDebugController)
         // XDebugger-based tools work for both Java/Kotlin and Python debug sessions.
@@ -1160,6 +1166,17 @@ class AgentService(
             if (registry.getTool("bitbucket_pr") != null) registry.unregisterDeferred("bitbucket_pr")
             if (registry.getTool("bitbucket_repo") != null) registry.unregisterDeferred("bitbucket_repo")
             if (registry.getTool("bitbucket_review") != null) registry.unregisterDeferred("bitbucket_review")
+        }
+
+        // view_image — gated on the visual-support master kill switch so that
+        // flipping `enableImageInput` in Settings re-registers (or unregisters)
+        // the tool without an IDE restart. Without this, the init-time check at
+        // registerAllTools() would freeze the registration state for the
+        // session and OFF→ON would require a restart to expose view_image.
+        if (com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state.enableImageInput) {
+            if (registry.getTool("view_image") == null) safeRegisterDeferred("File") { ViewImageTool() }
+        } else {
+            if (registry.getTool("view_image") != null) registry.unregisterDeferred("view_image")
         }
     }
 

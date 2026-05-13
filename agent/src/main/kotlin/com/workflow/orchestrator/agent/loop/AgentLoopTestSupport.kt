@@ -42,4 +42,28 @@ object AgentLoopTestSupport {
             }
         }
     )
+
+    /**
+     * Single source of truth for the master+autoload gate that produces the
+     * `ContentBlock.ImageRef` list appended to a tool-result `ApiMessage`.
+     * Production calls this from [AgentLoop]; unit tests call it directly so
+     * the guard logic is pinned in one place. When either flag is OFF the
+     * returned list is empty regardless of `toolResult.imageRefs`.
+     */
+    fun gateImageRefs(
+        toolResult: ToolResult<*>,
+        masterEnabled: Boolean,
+        autoloadEnabled: Boolean,
+    ): List<ContentBlock.ImageRef> = if (masterEnabled && autoloadEnabled) {
+        toolResult.imageRefs.map { ref ->
+            ContentBlock.ImageRef(
+                sha256 = ref.sha256,
+                mime = ref.mime,
+                size = ref.size,
+                originalFilename = ref.originalFilename,
+            )
+        }
+    } else {
+        emptyList()
+    }
 }

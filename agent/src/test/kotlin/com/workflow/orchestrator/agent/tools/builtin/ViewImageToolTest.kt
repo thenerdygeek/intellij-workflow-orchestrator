@@ -4,6 +4,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.session.AttachmentStore
 import com.workflow.orchestrator.agent.tool.SessionAttachmentAccess
 import com.workflow.orchestrator.core.services.SessionDownloadDir
+import com.workflow.orchestrator.core.settings.PluginSettings
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.unmockkAll
@@ -51,22 +52,20 @@ class ViewImageToolTest {
     private fun testContext(downloadsDir: Path, store: AttachmentStore) =
         SessionDownloadDir(downloadsDir) + SessionAttachmentAccess(store)
 
-    /** Minimal mock Project that returns false for enableToolImageAutoload so PluginSettings
-     *  lookup throws (which we treat as disabled) without requiring the real service. */
-    private fun project(): Project = mockk<Project>(relaxed = true)
-
-    /** A project mock that pretends enableToolImageAutoload = true via PluginSettings.
-     *  The simplest approach: catch the service exception inside the tool (already handled)
-     *  and arrange a real PluginSettings when needed. For tests that need autoload ON,
-     *  we exercise the tool through the real coroutine context with settings = true by
-     *  supplying a project whose PluginSettings.getInstance() returns a configured state. */
-    private fun projectWithAutoloadEnabled(): Project {
-        // We rely on the fact that the tool wraps settings lookup in try/catch.
-        // To enable autoload in tests we use a custom subclass approach: mock the static
-        // companion getState() path via reflection is fragile — instead the test verifies
-        // "no imageRefs" when disabled and "imageRefs present" when the IntelliJ lookup
-        // is bypassed by the test entry point below.
-        return mockk<Project>(relaxed = true)
+    /** Project mock whose [PluginSettings] resolves to master ON + autoload OFF.
+     *
+     *  Master ON lets the tool body pass its first guard (the visual-support kill
+     *  switch); autoload OFF makes the tool return the non-error "autoload
+     *  disabled" message — matching the behaviour these tests were written
+     *  against before the kill switch landed. */
+    private fun project(): Project {
+        val settings = PluginSettings().apply {
+            state.enableImageInput = true
+            state.enableToolImageAutoload = false
+        }
+        return mockk<Project>(relaxed = true).also {
+            every { it.getService(PluginSettings::class.java) } returns settings
+        }
     }
 
     // ── Happy path (autoload disabled in test — settings mock not injected) ──────

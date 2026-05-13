@@ -1842,14 +1842,25 @@ class AgentLoop(
             // ContentPart.Image — without this, BrainRouter.hasImageParts() returns
             // false on the next iteration and the request goes to the text-only
             // endpoint, so the LLM literally never sees the bytes the tool fetched.
-            val toolImageRefs = toolResult.imageRefs.map { ref ->
-                ContentBlock.ImageRef(
-                    sha256 = ref.sha256,
-                    mime = ref.mime,
-                    size = ref.size,
-                    originalFilename = ref.originalFilename,
-                )
+            // Both the master flag and the autoload sub-flag must be ON; when either
+            // is OFF the image refs are suppressed so no ContentBlock.ImageRef blocks
+            // are written into the conversation history for this turn.
+            val imageSettings = try {
+                com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state
+            } catch (_: Exception) {
+                null
             }
+            val coreResultForGate = com.workflow.orchestrator.core.services.ToolResult<Unit>(
+                data = Unit,
+                summary = toolResult.summary,
+                isError = toolResult.isError,
+                imageRefs = toolResult.imageRefs,
+            )
+            val toolImageRefs = AgentLoopTestSupport.gateImageRefs(
+                toolResult = coreResultForGate,
+                masterEnabled = imageSettings?.enableImageInput == true,
+                autoloadEnabled = imageSettings?.enableToolImageAutoload == true,
+            )
             contextManager.addToolResult(
                 toolCallId = toolCallId,
                 content = truncatedContent,

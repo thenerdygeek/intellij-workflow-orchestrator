@@ -70,6 +70,13 @@ class BrainRouter(
     private val attachmentStore: AttachmentStore,
     private val modelRefProvider: () -> String,
     private val onAnalyzedImageBadge: (() -> Unit)? = null,
+    /**
+     * Returns whether visual support (master kill switch) is currently enabled.
+     * Defaults to `true` so existing tests and production wiring without an
+     * explicit provider keep their prior behaviour; [AgentService] passes a
+     * lambda that reads [PluginSettings.enableImageInput] at call time.
+     */
+    private val imageEnabledProvider: () -> Boolean = { true },
 ) : LlmBrain {
 
     private val log = Logger.getInstance(BrainRouter::class.java)
@@ -135,9 +142,11 @@ class BrainRouter(
         maxTokens: Int?,
         toolChoice: JsonElement?,
     ): ApiResult<ChatCompletionResponse> {
-        val hasImage = messages.any { it.hasImageParts() }
+        val imageEnabled = imageEnabledProvider()
+        // When master is OFF, treat every turn as text-only regardless of content.
+        val hasImage = imageEnabled && messages.any { it.hasImageParts() }
         val route = if (hasImage) "image-or-mixed" else "text-only"
-        log.info("[multimodal] BrainRouter.chat decision: hasImage=$hasImage → route=$route")
+        log.info("[multimodal] BrainRouter.chat decision: imageEnabled=$imageEnabled hasImage=$hasImage → route=$route")
         return if (hasImage) {
             imageBearingNonStreaming(messages, tools, maxTokens)
         } else {
@@ -151,9 +160,11 @@ class BrainRouter(
         maxTokens: Int?,
         onChunk: suspend (StreamChunk) -> Unit,
     ): ApiResult<ChatCompletionResponse> {
-        val hasImage = messages.any { it.hasImageParts() }
+        val imageEnabled = imageEnabledProvider()
+        // When master is OFF, treat every turn as text-only regardless of content.
+        val hasImage = imageEnabled && messages.any { it.hasImageParts() }
         val route = if (hasImage) "image-or-mixed-stream" else "text-only"
-        log.info("[multimodal] BrainRouter.chatStream decision: hasImage=$hasImage → route=$route")
+        log.info("[multimodal] BrainRouter.chatStream decision: imageEnabled=$imageEnabled hasImage=$hasImage → route=$route")
         return if (hasImage) {
             imageBearingStreaming(messages, tools, maxTokens, onChunk)
         } else {
@@ -314,14 +325,22 @@ class BrainRouter(
         tools: List<ToolDefinition>?,
         maxTokens: Int?,
     ): CompletionStreamRequest {
+        val imageEnabled = imageEnabledProvider()
         // Sanitize before content-part transform so that empty-content messages are
         // dropped (Phase 3) and role alternation is enforced (Phase 4).
         val sanitized = MessageSanitizer.sanitizeForAnthropic(messages)
         val streamMessages = sanitized.map { msg ->
-            val parts = (msg.parts ?: listOf(ContentPart.Text(msg.content ?: ""))).map { part ->
+            val parts = (msg.parts ?: listOf(ContentPart.Text(msg.content ?: ""))).mapNotNull { part ->
                 when (part) {
                     is ContentPart.Text -> StreamContentPart.Text(part.text)
                     is ContentPart.Image -> {
+                        // When master is OFF, drop image parts silently. This strips legacy
+                        // image blocks already in session history at the request boundary
+                        // without touching the on-disk conversation history.
+                        if (!imageEnabled) {
+                            log.info("[multimodal] BrainRouter.buildStreamRequest: dropping image sha256=${part.sha256.take(12)}… (visual support disabled)")
+                            return@mapNotNull null
+                        }
                         val bytes = attachmentStore.read(part.sha256)
                         if (bytes == null) {
                             log.warn("[multimodal] BrainRouter.buildStreamRequest MISS: sha256=${part.sha256.take(12)}… not found in AttachmentStore")

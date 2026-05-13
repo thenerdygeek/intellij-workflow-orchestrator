@@ -30,6 +30,15 @@ class AttachmentUploadHandlerTest {
     @TempDir
     lateinit var tempDir: Path
 
+    /** Settings instance with the master visual-support kill switch ON. The
+     *  default for `enableImageInput` is `false` (panic-button posture), so
+     *  any test that exercises the non-kill-switch validation paths must
+     *  explicitly enable it first. The dedicated kill-switch tests below
+     *  construct their own `PluginSettings()` with the default `false` value
+     *  (or set it explicitly) and do not use this helper. */
+    private fun enabledSettings(): PluginSettings =
+        PluginSettings().apply { state.enableImageInput = true }
+
     // ── matches() — URL routing predicate ────────────────────────────────────
 
     @Test
@@ -55,7 +64,7 @@ class AttachmentUploadHandlerTest {
 
     @Test
     fun `validate accepts a 1KB image when default cap is 5MB`() {
-        val settings = PluginSettings()
+        val settings = enabledSettings()
         val bytes = ByteArray(1024) { 0 }
         val v = AttachmentUploadHandler.validate(bytes, "image/png", settings)
         assertSame(AttachmentUploadHandler.ValidationResult.Ok, v)
@@ -63,7 +72,7 @@ class AttachmentUploadHandlerTest {
 
     @Test
     fun `validate rejects oversize images`() {
-        val settings = PluginSettings().apply { state.imageMaxBytes = 100L }
+        val settings = enabledSettings().apply { state.imageMaxBytes = 100L }
         val tooBig = ByteArray(101)
         val v = AttachmentUploadHandler.validate(tooBig, "image/png", settings)
         assertSame(AttachmentUploadHandler.ValidationResult.SizeExceeded, v)
@@ -71,7 +80,7 @@ class AttachmentUploadHandlerTest {
 
     @Test
     fun `validate accepts size exactly equal to cap`() {
-        val settings = PluginSettings().apply { state.imageMaxBytes = 100L }
+        val settings = enabledSettings().apply { state.imageMaxBytes = 100L }
         val justRight = ByteArray(100)
         val v = AttachmentUploadHandler.validate(justRight, "image/png", settings)
         assertSame(AttachmentUploadHandler.ValidationResult.Ok, v)
@@ -85,7 +94,7 @@ class AttachmentUploadHandlerTest {
         // PNG/JPEG/WebP round-trip through every vision-capable model. HEIC
         // and HEIF were dropped after the probe because the gateway rejects
         // them with event: error frames despite being in Cody's UI list.
-        val settings = PluginSettings()
+        val settings = enabledSettings()
         val bytes = ByteArray(10)
         for (mime in listOf("image/png", "image/jpeg", "image/webp")) {
             assertSame(
@@ -98,7 +107,7 @@ class AttachmentUploadHandlerTest {
 
     @Test
     fun `validate rejects HEIC and HEIF by default after format_lab finding`() {
-        val settings = PluginSettings()
+        val settings = enabledSettings()
         val bytes = ByteArray(10)
         for (mime in listOf("image/heic", "image/heif")) {
             assertSame(
@@ -111,7 +120,7 @@ class AttachmentUploadHandlerTest {
 
     @Test
     fun `validate rejects MIMEs absent from whitelist`() {
-        val settings = PluginSettings()
+        val settings = enabledSettings()
         val bytes = ByteArray(10)
         val v = AttachmentUploadHandler.validate(bytes, "image/gif", settings)
         assertSame(AttachmentUploadHandler.ValidationResult.MimeNotAllowed, v)
@@ -119,7 +128,7 @@ class AttachmentUploadHandlerTest {
 
     @Test
     fun `validate respects user-edited whitelist`() {
-        val settings = PluginSettings().apply {
+        val settings = enabledSettings().apply {
             state.imageMimeWhitelist.clear()
             state.imageMimeWhitelist.add("image/png")
         }

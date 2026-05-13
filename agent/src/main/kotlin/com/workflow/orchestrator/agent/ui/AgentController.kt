@@ -573,6 +573,16 @@ class AgentController(
      */
     fun pushImageSettingsToWebview() {
         dashboard.pushImageSettings()
+        // Also re-evaluate the view_image registration so the master kill switch
+        // takes effect without an IDE restart: flipping `enableImageInput` from
+        // OFF→ON in Settings must surface the tool in the LLM's schema for the
+        // next turn, and ON→OFF must remove it (defence-in-depth alongside the
+        // body guard inside ViewImageTool.execute()).
+        try {
+            service.reregisterConditionalTools()
+        } catch (e: Throwable) {
+            LOG.warn("pushImageSettingsToWebview: reregisterConditionalTools failed", e)
+        }
     }
 
     /**

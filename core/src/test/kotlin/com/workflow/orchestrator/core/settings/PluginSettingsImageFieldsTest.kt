@@ -36,9 +36,13 @@ class PluginSettingsImageFieldsTest {
     }
 
     @Test
-    fun `new State has enableImageInput true`() {
+    fun `new State has enableImageInput false (panic-button default)`() {
+        // Default flipped from true → false in the visual-support kill-switch PR
+        // (2026-05-13). Users who never touched the setting get visual support
+        // disabled by default; users who explicitly enabled it via Settings UI
+        // keep their saved value on upgrade (field name unchanged, XML stays valid).
         val state = PluginSettings.State()
-        assertTrue(state.enableImageInput)
+        assertFalse(state.enableImageInput)
     }
 
     @Test

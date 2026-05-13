@@ -74,6 +74,22 @@ class ViewImageTool : AgentTool {
     override val timeoutMs = 30_000L
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        // Master kill switch — defence in depth for hot-reload races where the tool
+        // was activated in a prior session before the flag was toggled off. Registration
+        // is the primary gate (AgentService skips safeRegisterDeferred when OFF); this
+        // body guard ensures the tool is always a no-op when master is disabled.
+        val masterEnabled = try {
+            com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state.enableImageInput
+        } catch (_: Exception) {
+            false
+        }
+        if (!masterEnabled) {
+            return ToolResult.error(
+                "Visual support is disabled in settings (Tools > Workflow Orchestrator > Multimodal).",
+                "Visual support disabled"
+            )
+        }
+
         val rawPath = params["path"]?.jsonPrimitive?.content
             ?: return ToolResult.error("Missing required 'path' argument", "Missing required 'path' argument")
 

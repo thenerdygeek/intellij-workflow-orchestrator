@@ -4,10 +4,13 @@ import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.dsl.builder.Cell
 import com.intellij.ui.dsl.builder.bindIntText
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.bindText
 import com.intellij.ui.dsl.builder.panel
+import com.intellij.ui.layout.selected
+import javax.swing.JCheckBox
 import javax.swing.JComponent
 
 /**
@@ -28,10 +31,15 @@ class MultimodalSettingsConfigurable(private val project: Project) : SearchableC
     override fun getDisplayName(): String = "Multimodal"
 
     override fun createComponent(): JComponent {
+        // Single source of truth for the master checkbox. Shared between the
+        // "Image Input" group (where the visible control lives) and the
+        // "Limits" group (whose sub-rows grey out via `enabledIf`) so we don't
+        // need a hidden phantom checkbox duplicating the binding.
+        var masterCell: Cell<JCheckBox>? = null
         val innerPanel = panel {
             group("Image Input") {
                 row {
-                    checkBox("Enable image input")
+                    masterCell = checkBox("Enable visual support (images, view_image tool, multimodal /stream)")
                         .bindSelected(
                             { settings.state.enableImageInput },
                             { settings.state.enableImageInput = it }
@@ -40,8 +48,9 @@ class MultimodalSettingsConfigurable(private val project: Project) : SearchableC
                 }
                 row {
                     comment(
-                        "When disabled, the paperclip menu hides the image action and " +
-                            "paste/drag-drop reject image content."
+                        "When disabled, the agent runs text-only: view_image is removed from the LLM's " +
+                            "tool list, image uploads in chat are blocked, and images already in session " +
+                            "history are stripped from requests. Disable this if image handling is misbehaving."
                     )
                 }
                 row {
@@ -50,6 +59,7 @@ class MultimodalSettingsConfigurable(private val project: Project) : SearchableC
                             { settings.state.enableToolImageAutoload },
                             { settings.state.enableToolImageAutoload = it }
                         )
+                        .also { cell -> masterCell?.let { cell.enabledIf(it.component.selected) } }
                     cell()
                 }
                 row {
@@ -68,11 +78,13 @@ class MultimodalSettingsConfigurable(private val project: Project) : SearchableC
                             { settings.state.imageMaxBytes.toInt().coerceAtLeast(1) },
                             { settings.state.imageMaxBytes = it.toLong() }
                         )
+                        .also { cell -> masterCell?.let { cell.enabledIf(it.component.selected) } }
                     comment("Default 5_242_880 (5 MB).")
                 }
                 row("Maximum images per turn:") {
                     intTextField(range = 1..10)
                         .bindIntText(settings.state::imagesPerTurnCap)
+                        .also { cell -> masterCell?.let { cell.enabledIf(it.component.selected) } }
                     comment("Mirrors Cody's per-turn cap. Default 2.")
                 }
                 row("Allowed MIME types:") {
@@ -87,6 +99,7 @@ class MultimodalSettingsConfigurable(private val project: Project) : SearchableC
                                 settings.state.imageMimeWhitelist.addAll(parsed)
                             }
                         )
+                        .also { cell -> masterCell?.let { cell.enabledIf(it.component.selected) } }
                     comment(
                         "Comma-separated. Default: image/png, image/jpeg, image/webp. " +
                             "These are the formats verified to round-trip through Sourcegraph's " +

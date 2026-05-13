@@ -240,10 +240,19 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var imagesPerTurnCap by property(2)
 
         /**
-         * Kill switch. When false, the paperclip menu hides the image action
-         * and paste/drag-drop reject image content. Default: true.
+         * Master visual-support kill switch. When false, all five image-handling
+         * surfaces are silenced: the view_image tool is unregistered from the
+         * LLM's tool list, image uploads in chat are blocked, BrainRouter treats
+         * every turn as text-only (routing to /messages rather than /stream),
+         * legacy image blocks in session history are stripped at the request
+         * boundary, and tool-output image auto-load is suppressed regardless of
+         * [enableToolImageAutoload]. Default: false (panic-button posture).
+         *
+         * Sub-flags ([enableToolImageAutoload], MIME whitelists, [imageMaxBytes],
+         * [imagesPerTurnCap]) are preserved in storage when this is false; they
+         * reactivate automatically when the master is re-enabled.
          */
-        var enableImageInput by property(true)
+        var enableImageInput by property(false)
 
         /**
          * Token-cost estimate per image used for pre-send budget warnings.
