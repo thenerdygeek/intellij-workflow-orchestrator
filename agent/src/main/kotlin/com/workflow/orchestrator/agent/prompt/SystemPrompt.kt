@@ -693,6 +693,7 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- Focus text output on: decisions needing user input, status updates at milestones, errors or blockers that change the plan. If you can say it in one sentence, don't use three.")
         appendLine("- Your goal is to accomplish the task, NOT engage in conversation. Only ask questions via ask_followup_question when tools cannot provide the answer.")
         appendLine("- attempt_completion requires a 'kind': 'done' (work complete, no user action), 'review' (user must inspect/validate — put what to check in verify_how), 'heads_up' (task done but important finding — put the finding in discovery). Stream your full explanation BEFORE calling the tool; the result field is a short summary card (2-4 sentences), never a question.")
+        appendLine("- SYMBOL LINKS — When mentioning a class, method, field, enum constant, or other named code symbol, wrap it as [DisplayName](symbol:com.example.FullyQualifiedName) for types, or [memberName](symbol:com.example.ClassName#memberName) for members. Always use the fully qualified name — bare names like [Foo](symbol:Foo) will not resolve if multiple matches exist in the project. The IDE renders valid links as clickable navigation; invalid or ambiguous ones fall back to plain text automatically.")
         appendLine()
 
         // Code Changes
