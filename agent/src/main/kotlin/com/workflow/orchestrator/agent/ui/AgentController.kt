@@ -963,6 +963,18 @@ class AgentController(
         // "View in Editor" toolbar button — opens the chat in a full editor tab
         dashboard.setOnViewInEditor(::openChatInEditorTab)
 
+        // "Open in editor tab" button on artifact/visualization blocks
+        dashboard.setCefEditorTabCallback { payload ->
+            try {
+                val root = lenientJson.parseToJsonElement(payload).jsonObject
+                val type = root["type"]?.jsonPrimitive?.content ?: "artifact"
+                val content = root["content"]?.jsonPrimitive?.content ?: return@setCefEditorTabCallback
+                AgentVisualizationEditor.openVisualization(project, type, content)
+            } catch (e: Exception) {
+                LOG.warn("openInEditorTab: bad payload", e)
+            }
+        }
+
         // Tool toggle — user enables/disables a tool via the Tools panel checkbox
         dashboard.setCefToolToggleCallback { toolName, enabled ->
             LOG.info("AgentController: tool toggle — $toolName enabled=$enabled")
