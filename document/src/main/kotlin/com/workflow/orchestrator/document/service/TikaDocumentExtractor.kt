@@ -134,11 +134,12 @@ class TikaDocumentExtractor(
             else -> Files.newInputStream(path).use { tikaXhtml.extract(it, mime) }
         }
         val maxChars = options.maxChars ?: maxCharsProvider()
-        val (markdown, truncated) = assembler.assemble(blocks, maxChars)
+        val (markdown, truncated, contentLength) = assembler.assemble(blocks, maxChars)
         return DocumentContent(
             markdown = markdown,
             mime = mime,
             truncated = truncated,
+            contentLength = if (truncated) contentLength else null,
             pageCount = blocks.count { it is DocumentBlock.PageMarker }.takeIf { it > 0 },
         )
     }

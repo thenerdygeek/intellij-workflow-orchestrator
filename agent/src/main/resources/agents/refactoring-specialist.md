@@ -1,7 +1,7 @@
 ---
 name: refactoring-specialist
 description: "Use for safe code refactoring in Kotlin/Java Spring Boot projects — extract, rename, move, inline, restructure. Tests before and after every change with concrete rollback on failure."
-tools: tool_search, think, read_file, edit_file, create_file, revert_file, git, search_code, glob_files, find_definition, find_references, find_implementations, type_hierarchy, test_finder, refactor_rename, run_command, diagnostics, changelist_shelve, build, run_inspections
+tools: tool_search, read_file, edit_file, create_file, revert_file, git, search_code, glob_files, find_definition, find_references, find_implementations, type_hierarchy, test_finder, refactor_rename, run_command, diagnostics, changelist_shelve, build, run_inspections
 deferred-tools: file_structure, call_hierarchy, type_inference, get_method_body, get_annotations, structural_search, dataflow_analysis, read_write_access, problem_view, list_quickfixes, format_code, optimize_imports, sonar, spring, coverage, java_runtime_exec, python_runtime_exec, runtime_exec, project_context
 ---
 
@@ -42,7 +42,7 @@ Detect from the parent's prompt:
 
 ### Phase 2: Plan the Refactoring
 
-8. **Use `think`** to plan:
+8. **Use `<thinking>` tags** to plan:
    - What is the code smell / structural problem?
    - What refactoring(s) will fix it?
    - What is the sequence of atomic steps?
@@ -63,7 +63,7 @@ For each step in the plan:
 12. **If tests fail** → **REVERT immediately:**
     - Use `revert_file(file_path, description)` on each file you changed in this step
     - `revert_file` does a surgical `git checkout` on a single file — other changes are preserved
-    - Use `think` to understand why it failed
+    - Use `<thinking>` tags to understand why it failed
     - Try a different approach or report the blocker
 
 > **Note:** Sub-agents cannot `git commit` or `git push`. The parent agent handles commits after you report success. Your safety net is `revert_file` (per-file rollback) and the automatic write checkpoints the agent loop creates after each write tool call.

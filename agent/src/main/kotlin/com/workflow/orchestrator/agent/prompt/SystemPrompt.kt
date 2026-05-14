@@ -327,7 +327,7 @@ In each user message, the environment_details will specify the current mode. The
         appendLine()
         appendLine("**Core tools (always available):**")
         appendLine("- File operations: read_file, edit_file, create_file, search_code, glob_files, revert_file")
-        appendLine("- Execution: run_command (shell), think (reasoning scratchpad)")
+        appendLine("- Execution: run_command (shell)")
         appendLine("- Code intelligence: find_definition, find_references, diagnostics")
         appendLine("- Communication: ask_followup_question, attempt_completion, plan_mode_respond, enable_plan_mode, discard_plan")
         appendLine("- Tasks: task_create, task_update, task_list, task_get")

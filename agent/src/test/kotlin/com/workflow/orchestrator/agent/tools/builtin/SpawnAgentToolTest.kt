@@ -70,7 +70,7 @@ class SpawnAgentToolTest {
         val reg = ToolRegistry()
         // Builtin read tools (AttemptCompletionTool + TaskReportTool use real implementations)
         for (name in listOf(
-            "read_file", "search_code", "glob_files", "think",
+            "read_file", "search_code", "glob_files",
             "project_context", "current_time", "ask_followup_question", "ask_user_input"
         )) reg.register(stubTool(name))
         reg.register(AttemptCompletionTool())
@@ -899,7 +899,7 @@ class SpawnAgentToolTest {
                 writeConfigFile(tempDir, "alpha-agent.md", makeConfig(
                     name = "alpha-agent",
                     description = "Alpha test agent",
-                    tools = "read_file, search_code, think, attempt_completion",
+                    tools = "read_file, search_code, attempt_completion",
                     systemPrompt = "You are the alpha agent."
                 ))
                 configLoader.loadFromDisk(tempDir)
@@ -935,7 +935,7 @@ class SpawnAgentToolTest {
                 writeConfigFile(tempDir, "specialist.md", makeConfig(
                     name = "specialist",
                     description = "Test specialist",
-                    tools = "read_file, search_code, think, attempt_completion",
+                    tools = "read_file, search_code, attempt_completion",
                     systemPrompt = "TEST SPECIALIST: You are a unique test specialist agent."
                 ))
                 configLoader.loadFromDisk(tempDir)
@@ -1006,7 +1006,7 @@ class SpawnAgentToolTest {
                 writeConfigFile(tempDir, "reader.md", makeConfig(
                     name = "reader",
                     description = "Read-only agent",
-                    tools = "read_file, search_code, think, attempt_completion",
+                    tools = "read_file, search_code, attempt_completion",
                     systemPrompt = "You are a read-only agent."
                 ))
                 configLoader.loadFromDisk(tempDir)
@@ -1058,7 +1058,7 @@ class SpawnAgentToolTest {
                 assertNotNull(capturedToolNames, "Brain should have received tool definitions")
                 // attempt_completion is silently dropped from sub-agent configs; task_report replaces it.
                 assertEquals(
-                    setOf("read_file", "search_code", "think", "task_report", "tool_search"),
+                    setOf("read_file", "search_code", "task_report", "tool_search"),
                     capturedToolNames!!.toSet(),
                     "Sub-agent should have config-specified tools (attempt_completion dropped), task_report injected, plus auto-injected tool_search"
                 )
@@ -1078,7 +1078,7 @@ class SpawnAgentToolTest {
                 writeConfigFile(tempDir, "writer.md", makeConfig(
                     name = "writer",
                     description = "Write-capable agent",
-                    tools = "read_file, edit_file, create_file, run_command, think, attempt_completion",
+                    tools = "read_file, edit_file, create_file, run_command, attempt_completion",
                     systemPrompt = "You are a write-capable agent."
                 ))
                 configLoader.loadFromDisk(tempDir)
@@ -1121,7 +1121,7 @@ class SpawnAgentToolTest {
                 writeConfigFile(tempDir, "analyzer.md", makeConfig(
                     name = "analyzer",
                     description = "Analysis-only agent",
-                    tools = "read_file, search_code, diagnostics, think, attempt_completion",
+                    tools = "read_file, search_code, diagnostics, attempt_completion",
                     systemPrompt = "You are an analysis agent."
                 ))
                 configLoader.loadFromDisk(tempDir)
@@ -1225,7 +1225,7 @@ class SpawnAgentToolTest {
                 writeConfigFile(tempDir, "quick-agent.md", makeConfig(
                     name = "quick-agent",
                     description = "Quick agent",
-                    tools = "read_file, think, attempt_completion",
+                    tools = "read_file, attempt_completion",
                     systemPrompt = "You are a quick agent."
                 ))
                 configLoader.loadFromDisk(tempDir)
@@ -1267,7 +1267,7 @@ class SpawnAgentToolTest {
                     ---
                     name: includes-agent
                     description: "Agent that lists agent tool"
-                    tools: read_file, agent, search_code, think, attempt_completion
+                    tools: read_file, agent, search_code, attempt_completion
                     max-turns: 10
                     ---
                     You are a test agent.

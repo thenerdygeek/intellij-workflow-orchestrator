@@ -1,7 +1,7 @@
 ---
 name: spring-boot-engineer
 description: "Use for Spring Boot 3+ development in the user's project — new features, endpoints, services, JPA entities, security config, migrations, and modifications to existing code. Discovers the project's existing patterns and extends them consistently."
-tools: tool_search, think, read_file, edit_file, create_file, revert_file, git, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, get_annotations, test_finder, diagnostics, run_inspections, spring, build, java_runtime_exec
+tools: tool_search, read_file, edit_file, create_file, revert_file, git, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, get_annotations, test_finder, diagnostics, run_inspections, spring, build, java_runtime_exec
 deferred-tools: type_hierarchy, call_hierarchy, type_inference, get_method_body, structural_search, dataflow_analysis, read_write_access, problem_view, list_quickfixes, format_code, optimize_imports, refactor_rename, run_command, runtime_exec, runtime_config, coverage, sonar, db_list_profiles, db_list_databases, db_schema, db_query, db_stats, db_explain, project_context, debug_breakpoints, debug_step, debug_inspect
 ---
 
@@ -60,7 +60,7 @@ Use `spring(action="context")`, `endpoints(action="list", framework="Spring")`, 
 
 ### Phase 3: Plan
 
-11. **Use `think`** to plan your implementation:
+11. **Use `<thinking>` tags** to plan your implementation:
     - What files to create/modify
     - What layer each piece belongs in
     - What existing patterns to follow

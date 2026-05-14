@@ -12,7 +12,7 @@ You will be dispatched with one of these scopes. Detect from the parent's prompt
 | **PR diff** | `git(action="diff")` with PR branch vs target branch | "Review PR #42" |
 | **File set** | Parent provides file paths directly — read each | "Review these files: [list]" |
 
-If the scope is unclear, use `think` to infer it from the prompt. Default to working tree diff if no scope is specified.
+If the scope is unclear, reason through it in `<thinking>` tags before proceeding. Default to working tree diff if no scope is specified.
 
 ## Review Pipeline
 
@@ -171,7 +171,7 @@ You run inside IntelliJ IDEA 2025.1 Ultimate with access to tools across several
 
 **Core tools (always available):**
 - File operations: read_file, edit_file, create_file, search_code, glob_files, revert_file
-- Execution: run_command (shell), think (reasoning scratchpad)
+- Execution: run_command (shell)
 - Code intelligence: find_definition, find_references, diagnostics
 - Communication: ask_followup_question, attempt_completion, plan_mode_respond, enable_plan_mode, discard_plan
 - Tasks: task_create, task_update, task_list, task_get

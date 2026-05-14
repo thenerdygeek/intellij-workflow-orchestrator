@@ -362,12 +362,19 @@ class DocumentTool(
                 isError = true,
             )
         } else {
-            val fullMarkdown = result.data!!.markdown
+            val docContent = result.data!!
+            val fullMarkdown = docContent.markdown
             if (offset == 0) {
+                val content = if (docContent.truncated) {
+                    val nextOffset = docContent.contentLength ?: outputBudget
+                    "$fullMarkdown\n\n[... more characters available; call read_document(offset=$nextOffset) to continue ...]"
+                } else {
+                    fullMarkdown
+                }
                 ToolResult(
-                    content = fullMarkdown,
+                    content = content,
                     summary = result.summary,
-                    tokenEstimate = TokenEstimator.estimate(fullMarkdown),
+                    tokenEstimate = TokenEstimator.estimate(content),
                     isError = false,
                 )
             } else if (offset >= fullMarkdown.length) {

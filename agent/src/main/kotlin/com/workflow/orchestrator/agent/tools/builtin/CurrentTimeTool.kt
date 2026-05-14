@@ -45,7 +45,6 @@ class CurrentTimeTool : AgentTool {
             )
         }
         related("run_command", Relationship.FALLBACK, "If current_time were unavailable, `run_command date -u +%FT%TZ` is the closest UTC-only substitute on Unix; on Windows the format differs.")
-        related("think", Relationship.ALTERNATIVE, "Use `think` instead when the LLM is just stalling — current_time is not a no-op scratchpad.")
         downside("Returns the JVM-local timezone (whatever the IDE inherits from the OS), not the user's preferred reporting zone — there's no `tz` param. A user in PST sees `-08:00`; the same code running on a CI box in UTC sees `+00:00`. The UTC field is always present as an unambiguous anchor.")
         downside("No monotonic-clock variant. If the LLM tried to use this for elapsed-time measurements across two calls, NTP adjustments or DST transitions could yield negative deltas. Not what the tool is for, but the description doesn't warn against it.")
         downside("Registered as a deferred tool under 'Utilities' — invisible until the LLM `tool_search`es for it. For a tool this cheap, the discovery friction probably costs more in extra `tool_search` calls than the schema would cost in the core set.")

@@ -283,7 +283,7 @@ class MarkdownAssemblerTest {
             rows = listOf(listOf("value1", "value2"), listOf("value3", "value4")),
         )
         // Serialise the table to measure its size.
-        val tableSize = assembler.assemble(listOf(table), maxChars = 100_000).first.length
+        val tableSize = assembler.assemble(listOf(table), maxChars = 100_000).markdown.length
 
         // maxChars is 7 (para fits exactly, table does not).
         val (md, truncated) = assembler.assemble(listOf(para, table), maxChars = 7)

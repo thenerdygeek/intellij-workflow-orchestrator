@@ -124,7 +124,7 @@ class PdfPipelineTest {
     @Test
     fun `multi-page table continuation does not leave duplicate row text on page 2`() {
         val blocks = pipeline.extract(fixture("multi-page-table.pdf"))
-        val markdown = MarkdownAssembler().assemble(blocks, 200_000).first
+        val markdown = MarkdownAssembler().assemble(blocks, 200_000).markdown
         val occurrencesBug032 = "BUG-032".toRegex().findAll(markdown).count()
         assertEquals(
             1,

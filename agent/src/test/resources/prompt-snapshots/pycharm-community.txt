@@ -85,7 +85,7 @@ You run inside PyCharm 2025.1 Community with access to tools across several cate
 
 **Core tools (always available):**
 - File operations: read_file, edit_file, create_file, search_code, glob_files, revert_file
-- Execution: run_command (shell), think (reasoning scratchpad)
+- Execution: run_command (shell)
 - Code intelligence: find_definition, find_references, diagnostics
 - Communication: ask_followup_question, attempt_completion, plan_mode_respond, enable_plan_mode, discard_plan
 - Tasks: task_create, task_update, task_list, task_get

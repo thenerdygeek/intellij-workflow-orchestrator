@@ -23,7 +23,6 @@ import com.workflow.orchestrator.agent.tools.builtin.TaskCreateTool
 import com.workflow.orchestrator.agent.tools.builtin.TaskGetTool
 import com.workflow.orchestrator.agent.tools.builtin.TaskReportTool
 import com.workflow.orchestrator.agent.tools.builtin.TaskUpdateTool
-import com.workflow.orchestrator.agent.tools.builtin.ThinkTool
 import com.workflow.orchestrator.agent.tools.builtin.ToolSearchTool
 import com.workflow.orchestrator.agent.tools.builtin.UseSkillTool
 import com.workflow.orchestrator.agent.tools.database.DbExplainTool
@@ -137,7 +136,6 @@ class ToolDslSchemaParityTest {
         "RevertFileTool" to { RevertFileTool() },
         "SendStdinTool" to { SendStdinTool() },
         "AttemptCompletionTool" to { AttemptCompletionTool() },
-        "ThinkTool" to { ThinkTool() },
         "AskQuestionsTool" to { AskQuestionsTool() },
         "PlanModeRespondTool" to { PlanModeRespondTool() },
         "EnablePlanModeTool" to { EnablePlanModeTool() },

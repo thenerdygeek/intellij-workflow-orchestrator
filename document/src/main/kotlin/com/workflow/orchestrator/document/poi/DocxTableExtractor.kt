@@ -73,16 +73,23 @@ class DocxTableExtractor(
             docKey: String = "anonymous",
         ): Triple<List<ParagraphVisitor>, List<TableVisitor>, List<PostBodyVisitor>> {
             val listAccumulator = ListAccumulatorVisitor()
+            val commentVisitor = CommentExtractionVisitor(listAccumulator = listAccumulator)
             val paragraphVisitors = buildList<ParagraphVisitor> {
                 add(listAccumulator)                     // FIRST: accumulate / flush list items
                 add(DefaultHeadingParagraphVisitor())
                 // Share the accumulator so comments on list-item paragraphs are deferred
                 // until after the ListBlock flush (preserves [ListBlock, Comment] order).
-                add(CommentExtractionVisitor(listAccumulator = listAccumulator))
+                add(commentVisitor)
                 add(TrackedChangeVisitor())
                 if (imageService != null) add(ImageExtractionVisitor(imageService, docKey))
             }
-            val tableVisitors = listOf(DefaultTableVisitor())
+            val tableVisitors = buildList<TableVisitor> {
+                add(DefaultTableVisitor())
+                // Same commentVisitor instance so table-cell comments share list-accumulator
+                // routing with body-paragraph comments — closes the gap where comments on
+                // table content were silently dropped.
+                add(commentVisitor)
+            }
             val postBodyVisitors = listOf<PostBodyVisitor>(
                 listAccumulator,
                 FootnoteExtractionVisitor(),

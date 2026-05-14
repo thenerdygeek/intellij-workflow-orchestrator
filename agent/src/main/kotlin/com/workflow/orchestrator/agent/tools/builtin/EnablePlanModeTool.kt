@@ -94,11 +94,6 @@ class EnablePlanModeTool : AgentTool {
             Relationship.SEE_ALSO,
             "Both are session-control primitives the LLM emits to hand off to the user — but `attempt_completion` ends the task with a final answer, whereas `enable_plan_mode` requests more time to think and design before doing.",
         )
-        related(
-            "think",
-            Relationship.ALTERNATIVE,
-            "Use `think` instead for short in-loop reasoning that doesn't need user buy-in. `enable_plan_mode` is for deliberation that should produce a user-reviewable plan; `think` is for deliberation that stays inside the loop.",
-        )
         downside("Asymmetric on/off semantics: only the user can return to act mode (via UI Approve button). LLMs that try to programmatically toggle back hit the schema filter (no `disable_plan_mode` tool exists) and may waste turns flailing.")
         downside("Schema filtering removes `enable_plan_mode` itself from the tool set when plan mode is already active, so the LLM cannot \"refresh\" plan mode mid-session. This is correct, but can confuse models that try to re-enter plan mode after partial exploration.")
         downside("The reason string is required but never enforced for length or quality — the LLM can pass a one-word `reason=\"complex\"` and still flip the mode. Audit traces depend on the LLM voluntarily writing useful reasons.")

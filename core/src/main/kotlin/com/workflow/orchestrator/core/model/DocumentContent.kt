@@ -23,12 +23,17 @@ package com.workflow.orchestrator.core.model
  *                    formats that have no page concept (e.g. XLSX, CSV).
  * @param title       Document title from embedded metadata, if present.
  * @param author      Document author from embedded metadata, if present.
- * @param truncated   `true` if the Markdown was cut off because the extracted text exceeded
- *                    the configured `maxChars` budget. A truncation marker is appended to
- *                    [markdown] when this flag is `true`.
- * @param blocks      Optional typed block list produced by the extraction pipeline. Present
- *                    only when the assembler is configured to retain intermediate blocks;
- *                    otherwise `null`. Each element is one of [DocumentBlock]'s subclasses.
+ * @param truncated      `true` if the Markdown was cut off because the extracted text exceeded
+ *                       the configured `maxChars` budget. A truncation marker is appended to
+ *                       [markdown] when this flag is `true`.
+ * @param contentLength  When [truncated] is `true`, the number of real content characters
+ *                       before the truncation marker — i.e. the exact block boundary at which
+ *                       assembly stopped. Use this value as the `offset` for the next
+ *                       read_document call to avoid any content gap between pages. `null`
+ *                       when [truncated] is `false`.
+ * @param blocks         Optional typed block list produced by the extraction pipeline. Present
+ *                       only when the assembler is configured to retain intermediate blocks;
+ *                       otherwise `null`. Each element is one of [DocumentBlock]'s subclasses.
  */
 data class DocumentContent(
     val markdown: String,
@@ -37,5 +42,6 @@ data class DocumentContent(
     val title: String? = null,
     val author: String? = null,
     val truncated: Boolean = false,
+    val contentLength: Int? = null,
     val blocks: List<DocumentBlock>? = null,
 )

@@ -1,7 +1,7 @@
 ---
 name: security-auditor
 description: "Use for security audits of Kotlin/Java Spring Boot projects — OWASP Top 10, Spring Security config, auth/authz flows, dependency vulnerabilities, secrets scanning, and AWS deployment security. Discovers the project's security posture before auditing."
-tools: tool_search, think, read_file, git, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, call_hierarchy, dataflow_analysis, diagnostics, run_inspections, sonar, spring, build, render_artifact, run_command
+tools: tool_search, read_file, git, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, call_hierarchy, dataflow_analysis, diagnostics, run_inspections, sonar, spring, build, render_artifact, run_command
 deferred-tools: type_hierarchy, type_inference, get_method_body, get_annotations, structural_search, read_write_access, test_finder, problem_view, list_quickfixes, project_context
 prompt-sections:
   memory: project
@@ -54,7 +54,7 @@ Detect from the parent's prompt:
    - `UserDetailsService`, `AuthenticationProvider`, `@AuthenticationPrincipal`
 5. **Find secrets patterns** — `search_code` for `application*.yml`, `application*.properties`
 6. **Check dependencies** — `build(action="maven_dependencies")` or `build(action="gradle_dependencies")`
-7. **Use `think`** to document the discovered security architecture before auditing
+7. **Use `<thinking>` tags** to document the discovered security architecture before auditing
 
 ### Phase 2: OWASP Top 10 Audit
 

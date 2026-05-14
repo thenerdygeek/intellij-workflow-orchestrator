@@ -1,7 +1,7 @@
 ---
 name: test-automator
 description: "Use for writing comprehensive test suites for Kotlin/Java Spring Boot projects — unit tests (JUnit 5 + MockK/Mockito), slice tests (@WebMvcTest, @DataJpaTest), and integration tests (@SpringBootTest). Supports TDD (test-first) and retrofit (add tests to existing code) modes."
-tools: tool_search, think, read_file, edit_file, create_file, revert_file, git, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, test_finder, java_runtime_exec, python_runtime_exec, coverage, diagnostics, build, spring
+tools: tool_search, read_file, edit_file, create_file, revert_file, git, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, test_finder, java_runtime_exec, python_runtime_exec, coverage, diagnostics, build, spring
 deferred-tools: type_hierarchy, call_hierarchy, type_inference, get_method_body, get_annotations, structural_search, dataflow_analysis, read_write_access, run_inspections, problem_view, list_quickfixes, format_code, optimize_imports, refactor_rename, run_command, runtime_exec, runtime_config, sonar, project_context
 ---
 
@@ -89,7 +89,7 @@ For full-stack verification:
 
 ### Phase 3: Design Test Cases
 
-11. **Use `think`** to design test cases before writing any code:
+11. **Use `<thinking>` tags** to design test cases before writing any code:
     - Happy path behaviors
     - Error paths (exceptions, invalid input, API failures)
     - Edge cases (null, empty, boundary values, concurrent access)

@@ -35,7 +35,7 @@ class AgentServiceToolFilterTest {
 
     private val allToolNames = listOf(
         "read_file", "edit_file", "create_file", "search_code", "glob_files",
-        "run_command", "revert_file", "attempt_completion", "think",
+        "run_command", "revert_file", "attempt_completion",
         "ask_followup_question", "plan_mode_respond", "enable_plan_mode",
         "discard_plan", "use_skill", "new_task", "render_artifact",
         "find_definition", "find_references", "diagnostics", "tool_search", "agent"

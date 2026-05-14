@@ -3,18 +3,26 @@ package com.workflow.orchestrator.document.poi.visitor
 import com.workflow.orchestrator.core.model.DocumentBlock
 import org.apache.poi.xwpf.usermodel.XWPFDocument
 import org.apache.poi.xwpf.usermodel.XWPFParagraph
+import org.apache.poi.xwpf.usermodel.XWPFTable
 
 /**
- * Emits [DocumentBlock.Comment] blocks for any DOCX review comment whose
- * `w:commentRangeEnd` marker falls inside the visited paragraph.
+ * Emits [DocumentBlock.Comment] blocks for DOCX review comments, covering both
+ * top-level body paragraphs (via [ParagraphVisitor]) and paragraphs inside table
+ * cells (via [TableVisitor]).
  *
- * Anchor text is the first 60 chars of the paragraph's trimmed text. The exact
- * anchored span (between `w:commentRangeStart` and `w:commentRangeEnd`) is a
- * Phase 5+ refinement — Phase 1 uses paragraph-level anchoring for simplicity.
+ * A comment is emitted when the `w:commentRangeEnd` marker for that comment falls
+ * inside the visited paragraph. Anchor text is the first 60 chars of the
+ * paragraph's trimmed text. Multiple comments ending in the same paragraph are
+ * emitted in ascending `w:id` order. Comments whose ID is not found in the
+ * document (orphaned markers) are silently skipped.
  *
- * Multiple comments ending in the same paragraph are emitted in ascending
- * `w:id` order. Comments whose ID is not found in the document (orphaned
- * markers) are silently skipped.
+ * ## Why TableVisitor is required
+ *
+ * `doc.bodyElements` yields top-level `XWPFParagraph` and `XWPFTable` objects only.
+ * Paragraphs inside table cells are NOT surfaced as direct body elements, so a
+ * `ParagraphVisitor`-only approach silently drops any comment whose anchor text
+ * lives in a table cell. [visit(XWPFTable)] walks every cell paragraph to close
+ * this gap.
  *
  * ## List-item anchoring
  *
@@ -23,6 +31,7 @@ import org.apache.poi.xwpf.usermodel.XWPFParagraph
  * pending-comment buffer instead of being returned immediately. The accumulator
  * emits them AFTER its [DocumentBlock.ListBlock] on flush, so the block stream
  * reads `[..., ListBlock, Comment, ...]` rather than `[..., Comment, ..., ListBlock, ...]`.
+ * List-item paragraphs inside table cells follow the same routing.
  *
  * @param listAccumulator Optional accumulator shared with [ListAccumulatorVisitor];
  *                        when null (e.g. test fixtures that don't use the default
@@ -30,9 +39,31 @@ import org.apache.poi.xwpf.usermodel.XWPFParagraph
  */
 class CommentExtractionVisitor(
     private val listAccumulator: ListAccumulatorVisitor? = null,
-) : ParagraphVisitor {
+) : ParagraphVisitor, TableVisitor {
 
-    override fun visit(paragraph: XWPFParagraph, doc: XWPFDocument): List<DocumentBlock> {
+    // ── ParagraphVisitor ─────────────────────────────────────────────────────
+
+    override fun visit(paragraph: XWPFParagraph, doc: XWPFDocument): List<DocumentBlock> =
+        commentsForParagraph(paragraph, doc)
+
+    // ── TableVisitor ─────────────────────────────────────────────────────────
+
+    /** Walks every cell paragraph in [table] and collects comments from each. */
+    override fun visit(table: XWPFTable, doc: XWPFDocument): List<DocumentBlock> {
+        val blocks = mutableListOf<DocumentBlock>()
+        for (row in table.rows) {
+            for (cell in row.tableCells) {
+                for (paragraph in cell.paragraphs) {
+                    blocks += commentsForParagraph(paragraph, doc)
+                }
+            }
+        }
+        return blocks
+    }
+
+    // ── Shared logic ──────────────────────────────────────────────────────────
+
+    private fun commentsForParagraph(paragraph: XWPFParagraph, doc: XWPFDocument): List<DocumentBlock> {
         val endingCommentIds = collectCommentRangeEndIds(paragraph)
         if (endingCommentIds.isEmpty()) return emptyList()
 

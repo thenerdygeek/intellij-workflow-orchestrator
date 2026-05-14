@@ -60,7 +60,7 @@ class SubagentRunnerTest {
 
     private fun buildTools(): Map<String, AgentTool> {
         val tools = mutableMapOf<String, AgentTool>()
-        for (name in listOf("read_file", "search_code", "think")) {
+        for (name in listOf("read_file", "search_code")) {
             tools[name] = stubTool(name)
         }
         tools["attempt_completion"] = AttemptCompletionTool()
@@ -329,8 +329,8 @@ class SubagentRunnerTest {
 
         @Test
         fun `empty args produce clean preview`() {
-            val preview = SubagentRunner.formatToolCallPreview("think", "")
-            assertEquals("think()", preview)
+            val preview = SubagentRunner.formatToolCallPreview("read_file", "")
+            assertEquals("read_file()", preview)
         }
     }
 
@@ -453,7 +453,7 @@ class SubagentRunnerTest {
             // Brain with toolNameSet simulating main agent's full set (includes jira, bamboo)
             val mainAgentToolNames = setOf(
                 "read_file", "edit_file", "run_command", "search_code",
-                "think", "attempt_completion", "jira", "bamboo_builds"
+                "attempt_completion", "jira", "bamboo_builds"
             )
             val mainAgentParamNames = setOf(
                 "path", "content", "query", "command", "result", "action"
@@ -801,7 +801,7 @@ class SubagentRunnerTest {
                 )),
             ))
 
-            val coreTools = buildTools()  // read_file, search_code, think, attempt_completion
+            val coreTools = buildTools()  // read_file, search_code, attempt_completion
             val deferredTools = mapOf("db_explain" to (dbExplainTool to "Database"))
 
             val runner = SubagentRunner(
@@ -917,7 +917,7 @@ class SubagentRunnerTest {
 
         private fun buildToolsWithTaskReport(): Map<String, AgentTool> {
             val tools = mutableMapOf<String, AgentTool>()
-            for (name in listOf("read_file", "search_code", "think")) {
+            for (name in listOf("read_file", "search_code")) {
                 tools[name] = stubTool(name)
             }
             tools["task_report"] = TaskReportTool()

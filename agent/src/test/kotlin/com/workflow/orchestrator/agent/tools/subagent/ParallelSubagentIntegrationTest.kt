@@ -64,7 +64,7 @@ class ParallelSubagentIntegrationTest {
         val reg = ToolRegistry()
         // Builtin read tools
         for (name in listOf(
-            "read_file", "search_code", "glob_files", "think",
+            "read_file", "search_code", "glob_files",
             "project_context", "current_time", "ask_questions", "ask_user_input"
         )) reg.register(stubTool(name))
         reg.register(AttemptCompletionTool())

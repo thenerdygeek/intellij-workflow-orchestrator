@@ -32,19 +32,37 @@ import com.workflow.orchestrator.core.model.DocumentBlock
 class MarkdownAssembler {
 
     /**
+     * Result of [assemble]. Supports 2- or 3-component destructuring:
+     * `val (md, truncated) = assemble(...)` and `val (md, truncated, len) = assemble(...)`.
+     *
+     * @param markdown      The assembled (possibly truncated) Markdown string.
+     * @param truncated     True when one or more trailing blocks were dropped.
+     * @param contentLength Length of the real content portion before any truncation marker.
+     *                      When [truncated] is false this equals [markdown].length.
+     *                      When [truncated] is true this is the char position at which the
+     *                      dropped block would have started — the correct `offset` for a
+     *                      subsequent read_document call to avoid any content gap.
+     */
+    data class AssemblerResult(
+        val markdown: String,
+        val truncated: Boolean,
+        val contentLength: Int,
+    )
+
+    /**
      * Assembles [blocks] into a Markdown string, capped at [maxChars] characters.
      *
      * @param blocks   Ordered list of document blocks to render.
      * @param maxChars Maximum number of characters in the returned Markdown string
      *                 (excluding the truncation marker itself). Must be >= 0.
-     * @return A pair of `(markdown, truncated)`. `truncated` is `true` when one or more
-     *         trailing blocks were omitted because the budget was exhausted.
+     * @return [AssemblerResult] with the markdown, truncation flag, and content length
+     *         before any truncation marker.
      */
-    fun assemble(blocks: List<DocumentBlock>, maxChars: Int): Pair<String, Boolean> {
+    fun assemble(blocks: List<DocumentBlock>, maxChars: Int): AssemblerResult {
         require(maxChars >= 0) { "maxChars must be >= 0, was $maxChars" }
 
         if (blocks.isEmpty()) {
-            return Pair("", false)
+            return AssemblerResult("", truncated = false, contentLength = 0)
         }
 
         val sb = StringBuilder()
@@ -59,14 +77,14 @@ class MarkdownAssembler {
             if (wouldExceed && !isFirstBlock) {
                 // Compute the total size as if we had rendered everything.
                 val totalIfNoTruncation = computeFullLength(blocks)
-                val n = sb.length
+                val n = sb.length  // content length before the marker — the gap-free next offset
                 val m = totalIfNoTruncation
                 val x = renderedCount
                 val y = blocks.size
                 val droppedFootnotes = blocks.drop(x).count { it is DocumentBlock.Footnote }
                 val footnoteClause = if (droppedFootnotes > 0) " ($droppedFootnotes footnotes dropped)" else ""
                 sb.append("\n\n*[Document truncated at $n characters of $m total characters; $x of $y blocks rendered$footnoteClause]*\n")
-                return Pair(sb.toString(), true)
+                return AssemblerResult(sb.toString(), truncated = true, contentLength = n)
             }
 
             sb.append(serialized)
@@ -84,11 +102,11 @@ class MarkdownAssembler {
                 val droppedFootnotes = blocks.drop(x).count { it is DocumentBlock.Footnote }
                 val footnoteClause = if (droppedFootnotes > 0) " ($droppedFootnotes footnotes dropped)" else ""
                 sb.append("\n\n*[Document truncated at $n characters of $m total characters; $x of $y blocks rendered$footnoteClause]*\n")
-                return Pair(sb.toString(), true)
+                return AssemblerResult(sb.toString(), truncated = true, contentLength = n)
             }
         }
 
-        return Pair(sb.toString(), false)
+        return AssemblerResult(sb.toString(), truncated = false, contentLength = sb.length)
     }
 
     // ── Block serialisation ────────────────────────────────────────────────────

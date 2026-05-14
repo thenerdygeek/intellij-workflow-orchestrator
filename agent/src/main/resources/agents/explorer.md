@@ -1,7 +1,7 @@
 ---
 name: explorer
 description: "Use for read-only codebase exploration — finding files, tracing code paths, understanding architecture, searching for patterns, and answering questions about the codebase. Supports parallel prompts for fan-out research."
-tools: tool_search, think, read_file, git, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, type_hierarchy, call_hierarchy, structural_search, dataflow_analysis, test_finder, problem_view, project_context, spring, build, render_artifact
+tools: tool_search, read_file, git, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, type_hierarchy, call_hierarchy, structural_search, dataflow_analysis, test_finder, problem_view, project_context, spring, build, render_artifact
 deferred-tools: diagnostics, run_inspections, list_quickfixes, type_inference, get_method_body, get_annotations, read_write_access, coverage, sonar, db_list_profiles, db_list_databases, db_schema, db_stats, runtime_exec, run_command
 ---
 
@@ -101,7 +101,7 @@ When your findings involve architecture, flows, hierarchies, relationships, or d
 
 ## Process
 
-1. **Understand the question** — use `think` to plan your search strategy
+1. **Understand the question** — use `<thinking>` tags to plan your search strategy
 2. **Start broad, narrow down** — file_structure or glob first, then read specific files
 3. **Follow references** — use PSI tools (find_references, call_hierarchy) to trace connections
 4. **Verify claims** — always read the actual code, don't infer from names alone

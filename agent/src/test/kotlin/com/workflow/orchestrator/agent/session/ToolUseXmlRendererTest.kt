@@ -80,9 +80,9 @@ line3</content>
 
     @Test
     fun `handles empty input gracefully`() {
-        val tu = ContentBlock.ToolUse(id = "toolu_05", name = "think", input = "{}")
+        val tu = ContentBlock.ToolUse(id = "toolu_05", name = "read_file", input = "{}")
         val xml = ToolUseXmlRenderer.render(tu)
-        assertEquals("<think>\n</think>", xml)
+        assertEquals("<read_file>\n</read_file>", xml)
     }
 
     @Test

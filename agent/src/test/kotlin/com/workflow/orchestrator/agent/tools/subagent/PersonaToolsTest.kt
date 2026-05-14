@@ -52,20 +52,6 @@ class PersonaToolsTest {
         "general-purpose", "performance-engineer", "refactoring-specialist",
         "security-auditor", "spring-boot-engineer", "test-automator", "python-engineer"
     ])
-    fun `persona core tools contain think`(personaName: String) {
-        val config = loader.getCachedConfig(personaName)
-            ?: fail("Persona '$personaName' not found")
-
-        assertTrue(config.tools.contains("think"),
-            "Persona '$personaName': think must be in core tools, got core=${config.tools}")
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = [
-        "code-reviewer", "architect-reviewer", "devops-engineer", "explorer",
-        "general-purpose", "performance-engineer", "refactoring-specialist",
-        "security-auditor", "spring-boot-engineer", "test-automator", "python-engineer"
-    ])
     fun `persona core tools do not exceed 20`(personaName: String) {
         val config = loader.getCachedConfig(personaName)
             ?: fail("Persona '$personaName' not found")

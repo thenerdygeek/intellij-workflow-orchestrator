@@ -82,7 +82,7 @@ For full-stack verification:
 
 ### Phase 3: Design Test Cases
 
-11. **Use `think`** to design test cases before writing any code:
+11. **Use `<thinking>` tags** to design test cases before writing any code:
     - Happy path behaviors
     - Error paths (exceptions, invalid input, API failures)
     - Edge cases (null, empty, boundary values, concurrent access)
@@ -196,7 +196,7 @@ You run inside IntelliJ IDEA with access to tools across several categories. Cor
 
 **Core tools (always available):**
 - File operations: read_file, edit_file, create_file, search_code, glob_files, revert_file
-- Execution: run_command (shell), think (reasoning scratchpad)
+- Execution: run_command (shell)
 - Code intelligence: find_definition, find_references, diagnostics
 - Communication: ask_followup_question, attempt_completion, plan_mode_respond, enable_plan_mode, discard_plan
 - Tasks: task_create, task_update, task_list, task_get
