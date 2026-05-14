@@ -75,7 +75,12 @@ class PlanModeRespondTool : AgentTool {
         "Rules of thumb: zero callouts is fine — use them only when the user's attention is genuinely " +
         "needed. Two or three at most for a typical plan. If you have nothing the user must review, " +
         "skip callouts entirely — an empty top-zone is cleaner than a fake `[!NOTE]` filler.\n\n" +
-        "If while writing your response you realize you need more exploration, set needs_more_exploration=true."
+        "If while writing your response you realize you need more exploration, set needs_more_exploration=true.\n\n" +
+        "If your previous plan call was cut short by the output length limit, call this tool again with " +
+        "append=true and continue EXACTLY where the previous content was cut off — the system has saved " +
+        "the prefix that was already emitted and will stitch it together with your continuation. " +
+        "Do not repeat earlier sections. Do not set append=true for a fresh plan or a revised plan; " +
+        "only in response to a system truncation nudge."
 
     override val parameters = FunctionParameters(
         properties = mapOf(
@@ -92,7 +97,14 @@ class PlanModeRespondTool : AgentTool {
                     "exploration with tools, for example reading files. (Remember, you can explore the project " +
                     "with tools like read_file in PLAN MODE without the user having to toggle to ACT MODE.) " +
                     "Defaults to false if not specified."
-            )
+            ),
+            "append" to ParameterProperty(
+                type = "boolean",
+                description = "Set to true when continuing after a truncation nudge OR after a successful " +
+                    "call with needs_more_exploration=true. The new response is appended to the existing " +
+                    "plan content in the editor — start exactly where the previous content was cut off and " +
+                    "do not repeat earlier sections. Defaults to false (replaces the current plan)."
+            ),
         ),
         required = listOf("response")
     )
@@ -130,6 +142,15 @@ class PlanModeRespondTool : AgentTool {
                 whenPresent("If true: AgentLoop emits the plan to the UI but does NOT suspend — the loop continues immediately so the LLM can read more files, search, etc. The plan rendered is treated as a draft.")
                 whenAbsent("Defaults to false — AgentLoop calls userInputChannel.receive() and suspends until the user sends a message (typed feedback, inline step comments, or Approve click). This is the load-bearing default; flipping it accidentally turns plan mode into an unbounded auto-loop.")
                 constraint("accepts JSON boolean (true/false) OR string `\"true\"`/`\"false\"` (some models emit booleans as strings — handled by a try/catch in execute)")
+                example("false")
+                example("true")
+            }
+            optional("append", "boolean") {
+                llmSeesIt("Set to true when continuing after a truncation nudge OR after a successful call with needs_more_exploration=true. The new response is appended to the existing plan content in the editor — start exactly where the previous content was cut off and do not repeat earlier sections. Defaults to false (replaces the current plan).")
+                humanReadable("Stitch mode: the new content is glued onto whatever plan text was already saved. Use only in response to a system truncation nudge, or when deliberately adding sections after a needs_more_exploration=true draft.")
+                whenPresent("AgentController prepends accumulatedPlanText to the new planText before writing to disk and rendering the plan card — the result is the full combined plan, not just the continuation.")
+                whenAbsent("Defaults to false — the new response replaces the current plan entirely. This is correct for fresh plans and revised plans.")
+                constraint("Only set to true in response to an output-length truncation nudge or when following up on a needs_more_exploration=true call; never for first-call or wholesale revision")
                 example("false")
                 example("true")
             }
@@ -185,6 +206,12 @@ class PlanModeRespondTool : AgentTool {
             params["needs_more_exploration"]?.jsonPrimitive?.content?.equals("true", ignoreCase = true) ?: false
         }
 
+        val append = try {
+            params["append"]?.jsonPrimitive?.boolean ?: false
+        } catch (_: Exception) {
+            params["append"]?.jsonPrimitive?.content?.equals("true", ignoreCase = true) ?: false
+        }
+
         return ToolResult.planResponse(
             content = response,
             summary = if (needsMoreExploration) {
@@ -193,7 +220,8 @@ class PlanModeRespondTool : AgentTool {
                 "Plan presented: ${response.take(200)}"
             },
             tokenEstimate = response.length / 4,
-            needsMoreExploration = needsMoreExploration
+            needsMoreExploration = needsMoreExploration,
+            append = append,
         )
     }
 }

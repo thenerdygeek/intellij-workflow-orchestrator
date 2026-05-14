@@ -92,4 +92,55 @@ class PlanModeRespondToolTest {
         assertTrue(tool.description.contains("implementation plan"), "description should mention implementation plan")
         assertTrue(tool.description.contains("needs_more_exploration"), "description should mention needs_more_exploration")
     }
+
+    @Test
+    fun `PlanResponse type has append=false by default`() = runTest {
+        val result = tool.execute(buildJsonObject {
+            put("response", "Phase 1")
+        }, project)
+        val type = result.type
+        assertTrue(type is com.workflow.orchestrator.agent.tools.ToolResultType.PlanResponse)
+        assertFalse((type as com.workflow.orchestrator.agent.tools.ToolResultType.PlanResponse).append,
+            "append should default to false")
+    }
+
+    @Test
+    fun `PlanResponse type has append=true when set`() = runTest {
+        // The tool doesn't parse append yet — this test will pass once Task 2 wires it.
+        // For now just verify the data class field exists and factory accepts the param.
+        val factoryResult = com.workflow.orchestrator.agent.tools.ToolResult.planResponse(
+            content = "plan",
+            summary = "plan",
+            tokenEstimate = 10,
+            needsMoreExploration = false,
+            append = true,
+        )
+        val type = factoryResult.type
+        assertTrue(type is com.workflow.orchestrator.agent.tools.ToolResultType.PlanResponse)
+        assertTrue((type as com.workflow.orchestrator.agent.tools.ToolResultType.PlanResponse).append)
+    }
+
+    @Test
+    fun `append=true is passed through to ToolResult type`() = runTest {
+        val result = tool.execute(buildJsonObject {
+            put("response", "Phase 2: continued from cutoff")
+            put("append", true)
+        }, project)
+        assertFalse(result.isError)
+        assertTrue(result.isPlanResponse)
+        assertTrue((result.type as com.workflow.orchestrator.agent.tools.ToolResultType.PlanResponse).append)
+    }
+
+    @Test
+    fun `append defaults to false when omitted`() = runTest {
+        val result = tool.execute(buildJsonObject {
+            put("response", "Full fresh plan")
+        }, project)
+        assertFalse((result.type as com.workflow.orchestrator.agent.tools.ToolResultType.PlanResponse).append)
+    }
+
+    @Test
+    fun `description mentions append parameter`() {
+        assertTrue(tool.description.contains("append"), "description must explain the append param")
+    }
 }

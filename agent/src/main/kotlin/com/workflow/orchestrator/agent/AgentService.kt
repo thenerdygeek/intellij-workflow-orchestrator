@@ -870,7 +870,6 @@ class AgentService(
         safeRegisterCore { RevertFileTool() }
         safeRegisterCore { AttemptCompletionTool() }
         safeRegisterCore { TaskReportTool() }
-        safeRegisterCore { ThinkTool() }
         safeRegisterCore { AskQuestionsTool() }
         safeRegisterCore { PlanModeRespondTool() }
         safeRegisterCore { EnablePlanModeTool() }
@@ -1284,7 +1283,13 @@ class AgentService(
          * Callback fired when the LLM presents a plan via plan_mode_respond.
          * Used by the UI to render the plan card. Does NOT exit the loop.
          */
-        onPlanResponse: ((planText: String, needsMoreExploration: Boolean) -> Unit)? = null,
+        onPlanResponse: ((planText: String, needsMoreExploration: Boolean, append: Boolean) -> Unit)? = null,
+        /**
+         * Callback fired when a plan_mode_respond call is truncated mid-emission.
+         * The emitted <response> content (the plan prefix) is passed so the caller can
+         * pre-populate the accumulator before the LLM's append=true continuation arrives.
+         */
+        onPlanPartialContent: ((partialContent: String) -> Unit)? = null,
         /**
          * Callback fired when the LLM toggles plan mode via enable_plan_mode tool.
          * Used by the UI to update the plan mode button and rebuild tool definitions.
@@ -1936,6 +1941,7 @@ class AgentService(
                         onSessionStats?.invoke(modelId, tokensIn, tokensOut, costUsd)
                     },
                     onPlanResponse = onPlanResponse,
+                    onPlanPartialContent = onPlanPartialContent,
                     onPlanModeToggle = { enabled ->
                         planModeActive.set(enabled)
                         onPlanModeToggled?.invoke(enabled)
@@ -2217,7 +2223,8 @@ class AgentService(
         onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
         onCompactionState: ((active: Boolean, phase: String) -> Unit)? = null,
         onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null,
-        onPlanResponse: ((planText: String, needsMoreExploration: Boolean) -> Unit)? = null,
+        onPlanResponse: ((planText: String, needsMoreExploration: Boolean, append: Boolean) -> Unit)? = null,
+        onPlanPartialContent: ((partialContent: String) -> Unit)? = null,
         onPlanModeToggled: ((Boolean) -> Unit)? = null,
         onPlanDiscarded: (() -> Unit)? = null,
         userInputChannel: Channel<String>? = null,
@@ -2462,6 +2469,7 @@ class AgentService(
                 onCompactionState = onCompactionState,
                 onModelSwitch = onModelSwitch,
                 onPlanResponse = onPlanResponse,
+                onPlanPartialContent = onPlanPartialContent,
                 onPlanModeToggled = onPlanModeToggled,
                 onPlanDiscarded = onPlanDiscarded,
                 userInputChannel = userInputChannel,

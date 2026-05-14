@@ -115,7 +115,7 @@ class PlanModeLoopTest {
         brain: LlmBrain,
         tools: List<AgentTool>,
         planMode: Boolean = false,
-        onPlanResponse: ((String, Boolean) -> Unit)? = null,
+        onPlanResponse: ((String, Boolean, Boolean) -> Unit)? = null,
         userInputChannel: Channel<String>? = null
     ): AgentLoop {
         val toolMap = tools.associateBy { it.name }
@@ -166,7 +166,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { text, explore -> planCallbackFired.add(text to explore) },
+                onPlanResponse = { text, explore, _ -> planCallbackFired.add(text to explore) },
                 userInputChannel = channel
             )
 
@@ -219,7 +219,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { text, explore -> planCallbackFired.add(text to explore) },
+                onPlanResponse = { text, explore, _ -> planCallbackFired.add(text to explore) },
                 userInputChannel = channel
             )
 
@@ -269,7 +269,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { _, _ -> },
+                onPlanResponse = { _, _, _ -> },
                 userInputChannel = channel
             )
 
@@ -305,7 +305,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { text, _ -> planCallbackFired.add(text) },
+                onPlanResponse = { text, _, _ -> planCallbackFired.add(text) },
                 userInputChannel = null
             )
 
@@ -338,7 +338,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { _, _ -> },
+                onPlanResponse = { _, _, _ -> },
                 userInputChannel = channel
             )
 
@@ -399,7 +399,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { _, _ -> },
+                onPlanResponse = { _, _, _ -> },
                 userInputChannel = channel
             )
 
@@ -465,7 +465,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { _, _ -> },
+                onPlanResponse = { _, _, _ -> },
                 userInputChannel = channel
             )
 
@@ -552,7 +552,7 @@ class PlanModeLoopTest {
             val loop = buildLoop(
                 brain, tools,
                 planMode = true,
-                onPlanResponse = { _, _ -> },
+                onPlanResponse = { _, _, _ -> },
                 userInputChannel = channel
             )
 
@@ -568,6 +568,63 @@ class PlanModeLoopTest {
             // Send user response after the text-only turn (which resets consecutiveEmpties to 0)
             channel.send("Please continue.")
             loopJob.join()
+        }
+
+        @Test
+        fun `two plan_mode_respond calls with append=true — callback receives append flag correctly`() = runTest {
+            val channel = Channel<String>(Channel.RENDEZVOUS)
+            // Records (text, needsMoreExploration, append) for each callback invocation
+            val planCallbacks = mutableListOf<Triple<String, Boolean, Boolean>>()
+
+            val brain = sequenceBrain(
+                // First call: full plan, needsMoreExploration=true so loop continues without waiting
+                toolCallResponse(
+                    "plan_mode_respond" to
+                        """{"response":"## Phase 1\nStep 1","needs_more_exploration":true}"""
+                ),
+                // Second call: continuation with append=true; loop suspends for user input
+                toolCallResponse(
+                    "plan_mode_respond" to
+                        """{"response":"\n## Phase 2\nStep 2","append":true}"""
+                ),
+                // After user approves, LLM completes
+                toolCallResponse(
+                    "attempt_completion" to """{"result":"Done"}"""
+                )
+            )
+
+            val completionTool = fakeTool(
+                "attempt_completion",
+                ToolResult(content = "Done", summary = "Done", tokenEstimate = 5, isCompletion = true)
+            )
+            val tools = listOf(PlanModeRespondTool(), completionTool)
+
+            val loop = buildLoop(
+                brain, tools,
+                planMode = true,
+                onPlanResponse = { text, explore, append ->
+                    planCallbacks.add(Triple(text, explore, append))
+                },
+                userInputChannel = channel
+            )
+
+            val loopJob = launch {
+                loop.run("Plan a two-phase implementation")
+            }
+
+            channel.send("Approved")
+            loopJob.join()
+
+            assertEquals(2, planCallbacks.size, "callback must fire once per plan_mode_respond call")
+
+            val (text1, explore1, append1) = planCallbacks[0]
+            assertTrue(text1.contains("Phase 1"), "first callback carries Phase 1 content")
+            assertTrue(explore1, "first call has needs_more_exploration=true")
+            assertFalse(append1, "first call must not have append=true")
+
+            val (text2, _, append2) = planCallbacks[1]
+            assertTrue(text2.contains("Phase 2"), "second callback carries Phase 2 content")
+            assertTrue(append2, "second call must have append=true")
         }
     }
 }

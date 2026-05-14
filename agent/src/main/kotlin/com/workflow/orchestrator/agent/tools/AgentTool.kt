@@ -220,7 +220,7 @@ sealed class ToolResultType {
     data object Standard : ToolResultType()
     data object Error : ToolResultType()
     data object Completion : ToolResultType()
-    data class PlanResponse(val needsMoreExploration: Boolean) : ToolResultType()
+    data class PlanResponse(val needsMoreExploration: Boolean, val append: Boolean = false) : ToolResultType()
     data class SkillActivation(val skillName: String, val skillContent: String) : ToolResultType()
     data class SessionHandoff(val context: String) : ToolResultType()
     data object PlanModeToggle : ToolResultType()
@@ -314,8 +314,8 @@ data class ToolResult(
         fun completion(content: String, summary: String, tokenEstimate: Int, completionData: CompletionData? = null) =
             ToolResult(content, summary, tokenEstimate, isCompletion = true, completionData = completionData, type = ToolResultType.Completion)
 
-        fun planResponse(content: String, summary: String, tokenEstimate: Int, needsMoreExploration: Boolean) =
-            ToolResult(content, summary, tokenEstimate, isPlanResponse = true, needsMoreExploration = needsMoreExploration, type = ToolResultType.PlanResponse(needsMoreExploration))
+        fun planResponse(content: String, summary: String, tokenEstimate: Int, needsMoreExploration: Boolean, append: Boolean = false) =
+            ToolResult(content, summary, tokenEstimate, isPlanResponse = true, needsMoreExploration = needsMoreExploration, type = ToolResultType.PlanResponse(needsMoreExploration, append))
 
         fun skillActivation(content: String, summary: String, tokenEstimate: Int, skillName: String, skillContent: String) =
             ToolResult(content, summary, tokenEstimate, isSkillActivation = true, activatedSkillName = skillName, activatedSkillContent = skillContent, type = ToolResultType.SkillActivation(skillName, skillContent))

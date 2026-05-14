@@ -195,8 +195,19 @@ class AgentLoop(
      *
      * @param planText the plan markdown from the LLM
      * @param needsMoreExploration if true, loop continues immediately (LLM explores more)
+     * @param append if true, caller should append planText to the existing accumulated plan
+     *   rather than replacing it (used for output-truncation recovery continuations)
      */
-    private val onPlanResponse: ((planText: String, needsMoreExploration: Boolean) -> Unit)? = null,
+    private val onPlanResponse: ((planText: String, needsMoreExploration: Boolean, append: Boolean) -> Unit)? = null,
+    /**
+     * Callback fired when a plan_mode_respond call is truncated mid-emission (finish_reason=length).
+     * The partial <response> content that WAS emitted is extracted and forwarded here so the caller
+     * can pre-populate the plan accumulator before the LLM continues with append=true.
+     *
+     * Without this, the accumulator would be empty when the continuation arrives, and only the
+     * second half of the plan would appear in the editor — the first half would be lost.
+     */
+    private val onPlanPartialContent: ((partialContent: String) -> Unit)? = null,
     /**
      * Channel for receiving user input during the loop.
      * Used in plan mode: after the LLM presents a plan (needsMoreExploration=false),
@@ -1259,16 +1270,60 @@ class AgentLoop(
                 rawAssistantMessage
             }
 
-            // Stage 3.5: Handle truncated response (finish_reason: length)
+            // Stage 3.5: Handle truncated response (finish_reason: length).
+            // Three distinct cases — each needs a different instruction:
+            //   1. plan_mode_respond XML started but not completed → the tool NEVER executed.
+            //      Extract whatever <response> content WAS emitted from partialText and fire
+            //      onPlanPartialContent so the caller pre-populates the plan accumulator.
+            //      Then nudge with append=true so the continuation is stitched onto the
+            //      extracted prefix. Re-emitting from scratch would hit the same length limit.
+            //   2. Some other tool XML started but not completed → tell LLM to retry
+            //      with a smaller operation (the standard tool-call recovery path).
+            //   3. Pure prose (no tool XML) — e.g. the LLM was writing a text plan
+            //      before calling plan_mode_respond → tell LLM to continue verbatim
+            //      (NOT "use smaller steps", which causes it to pivot to a "focused plan").
             if (choice.finishReason == "length") {
-                // Response was truncated — don't try to parse partial tool calls
+                val partialText = assistantMessage.content ?: ""
+                val isPlanModeRespondTruncation = partialText.contains("<plan_mode_respond")
+                val hasPartialToolCall = !isPlanModeRespondTruncation &&
+                    partialText.contains("<") &&
+                    currentToolNames.any { partialText.contains("<$it") }
+                LOG.warn("[Loop] Response truncated (finish_reason=length) at iteration $iteration — " +
+                    "${partialText.length} chars, isPlanModeRespond=$isPlanModeRespondTruncation, " +
+                    "hasPartialToolCall=$hasPartialToolCall")
+                fileLogger?.logRetry(sessionId ?: "", "output_length_truncation", iteration)
                 contextManager.addAssistantMessage(
-                    ChatMessage(role = "assistant", content = assistantMessage.content ?: "")
+                    ChatMessage(role = "assistant", content = partialText)
                 )
-                contextManager.addUserMessage(
-                    "Your response was cut short due to output length limits. " +
-                    "Please continue from where you left off, using smaller steps."
-                )
+                if (isPlanModeRespondTruncation) {
+                    // Extract the plan content that was already emitted inside <response>...</response>
+                    // (the closing tag was never reached, so we take everything after <response>).
+                    val responseTag = "<response>"
+                    val responseIdx = partialText.indexOf(responseTag)
+                    val emittedPlanContent = if (responseIdx >= 0)
+                        partialText.substring(responseIdx + responseTag.length)
+                    else ""
+                    if (emittedPlanContent.isNotBlank()) {
+                        onPlanPartialContent?.invoke(emittedPlanContent)
+                    }
+                }
+                val lengthNudge = when {
+                    isPlanModeRespondTruncation ->
+                        "Your plan_mode_respond call was cut short — the response parameter was not " +
+                        "fully emitted. Call plan_mode_respond again with append=true, starting your " +
+                        "response EXACTLY where the previous content was cut off. Do not repeat " +
+                        "earlier sections of the plan."
+                    hasPartialToolCall ->
+                        "Your response was cut short while emitting a tool call. " +
+                        "Please retry with a smaller, simpler operation — break the work into a " +
+                        "series of smaller tool calls rather than one large one."
+                    else ->
+                        "Your response was cut short by the output length limit. " +
+                        "Resume EXACTLY where you stopped — do not summarize, abbreviate, or restart. " +
+                        "Continue the text character-for-character from where it was cut off. " +
+                        "(This is an automated message — do not acknowledge it.)"
+                }
+                contextManager.addUserMessage(lengthNudge)
                 continue
             }
 
@@ -2064,7 +2119,7 @@ class AgentLoop(
                 is ToolResultType.PlanResponse -> {
                     val pr = toolResult.type
                     LOG.info("[Loop] Plan presented (needsMoreExploration=${pr.needsMoreExploration})")
-                    onPlanResponse?.invoke(toolResult.content, pr.needsMoreExploration)
+                    onPlanResponse?.invoke(toolResult.content, pr.needsMoreExploration, pr.append)
 
                     if (!pr.needsMoreExploration && userInputChannel != null) {
                         // Wait for user input (matches Cline's ask() pattern).

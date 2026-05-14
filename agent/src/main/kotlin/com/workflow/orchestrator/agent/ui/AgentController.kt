@@ -177,6 +177,8 @@ class AgentController(
      * in a full JCEF editor tab.
      */
     private var currentPlanData: PlanJson? = null
+    /** Accumulates plan markdown across append=true plan_mode_respond calls for this session. Cleared on session reset. */
+    private var accumulatedPlanText: String = ""
 
     /**
      * True while the programmatic "Approve & Clear Context" / "Just Approve" question
@@ -1667,7 +1669,8 @@ class AgentController(
                     }
                 }
             },
-            onPlanResponse = { text, explore -> onPlanResponse(text, explore) },
+            onPlanResponse = { text, explore, append -> onPlanResponse(text, explore, append) },
+            onPlanPartialContent = ::onPlanPartialContent,
             onPlanModeToggled = { enabled -> invokeLater { togglePlanMode(enabled) } },
             onPlanDiscarded = { invokeLater { onPlanDiscardedByLlm() } },
             userInputChannel = userInputChannel,
@@ -2406,6 +2409,7 @@ class AgentController(
         originalTaskText = null
         currentSessionId = null
         currentPlanData = null
+        accumulatedPlanText = ""
         pendingApproval?.cancel()
         pendingApproval = null
         pendingApprovalToolName = null
@@ -2757,7 +2761,8 @@ class AgentController(
                     }
                 }
             },
-            onPlanResponse = { text, explore -> onPlanResponse(text, explore) },
+            onPlanResponse = { text, explore, append -> onPlanResponse(text, explore, append) },
+            onPlanPartialContent = ::onPlanPartialContent,
             onPlanModeToggled = { enabled -> invokeLater { togglePlanMode(enabled) } },
             onPlanDiscarded = { invokeLater { onPlanDiscardedByLlm() } },
             userInputChannel = userInputChannel,
@@ -2894,7 +2899,33 @@ class AgentController(
      * If needsMoreExploration=false, the loop will wait on userInputChannel
      * for the user to respond (type chat, add comments, or approve).
      */
-    private fun onPlanResponse(planText: String, needsMoreExploration: Boolean) {
+
+    /**
+     * Called when a plan_mode_respond was truncated mid-emission (finish_reason=length).
+     * The content that WAS emitted inside <response> is pre-populated into [accumulatedPlanText]
+     * so that when the LLM calls plan_mode_respond again with append=true, [onPlanResponse]
+     * can stitch together prefix + continuation into a complete plan.
+     *
+     * Called on the IO coroutine (AgentLoop.run) before the loop iterates — guaranteed to
+     * execute before the next onPlanResponse invocation.
+     */
+    private fun onPlanPartialContent(partialContent: String) {
+        accumulatedPlanText = if (accumulatedPlanText.isNotBlank()) {
+            "$accumulatedPlanText\n$partialContent"
+        } else {
+            partialContent
+        }
+        LOG.info("AgentController: pre-populated plan accumulator with ${partialContent.length} chars from truncated call")
+    }
+
+    private fun onPlanResponse(planText: String, needsMoreExploration: Boolean, append: Boolean = false) {
+        val fullPlan = if (append && accumulatedPlanText.isNotBlank()) {
+            "$accumulatedPlanText\n$planText"
+        } else {
+            planText
+        }
+        accumulatedPlanText = fullPlan
+
         // Save plan to disk and store path in ContextManager for compaction survival.
         // Done outside invokeLater so it's synchronous and guaranteed before UI render.
         val sid = currentSessionId
@@ -2907,7 +2938,7 @@ class AgentController(
                 )
                 val planFile = java.io.File(sessionDir, "plan.md")
                 planFile.parentFile?.mkdirs()
-                planFile.writeText(planText, Charsets.UTF_8)
+                planFile.writeText(fullPlan, Charsets.UTF_8)
                 // Store path in ContextManager so it survives compaction
                 contextManager?.setActivePlanPath(planFile.absolutePath)
                 LOG.info("AgentController: plan saved to ${planFile.absolutePath}")
@@ -2919,11 +2950,11 @@ class AgentController(
         }
 
         invokeLater {
-            val summary = planText.lines()
+            val summary = fullPlan.lines()
                 .firstOrNull { it.isNotBlank() && !it.startsWith("#") }
                 ?.trim()?.take(300)
                 ?: "Implementation plan"
-            val planData = PlanJson(summary = summary, markdown = planText)
+            val planData = PlanJson(summary = summary, markdown = fullPlan)
             currentPlanData = planData
             val planJson = Json.encodeToString(planData)
             dashboard.renderPlan(planJson)
@@ -3094,6 +3125,7 @@ class AgentController(
     private fun performPlanDiscard(userInitiated: Boolean) {
         LOG.info("AgentController.performPlanDiscard(userInitiated=$userInitiated)")
         currentPlanData = null
+        accumulatedPlanText = ""
         invokeLater { dashboard.clearPlanInUi() }
 
         if (userInitiated) {
@@ -3552,6 +3584,7 @@ class AgentController(
         sessionApprovalStore.clear()
         currentSessionId = null
         currentPlanData = null
+        accumulatedPlanText = ""
         pendingApproval?.cancel()
         pendingApproval = null
         pendingApprovalToolName = null
