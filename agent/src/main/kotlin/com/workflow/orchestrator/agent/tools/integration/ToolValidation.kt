@@ -13,7 +13,7 @@ object ToolValidation {
 
     private val JIRA_KEY_PATTERN = Regex("[A-Z][A-Z0-9]+-\\d+")
     private val BAMBOO_PLAN_KEY_PATTERN = Regex("[A-Z][A-Z0-9]+-[A-Z][A-Z0-9]+")
-    private val BAMBOO_BUILD_KEY_PATTERN = Regex("[A-Z][A-Z0-9]+-[A-Z][A-Z0-9]+-\\d+")
+    private val BAMBOO_BUILD_KEY_PATTERN = Regex("[A-Z][A-Z0-9]+-[A-Z][A-Z0-9]+(-[A-Z][A-Z0-9]+)*-\\d+")
 
     fun validateJiraKey(key: String): ToolResult? {
         if (key.isBlank()) {
@@ -40,7 +40,7 @@ object ToolValidation {
             return error("Bamboo build key cannot be empty. Expected format: PROJ-PLAN-123")
         }
         if (!BAMBOO_BUILD_KEY_PATTERN.matches(buildKey)) {
-            return error("Invalid Bamboo build key '$buildKey'. Expected format: PROJ-PLAN-123 (e.g., MYAPP-BUILD-456)")
+            return error("Invalid Bamboo build key '$buildKey'. Expected format: PROJ-PLAN-123 (plan-level) or PROJ-PLAN-JOB-123 (job-level, e.g., MYAPP-BUILD123-BART-6)")
         }
         return null
     }
