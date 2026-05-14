@@ -53,6 +53,9 @@ import kotlin.coroutines.coroutineContext
 class SonarTool : AgentTool {
 
     override val name = "sonar"
+    // local_analysis manages its own process timeout (300–900 s) + CE-task poll.
+    // The outer withTimeoutOrNull must never fire before the tool's own sentinel.
+    override val timeoutMs: Long get() = Long.MAX_VALUE
 
     // ══════════════════════════════════════════════════════════════════════
     // Tool documentation (DSL) — 18 actions

@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef, useEffect, useMemo, lazy, Suspense } from 'react';
+import { memo, useCallback, useRef, useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import type { ToolCall } from '@/bridge/types';
 import { Terminal } from '@/components/ui/tool-ui/terminal';
 import {
@@ -84,6 +84,26 @@ function extractRunCommandTimeoutLabel(toolCall: ToolCall): string | null {
   } catch {
     return formatElapsedSeconds(120);
   }
+}
+
+// ── Live elapsed timer (mounted only while RUNNING) ──
+
+function LiveElapsedTimer({ timeoutLabel }: { timeoutLabel: string | null }) {
+  const startRef = useRef(Date.now());
+  const [elapsedMs, setElapsedMs] = useState(0);
+
+  useEffect(() => {
+    startRef.current = Date.now();
+    setElapsedMs(0);
+    const id = setInterval(() => setElapsedMs(Date.now() - startRef.current), 100);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--accent)]">
+      {formatElapsedMs(elapsedMs)}{timeoutLabel ? ` / ${timeoutLabel}` : ''}
+    </span>
+  );
 }
 
 // ── Status icon ──
@@ -345,33 +365,17 @@ const ToolCallItem = memo(function ToolCallItem({ tc }: { tc: ToolCall }) {
               </span>
             )}
             <span className="flex-1" />
-            {(() => {
-              const timeoutLabel = extractRunCommandTimeoutLabel(tc);
-              if (isRunning) {
-                return (
-                  <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--accent)]">
-                    running{timeoutLabel ? ` / ${timeoutLabel}` : ''}
-                  </span>
-                );
-              }
-              return (
-                <>
-                  {timeoutLabel && (
-                    <span
-                      className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--fg-muted)]"
-                      title="Configured run_command timeout"
-                    >
-                      timeout {timeoutLabel}
-                    </span>
-                  )}
-                  {tc.durationMs != null && (
-                    <span className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--fg-muted)]">
-                      {formatDuration(tc.durationMs)}
-                    </span>
-                  )}
-                </>
-              );
-            })()}
+            {isRunning
+              ? <LiveElapsedTimer timeoutLabel={extractRunCommandTimeoutLabel(tc)} />
+              : tc.durationMs != null && (
+                <span
+                  className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--fg-muted)]"
+                  title={extractRunCommandTimeoutLabel(tc) ? `Limit: ${extractRunCommandTimeoutLabel(tc)}` : undefined}
+                >
+                  {formatDuration(tc.durationMs)}
+                </span>
+              )
+            }
           </span>
         </ChainOfThoughtTrigger>
         <ChainOfThoughtContent>

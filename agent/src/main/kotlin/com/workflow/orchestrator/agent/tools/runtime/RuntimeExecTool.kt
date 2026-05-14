@@ -77,6 +77,8 @@ import kotlin.coroutines.resume
 class RuntimeExecTool : AgentTool {
 
     override val name = "runtime_exec"
+    // run_config and get_test_results manage their own readiness/process timeouts (up to 600 s).
+    override val timeoutMs: Long get() = Long.MAX_VALUE
 
     override val description = """
 Runtime observation and launch — read console output and structured test results from running or recently finished run configurations, and launch/stop existing run configurations.

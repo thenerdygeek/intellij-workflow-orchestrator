@@ -66,6 +66,8 @@ import kotlin.coroutines.resume
 class PythonRuntimeExecTool : AgentTool {
 
     override val name = "python_runtime_exec"
+    // run_tests manages its own pytest process timeout (up to RUN_TESTS_MAX_TIMEOUT = 900 s).
+    override val timeoutMs: Long get() = Long.MAX_VALUE
 
     override val description = """
 Python runtime execution — pytest test running and module byte-compilation.

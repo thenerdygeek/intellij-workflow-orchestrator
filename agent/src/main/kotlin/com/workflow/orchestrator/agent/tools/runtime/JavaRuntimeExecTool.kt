@@ -105,6 +105,8 @@ class JavaRuntimeExecTool : AgentTool {
     )
 
     override val name = "java_runtime_exec"
+    // run_tests manages its own process + test-tree timeout (up to RUN_TESTS_MAX_TIMEOUT = 900 s).
+    override val timeoutMs: Long get() = Long.MAX_VALUE
 
     override val description = """
 Java/Kotlin runtime execution — JUnit/TestNG test running, module compilation, and rerun of failed tests.

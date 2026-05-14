@@ -67,6 +67,8 @@ import kotlin.coroutines.resume
 class CoverageTool : AgentTool {
 
     override val name = "coverage"
+    // run_with_coverage manages its own process timeout (up to MAX_TIMEOUT = 900 s).
+    override val timeoutMs: Long get() = Long.MAX_VALUE
 
     override val description = """
 Run tests with coverage analysis and retrieve rich per-file coverage data.
