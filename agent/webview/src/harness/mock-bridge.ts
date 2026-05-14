@@ -95,7 +95,6 @@ export function installMockBridge(): void {
   };
   w._togglePlanMode = spy('_togglePlanMode');
   w._compactContext = spy('_compactContext');
-  w._toggleRalphLoop = spy('_toggleRalphLoop');
   w._navigateToFile = spy('_navigateToFile');
   w._requestFocusIde = spy('_requestFocusIde');
   w._submitPrompt = spy('_submitPrompt');

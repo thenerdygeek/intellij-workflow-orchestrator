@@ -56,7 +56,7 @@ class AgentCefPanel(
      * Tracks every [JBCefJSQuery] created via [registerQuery] so [dispose] can
      * tear them all down in one pass. This avoids the previous bug where new
      * queries would be added to [createBrowser] but forgotten in [dispose],
-     * leaking native resources (e.g. `toggleRalphLoopQuery`).
+     * leaking native resources.
      */
     private val registeredQueries = mutableListOf<JBCefJSQuery>()
 
@@ -84,7 +84,6 @@ class AgentCefPanel(
     private var requestModelListQuery: JBCefJSQuery? = null
     private var togglePlanModeQuery: JBCefJSQuery? = null
     private var compactContextQuery: JBCefJSQuery? = null
-    private var toggleRalphLoopQuery: JBCefJSQuery? = null
     private var activateSkillQuery: JBCefJSQuery? = null
     private var requestFocusIdeQuery: JBCefJSQuery? = null
     private var openSettingsQuery: JBCefJSQuery? = null
@@ -221,7 +220,6 @@ class AgentCefPanel(
     var onTogglePlanMode: ((Boolean) -> Unit)? = null
     /** Callback when user clicks the Compact button in the TopBar. Param is `force` — true bypasses the 70% utilization floor. */
     var onCompactContext: ((Boolean) -> Unit)? = null
-    var onToggleRalphLoop: ((Boolean) -> Unit)? = null
     var onActivateSkill: ((String) -> Unit)? = null
     var onRequestFocusIde: (() -> Unit)? = null
     var onOpenSettings: (() -> Unit)? = null
@@ -476,7 +474,6 @@ class AgentCefPanel(
         requestModelListQuery = registerQuery(b) { _ -> onRequestModelList?.invoke(); JBCefJSQuery.Response("ok") }
         togglePlanModeQuery = registerQuery(b) { enabled -> onTogglePlanMode?.invoke(enabled == "true"); JBCefJSQuery.Response("ok") }
         compactContextQuery = registerQuery(b) { force -> onCompactContext?.invoke(force == "true"); JBCefJSQuery.Response("ok") }
-        toggleRalphLoopQuery = registerQuery(b) { enabled -> onToggleRalphLoop?.invoke(enabled == "true"); JBCefJSQuery.Response("ok") }
         activateSkillQuery = registerQuery(b) { name -> onActivateSkill?.invoke(name); JBCefJSQuery.Response("ok") }
         requestFocusIdeQuery = registerQuery(b) { _ -> onRequestFocusIde?.invoke(); JBCefJSQuery.Response("ok") }
         openSettingsQuery = registerQuery(b) { _ -> onOpenSettings?.invoke(); JBCefJSQuery.Response("ok") }
@@ -727,7 +724,6 @@ class AgentCefPanel(
                     injectBridge("_requestModelList") { requestModelListQuery?.let { q -> js("window._requestModelList = function() { ${q.inject("'pull'")} }") } }
                     injectBridge("_togglePlanMode") { togglePlanModeQuery?.let { q -> js("window._togglePlanMode = function(enabled) { ${q.inject("String(enabled)")} }") } }
                     injectBridge("_compactContext") { compactContextQuery?.let { q -> js("window._compactContext = function(force) { ${q.inject("String(force)")} }") } }
-                    injectBridge("_toggleRalphLoop") { toggleRalphLoopQuery?.let { q -> js("window._toggleRalphLoop = function(enabled) { ${q.inject("String(enabled)")} }") } }
                     injectBridge("_activateSkill") { activateSkillQuery?.let { q -> js("window._activateSkill = function(name) { ${q.inject("name")} }") } }
                     injectBridge("_requestFocusIde") { requestFocusIdeQuery?.let { q -> js("window._requestFocusIde = function() { ${q.inject("'focus'")} }") } }
                     injectBridge("_openSettings") { openSettingsQuery?.let { q -> js("window._openSettings = function() { ${q.inject("'settings'")} }") } }
@@ -1144,10 +1140,6 @@ class AgentCefPanel(
 
     fun setPlanMode(enabled: Boolean) {
         callJs("setPlanMode(${if (enabled) "true" else "false"})")
-    }
-
-    fun setRalphLoop(enabled: Boolean) {
-        callJs("setRalphLoop(${if (enabled) "true" else "false"})")
     }
 
     // ── Sub-Agent boundary card bridge methods ──
@@ -1648,7 +1640,7 @@ class AgentCefPanel(
         bridgeDispatcher?.dispose()
         // Tear down every JBCefJSQuery created via registerQuery in one pass.
         // This automatically covers any new bridges added later — no risk of
-        // forgetting one in dispose() (the previous toggleRalphLoopQuery leak).
+        // forgetting one in dispose().
         registeredQueries.forEach {
             try {
                 it.dispose()

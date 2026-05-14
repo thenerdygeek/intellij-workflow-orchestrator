@@ -200,7 +200,6 @@ interface ChatState {
     /** When set, the active model is the result of an automatic fallback (e.g. network error → cheaper model). The string is the human-readable reason shown in the chip's tooltip. null = primary model. */
     modelFallbackReason: string | null;
     mode: 'agent' | 'plan';
-    ralph: boolean;
   };
   busy: boolean;
   /**
@@ -325,7 +324,6 @@ interface ChatState {
   skipQuestion(qid: string): void;
   setInputLocked(locked: boolean): void;
   setInputMode(mode: 'agent' | 'plan'): void;
-  setRalphLoop(enabled: boolean): void;
   setBusy(busy: boolean): void;
   setCompactionState(active: boolean, phase: string): void;
   insertCompactionMarker(payload: {
@@ -450,7 +448,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     model: '',
     modelFallbackReason: null,
     mode: 'agent',
-    ralph: false,
   },
   busy: false,
   compactionState: { active: false, phase: '' },
@@ -1121,12 +1118,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setInputMode(mode: 'agent' | 'plan') {
     set(state => ({
       inputState: { ...state.inputState, mode },
-    }));
-  },
-
-  setRalphLoop(enabled: boolean) {
-    set(state => ({
-      inputState: { ...state.inputState, ralph: enabled },
     }));
   },
 

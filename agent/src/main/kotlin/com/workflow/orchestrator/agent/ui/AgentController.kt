@@ -480,7 +480,6 @@ class AgentController(
             onSendMessage = ::executeTask,
             onChangeModel = ::changeModel,
             onTogglePlanMode = ::togglePlanMode,
-            onToggleRalphLoop = { /* Ralph loop not wired in lean rewrite */ },
             onActivateSkill = { skillName -> executeTask("/skill $skillName") },
             onRequestFocusIde = { /* No-op: focus returns to IDE naturally */ },
             onOpenSettings = ::openSettings,
@@ -2421,7 +2420,6 @@ class AgentController(
         dashboard.setBusy(false)                                   // Stop spinner
         dashboard.setInputLocked(false)                            // Unlock input bar
         dashboard.setPlanMode(false)                                // Exit plan mode in UI
-        dashboard.setRalphLoop(false)                              // Exit ralph loop mode
         dashboard.setSteeringMode(false)                           // Exit steering mode
         dashboard.updateCheckpoints("[]")                          // Clear checkpoint timeline
         dashboard.updateEditStats(0, 0, 0)                    // Reset edit counters
