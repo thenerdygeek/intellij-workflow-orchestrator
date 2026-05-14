@@ -989,6 +989,7 @@ class AgentController(
         dashboard.setCefSkillCallbacks(onDismiss = {
             LOG.info("AgentController: skill dismissed by user")
             contextManager?.clearActiveSkill()
+            dashboard.hideSkillBanner()
         })
 
         // Kill sub-agent — user clicks the kill button on a running sub-agent card

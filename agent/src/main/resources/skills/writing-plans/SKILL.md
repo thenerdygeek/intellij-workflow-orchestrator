@@ -210,7 +210,7 @@ If you find issues, fix them inline. No need to re-review — just fix and move 
 
 ## Execution Handoff
 
-After the user approves the plan, the session switches back to act mode. You receive an approval message containing the task checklist. Use `ask_followup_question` to offer the execution choice:
+After the user approves the plan, the session switches back to act mode. You will receive an approval message (it may say "The user has approved the plan" — context may or may not have been cleared). **Before creating any tasks or writing any code**, use `ask_followup_question` to offer the execution choice:
 
 ```
 ask_followup_question(
