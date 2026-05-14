@@ -40,9 +40,6 @@ object ServiceLookup {
     )
 }
 
-/** Max chars for raw string data (build logs, diffs, file content). */
-private const val MAX_DATA_STRING_CHARS = 10_000
-
 /** Max list items to render before truncating. */
 private const val MAX_LIST_ITEMS = 50
 
@@ -67,12 +64,12 @@ fun <T> com.workflow.orchestrator.core.services.ToolResult<T>.toAgentToolResult(
         when {
             dataVal == null || dataVal == Unit -> { /* summary is sufficient */ }
             dataVal is String -> {
-                // Raw string data (build logs, diffs, file content) — cap at 10K chars
-                if (dataVal.length > MAX_DATA_STRING_CHARS) {
-                    append("\n\n")
-                    append(dataVal.take(MAX_DATA_STRING_CHARS))
-                    append("\n\n[TRUNCATED — ${dataVal.length} total chars, showing first $MAX_DATA_STRING_CHARS]")
-                } else if (dataVal != summary && dataVal.isNotBlank()) {
+                // Pass the full string through — AgentLoop's grep/spill/truncation pipeline
+                // manages size (30K auto-spill, 50K hard cap, output_file=true explicit spill).
+                // An early cap here would silently truncate content before grep_pattern or
+                // output_file=true can operate on it, producing empty grep results and
+                // missing file paths on large build logs.
+                if (dataVal != summary && dataVal.isNotBlank()) {
                     append("\n\n")
                     append(dataVal)
                 }
@@ -95,13 +92,7 @@ fun <T> com.workflow.orchestrator.core.services.ToolResult<T>.toAgentToolResult(
                 if (dataStr != summary && dataStr.isNotBlank() &&
                     !dataStr.startsWith(dataVal::class.java.name)) {
                     append("\n\n")
-                    // Cap non-list structured data at 10K
-                    if (dataStr.length > MAX_DATA_STRING_CHARS) {
-                        append(dataStr.take(MAX_DATA_STRING_CHARS))
-                        append("\n[TRUNCATED]")
-                    } else {
-                        append(dataStr)
-                    }
+                    append(dataStr)
                 }
             }
         }
