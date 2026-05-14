@@ -205,18 +205,18 @@ class AgentDebugController internal constructor(
      * Gets stack frames from the current execution stack, wrapping the callback-based
      * XExecutionStack.computeStackFrames() API.
      */
-    suspend fun getStackFrames(session: XDebugSession, maxFrames: Int = 20): List<FrameInfo> {
+    suspend fun getStackFrames(session: XDebugSession, maxFrames: Int = 20): List<FrameInfo>? {
         val stack = session.currentStackFrame?.let {
-            // Get the execution stack from the suspend context
             session.suspendContext?.activeExecutionStack
         } ?: return emptyList()
 
-        return suspendCancellableCoroutine { cont ->
+        return awaitCallback<List<FrameInfo>>(GET_STACK_FRAMES_TIMEOUT_MS) { stopped, resume, _ ->
             val frames = mutableListOf<FrameInfo>()
             var index = 0
 
             stack.computeStackFrames(0, object : XExecutionStack.XStackFrameContainer {
                 override fun addStackFrames(frameList: List<XStackFrame>, last: Boolean) {
+                    if (stopped.get()) return
                     for (frame in frameList) {
                         if (index >= maxFrames) break
                         val pos = frame.sourcePosition
@@ -231,12 +231,13 @@ class AgentDebugController internal constructor(
                         )
                     }
                     if (last || index >= maxFrames) {
-                        cont.resume(frames)
+                        resume(frames)
                     }
                 }
 
                 override fun errorOccurred(errorMessage: String) {
-                    cont.resume(frames) // Return what we have
+                    if (stopped.get()) return
+                    resume(frames)
                 }
 
                 override fun isObsolete(): Boolean = false
@@ -254,20 +255,24 @@ class AgentDebugController internal constructor(
             session.suspendContext?.activeExecutionStack
         } ?: return emptyList()
 
-        return suspendCancellableCoroutine { cont ->
+        return awaitCallback<List<XStackFrame>>(GET_STACK_FRAMES_TIMEOUT_MS) { stopped, resume, _ ->
             val frames = mutableListOf<XStackFrame>()
             stack.computeStackFrames(0, object : XExecutionStack.XStackFrameContainer {
                 override fun addStackFrames(frameList: List<XStackFrame>, last: Boolean) {
+                    if (stopped.get()) return
                     for (f in frameList) {
                         if (frames.size >= maxFrames) break
                         frames += f
                     }
-                    if (last || frames.size >= maxFrames) cont.resume(frames.toList())
+                    if (last || frames.size >= maxFrames) resume(frames.toList())
                 }
-                override fun errorOccurred(errorMessage: String) { cont.resume(frames.toList()) }
+                override fun errorOccurred(errorMessage: String) {
+                    if (stopped.get()) return
+                    resume(frames.toList())
+                }
                 override fun isObsolete(): Boolean = false
             })
-        }
+        } ?: emptyList()
     }
 
     /**
@@ -450,7 +455,26 @@ class AgentDebugController internal constructor(
                     hasChildren: Boolean
                 ) {
                     if (stopped.get()) return
-                    resume(Pair(presentation.type ?: "unknown", presentation.toString()))
+                    // XValuePresentation carries the rendered text inside renderValue(), not toString().
+                    // JavaValuePresentation (and other rich presentations) always use this overload;
+                    // calling toString() returns the object identity string (ClassName@hashcode).
+                    val sb = StringBuilder()
+                    // All 9 methods are abstract in IntelliJ Platform 2025.3+ (no default impls).
+                    presentation.renderValue(object : XValuePresentation.XValueTextRenderer {
+                        override fun renderValue(value: String) { sb.append(value) }
+                        override fun renderStringValue(value: String) { sb.append('"').append(value).append('"') }
+                        override fun renderStringValue(value: String, additionalSpecialCharsToHighlight: String?, maxLength: Int) {
+                            val display = if (maxLength in 1 until value.length) value.take(maxLength) + "…" else value
+                            sb.append('"').append(display).append('"')
+                        }
+                        override fun renderNumericValue(value: String) { sb.append(value) }
+                        override fun renderKeywordValue(value: String) { sb.append(value) }
+                        override fun renderValue(value: String, textAttributesKey: com.intellij.openapi.editor.colors.TextAttributesKey) { sb.append(value) }
+                        override fun renderComment(value: String) {}
+                        override fun renderSpecialSymbol(symbol: String) { sb.append(symbol) }
+                        override fun renderError(error: String) { sb.append("<error: ").append(error).append('>') }
+                    })
+                    resume(Pair(presentation.type ?: "unknown", sb.toString()))
                 }
 
                 override fun setFullValueEvaluator(fullValueEvaluator: XFullValueEvaluator) {}
@@ -686,6 +710,7 @@ class AgentDebugController internal constructor(
     companion object {
         const val MAX_VARIABLE_CHARS = 3000
         const val MAX_CHILDREN_PER_LEVEL = 10
+        const val GET_STACK_FRAMES_TIMEOUT_MS = 15_000L
     }
 }
 

@@ -639,6 +639,63 @@ class AgentDebugControllerTest {
         )
     }
 
+    @Test
+    fun `evaluate renders XValuePresentation via renderValue not toString`() = runTest {
+        // Bug: setPresentation(icon, XValuePresentation, hasChildren) called presentation.toString()
+        // which gives ClassName@hashcode. Fix: call presentation.renderValue(renderer) instead.
+        val evaluator = mockk<XDebuggerEvaluator>(relaxed = true)
+        val frame = mockk<XStackFrame>(relaxed = true) {
+            every { getEvaluator() } returns evaluator
+        }
+        val session = mockk<XDebugSession>(relaxed = true) {
+            every { currentStackFrame } returns frame
+        }
+        val xValue = mockk<XValue>(relaxed = true)
+
+        every { evaluator.evaluate(any<String>(), any(), any()) } answers {
+            arg<XDebuggerEvaluator.XEvaluationCallback>(1).evaluated(xValue)
+        }
+        // Simulate JavaValuePresentation behaviour: fires the rich overload and renders via renderValue()
+        every { xValue.computePresentation(any(), any<XValuePlace>()) } answers {
+            val node = arg<XValueNode>(0)
+            val presentation = object : com.intellij.xdebugger.frame.presentation.XValuePresentation() {
+                override fun getType() = "ArrayList"
+                override fun renderValue(renderer: com.intellij.xdebugger.frame.presentation.XValuePresentation.XValueTextRenderer) {
+                    renderer.renderValue("[ element0, element1 ]")
+                }
+            }
+            node.setPresentation(null, presentation, true)
+        }
+
+        controller.registerSession(session)
+        val result = controller.evaluate(session, "myList")
+
+        assertFalse(result.isError, "Should not be an error: ${result.result}")
+        assertEquals("[ element0, element1 ]", result.result,
+            "Expected rendered value, not presentation.toString() object identity string")
+        assertEquals("ArrayList", result.type)
+    }
+
+    @Test
+    fun `getStackFrames returns null when computeStackFrames never completes`() = runTest {
+        val stack = mockk<XExecutionStack>(relaxed = true)
+        val context = mockk<XSuspendContext>(relaxed = true) {
+            every { activeExecutionStack } returns stack
+        }
+        val frame = mockk<XStackFrame>(relaxed = true)
+        val session = mockk<XDebugSession>(relaxed = true) {
+            every { currentStackFrame } returns frame
+            every { suspendContext } returns context
+        }
+        // computeStackFrames never fires addStackFrames — simulates a hung JDI call
+        every { stack.computeStackFrames(0, any()) } just Runs
+
+        // Should time out and return null rather than hanging indefinitely
+        val result = controller.getStackFrames(session, maxFrames = 5)
+
+        assertNull(result, "Expected null on timeout, not a hung coroutine")
+    }
+
     // --- Helper ---
 
     private fun createMockSession(isSuspended: Boolean = false): XDebugSession {

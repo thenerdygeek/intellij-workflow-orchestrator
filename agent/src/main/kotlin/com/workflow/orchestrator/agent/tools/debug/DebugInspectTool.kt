@@ -1051,6 +1051,14 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
 
         return try {
             val frames = controller.getStackFrames(session, maxFrames)
+                ?: return ToolResult(
+                    "Stack frame retrieval timed out after ${AgentDebugController.GET_STACK_FRAMES_TIMEOUT_MS / 1000}s. " +
+                        "The debugger may be in an inconsistent state. " +
+                        "Try debug_step(action=get_state) to verify the session is still suspended.",
+                    "Timed out",
+                    ToolResult.ERROR_TOKEN_ESTIMATE,
+                    isError = true
+                )
 
             if (frames.isEmpty()) {
                 return ToolResult("No stack frames available.", "No frames", ToolResult.ERROR_TOKEN_ESTIMATE)
