@@ -902,6 +902,12 @@ class AgentService(
         // Local IDE build/import problems — distinct from remote CI (bamboo_*) builds.
         safeRegisterCore { BuildProblemsTool() }
 
+        // Feedback tool — only registered when the feature is enabled so its schema
+        // never reaches the LLM (and costs tokens) when the setting is off.
+        if (AgentSettings.getInstance(project).state.agentFeedbackEnabled) {
+            safeRegisterCore { FeedbackTool(project.name) }
+        }
+
         // tool_search itself is core (the LLM needs it to discover deferred tools)
         safeRegisterCore { ToolSearchTool(registry) }
 
@@ -2052,6 +2058,7 @@ class AgentService(
                     // resolving via :core/AttachmentSink see the SAME store
                     // BrainRouter routes through.
                     attachmentStoreProvider = { activeAttachmentStore },
+                    feedbackEnabled = agentSettings.state.agentFeedbackEnabled,
                 )
 
                 // I4: Set activeTask atomically after both loop and job are available

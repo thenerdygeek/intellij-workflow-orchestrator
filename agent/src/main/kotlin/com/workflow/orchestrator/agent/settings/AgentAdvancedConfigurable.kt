@@ -134,6 +134,19 @@ class AgentAdvancedConfigurable(
                 }
             }
 
+            group("Tool Feedback") {
+                row {
+                    checkBox("Enable tool feedback collection after task completion")
+                        .bindSelected(agentSettings.state::agentFeedbackEnabled)
+                        .comment(
+                            "When enabled, the agent is asked to use the <code>feedback</code> tool " +
+                            "immediately after completing a task. It reports any tools that misbehaved, " +
+                            "had confusing parameters, or returned unexpected results. " +
+                            "Feedback is appended to <code>~/.workflow-orchestrator/feedback.md</code>."
+                        )
+                }
+            }
+
             group("Background processes") {
                 row("Concurrent processes per session:") {
                     intTextField(1..20)

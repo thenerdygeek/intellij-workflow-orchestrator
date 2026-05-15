@@ -66,6 +66,14 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         /** When true, skip the confirmation dialog before killing background processes
          *  on session transition. */
         var suppressBackgroundKillConfirmation by property(false)
+
+        /**
+         * When true, the agent is asked to call the `feedback` tool immediately after
+         * [AttemptCompletionTool]. The tool collects information about tools that
+         * misbehaved, had confusing parameters, or produced unexpected results.
+         * Feedback is appended to ~/.workflow-orchestrator/feedback.md.
+         */
+        var agentFeedbackEnabled by property(false)
     }
 
     companion object {

@@ -441,6 +441,14 @@ class AgentLoop(
      * content-addressed store.
      */
     private val attachmentStoreProvider: () -> AttachmentStore? = { null },
+    /**
+     * When true, the loop does not exit immediately on [AttemptCompletionTool].
+     * Instead it injects a single user message asking the LLM to call the `feedback`
+     * tool, then exits as [LoopResult.Completed] once feedback has been submitted
+     * (or if the LLM skips it). The `feedback` tool must also be registered in the
+     * active tool set (done by [AgentService] when [AgentSettings.agentFeedbackEnabled]).
+     */
+    private val feedbackEnabled: Boolean = false,
 ) {
     private val cancelled = AtomicBoolean(false)
     private var totalTokensUsed = 0
@@ -464,6 +472,14 @@ class AgentLoop(
 
     /** Loop detector: tracks repeated identical tool calls (from Cline). */
     private val loopDetector = LoopDetector()
+
+    // ── Feedback flow state ───────────────────────────────────────────────
+    // When feedbackEnabled=true: after attempt_completion the loop does NOT
+    // return immediately. It stores the pending result here, injects a message
+    // asking the LLM to call `feedback`, then returns pendingCompletion once
+    // the feedback tool fires (or the loop exits by other means).
+    private var awaitingFeedback = false
+    private var pendingCompletion: LoopResult.Completed? = null
 
     // Session-scoped approval is handled by the injected sessionApprovalStore
     // (lives at the session level, persists across loop runs within the same session).
@@ -2078,28 +2094,56 @@ class AgentLoop(
                     onDebugLog?.invoke("info", "loop_exit", "Exit: $toolName", mapOf("iteration" to iteration))
                     toolResult.completionData?.let { sessionMetrics?.recordCompletion(it.kind) }
                     sessionMetrics?.recordIterationEnd()
-                    // Collapse the just-persisted [assistant w/ completion tool_call,
-                    // tool_result] pair into a single plain assistant text turn. Without
-                    // this, the next user turn (typed message or `next_step` hint accept)
-                    // gets merged with the prior tool result via sanitizeMessages's
-                    // tool→user conversion + same-role merging — the LLM sees "TOOL
-                    // RESULT: <prior summary>\n\n<user prompt>" and re-issues
-                    // attempt_completion. Resume of the session also auto-iterates on
-                    // the dangling tool result. Both bugs disappear once the trailing
-                    // pair becomes a single plain assistant turn.
-                    contextManager.collapseLastCompletionToolPair()
-                    messageStateHandler?.collapseLastCompletionToolPair()
-                    return LoopResult.Completed(
-                        summary = toolResult.content,
-                        iterations = iteration,
-                        tokensUsed = totalTokensUsed,
-                        completionData = toolResult.completionData,
-                        inputTokens = totalInputTokens,
-                        outputTokens = totalOutputTokens,
-                        filesModified = filesModifiedList(),
-                        linesAdded = totalLinesAdded,
-                        linesRemoved = totalLinesRemoved
-                    )
+
+                    if (feedbackEnabled && !awaitingFeedback) {
+                        // Collapse now so the attempt_completion pair doesn't dangle
+                        // in history while the feedback turn runs.
+                        contextManager.collapseLastCompletionToolPair()
+                        messageStateHandler?.collapseLastCompletionToolPair()
+                        // Save result for after feedback is submitted.
+                        pendingCompletion = LoopResult.Completed(
+                            summary = toolResult.content,
+                            iterations = iteration,
+                            tokensUsed = totalTokensUsed,
+                            completionData = toolResult.completionData,
+                            inputTokens = totalInputTokens,
+                            outputTokens = totalOutputTokens,
+                            filesModified = filesModifiedList(),
+                            linesAdded = totalLinesAdded,
+                            linesRemoved = totalLinesRemoved
+                        )
+                        awaitingFeedback = true
+                        contextManager.addUserMessage(
+                            "Use the `feedback` tool to share any feedback about the tools you used during this task. " +
+                            "Report tools that did not work as expected, had confusing or contradictory parameters, " +
+                            "returned incorrect results, or failed unexpectedly. " +
+                            "If you have no feedback, call it with an empty string."
+                        )
+                        // Loop continues — LLM sees the feedback request next turn.
+                    } else {
+                        // Collapse the just-persisted [assistant w/ completion tool_call,
+                        // tool_result] pair into a single plain assistant text turn. Without
+                        // this, the next user turn (typed message or `next_step` hint accept)
+                        // gets merged with the prior tool result via sanitizeMessages's
+                        // tool→user conversion + same-role merging — the LLM sees "TOOL
+                        // RESULT: <prior summary>\n\n<user prompt>" and re-issues
+                        // attempt_completion. Resume of the session also auto-iterates on
+                        // the dangling tool result. Both bugs disappear once the trailing
+                        // pair becomes a single plain assistant turn.
+                        contextManager.collapseLastCompletionToolPair()
+                        messageStateHandler?.collapseLastCompletionToolPair()
+                        return LoopResult.Completed(
+                            summary = toolResult.content,
+                            iterations = iteration,
+                            tokensUsed = totalTokensUsed,
+                            completionData = toolResult.completionData,
+                            inputTokens = totalInputTokens,
+                            outputTokens = totalOutputTokens,
+                            filesModified = filesModifiedList(),
+                            linesAdded = totalLinesAdded,
+                            linesRemoved = totalLinesRemoved
+                        )
+                    }
                 }
                 is ToolResultType.SessionHandoff -> {
                     val handoff = toolResult.type
@@ -2147,7 +2191,12 @@ class AgentLoop(
                     contextManager.setActiveSkill(activation.skillContent)
                 }
                 is ToolResultType.Standard, is ToolResultType.Error -> {
-                    // Normal result — no special dispatch
+                    // Feedback gate: if the LLM called `feedback` in response to our
+                    // post-completion prompt, return the saved pending completion now.
+                    if (awaitingFeedback && toolName == "feedback") {
+                        awaitingFeedback = false
+                        return pendingCompletion!!
+                    }
                 }
             }
         }
