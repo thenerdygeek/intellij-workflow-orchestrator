@@ -35,12 +35,9 @@ class AskQuestionsEnrichmentTest {
     private val project = mockk<com.intellij.openapi.project.Project>(relaxed = true)
     private val lenientJson = Json { ignoreUnknownKeys = true }
 
-    @AfterEach
-    fun cleanup() {
-        AskQuestionsTool.showSimpleQuestionCallback = null
-        AskQuestionsTool.showQuestionsCallback = null
-        AskQuestionsTool.pendingQuestions = null
-    }
+    // cleanup is no longer needed — each test creates its own AskQuestionsTool instance
+    // and fields are instance-level (not companion/static). Instances are GC'd after
+    // each test; no cross-test state leakage is possible.
 
     // ── Exact replicas of the enrichment helpers in AgentController ──────────────
     // Kept in sync deliberately — a mismatch here means the controller changed and
@@ -323,7 +320,7 @@ class AskQuestionsEnrichmentTest {
             val resolved = CompletableDeferred<String>()
 
             // Simulate AgentController's simple-mode wiring
-            AskQuestionsTool.showSimpleQuestionCallback = { question, optionsJson ->
+            tool.showSimpleQuestionCallback = { question, optionsJson ->
                 val options = if (!optionsJson.isNullOrBlank()) {
                     try { lenientJson.decodeFromString<List<String>>(optionsJson) }
                     catch (_: Exception) { emptyList() }
@@ -337,7 +334,7 @@ class AskQuestionsEnrichmentTest {
                     val collectedAnswers = mapOf("q1" to """["o1"]""")
                     val enriched = buildEnrichedPayload(live, collectedAnswers)
 
-                    AskQuestionsTool.resolveQuestions(enriched)
+                    tool.resolveQuestions(enriched)
                     resolved.complete(enriched)
                 }
             }
@@ -386,7 +383,7 @@ class AskQuestionsEnrichmentTest {
             val resolved = CompletableDeferred<String>()
 
             // Simulate AgentController's wizard-mode wiring
-            AskQuestionsTool.showQuestionsCallback = { questionsJson ->
+            tool.showQuestionsCallback = { questionsJson ->
                 val live = parseWizardLiveQuestions(questionsJson)!!
 
                 // Simulate user answering q1 -> o1 (PostgreSQL), q2 -> o2 (TypeORM)
@@ -396,7 +393,7 @@ class AskQuestionsEnrichmentTest {
                 )
                 val enriched = buildEnrichedPayload(live, collectedAnswers)
 
-                AskQuestionsTool.resolveQuestions(enriched)
+                tool.resolveQuestions(enriched)
                 resolved.complete(enriched)
             }
 
@@ -471,7 +468,7 @@ class AskQuestionsEnrichmentTest {
         fun `simple mode ToolResult content has question and answer tags with resolved label not raw id`() = runTest {
             val tool = AskQuestionsTool()
 
-            AskQuestionsTool.showSimpleQuestionCallback = { question, optionsJson ->
+            tool.showSimpleQuestionCallback = { question, optionsJson ->
                 val options = try {
                     if (!optionsJson.isNullOrBlank()) lenientJson.decodeFromString<List<String>>(optionsJson)
                     else emptyList()
@@ -481,7 +478,7 @@ class AskQuestionsEnrichmentTest {
                     val wizardJson = buildSimpleWizardJson(question, options)
                     val live = parseSimpleLiveQuestions(wizardJson)!!
                     val enriched = buildEnrichedPayload(live, mapOf("q1" to """["o1"]"""))
-                    AskQuestionsTool.resolveQuestions(enriched)
+                    tool.resolveQuestions(enriched)
                 }
             }
 
@@ -533,13 +530,13 @@ class AskQuestionsEnrichmentTest {
                 ]}
             ]"""
 
-            AskQuestionsTool.showQuestionsCallback = { questionsJson ->
+            tool.showQuestionsCallback = { questionsJson ->
                 val live = parseWizardLiveQuestions(questionsJson)!!
                 val enriched = buildEnrichedPayload(live, mapOf(
                     "q1" to """["o1"]""",
                     "q2" to """["o2"]"""
                 ))
-                AskQuestionsTool.resolveQuestions(enriched)
+                tool.resolveQuestions(enriched)
             }
 
             val result = tool.execute(

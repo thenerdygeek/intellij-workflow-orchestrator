@@ -15,9 +15,46 @@ class AskQuestionsToolTest {
 
     @AfterEach
     fun cleanup() {
-        AskQuestionsTool.showSimpleQuestionCallback = null
-        AskQuestionsTool.showQuestionsCallback = null
-        AskQuestionsTool.pendingQuestions = null
+        tool.showSimpleQuestionCallback = null
+        tool.showQuestionsCallback = null
+        tool.pendingQuestions = null
+    }
+
+    @Test
+    fun `tool state is isolated between instances to prevent cross-IDE routing bugs`() {
+        // Arrange
+        val tool1 = AskQuestionsTool()
+        val tool2 = AskQuestionsTool()
+
+        var callback1Fired = false
+        var callback2Fired = false
+
+        // Act
+        tool1.showSimpleQuestionCallback = { _, _ -> callback1Fired = true }
+        tool2.showSimpleQuestionCallback = { _, _ -> callback2Fired = true }
+
+        // Assert - Callbacks shouldn't overwrite each other
+        tool1.showSimpleQuestionCallback?.invoke("Q1", null)
+        assertTrue(callback1Fired)
+        assertFalse(callback2Fired)
+
+        callback1Fired = false
+        tool2.showSimpleQuestionCallback?.invoke("Q2", null)
+        assertFalse(callback1Fired)
+        assertTrue(callback2Fired)
+
+        // Assert - pendingQuestions shouldn't overwrite each other
+        tool1.pendingQuestions = kotlinx.coroutines.CompletableDeferred()
+        tool2.pendingQuestions = kotlinx.coroutines.CompletableDeferred()
+
+        assertNotSame(tool1.pendingQuestions, tool2.pendingQuestions, 
+            "Pending questions deferred must be isolated between instances")
+
+        // Assert - UI render status isolated
+        tool1.uiRenderConfirmed = true
+        tool2.uiRenderConfirmed = false
+        assertTrue(tool1.uiRenderConfirmed)
+        assertFalse(tool2.uiRenderConfirmed)
     }
 
     @Test
@@ -136,7 +173,7 @@ class AskQuestionsToolTest {
             var receivedQuestion: String? = null
             var receivedOptions: String? = null
 
-            AskQuestionsTool.showSimpleQuestionCallback = { q, opts ->
+            tool.showSimpleQuestionCallback = { q, opts ->
                 receivedQuestion = q
                 receivedOptions = opts
             }
@@ -160,11 +197,11 @@ class AskQuestionsToolTest {
                 "Options should be null when not provided")
 
             // The pending deferred should be set (tool is blocking)
-            assertNotNull(AskQuestionsTool.pendingQuestions,
+            assertNotNull(tool.pendingQuestions,
                 "pendingQuestions should be set while waiting for answer")
 
             // Resolve to let the coroutine complete
-            AskQuestionsTool.pendingQuestions?.complete("user answer")
+            tool.pendingQuestions?.complete("user answer")
             job.join()
         }
 
@@ -173,7 +210,7 @@ class AskQuestionsToolTest {
             var receivedQuestion: String? = null
             var receivedOptions: String? = null
 
-            AskQuestionsTool.showSimpleQuestionCallback = { q, opts ->
+            tool.showSimpleQuestionCallback = { q, opts ->
                 receivedQuestion = q
                 receivedOptions = opts
             }
@@ -193,7 +230,7 @@ class AskQuestionsToolTest {
             // Empty string options are normalized to null (no options = plain text mode)
             assertNull(receivedOptions)
 
-            AskQuestionsTool.pendingQuestions?.complete("answer")
+            tool.pendingQuestions?.complete("answer")
             job.join()
         }
     }

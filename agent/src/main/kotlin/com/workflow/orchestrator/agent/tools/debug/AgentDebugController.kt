@@ -21,6 +21,7 @@ import com.intellij.debugger.jdi.VirtualMachineProxyImpl
 import com.workflow.orchestrator.agent.AgentService
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import org.jetbrains.annotations.VisibleForTesting
@@ -357,7 +358,13 @@ class AgentDebugController internal constructor(
                     if (stopped.get()) return
                     for (i in 0 until children.size()) {
                         if (result.size >= MAX_CHILDREN_PER_LEVEL) break
-                        names.add(children.getName(i))
+                        val childName = children.getName(i)
+                        // Skip CGLIB/Spring-AOP proxy synthetic fields — they add noise
+                        // (CGLIB$BOUND, CGLIB$THREAD_CALLBACKS, $$EnhancerBy...) without
+                        // carrying application state.
+                        if (childName.startsWith("CGLIB\$") || childName.startsWith("\$\$EnhancerBy") ||
+                            childName.startsWith("\$\$FastClassBy")) continue
+                        names.add(childName)
                         result.add(children.getValue(i))
                     }
                     if (last || result.size >= MAX_CHILDREN_PER_LEVEL) {
@@ -437,7 +444,11 @@ class AgentDebugController internal constructor(
     }
 
     private suspend fun resolvePresentation(value: XValue): Pair<String, String> {
-        return awaitCallback<Pair<String, String>>(5000L) { stopped, resume, _ ->
+        // JavaValue.computePresentation() may call setPresentation twice for complex objects:
+        // first with "Collecting data…" (async toString to JVM pending), then with the real
+        // value. awaitCallback fires on the first callback, capturing the placeholder.
+        // Retry up to 3 times with back-off so the JVM evaluation can settle.
+        suspend fun computeOnce(): Pair<String, String>? = awaitCallback<Pair<String, String>>(5000L) { stopped, resume, _ ->
             value.computePresentation(object : XValueNode {
                 override fun setPresentation(
                     icon: Icon?,
@@ -481,7 +492,14 @@ class AgentDebugController internal constructor(
 
                 override fun isObsolete(): Boolean = false
             }, XValuePlace.TREE)
-        } ?: Pair("unknown", "<timed out>")
+        }
+
+        for (retryDelay in listOf(0L, 300L, 600L)) {
+            if (retryDelay > 0L) delay(retryDelay)
+            val result = computeOnce() ?: return Pair("unknown", "<timed out>")
+            if (!result.second.startsWith("Collecting data")) return result
+        }
+        return Pair("unknown", "Collecting data… (value not ready after retries — try evaluate again)")
     }
 
     /**

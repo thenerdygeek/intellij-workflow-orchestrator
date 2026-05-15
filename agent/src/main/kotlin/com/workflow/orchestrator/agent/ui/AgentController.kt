@@ -79,6 +79,18 @@ class AgentController(
     }
 
     private val service = AgentService.getInstance(project)
+
+    /**
+     * Per-project [AskQuestionsTool] instance — resolved lazily from the [ToolRegistry]
+     * so each IDE window's AgentController wires callbacks to its OWN tool instance.
+     * This is the fix for the cross-IDE question routing bug: when fields lived on the
+     * companion object, the last controller to initialise would overwrite all other
+     * windows' callbacks.
+     */
+    private val askQuestionsTool: com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool by lazy {
+        service.registry.get("ask_followup_question") as com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool
+    }
+
     private var contextManager: ContextManager? = null
     /** Session-scoped approval store. Created on first message, cleared on newChat. */
     private val sessionApprovalStore = SessionApprovalStore()
@@ -770,7 +782,7 @@ class AgentController(
         // Simple mode: show question in chat stream, user types answer via chat input.
         // The tool blocks on pendingQuestions deferred. When the user sends a message,
         // executeTask() intercepts it and resolves the deferred directly.
-        com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.showSimpleQuestionCallback = { question, optionsJson ->
+        askQuestionsTool.showSimpleQuestionCallback = { question, optionsJson ->
             LOG.info("ask_followup_question: callback fired (question=${question.take(80)}, hasOptions=${!optionsJson.isNullOrBlank()})")
             // Drain stream batcher before UI flush so buffered tokens appear before the question
             flushStream()
@@ -845,7 +857,7 @@ class AgentController(
                         // 10s watchdog fires [UI_RENDER_FAILED] even though the user
                         // sees the question fine. The streaming-token path doesn't
                         // fail silently, so confirming inline is safe.
-                        com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.uiRenderConfirmed = true
+                        askQuestionsTool.uiRenderConfirmed = true
                     }
                     dashboard.focusInput()
                 } catch (e: Exception) {
@@ -860,13 +872,13 @@ class AgentController(
                     // Same reason as the no-options branch above — the streaming-token
                     // path bypasses showQuestions, so the watchdog never sees the
                     // _reportInteractiveRender confirmation otherwise.
-                    com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.uiRenderConfirmed = true
+                    askQuestionsTool.uiRenderConfirmed = true
                     dashboard.focusInput()
                 }
             }
         }
         // Wizard mode: structured multi-question UI
-        com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.showQuestionsCallback = { questionsJson ->
+        askQuestionsTool.showQuestionsCallback = { questionsJson ->
             LOG.info("ask_questions: wizard callback fired (json=${questionsJson.length} chars)")
             // Cache question metadata BEFORE the invokeLater dispatch. This write happens-before
             // AWT's event queue enqueue (JMM §17.4.5), so onSubmitted — which runs on the EDT —
@@ -929,7 +941,7 @@ class AgentController(
                             "\"$qid\":$opts"
                         }
                     }
-                    com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.resolveQuestions(enrichedPayload)
+                    askQuestionsTool.resolveQuestions(enrichedPayload)
                 }
                 liveQuestions = null
                 collectedAnswers.clear()
@@ -948,7 +960,7 @@ class AgentController(
                     executeTask("The user is still reviewing the plan. Continue in plan mode.")
                 } else {
                     dashboard.setBusy(true)
-                    com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.cancelQuestions()
+                    askQuestionsTool.cancelQuestions()
                     collectedAnswers.clear()
                     skippedQuestionIds.clear()
                 }
@@ -1577,7 +1589,7 @@ class AgentController(
         }
 
         // If a simple question is pending (ask_followup_question), resolve it with user's answer
-        val pending = com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.pendingQuestions
+        val pending = askQuestionsTool.pendingQuestions
         if (pending != null && !pending.isCompleted && currentJob?.isActive == true) {
             LOG.info("AgentController: resolving pending question with user answer — setting busy=true, steeringMode=true")
             if (attachments.isNotEmpty()) {
@@ -3627,7 +3639,7 @@ class AgentController(
                 // This prevents the 10s watchdog from auto-resolving the deferred
                 // when the UI is alive but the user just hasn't answered yet.
                 if (type == "question") {
-                    com.workflow.orchestrator.agent.tools.builtin.AskQuestionsTool.uiRenderConfirmed = true
+                    askQuestionsTool.uiRenderConfirmed = true
                 }
             } else {
                 LOG.warn("Interactive render FAILED: type=$type, status=$status, message=$message")

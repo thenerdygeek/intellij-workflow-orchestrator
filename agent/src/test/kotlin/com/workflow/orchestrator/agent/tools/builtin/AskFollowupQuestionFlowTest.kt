@@ -35,9 +35,9 @@ class AskFollowupQuestionFlowTest {
 
     @AfterEach
     fun cleanup() {
-        AskQuestionsTool.showSimpleQuestionCallback = null
-        AskQuestionsTool.showQuestionsCallback = null
-        AskQuestionsTool.pendingQuestions = null
+        tool.showSimpleQuestionCallback = null
+        tool.showQuestionsCallback = null
+        tool.pendingQuestions = null
     }
 
     // ════════════════════════════════════════════
@@ -53,7 +53,7 @@ class AskFollowupQuestionFlowTest {
             var receivedQuestion: String? = null
             var receivedOptions: String? = null
 
-            AskQuestionsTool.showSimpleQuestionCallback = { q, opts ->
+            tool.showSimpleQuestionCallback = { q, opts ->
                 receivedQuestion = q
                 receivedOptions = opts
             }
@@ -75,7 +75,7 @@ class AskFollowupQuestionFlowTest {
             assertEquals("Help with PROJECT-12345 (some API fixes)", parsed[0])
             assertEquals("Something else", parsed[1])
 
-            AskQuestionsTool.pendingQuestions?.complete("user answer")
+            tool.pendingQuestions?.complete("user answer")
             job.join()
         }
 
@@ -83,7 +83,7 @@ class AskFollowupQuestionFlowTest {
         fun `callback fires with null options when LLM sends no options`() = runTest {
             var receivedOptions: String? = "sentinel"
 
-            AskQuestionsTool.showSimpleQuestionCallback = { _, opts ->
+            tool.showSimpleQuestionCallback = { _, opts ->
                 receivedOptions = opts
             }
 
@@ -96,7 +96,7 @@ class AskFollowupQuestionFlowTest {
             kotlinx.coroutines.yield()
             assertNull(receivedOptions, "Options should be null when not provided")
 
-            AskQuestionsTool.pendingQuestions?.complete("answer")
+            tool.pendingQuestions?.complete("answer")
             job.join()
         }
 
@@ -104,7 +104,7 @@ class AskFollowupQuestionFlowTest {
         fun `callback fires with null options when options is empty string`() = runTest {
             var receivedOptions: String? = "sentinel"
 
-            AskQuestionsTool.showSimpleQuestionCallback = { _, opts ->
+            tool.showSimpleQuestionCallback = { _, opts ->
                 receivedOptions = opts
             }
 
@@ -118,7 +118,7 @@ class AskFollowupQuestionFlowTest {
             kotlinx.coroutines.yield()
             assertNull(receivedOptions, "Empty string options should normalize to null")
 
-            AskQuestionsTool.pendingQuestions?.complete("answer")
+            tool.pendingQuestions?.complete("answer")
             job.join()
         }
 
@@ -126,7 +126,7 @@ class AskFollowupQuestionFlowTest {
         fun `callback fires with null options when options is invalid JSON`() = runTest {
             var receivedOptions: String? = "sentinel"
 
-            AskQuestionsTool.showSimpleQuestionCallback = { _, opts ->
+            tool.showSimpleQuestionCallback = { _, opts ->
                 receivedOptions = opts
             }
 
@@ -141,7 +141,7 @@ class AskFollowupQuestionFlowTest {
             // Invalid JSON → options parsed as empty list → re-serialized as null
             assertNull(receivedOptions, "Invalid JSON options should fall back to null (no options)")
 
-            AskQuestionsTool.pendingQuestions?.complete("answer")
+            tool.pendingQuestions?.complete("answer")
             job.join()
         }
 
@@ -149,7 +149,7 @@ class AskFollowupQuestionFlowTest {
         fun `callback fires with 5 options`() = runTest {
             var receivedOptions: String? = null
 
-            AskQuestionsTool.showSimpleQuestionCallback = { _, opts ->
+            tool.showSimpleQuestionCallback = { _, opts ->
                 receivedOptions = opts
             }
 
@@ -168,7 +168,7 @@ class AskFollowupQuestionFlowTest {
             val parsed = json.decodeFromString<List<String>>(receivedOptions!!)
             assertEquals(5, parsed.size)
 
-            AskQuestionsTool.pendingQuestions?.complete("answer")
+            tool.pendingQuestions?.complete("answer")
             job.join()
         }
     }
@@ -585,7 +585,7 @@ class AskFollowupQuestionFlowTest {
 
         @Test
         fun `pendingQuestions is set while waiting and cleared after answer`() = runTest {
-            AskQuestionsTool.showSimpleQuestionCallback = { _, _ -> }
+            tool.showSimpleQuestionCallback = { _, _ -> }
 
             val job = launch {
                 tool.execute(buildJsonObject {
@@ -595,37 +595,42 @@ class AskFollowupQuestionFlowTest {
             }
 
             kotlinx.coroutines.yield()
-            assertNotNull(AskQuestionsTool.pendingQuestions, "Deferred must be set while waiting")
-            assertFalse(AskQuestionsTool.pendingQuestions!!.isCompleted, "Deferred must not be completed yet")
+            assertNotNull(tool.pendingQuestions, "Deferred must be set while waiting")
+            assertFalse(tool.pendingQuestions!!.isCompleted, "Deferred must not be completed yet")
 
-            AskQuestionsTool.pendingQuestions?.complete("""{"q1":["o1"]}""")
+            tool.pendingQuestions?.complete("""{"q1":["o1"]}""")
             job.join()
 
-            assertNull(AskQuestionsTool.pendingQuestions, "Deferred must be cleared after completion")
+            assertNull(tool.pendingQuestions, "Deferred must be cleared after completion")
         }
 
         @Test
-        fun `cancellation resolves with cancelled JSON`() = runTest {
-            AskQuestionsTool.showSimpleQuestionCallback = { _, _ -> }
+        fun `cancellation throws CancellationException`() = runTest {
+            tool.showSimpleQuestionCallback = { _, _ -> }
 
+            var caught = false
             val job = launch {
-                val result = tool.execute(buildJsonObject {
-                    put("question", "Test?")
-                }, project)
-                assertFalse(result.isError)
-                assertTrue(result.content.contains("dismissed"))
+                try {
+                    tool.execute(buildJsonObject {
+                        put("question", "Test?")
+                    }, project)
+                    fail("Expected CancellationException")
+                } catch (_: kotlinx.coroutines.CancellationException) {
+                    caught = true
+                }
             }
 
             kotlinx.coroutines.yield()
-            AskQuestionsTool.cancelQuestions()
+            tool.cancelQuestions()
             job.join()
+            assertTrue(caught, "CancellationException must be thrown when user cancels")
         }
 
         @Test
         fun `tool returns error when no callback is set`() = runTest {
             // Neither showSimpleQuestionCallback nor showQuestionsCallback is set
-            AskQuestionsTool.showSimpleQuestionCallback = null
-            AskQuestionsTool.showQuestionsCallback = null
+            tool.showSimpleQuestionCallback = null
+            tool.showQuestionsCallback = null
 
             val result = tool.execute(buildJsonObject {
                 put("question", "Test?")
@@ -637,7 +642,7 @@ class AskFollowupQuestionFlowTest {
 
         @Test
         fun `tool returns answer wrapped in answer tags`() = runTest {
-            AskQuestionsTool.showSimpleQuestionCallback = { _, _ -> }
+            tool.showSimpleQuestionCallback = { _, _ -> }
 
             val job = launch {
                 val result = tool.execute(buildJsonObject {
@@ -650,7 +655,7 @@ class AskFollowupQuestionFlowTest {
             }
 
             kotlinx.coroutines.yield()
-            AskQuestionsTool.pendingQuestions?.complete("PostgreSQL")
+            tool.pendingQuestions?.complete("PostgreSQL")
             job.join()
         }
     }
@@ -665,10 +670,10 @@ class AskFollowupQuestionFlowTest {
 
         @Test
         fun `falls back to showQuestionsCallback when showSimpleQuestionCallback is null`() = runTest {
-            AskQuestionsTool.showSimpleQuestionCallback = null
+            tool.showSimpleQuestionCallback = null
 
             var receivedJson: String? = null
-            AskQuestionsTool.showQuestionsCallback = { json ->
+            tool.showQuestionsCallback = { json ->
                 receivedJson = json
             }
 
@@ -686,7 +691,7 @@ class AskFollowupQuestionFlowTest {
             val parsed = Json.parseToJsonElement(receivedJson!!).jsonObject
             assertNotNull(parsed["questions"])
 
-            AskQuestionsTool.pendingQuestions?.complete("answer")
+            tool.pendingQuestions?.complete("answer")
             job.join()
         }
     }

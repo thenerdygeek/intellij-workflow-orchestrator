@@ -59,7 +59,7 @@ Actions:
 - evaluate(expression, session_id?) [SUSPENDED] → Evaluate Java/Kotlin expression in current frame
 - get_stack_frames(session_id?, thread_name?, max_frames?) [SUSPENDED] → Get call stack
 - get_variables(session_id?, variable_name?, max_depth?) [SUSPENDED] → Inspect local variables in current frame
-- set_value(variable_name, new_value, session_id?) [SUSPENDED] → Modify a variable's value at runtime (test hypotheses without restarting)
+- set_value(variable_name, new_value, session_id?) [SUSPENDED] → Assign a new value to a local variable at runtime. new_value must be a value-producing expression (42, "hello", null, true). Void method calls (e.g. obj.setX(y)) fail with "Incompatible types" — use evaluate for those instead.
 - thread_dump(session_id?, max_frames?, include_stacks?, include_daemon?) [ANY] → Full thread dump. Per-thread frames require that thread to be suspended.
 - memory_view(class_name, session_id?, max_instances?) [SUSPENDED, Java/Kotlin only, requires canGetInstanceInfo] → Count/inspect live instances
 - hotswap(session_id?, compile_first?) [ANY, Java/Kotlin only] → Hot-reload changed classes
@@ -105,7 +105,7 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
             ),
             "new_value" to ParameterProperty(
                 type = "string",
-                description = "Expression to set as the variable's new value (e.g., '42', '\"hello\"', 'null', 'listOf(1,2,3)') — for set_value"
+                description = "Value expression to assign — must produce a result compatible with the variable's type. Primitives and boxed types: '42', 'true', '3.14'. Strings: '\"hello\"'. Null: 'null'. Void method calls like 'obj.setX(v)' are NOT supported here — use evaluate for those. — for set_value"
             ),
             "include_stacks" to ParameterProperty(
                 type = "boolean",
@@ -517,10 +517,11 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
                         example("retryCount")
                     }
                     required("new_value", "string") {
-                        llmSeesIt("Expression to set as the variable's new value (e.g., '42', '\"hello\"', 'null', 'listOf(1,2,3)') — for set_value")
-                        humanReadable("The new value as a string expression. Primitives as literals (42, true, 'x'); strings with quotes (\"hello\"); null as the word null; complex values as expressions.")
-                        whenPresent("The variable is set to the result of evaluating this expression.")
-                        constraint("must be a valid Java/Kotlin expression in the context of the current frame")
+                        llmSeesIt("Value expression to assign — must produce a result compatible with the variable's type. Primitives and boxed types: '42', 'true', '3.14'. Strings: '\"hello\"'. Null: 'null'. Void method calls like 'obj.setX(v)' are NOT supported here — use evaluate for those. — for set_value")
+                        humanReadable("The new value as a string expression. Primitives as literals (42, true, 3.14); strings with quotes (\"hello\"); null. Must produce a value — void method calls like obj.setX(v) will fail with 'Incompatible types for = operation'. Use evaluate for calling setters.")
+                        whenPresent("The variable is set to the result of evaluating this expression in the JVM context.")
+                        constraint("expression must produce a non-void value assignable to the variable's declared type")
+                        constraint("void method calls (setters, mutators) cause 'Incompatible types' — use evaluate action instead")
                         example("42")
                         example("\"admin\"")
                         example("null")

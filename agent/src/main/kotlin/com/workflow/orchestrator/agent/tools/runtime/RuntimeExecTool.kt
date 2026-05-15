@@ -1963,8 +1963,12 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
                         .exec(arrayOf("cmd", "/c", "netstat -ano | findstr LISTENING | findstr $pid"))
                         .inputStream.bufferedReader().readLines()
                     for (line in lines) {
-                        val name = line.trim().split(Regex("""\s+""")).lastOrNull() ?: continue
-                        val portStr = name.substringAfterLast(':')
+                        val cols = line.trim().split(Regex("""\s+"""))
+                        // netstat output columns: Protocol LocalAddr ForeignAddr State PID
+                        // lastOrNull() was returning the PID (last column) instead of the port.
+                        // Column 1 (LocalAddr) contains the bound address: "0.0.0.0:8080".
+                        val localAddr = cols.getOrNull(1) ?: continue
+                        val portStr = localAddr.substringAfterLast(':')
                         val port = portStr.toIntOrNull() ?: continue
                         if (port in 1..65535) ports.add(port)
                     }
@@ -1974,13 +1978,29 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
         ports
     }
 
-    /** Parse lsof TCP-LISTEN output (skip header row, extract last column port). */
+    /**
+     * Parse lsof TCP-LISTEN output (skip header row, extract port from name column).
+     *
+     * lsof output: `COMMAND PID USER FD TYPE DEVICE SIZE NODE NAME`
+     * where NAME is `TCP *:8080 (LISTEN)` or `TCP 127.0.0.1:8080 (LISTEN)`.
+     * Using lastOrNull() is wrong — it returns `"(LISTEN)"`, not the port token.
+     * Instead, find the first whitespace token that contains a colon (skipping the
+     * `(LISTEN)` state token which starts with `(`), then extract the port after the
+     * last colon.  Tokens like PID (`1234`) have no colon so they are skipped safely.
+     */
     private fun parseLsofPorts(lines: List<String>, ports: MutableSet<Int>) {
         for (line in lines.drop(1)) {
-            val name = line.trim().split(Regex("""\s+""")).lastOrNull() ?: continue
-            val portStr = name.substringAfterLast(':')
-            val port = portStr.toIntOrNull() ?: continue
-            if (port in 1..65535) ports.add(port)
+            val tokens = line.trim().split(Regex("""\s+"""))
+            for (token in tokens) {
+                if (token.startsWith("(")) continue   // skip "(LISTEN)" state indicator
+                if (!token.contains(':')) continue     // port tokens always have a colon
+                val portStr = token.substringAfterLast(':')
+                val port = portStr.toIntOrNull() ?: continue
+                if (port in 1..65535) {
+                    ports.add(port)
+                    break   // one port entry per lsof line
+                }
+            }
         }
     }
 

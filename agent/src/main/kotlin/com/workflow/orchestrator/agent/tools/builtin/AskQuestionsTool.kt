@@ -14,7 +14,7 @@ import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.agent.util.JsEscape
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -51,6 +51,9 @@ data class QuestionOption(
  * decision trees (e.g. "Pick a database, then pick a schema, then pick a migration strategy").
  */
 class AskQuestionsTool : AgentTool {
+    // Waits indefinitely for user input — the user controls when to answer, skip, or
+    // cancel. The 10 s UI render watchdog handles silent JCEF failures independently.
+    override val timeoutMs: Long get() = Long.MAX_VALUE
     override val name = "ask_followup_question"
     override val description = "Ask the user a question to gather additional information needed to complete the task. " +
         "Use this when you encounter ambiguities, need clarification, or require more details to proceed effectively. " +
@@ -191,48 +194,53 @@ class AskQuestionsTool : AgentTool {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    companion object {
-        private const val QUESTION_TIMEOUT_MS = 5 * 60 * 1000L // 5 minutes
+    // ── Per-instance UI state ────────────────────────────────────────────────
+    //
+    // All mutable state is on the INSTANCE, not the companion object.
+    // IntelliJ runs multiple project windows in the same JVM; if state were
+    // class-level static, the last AgentController to initialise would own the
+    // callbacks and questions from every other window would route to the wrong UI.
 
+    /** Callback to show the question wizard in the dashboard UI (wizard mode). */
+    var showQuestionsCallback: ((String) -> Unit)? = null
+
+    /** Callback to show a simple question in the chat UI (simple mode).
+     *  Receives: questionText, optionsJson (nullable). */
+    var showSimpleQuestionCallback: ((String, String?) -> Unit)? = null
+
+    /** Deferred result that blocks tool execution until the user answers. */
+    @Volatile
+    var pendingQuestions: CompletableDeferred<String>? = null
+
+    /**
+     * Set to true by the UI layer (JCEF bridge round-trip) when the question
+     * has been successfully rendered. Checked by [executeSimple]/[executeWizard]
+     * after [UI_RENDER_GRACE_MS] to detect silent UI failures.
+     */
+    @Volatile
+    var uiRenderConfirmed: Boolean = false
+
+    /** Resolve the pending question(s) with the user's answer. */
+    fun resolveQuestions(answersJson: String) {
+        pendingQuestions?.complete(answersJson)
+    }
+
+    /** Cancel the pending question(s) (user dismissed). */
+    fun cancelQuestions() {
+        pendingQuestions?.complete("""{"cancelled":true}""")
+    }
+
+    companion object {
         /**
          * Grace period after the callback fires before we assume the UI failed to render.
-         * If the deferred isn't resolved by the user AND the UI render confirmation hasn't
-         * arrived within this window, we log a warning. The tool still waits for the full
-         * [QUESTION_TIMEOUT_MS], but this shorter check enables early diagnostics.
+         * If the deferred isn't resolved AND the UI render confirmation hasn't arrived
+         * within this window, the watchdog completes the deferred with [UI_RENDER_FAILED]
+         * so the tool doesn't hang forever on a silent JCEF failure.
          *
          * Set to 10s — enough for EDT scheduling + JCEF round-trip, short enough to detect
-         * a stuck UI before the user gives up.
+         * a stuck UI promptly.
          */
-        private const val UI_RENDER_GRACE_MS = 10_000L
-
-        /** Callback to show the question wizard in the dashboard UI (wizard mode). */
-        var showQuestionsCallback: ((String) -> Unit)? = null
-
-        /** Callback to show a simple question in the chat UI (simple mode).
-         *  Receives: questionText, optionsJson (nullable). */
-        var showSimpleQuestionCallback: ((String, String?) -> Unit)? = null
-
-        /** Deferred result that blocks tool execution until the user answers. */
-        @Volatile
-        var pendingQuestions: CompletableDeferred<String>? = null
-
-        /**
-         * Set to true by the UI layer (JCEF bridge round-trip) when the question
-         * has been successfully rendered. Checked by [executeSimple]/[executeWizard]
-         * after [UI_RENDER_GRACE_MS] to detect silent UI failures.
-         */
-        @Volatile
-        var uiRenderConfirmed: Boolean = false
-
-        /** Resolve the pending question(s) with the user's answer. */
-        fun resolveQuestions(answersJson: String) {
-            pendingQuestions?.complete(answersJson)
-        }
-
-        /** Cancel the pending question(s) (user dismissed). */
-        fun cancelQuestions() {
-            pendingQuestions?.complete("""{"cancelled":true}""")
-        }
+        internal const val UI_RENDER_GRACE_MS = 10_000L
     }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
@@ -307,10 +315,8 @@ class AskQuestionsTool : AgentTool {
         }
 
         // UI render watchdog: if the JCEF bridge hasn't confirmed the render within
-        // UI_RENDER_GRACE_MS, assume the UI is stuck and auto-resolve the deferred
-        // so the agent loop doesn't block for 5 minutes. Uses a daemon timer thread
-        // to avoid structured concurrency issues (we can't launch a coroutine that
-        // outlives the withTimeoutOrNull scope without completing it).
+        // UI_RENDER_GRACE_MS, assume the UI is stuck and complete the deferred with a
+        // sentinel so the tool doesn't hang forever on a silent JCEF failure.
         val watchdogTimer = java.util.Timer("ask-question-watchdog", true)
         watchdogTimer.schedule(object : java.util.TimerTask() {
             override fun run() {
@@ -320,24 +326,13 @@ class AskQuestionsTool : AgentTool {
             }
         }, UI_RENDER_GRACE_MS)
 
-        val answer = withTimeoutOrNull(QUESTION_TIMEOUT_MS) { deferred.await() }
+        val answer = deferred.await()   // waits indefinitely — user cancels or answers
         watchdogTimer.cancel()
         pendingQuestions = null
 
-        if (answer == null) {
-            return ToolResult(
-                "User did not respond within 5 minutes.",
-                "ask_followup_question: timeout",
-                ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
-            )
-        }
-
         if (answer.contains("\"cancelled\":true")) {
-            return ToolResult(
-                "User dismissed the question.",
-                "ask_followup_question: cancelled",
-                ToolResult.ERROR_TOKEN_ESTIMATE, isError = false
-            )
+            // User explicitly dismissed the question — stop the agent loop.
+            throw CancellationException("Task stopped: user cancelled the question")
         }
 
         if (answer == "[SKIPPED]") {
@@ -423,24 +418,13 @@ class AskQuestionsTool : AgentTool {
             }
         }, UI_RENDER_GRACE_MS)
 
-        val answersJson = withTimeoutOrNull(QUESTION_TIMEOUT_MS) { deferred.await() }
+        val answersJson = deferred.await()   // waits indefinitely — user cancels or answers
         watchdogTimer.cancel()
         pendingQuestions = null
 
-        if (answersJson == null) {
-            return ToolResult(
-                "User did not respond within 5 minutes.",
-                "ask_followup_question: wizard timeout",
-                ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
-            )
-        }
-
         if (answersJson.contains("\"cancelled\":true")) {
-            return ToolResult(
-                "User cancelled the question wizard.",
-                "ask_followup_question: wizard cancelled",
-                ToolResult.ERROR_TOKEN_ESTIMATE, isError = false
-            )
+            // User explicitly dismissed the wizard — stop the agent loop.
+            throw CancellationException("Task stopped: user cancelled the question wizard")
         }
 
         if (answersJson == "[UI_RENDER_FAILED]") {
