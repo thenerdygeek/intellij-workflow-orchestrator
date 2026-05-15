@@ -42,20 +42,25 @@ class FeedbackTool(private val projectName: String) : AgentTool {
 
     override val parameters = FunctionParameters(
         properties = mapOf(
-            "feedback" to ParameterProperty(
+            "content" to ParameterProperty(
                 type = "string",
                 description = "Feedback about the tools used in this task. Describe which tool(s) had issues, what was expected, what actually happened, and any confusion about parameters. Pass an empty string if you have no feedback."
             )
         ),
-        required = listOf("feedback")
+        required = listOf("content")
     )
 
     override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR)
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
-        val feedback = params["feedback"]?.jsonPrimitive?.content
+        // Parameter is named "content" (not "feedback") to avoid the XML collision where
+        // both the tool tag and the param tag would be <feedback>…</feedback>, making
+        // the format self-referential and confusing for the LLM. "content" is also in
+        // CODE_CARRYING_PARAMS so the parser uses lastIndexOf, safely handling any
+        // XML-like strings inside the feedback text.
+        val feedback = params["content"]?.jsonPrimitive?.content
             ?: return ToolResult.error(
-                message = "Missing required parameter: feedback",
+                message = "Missing required parameter: content",
                 summary = "feedback: missing parameter"
             )
 
