@@ -1243,10 +1243,28 @@ class AgentController(
                 .filter { !it.isOpusClass && !it.modelName.lowercase().contains("sonnet") && !it.modelName.lowercase().contains("haiku") }
                 .sortedWith(compareBy<com.workflow.orchestrator.core.ai.dto.ModelInfo> { it.tier }.thenByDescending { it.created })
 
-            // Latest generation = the version key of the most-recently-created model
-            // in the family. Thinking and non-thinking of the same version share a key.
-            val latestOpusKey   = opusAll.maxByOrNull { it.created }?.let { versionKey(it.modelName) }
-            val latestSonnetKey = sonnetAll.maxByOrNull { it.created }?.let { versionKey(it.modelName) }
+            // Extract digit groups for numerical version comparison.
+            // "claude-opus-4-6" → [4, 6]; "claude-3-opus" → [3]; "claude-opus-4-5" → [4, 5]
+            fun versionNums(modelName: String): List<Int> =
+                Regex("\\d+").findAll(versionKey(modelName)).map { it.value.toInt() }.toList()
+
+            // Compare two models by version number, not by `created` timestamp.
+            // Using `created` is unreliable because Sourcegraph refreshes the timestamp
+            // on "-latest" alias models (e.g. opus-4-5-thinking-latest) after newer
+            // numbered releases (e.g. opus-4-6), causing the alias to sort above the
+            // genuinely newer model.
+            val byVersionAsc = Comparator<com.workflow.orchestrator.core.ai.dto.ModelInfo> { a, b ->
+                val va = versionNums(a.modelName); val vb = versionNums(b.modelName)
+                for (i in 0 until maxOf(va.size, vb.size)) {
+                    val diff = va.getOrElse(i) { 0 } - vb.getOrElse(i) { 0 }  // ascending
+                    if (diff != 0) return@Comparator diff
+                }
+                0
+            }
+
+            // Latest generation = the version key of the numerically highest model in the family.
+            val latestOpusKey   = opusAll.maxWithOrNull(byVersionAsc)?.let { versionKey(it.modelName) }
+            val latestSonnetKey = sonnetAll.maxWithOrNull(byVersionAsc)?.let { versionKey(it.modelName) }
 
             val opusLatest   = opusAll.filter   { versionKey(it.modelName) == latestOpusKey }
             val opusOlder    = opusAll.filter    { versionKey(it.modelName) != latestOpusKey }

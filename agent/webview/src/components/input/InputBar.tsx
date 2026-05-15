@@ -88,22 +88,19 @@ export function ModelPickerRow({ model }: { model: DropdownItem }) {
   const isDeprecated = model.status === 'deprecated';
   return (
     <div className="flex flex-col flex-1 min-w-0">
-      <span className="text-[12px]">{model.name}</span>
-      {model.provider && <span className="text-[10px] capitalize" style={{ color: 'var(--fg-muted)' }}>{model.provider}</span>}
+      <span className="text-[12px] flex items-center gap-1">
+        <span>{model.name}</span>
+        {caps.includes('vision') && <span title="vision" aria-label="vision">{'\u{1F441}'}</span>}
+        {caps.includes('tools') && <span title="tools" aria-label="tools">{'\u{1F527}'}</span>}
+        {caps.includes('reasoning') && <span title="reasoning" aria-label="reasoning">{'\u{1F9E0}'}</span>}
+        {isDeprecated && <span title="deprecated" aria-label="deprecated" style={{ color: 'var(--warning, #d97706)' }}>{'⚠'}</span>}
+      </span>
       {cap && (
         <span className="text-[10px]" style={{ color: 'var(--fg-muted)' }}>
           {Math.round(cap.maxInputTokens / 1000)}K context
           {typeof cap.maxUserInputTokens === 'number'
             ? ` · ${Math.round(cap.maxUserInputTokens / 1000)}K per-message`
             : ''}
-        </span>
-      )}
-      {(caps.length > 0 || isDeprecated) && (
-        <span className="text-[10px] flex items-center gap-1 mt-0.5" style={{ color: 'var(--fg-muted)' }}>
-          {caps.includes('vision') && <span title="vision" aria-label="vision">{'\u{1F441}'}</span>}
-          {caps.includes('tools') && <span title="tools" aria-label="tools">{'\u{1F527}'}</span>}
-          {caps.includes('reasoning') && <span title="reasoning" aria-label="reasoning">{'\u{1F9E0}'}</span>}
-          {isDeprecated && <span title="deprecated" aria-label="deprecated" style={{ color: 'var(--warning, #d97706)' }}>{'⚠'}</span>}
         </span>
       )}
     </div>
@@ -251,7 +248,6 @@ const ModelChip = memo(function ModelChip({
                   style={m.name === model ? { backgroundColor: 'var(--hover-overlay-strong, rgba(255,255,255,0.08))' } : undefined}>
                   <ProviderLogo provider={m.provider} />
                   <ModelPickerRow model={m} />
-                  {m.thinking && <Brain className="h-3.5 w-3.5 shrink-0 ml-auto" style={{ color: 'var(--accent, #60a5fa)' }} />}
                 </DropdownMenuItem>
               );
             })
