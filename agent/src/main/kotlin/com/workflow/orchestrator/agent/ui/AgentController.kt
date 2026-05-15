@@ -1207,13 +1207,7 @@ class AgentController(
                 LOG.warn("AgentController: model list still empty after retries — dropdown will be re-fetched on next remount")
                 return@launch
             }
-            // Sort by tier (opus first) then by created date (newest first)
-            val sorted = models.sortedWith(compareBy<com.workflow.orchestrator.core.ai.dto.ModelInfo> { it.tier }.thenByDescending { it.created })
-
-            // Build JSON for the dropdown using formatted display names.
-            // Multimodal-agent Phase 6 (F-P5-3) — `vision` field tells the JS
-            // chat input whether to block image-bearing turns at Send.
-            //
+            // Fetch catalog early — needed for deprecated filtering and JSON enrichment.
             // Phase 7 — pull capacity / capabilities / status from the live
             // [com.workflow.orchestrator.core.ai.ModelCatalogService] when
             // available. Falls back to the name-heuristic for `vision` and
@@ -1222,13 +1216,50 @@ class AgentController(
             val catalog = try {
                 project.getService(com.workflow.orchestrator.agent.AgentService::class.java)?.getSharedModelCatalog()
             } catch (_: Throwable) { null }
-            val modelsJson = sorted.joinToString(",", "[", "]") { m ->
+
+            // Drop deprecated models — Sourcegraph marks superseded models with
+            // status="deprecated" in the catalog; they are hidden from the picker.
+            val activeModels = models.filter { m -> catalog?.getStatus(m.id) != "deprecated" }
+
+            // Strips "-thinking", "-latest", and 8-digit date suffixes so that
+            // "claude-opus-4-5-thinking-latest" and "claude-opus-4-5" share the
+            // same version key for generation-grouping purposes.
+            fun versionKey(modelName: String): String =
+                modelName
+                    .replace(Regex("(?i)-thinking"), "")
+                    .replace(Regex("(?i)-latest"), "")
+                    .replace(Regex("-\\d{8}$"), "")
+                    .trimEnd('-')
+
+            // Within each family: thinking variants first, then newest-created first.
+            val thinkingFirst =
+                compareByDescending<com.workflow.orchestrator.core.ai.dto.ModelInfo> { it.isThinkingModel }
+                    .thenByDescending { it.created }
+
+            val opusAll   = activeModels.filter { it.isOpusClass }.sortedWith(thinkingFirst)
+            val sonnetAll = activeModels.filter { it.modelName.lowercase().contains("sonnet") }.sortedWith(thinkingFirst)
+            val haikuAll  = activeModels.filter { it.modelName.lowercase().contains("haiku") }.sortedWith(thinkingFirst)
+            val otherAll  = activeModels
+                .filter { !it.isOpusClass && !it.modelName.lowercase().contains("sonnet") && !it.modelName.lowercase().contains("haiku") }
+                .sortedWith(compareBy<com.workflow.orchestrator.core.ai.dto.ModelInfo> { it.tier }.thenByDescending { it.created })
+
+            // Latest generation = the version key of the most-recently-created model
+            // in the family. Thinking and non-thinking of the same version share a key.
+            val latestOpusKey   = opusAll.maxByOrNull { it.created }?.let { versionKey(it.modelName) }
+            val latestSonnetKey = sonnetAll.maxByOrNull { it.created }?.let { versionKey(it.modelName) }
+
+            val opusLatest   = opusAll.filter   { versionKey(it.modelName) == latestOpusKey }
+            val opusOlder    = opusAll.filter    { versionKey(it.modelName) != latestOpusKey }
+            val sonnetLatest = sonnetAll.filter  { versionKey(it.modelName) == latestSonnetKey }
+            val sonnetOlder  = sonnetAll.filter  { versionKey(it.modelName) != latestSonnetKey }
+
+            // Build JSON incrementally so separator objects can be interspersed
+            // with model objects in the same flat array.
+            fun modelJson(m: com.workflow.orchestrator.core.ai.dto.ModelInfo): String {
                 val id = m.id.replace("\"", "\\\"")
                 val name = m.displayName.replace("\"", "\\\"")
                 val provider = m.provider.replace("\"", "\\\"")
                 val thinking = m.isThinkingModel
-                // Catalog-backed when available, name-heuristic fallback so the
-                // dropdown is never empty on cold catalog.
                 val vision = catalog?.supportsVision(m.id) ?: isLikelyVisionCapable(m.id)
                 val cw = catalog?.getContextWindow(m.id, tier = "enterprise")
                 val cwField = if (cw != null) {
@@ -1239,10 +1270,6 @@ class AgentController(
                     ""","contextWindow":$withCap"""
                 } else ""
                 val capsField = if (catalog != null) {
-                    // Compose a small capabilities array — `vision` if catalog
-                    // says so, `tools` from `supportsTools()`, `reasoning` for
-                    // thinking models. The picker uses these to render the
-                    // 👁🔧🧠 badge strip.
                     val parts = mutableListOf<String>()
                     if (catalog.supportsVision(m.id)) parts += "\"vision\""
                     if (catalog.supportsTools(m.id)) parts += "\"tools\""
@@ -1250,8 +1277,33 @@ class AgentController(
                     if (parts.isNotEmpty()) ""","capabilities":[${parts.joinToString(",")}]""" else ""
                 } else ""
                 val statusField = catalog?.getStatus(m.id)?.let { ""","status":"$it"""" } ?: ""
-                """{"id":"$id","name":"$name","provider":"$provider","thinking":$thinking,"vision":$vision$cwField$capsField$statusField}"""
+                return """{"id":"$id","name":"$name","provider":"$provider","thinking":$thinking,"vision":$vision$cwField$capsField$statusField}"""
             }
+
+            fun sepJson(label: String): String {
+                val escaped = label.replace("\"", "\\\"")
+                return """{"id":"__sep_${label.replace(" ", "_")}","name":"$escaped","separator":true}"""
+            }
+
+            val jsonItems = mutableListOf<String>()
+            // Section 1 & 2: latest opus (thinking first) then latest sonnet (thinking first)
+            opusLatest.forEach   { jsonItems += modelJson(it) }
+            sonnetLatest.forEach { jsonItems += modelJson(it) }
+            // Section 3–5: older opus + sonnet under "Older Models" separator
+            if (opusOlder.isNotEmpty() || sonnetOlder.isNotEmpty()) {
+                jsonItems += sepJson("Older Models")
+                opusOlder.forEach   { jsonItems += modelJson(it) }
+                sonnetOlder.forEach { jsonItems += modelJson(it) }
+            }
+            // Section 6–7: haiku under "Faster Models" separator
+            if (haikuAll.isNotEmpty()) {
+                jsonItems += sepJson("Faster Models")
+                haikuAll.forEach { jsonItems += modelJson(it) }
+            }
+            // Non-Anthropic / unclassified models appended last
+            otherAll.forEach { jsonItems += modelJson(it) }
+
+            val modelsJson = jsonItems.joinToString(",", "[", "]")
 
             // Auto-select the best model (latest Opus) if no model is configured
             val settings = AgentSettings.getInstance(project)

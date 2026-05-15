@@ -12,6 +12,8 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu';
 import { MentionDropdown, relevanceScore } from './MentionDropdown';
 import { SkillDropdown } from './SkillDropdown';
@@ -47,7 +49,7 @@ function rememberModels(items: DropdownItem[]): void {
   cachedModelItems = items;
 }
 function modelByName(name: string): DropdownItem | undefined {
-  return cachedModelItems.find(m => m.name === name);
+  return cachedModelItems.find(m => !m.separator && m.name === name);
 }
 
 // ── Types ──
@@ -70,6 +72,8 @@ interface DropdownItem {
   contextWindow?: { maxInputTokens: number; maxUserInputTokens?: number };
   capabilities?: string[];
   status?: 'experimental' | 'beta' | 'stable' | 'deprecated' | string;
+  /** When true, renders as a non-interactive section divider with `name` as the label. */
+  separator?: boolean;
 }
 
 /**
@@ -148,7 +152,7 @@ const ModelChip = memo(function ModelChip({
   fallbackReason: string | null;
 }) {
   const [items, setItems] = useState<DropdownItem[]>([]);
-  const activeItem = useMemo(() => items.find(m => m.name === model), [items, model]);
+  const activeItem = useMemo(() => items.find(m => !m.separator && m.name === model), [items, model]);
   // Tracks when the menu most-recently opened. Radix opens on `pointerdown`
   // and items select on `pointerup` — a single mouse click fires both, and
   // when the menu pops up under the cursor the second event lands on a
@@ -219,26 +223,38 @@ const ModelChip = memo(function ModelChip({
       <DropdownMenuContent align="start" className="min-w-[220px]">
         {items.length === 0
           ? <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--fg-muted)' }}>No models available</div>
-          : items.map(m => (
-              <DropdownMenuItem
-                key={m.id}
-                onSelect={(e) => {
-                  // Radix click-through guard: ignore selections that fire within
-                  // the open-grace period (the same mouse click that opened the
-                  // menu would otherwise auto-select the item under the cursor).
-                  if (Date.now() - openedAtRef.current < 250) {
-                    e.preventDefault();
-                    return;
-                  }
-                  window._changeModel?.(m.id);
-                }}
-                className="gap-2"
-                style={m.name === model ? { backgroundColor: 'var(--hover-overlay-strong, rgba(255,255,255,0.08))' } : undefined}>
-                <ProviderLogo provider={m.provider} />
-                <ModelPickerRow model={m} />
-                {m.thinking && <Brain className="h-3.5 w-3.5 shrink-0 ml-auto" style={{ color: 'var(--accent, #60a5fa)' }} />}
-              </DropdownMenuItem>
-            ))
+          : items.map(m => {
+              if (m.separator) {
+                return (
+                  <div key={m.id}>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel className="text-[10px] font-medium px-2 py-1" style={{ color: 'var(--fg-muted)' }}>
+                      {m.name}
+                    </DropdownMenuLabel>
+                  </div>
+                );
+              }
+              return (
+                <DropdownMenuItem
+                  key={m.id}
+                  onSelect={(e) => {
+                    // Radix click-through guard: ignore selections that fire within
+                    // the open-grace period (the same mouse click that opened the
+                    // menu would otherwise auto-select the item under the cursor).
+                    if (Date.now() - openedAtRef.current < 250) {
+                      e.preventDefault();
+                      return;
+                    }
+                    window._changeModel?.(m.id);
+                  }}
+                  className="gap-2"
+                  style={m.name === model ? { backgroundColor: 'var(--hover-overlay-strong, rgba(255,255,255,0.08))' } : undefined}>
+                  <ProviderLogo provider={m.provider} />
+                  <ModelPickerRow model={m} />
+                  {m.thinking && <Brain className="h-3.5 w-3.5 shrink-0 ml-auto" style={{ color: 'var(--accent, #60a5fa)' }} />}
+                </DropdownMenuItem>
+              );
+            })
         }
       </DropdownMenuContent>
     </DropdownMenu>
