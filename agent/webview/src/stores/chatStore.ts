@@ -172,9 +172,6 @@ interface ChatState {
   streamingThinkingText: string | null;
   streamingThinkingTs: number | null;
   activeToolCalls: Map<string, ToolCall>;  // key = unique tool call ID
-  /** Live sub-agent state — accumulates internal messages and tool chains while running.
-   *  On completion/kill, the state is frozen into the UiMessage and removed from this map. */
-  activeSubAgents: Map<string, SubAgentState>;
   plan: Plan | null;
   planCommentCount: number;
   /**
@@ -433,7 +430,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingThinkingText: null,
   streamingThinkingTs: null,
   activeToolCalls: new Map(),
-  activeSubAgents: new Map(),
   plan: null,
   planCommentCount: 0,
   seenPlanSummaries: new Set<string>(),
@@ -511,7 +507,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingThinkingText: null,
       streamingThinkingTs: null,
       activeToolCalls: new Map(),
-  activeSubAgents: new Map(),
       // Reset tool output streams alongside activeToolCalls — they are keyed by
       // the same tool call IDs and would otherwise leak across sessions.
       toolOutputStreams: {},
@@ -590,7 +585,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingThinkingText: null,
       streamingThinkingTs: null,
       activeToolCalls: new Map(),
-  activeSubAgents: new Map(),
       // Drop all tool output streams — the map was keyed by the now-cleared
       // tool call IDs and would otherwise leak for the rest of the app's life.
       toolOutputStreams: {},
@@ -957,7 +951,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({
       messages: [...state.messages, ...toolMessages],
       activeToolCalls: new Map(),
-  activeSubAgents: new Map(),
       toolOutputStreams: {},
       toolCallOpen: {},
     });
@@ -971,7 +964,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingThinkingText: null,
       streamingThinkingTs: null,
       activeToolCalls: new Map(),
-  activeSubAgents: new Map(),
       // Drop tool output streams in lockstep with activeToolCalls.
       toolOutputStreams: {},
       toolCallOpen: {},
@@ -1571,17 +1563,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   // ── Sub-Agent Actions ──
-  // Live sub-agent state is tracked in activeSubAgents (like activeToolCalls).
-  // Internal messages and tool chains accumulate there while running.
-  // On completion/kill, the state is frozen into the UiMessage and removed from the map.
+  // messages[] is the single source of truth for sub-agent state.
+  // Each sub-agent corresponds to exactly one UiMessage whose subagentData
+  // holds the full SubAgentState. All mutations update that field in-place.
+  // Use selectActiveSubAgents(state) to derive a Map<agentId, SubAgentState>.
 
   spawnSubAgent(payload: string) {
     const data = JSON.parse(payload);
 
     set((state) => {
-      // Dedupe on agentId
-      if (state.activeSubAgents.has(data.agentId) ||
-          state.messages.some((m) => m.subagentData?.agentId === data.agentId)) {
+      // Dedupe on agentId — messages[] is the sole source of truth now
+      if (state.messages.some((m) => m.subagentData?.agentId === data.agentId)) {
         return state;
       }
 
@@ -1602,21 +1594,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ts: uniqueTs(),
         type: 'SAY',
         say: 'SUBAGENT_STARTED',
-        subagentData: {
-          agentId: data.agentId,
-          agentType: data.label || 'general-purpose',
-          description: data.label,
-          status: 'RUNNING',
-          iterations: 1,
-        },
+        subagentData: agentState,
       };
-
-      const newMap = new Map(state.activeSubAgents);
-      newMap.set(data.agentId, agentState);
 
       return {
         messages: [...state.messages, msg],
-        activeSubAgents: newMap,
       };
     });
   },
@@ -1624,63 +1606,58 @@ export const useChatStore = create<ChatState>((set, get) => ({
   updateSubAgentIteration(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
-      // Update live state
-      const newMap = new Map(state.activeSubAgents);
-      const agent = newMap.get(data.agentId);
-      if (agent) {
-        newMap.set(data.agentId, {
-          ...agent,
-          iteration: data.iteration || (agent.iteration + 1),
-          tokensUsed: data.tokensUsed ?? agent.tokensUsed,
-        });
-      }
-      // Also update the UiMessage for persistence
-      const messages = state.messages.map(m =>
-        m.subagentData?.agentId === data.agentId
-          ? { ...m, subagentData: { ...m.subagentData!, iterations: data.iteration || (m.subagentData!.iterations + 1) } }
-          : m
-      );
-      return { messages, activeSubAgents: newMap };
+      const messages = state.messages.map((m): UiMessage => {
+        if (!m.subagentData || m.subagentData.agentId !== data.agentId) return m;
+        const sub = m.subagentData;
+        return {
+          ...m,
+          subagentData: {
+            ...sub,
+            iteration: data.iteration ?? ((sub.iteration ?? 0) + 1),
+            tokensUsed: data.tokensUsed ?? sub.tokensUsed,
+          } as SubAgentState,
+        };
+      });
+      return { messages };
     });
   },
 
   addSubAgentToolCall(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
-      const newMap = new Map(state.activeSubAgents);
-      const agent = newMap.get(data.agentId);
-      if (agent) {
-        // Field names use the `tool*` prefix to match the Kotlin payload keys from
-        // AgentCefPanel.addSubAgentToolCall (put("toolArgs", ...)). Reading bare
-        // `data.args` here silently returned undefined, which is one reason the
-        // expanded view rendered empty.
-        const tc: ToolCall = {
-          id: data.toolCallId || `sa-tc-${uniqueTs()}`,
-          name: data.toolName || 'unknown',
-          args: data.toolArgs || '',
-          status: 'RUNNING',
+      // Field names use the `tool*` prefix to match the Kotlin payload keys from
+      // AgentCefPanel.addSubAgentToolCall (put("toolArgs", ...)). Reading bare
+      // `data.args` here silently returned undefined, which is one reason the
+      // expanded view rendered empty.
+      const tc: ToolCall = {
+        id: data.toolCallId || `sa-tc-${uniqueTs()}`,
+        name: data.toolName || 'unknown',
+        args: data.toolArgs || '',
+        status: 'RUNNING',
+      };
+      const messages = state.messages.map((m): UiMessage => {
+        if (!m.subagentData || m.subagentData.agentId !== data.agentId) return m;
+        const sub = m.subagentData;
+        return {
+          ...m,
+          say: 'SUBAGENT_PROGRESS' as const,
+          subagentData: {
+            ...sub,
+            activeToolChain: [...sub.activeToolChain, tc],
+          } as SubAgentState,
         };
-        newMap.set(data.agentId, {
-          ...agent,
-          activeToolChain: [...agent.activeToolChain, tc],
-        });
-      }
-      // Update UiMessage say to PROGRESS
-      const messages = state.messages.map(m =>
-        m.subagentData?.agentId === data.agentId
-          ? { ...m, say: 'SUBAGENT_PROGRESS' as const }
-          : m
-      );
-      return { messages, activeSubAgents: newMap };
+      });
+      return { messages };
     });
   },
 
   updateSubAgentToolCall(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
-      const newMap = new Map(state.activeSubAgents);
-      const agent = newMap.get(data.agentId);
-      if (agent) {
+      let newStreams = state.toolOutputStreams;
+      const messages = state.messages.map((m): UiMessage => {
+        if (!m.subagentData || m.subagentData.agentId !== data.agentId) return m;
+        const agent = m.subagentData;
         const status: ToolCallStatus = data.isError ? 'ERROR' : 'COMPLETED';
         // Finalize the tool: move from activeToolChain to messages
         const matchIdx = agent.activeToolChain.findIndex(tc => tc.name === data.toolName && tc.status === 'RUNNING');
@@ -1702,6 +1679,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // full output instead of losing it when the stream entry is later cleared.
         const streamOutput = state.toolOutputStreams[finalizedId];
         const mergedOutput = data.toolOutput || streamOutput || undefined;
+
+        // Release the accumulated stream entry now that its content is baked into
+        // the finalized message — prevents unbounded toolOutputStreams growth over
+        // long sessions with many sub-agent tool invocations.
+        if (streamOutput !== undefined) {
+          newStreams = { ...newStreams };
+          delete newStreams[finalizedId];
+        }
 
         // Multimodal-agent Phase 6 — accept tool-produced image metadata from
         // the sub-agent JSON payload. Defensive: tolerate missing/non-array
@@ -1726,49 +1711,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
           },
         };
 
-        // Release the accumulated stream entry now that its content is baked into
-        // the finalized message — prevents unbounded toolOutputStreams growth over
-        // long sessions with many sub-agent tool invocations.
-        const newStreams = { ...state.toolOutputStreams };
-        if (streamOutput !== undefined) {
-          delete newStreams[finalizedId];
-        }
-
-        newMap.set(data.agentId, {
-          ...agent,
-          activeToolChain: remaining,
-          messages: [...agent.messages, toolMsg],
-        });
-        return { activeSubAgents: newMap, toolOutputStreams: newStreams };
-      }
-      return { activeSubAgents: newMap };
+        return {
+          ...m,
+          subagentData: {
+            ...agent,
+            activeToolChain: remaining,
+            messages: [...agent.messages, toolMsg],
+          } as SubAgentState,
+        };
+      });
+      return { messages, toolOutputStreams: newStreams };
     });
   },
 
   updateSubAgentMessage(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
-      const newMap = new Map(state.activeSubAgents);
-      const agent = newMap.get(data.agentId);
-      if (agent) {
-        const textMsg: UiMessage = {
-          ts: uniqueTs(),
-          type: 'SAY',
-          say: 'TEXT',
-          text: data.textContent || '',
+      const textMsg: UiMessage = {
+        ts: uniqueTs(),
+        type: 'SAY',
+        say: 'TEXT',
+        text: data.textContent || '',
+      };
+      const messages = state.messages.map((m): UiMessage => {
+        if (!m.subagentData || m.subagentData.agentId !== data.agentId) return m;
+        const sub = m.subagentData;
+        return {
+          ...m,
+          say: 'SUBAGENT_PROGRESS' as const,
+          subagentData: {
+            ...sub,
+            messages: [...sub.messages, textMsg],
+          } as SubAgentState,
         };
-        newMap.set(data.agentId, {
-          ...agent,
-          messages: [...agent.messages, textMsg],
-        });
-      }
-      // Update UiMessage text for persistence
-      const messages = state.messages.map(m =>
-        m.subagentData?.agentId === data.agentId
-          ? { ...m, say: 'SUBAGENT_PROGRESS' as const, text: data.textContent || '' }
-          : m
-      );
-      return { messages, activeSubAgents: newMap };
+      });
+      return { messages };
     });
   },
 
@@ -1785,42 +1762,51 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { agentId, delta } = JSON.parse(payload) as { agentId: string; delta: string };
     if (!delta) return;
     set((state) => {
-      const newMap = new Map(state.activeSubAgents);
-      const agent = newMap.get(agentId);
-      if (!agent) return state;
-      const msgs = agent.messages;
-      const lastIdx = msgs.length - 1;
-      const last = lastIdx >= 0 ? msgs[lastIdx] : undefined;
-      if (last && last.type === 'SAY' && last.say === 'TEXT') {
-        const updated: UiMessage = { ...last, text: (last.text ?? '') + delta };
-        const nextMessages = msgs.slice(0, lastIdx).concat(updated);
-        newMap.set(agentId, { ...agent, messages: nextMessages });
-      } else {
-        const textMsg: UiMessage = {
-          ts: uniqueTs(),
-          type: 'SAY',
-          say: 'TEXT',
-          text: delta,
+      const messages = state.messages.map((m): UiMessage => {
+        if (!m.subagentData || m.subagentData.agentId !== agentId) return m;
+        const agent = m.subagentData;
+        const msgs = agent.messages;
+        const lastIdx = msgs.length - 1;
+        const last = lastIdx >= 0 ? msgs[lastIdx] : undefined;
+        let nextMsgs: UiMessage[];
+        if (last && last.type === 'SAY' && last.say === 'TEXT') {
+          const updated: UiMessage = { ...last, text: (last.text ?? '') + delta };
+          nextMsgs = msgs.slice(0, lastIdx).concat(updated);
+        } else {
+          const textMsg: UiMessage = {
+            ts: uniqueTs(),
+            type: 'SAY',
+            say: 'TEXT',
+            text: delta,
+          };
+          nextMsgs = [...msgs, textMsg];
+        }
+        return {
+          ...m,
+          subagentData: { ...agent, messages: nextMsgs } as SubAgentState,
         };
-        newMap.set(agentId, { ...agent, messages: [...msgs, textMsg] });
-      }
-      return { activeSubAgents: newMap };
+      });
+      return { messages };
     });
   },
 
   /**
    * Append a thinking-block delta to the sub-agent's live streaming buffer.
    * Mirrors the main agent's appendToThinking path. No-op if the agentId is
-   * not found in activeSubAgents.
+   * not found in messages[].
    */
   appendSubAgentThinking(agentId: string, delta: string) {
     set((state) => {
-      const newMap = new Map(state.activeSubAgents);
-      const sub = newMap.get(agentId);
-      if (!sub) return {};
-      const prev = sub.streamingThinkingText ?? '';
-      newMap.set(agentId, { ...sub, streamingThinkingText: prev + delta });
-      return { activeSubAgents: newMap };
+      const messages = state.messages.map((m): UiMessage => {
+        if (!m.subagentData || m.subagentData.agentId !== agentId) return m;
+        const sub = m.subagentData;
+        const prev = sub.streamingThinkingText ?? '';
+        return {
+          ...m,
+          subagentData: { ...sub, streamingThinkingText: prev + delta } as SubAgentState,
+        };
+      });
+      return { messages };
     });
   },
 
@@ -1831,77 +1817,74 @@ export const useChatStore = create<ChatState>((set, get) => ({
    */
   endSubAgentThinking(agentId: string) {
     set((state) => {
-      const newMap = new Map(state.activeSubAgents);
-      const sub = newMap.get(agentId);
-      if (!sub) return {};
-      const text = sub.streamingThinkingText ?? '';
-      if (!text) {
-        // Empty thinking block — nothing to finalise.
-        newMap.set(agentId, { ...sub, streamingThinkingText: null });
-        return { activeSubAgents: newMap };
-      }
-      const finalised: UiMessage = {
-        ts: uniqueTs(),
-        type: 'SAY',
-        say: 'REASONING',
-        text,
-      };
-      const messages = [...sub.messages, finalised];
-      newMap.set(agentId, { ...sub, messages, streamingThinkingText: null });
-      return { activeSubAgents: newMap };
+      const messages = state.messages.map((m): UiMessage => {
+        if (!m.subagentData || m.subagentData.agentId !== agentId) return m;
+        const sub = m.subagentData;
+        const text = sub.streamingThinkingText ?? '';
+        if (!text) {
+          // Empty thinking block — nothing to finalise.
+          return {
+            ...m,
+            subagentData: { ...sub, streamingThinkingText: null } as SubAgentState,
+          };
+        }
+        const finalised: UiMessage = {
+          ts: uniqueTs(),
+          type: 'SAY',
+          say: 'REASONING',
+          text,
+        };
+        return {
+          ...m,
+          subagentData: {
+            ...sub,
+            messages: [...sub.messages, finalised],
+            streamingThinkingText: null,
+          } as SubAgentState,
+        };
+      });
+      return { messages };
     });
   },
 
   completeSubAgent(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
-      // Mark as completed in the map (keep entry so SubAgentView retains internal messages)
-      const newMap = new Map(state.activeSubAgents);
-      const agent = newMap.get(data.agentId);
-      if (agent) {
-        newMap.set(data.agentId, {
-          ...agent,
-          status: data.isError ? 'ERROR' : 'COMPLETED',
-          summary: data.textContent || '',
-          tokensUsed: data.tokensUsed ?? agent.tokensUsed,
-          activeToolChain: [], // clear any in-flight tools
-        });
-      }
-
-      // Freeze into the UiMessage for persistence
-      const messages = state.messages.map(m => {
-        if (m.subagentData?.agentId === data.agentId) {
-          return {
-            ...m,
-            say: 'SUBAGENT_COMPLETED' as const,
-            subagentData: {
-              ...m.subagentData!,
-              status: data.isError ? 'FAILED' : 'COMPLETED',
-              summary: data.textContent || '',
-            },
-          };
-        }
-        return m;
+      const messages = state.messages.map((m): UiMessage => {
+        if (!m.subagentData || m.subagentData.agentId !== data.agentId) return m;
+        const sub = m.subagentData;
+        return {
+          ...m,
+          say: 'SUBAGENT_COMPLETED' as const,
+          subagentData: {
+            ...sub,
+            status: (data.isError ? 'ERROR' : 'COMPLETED') as SubAgentState['status'],
+            summary: data.textContent || '',
+            tokensUsed: data.tokensUsed ?? sub.tokensUsed,
+            activeToolChain: [], // clear any in-flight tools
+          } as SubAgentState,
+        };
       });
-      return { messages, activeSubAgents: newMap };
+      return { messages };
     });
   },
 
   killSubAgent(agentId: string) {
     set((state) => {
-      // Mark as killed in map (keep entry for SubAgentView to show history)
-      const newMap = new Map(state.activeSubAgents);
-      const agent = newMap.get(agentId);
-      if (agent) {
-        newMap.set(agentId, { ...agent, status: 'KILLED', activeToolChain: [] });
-      }
-
-      const messages = state.messages.map(m =>
-        m.subagentData?.agentId === agentId
-          ? { ...m, say: 'SUBAGENT_COMPLETED' as const, subagentData: { ...m.subagentData!, status: 'KILLED' } }
-          : m
-      );
-      return { messages, activeSubAgents: newMap };
+      const messages = state.messages.map((m): UiMessage => {
+        if (!m.subagentData || m.subagentData.agentId !== agentId) return m;
+        const sub = m.subagentData;
+        return {
+          ...m,
+          say: 'SUBAGENT_COMPLETED' as const,
+          subagentData: {
+            ...sub,
+            status: 'KILLED' as const,
+            activeToolChain: [],
+          } as SubAgentState,
+        };
+      });
+      return { messages };
     });
     // Notify Kotlin to cancel the worker
     import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
@@ -2073,3 +2056,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // ── Background Process Actions (Phase 7, Task 7.3) ──
   setBackgroundProcesses: (snapshot) => set({ backgroundProcesses: snapshot }),
 }));
+
+/**
+ * Derived selector: builds a Map<agentId, SubAgentState> from state.messages[].
+ *
+ * messages[] is the single source of truth for sub-agent state after the P4.T2
+ * refactor. This selector replaces the former `state.activeSubAgents` field.
+ *
+ * The Map is rebuilt on every call — callers using this with useChatStore
+ * should memoize via `useShallow` or a stable equality function to avoid
+ * unnecessary re-renders.
+ */
+export function selectActiveSubAgents(state: ReturnType<typeof useChatStore.getState>): Map<string, SubAgentState> {
+  const m = new Map<string, SubAgentState>();
+  for (const msg of state.messages) {
+    if (msg.subagentData) {
+      m.set(msg.subagentData.agentId, msg.subagentData as SubAgentState);
+    }
+  }
+  return m;
+}
