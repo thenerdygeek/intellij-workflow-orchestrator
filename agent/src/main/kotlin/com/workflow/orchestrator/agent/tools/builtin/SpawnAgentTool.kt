@@ -81,24 +81,39 @@ class SpawnAgentTool(
     var onCheckpoint: (suspend () -> Unit)? = null,
     private val configLoader: AgentConfigLoader? = null,
     private val ideContext: IdeContext? = null,
-    /** Parent output spiller — sub-agent large tool outputs are spilled to the same session dir. */
-    private val outputSpiller: com.workflow.orchestrator.agent.tools.ToolOutputSpiller? = null,
+    /**
+     * Provider for the parent output spiller — evaluated at sub-agent dispatch time so sub-agents
+     * see the spiller that was populated in executeTask, not the null at registerAllTools time.
+     */
+    private val outputSpiller: () -> com.workflow.orchestrator.agent.tools.ToolOutputSpiller? = { null },
     /** Provider for the session-scoped AttachmentStore — forwarded so sub-agent image tools hit the same store. */
     private val attachmentStoreProvider: () -> com.workflow.orchestrator.agent.session.AttachmentStore? = { null },
     /** Optional signal fired when the sub-agent's ContextManager runs a compaction pass. */
     private val onCompactionState: ((active: Boolean, phase: String) -> Unit)? = null,
-    /** Optional model fallback manager — enables sub-agent fallback/escalation on network errors. */
-    private val fallbackManager: com.workflow.orchestrator.agent.loop.ModelFallbackManager? = null,
-    /** Optional factory that produces a fresh LlmBrain for a given model ID. */
-    private val brainFactory: (suspend (modelId: String, reason: String?) -> com.workflow.orchestrator.core.ai.LlmBrain)? = null,
-    /** Optional fallback chain for L2 tier escalation when fallbackManager is null. */
-    private val cachedFallbackChain: List<String>? = null,
+    /**
+     * Provider for the model fallback manager — evaluated at dispatch time so sub-agents see
+     * the manager populated in executeTask, not the null snapshot at registerAllTools time.
+     */
+    private val fallbackManager: () -> com.workflow.orchestrator.agent.loop.ModelFallbackManager? = { null },
+    /**
+     * Provider for the brain factory — evaluated at dispatch time so sub-agents see the factory
+     * populated in executeTask, not the null snapshot at registerAllTools time.
+     */
+    private val brainFactory: () -> (suspend (modelId: String, reason: String?) -> com.workflow.orchestrator.core.ai.LlmBrain)? = { null },
+    /**
+     * Provider for the cached fallback chain — evaluated at dispatch time so sub-agents see
+     * the chain populated in executeTask, not the null snapshot at registerAllTools time.
+     */
+    private val cachedFallbackChain: () -> List<String>? = { null },
     /** Optional callback fired when the loop retries a failed API call. */
     private val onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
     /** Optional callback when the loop switches models (fallback or escalation). */
     private val onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null,
-    /** Optional model catalog service — filters fallback chain to vision-capable models. */
-    private val modelCatalogService: com.workflow.orchestrator.core.ai.ModelCatalogService? = null,
+    /**
+     * Provider for the model catalog service — evaluated at dispatch time so sub-agents see
+     * the catalog populated in executeTask, not the null snapshot at registerAllTools time.
+     */
+    private val modelCatalogService: () -> com.workflow.orchestrator.core.ai.ModelCatalogService? = { null },
     /**
      * Optional provider for the current parent session ID. Used alongside
      * [subagentMessageStateHandlerFactory] to construct a per-sub-agent
@@ -819,15 +834,15 @@ Tips:
             ideContext = ideContext,
             agentConfig = config,
             messageStateHandler = subagentStateHandler,
-            outputSpiller = outputSpiller,
+            outputSpiller = outputSpiller(),
             attachmentStoreProvider = attachmentStoreProvider,
             onCompactionState = onCompactionState,
-            fallbackManager = fallbackManager,
-            brainFactory = brainFactory,
-            cachedFallbackChain = cachedFallbackChain,
+            fallbackManager = fallbackManager(),
+            brainFactory = brainFactory(),
+            cachedFallbackChain = cachedFallbackChain(),
             onRetry = onRetry,
             onModelSwitch = onModelSwitch,
-            modelCatalogService = modelCatalogService,
+            modelCatalogService = modelCatalogService(),
         )
         val uiLabel = "$description (${config.name})"
         runningAgents[agentId] = runner
@@ -941,15 +956,15 @@ Tips:
                         ideContext = ideContext,
                         agentConfig = config,
                         messageStateHandler = childSubagentStateHandler,
-                        outputSpiller = outputSpiller,
+                        outputSpiller = outputSpiller(),
                         attachmentStoreProvider = attachmentStoreProvider,
                         onCompactionState = onCompactionState,
-                        fallbackManager = fallbackManager,
-                        brainFactory = brainFactory,
-                        cachedFallbackChain = cachedFallbackChain,
+                        fallbackManager = fallbackManager(),
+                        brainFactory = brainFactory(),
+                        cachedFallbackChain = cachedFallbackChain(),
                         onRetry = onRetry,
                         onModelSwitch = onModelSwitch,
-                        modelCatalogService = modelCatalogService,
+                        modelCatalogService = modelCatalogService(),
                     )
                     val perChildDesc = promptPairs[idx].second
                     val childLabel = "${perChildDesc} #${idx + 1} (${config.name})"
