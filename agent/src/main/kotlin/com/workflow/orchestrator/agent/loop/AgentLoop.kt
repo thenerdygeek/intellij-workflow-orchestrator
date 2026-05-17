@@ -757,7 +757,14 @@ class AgentLoop(
                 LOG.info("[Loop] Context compaction triggered at ${"%.1f".format(utilBefore)}%")
                 onCompactionState?.invoke(true, "Compacting context — utilization ${"%.0f".format(utilBefore)}%…")
                 try {
-                    contextManager.compact(brain)
+                    when (val compactResult = contextManager.compact(brain)) {
+                        is ContextManager.CompactResult.Failed -> {
+                            LOG.warn("[Context] auto-compaction failed: ${compactResult.reason}; falling back to slidingWindow(0.3)")
+                            contextManager.slidingWindow(0.3)
+                        }
+                        is ContextManager.CompactResult.Cancelled -> LOG.info("[Context] auto-compaction cancelled by PreCompact hook: ${compactResult.reason}")
+                        is ContextManager.CompactResult.Skipped, is ContextManager.CompactResult.Compacted -> { /* normal path */ }
+                    }
                 } finally {
                     onCompactionState?.invoke(false, "")
                 }
@@ -951,7 +958,22 @@ class AgentLoop(
                     // Force aggressive compaction
                     onCompactionState?.invoke(true, "Compacting context after overflow…")
                     try {
-                        contextManager.compact(brain)
+                        when (val compactResult = contextManager.compact(brain)) {
+                            is ContextManager.CompactResult.Failed -> {
+                                LOG.warn("[Context] length-overflow compaction failed: ${compactResult.reason}; falling back to slidingWindow(0.3)")
+                                contextManager.slidingWindow(0.3)
+                                if (contextOverflowRetries >= MAX_CONTEXT_OVERFLOW_RETRIES) {
+                                    LOG.warn("[Loop] Compaction failed $contextOverflowRetries consecutive times at overflow site — aborting loop")
+                                    return makeFailed(
+                                        "Context compaction failed after $contextOverflowRetries attempts: ${compactResult.reason}. History was truncated as a safety net.",
+                                        iteration,
+                                        FailureReason.API_ERROR
+                                    )
+                                }
+                            }
+                            is ContextManager.CompactResult.Cancelled -> LOG.info("[Context] length-overflow compaction cancelled by PreCompact hook: ${compactResult.reason}")
+                            is ContextManager.CompactResult.Skipped, is ContextManager.CompactResult.Compacted -> { /* normal path */ }
+                        }
                     } finally {
                         onCompactionState?.invoke(false, "")
                     }
@@ -1188,7 +1210,14 @@ class AgentLoop(
                     onRetry?.invoke(compactionRetries, MAX_COMPACTION_RETRIES, "Compacting context and retrying", 0)
                     onCompactionState?.invoke(true, "Compacting context after repeated timeouts…")
                     try {
-                        contextManager.compact(brain)
+                        when (val compactResult = contextManager.compact(brain)) {
+                            is ContextManager.CompactResult.Failed -> {
+                                LOG.warn("[Context] timeout-recovery compaction failed: ${compactResult.reason}; falling back to slidingWindow(0.3)")
+                                contextManager.slidingWindow(0.3)
+                            }
+                            is ContextManager.CompactResult.Cancelled -> LOG.info("[Context] timeout-recovery compaction cancelled by PreCompact hook: ${compactResult.reason}")
+                            is ContextManager.CompactResult.Skipped, is ContextManager.CompactResult.Compacted -> { /* normal path */ }
+                        }
                     } finally {
                         onCompactionState?.invoke(false, "")
                     }

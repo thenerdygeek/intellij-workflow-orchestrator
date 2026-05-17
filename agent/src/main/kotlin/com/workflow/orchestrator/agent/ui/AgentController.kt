@@ -638,10 +638,20 @@ class AgentController(
                 val result = service.compactContext(cm, force = force)
                 if (result == null) {
                     invokeLater {
-                        dashboard.appendStatus(
-                            "Context at ${"%.0f".format(utilBefore)}% — below compaction threshold (70%).",
-                            RichStreamingPanel.StatusType.INFO
-                        )
+                        if (force) {
+                            // force=true bypasses the shouldCompact() threshold gate, so a null result
+                            // means the compaction was Failed (or cancelled by a PreCompact hook).
+                            // AgentService already called slidingWindow(0.3) on Failed as a safety net.
+                            dashboard.appendStatus(
+                                "Compaction failed; conversation history was truncated as a safety net.",
+                                RichStreamingPanel.StatusType.WARNING
+                            )
+                        } else {
+                            dashboard.appendStatus(
+                                "Context at ${"%.0f".format(utilBefore)}% — below compaction threshold.",
+                                RichStreamingPanel.StatusType.INFO
+                            )
+                        }
                     }
                     return@launch
                 }

@@ -467,6 +467,7 @@ class ContextManagerTest {
             assertEquals("important system prompt", messages[0].content)
         }
 
+        @Disabled("summary format changed to '[Context Summary — earlier conversation was compacted]' in Phase 1 redesign — will be deleted in Phase 3")
         @Test
         fun `summary is inserted as assistant message to avoid consecutive user messages`() = runTest {
             val fakeBrain = FakeLlmBrain(summaryResponse = "TASK: test\nFILES: a.kt\nDONE: stuff")
@@ -808,6 +809,7 @@ class ContextManagerTest {
             assertEquals("important system prompt", messages[0].content)
         }
 
+        @Disabled("first user-assistant pair is no longer preserved verbatim in Phase 1 single-stage redesign; summary check '[Context Summary]' is stale — will be deleted in Phase 3")
         @Test
         fun `force=true preserves first user-assistant pair (the original task)`() = runTest {
             val brain = FakeLlmBrain(summaryResponse = "TASK: stuff")

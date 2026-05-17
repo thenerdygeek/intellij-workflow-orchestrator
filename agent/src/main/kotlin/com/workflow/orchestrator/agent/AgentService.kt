@@ -822,14 +822,22 @@ class AgentService(
      *   (only returned when `force=false`)
      */
     suspend fun compactContext(contextManager: ContextManager, force: Boolean = false): Pair<Int, Int>? {
-        val utilization = contextManager.utilizationPercent()
-        if (!force && utilization <= 70.0) return null // Matches ContextManager.compact() internal threshold
+        if (!force && !contextManager.shouldCompact()) return null
 
-        val tokensBefore = contextManager.tokenEstimate()
         val brain = createBrain()
-        contextManager.compact(brain, hookManager, force = force)
-        val tokensAfter = contextManager.tokenEstimate()
-        return tokensBefore to tokensAfter
+        return when (val result = contextManager.compact(brain, hookManager, force = force)) {
+            is ContextManager.CompactResult.Compacted -> result.tokensBefore to result.tokensAfter
+            is ContextManager.CompactResult.Failed -> {
+                log.warn("[AgentService] compactContext failed: ${result.reason}; applying slidingWindow(0.3) as safety net")
+                contextManager.slidingWindow(0.3)
+                null
+            }
+            is ContextManager.CompactResult.Cancelled -> {
+                log.info("[AgentService] compactContext cancelled by PreCompact hook: ${result.reason}")
+                null
+            }
+            is ContextManager.CompactResult.Skipped -> null
+        }
     }
 
     // ── Tool Registration ──────────────────────────────────────────────────
