@@ -438,6 +438,13 @@ class MessageStateHandler(
     }
 
     private suspend fun updateGlobalIndex() = globalIndexMutex.withLock {
+        // Sub-agent sessions use sessionId = "$parentId/subagents/$agentId" (slash-containing).
+        // Those nested IDs must not pollute the global sessions.json index — they would appear
+        // as phantom non-resumable cards in the history UI. Sub-agent conversation history is
+        // still persisted (the writes to api_conversation_history.json + ui_messages.json
+        // happen separately) — only the index entry is suppressed.
+        if (sessionId.contains('/')) return@withLock
+
         val totalTokensIn = apiHistory.sumOf { it.metrics?.inputTokens ?: 0 }
         val totalTokensOut = apiHistory.sumOf { it.metrics?.outputTokens ?: 0 }
         val totalCost = apiHistory.sumOf { it.metrics?.cost ?: 0.0 }
