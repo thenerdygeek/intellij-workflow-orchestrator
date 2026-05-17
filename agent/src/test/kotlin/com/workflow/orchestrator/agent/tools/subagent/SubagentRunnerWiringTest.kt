@@ -43,6 +43,16 @@ class SubagentRunnerWiringTest {
     }
 
     @Test
+    fun `SubagentProgressUpdate has thinkingDelta and thinkingEnd fields`() {
+        val update = SubagentProgressUpdate(
+            thinkingDelta = "foo",
+            thinkingEnd = true,
+        )
+        org.junit.jupiter.api.Assertions.assertEquals("foo", update.thinkingDelta)
+        org.junit.jupiter.api.Assertions.assertEquals(true, update.thinkingEnd)
+    }
+
+    @Test
     fun `SubagentRunner forwards the new params into the AgentLoop constructor call`() {
         val src = java.io.File(
             "src/main/kotlin/com/workflow/orchestrator/agent/tools/subagent/SubagentRunner.kt"

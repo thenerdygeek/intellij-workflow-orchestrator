@@ -113,6 +113,17 @@ data class SubagentProgressUpdate(
      * so the Kotlin↔JS bridge can fast-path streaming without re-serialising stats.
      */
     val streamDelta: String? = null,
+    /**
+     * Incremental thinking-block delta. Emitted by [SubagentRunner] after routing the
+     * upstream stream chunk through [com.workflow.orchestrator.agent.ui.ThinkingTagSplitter].
+     * Mirrors main-agent `appendToThinking`. Null on chunks that contain no thinking content.
+     */
+    val thinkingDelta: String? = null,
+    /**
+     * Marks the close of a `<thinking>` block. Mirrors main-agent `endThinking`.
+     * Emitted once after the matching open tag has produced at least one delta.
+     */
+    val thinkingEnd: Boolean = false,
 )
 
 /**
