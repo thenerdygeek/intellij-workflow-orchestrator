@@ -28,7 +28,7 @@ The sub-agent tool (`spawn_agent`) is inspired by Claude Code's observable behav
 | Text-only = nudge, not completion | Cline |
 | Empty response recovery (3-strike) | Codex CLI + Cline |
 | Loop detection (3 soft / 5 hard) | Cline (`loop-detection.ts`) |
-| 3-stage compaction (dedup, truncate, summarize) | Cline + our addition (Stage 3 LLM summarization) |
+| Single-stage CC-style compaction (dedup pre-pass + LLM summary at 88%) | Claude Code (rewritten 2026-05-17 from prior 3-stage Cline port) |
 | Typed task system (`task_create/update/list/get`, `TaskStore`, blocks/blockedBy DAG) | Our addition (replaces Cline `task_progress` param) |
 | Plan mode with `plan_mode_respond` / `act_mode_respond` | Cline |
 | Skill system with `use_skill` | Cline (`skills.ts`) |
@@ -53,7 +53,7 @@ graph TB
     Service["AgentService<br/>(Project-level)"]
     Loop["AgentLoop<br/>(ReAct)"]
     Brain["LlmBrain<br/>(OpenAI-compat API)"]
-    CTX["ContextManager<br/>(Messages + 3-stage compaction)"]
+    CTX["ContextManager<br/>(Messages + single-stage CC-style compaction)"]
     TaskProg["TaskStore<br/>(typed tasks, blocks/blockedBy DAG)"]
     Tools["ToolRegistry<br/>(3-tier: core/deferred/active)"]
     Store["SessionStore<br/>(JSONL + checkpoints)"]
@@ -122,7 +122,7 @@ flowchart TD
     CHECK_CANCEL -->|No| CHECK_ITER{iteration < 200?}
     CHECK_ITER -->|No| RETURN_MAX([LoopResult.Failed<br/>'exceeded max iterations'])
     CHECK_ITER -->|Yes| COMPACT{shouldCompact?}
-    COMPACT -->|Yes| DO_COMPACT["compact(brain)<br/>3-stage pipeline"]
+    COMPACT -->|Yes| DO_COMPACT["compact(brain)<br/>dedup pre-pass → LLM summary<br/>→ CompactResult"]
     DO_COMPACT --> CALL_LLM
     COMPACT -->|No| CALL_LLM["brain.chatStream(messages, tools)<br/>dynamic tool defs via provider"]
     CALL_LLM --> API_ERR{API error?}
@@ -278,10 +278,11 @@ All variants carry `inputTokens` and `outputTokens` (cumulative across all API c
 systemPrompt: ChatMessage?          -- single system message, set once
 messages: MutableList<ChatMessage>   -- all conversation messages in order
 lastPromptTokens: Int?               -- API-reported prompt tokens (invalidated on compaction)
-lastSummary: String?                 -- previous LLM summary for summary chaining
-fileReadIndices: Map<path, indices>  -- tracks file reads for Stage 1 dedup
+previousSummary: String?             -- previous LLM summary for summary chaining across compactions
 activeSkillContent: String?          -- survives compaction via re-injection
+activePlanPath: String?              -- survives compaction via re-injection
 taskStore: TaskStore?                -- attached via ContextManager.attachTaskStore; rendered via renderTaskProgressMarkdown on every prompt build (survives compaction)
+lastCompactionRanSummary: Boolean    -- UI marker — set when compact() ran the LLM summarization (vs Skipped/Cancelled/Failed)
 ```
 
 `getMessages()` returns `[systemPrompt] + messages` as the list sent to the LLM.
@@ -291,63 +292,52 @@ taskStore: TaskStore?                -- attached via ContextManager.attachTaskSt
 | Strategy | Source | Accuracy |
 |---|---|---|
 | **API-reported** | `response.usage.promptTokens` from each LLM call | Exact |
-| **bytes/4 estimate** | Sum of UTF-8 byte lengths / 4 (Codex CLI pattern) | ~80% accurate |
+| **chars/3.5 estimate** | Sum of message-content lengths / 3.5 (+ image and tool-definition overhead) | ~80% accurate |
 
-API-reported is preferred. Fallback used before the first API call or when usage data is missing. Token count is **invalidated** after every compaction stage (bug fix from expert review).
+API-reported is preferred. Fallback used before the first API call or when usage data is missing. Token count is **invalidated** after every successful compaction.
 
-### 3-Stage Compaction Pipeline
+### Single-Stage Compaction Pipeline (rewritten 2026-05-17)
 
-Compaction triggers when utilization exceeds 85% of `maxInputTokens` (default 150K).
+The system was previously a 3-stage Cline port (dedup → truncate → LLM-summary) with 70/85/95% utilization banding. Rewritten in commits `4eea82cfd` / `edf979fb0` / `b995bef6a` as a single-stage Claude-Code-style summarizer behind a single 88% gate. Returns `CompactResult` (sealed: `Skipped` / `Cancelled` / `Failed` / `Compacted`).
 
 ```mermaid
-graph LR
-    CHECK{"utilization > 70%?"}
-    CHECK -->|Yes| S1["Stage 1:<br/>Duplicate file read<br/>detection"]
-    S1 --> S1CHECK{">= 30% saved?"}
-    S1CHECK -->|Yes| DONE([Done])
-    S1CHECK -->|No| S2CHECK{"still > 85%?"}
-    S2CHECK -->|Yes| S2["Stage 2:<br/>Conversation<br/>truncation"]
-    S2CHECK -->|No| DONE
-    S2 --> S3CHECK{"still > 95%?"}
-    S3CHECK -->|Yes| S3["Stage 3:<br/>LLM summarization"]
-    S3CHECK -->|No| REINJECT
-    S3 --> REINJECT["Re-inject active skill"]
-    REINJECT --> DONE
+graph TB
+    THRESH{"utilization >= 88%<br/>OR force?"}
+    THRESH -->|No| SKIP([Skipped])
+    THRESH -->|Yes| HOOK["PRE_COMPACT hook<br/>(cancellable)"]
+    HOOK -->|Cancel| CANCELLED([Cancelled])
+    HOOK -->|Proceed| DEDUP["deduplicateFileReads()<br/>(unconditional pre-pass)"]
+    DEDUP --> SPLIT["findSafeSplitPoint(0.30)<br/>preserve last ~30%"]
+    SPLIT --> SUMM["brain.chat(prompt, maxTokens=2048)<br/>summarize prefix"]
+    SUMM -->|null content| FAILED([Failed → caller falls back<br/>to slidingWindow(0.3)])
+    SUMM -->|summary| REPLACE["Replace prefix with<br/>single assistant message"]
+    REPLACE --> STRIP["Strip image parts<br/>(bytes survive on disk)"]
+    STRIP --> REINJECT["Re-inject active skill<br/>+ active plan pointer"]
+    REINJECT --> PERSIST["onHistoryOverwrite(msgs, 0 to splitIdx)"]
+    PERSIST --> DONE([Compacted])
 
-    style S1 fill:#e8f5e9,stroke:#388e3c
-    style S2 fill:#fff3e0,stroke:#f57c00
-    style S3 fill:#ffebee,stroke:#c62828
+    style DEDUP fill:#e8f5e9,stroke:#388e3c
+    style SUMM fill:#fff3e0,stroke:#f57c00
+    style FAILED fill:#ffebee,stroke:#c62828
 ```
 
-**Stage 1: Duplicate file read detection (from Cline)**
+**Dedup pre-pass — `deduplicateFileReads()`**
 
-Ported from Cline's `findAndPotentiallySaveFileReadContextHistoryUpdates`. For each file read multiple times, replaces all older reads with `[File content for '{path}' was previously read ({toolName}) -- see latest read below]`. Keeps only the most recent read intact. If savings >= 30%, no further compaction needed.
+Cheap (~1ms, pure Kotlin) input-shaping step. Tracks `read_file` / `create_file` / `edit_file` results by path and replaces all older reads of the same path with `[File content for '{path}' was previously read ({toolName}) -- see latest read below]`. Keeps the most recent read intact. **Critical:** this bounds the summarization prompt's own input — without dedup, a session that re-reads the same file 5 times feeds five full 80K-char tool results into `brain.chat()`, which can exceed the model's window. Not a gated stage anymore; runs unconditionally before summarization.
 
-**Stage 2: Conversation truncation (from Cline)**
+**LLM summarization — `summarizePrefix()`**
 
-Ported from Cline's `getNextTruncationRange` + `applyContextHistoryUpdates`:
-- Always preserves the first user-assistant pair (the original task)
-- Removes middle messages in even-count blocks to maintain role alternation
-- Strategy selection: `HALF` (remove ~50%) or `QUARTER` (remove ~75%) based on how far over the limit
-- Handles orphaned tool results at truncation boundaries
-- Inserts truncation notice in the first assistant message
+Single `brain.chat()` call with `maxTokens=2048`. Structured prompt asks for: TASK (original intent), FILES (paths touched + role), DECISIONS (key choices + why), STATE (done vs in-progress), ERRORS (unresolved), PENDING (next steps). Message serialization:
+- `msg.content` when present; falls back to `(tool_call: {name})` for tool-call-only turns
+- `[+N image(s) attached]` placeholder when `msg.parts` contains `ContentPart.Image` entries (bytes themselves don't go in the prompt — they live in `msg.parts`)
 
-**Stage 3: LLM summarization (our addition -- Cline does not have this)**
+**Summary chaining**
 
-Asks a separate LLM call to summarize the oldest 70% of messages into a structured format:
-```
-TASK: <what the user asked for>
-FILES: <files read or modified>
-DONE: <what has been completed>
-ERRORS: <any errors encountered>
-PENDING: <what still needs to be done>
-```
+`previousSummary` is fed into the next compaction's prompt with explicit instruction to fold it in. Output is always bounded to ≤2048 tokens, so multi-compaction sessions retain pre-compaction context without unbounded growth.
 
-Improvements:
-- **Summary chaining**: includes previous summary in next compaction prompt for continuity
-- **Role correctness**: inserts summary as assistant message (not user) to avoid consecutive user messages
-- **Pair-aware splitting**: uses `findSafeSplitPoint()` to avoid breaking tool_call/result pairs
-- **Failure-safe**: on LLM error, leaves messages unchanged
+**Caller-side `Failed` fallback**
+
+When `brain.chat()` returns no content, `compact()` returns `CompactResult.Failed`. Every external caller wires `slidingWindow(0.3)` — preserved from the original code, repurposed — as a hard-truncation safety net. At `AgentLoop` length-overflow recovery, three consecutive `Failed` results abort the loop with a user-visible error.
 
 ### Compaction Survival
 
@@ -896,7 +886,7 @@ Four hook-exempt LLM tools replace the old `task_progress` markdown parameter:
 | Deleted System | Approximate LOC | Replacement |
 |---|---|---|
 | Event-sourced context (ContextEvent, ConversationHistory, EventStore) | ~3K | Mutable list in `ContextManager` |
-| 4-stage condenser pipeline (CondensationPipeline, 5 condenser classes) | ~2K | 3-stage compaction (dedup + truncation + LLM summary) |
+| 4-stage condenser pipeline (CondensationPipeline, 5 condenser classes) | ~2K | Single-stage CC-style compaction (dedup pre-pass + LLM summary; rewritten 2026-05-17) |
 | Multi-tier budget system (OK/COMPRESS/NUDGE/CRITICAL/TERMINATE) | ~500 | Single `compactionThreshold` double |
 | 6 gate systems (ApprovalGate, SafetyGate, RateLimitGate, etc.) | ~2K | Plan mode schema filtering + hook system |
 | 18-section PromptAssembler (605 LOC) | ~600 | `SystemPrompt.build()` with 11 Cline-ported sections |

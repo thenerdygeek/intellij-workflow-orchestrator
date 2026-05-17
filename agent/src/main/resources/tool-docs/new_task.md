@@ -4,10 +4,11 @@
 
 The agent loop has a finite context window. Every turn — the system prompt,
 the conversation history, every file the LLM has read, every tool result —
-all of it has to fit. When the input-token count crosses 85% of the model's
-limit, `ContextManager` runs a 3-stage compaction pipeline: first it dedupes
-file reads (replacing older copies with placeholders), then it truncates the
-middle of the conversation, then it asks an LLM to summarize whatever's left.
+all of it has to fit. When the input-token count crosses 88% of the model's
+limit, `ContextManager` runs a single-stage Claude-Code-style compactor:
+first an unconditional dedup pre-pass collapses repeated file reads to
+placeholders, then an LLM call summarizes the oldest ~70% of messages into
+a single assistant turn (the most recent ~30% are preserved verbatim).
 
 That pipeline keeps long sessions alive, but it has a failure mode: summary
 chaining decay. Each compaction's summary becomes the input to the next

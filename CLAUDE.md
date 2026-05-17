@@ -22,7 +22,7 @@ Plugin ID: `com.workflow.orchestrator.plugin` | Kotlin 2.1.10 | Gradle + Intelli
 | `:pullrequest` | PR dashboard, merge, Bitbucket |
 | `:automation` | Docker tags, queue, drift detection |
 | `:handover` | Jira closure, copyright, AI pre-review, QA clipboard |
-| `:agent` | Cline-ported ReAct loop; ToolRegistry (deferred, per-tool timeouts); 11-section IDE-aware system prompt; 3-stage ContextManager; plan mode; skill system; two-file atomic JSON persistence + checkpoints; typed tasks (DAG); sub-agents (3 scopes, 5 parallel); 8 bundled personas + user YAML; ToolOutputSpiller (>30K); BuildSystemValidator; JCEF chat UI |
+| `:agent` | Cline-ported ReAct loop; ToolRegistry (deferred, per-tool timeouts); 11-section IDE-aware system prompt; single-stage CC-style ContextManager (dedup pre-pass → LLM summary at 88%; `CompactResult` + `slidingWindow` fallback); plan mode; skill system; two-file atomic JSON persistence + checkpoints; typed tasks (DAG); sub-agents (3 scopes, 5 parallel); 8 bundled personas + user YAML; ToolOutputSpiller (>30K); BuildSystemValidator; JCEF chat UI |
 
 ## Service Architecture (IMPORTANT)
 

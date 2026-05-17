@@ -23,7 +23,7 @@ AgentController (UI entry point, owns AgentCefPanel + JCEF bridges)
         → OpenAiCompatBrain (text-only turns; no tools:[...] parameter sent)
         → SourcegraphCompletionsStreamClient (any image-bearing turn)
       → AssistantMessageParser (extracts XML tool calls from raw text content)
-      → ContextManager (3-stage compaction: dedup → truncation → LLM summarization)
+      → ContextManager (single-stage CC-style: dedup pre-pass → LLM summary at 88%)
       → LoopDetector (doom loop detection: 3 soft warning, 5 hard failure)
       → Tool execution with optional approval gate
       → Steering messages (ConcurrentLinkedQueue, drained at iteration boundary)
@@ -34,11 +34,15 @@ AgentController (UI entry point, owns AgentCefPanel + JCEF bridges)
 - **AgentLoop** (`loop/AgentLoop.kt`, ~1471 lines) — Core ReAct loop. Tool call processing, context compaction on overflow, parallel read-only tool execution (via coroutineScope+async), sequential write tool execution. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation. Mid-loop cancellation support. Context overflow replay (compress + retry same request). Doom loop detection before each tool call. Streaming token estimate when usage is null. Plan mode execution guard (blocks `WRITE_TOOLS` even if LLM hallucinates them).
 - **AgentService** (`AgentService.kt`, ~1549 lines) — Main orchestration service. Manages tool registration, session lifecycle, plan mode state (`planModeActive: AtomicBoolean`), model fallback, context management setup. Builds `AgentLoop` with all callbacks wired. Schema filtering for plan mode (removes write tools + `enable_plan_mode` from tool definitions before LLM call). Dynamic tool definition provider rebuilds system prompt when tool set changes.
 - **AgentController** (`ui/AgentController.kt`) — UI entry point. Owns `AgentCefPanel`, routes user messages, handles steering, dispatches JCEF bridge callbacks (tool approval, plan approval, session history, artifact results). Wires `AgentService.executeTask()` with UI callbacks.
-- **ContextManager** (`loop/ContextManager.kt`, ~891 lines) — 3-stage compaction pipeline ported from Cline:
-  - Stage 1: Duplicate file read detection — tracks files read by path, replaces older reads with placeholder, keeps most recent read. If savings ≥ 30%, stop here.
-  - Stage 2: Conversation truncation (Cline's `getNextTruncationRange`) — preserves first user-assistant exchange and last N messages, removes middle messages in even-count blocks.
-  - Stage 3: LLM summarization (our addition) — summary chaining includes previous summary in next compaction, inserts summary as assistant message.
-  - Tracks active skill content, TaskStore reference, file read indices.
+- **ContextManager** (`loop/ContextManager.kt`, ~795 lines) — Single-stage Claude-Code-style compactor (rewritten 2026-05-17 from the 1,427-line 3-stage Cline port):
+  - Trigger: single 88% utilization gate (was 70/85/95% banding); per-model budget from `ModelCatalogService.getContextWindow()` via `effectiveMaxInputTokens()`
+  - Pre-pass: `deduplicateFileReads()` — cheap input shaping; collapses repeated `read_file`/`create_file`/`edit_file` results for the same path to a 75-char placeholder, keeping the most recent read. Bounds the summarization prompt's own input.
+  - Main: `summarizePrefix()` — LLM-summarize first ~70% of messages into a single assistant turn (TASK/FILES/DECISIONS/STATE/ERRORS/PENDING); preserves last ~30% verbatim. Image-bearing messages get `[+N image(s) attached]` placeholders in the prompt; tool-call-only turns fall back to the tool name.
+  - Returns `CompactResult` sealed class (`Skipped` / `Cancelled` / `Failed` / `Compacted`). Callers (AgentLoop x3 sites, AgentService, AgentController, SubagentRunner) wire `slidingWindow(0.3)` as the hard-truncation fallback when `Failed` is returned.
+  - Summary chaining: previous summary is fed into the next compaction's prompt, so multi-compaction sessions don't lose pre-compaction context.
+  - Post-compaction: image parts stripped (bytes survive on disk), active skill content re-injected, active plan pointer re-injected.
+  - PreCompact hook fires before summarization; cancellable.
+  - Tracks active skill content, active plan path, TaskStore reference, previous summary.
 - **LoopDetector** (`loop/LoopDetector.kt`, ~118 lines) — Detects identical consecutive tool calls. 3 identical = soft warning injected as system message. 5 identical = hard failure stops the loop.
 - **BrainRouter** (`loop/BrainRouter.kt`, ~390 lines) — Implements `LlmBrain`; the agent loop's `brain.chatStream()` call site routes through it transparently. Routing rule (post-2026-05-05 simplification): text-only → `OpenAiCompatBrain` (`/.api/llm/chat/completions`); any image-bearing turn (image-only OR image+tools) → `SourcegraphCompletionsStreamClient` (`/.api/completions/stream`). **2026-05-13 migration:** The native-vs-XML merge path in BrainRouter was removed. Neither client sends `tools:[...]` any longer — tool definitions live in the system prompt only, and both clients forward no `tools` parameter. Tool call extraction is handled entirely by `AssistantMessageParser` on the raw SSE text stream; no `delta_tool_calls` frames are consumed. The routing logic is therefore simpler: only the image-vs-text distinction remains. Gateway-emitted `event: error` frames (HEIC/HEIF/BMP/TIFF/AVIF/SVG and unsupported document shapes per format_lab 2026-05-05) surface as a user-visible assistant message: `"Sourcegraph rejected this attachment: …. Supported image formats: PNG, JPEG, WebP."` instead of an empty bubble. **F-P6-4 — typed exception**: missing-attachment surfaces as `AttachmentMissingException` mapped to `VALIDATION_ERROR` with a clear "re-upload or remove the image" message instead of confusing `NETWORK_ERROR`. **F-P6-5 — tool-role coercion is intentional** (do NOT "fix"): the Cody stream schema only accepts the three speakers `human`/`assistant`/`system`, so stray tool-role turns coerce to `human` with the tool name preserved in the text body. Per-session isolation: `AttachmentStore` constructed per-session in `AgentService.wrapBrainWithRouter()`; recycled/fallback brains receive a fresh router pointed at the SAME session dir, never a stale store. The exact pattern locked in by Phase 5's `AttachmentUploadHandler` for the upload path. **Historical note (2026-05-05):** the two-step image+tools workaround (vision-summarize on /stream → tools call on /chat/completions) was deleted after format_lab confirmed Sourcegraph forwards `tools` on api-version=9. The prior `📷 image analyzed` UI badge, the `router-step1-` synthetic-response IDs, the abstention/empty-handling, and ~520 lines of step-1 framing-prompt anti-refusal hardening (commits 14361e88, 66f757f0, fa005e43, b4d0fb36, 4e3f607d) all went with it. Baselines `capabilities_lab_2026-04-22_*.json` and `capabilities_lab_2026-05-05_*.json` document the regime change.
 - **MessageStateHandler** (`session/MessageStateHandler.kt`, ~302 lines) — Two-file JSON persistence (api_conversation_history.json + ui_messages.json). Atomic file writes via write-then-rename, per-session `kotlinx.coroutines.sync.Mutex`.
@@ -328,21 +332,33 @@ Key files: `ide/LanguageIntelligenceProvider.kt`, `ide/LanguageProviderRegistry.
 
 ## Context Management
 
-All context management runs through `ContextManager` — a 3-stage compaction pipeline ported from Cline.
+All context management runs through `ContextManager` — a single-stage Claude-Code-style compactor. Rewritten 2026-05-17 (commits `4eea82cfd` / `edf979fb0` / `b995bef6a`) from the previous 1,427-line 3-stage Cline port.
 
-### Pipeline
+### Flow
 
-1. **Stage 1 — Duplicate file read detection** (from Cline): Tracks files read by path. Replaces older reads with `"[File content for '{path}' — see latest read below]"`. Keeps most recent read. If savings ≥ 30%, stop here.
-2. **Stage 2 — Conversation truncation** (from Cline's `getNextTruncationRange`): Preserves first user-assistant exchange (task description) and last N messages (recent work). Removes middle messages in even-count blocks to maintain user-assistant role alternation.
-3. **Stage 3 — LLM summarization** (our addition — Cline doesn't have this): Optional fallback when truncation alone isn't enough. Summary chaining: includes previous summary in next compaction. Inserts summary as assistant message to avoid consecutive user messages.
+`compact(brain, hookManager, force) → CompactResult`:
+
+1. **Threshold gate** — single 88% utilization. Returns `Skipped` if below (unless `force=true`).
+2. **`PRE_COMPACT` hook** — cancellable. Hook returns `Cancel` → returns `Cancelled`.
+3. **Dedup pre-pass** — `deduplicateFileReads()` collapses repeated `read_file`/`create_file`/`edit_file` results for the same path to a 75-char placeholder, keeping the most recent read. Cheap (~1ms, pure Kotlin); bounds the summarization prompt's own input so it doesn't blow past the model window.
+4. **Safe split point** — preserves last ~30% of messages (tail), biases to role boundary, doesn't split tool_call/result pairs.
+5. **LLM summarize the prefix** — single `brain.chat()` call, structured prompt (TASK/FILES/DECISIONS/STATE/ERRORS/PENDING), `maxTokens=2048`. Image-bearing messages get `[+N image(s) attached]` placeholders; tool-call-only turns fall back to the tool name; previous summary (from prior compaction) folded into the new prompt. Returns `Failed` if brain returns no content.
+6. **Replace prefix** with single assistant message containing the summary. Tail preserved verbatim.
+7. **Post-summary cleanup** — strip image parts (bytes survive on disk), re-inject active skill content, re-inject active plan pointer.
+8. **Persist** — invalidate `lastPromptTokens`, invoke `onHistoryOverwrite(messages, 0 to splitIdx)` (the `Pair<Int, Int>` is the **deleted-message-index-range**, not a token pair).
+
+### Failure handling
+
+`compact()` returns `CompactResult` (sealed): `Skipped(utilizationPercent)`, `Cancelled(reason)`, `Failed(reason)`, `Compacted(tokensBefore, tokensAfter, summaryChars)`. Every external caller (3 sites in `AgentLoop`, `AgentService.compactContext()`, `AgentController` Compact button, and the sub-agent equivalents) wires `slidingWindow(0.3)` — preserved from the original code, repurposed — as the hard-truncation fallback when `Failed` is returned. At `AgentLoop` length-overflow recovery, three consecutive `Failed` results abort the loop with a user-visible error.
 
 ### Key details
-- **Compaction threshold**: 85% of `maxInputTokens` (default 150K)
+- **Compaction threshold**: 88% of `effectiveMaxInputTokens()` (single value; was 70/85/95% banding). Per-model from `ModelCatalogService.getContextWindow(currentModelRef)`; falls back to constructor `maxInputTokens` (default 90K) if catalog miss.
 - **Token tracking**: `lastPromptTokens` from API response, invalidated after compaction
-- **Tool output**: Full content in context. `truncateOutput()` middle-truncates at 50KB (60% head + 40% tail).
-- **Active skill**: Stored in `ContextManager`, re-injected into system prompt after compaction
-- **Task store**: `ContextManager.attachTaskStore(TaskStore)` wires the task store; current tasks rendered into system prompt Section 2 after every compaction rebuild
-- **History overwrite callback**: After compaction, `onHistoryOverwrite` persists modified conversation via `MessageStateHandler`
+- **Tool output**: Independent of compaction. `truncateOutput()` middle-truncates per-tool result at 50KB/100KB (60% head + 40% tail). `ToolOutputSpiller` separately spills `>30KB` to disk and returns a preview + file path.
+- **Active skill / active plan**: Stored in `ContextManager`, re-injected as assistant messages after compaction so the model knows the skill/plan is still in force.
+- **Task store**: `ContextManager.attachTaskStore(TaskStore)` wires the task store; current tasks rendered into system prompt Section 2.
+- **History overwrite callback**: `onHistoryOverwrite(messages, deletedRange: Pair<Int,Int>)` persists the modified conversation via `MessageStateHandler`. The `Pair<Int,Int>` is the index range of removed messages (`0 to splitIdx`), not token counts.
+- **Summary chaining**: `previousSummary` field; each compaction folds the prior summary into the next prompt to retain pre-compaction context across multi-day sessions.
 
 ## TaskStore + Task Tools
 
@@ -447,7 +463,7 @@ try {
 - **`output_file` parameter**: Boolean (not a path). When `true`, full output is saved to disk via `ToolOutputSpiller` and the context receives a preview (first 20 + last 10 lines) with the file path. The LLM can then use `read_file` or `search_code` on the saved file.
 - **ToolOutputSpiller**: Auto-spills large outputs (>30K chars) to `{sessionDir}/tool-output/{toolName}-{epochSec}-output.txt`. Preview = head 20 lines + tail 10 lines + file reference. Falls back to truncation if disk write fails.
 - **Per-tool spill wiring (Phase 7, 2026-04-18):** Every high-output tool calls `AgentTool.spillOrFormat(content, project)` directly so full content lands on disk and `ToolResult.spillPath` points to it. Wired: runtime (`runtime_exec`, `java_runtime_exec`, `python_runtime_exec`, `coverage`), debug (`debug_inspect` get_variables/thread_dump/memory_view; evaluate KEEPs its small cap), inspection (`list_quickfixes`, `problem_view`, `run_inspections`, `diagnostics` — structured preview: prose head-20 inline, full JSON on disk), DB (`db_query`, `db_explain`, `db_schema`, `db_stats`), PSI (`find_references`, `call_hierarchy`, `type_hierarchy`). `AgentLoop` also keeps a post-execution safety net that spills any >30K content a tool didn't self-spill. Acceptance suite: `SpillingWiringTest` pins the contract (12 tests).
-- **Tool-produced images:** tools may return `imageRefs` on `ToolResult`; `AgentLoop` writes them as `ContentBlock.ImageRef` blocks alongside the `ContentBlock.ToolResult` in a single user `ApiMessage`. Same downstream path as user-pasted images — `BrainRouter` detects via `messages.any { it.hasImageParts() }` (position-independent, fires whether the image arrives on a `role="user"` or `role="tool"` turn), hydrates bytes from `AttachmentStore`, and routes through `/.api/completions/stream`. Image-bearing tool results are pinned across context compaction (`ContextManager` Stage 1 dedup skip + Stage 2 truncation skip). Toggle: `PluginSettings.enableToolImageAutoload` (Settings → Tools → Workflow Orchestrator → AI Agent → Multimodal). Wired tools: `jira.download_attachment` (image MIME types only — png, jpeg, webp, gif). Pinned by `BrainRouterToolImageRoutingTest` and the `image+tools via tool-result origin still routes through stream` case in `BrainRouterTest`.
+- **Tool-produced images:** tools may return `imageRefs` on `ToolResult`; `AgentLoop` writes them as `ContentBlock.ImageRef` blocks alongside the `ContentBlock.ToolResult` in a single user `ApiMessage`. Same downstream path as user-pasted images — `BrainRouter` detects via `messages.any { it.hasImageParts() }` (position-independent, fires whether the image arrives on a `role="user"` or `role="tool"` turn), hydrates bytes from `AttachmentStore`, and routes through `/.api/completions/stream`. Image-bearing tool results are represented in compaction by `[+N image(s) attached]` placeholders in the summarization prompt (so the summarizer can describe what was relevant) and the image bytes are stripped post-summary while surviving on disk for replay. Toggle: `PluginSettings.enableToolImageAutoload` (Settings → Tools → Workflow Orchestrator → AI Agent → Multimodal). Wired tools: `jira.download_attachment` (image MIME types only — png, jpeg, webp, gif). Pinned by `BrainRouterToolImageRoutingTest` and the `image+tools via tool-result origin still routes through stream` case in `BrainRouterTest`.
 - **System prompt guidance**: RULES section instructs the LLM on when to use `grep_pattern` (targeted extraction), `output_file` (save for later), and to prefer dedicated tools over raw commands.
 
 ## Plan Mode Enforcement
