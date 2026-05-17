@@ -196,6 +196,12 @@ class SubagentRunner(
     ): SubagentRunResult {
         val stats = MutableSubagentStats()
 
+        // Per-run stream pipeline (mirrors AgentController main-agent path).
+        // Splitter strips <thinking>...</thinking>; batcher coalesces text to ~16ms
+        // frames so the JCEF bridge doesn't fire per SSE byte.
+        val thinkingSplitter = com.workflow.orchestrator.agent.ui.ThinkingTagSplitter()
+        var textBatcher: com.workflow.orchestrator.agent.ui.StreamBatcher? = null
+
         try {
             // 0. Wire API debug dumps on the brain (separate subdir from main agent).
             //    Detach any parent-session shared counter so this sub-agent's dumps
@@ -251,6 +257,17 @@ class SubagentRunner(
             // Capture coroutine scope to bridge non-suspend AgentLoop callbacks
             // to suspend onProgress. Port of Cline's per-tool-call progress reporting.
             val scope = CoroutineScope(coroutineContext)
+
+            // Allocate per-run stream pipeline after scope is ready (onFlush launches
+            // coroutines into it). StreamBatcher coalesces text at 16ms frames;
+            // ThinkingTagSplitter instance (thinkingSplitter) is declared above.
+            textBatcher = com.workflow.orchestrator.agent.ui.StreamBatcher(
+                onFlush = { batched ->
+                    scope.launch {
+                        onProgress(SubagentProgressUpdate(streamDelta = batched, stats = stats.snapshot()))
+                    }
+                }
+            )
 
             val loop = AgentLoop(
                 brain = brain,
@@ -323,8 +340,22 @@ class SubagentRunner(
                 onDebugLog = onDebugLog,
                 onCheckpoint = onCheckpoint,
                 onStreamChunk = { chunk ->
-                    scope.launch {
-                        onProgress(SubagentProgressUpdate(streamDelta = chunk, stats = stats.snapshot()))
+                    // Route through ThinkingTagSplitter so <thinking>...</thinking> blocks
+                    // are separated from prose. Text parts are coalesced by textBatcher;
+                    // ThinkingDelta and ThinkingEnd are emitted immediately (live render).
+                    for (part in thinkingSplitter.consume(chunk)) {
+                        when (part) {
+                            is com.workflow.orchestrator.agent.ui.ThinkingTagSplitter.Part.Text ->
+                                textBatcher?.append(part.text)
+                            is com.workflow.orchestrator.agent.ui.ThinkingTagSplitter.Part.ThinkingDelta ->
+                                scope.launch {
+                                    onProgress(SubagentProgressUpdate(thinkingDelta = part.text, stats = stats.snapshot()))
+                                }
+                            com.workflow.orchestrator.agent.ui.ThinkingTagSplitter.Part.ThinkingEnd ->
+                                scope.launch {
+                                    onProgress(SubagentProgressUpdate(thinkingEnd = true, stats = stats.snapshot()))
+                                }
+                        }
                     }
                 },
                 outputSpiller = outputSpiller,
@@ -338,66 +369,76 @@ class SubagentRunner(
                 modelCatalogService = modelCatalogService,
             )
 
-            // 8. Run the loop
-            val loopResult = loop.run(prompt)
+            // 8. Run the loop (inner try/finally ensures the StreamBatcher is flushed
+            // and disposed regardless of normal completion, abort, or exception so
+            // any tail prose bytes reach the UI before the final status event).
+            try {
+                val loopResult = loop.run(prompt)
 
-            // 9. Check abort after loop finishes
-            if (abortRequested.get()) {
-                return cancelledResult(stats)
-            }
+                // 9. Check abort after loop finishes
+                if (abortRequested.get()) {
+                    return cancelledResult(stats)
+                }
 
-            // 10. Map LoopResult to SubagentRunResult
-            val result = when (loopResult) {
-                is LoopResult.Completed -> {
-                    stats.inputTokens = loopResult.inputTokens
-                    stats.outputTokens = loopResult.outputTokens
-                    SubagentRunResult(
-                        status = SubagentRunStatus.COMPLETED,
-                        result = loopResult.summary,
-                        stats = stats.snapshot()
-                    )
+                // 10. Map LoopResult to SubagentRunResult
+                val result = when (loopResult) {
+                    is LoopResult.Completed -> {
+                        stats.inputTokens = loopResult.inputTokens
+                        stats.outputTokens = loopResult.outputTokens
+                        SubagentRunResult(
+                            status = SubagentRunStatus.COMPLETED,
+                            result = loopResult.summary,
+                            stats = stats.snapshot()
+                        )
+                    }
+                    is LoopResult.Failed -> {
+                        stats.inputTokens = loopResult.inputTokens
+                        stats.outputTokens = loopResult.outputTokens
+                        SubagentRunResult(
+                            status = SubagentRunStatus.FAILED,
+                            error = loopResult.error,
+                            stats = stats.snapshot()
+                        )
+                    }
+                    is LoopResult.Cancelled -> {
+                        stats.inputTokens = loopResult.inputTokens
+                        stats.outputTokens = loopResult.outputTokens
+                        SubagentRunResult(
+                            status = SubagentRunStatus.FAILED,
+                            error = "Subagent cancelled",
+                            stats = stats.snapshot()
+                        )
+                    }
+                    is LoopResult.SessionHandoff -> {
+                        stats.inputTokens = loopResult.inputTokens
+                        stats.outputTokens = loopResult.outputTokens
+                        SubagentRunResult(
+                            status = SubagentRunStatus.COMPLETED,
+                            result = loopResult.context,
+                            stats = stats.snapshot()
+                        )
+                    }
                 }
-                is LoopResult.Failed -> {
-                    stats.inputTokens = loopResult.inputTokens
-                    stats.outputTokens = loopResult.outputTokens
-                    SubagentRunResult(
-                        status = SubagentRunStatus.FAILED,
-                        error = loopResult.error,
-                        stats = stats.snapshot()
-                    )
-                }
-                is LoopResult.Cancelled -> {
-                    stats.inputTokens = loopResult.inputTokens
-                    stats.outputTokens = loopResult.outputTokens
-                    SubagentRunResult(
-                        status = SubagentRunStatus.FAILED,
-                        error = "Subagent cancelled",
-                        stats = stats.snapshot()
-                    )
-                }
-                is LoopResult.SessionHandoff -> {
-                    stats.inputTokens = loopResult.inputTokens
-                    stats.outputTokens = loopResult.outputTokens
-                    SubagentRunResult(
-                        status = SubagentRunStatus.COMPLETED,
-                        result = loopResult.context,
-                        stats = stats.snapshot()
-                    )
-                }
-            }
 
-            // 11. Report final status
-            val finalStatus = if (result.status == SubagentRunStatus.COMPLETED) SubagentExecutionStatus.COMPLETED else SubagentExecutionStatus.FAILED
-            onProgress(
-                SubagentProgressUpdate(
-                    status = finalStatus,
-                    stats = result.stats,
-                    result = result.result,
-                    error = result.error
+                // Flush batcher so tail prose reaches the UI before the final event.
+                textBatcher?.flush()
+
+                // 11. Report final status
+                val finalStatus = if (result.status == SubagentRunStatus.COMPLETED) SubagentExecutionStatus.COMPLETED else SubagentExecutionStatus.FAILED
+                onProgress(
+                    SubagentProgressUpdate(
+                        status = finalStatus,
+                        stats = result.stats,
+                        result = result.result,
+                        error = result.error
+                    )
                 )
-            )
 
-            return result
+                return result
+            } finally {
+                textBatcher?.flush()
+                textBatcher?.dispose()
+            }
         } catch (e: Exception) {
             // If aborted, return cancelled result
             if (abortRequested.get()) {
