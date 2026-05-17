@@ -522,6 +522,15 @@ class AgentService(
     /** Model ID of the currently active parent brain. Subagents inherit this as their default model. */
     @Volatile private var currentBrainModelId: String? = null
 
+    // Per-task wiring "live" fields for SpawnAgentTool — populated at the start of
+    // executeTask so the SpawnAgentTool's lambdas resolve to the current task's callbacks.
+    @Volatile private var liveOnRetry: ((Int, Int, String, Long) -> Unit)? = null
+    @Volatile private var liveOnCompactionState: ((Boolean, String) -> Unit)? = null
+    @Volatile private var liveOnModelSwitch: ((String, String, String) -> Unit)? = null
+    @Volatile private var liveFallbackManager: com.workflow.orchestrator.agent.loop.ModelFallbackManager? = null
+    @Volatile private var liveBrainFactory: (suspend (String, String?) -> com.workflow.orchestrator.core.ai.LlmBrain)? = null
+    @Volatile private var liveCachedFallbackChain: List<String>? = null
+
     /**
      * Bug 3 — user's pending model change. Set by [requestModelChange] from the
      * AgentController model dropdown handler. Polled by [AgentLoop] at the top of
@@ -917,7 +926,16 @@ class AgentService(
             toolRegistry = registry,
             project = project,
             configLoader = AgentConfigLoader.getInstance(),
-            ideContext = ideContext
+            ideContext = ideContext,
+            outputSpiller = _outputSpiller,
+            attachmentStoreProvider = { activeAttachmentStore },
+            onCompactionState = { active, phase -> liveOnCompactionState?.invoke(active, phase) },
+            fallbackManager = liveFallbackManager,
+            brainFactory = liveBrainFactory,
+            cachedFallbackChain = liveCachedFallbackChain,
+            onRetry = { a, m, r, d -> liveOnRetry?.invoke(a, m, r, d) },
+            onModelSwitch = { from, to, reason -> liveOnModelSwitch?.invoke(from, to, reason) },
+            modelCatalogService = sharedCatalogHolder.peek(),
         ) }
 
         // ── Deferred tools (loaded via tool_search) ──────────────────────
@@ -1917,6 +1935,15 @@ class AgentService(
                         })
                     } catch (_: Exception) { /* leave null if branch resolution fails */ }
                 }
+
+                // Wire live fields for SpawnAgentTool — keeps the per-task callbacks
+                // accessible to LLM-spawned sub-agents constructed by SpawnAgentTool.
+                liveOnRetry = onRetry
+                liveOnCompactionState = onCompactionState
+                liveOnModelSwitch = onModelSwitch
+                liveFallbackManager = fallbackManager
+                liveBrainFactory = brainFactory
+                liveCachedFallbackChain = cachedFallbackChain
 
                 val loop = AgentLoop(
                     brain = brain,
