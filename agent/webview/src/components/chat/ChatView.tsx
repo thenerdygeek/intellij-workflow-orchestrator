@@ -1,5 +1,6 @@
 import { memo, useCallback, useRef, useEffect, useState, useMemo } from 'react';
 import { useChatStore, selectActiveSubAgents } from '@/stores/chatStore';
+import { useShallow } from 'zustand/react/shallow';
 import { AgentMessage, AnsweredQuestionsCard } from './AgentMessage';
 import { ChatFooter } from './ChatFooter';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -18,7 +19,7 @@ import { ScrollButton } from '@/components/ui/prompt-kit/scroll-button';
 export const ChatView = memo(function ChatView() {
   const messages = useChatStore(s => s.messages);
   const streamingText = useChatStore(s => s.streamingText);
-  const activeSubAgents = useChatStore(selectActiveSubAgents);
+  const activeSubAgents = useChatStore(useShallow(selectActiveSubAgents));
 
   const messageListRef = useRef<MessageListHandle>(null);
   const wasStreamingRef = useRef(false);
