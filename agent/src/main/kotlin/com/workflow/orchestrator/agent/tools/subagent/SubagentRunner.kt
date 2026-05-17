@@ -206,12 +206,18 @@ class SubagentRunner(
         label: String,
         onProgress: suspend (SubagentProgressUpdate) -> Unit
     ): SubagentRunResult {
-        // Capture the caller's coroutine context (before withSubagentOrigin creates a child job)
-        // so that runInternal's free-floating CoroutineScope(callerContext) inherits the SAME job
-        // as the caller rather than the withContext child job. Without this, withContext's child job
-        // waits for scope.launch children to complete, altering callback ordering relative to direct
+        // Capture the pre-wrapper context so that runInternal's free-floating
+        // CoroutineScope(callerContext) inherits the SAME job as the caller rather than the
+        // withSubagentOrigin child job. Without this, withContext's child job waits for
+        // scope.launch children to complete, altering callback ordering relative to direct
         // onProgress calls (and breaking tests using UnconfinedTestDispatcher).
-        val callerContext = coroutineContext
+        //
+        // We also merge SubagentOriginContext into the context passed to runInternal so that
+        // scope.launch children — and any tools they invoke — can read the sub-agent origin via
+        // coroutineContext[SubagentOriginContext.Key]. Without the merge, callerContext would be
+        // missing the origin element (it was captured before withSubagentOrigin installed it),
+        // and any future origin-aware progress callback would see a silent null. See P3 review notes.
+        val callerContext = coroutineContext + SubagentOriginContext(agentId, label)
         return withSubagentOrigin(agentId, label) {
             runInternal(prompt, onProgress, callerContext)
         }
@@ -284,9 +290,9 @@ class SubagentRunner(
             // 7. Create AgentLoop with callbacks
             // Capture coroutine scope to bridge non-suspend AgentLoop callbacks
             // to suspend onProgress. Port of Cline's per-tool-call progress reporting.
-            // Uses callerContext (pre-withSubagentOrigin) so that scope.launch children
-            // are NOT parented to the withContext child job — preserving the original
-            // fire-and-forget scheduling behaviour regardless of the wrapping context.
+            // scope is parented at the caller's Job (fire-and-forget child semantics) and
+            // carries SubagentOriginContext so any progress-callback child can read the
+            // sub-agent origin via coroutineContext[SubagentOriginContext.Key].
             val scope = CoroutineScope(callerContext)
 
             // Allocate per-run stream pipeline after scope is ready (onFlush launches
