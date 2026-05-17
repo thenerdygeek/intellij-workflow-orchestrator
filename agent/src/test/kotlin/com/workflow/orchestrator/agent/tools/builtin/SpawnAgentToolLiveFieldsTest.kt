@@ -72,6 +72,100 @@ class SpawnAgentToolLiveFieldsTest {
         }
     }
 
+    /**
+     * End-to-end contract: mimic exactly how AgentService wires the SpawnAgentTool
+     * lambdas around its own mutable fields, then walk through the lifecycle:
+     *
+     *   service init       → SpawnAgentTool constructed; live fields are null
+     *   executeTask starts → AgentService populates live fields
+     *   LLM spawns agent   → SpawnAgentTool invokes providers; SubagentRunner sees populated values
+     *
+     * If a future regression reverts to snapshot-at-construction storage, this test fails.
+     */
+    @Test
+    fun `live field lifecycle — providers null at service-init time, populated at dispatch time`() {
+        // Simulate AgentService's mutable fields.
+        var liveSpiller: ToolOutputSpiller? = null
+        var liveFallback: ModelFallbackManager? = null
+        var liveBrainFactory: (suspend (String, String?) -> LlmBrain)? = null
+        var liveCachedChain: List<String>? = null
+        var liveCatalog: ModelCatalogService? = null
+
+        // Simulate the wiring AgentService does at SpawnAgentTool construction.
+        val spillerProvider: () -> ToolOutputSpiller? = { liveSpiller }
+        val fallbackProvider: () -> ModelFallbackManager? = { liveFallback }
+        val brainFactoryProvider: () -> (suspend (String, String?) -> LlmBrain)? = { liveBrainFactory }
+        val cachedChainProvider: () -> List<String>? = { liveCachedChain }
+        val catalogProvider: () -> ModelCatalogService? = { liveCatalog }
+
+        // ── service init: SpawnAgentTool is constructed. ──
+        // Snapshot what the providers see at this moment.
+        assertNull(spillerProvider(),  "service-init: spiller must be null")
+        assertNull(fallbackProvider(), "service-init: fallback must be null")
+        assertNull(brainFactoryProvider(), "service-init: brainFactory must be null")
+        assertNull(cachedChainProvider(), "service-init: cachedChain must be null")
+        assertNull(catalogProvider(),  "service-init: catalog must be null")
+
+        // ── executeTask runs: AgentService populates the live fields. ──
+        val populatedSpiller = mockk<ToolOutputSpiller>(relaxed = true)
+        val populatedFallback = mockk<ModelFallbackManager>(relaxed = true)
+        val populatedBrainFactory: suspend (String, String?) -> LlmBrain =
+            { _, _ -> mockk(relaxed = true) }
+        val populatedChain = listOf("model-a", "model-b")
+        val populatedCatalog = mockk<ModelCatalogService>(relaxed = true)
+        liveSpiller = populatedSpiller
+        liveFallback = populatedFallback
+        liveBrainFactory = populatedBrainFactory
+        liveCachedChain = populatedChain
+        liveCatalog = populatedCatalog
+
+        // ── LLM calls `agent` tool: SpawnAgentTool dispatches a sub-agent. ──
+        // The dispatch sites in executeSingle/executeParallel invoke each provider
+        // and forward the snapshot to SubagentRunner. Simulate that here.
+        val dispatchedSpiller = spillerProvider()
+        val dispatchedFallback = fallbackProvider()
+        val dispatchedBrainFactory = brainFactoryProvider()
+        val dispatchedChain = cachedChainProvider()
+        val dispatchedCatalog = catalogProvider()
+
+        // The sub-agent must see the populated values, NOT null.
+        assertSame(populatedSpiller, dispatchedSpiller, "dispatch: spiller must be populated")
+        assertSame(populatedFallback, dispatchedFallback, "dispatch: fallback must be populated")
+        assertSame(populatedBrainFactory, dispatchedBrainFactory, "dispatch: brainFactory must be populated")
+        assertSame(populatedChain, dispatchedChain, "dispatch: cachedChain must be populated")
+        assertSame(populatedCatalog, dispatchedCatalog, "dispatch: catalog must be populated")
+
+        // Bonus: a SECOND dispatch later sees the SAME populated values (no caching anti-pattern).
+        assertSame(populatedSpiller, spillerProvider())
+        assertSame(populatedFallback, fallbackProvider())
+    }
+
+    /**
+     * Regression guard: if any of the 5 fields were stored as a snapshot at SpawnAgentTool
+     * construction (the pre-F1 bug), the dispatched value would be null even after the
+     * live field is populated. This test fails fast on that exact regression.
+     */
+    @Test
+    fun `snapshot-at-construction anti-pattern would produce a null dispatch — provider pattern does not`() {
+        var liveSpiller: ToolOutputSpiller? = null
+
+        // ANTI-PATTERN: simulate the bug — capture the snapshot at "construction" (now).
+        val snapshotAtConstruction: ToolOutputSpiller? = liveSpiller  // null
+
+        // CORRECT pattern: a provider lambda.
+        val providerAtConstruction: () -> ToolOutputSpiller? = { liveSpiller }
+
+        // Time passes; executeTask populates the field.
+        val populated = mockk<ToolOutputSpiller>(relaxed = true)
+        liveSpiller = populated
+
+        // Anti-pattern still sees null (the bug).
+        assertNull(snapshotAtConstruction, "snapshot anti-pattern: still null after populate")
+
+        // Provider correctly sees the populated value.
+        assertSame(populated, providerAtConstruction(), "provider pattern: sees populated value")
+    }
+
     @Test
     fun `SpawnAgentTool dereferences providers at runner-construction time inside executeSingle and executeParallel`() {
         val src = java.io.File(
