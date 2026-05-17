@@ -37,6 +37,48 @@ function safeJsonParse(s: string | undefined): any {
 }
 
 /**
+ * Upgrades a persisted subagentData blob from the legacy UiMessageSubagentData
+ * shape (pre-Phase 4: description/iterations/agentType, no label/iteration) to
+ * the full SubAgentState shape used since Phase 4.
+ *
+ * Detection: if `raw.label` is already a string the blob is modern — leave it
+ * alone.  Anything without `label` is assumed legacy and gets safe defaults so
+ * SubAgentView never calls `.match` on undefined.
+ *
+ * Legacy sessions are always terminal at restart (no live run can resume across
+ * a JVM restart), so status is fixed to COMPLETED.
+ */
+function upgradeLegacySubagentData(raw: any): any {
+  if (!raw || typeof raw !== 'object') return raw;
+  // Modern shape has `label` (string). Leave it alone.
+  if (typeof raw.label === 'string') return raw;
+
+  const description = typeof raw.description === 'string' ? raw.description : '';
+  const agentType = typeof raw.agentType === 'string' ? raw.agentType : '';
+  const labelFromLegacy = description
+    ? (agentType ? `${description} (${agentType})` : description)
+    : 'Sub-agent';
+
+  return {
+    agentId: raw.agentId ?? 'unknown',
+    label: labelFromLegacy,
+    model: raw.model ?? null,
+    status: 'COMPLETED',  // legacy sessions are terminal; no live run resumes across restart
+    startedAt: typeof raw.startedAt === 'number' ? raw.startedAt : Date.now(),
+    iteration: typeof raw.iterations === 'number' ? raw.iterations
+              : typeof raw.iteration === 'number' ? raw.iteration
+              : 0,
+    tokensUsed: typeof raw.tokensUsed === 'number' ? raw.tokensUsed : 0,
+    messages: Array.isArray(raw.messages) ? raw.messages : [],
+    activeToolChain: Array.isArray(raw.activeToolChain) ? raw.activeToolChain : [],
+    streamingText: raw.streamingText ?? null,
+    streamingThinkingText: raw.streamingThinkingText ?? null,
+    summary: typeof raw.summary === 'string' ? raw.summary : undefined,
+    error: typeof raw.error === 'string' ? raw.error : undefined,
+  };
+}
+
+/**
  * Bug 7 — content-equality helpers used by setTasks/applyTask{Create,Update}
  * so a Kotlin-side re-emission of an unchanged task list doesn't cause every
  * `s => s.tasks` subscriber to re-render. Compares user-visible fields only;
@@ -364,7 +406,7 @@ interface ChatState {
   showToast(message: string, type: string, durationMs: number): void;
   dismissToast(id: string): void;
   receiveMentionResults(query: string, results: MentionSearchResult[]): void;
-  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval?: boolean): void;
+  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval?: boolean, originAgentId?: string | null, originLabel?: string | null): void;
   resolveApproval(decision: 'approve' | 'deny' | 'allowForSession'): void;
   showProcessInput(processId: string, description: string, prompt: string, command: string): void;
   resolveProcessInput(input: string): void;
@@ -1972,10 +2014,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     });
 
+    // Upgrade legacy subagentData shapes (pre-Phase 4) to the full SubAgentState
+    // shape so SubAgentView never calls .match on an undefined label.
+    const withSubagentUpgrade = upgraded.map(m => {
+      if (!m.subagentData) return m;
+      const upgraded2 = upgradeLegacySubagentData(m.subagentData);
+      if (upgraded2 === m.subagentData) return m;
+      return { ...m, subagentData: upgraded2 };
+    });
+
     // Restore plan from last PLAN_UPDATE message (steps field removed in Phase 5 — task system port)
     let restoredPlan: Plan | null = null;
-    for (let i = upgraded.length - 1; i >= 0; i--) {
-      const m = upgraded[i]!;
+    for (let i = withSubagentUpgrade.length - 1; i >= 0; i--) {
+      const m = withSubagentUpgrade[i]!;
       if (m.planData) {
         const pd = m.planData;
         restoredPlan = {
@@ -1987,7 +2038,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     set({
-      messages: upgraded,
+      messages: withSubagentUpgrade,
       streamingText: null,
       streamingMsgTs: null,
       streamingThinkingText: null,
