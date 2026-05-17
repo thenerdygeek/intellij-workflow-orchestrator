@@ -2,6 +2,7 @@ import { memo, useState, useRef, useEffect, useCallback } from 'react';
 import type { SubAgentState } from '@/bridge/types';
 import { AgentMessage } from '@/components/chat/AgentMessage';
 import { ToolCallChain } from '@/components/agent/ToolCallChain';
+import { ThinkingView } from '@/components/agent/ThinkingView';
 import { CopyButton } from '@/components/ui/copy-button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -316,9 +317,7 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
                       }]} />
                     )}
                     {msg.say === 'REASONING' && msg.text && (
-                      <div className="text-[11px] px-2 py-1 rounded" style={{ color: 'var(--fg-muted)', backgroundColor: 'var(--thinking-bg, rgba(0,0,0,0.04))' }}>
-                        {msg.text}
-                      </div>
+                      <ThinkingView content={msg.text} isStreaming={false} />
                     )}
                     {msg.say === 'ERROR' && msg.text && (
                       <div className="text-[11px] px-2 py-1 rounded" style={{ color: 'var(--error, #ef4444)' }}>
@@ -335,6 +334,14 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
                 )}
               </div>
             ))}
+
+            {/* Live streaming thinking (mirrors main-agent ChatFooter) */}
+            {subAgent.streamingThinkingText && (
+              <ThinkingView
+                content={subAgent.streamingThinkingText}
+                isStreaming
+              />
+            )}
 
             {/* Active (in-progress) tool calls */}
             {subAgent.activeToolChain && subAgent.activeToolChain.length > 0 && (
