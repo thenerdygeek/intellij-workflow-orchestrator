@@ -80,7 +80,25 @@ class SpawnAgentTool(
     /** Parent checkpoint callback — fires after sub-agent write tools. */
     var onCheckpoint: (suspend () -> Unit)? = null,
     private val configLoader: AgentConfigLoader? = null,
-    private val ideContext: IdeContext? = null
+    private val ideContext: IdeContext? = null,
+    /** Parent output spiller — sub-agent large tool outputs are spilled to the same session dir. */
+    private val outputSpiller: com.workflow.orchestrator.agent.tools.ToolOutputSpiller? = null,
+    /** Provider for the session-scoped AttachmentStore — forwarded so sub-agent image tools hit the same store. */
+    private val attachmentStoreProvider: () -> com.workflow.orchestrator.agent.session.AttachmentStore? = { null },
+    /** Optional signal fired when the sub-agent's ContextManager runs a compaction pass. */
+    private val onCompactionState: ((active: Boolean, phase: String) -> Unit)? = null,
+    /** Optional model fallback manager — enables sub-agent fallback/escalation on network errors. */
+    private val fallbackManager: com.workflow.orchestrator.agent.loop.ModelFallbackManager? = null,
+    /** Optional factory that produces a fresh LlmBrain for a given model ID. */
+    private val brainFactory: (suspend (modelId: String, reason: String?) -> com.workflow.orchestrator.core.ai.LlmBrain)? = null,
+    /** Optional fallback chain for L2 tier escalation when fallbackManager is null. */
+    private val cachedFallbackChain: List<String>? = null,
+    /** Optional callback fired when the loop retries a failed API call. */
+    private val onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
+    /** Optional callback when the loop switches models (fallback or escalation). */
+    private val onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null,
+    /** Optional model catalog service — filters fallback chain to vision-capable models. */
+    private val modelCatalogService: com.workflow.orchestrator.core.ai.ModelCatalogService? = null,
 ) : AgentTool {
 
     override val name = "agent"
@@ -778,6 +796,15 @@ Tips:
             onCheckpoint = onCheckpoint,
             ideContext = ideContext,
             agentConfig = config,
+            outputSpiller = outputSpiller,
+            attachmentStoreProvider = attachmentStoreProvider,
+            onCompactionState = onCompactionState,
+            fallbackManager = fallbackManager,
+            brainFactory = brainFactory,
+            cachedFallbackChain = cachedFallbackChain,
+            onRetry = onRetry,
+            onModelSwitch = onModelSwitch,
+            modelCatalogService = modelCatalogService,
         )
 
         val agentId = generateAgentId()
@@ -884,6 +911,15 @@ Tips:
                         onCheckpoint = onCheckpoint,
                         ideContext = ideContext,
                         agentConfig = config,
+                        outputSpiller = outputSpiller,
+                        attachmentStoreProvider = attachmentStoreProvider,
+                        onCompactionState = onCompactionState,
+                        fallbackManager = fallbackManager,
+                        brainFactory = brainFactory,
+                        cachedFallbackChain = cachedFallbackChain,
+                        onRetry = onRetry,
+                        onModelSwitch = onModelSwitch,
+                        modelCatalogService = modelCatalogService,
                     )
 
                     val childAgentId = generateAgentId()
