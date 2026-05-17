@@ -114,6 +114,8 @@ export const ChatFooter = memo(function ChatFooter() {
             onApprove={handleApprove}
             onDeny={handleDeny}
             onAllowForSession={pendingApproval.allowSessionApproval ? handleAllowForSession : undefined}
+            originAgentId={pendingApproval.originAgentId}
+            originLabel={pendingApproval.originLabel}
           />
         </div>
       )}

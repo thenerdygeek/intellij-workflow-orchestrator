@@ -411,9 +411,11 @@ class AgentDashboardPanel(
         diffContent: String? = null,
         commandPreviewJson: String? = null,
         allowSessionApproval: Boolean = true,
+        originAgentId: String? = null,
+        originLabel: String? = null,
     ) {
-        cefPanel?.showApproval(toolName, riskLevel, description, metadataJson, diffContent, commandPreviewJson, allowSessionApproval)
-        broadcast(replay = false) { it.showApproval(toolName, riskLevel, description, metadataJson, diffContent, commandPreviewJson, allowSessionApproval) }
+        cefPanel?.showApproval(toolName, riskLevel, description, metadataJson, diffContent, commandPreviewJson, allowSessionApproval, originAgentId, originLabel)
+        broadcast(replay = false) { it.showApproval(toolName, riskLevel, description, metadataJson, diffContent, commandPreviewJson, allowSessionApproval, originAgentId, originLabel) }
     }
 
     fun showProcessInput(processId: String, description: String, prompt: String, command: String) {

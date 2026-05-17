@@ -128,6 +128,10 @@ interface PendingApproval {
   commandPreview?: ApprovalCommandPreview;
   /** Whether the UI should offer "Allow for session". False for run_command. */
   allowSessionApproval: boolean;
+  /** Present when the approval bubbles up from a sub-agent. */
+  originAgentId?: string | null;
+  /** Human-readable label of the sub-agent that requested approval. */
+  originLabel?: string | null;
 }
 
 // ── Toast state ──
@@ -1301,7 +1305,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ mentionResults: results, mentionResultsQuery: query });
   },
 
-  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval: boolean = true) {
+  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval: boolean = true, originAgentId?: string | null, originLabel?: string | null) {
     set(state => {
       const approval: PendingApproval = {
         toolName,
@@ -1312,6 +1316,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         diffContent,
         commandPreview,
         allowSessionApproval,
+        originAgentId,
+        originLabel,
       };
 
       // Drain any active tool chain into individual UiMessage entries and

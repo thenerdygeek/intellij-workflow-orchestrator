@@ -14,6 +14,8 @@ interface ApprovalViewProps {
   onApprove: () => void;
   onDeny: () => void;
   onAllowForSession?: () => void;
+  originAgentId?: string | null;
+  originLabel?: string | null;
 }
 
 export function ApprovalView({
@@ -27,6 +29,8 @@ export function ApprovalView({
   onApprove,
   onDeny,
   onAllowForSession,
+  originAgentId: _originAgentId,
+  originLabel,
 }: ApprovalViewProps) {
   const id = useId();
 
@@ -37,6 +41,11 @@ export function ApprovalView({
 
   return (
     <div className="flex flex-col gap-2">
+      {originLabel && (
+        <div className="text-[11px] mb-1" style={{ color: 'var(--accent)' }}>
+          Sub-agent: {originLabel}
+        </div>
+      )}
       {isRunCommand && commandPreview && <CommandPreview {...commandPreview} />}
       {!isRunCommand && diffContent && (
         <div data-testid="approval-diff">

@@ -1852,6 +1852,14 @@ class AgentController(
      * @return the user's decision
      */
     private suspend fun approvalGate(toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean): ApprovalResult {
+        // Read the sub-agent origin context — present when the approval bubbles up from a
+        // sub-agent run wrapped by withSubagentOrigin(). Null for orchestrator-level approvals.
+        val origin = kotlin.coroutines.coroutineContext[
+            com.workflow.orchestrator.agent.tools.subagent.SubagentOriginContext.Key
+        ]
+        val originAgentId = origin?.agentId
+        val originLabel = origin?.label
+
         val deferred = CompletableDeferred<ApprovalResult>()
         // Defensive reentry guard — see the invariant described on [pendingApproval].
         // If a second approvalGate call arrives while the first is still waiting,
@@ -1925,7 +1933,9 @@ class AgentController(
                 metadataJson = metadataJson,
                 diffContent = diffContent,
                 commandPreviewJson = commandPreviewJson,
-                allowSessionApproval = allowSessionApproval
+                allowSessionApproval = allowSessionApproval,
+                originAgentId = originAgentId,
+                originLabel = originLabel,
             )
         }
 
