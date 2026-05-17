@@ -170,7 +170,7 @@ class SubagentRunnerTest {
             val runner = createRunner(brain)
             val progressUpdates = mutableListOf<SubagentProgressUpdate>()
 
-            val result = runner.run("Find the answer") { update ->
+            val result = runner.run("Find the answer", "test-agent", "test (unit-test)") { update ->
                 progressUpdates.add(update)
             }
 
@@ -204,7 +204,7 @@ class SubagentRunnerTest {
             ))
 
             val runner = createRunner(brain)
-            val result = runner.run("Search for foo") {}
+            val result = runner.run("Search for foo", "test-agent", "test (unit-test)") {}
 
             assertEquals(SubagentRunStatus.COMPLETED, result.status)
             // The onToolCall callback fires for each tool execution in the loop.
@@ -225,7 +225,7 @@ class SubagentRunnerTest {
             val runner = createRunner(brain)
             val progressUpdates = mutableListOf<SubagentProgressUpdate>()
 
-            val result = runner.run("Do something") { update ->
+            val result = runner.run("Do something", "test-agent", "test (unit-test)") { update ->
                 progressUpdates.add(update)
             }
 
@@ -252,7 +252,7 @@ class SubagentRunnerTest {
 
             val budget = 75_000
             val runner = createRunner(brain, contextBudget = budget)
-            val result = runner.run("Quick task") {}
+            val result = runner.run("Quick task", "test-agent", "test (unit-test)") {}
 
             assertEquals(SubagentRunStatus.COMPLETED, result.status)
             // The onTokenUpdate callback sets contextWindow = contextBudget
@@ -292,7 +292,7 @@ class SubagentRunnerTest {
             val runner = createRunner(brain)
             runner.abort()  // Abort before running
 
-            val result = runner.run("This should be cancelled") {}
+            val result = runner.run("This should be cancelled", "test-agent", "test (unit-test)") {}
 
             assertEquals(SubagentRunStatus.FAILED, result.status)
             assertTrue(result.error!!.contains("cancelled", ignoreCase = true))
@@ -348,7 +348,7 @@ class SubagentRunnerTest {
             val runner = createRunner(brain)
             val statuses = mutableListOf<SubagentExecutionStatus>()
 
-            runner.run("Quick task") { update ->
+            runner.run("Quick task", "test-agent", "test (unit-test)") { update ->
                 update.status?.let { statuses.add(it) }
             }
 
@@ -367,7 +367,7 @@ class SubagentRunnerTest {
             val runner = createRunner(brain)
             val statuses = mutableListOf<SubagentExecutionStatus>()
 
-            runner.run("Will fail") { update ->
+            runner.run("Will fail", "test-agent", "test (unit-test)") { update ->
                 update.status?.let { statuses.add(it) }
             }
 
@@ -398,7 +398,7 @@ class SubagentRunnerTest {
                 toolExecutionMode = "stream_interrupt"
             )
 
-            val result = runner.run("Quick task") {}
+            val result = runner.run("Quick task", "test-agent", "test (unit-test)") {}
 
             assertEquals(SubagentRunStatus.COMPLETED, result.status)
             assertNotNull(result.result)
@@ -416,7 +416,7 @@ class SubagentRunnerTest {
             // Use createRunner helper which does NOT pass toolExecutionMode
             val runner = createRunner(brain)
 
-            val result = runner.run("Quick task") {}
+            val result = runner.run("Quick task", "test-agent", "test (unit-test)") {}
 
             assertEquals(SubagentRunStatus.COMPLETED, result.status)
             assertNotNull(result.result)
@@ -436,7 +436,7 @@ class SubagentRunnerTest {
             ))
 
             val runner = createRunner(brain)
-            runner.run("Do something") {}
+            runner.run("Do something", "test-agent", "test (unit-test)") {}
 
             val systemMessage = brain.lastMessages.first()
             val content = systemMessage.content ?: ""
@@ -486,7 +486,7 @@ class SubagentRunnerTest {
                 contextBudget = 50_000
             )
 
-            runner.run("Research task") {}
+            runner.run("Research task", "test-agent", "test (unit-test)") {}
 
             val systemContent = brain.lastMessages.first().content ?: ""
             // System prompt should only contain sub-agent tools, not main-agent-only tools
@@ -516,7 +516,7 @@ class SubagentRunnerTest {
                 planMode = false,
                 contextBudget = 50_000
             )
-            runner.run("Review this code") {}
+            runner.run("Review this code", "test-agent", "test (unit-test)") {}
 
             val systemMessage = brain.lastMessages.first()
             val content = systemMessage.content ?: ""
@@ -574,7 +574,7 @@ class SubagentRunnerTest {
                 onSystemPromptBuilt = { prompt -> capturedSystemPrompt.add(prompt) }
             )
 
-            val result = runner.run("Quick task") {}
+            val result = runner.run("Quick task", "test-agent", "test (unit-test)") {}
 
             assertEquals(SubagentRunStatus.COMPLETED, result.status)
             // tool_search must appear in the composed system prompt
@@ -611,7 +611,7 @@ class SubagentRunnerTest {
                 onSystemPromptBuilt = { prompt -> capturedSystemPrompt.add(prompt) }
             )
 
-            runner.run("Find implementations") {}
+            runner.run("Find implementations", "test-agent", "test (unit-test)") {}
 
             assertTrue(capturedSystemPrompt.isNotEmpty(), "Hook must fire")
             val prompt = capturedSystemPrompt.first()
@@ -646,7 +646,7 @@ class SubagentRunnerTest {
                 onSystemPromptBuilt = { prompt -> capturedSystemPrompt.add(prompt) }
             )
 
-            runner.run("Quick task") {}
+            runner.run("Quick task", "test-agent", "test (unit-test)") {}
 
             assertTrue(capturedSystemPrompt.isNotEmpty(), "Hook must fire")
             val prompt = capturedSystemPrompt.first()
@@ -700,7 +700,7 @@ class SubagentRunnerTest {
                 contextBudget = 50_000,
                 approvalGate = gate,
             )
-            val result = runner.run("edit") {}
+            val result = runner.run("edit", "test-agent", "test (unit-test)") {}
 
             assertEquals(SubagentRunStatus.COMPLETED, result.status)
             assertEquals(1, approvalCalls.size,
@@ -741,7 +741,7 @@ class SubagentRunnerTest {
                 contextBudget = 50_000,
                 // no approvalGate
             )
-            val result = runner.run("edit") {}
+            val result = runner.run("edit", "test-agent", "test (unit-test)") {}
             assertEquals(SubagentRunStatus.COMPLETED, result.status,
                 "Null approval gate must not block execution.")
         }
@@ -815,7 +815,7 @@ class SubagentRunnerTest {
                 contextBudget = 100_000,
             )
 
-            val result = runner.run("Analyze slow query") {}
+            val result = runner.run("Analyze slow query", "test-agent", "test (unit-test)") {}
 
             assertEquals(SubagentRunStatus.COMPLETED, result.status,
                 "Sub-agent must complete after activating deferred tool via tool_search")
@@ -858,7 +858,7 @@ class SubagentRunnerTest {
             )
 
             // Should complete without crashing — tool_search returns "no results" for jira
-            val result = runner.run("Task") {}
+            val result = runner.run("Task", "test-agent", "test (unit-test)") {}
             assertEquals(SubagentRunStatus.COMPLETED, result.status,
                 "Sub-agent must complete even when tool_search finds no matching deferred tool")
         }
@@ -896,7 +896,7 @@ class SubagentRunnerTest {
                 onSystemPromptBuilt = { prompt -> capturedSystemPrompt = prompt },
             )
 
-            runner.run("Task") {}
+            runner.run("Task", "test-agent", "test (unit-test)") {}
 
             assertNotNull(capturedSystemPrompt, "onSystemPromptBuilt hook must be called")
             assertTrue(
@@ -945,7 +945,7 @@ class SubagentRunnerTest {
                 contextBudget = 50_000
             )
 
-            val result = runner.run("Review Foo.kt") {}
+            val result = runner.run("Review Foo.kt", "test-agent", "test (unit-test)") {}
 
             assertEquals(SubagentRunStatus.COMPLETED, result.status)
             assertNull(result.error)
@@ -970,7 +970,7 @@ class SubagentRunnerTest {
                 contextBudget = 50_000
             )
 
-            val result = runner.run("Debug the NPE") {}
+            val result = runner.run("Debug the NPE", "test-agent", "test (unit-test)") {}
 
             assertEquals(SubagentRunStatus.COMPLETED, result.status)
             val content = result.result ?: ""
@@ -1009,7 +1009,7 @@ class SubagentRunnerTest {
                 contextBudget = 50_000,
                 onSystemPromptBuilt = { prompt -> capturedPrompt = prompt }
             )
-            runner.run("Do something") {}
+            runner.run("Do something", "test-agent", "test (unit-test)") {}
 
             assertNotNull(capturedPrompt, "onSystemPromptBuilt hook must fire")
             assertTrue(
@@ -1041,7 +1041,7 @@ class SubagentRunnerTest {
                 contextBudget = 50_000,
                 onSystemPromptBuilt = { prompt -> capturedPrompt = prompt }
             )
-            runner.run("Task") {}
+            runner.run("Task", "test-agent", "test (unit-test)") {}
 
             val section = capturedPrompt ?: ""
             assertTrue(

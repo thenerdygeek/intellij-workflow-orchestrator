@@ -822,7 +822,7 @@ Tips:
                     model = brain.modelId,
                 )
             )
-            val result = runner.run(prompt) { progress ->
+            val result = runner.run(prompt, agentId, uiLabel) { progress ->
                 // Don't re-emit "running" for per-tool ticks — that would re-spawn
                 // the card. The runner only emits status="running" once at start;
                 // we already emitted that above with the label, so suppress it here.
@@ -941,7 +941,7 @@ Tips:
                     entries[idx].status = SubagentExecutionStatus.RUNNING
 
                     try {
-                        val result = runner.run(p) { progress ->
+                        val result = runner.run(p, childAgentId, childLabel) { progress ->
                             // Mirror progress into the entry for the group summary.
                             progress.stats?.let { stats ->
                                 entries[idx].toolCalls = stats.toolCalls

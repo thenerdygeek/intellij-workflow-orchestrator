@@ -187,12 +187,33 @@ class SubagentRunner(
      * and status changes.
      *
      * @param prompt the task prompt for the subagent
+     * @param agentId stable identifier for this sub-agent instance (used by the approval gate
+     *   and UI to attribute requests to the correct sub-agent card)
+     * @param label human-readable label shown in the approval modal, e.g. "Find auth flow (explorer)"
      * @param onProgress callback for incremental progress updates
      * @return the final result of the subagent run
      */
     suspend fun run(
         prompt: String,
+        agentId: String,
+        label: String,
         onProgress: suspend (SubagentProgressUpdate) -> Unit
+    ): SubagentRunResult {
+        // Capture the caller's coroutine context (before withSubagentOrigin creates a child job)
+        // so that runInternal's free-floating CoroutineScope(callerContext) inherits the SAME job
+        // as the caller rather than the withContext child job. Without this, withContext's child job
+        // waits for scope.launch children to complete, altering callback ordering relative to direct
+        // onProgress calls (and breaking tests using UnconfinedTestDispatcher).
+        val callerContext = coroutineContext
+        return withSubagentOrigin(agentId, label) {
+            runInternal(prompt, onProgress, callerContext)
+        }
+    }
+
+    private suspend fun runInternal(
+        prompt: String,
+        onProgress: suspend (SubagentProgressUpdate) -> Unit,
+        callerContext: kotlin.coroutines.CoroutineContext,
     ): SubagentRunResult {
         val stats = MutableSubagentStats()
 
@@ -256,7 +277,10 @@ class SubagentRunner(
             // 7. Create AgentLoop with callbacks
             // Capture coroutine scope to bridge non-suspend AgentLoop callbacks
             // to suspend onProgress. Port of Cline's per-tool-call progress reporting.
-            val scope = CoroutineScope(coroutineContext)
+            // Uses callerContext (pre-withSubagentOrigin) so that scope.launch children
+            // are NOT parented to the withContext child job — preserving the original
+            // fire-and-forget scheduling behaviour regardless of the wrapping context.
+            val scope = CoroutineScope(callerContext)
 
             // Allocate per-run stream pipeline after scope is ready (onFlush launches
             // coroutines into it). StreamBatcher coalesces text at 16ms frames;
