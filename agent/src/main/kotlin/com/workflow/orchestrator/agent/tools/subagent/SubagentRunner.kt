@@ -327,6 +327,15 @@ class SubagentRunner(
                         onProgress(SubagentProgressUpdate(streamDelta = chunk, stats = stats.snapshot()))
                     }
                 },
+                outputSpiller = outputSpiller,
+                attachmentStoreProvider = attachmentStoreProvider,
+                onCompactionState = onCompactionState,
+                fallbackManager = fallbackManager,
+                brainFactory = brainFactory,
+                cachedFallbackChain = cachedFallbackChain,
+                onRetry = onRetry,
+                onModelSwitch = onModelSwitch,
+                modelCatalogService = modelCatalogService,
             )
 
             // 8. Run the loop
