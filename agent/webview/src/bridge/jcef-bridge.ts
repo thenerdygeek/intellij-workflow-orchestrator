@@ -886,6 +886,17 @@ export function initBridge(storeAccessors: StoreAccessors): void {
     (window as any)[name] = fn;
   }
 
+  // Sub-agent thinking hooks (P2.T5) — called by AgentCefPanel via
+  // callJs("if (window._appendSubAgentThinking) window._appendSubAgentThinking(...)").
+  // Payload is a parsed JS object (Kotlin passes a JSON string as a JS literal via
+  // JsEscape.toJsString, so the JS engine already evaluates it as an object).
+  window._appendSubAgentThinking = (payload) => {
+    stores?.getChatStore().appendSubAgentThinking(payload.agentId, payload.delta);
+  };
+  window._endSubAgentThinking = (payload) => {
+    stores?.getChatStore().endSubAgentThinking(payload.agentId);
+  };
+
   // Session stats push — called by Kotlin after each API response
   (window as any)._receiveSessionStats = (json: string) => {
     try {

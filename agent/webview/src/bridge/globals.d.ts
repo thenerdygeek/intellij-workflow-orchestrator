@@ -64,6 +64,9 @@ declare global {
     setDebugLogVisible?: (visible: boolean) => void;
     // Debug log entry — pushed from Kotlin to append a structured log entry
     addDebugLogEntry?: (entryJson: string) => void;
+    // Sub-agent thinking bridge hooks (P2.T5)
+    _appendSubAgentThinking?: (payload: { agentId: string; delta: string }) => void;
+    _endSubAgentThinking?: (payload: { agentId: string }) => void;
     // Task bridge functions (Phase 5 task system port)
     _applyTaskCreate?: (task: Task) => void;
     _applyTaskUpdate?: (task: Task) => void;

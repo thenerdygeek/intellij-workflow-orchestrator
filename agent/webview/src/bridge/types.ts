@@ -12,6 +12,8 @@ export interface SubAgentState {
   activeToolChain: ToolCall[];
   summary?: string;
   startedAt: number;
+  /** Live streaming thinking buffer for this sub-agent's current <thinking> block. */
+  streamingThinkingText?: string | null;
 }
 
 // ── Tool call types ──

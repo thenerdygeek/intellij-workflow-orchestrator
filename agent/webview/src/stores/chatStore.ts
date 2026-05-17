@@ -401,6 +401,8 @@ interface ChatState {
   updateSubAgentToolCall(payload: string): void;
   updateSubAgentMessage(payload: string): void;
   appendSubAgentStreamDelta(payload: string): void;
+  appendSubAgentThinking(agentId: string, delta: string): void;
+  endSubAgentThinking(agentId: string): void;
   completeSubAgent(payload: string): void;
   killSubAgent(agentId: string): void;
 
@@ -1796,6 +1798,50 @@ export const useChatStore = create<ChatState>((set, get) => ({
         };
         newMap.set(agentId, { ...agent, messages: [...msgs, textMsg] });
       }
+      return { activeSubAgents: newMap };
+    });
+  },
+
+  /**
+   * Append a thinking-block delta to the sub-agent's live streaming buffer.
+   * Mirrors the main agent's appendToThinking path. No-op if the agentId is
+   * not found in activeSubAgents.
+   */
+  appendSubAgentThinking(agentId: string, delta: string) {
+    set((state) => {
+      const newMap = new Map(state.activeSubAgents);
+      const sub = newMap.get(agentId);
+      if (!sub) return {};
+      const prev = sub.streamingThinkingText ?? '';
+      newMap.set(agentId, { ...sub, streamingThinkingText: prev + delta });
+      return { activeSubAgents: newMap };
+    });
+  },
+
+  /**
+   * Mark the close of the current <thinking> block for agentId. Flushes the
+   * accumulated buffer into the sub-agent's messages as a REASONING UiMessage
+   * and clears the live buffer.
+   */
+  endSubAgentThinking(agentId: string) {
+    set((state) => {
+      const newMap = new Map(state.activeSubAgents);
+      const sub = newMap.get(agentId);
+      if (!sub) return {};
+      const text = sub.streamingThinkingText ?? '';
+      if (!text) {
+        // Empty thinking block — nothing to finalise.
+        newMap.set(agentId, { ...sub, streamingThinkingText: null });
+        return { activeSubAgents: newMap };
+      }
+      const finalised: UiMessage = {
+        ts: uniqueTs(),
+        type: 'SAY',
+        say: 'REASONING',
+        text,
+      };
+      const messages = [...sub.messages, finalised];
+      newMap.set(agentId, { ...sub, messages, streamingThinkingText: null });
       return { activeSubAgents: newMap };
     });
   },
