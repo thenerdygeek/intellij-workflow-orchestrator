@@ -105,6 +105,56 @@ class SubagentRunner(
      * through; Task 4 will consume agentConfig.promptSections when the YAML schema lands.
      */
     private val agentConfig: AgentConfig? = null,
+    /**
+     * Optional output spiller forwarded from the parent session. When set, sub-agent
+     * tool outputs above the spill threshold are written to disk instead of inflating
+     * the sub-agent's context window. Null = no spill (legacy behavior, tests).
+     */
+    private val outputSpiller: com.workflow.orchestrator.agent.tools.ToolOutputSpiller? = null,
+    /**
+     * Optional provider for the session-scoped [AttachmentStore]. Forwarded so
+     * sub-agent tools that read user-pasted images (or tool-produced images) hit
+     * the SAME store the parent's BrainRouter uses. Default returns null —
+     * sub-agent runs without a parent session see no attachments.
+     */
+    private val attachmentStoreProvider: () -> com.workflow.orchestrator.agent.session.AttachmentStore? = { null },
+    /**
+     * Optional signal fired when the sub-agent's own ContextManager runs a compaction
+     * pass. Lets the sub-agent card show a "Compacting…" overlay instead of freezing
+     * silently. Mirrors main agent's `onCompactionState`.
+     */
+    private val onCompactionState: ((active: Boolean, phase: String) -> Unit)? = null,
+    /**
+     * Optional model fallback manager. When set alongside [brainFactory], the sub-agent's
+     * AgentLoop can fall back to a cheaper model on network/timeout errors and escalate
+     * back. Without this, a transient network error fails the whole sub-agent.
+     */
+    private val fallbackManager: com.workflow.orchestrator.agent.loop.ModelFallbackManager? = null,
+    /**
+     * Optional factory that produces a fresh LlmBrain for a given model ID. Used by both
+     * fallbackManager (L1) and same-tier brain recycling (L2). Null = no recycling.
+     */
+    private val brainFactory: (suspend (modelId: String, reason: String?) -> com.workflow.orchestrator.core.ai.LlmBrain)? = null,
+    /**
+     * Optional fallback chain used by L2 tier escalation when [fallbackManager] is null
+     * but same-tier recycles are exhausted. Mirrors main agent's `cachedFallbackChain`.
+     */
+    private val cachedFallbackChain: List<String>? = null,
+    /**
+     * Optional callback fired when the loop retries a failed API call. Lets the sub-agent
+     * card show "Retrying 2/3…" instead of freezing.
+     */
+    private val onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
+    /**
+     * Optional callback when the loop switches models (fallback or escalation). Lets the
+     * sub-agent card update its model badge.
+     */
+    private val onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null,
+    /**
+     * Optional model catalog service. When set with image-bearing turns, the loop filters
+     * the fallback chain to vision-capable models. Mirrors main agent's `modelCatalogService`.
+     */
+    private val modelCatalogService: com.workflow.orchestrator.core.ai.ModelCatalogService? = null,
 ) {
     private val abortRequested = AtomicBoolean(false)
 
