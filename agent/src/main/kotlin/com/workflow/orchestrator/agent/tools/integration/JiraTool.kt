@@ -16,7 +16,9 @@ import com.workflow.orchestrator.core.model.jira.FieldValue
 import com.workflow.orchestrator.core.model.jira.TransitionError
 import com.workflow.orchestrator.core.model.jira.TransitionInput
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -82,9 +84,9 @@ description optional: for approval dialog on write actions.
                 description = "Operation to perform",
                 enumValues = listOf(
                     "get_ticket", "get_transitions", "transition", "comment", "get_comments",
-                    "log_work", "get_worklogs", "get_sprints", "get_linked_prs", "get_boards",
+                    "log_work", "get_worklogs", "my_worklogs", "get_sprints", "get_linked_prs", "get_boards",
                     "get_sprint_issues", "get_board_issues", "search_issues", "search_tickets",
-                    "get_dev_branches", "start_work", "download_attachment"
+                    "get_dev_branches", "start_work", "download_attachment", "user_search"
                 )
             ),
             "key" to ParameterProperty(
@@ -182,6 +184,33 @@ description optional: for approval dialog on write actions.
             "include_permissions" to ParameterProperty(
                 type = "boolean",
                 description = "If true, also fetch the user's permissions on this ticket's project (transition, comment, log work, watch). Default false. Useful for the LLM to check before attempting an action that may 403."
+            ),
+            "started" to ParameterProperty(
+                type = "string",
+                description = "Optional ISO 8601 datetime when the work was performed (e.g. '2026-05-10T09:00:00+00:00' or '2026-05-10') — for log_work. " +
+                    "Backdating worklogs requires the underlying user to have permission; otherwise Jira returns 403. " +
+                    "Defaults to 'now' when omitted."
+            ),
+            "author" to ParameterProperty(
+                type = "string",
+                description = "Optional Jira username/accountId filter — for get_worklogs (returns only worklogs by this user)"
+            ),
+            "since" to ParameterProperty(
+                type = "string",
+                description = "Optional ISO date (YYYY-MM-DD or full ISO 8601) lower bound — for get_worklogs, my_worklogs. Inclusive."
+            ),
+            "until" to ParameterProperty(
+                type = "string",
+                description = "Optional ISO date (YYYY-MM-DD or full ISO 8601) upper bound — for get_worklogs, my_worklogs. Inclusive."
+            ),
+            "assignee" to ParameterProperty(
+                type = "string",
+                description = "Optional Jira username filter — for get_sprint_issues. " +
+                    "Pass 'currentUser()' to filter to the authenticated user."
+            ),
+            "query" to ParameterProperty(
+                type = "string",
+                description = "Search query for user lookup — for user_search. Matches displayName, username, and email."
             )
         ),
         required = listOf("action")
@@ -1083,10 +1112,25 @@ description optional: for approval dialog on write actions.
                         // so the agent's ReAct loop can read it and act on it
                         val payloadInfo = when (val p = result.payload) {
                             is TransitionError.MissingFields -> {
+                                // Disambiguate "didn't pass field at all" vs "passed field but value
+                                // was unresolvable" — feedback.md §16. Without this hint, the LLM
+                                // sees the same "X is required" error in both cases and gets stuck.
                                 val fieldsList = p.payload.fields.joinToString("\n") { f ->
-                                    "  - ${f.id} (${f.name}): required=${f.required}, schema=${f.schema::class.simpleName}"
+                                    val passed = f.id in fieldValues.keys
+                                    val statusHint = if (passed) {
+                                        " ← VALUE PROVIDED but rejected — likely unresolvable user/value or wrong format"
+                                    } else ""
+                                    "  - ${f.id} (${f.name}): required=${f.required}, schema=${f.schema::class.simpleName}$statusHint"
                                 }
-                                "\npayload_type: missing_required_fields\nfields:\n$fieldsList\nguidance: ${p.payload.guidance}"
+                                val anyPassed = p.payload.fields.any { it.id in fieldValues.keys }
+                                val extraHint = if (anyPassed) {
+                                    "\nNote: at least one rejected field was passed in the call. The Jira API does not " +
+                                        "distinguish 'missing' from 'invalid' in this response — common causes are: " +
+                                        "(1) user-picker field given a username Jira can't resolve (try jira(action=user_search) first), " +
+                                        "(2) option field given a free-text value instead of {\"id\":\"...\"}, " +
+                                        "(3) cascading select missing the 'child' branch."
+                                } else ""
+                                "\npayload_type: missing_required_fields\nfields:\n$fieldsList\nguidance: ${p.payload.guidance}$extraHint"
                             }
                             is TransitionError.InvalidTransition -> "\npayload_type: invalid_transition\nreason: ${p.reason}"
                             is TransitionError.RequiresInteraction -> "\npayload_type: requires_interaction\ntransition: ${p.meta.name} (id=${p.meta.id})"
@@ -1190,6 +1234,20 @@ description optional: for approval dialog on write actions.
                 ToolValidation.validateJiraKey(key)?.let { return it }
                 ToolValidation.validateTimeSpent(timeSpent)?.let { return it }
 
+                // Parse optional `started` datetime — feedback.md §14. Accepts either
+                // a full ISO 8601 ("2026-05-10T09:00:00+00:00") or a bare date ("2026-05-10")
+                // which we promote to start-of-day in the system zone.
+                val startedRaw = params["started"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                val started: java.time.OffsetDateTime? = startedRaw?.let { raw ->
+                    parseStartedDateTime(raw) ?: return ToolResult(
+                        "Error: 'started' must be an ISO 8601 datetime (e.g. '2026-05-10T09:00:00+00:00') " +
+                            "or a bare date (e.g. '2026-05-10'). Got: '$raw'",
+                        "log_work: invalid 'started' value",
+                        ToolResult.ERROR_TOKEN_ESTIMATE,
+                        isError = true,
+                    )
+                }
+
                 // Pre-flight: verify ticket exists
                 val ticketResult = service.getTicket(key)
                 if (ticketResult.isError) {
@@ -1200,7 +1258,7 @@ description optional: for approval dialog on write actions.
                         isError = true
                     )
                 }
-                service.logWork(key, timeSpent, comment).toAgentToolResult()
+                service.logWork(key, timeSpent, comment, started).toAgentToolResult()
             }
 
             "get_worklogs" -> {
@@ -1209,7 +1267,115 @@ description optional: for approval dialog on write actions.
                     ?: params["issue_id"]?.jsonPrimitive?.content
                     ?: return ToolValidation.missingParam("key")
                 ToolValidation.validateJiraKey(issueKey)?.let { return it }
-                service.getWorklogs(issueKey).toAgentToolResult()
+                val author = params["author"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                val since = params["since"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }?.let { parseStartedDateTime(it) }
+                val until = params["until"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }?.let { parseStartedDateTime(it) }
+                val result = service.getWorklogs(issueKey)
+                if (result.isError || author == null && since == null && until == null) {
+                    return result.toAgentToolResult()
+                }
+                // Post-filter the worklog list — pre-fix the LLM had to fetch all worklogs and
+                // grep client-side, which is slow on tickets with hundreds of entries. Filtering
+                // here keeps the rest of the toAgentToolResult formatting intact.
+                val filtered = result.data.orEmpty().filter { wl ->
+                    val matchesAuthor = author == null || worklogMatchesAuthor(wl, author)
+                    val started = worklogStarted(wl)
+                    val matchesSince = since == null || (started != null && !started.isBefore(since))
+                    val matchesUntil = until == null || (started != null && !started.isAfter(until))
+                    matchesAuthor && matchesSince && matchesUntil
+                }
+                val filteredSummary = "${filtered.size} worklog(s) on $issueKey" +
+                    (author?.let { " by $it" } ?: "") +
+                    (since?.let { " since ${it.toLocalDate()}" } ?: "") +
+                    (until?.let { " until ${it.toLocalDate()}" } ?: "")
+                val content = buildString {
+                    appendLine(filteredSummary)
+                    filtered.forEach { appendLine(it.toString()) }
+                }
+                ToolResult(content, filteredSummary, TokenEstimator.estimate(content))
+            }
+
+            "my_worklogs" -> {
+                val sinceStr = params["since"]?.jsonPrimitive?.content
+                    ?: return ToolValidation.missingParam("since")
+                val untilStr = params["until"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                val since = parseStartedDateTime(sinceStr)
+                    ?: return ToolResult(
+                        "Error: 'since' must be ISO 8601 date or datetime. Got: '$sinceStr'",
+                        "my_worklogs: invalid 'since'", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true,
+                    )
+                val until = untilStr?.let { parseStartedDateTime(it) }
+                // Find tickets the current user logged time on in the window, then aggregate.
+                // JQL: worklogAuthor = currentUser() AND worklogDate >= since [AND worklogDate <= until]
+                val jql = buildString {
+                    append("worklogAuthor = currentUser() AND worklogDate >= \"${since.toLocalDate()}\"")
+                    if (until != null) append(" AND worklogDate <= \"${until.toLocalDate()}\"")
+                    append(" ORDER BY updated DESC")
+                }
+                val ticketsResult = service.searchTickets(jql, 50)
+                if (ticketsResult.isError) return ticketsResult.toAgentToolResult()
+                val tickets = ticketsResult.data.orEmpty()
+                if (tickets.isEmpty()) {
+                    return ToolResult(
+                        "No worklogs found in the requested window.",
+                        "my_worklogs: 0 tickets",
+                        ToolResult.ERROR_TOKEN_ESTIMATE,
+                    )
+                }
+                // Resolve the current user once so we can post-filter worklogs by author on
+                // each ticket (a ticket the user touched may also have entries from teammates).
+                val myselfResult = service.getMyselfExpanded()
+                val myselfName = myselfResult.data?.name
+                // Fetch worklogs in parallel but BOUNDED by a Semaphore — Jira Cloud rate-limits
+                // around ~50 req/10s per token, so 50 simultaneous getWorklogs calls would hit
+                // 429 and all fail together. Code-review concern.
+                val concurrencyLimit = kotlinx.coroutines.sync.Semaphore(8)
+                val perTicket = coroutineScope {
+                    tickets.map { ticket ->
+                        async {
+                            concurrencyLimit.withPermit {
+                                val key = extractTicketKey(ticket) ?: return@withPermit null
+                                key to service.getWorklogs(key).data.orEmpty()
+                                    .filter { wl ->
+                                        val started = worklogStarted(wl) ?: return@filter false
+                                        val inWindow = !started.isBefore(since) &&
+                                            (until == null || !started.isAfter(until))
+                                        val byMe = myselfName == null || worklogMatchesAuthor(wl, myselfName)
+                                        inWindow && byMe
+                                    }
+                            }
+                        }
+                    }.awaitAll().filterNotNull()
+                }
+                val total = perTicket.sumOf { it.second.size }
+                val content = buildString {
+                    appendLine("$total worklog(s) across ${perTicket.count { it.second.isNotEmpty() }} ticket(s) " +
+                        "from ${since.toLocalDate()}${until?.let { " to ${it.toLocalDate()}" } ?: ""}:")
+                    if (myselfName == null) {
+                        // Without /myself we can't filter to the current user, so any teammates'
+                        // worklogs on the same tickets are also included. Flag this to the LLM
+                        // so it can decide whether to retry or proceed with mixed-author data.
+                        appendLine("Note: could not resolve current user identity — results may include " +
+                            "worklogs by other users on these tickets.")
+                    }
+                    perTicket.filter { it.second.isNotEmpty() }.forEach { (key, logs) ->
+                        appendLine()
+                        appendLine("$key (${logs.size} log(s)):")
+                        logs.forEach { appendLine("  - $it") }
+                    }
+                }
+                ToolResult(content, "my_worklogs: $total log(s) across ${perTicket.size} ticket(s)",
+                    TokenEstimator.estimate(content))
+            }
+
+            "user_search" -> {
+                val query = params["query"]?.jsonPrimitive?.content
+                    ?: return ToolValidation.missingParam("query")
+                val maxResults = params["max_results"]?.jsonPrimitive?.content?.toIntOrNull() ?: 20
+                ToolValidation.validateNotBlank(query, "query")?.let { return it }
+                val searchSvc = ServiceLookup.jiraSearch(project)
+                    ?: return ServiceLookup.notConfigured("Jira (user search)")
+                searchSvc.searchUsers(query, maxResults).toAgentToolResult()
             }
 
             "get_sprints" -> {
@@ -1240,7 +1406,19 @@ description optional: for approval dialog on write actions.
                     ?: return ToolValidation.missingParam("sprint_id")
                 val sprintId = sprintIdStr.toIntOrNull()
                     ?: return ToolResult("Error: 'sprint_id' must be an integer, got '$sprintIdStr'", "Error: invalid sprint_id", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
-                service.getSprintIssues(sprintId).toAgentToolResult()
+                val assignee = params["assignee"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                val result = service.getSprintIssues(sprintId)
+                if (result.isError || assignee == null) return result.toAgentToolResult()
+                // Post-filter the issue list — pre-fix the LLM had to fetch all 200 sprint
+                // issues and grep client-side. Feedback.md §13.
+                val all = result.data.orEmpty()
+                val filtered = all.filter { ticketAssigneeMatches(it, assignee) }
+                val summary = "${filtered.size} of ${all.size} issue(s) in sprint $sprintId assigned to '$assignee'"
+                val content = buildString {
+                    appendLine(summary)
+                    filtered.forEach { appendLine(it.toString()) }
+                }
+                ToolResult(content, summary, TokenEstimator.estimate(content))
             }
 
             "get_board_issues" -> {
@@ -1630,6 +1808,45 @@ description optional: for approval dialog on write actions.
             ToolResult(combined, summaries.joinToString(" · "), TokenEstimator.estimate(combined))
         }
     }
+
+    /**
+     * Parses either a bare ISO date (YYYY-MM-DD) or a full ISO 8601 datetime into an
+     * OffsetDateTime. Bare dates are promoted to start-of-day at the system zone offset,
+     * which matches Jira's worklog convention for date-only `worklogDate` JQL filters.
+     */
+    internal fun parseStartedDateTime(raw: String): java.time.OffsetDateTime? = try {
+        java.time.OffsetDateTime.parse(raw)
+    } catch (_: Exception) {
+        try {
+            val date = java.time.LocalDate.parse(raw)
+            date.atStartOfDay().atOffset(java.time.OffsetDateTime.now().offset)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    internal fun worklogStarted(wl: com.workflow.orchestrator.core.model.jira.WorklogData): java.time.OffsetDateTime? =
+        parseStartedDateTime(wl.started)
+
+    /** Loose author match — Jira returns displayName / accountId / username inconsistently across versions. */
+    internal fun worklogMatchesAuthor(
+        wl: com.workflow.orchestrator.core.model.jira.WorklogData,
+        author: String,
+    ): Boolean = wl.author.equals(author, ignoreCase = true) ||
+        wl.author.contains(author, ignoreCase = true)
+
+    internal fun ticketAssigneeMatches(
+        ticket: com.workflow.orchestrator.core.model.jira.JiraTicketData,
+        assignee: String,
+    ): Boolean {
+        val a = ticket.assignee ?: return false
+        return a.equals(assignee, ignoreCase = true) || a.contains(assignee, ignoreCase = true)
+    }
+
+    /** Extract the ticket key from a JiraTicketData — defensive against changing model shape. */
+    internal fun extractTicketKey(
+        ticket: com.workflow.orchestrator.core.model.jira.JiraTicketData,
+    ): String? = ticket.key.takeIf { it.isNotBlank() }
 
     private fun formatDevStatusBundle(issueKey: String, bundle: com.workflow.orchestrator.core.model.jira.DevStatusBundle): String = buildString {
         appendLine("Dev Status for $issueKey: ${bundle.summaryLine()}")

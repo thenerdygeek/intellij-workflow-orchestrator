@@ -667,7 +667,25 @@ All actions accept optional session_id (defaults to active session).
             val content = if (pauseEvent != null) {
                 "Reached ${pauseEvent.file ?: "unknown"}:${pauseEvent.line ?: "?"}\nSession: $name"
             } else {
-                "Run to cursor requested ($filePath:$line). Session did not pause within 30s.\nSession: $name"
+                // Pause event didn't arrive within the wait window, but the session may
+                // actually be suspended already — the event flow can race against the IsSuspended
+                // flag (audit finding C5). Re-check the current session state so the LLM gets
+                // an accurate message and doesn't conclude "the action failed" when it didn't.
+                val currentlySuspended = withContext(Dispatchers.EDT) {
+                    session.isSuspended && session.currentStackFrame != null
+                }
+                val pos = withContext(Dispatchers.EDT) { session.currentPosition }
+                val posStr = pos?.let { "${it.file.path}:${(it.line + 1)}" } ?: "unknown location"
+                if (currentlySuspended) {
+                    "Run to cursor requested ($filePath:$line). Pause event not observed within 30s, " +
+                        "but the session is currently SUSPENDED at $posStr — the action likely succeeded; " +
+                        "the wait simply didn't see the event in time.\nSession: $name"
+                } else {
+                    "Run to cursor requested ($filePath:$line). No pause within 30s and the session is " +
+                        "not currently suspended — the target line was probably skipped (early return, " +
+                        "exception, or a different code path). Consider `get_state` to confirm, then a " +
+                        "fresh breakpoint at the desired line.\nSession: $name"
+                }
             }
 
             ToolResult(content, "Run to cursor", TokenEstimator.estimate(content))

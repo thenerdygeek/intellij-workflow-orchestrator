@@ -250,7 +250,26 @@ Returns structured problems with file path, problem type (DEPENDENCY, REPOSITORY
             return errorResult("Invalid 'severity' value: '$severity'. Must be one of $VALID_SEVERITIES.")
         }
 
-        val coreResult = BuildProblemsService.getInstance(project).getRecentBuildProblems()
+        // Wrap the service resolution: in IDE flavors without a Maven probe (PyCharm Community,
+        // WebStorm, etc.) IntelliJ raises an unsatisfied-dependency exception from the DI
+        // container — which pre-fix leaked verbatim into the LLM as
+        // "Dependency resolver from Project... cannot instantiate 'BuildProblemsServiceImpl':
+        // has unsatisfied dependency type interface MavenProblemsProbe". That's a tool-internal
+        // detail. We now map it to a friendly UNAVAILABLE result so the LLM knows to skip this
+        // tool on the current IDE instead of retrying.
+        val coreResult = try {
+            BuildProblemsService.getInstance(project).getRecentBuildProblems()
+        } catch (e: Throwable) {
+            return ToolResult(
+                content = "get_build_problems is not available in this IDE flavor — the build-problems " +
+                    "service couldn't be resolved (likely no Maven/Gradle plugin installed). " +
+                    "For PyCharm/WebStorm/other non-JVM IDEs use `diagnostics` for per-file compile errors " +
+                    "or `runtime_exec.get_run_output` to inspect a build run.",
+                summary = "get_build_problems unavailable in this IDE",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = false,
+            )
+        }
         if (coreResult.isError) {
             return ToolResult(
                 content = coreResult.summary + (coreResult.hint?.let { "\nHint: $it" } ?: ""),

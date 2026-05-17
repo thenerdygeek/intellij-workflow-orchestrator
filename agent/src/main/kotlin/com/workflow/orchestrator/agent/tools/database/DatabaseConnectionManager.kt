@@ -246,14 +246,22 @@ object DatabaseConnectionManager {
 
         val rows = mutableListOf<List<String>>()
         var rowCount = 0
-        var truncatedCells = 0
+        var cellTruncations = 0
+        var cellSanitizations = 0
         while (rs.next() && rowCount < MAX_ROWS) {
             val row = (1..colCount).map { i ->
                 val v = rs.getString(i) ?: "NULL"
+                if (v.contains('|') || v.contains('\n')) cellSanitizations++
                 if (v.length > MAX_CELL_CHARS) {
-                    truncatedCells++
-                    v.take(MAX_CELL_CHARS) + "\u2026"
-                } else v
+                    // Mark cell truncation explicitly with kept-of-original counts so the LLM
+                    // can re-query with a tighter projection if needed. Pre-fix the cell value
+                    // was silently cut mid-word (e.g. "UNIT_D\u2026") \u2014 feedback.md \u00a73.
+                    cellTruncations++
+                    val keptPrefix = v.take(MAX_CELL_CHARS).replace('|', '/').replace('\n', ' ')
+                    "$keptPrefix\u2026 [truncated, $MAX_CELL_CHARS of ${v.length} chars]"
+                } else {
+                    v.replace('|', '/').replace('\n', ' ')
+                }
             }
             rows.add(row)
             rowCount++
@@ -265,8 +273,22 @@ object DatabaseConnectionManager {
         sb.append("| ${headers.map { "---" }.joinToString(" | ")} |\n")
         rows.forEach { row -> sb.append("| ${row.joinToString(" | ")} |\n") }
         if (truncated) sb.append("\n_Results truncated at $MAX_ROWS rows._\n")
-        if (truncatedCells > 0) {
-            sb.append("\n_$truncatedCells cell(s) truncated at $MAX_CELL_CHARS chars — values end with …. Use `output_file=true` to retrieve full cell values._\n")
+        if (cellTruncations > 0) {
+            sb.append(
+                "\n_$cellTruncations cell value(s) truncated at $MAX_CELL_CHARS chars. " +
+                    "Re-query with a narrower projection (CAST(col AS VARCHAR($MAX_CELL_CHARS)) / LEFT(col, $MAX_CELL_CHARS)) " +
+                    "or set `output_file=true` to retrieve full cell values._\n"
+            )
+        }
+        if (cellSanitizations > 0) {
+            // Pipes / newlines in cell content are replaced (with `/` and space) so the Markdown
+            // table renders correctly. Flag this so the LLM knows the displayed value isn't byte-
+            // identical to the DB row — important when the LLM intends to write the value back
+            // somewhere. Code-review concern.
+            sb.append(
+                "\n_$cellSanitizations cell value(s) had '|' or newlines replaced for Markdown safety. " +
+                    "Re-query a specific row if you need byte-exact values._\n"
+            )
         }
 
         return sb.toString() to rowCount

@@ -21,7 +21,6 @@ import com.intellij.debugger.jdi.VirtualMachineProxyImpl
 import com.workflow.orchestrator.agent.AgentService
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import org.jetbrains.annotations.VisibleForTesting
@@ -29,6 +28,7 @@ import java.util.UUID
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.swing.Icon
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -211,7 +211,13 @@ class AgentDebugController internal constructor(
             session.suspendContext?.activeExecutionStack
         } ?: return emptyList()
 
-        return awaitCallback<List<FrameInfo>>(GET_STACK_FRAMES_TIMEOUT_MS) { stopped, resume, _ ->
+        // Partial-result fallback: even if the platform never invokes the last=true callback
+        // (deep stacks, suspended JNI frames, or a debugger probe that drops mid-walk), we
+        // still surface whatever frames were collected — better than a bare empty list that
+        // hits the 120s tool-level timeout. The `partial` AtomicReference is read on the
+        // timeout path (awaitCallback returns null).
+        val partial = AtomicReference<List<FrameInfo>>(emptyList())
+        val result = awaitCallback<List<FrameInfo>>(GET_STACK_FRAMES_TIMEOUT_MS) { stopped, resume, _ ->
             val frames = mutableListOf<FrameInfo>()
             var index = 0
 
@@ -231,6 +237,7 @@ class AgentDebugController internal constructor(
                             )
                         )
                     }
+                    partial.set(frames.toList())
                     if (last || index >= maxFrames) {
                         resume(frames)
                     }
@@ -244,6 +251,7 @@ class AgentDebugController internal constructor(
                 override fun isObsolete(): Boolean = false
             })
         }
+        return result ?: partial.get()
     }
 
     /**
@@ -256,7 +264,10 @@ class AgentDebugController internal constructor(
             session.suspendContext?.activeExecutionStack
         } ?: return emptyList()
 
-        return awaitCallback<List<XStackFrame>>(GET_STACK_FRAMES_TIMEOUT_MS) { stopped, resume, _ ->
+        // Same partial-result pattern as getStackFrames — return what we have on timeout
+        // rather than empty, so a slow walk still gives the LLM something to act on.
+        val partial = AtomicReference<List<XStackFrame>>(emptyList())
+        val result = awaitCallback<List<XStackFrame>>(GET_STACK_FRAMES_TIMEOUT_MS) { stopped, resume, _ ->
             val frames = mutableListOf<XStackFrame>()
             stack.computeStackFrames(0, object : XExecutionStack.XStackFrameContainer {
                 override fun addStackFrames(frameList: List<XStackFrame>, last: Boolean) {
@@ -265,6 +276,7 @@ class AgentDebugController internal constructor(
                         if (frames.size >= maxFrames) break
                         frames += f
                     }
+                    partial.set(frames.toList())
                     if (last || frames.size >= maxFrames) resume(frames.toList())
                 }
                 override fun errorOccurred(errorMessage: String) {
@@ -273,7 +285,8 @@ class AgentDebugController internal constructor(
                 }
                 override fun isObsolete(): Boolean = false
             })
-        } ?: emptyList()
+        }
+        return result ?: partial.get()
     }
 
     /**
@@ -444,11 +457,23 @@ class AgentDebugController internal constructor(
     }
 
     private suspend fun resolvePresentation(value: XValue): Pair<String, String> {
-        // JavaValue.computePresentation() may call setPresentation twice for complex objects:
-        // first with "Collecting data…" (async toString to JVM pending), then with the real
-        // value. awaitCallback fires on the first callback, capturing the placeholder.
-        // Retry up to 3 times with back-off so the JVM evaluation can settle.
-        suspend fun computeOnce(): Pair<String, String>? = awaitCallback<Pair<String, String>>(5000L) { stopped, resume, _ ->
+        // IntelliJ's XDebugger calls setPresentation in two stages for lazy values:
+        //   1. Synchronously with the "Collecting data…" placeholder (XDebuggerUIConstants.COLLECTING_DATA_MESSAGE).
+        //   2. Asynchronously with the real evaluated value once the JDI round-trip completes.
+        // Pre-fix code resumed on the first call and returned the placeholder. We now:
+        //   - Always capture the latest presentation in `latest`,
+        //   - Only resume() when we see a non-placeholder value,
+        //   - Fall back to the latest captured presentation if the timeout elapses.
+        // Replaces an earlier retry-loop attempt (0/300/600ms back-off + re-invoke
+        // computePresentation) which queued duplicate evaluations on the debugger thread.
+        //
+        // Race safety: if the platform fires setPresentation AFTER the timeout, `awaitCallback`'s
+        // contract guarantees resume(...) becomes a no-op — it sets stopped.set(true) in
+        // invokeOnCancellation, and the lambda guards every resume with `stopped.getAndSet(true)`.
+        // `latest` may still be written by the late callback (harmless AtomicReference write),
+        // but no double-resume can occur.
+        val latest = AtomicReference<Pair<String, String>?>(null)
+        val result = awaitCallback<Pair<String, String>>(PRESENTATION_TIMEOUT_MS) { stopped, resume, _ ->
             value.computePresentation(object : XValueNode {
                 override fun setPresentation(
                     icon: Icon?,
@@ -457,7 +482,9 @@ class AgentDebugController internal constructor(
                     hasChildren: Boolean
                 ) {
                     if (stopped.get()) return
-                    resume(Pair(type ?: "unknown", value))
+                    val pair = Pair(type ?: "unknown", value)
+                    latest.set(pair)
+                    if (!isPlaceholderValue(value)) resume(pair)
                 }
 
                 override fun setPresentation(
@@ -485,7 +512,10 @@ class AgentDebugController internal constructor(
                         override fun renderSpecialSymbol(symbol: String) { sb.append(symbol) }
                         override fun renderError(error: String) { sb.append("<error: ").append(error).append('>') }
                     })
-                    resume(Pair(presentation.type ?: "unknown", sb.toString()))
+                    val rendered = sb.toString()
+                    val pair = Pair(presentation.type ?: "unknown", rendered)
+                    latest.set(pair)
+                    if (!isPlaceholderValue(rendered)) resume(pair)
                 }
 
                 override fun setFullValueEvaluator(fullValueEvaluator: XFullValueEvaluator) {}
@@ -493,13 +523,24 @@ class AgentDebugController internal constructor(
                 override fun isObsolete(): Boolean = false
             }, XValuePlace.TREE)
         }
+        // Resume succeeded → real value. Timed out → fall back to whatever placeholder we last saw
+        // (better signal than "<timed out>" — the LLM can still see the type and the lazy-load note).
+        return result ?: latest.get() ?: Pair("unknown", "<timed out>")
+    }
 
-        for (retryDelay in listOf(0L, 300L, 600L)) {
-            if (retryDelay > 0L) delay(retryDelay)
-            val result = computeOnce() ?: return Pair("unknown", "<timed out>")
-            if (!result.second.startsWith("Collecting data")) return result
-        }
-        return Pair("unknown", "Collecting data… (value not ready after retries — try evaluate again)")
+    /**
+     * True when the rendered value is one of IntelliJ's placeholder strings emitted before
+     * the lazy JDI evaluation completes. We intentionally match both the ellipsis-char (…)
+     * and the three-dots (...) forms since the constant flips between platform releases,
+     * and treat blank values as placeholders too (some XValues set "" before resolving).
+     */
+    @VisibleForTesting
+    internal fun isPlaceholderValue(value: String): Boolean {
+        val trimmed = value.trim()
+        if (trimmed.isEmpty()) return true
+        return trimmed == "Collecting data…" ||
+            trimmed == "Collecting data..." ||
+            trimmed.startsWith("Collecting data")
     }
 
     /**
@@ -729,6 +770,14 @@ class AgentDebugController internal constructor(
         const val MAX_VARIABLE_CHARS = 3000
         const val MAX_CHILDREN_PER_LEVEL = 10
         const val GET_STACK_FRAMES_TIMEOUT_MS = 15_000L
+
+        /**
+         * Bounded wait for one XValue's presentation to resolve. Bumped from 5s to 8s
+         * after the placeholder-skip fix: now that we ignore "Collecting data…", we need
+         * enough room for the second async setPresentation call to arrive — typically
+         * 50ms-2s but worst-case (heap-pressure debuggee, slow JDWP) up to ~6s observed.
+         */
+        const val PRESENTATION_TIMEOUT_MS = 8_000L
     }
 }
 

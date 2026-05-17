@@ -1097,6 +1097,11 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
         val variableName = params["variable_name"]?.jsonPrimitive?.content
         val maxDepth = (params["max_depth"]?.jsonPrimitive?.intOrNull ?: DEFAULT_MAX_DEPTH)
             .coerceIn(1, MAX_DEPTH_CAP)
+        // Default: hide CGLIB / Spring-proxy synthetic noise. LLM can pass include_internals=true
+        // when it explicitly needs to inspect proxy internals (rare — usually debugging the
+        // proxy infrastructure itself). Feedback.md §5 — Spring beans show 8-15 CGLIB lines
+        // before the first real field, drowning out the actual state.
+        val includeInternals = params["include_internals"]?.jsonPrimitive?.booleanOrNull ?: false
 
         val session = when (val r = requireSuspendedSession(project, sessionId)) {
             is SessionResolution.Found -> r.session
@@ -1140,7 +1145,7 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
 
             val sb = StringBuilder()
             sb.append("$frameHeader\n\nVariables:\n")
-            sb.append(formatVariables(targetVars))
+            sb.append(formatVariables(targetVars, includeInternals = includeInternals))
 
             val spilled = spillOrFormat(sb.toString(), project)
 
@@ -1179,6 +1184,23 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
         val session = when (val r = requireSuspendedSession(project, sessionId)) {
             is SessionResolution.Found -> r.session
             is SessionResolution.Failed -> return r.toolResult
+        }
+
+        // Pre-flight check: if the LLM passed something that looks like a method-call expression
+        // ("x.foo()"), the JDI assignment fallback would emit a cryptic "Incompatible types for
+        // '=' operation" error — feedback.md §2. Surface a clear hint pointing them at the
+        // evaluate action (which IS the right tool for invoking side-effecting setters).
+        val mutationHint = detectMutationExpression(newValue)
+        if (mutationHint != null) {
+            return ToolResult(
+                content = "set_value rejected '$newValue': $mutationHint\n" +
+                    "Use `evaluate(expression=\"$newValue\")` to invoke a setter / method call. " +
+                    "`set_value` is only for primitive / string / null literal assignments " +
+                    "(e.g. `42`, `\"hello\"`, `null`, `true`).",
+                summary = "set_value: use `evaluate` for method calls",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                isError = true,
+            )
         }
 
         return try {
@@ -1261,6 +1283,37 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
         } catch (e: Exception) {
             ToolResult("Error setting variable: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
+    }
+
+    /**
+     * Cheap heuristic — returns a human-readable hint if [expr] looks like a method-call
+     * expression (`foo.bar()`, `new Foo()`, `Foo.method(...)`). Returns null for plain
+     * literals (`42`, `"hello"`, `null`, `true`, `[1,2,3]`, `new int[]{1,2}`).
+     *
+     * Used by [executeSetValue] to redirect the LLM to the `evaluate` action before the
+     * JDI assignment fallback emits a cryptic "Incompatible types for '=' operation" error.
+     */
+    internal fun detectMutationExpression(expr: String): String? {
+        val trimmed = expr.trim()
+        if (trimmed.isEmpty()) return null
+        // Plain literals — pass through to JDI which handles these natively.
+        if (trimmed == "null" || trimmed == "true" || trimmed == "false") return null
+        if (trimmed.toLongOrNull() != null || trimmed.toDoubleOrNull() != null) return null
+        if (trimmed.startsWith('"') && trimmed.endsWith('"')) return null
+        if (trimmed.startsWith('\'') && trimmed.endsWith('\'')) return null
+        // Constructors like `new Foo()` or `new int[]{1,2}` — JDI handles array literals
+        // but generally not new-expressions; flag them as mutation-shaped.
+        if (trimmed.startsWith("new ")) {
+            return "expression looks like a constructor / 'new' call"
+        }
+        // Detect a method-call shape: identifier followed by `(` somewhere. We're conservative —
+        // only flag when there's a dot-or-bare identifier followed by `(`, not when the value is
+        // something like a JSON literal `{key: value}` or an array `[1,2,3]`.
+        val callRegex = Regex("""[a-zA-Z_$][a-zA-Z0-9_$]*\s*\(""")
+        if (callRegex.containsMatchIn(trimmed)) {
+            return "expression looks like a method or function call"
+        }
+        return null
     }
 
     // ── thread_dump ─────────────────────────────────────────────────────────

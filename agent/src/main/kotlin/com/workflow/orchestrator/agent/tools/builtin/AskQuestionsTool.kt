@@ -86,6 +86,11 @@ class AskQuestionsTool : AgentTool {
     )
     override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR, WorkerType.CODER, WorkerType.ANALYZER)
 
+    // `timeoutMs = Long.MAX_VALUE` already declared at top of class — supersedes the earlier
+    // 5min+30s override from feedback.md §13. The unbounded wait is the cleaner design: the
+    // user controls the response timeline; the in-tool 10s UI-render watchdog and the 5min
+    // QUESTION_TIMEOUT_MS handle silent-UI and abandoned-conversation cases respectively.
+
     override fun documentation(): ToolDocumentation = toolDoc("ask_followup_question") {
         summary {
             technical("Two-mode user-input primitive: simple mode shows a chat question with optional clickable choice chips; wizard mode renders a multi-step JCEF dashboard wizard with single/multi-select options, back/skip/next nav, and a summary page. Both modes complete a CompletableDeferred that suspends the agent loop until the user answers, dismisses, or the 5-minute timeout fires; a 10s UI-render watchdog auto-resolves with [UI_RENDER_FAILED] when the JCEF bridge never confirms the render.")

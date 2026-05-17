@@ -18,6 +18,28 @@ object PathValidator {
     private const val AGENT_DATA_DIR = ".workflow-orchestrator"
 
     /**
+     * Expands a leading `~` or `~/` to the user's home directory.
+     * The shell does this for run_command paths, but raw file tool paths
+     * (read_file, glob_files, search_code, edit_file, create_file) never
+     * go through a shell, so we need to expand them here. Without this,
+     * `~/.workflow-orchestrator/memory/MEMORY.md` is treated as a literal
+     * relative path and resolves under the project root, where it doesn't exist.
+     *
+     * Only the leading `~` is expanded. `~user/x` (other-user expansion) is
+     * intentionally NOT supported — that requires resolving a username to a
+     * home directory and the failure mode would be confusing on Windows.
+     */
+    internal fun expandUserHome(rawPath: String): String {
+        if (rawPath.isEmpty() || rawPath[0] != '~') return rawPath
+        val home = System.getProperty("user.home") ?: return rawPath
+        return when {
+            rawPath == "~" -> home
+            rawPath.startsWith("~/") || rawPath.startsWith("~" + File.separator) -> home + File.separator + rawPath.substring(2)
+            else -> rawPath
+        }
+    }
+
+    /**
      * Resolve a raw path and validate it stays within the project.
      * Write tools (edit_file, create_file) should use this — project-only access.
      *
@@ -59,7 +81,8 @@ object PathValidator {
             return null to ToolResult.error("Error: project base path not available", "Error: no project")
         }
 
-        val resolved = if (File(rawPath).isAbsolute) rawPath else File(projectBasePath, rawPath).path
+        val expanded = expandUserHome(rawPath)
+        val resolved = if (File(expanded).isAbsolute) expanded else File(projectBasePath, expanded).path
 
         val canonical = try {
             File(resolved).canonicalPath
@@ -136,7 +159,8 @@ object PathValidator {
             return null to ToolResult.error("Error: project base path not available", "Error: no project")
         }
 
-        val resolved = if (File(rawPath).isAbsolute) rawPath else File(projectBasePath, rawPath).path
+        val expanded = expandUserHome(rawPath)
+        val resolved = if (File(expanded).isAbsolute) expanded else File(projectBasePath, expanded).path
 
         val canonical = try {
             File(resolved).canonicalPath

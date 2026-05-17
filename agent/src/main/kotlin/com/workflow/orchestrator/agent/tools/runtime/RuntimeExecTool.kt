@@ -435,7 +435,7 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
                     optional("discover_ports", "boolean") {
                         llmSeesIt("Attempt port discovery via log patterns and lsof/ss/netstat (default true) — for run_config")
                         humanReadable("Try to learn which TCP ports the process bound. OS-only — never derived from static config.")
-                        whenPresent("Runs lsof / ss / netstat by PID after readiness; `Listening ports:` is added to the result on success.")
+                        whenPresent("Runs lsof / ss / netstat by PID after readiness; `Listening TCP port(s):` is added to the result on success.")
                         whenAbsent("Defaults to true; set false if you don't care or the OS commands cost more than they're worth.")
                         example("false")
                     }
@@ -1604,7 +1604,10 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
                 sb.appendLine("Session: ${debugSessionName.get() ?: "unknown"}")
                 debugPid.get()?.let { sb.appendLine("PID: $it") }
                 if (discoveredPorts.isNotEmpty()) {
-                    sb.appendLine("Listening ports: ${discoveredPorts.toSortedSet()}")
+                    // Label disambiguates port vs PID — feedback.md §4 reported confusion
+                    // when an ephemeral port (32636) was read as a process id. Adding "TCP"
+                    // and the unit ("port(s)") makes the line self-describing.
+                    sb.appendLine("Listening TCP port(s): ${discoveredPorts.toSortedSet()}")
                 }
                 val debugReadySignal = debugHttpProbeSignal.get() ?: readySignal.get()
                 debugReadySignal?.let { sb.appendLine("Ready signal: $it") }
@@ -1645,7 +1648,10 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
                 sb.appendLine("Mode: run")
                 pid?.let { sb.appendLine("PID: $it") }
                 if (discoveredPorts.isNotEmpty()) {
-                    sb.appendLine("Listening ports: ${discoveredPorts.toSortedSet()}")
+                    // Label disambiguates port vs PID — feedback.md §4 reported confusion
+                    // when an ephemeral port (32636) was read as a process id. Adding "TCP"
+                    // and the unit ("port(s)") makes the line self-describing.
+                    sb.appendLine("Listening TCP port(s): ${discoveredPorts.toSortedSet()}")
                 }
                 val effectiveSignal = httpProbeSignal.get() ?: readySignal.get()
                 effectiveSignal?.let { sb.appendLine("Ready signal: $it") }

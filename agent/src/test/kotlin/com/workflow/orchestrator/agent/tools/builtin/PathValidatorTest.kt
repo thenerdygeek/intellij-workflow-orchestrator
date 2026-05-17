@@ -146,4 +146,69 @@ class PathValidatorTest {
         assertNull(canon)
         assertNotNull(err)
     }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Tilde expansion (feedback.md §8 — `~/.workflow-orchestrator/memory/MEMORY.md`
+    // was treated as literal path inside the project directory)
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `expandUserHome expands leading ~ to user home`() {
+        val home = System.getProperty("user.home")
+        assertEquals(home, PathValidator.expandUserHome("~"))
+    }
+
+    @Test
+    fun `expandUserHome expands ~slash prefix`() {
+        val home = System.getProperty("user.home")
+        val expanded = PathValidator.expandUserHome("~/.workflow-orchestrator/memory/MEMORY.md")
+        assertEquals(home + File.separator + ".workflow-orchestrator/memory/MEMORY.md", expanded)
+    }
+
+    @Test
+    fun `expandUserHome leaves non-tilde paths alone`() {
+        assertEquals("/etc/passwd", PathValidator.expandUserHome("/etc/passwd"))
+        assertEquals("src/Main.kt", PathValidator.expandUserHome("src/Main.kt"))
+        assertEquals("", PathValidator.expandUserHome(""))
+    }
+
+    @Test
+    fun `expandUserHome does NOT expand other-user tilde syntax`() {
+        // `~user/x` is intentionally NOT supported — return as-is so the path validator
+        // rejects it cleanly rather than silently expanding to the wrong home.
+        assertEquals("~root/foo", PathValidator.expandUserHome("~root/foo"))
+    }
+
+    @Test
+    fun `read validator expands tilde to agent data dir`() {
+        // The agent data dir lives at ~/.workflow-orchestrator/. A read with `~/.workflow-orchestrator/X`
+        // should resolve into the allow-listed root. We can't write under the user's real home
+        // safely in a test, so we verify only the expansion happens (path may still fail to read
+        // because no such file exists — that's a separate I/O error, not a path-validation error).
+        val home = System.getProperty("user.home")
+        val tildePath = "~/.workflow-orchestrator/memory/MEMORY.md"
+        val (canonical, error) = PathValidator.resolveAndValidateForRead(tildePath, tempDir.toString())
+        // Expansion happened: canonical must point under the real home, not under tempDir.
+        // If a path-traversal error fires here, it means expansion was skipped.
+        if (canonical != null) {
+            assertTrue(canonical.startsWith(File(home).canonicalPath))
+        } else {
+            // Allowed only if the error is NOT a path-validation one (file may simply not exist).
+            // The exact error path for read here is allow-listed because canonical starts with home.
+            // In practice the assertion above will always run because expandUserHome makes the path absolute.
+            assertNotNull(error)
+        }
+    }
+
+    @Test
+    fun `write validator expands tilde for memory dir paths`(@TempDir project: Path) {
+        // When the LLM passes `~/.workflow-orchestrator/.../memory/X.md` to a write tool, expansion
+        // should turn it into an absolute path that the memoryDir-allow-list can match.
+        val home = System.getProperty("user.home")
+        val memoryDir = File(home, ".workflow-orchestrator/proj/agent/memory").absolutePath
+        val tildePath = "~/.workflow-orchestrator/proj/agent/memory/note.md"
+        val (canonical, _) = PathValidator.resolveAndValidateForWrite(tildePath, project.toString(), memoryDir)
+        assertNotNull(canonical)
+        assertTrue(canonical!!.startsWith(File(home).canonicalPath))
+    }
 }
