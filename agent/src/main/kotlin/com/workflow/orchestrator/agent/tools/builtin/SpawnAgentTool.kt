@@ -99,6 +99,21 @@ class SpawnAgentTool(
     private val onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null,
     /** Optional model catalog service — filters fallback chain to vision-capable models. */
     private val modelCatalogService: com.workflow.orchestrator.core.ai.ModelCatalogService? = null,
+    /**
+     * Optional provider for the current parent session ID. Used alongside
+     * [subagentMessageStateHandlerFactory] to construct a per-sub-agent
+     * [com.workflow.orchestrator.agent.session.MessageStateHandler] that writes
+     * its persistence files under sessions/{parentId}/subagents/{agentId}/.
+     * Null = ephemeral sub-agent runs (default, tests).
+     */
+    private val parentSessionIdProvider: () -> String? = { null },
+    /**
+     * Optional factory that constructs a [com.workflow.orchestrator.agent.session.MessageStateHandler]
+     * for a sub-agent run, scoped to sessions/{parentId}/subagents/{agentId}/.
+     * Receives the parent session ID and the sub-agent's own agentId as arguments.
+     * Null = no sub-agent persistence (default, tests).
+     */
+    private val subagentMessageStateHandlerFactory: ((parentSessionId: String, agentId: String) -> com.workflow.orchestrator.agent.session.MessageStateHandler)? = null,
 ) : AgentTool {
 
     override val name = "agent"
@@ -775,6 +790,13 @@ Tips:
         brain.toolNameSet = coreTools.keys
         brain.paramNameSet = coreTools.values.flatMap { it.parameters.properties.keys }.toSet()
 
+        // Generate agentId before runner so the persistence handler can be scoped to it.
+        val agentId = generateAgentId()
+        val parentSessionId = parentSessionIdProvider()
+        val subagentStateHandler = subagentMessageStateHandlerFactory?.let { factory ->
+            parentSessionId?.let { pid -> factory(pid, agentId) }
+        }
+
         val runner = SubagentRunner(
             brain = brain,
             coreTools = coreTools,
@@ -796,6 +818,7 @@ Tips:
             onCheckpoint = onCheckpoint,
             ideContext = ideContext,
             agentConfig = config,
+            messageStateHandler = subagentStateHandler,
             outputSpiller = outputSpiller,
             attachmentStoreProvider = attachmentStoreProvider,
             onCompactionState = onCompactionState,
@@ -806,8 +829,6 @@ Tips:
             onModelSwitch = onModelSwitch,
             modelCatalogService = modelCatalogService,
         )
-
-        val agentId = generateAgentId()
         val uiLabel = "$description (${config.name})"
         runningAgents[agentId] = runner
         try {
@@ -890,6 +911,14 @@ Tips:
                     // Scope brain's XML parser to subagent's tool set (same as executeSingle)
                     brain.toolNameSet = coreTools.keys
                     brain.paramNameSet = coreTools.values.flatMap { it.parameters.properties.keys }.toSet()
+
+                    // Generate childAgentId before runner so the persistence handler can be scoped to it.
+                    val childAgentId = generateAgentId()
+                    val childParentSessionId = parentSessionIdProvider()
+                    val childSubagentStateHandler = subagentMessageStateHandlerFactory?.let { factory ->
+                        childParentSessionId?.let { pid -> factory(pid, childAgentId) }
+                    }
+
                     val runner = SubagentRunner(
                         brain = brain,
                         coreTools = coreTools,
@@ -911,6 +940,7 @@ Tips:
                         onCheckpoint = onCheckpoint,
                         ideContext = ideContext,
                         agentConfig = config,
+                        messageStateHandler = childSubagentStateHandler,
                         outputSpiller = outputSpiller,
                         attachmentStoreProvider = attachmentStoreProvider,
                         onCompactionState = onCompactionState,
@@ -921,8 +951,6 @@ Tips:
                         onModelSwitch = onModelSwitch,
                         modelCatalogService = modelCatalogService,
                     )
-
-                    val childAgentId = generateAgentId()
                     val perChildDesc = promptPairs[idx].second
                     val childLabel = "${perChildDesc} #${idx + 1} (${config.name})"
                     runningAgents[childAgentId] = runner

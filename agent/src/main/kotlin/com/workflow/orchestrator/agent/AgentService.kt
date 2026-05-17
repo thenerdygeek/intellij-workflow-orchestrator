@@ -936,6 +936,16 @@ class AgentService(
             onRetry = { a, m, r, d -> liveOnRetry?.invoke(a, m, r, d) },
             onModelSwitch = { from, to, reason -> liveOnModelSwitch?.invoke(from, to, reason) },
             modelCatalogService = sharedCatalogHolder.peek(),
+            parentSessionIdProvider = { activeTask.get()?.sessionId },
+            subagentMessageStateHandlerFactory = { parentId, agentId ->
+                val basePath = project.basePath ?: System.getProperty("user.home")
+                val agentBaseDir = ProjectIdentifier.agentDir(basePath)
+                MessageStateHandler(
+                    baseDir = agentBaseDir,
+                    sessionId = "$parentId/subagents/$agentId",
+                    taskText = "sub-agent $agentId",
+                )
+            },
         ) }
 
         // ── Deferred tools (loaded via tool_search) ──────────────────────
