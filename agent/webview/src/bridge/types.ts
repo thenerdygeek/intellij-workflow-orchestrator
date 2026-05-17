@@ -413,7 +413,13 @@ export interface UiMessage {
   planData?: UiMessagePlanData;
   approvalData?: UiMessageApprovalData;
   questionData?: UiMessageQuestionData;
-  subagentData?: UiMessageSubagentData;
+  /**
+   * After the P4.T2 refactor, this field holds the full SubAgentState (the
+   * single source of truth for sub-agent lifecycle). Legacy sessions persisted
+   * with UiMessageSubagentData shape are handled by hydrateFromUiMessages
+   * which re-hydrates into SubAgentState on load.
+   */
+  subagentData?: SubAgentState;
   toolCallData?: UiMessageToolCallData;
   completionData?: CompletionData;
   planApprovalData?: UiMessagePlanApprovalData;

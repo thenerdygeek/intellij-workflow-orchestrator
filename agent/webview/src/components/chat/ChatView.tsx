@@ -1,5 +1,5 @@
 import { memo, useCallback, useRef, useEffect, useState, useMemo } from 'react';
-import { useChatStore } from '@/stores/chatStore';
+import { useChatStore, selectActiveSubAgents } from '@/stores/chatStore';
 import { AgentMessage, AnsweredQuestionsCard } from './AgentMessage';
 import { ChatFooter } from './ChatFooter';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -11,14 +11,14 @@ import { ArtifactRenderer } from '@/components/rich/ArtifactRenderer';
 import { ThinkingView } from '@/components/agent/ThinkingView';
 import { CompletionCard } from '@/components/agent/CompletionCard';
 import { PlanSummaryCard } from '@/components/agent/PlanSummaryCard';
-import type { UiMessage, ToolCall, Plan, SubAgentState } from '@/bridge/types';
+import type { UiMessage, ToolCall, Plan } from '@/bridge/types';
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList';
 import { ScrollButton } from '@/components/ui/prompt-kit/scroll-button';
 
 export const ChatView = memo(function ChatView() {
   const messages = useChatStore(s => s.messages);
   const streamingText = useChatStore(s => s.streamingText);
-  const activeSubAgents = useChatStore(s => s.activeSubAgents);
+  const activeSubAgents = useChatStore(selectActiveSubAgents);
 
   const messageListRef = useRef<MessageListHandle>(null);
   const wasStreamingRef = useRef(false);
@@ -112,19 +112,10 @@ export const ChatView = memo(function ChatView() {
     }
 
     if (msg.say === 'SUBAGENT_STARTED' || msg.say === 'SUBAGENT_PROGRESS' || msg.say === 'SUBAGENT_COMPLETED') {
-      if (!msg.subagentData) return null;
-      const liveState = activeSubAgents.get(msg.subagentData.agentId);
-      const subAgentState: SubAgentState = liveState ?? {
-        agentId: msg.subagentData.agentId,
-        label: msg.subagentData.description,
-        status: msg.subagentData.status as any,
-        iteration: msg.subagentData.iterations,
-        tokensUsed: 0,
-        messages: [],
-        activeToolChain: [],
-        summary: msg.subagentData.summary,
-        startedAt: msg.ts,
-      };
+      // subagentData IS the SubAgentState (single source of truth since P4.T2).
+      // activeSubAgents is a derived selector that reads from the same messages[].
+      const subAgentState = activeSubAgents.get(msg.subagentData?.agentId ?? '') ?? msg.subagentData;
+      if (!subAgentState) return null;
       return (
         <ErrorBoundary key={key}>
           <SubAgentView subAgent={subAgentState} />

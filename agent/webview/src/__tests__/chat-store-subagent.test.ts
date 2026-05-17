@@ -17,7 +17,8 @@ describe('chatStore — sub-agent lifecycle', () => {
     expect(msgs[0]!.subagentData).toBeDefined();
     expect(msgs[0]!.subagentData!.agentId).toBe('agent-1');
     expect(msgs[0]!.subagentData!.status).toBe('RUNNING');
-    expect(msgs[0]!.subagentData!.description).toBe('Research agent');
+    // After P4.T2 refactor, subagentData IS SubAgentState; field is 'label' not 'description'
+    expect(msgs[0]!.subagentData!.label).toBe('Research agent');
   });
 
   it('duplicate spawnSubAgent is a no-op', () => {
@@ -33,7 +34,8 @@ describe('chatStore — sub-agent lifecycle', () => {
     chatState().updateSubAgentIteration(JSON.stringify({ agentId: 'agent-1', iteration: 3 }));
 
     const msg = chatState().messages[0]!;
-    expect(msg.subagentData!.iterations).toBe(3);
+    // After P4.T2 refactor, subagentData IS SubAgentState; field is 'iteration' not 'iterations'
+    expect(msg.subagentData!.iteration).toBe(3);
   });
 
   it('completeSubAgent sets status and summary', () => {
