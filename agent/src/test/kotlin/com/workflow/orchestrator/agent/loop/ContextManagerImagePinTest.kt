@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 
 /**
@@ -132,50 +133,11 @@ class ContextManagerImagePinTest {
     }
 
     // ---- Stage 2 pin: truncation must not drop an image-bearing message ----
+    // TODO Phase 3: delete this test — truncateConversation() removed in Phase 1
 
+    @Disabled("truncateConversation() removed in Phase 1 redesign — will be deleted in Phase 3")
     @Test
     fun `Stage 2 truncation preserves image-bearing tool_result in the middle`() {
-        val cm = ContextManager(maxInputTokens = 1000)
-        // First task pair (always preserved by Stage 2 — Cline keeps the task description).
-        cm.addUserMessage("Initial task")
-        cm.addAssistantMessage(ChatMessage(role = "assistant", content = "starting"))
-
-        // Filler turns 1..2 — first half of the candidate truncation range.
-        for (i in 1..2) {
-            cm.addUserMessage("filler q$i")
-            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "filler a$i"))
-        }
-
-        // Inject an image-bearing user-side turn squarely inside the candidate
-        // truncation range. addUserMessageWithParts populates ChatMessage.parts
-        // with a ContentPart.Image, which `hasImageParts()` detects.
-        // With messages.size=20 and HALF strategy, Cline computes range [2, 9]
-        // (rangeStart=2, messagesToRemove=floorDiv(18,4)*2=8). The image-bearing
-        // user message lands at index 6 — inside the range — so without pinning
-        // it would be dropped.
-        cm.addUserMessageWithParts(
-            parts = listOf(
-                ContentPart.Text("here is a screenshot mid-conversation"),
-                ContentPart.Image(sha256 = "sha-mid", mime = "image/png")
-            )
-        )
-        cm.addAssistantMessage(ChatMessage(role = "assistant", content = "noted the image"))
-
-        // More filler turns 3..8 (six more pairs to reach messages.size = 20).
-        for (i in 3..8) {
-            cm.addUserMessage("filler q$i")
-            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "filler a$i"))
-        }
-
-        // Sanity check the fixture matches the math the assertion relies on.
-        assertEquals(20, cm.messageCount(), "fixture: messages.size must be 20 to land HALF range at [2,9]")
-
-        cm.truncateConversation(TruncationStrategy.HALF)
-
-        // After truncation, the image-bearing message must still be present.
-        val survived = cm.getMessages().any { msg ->
-            msg.parts?.any { it is ContentPart.Image && it.sha256 == "sha-mid" } == true
-        }
-        assertTrue(survived, "Image-bearing message must survive Stage 2 truncation (Cline pinning rule)")
+        // TODO Phase 3: delete — truncateConversation(TruncationStrategy.HALF) removed in Phase 1
     }
 }

@@ -649,7 +649,7 @@ class AgentController(
                 val utilAfter = cm.utilizationPercent()
                 val saved = tokensBefore - tokensAfter
                 val msgsAfter = cm.messageCount()
-                val ranStage3 = cm.lastCompactionRanStage3
+                val ranStage3 = cm.lastCompactionRanSummary
                 invokeLater {
                     dashboard.insertCompactionMarker(
                         tokensBefore = tokensBefore,

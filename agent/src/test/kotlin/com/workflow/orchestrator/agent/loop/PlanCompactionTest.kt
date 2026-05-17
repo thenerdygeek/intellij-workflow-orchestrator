@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.loop
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 
 class PlanCompactionTest {
@@ -32,27 +33,10 @@ class PlanCompactionTest {
         assertNull(contextManager.getActivePlanPath())
     }
 
+    @Disabled("truncateConversation() removed in Phase 1 redesign — will be deleted in Phase 3")
     @Test
     fun `plan path survives compaction via re-injection`() {
-        contextManager.setSystemPrompt("System prompt")
-        contextManager.setActivePlanPath("/tmp/session/plan.md")
-
-        for (i in 1..20) {
-            contextManager.addUserMessage("User message $i")
-            contextManager.addAssistantMessage(
-                ChatMessage(role = "assistant", content = "Response $i")
-            )
-        }
-
-        contextManager.truncateConversation(TruncationStrategy.HALF)
-        contextManager.reInjectActivePlan()
-
-        val messages = contextManager.getMessages()
-        val hasPlanMessage = messages.any { msg ->
-            msg.content?.contains("[Active Plan]") == true &&
-            msg.content?.contains("/tmp/session/plan.md") == true
-        }
-        assertTrue(hasPlanMessage, "Plan path should be re-injected after compaction")
+        // TODO Phase 3: delete — truncateConversation(TruncationStrategy.HALF) removed in Phase 1
     }
 
     @Test

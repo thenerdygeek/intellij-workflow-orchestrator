@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.loop
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 
 class SkillCompactionTest {
@@ -34,34 +35,10 @@ class SkillCompactionTest {
         assertNull(contextManager.getActiveSkill())
     }
 
+    @Disabled("truncateConversation() removed in Phase 1 redesign — will be deleted in Phase 3")
     @Test
     fun `active skill survives compaction via re-injection`() {
-        contextManager.setSystemPrompt("System prompt")
-
-        // Set an active skill
-        contextManager.setActiveSkill("# Brainstorm Skill\nExplore ideas first.")
-
-        // Add enough messages to simulate a conversation that gets truncated
-        for (i in 1..20) {
-            contextManager.addUserMessage("User message $i with some content to take up space")
-            contextManager.addAssistantMessage(
-                ChatMessage(role = "assistant", content = "Response $i with details")
-            )
-        }
-
-        // Simulate truncation (Stage 2 of compaction)
-        contextManager.truncateConversation(TruncationStrategy.HALF)
-
-        // Re-inject active skill (called at end of compact())
-        contextManager.reInjectActiveSkill()
-
-        // Verify the skill content was re-injected
-        val messages = contextManager.getMessages()
-        val hasSkillMessage = messages.any { msg ->
-            msg.content?.contains("[Active Skill]") == true &&
-            msg.content?.contains("Brainstorm Skill") == true
-        }
-        assertTrue(hasSkillMessage, "Active skill should be re-injected after compaction")
+        // TODO Phase 3: delete — truncateConversation(TruncationStrategy.HALF) removed in Phase 1
     }
 
     @Test

@@ -7,6 +7,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
@@ -297,125 +298,40 @@ class ContextManagerTest {
     }
 
     // ---- Stage 2: Conversation truncation (from Cline) ----
+    // TODO Phase 3: delete this nested class — truncateConversation() removed in Phase 1
 
+    @Disabled("truncateConversation() removed in Phase 1 redesign — will be deleted in Phase 3")
     @Nested
     inner class ConversationTruncation {
 
         @Test
         fun `truncation preserves first user-assistant exchange`() {
-            cm = ContextManager(maxInputTokens = 1000)
-            // First exchange (the task description)
-            cm.addUserMessage("Fix the bug in main.kt")
-            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "I'll look at the code."))
-            // Many more exchanges
-            for (i in 1..10) {
-                cm.addUserMessage("question $i")
-                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "answer $i"))
-            }
-
-            cm.truncateConversation(TruncationStrategy.HALF)
-
-            val messages = cm.getMessages()
-            // First message should still be the original task
-            assertEquals("Fix the bug in main.kt", messages[0].content)
+            // TODO Phase 3: delete — truncateConversation(TruncationStrategy.HALF) removed
         }
 
         @Test
         fun `truncation preserves last N messages`() {
-            cm = ContextManager(maxInputTokens = 1000)
-            cm.addUserMessage("task")
-            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "starting"))
-            for (i in 1..10) {
-                cm.addUserMessage("q$i")
-                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
-            }
-
-            val countBefore = cm.messageCount()
-            cm.truncateConversation(TruncationStrategy.HALF)
-
-            val messages = cm.getMessages()
-            val countAfter = messages.size
-            assertTrue(countAfter < countBefore, "Some messages should be removed")
-            // Last message should still be present
-            assertEquals("a10", messages.last().content)
+            // TODO Phase 3: delete — truncateConversation(TruncationStrategy.HALF) removed
         }
 
         @Test
         fun `truncation maintains role alternation`() {
-            cm = ContextManager(maxInputTokens = 1000)
-            for (i in 1..10) {
-                cm.addUserMessage("q$i")
-                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
-            }
-
-            cm.truncateConversation(TruncationStrategy.HALF)
-
-            val messages = cm.getMessages()
-            // Check alternation: no two consecutive messages should have the same role
-            // (except system which is prepended)
-            for (i in 1 until messages.size) {
-                val prev = messages[i - 1]
-                val curr = messages[i]
-                // System prompt can precede user
-                if (prev.role == "system") continue
-                // After truncation notice (assistant), next should be user
-                if (prev.role == "assistant" && curr.role == "user") continue
-                if (prev.role == "user" && curr.role == "assistant") continue
-                // Tool results follow assistant tool_calls
-                if (prev.role == "assistant" && curr.role == "tool") continue
-                if (prev.role == "tool" && curr.role == "user") continue
-                if (prev.role == "tool" && curr.role == "tool") continue // multiple tool results
-                // Allow tool -> assistant for adjacent tool groups
-                if (prev.role == "tool" && curr.role == "assistant") continue
-                fail<String>("Unexpected role sequence at index $i: ${prev.role} -> ${curr.role}")
-            }
+            // TODO Phase 3: delete — truncateConversation(TruncationStrategy.HALF) removed
         }
 
         @Test
         fun `LAST_TWO keeps only first and last pair`() {
-            cm = ContextManager(maxInputTokens = 1000)
-            for (i in 1..10) {
-                cm.addUserMessage("q$i")
-                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
-            }
-
-            cm.truncateConversation(TruncationStrategy.LAST_TWO)
-
-            val messages = cm.getMessages()
-            // Should have first pair + truncation notice + last pair = roughly 4 messages
-            assertTrue(messages.size <= 6, "LAST_TWO should keep very few messages, got ${messages.size}")
-            assertEquals("q1", messages[0].content)
+            // TODO Phase 3: delete — truncateConversation(TruncationStrategy.LAST_TWO) removed
         }
 
         @Test
         fun `no-op when too few messages to truncate`() {
-            cm = ContextManager(maxInputTokens = 1000)
-            cm.addUserMessage("task")
-            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "ok"))
-
-            val countBefore = cm.messageCount()
-            cm.truncateConversation(TruncationStrategy.HALF)
-            assertEquals(countBefore, cm.messageCount(), "Should not truncate when < 4 messages")
+            // TODO Phase 3: delete — truncateConversation(TruncationStrategy.HALF) removed
         }
 
         @Test
         fun `truncation inserts notice in first assistant message`() {
-            cm = ContextManager(maxInputTokens = 1000)
-            for (i in 1..10) {
-                cm.addUserMessage("q$i")
-                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
-            }
-
-            cm.truncateConversation(TruncationStrategy.HALF)
-
-            val messages = cm.getMessages()
-            // Second message (first assistant) should contain truncation notice
-            val firstAssistant = messages[1]
-            assertEquals("assistant", firstAssistant.role)
-            assertTrue(
-                firstAssistant.content!!.contains("truncated", ignoreCase = true),
-                "First assistant message should contain truncation notice"
-            )
+            // TODO Phase 3: delete — truncateConversation(TruncationStrategy.HALF) removed
         }
     }
 
@@ -809,88 +725,28 @@ class ContextManagerTest {
             assertTrue(cm.messageCount() < countBefore, "force=true should compact even at low utilization")
         }
 
+        @Disabled("lastCompactionRanStage3 removed in Phase 1 redesign — will be deleted in Phase 3")
         @Test
         fun `force=false returns early at low utilization (auto-compaction unchanged)`() = runTest {
-            val brain = FakeLlmBrain(summaryResponse = "TASK: t")
-            cm = ContextManager(maxInputTokens = 100_000)
-            cm.setSystemPrompt("sys")
-            for (i in 1..10) {
-                cm.addUserMessage("u$i")
-                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
-            }
-            cm.updateTokens(promptTokens = 500)  // <70%
-
-            val countBefore = cm.messageCount()
-            cm.compact(brain, force = false)
-
-            assertEquals(countBefore, cm.messageCount(), "force=false should not compact below 70% utilization")
-            assertFalse(cm.lastCompactionRanStage3, "Stage 3 must not run when entry gate blocks compaction")
+            // TODO Phase 3: delete — cm.lastCompactionRanStage3 removed in Phase 1
         }
 
+        @Disabled("lastCompactionRanStage3 removed in Phase 1 redesign — will be deleted in Phase 3")
         @Test
         fun `force=true runs Stage 3 LLM summarization even at low utilization`() = runTest {
-            val brain = FakeLlmBrain(summaryResponse = "TASK: thing\nFILES: foo.kt\nDONE: a\nERRORS: -\nPENDING: -")
-            cm = ContextManager(maxInputTokens = 100_000)
-            cm.setSystemPrompt("sys")
-            // 20 messages: enough that even after Stage 2 QUARTER (~75% drop of middle),
-            // post-Stage-2 message count remains > FORCE_STAGE3_MIN_MESSAGES = 6.
-            // QUARTER on 20 msgs removes ~12 → 8 left; 8 > 6 → Stage 3 fires.
-            for (i in 1..10) {
-                cm.addUserMessage("u$i")
-                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
-            }
-            cm.updateTokens(promptTokens = 200)  // <1% utilization
-
-            cm.compact(brain, force = true)
-
-            assertTrue(cm.lastCompactionRanStage3, "Stage 3 should run under force when messages > 6")
-            val messages = cm.getMessages()
-            val summaryMsg = messages.find { it.content?.contains("[Context Summary]") == true }
-            assertNotNull(summaryMsg, "Summary message should be inserted")
-            assertEquals("assistant", summaryMsg!!.role, "Summary must be assistant role")
+            // TODO Phase 3: delete — cm.lastCompactionRanStage3 removed in Phase 1
         }
 
+        @Disabled("lastCompactionRanStage3 removed in Phase 1 redesign — will be deleted in Phase 3")
         @Test
         fun `force=false skips Stage 3 below 95% utilization (auto-compaction unchanged)`() = runTest {
-            val brain = FakeLlmBrain(summaryResponse = "TASK: t")
-            cm = ContextManager(maxInputTokens = 200)
-            cm.setSystemPrompt("sys")
-            // Calibrated: 20 messages × ~18 chars → tokenEstimate ~93% before Stage 2 (gate
-            // passes at >85%), and ~78% after Stage 2 HALF removes ~8 messages (Stage 3
-            // gate at >95% does NOT pass — confirms the old auto-compaction ceiling).
-            val padding = "x".repeat(15)  // each message = "u1 " + 15 = ~18 chars
-            for (i in 1..10) {
-                cm.addUserMessage("u$i $padding")
-                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i $padding"))
-            }
-            cm.updateTokens(promptTokens = 175)  // 87.5% — entry gate passes
-
-            cm.compact(brain, force = false)
-
-            assertFalse(
-                cm.lastCompactionRanStage3,
-                "Stage 3 must remain gated at 95% under auto-compaction (force=false)"
-            )
+            // TODO Phase 3: delete — cm.lastCompactionRanStage3 removed in Phase 1
         }
 
+        @Disabled("lastCompactionRanStage3 removed in Phase 1 redesign — will be deleted in Phase 3")
         @Test
         fun `force=true respects 6-message floor and skips Stage 3 on small sessions`() = runTest {
-            val brain = FakeLlmBrain(summaryResponse = "TASK: t")
-            cm = ContextManager(maxInputTokens = 100_000)
-            cm.setSystemPrompt("sys")
-            // Only 4 messages — below FORCE_STAGE3_MIN_MESSAGES = 6
-            cm.addUserMessage("u1")
-            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a1"))
-            cm.addUserMessage("u2")
-            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a2"))
-            cm.updateTokens(promptTokens = 100)
-
-            cm.compact(brain, force = true)
-
-            assertFalse(
-                cm.lastCompactionRanStage3,
-                "Stage 3 must skip when message count is at or below the 6-message floor"
-            )
+            // TODO Phase 3: delete — cm.lastCompactionRanStage3 removed in Phase 1
         }
 
         @Test
@@ -922,54 +778,16 @@ class ContextManagerTest {
             )
         }
 
+        @Disabled("lastCompactionRanStage3 removed in Phase 1 redesign — will be deleted in Phase 3")
         @Test
         fun `force=false uses HALF strategy when over 85%`() = runTest {
-            val brain = FakeLlmBrain(summaryResponse = "TASK: t")
-            cm = ContextManager(maxInputTokens = 200)
-            cm.setSystemPrompt("sys")
-            // Same calibration as the Stage-3-gate test: messages sized so post-Stage-2
-            // util stays under 95%, isolating HALF's behavior from Stage 3's contribution.
-            val padding = "x".repeat(15)
-            for (i in 1..10) {
-                cm.addUserMessage("u$i $padding")
-                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i $padding"))
-            }
-            cm.updateTokens(promptTokens = 175)
-
-            val countBefore = cm.messageCount()
-            cm.compact(brain, force = false)
-            val countAfter = cm.messageCount()
-            val removed = countBefore - countAfter
-
-            // HALF formula: floor((20-2)/4)*2 = 8 messages removed.
-            // Allow a small fudge for the truncation-notice replacement bookkeeping.
-            assertEquals(8, removed, "force=false at >85% must use HALF (removes 8 of 20)")
-            assertFalse(cm.lastCompactionRanStage3, "Stage 3 must not run alongside HALF in this scenario")
+            // TODO Phase 3: delete — cm.lastCompactionRanStage3 removed in Phase 1
         }
 
+        @Disabled("lastCompactionRanStage3 removed in Phase 1 redesign — will be deleted in Phase 3")
         @Test
         fun `lastCompactionRanStage3 resets to false at start of each compact call`() = runTest {
-            val brain = FakeLlmBrain(summaryResponse = "TASK: t\nFILES: f\nDONE: d\nERRORS: -\nPENDING: -")
-            cm = ContextManager(maxInputTokens = 100_000)
-            cm.setSystemPrompt("sys")
-            // 20 messages → after Stage 2 QUARTER, ~8 left, > 6-floor → Stage 3 fires
-            for (i in 1..10) {
-                cm.addUserMessage("u$i")
-                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
-            }
-            cm.updateTokens(promptTokens = 200)
-
-            // First compaction with force=true → Stage 3 runs
-            cm.compact(brain, force = true)
-            assertTrue(cm.lastCompactionRanStage3, "Stage 3 ran on first compaction")
-
-            // Second compaction: now there are very few messages, Stage 3 must NOT run.
-            // Critical: the flag from the first call must not leak into this call.
-            cm.compact(brain, force = true)
-            assertFalse(
-                cm.lastCompactionRanStage3,
-                "Stage 3 flag must reset to false on each compact() entry, not persist from prior call"
-            )
+            // TODO Phase 3: delete — cm.lastCompactionRanStage3 removed in Phase 1
         }
 
         @Test
@@ -1016,27 +834,10 @@ class ContextManagerTest {
             )
         }
 
+        @Disabled("lastCompactionRanStage3 removed in Phase 1 redesign — will be deleted in Phase 3")
         @Test
         fun `force=true with Stage 3 LLM failure leaves Stage 1+2 results intact`() = runTest {
-            val errorBrain = ErrorLlmBrain()
-            cm = ContextManager(maxInputTokens = 100_000)
-            cm.setSystemPrompt("sys")
-            for (i in 1..10) {
-                cm.addUserMessage("u$i")
-                cm.addAssistantMessage(ChatMessage(role = "assistant", content = "a$i"))
-            }
-            cm.updateTokens(promptTokens = 200)
-
-            val countBefore = cm.messageCount()
-            cm.compact(errorBrain, force = true)
-            val countAfter = cm.messageCount()
-
-            // Stage 2 (QUARTER) must have run before Stage 3 attempted
-            assertTrue(countAfter < countBefore, "Stage 2 truncation must complete even if Stage 3 fails")
-            assertFalse(cm.lastCompactionRanStage3, "Stage 3 flag stays false when LLM call fails")
-            // No "Compaction failed" placeholder in messages
-            val hasErrorPlaceholder = cm.getMessages().any { it.content?.contains("Compaction failed") == true }
-            assertFalse(hasErrorPlaceholder, "Stage 3 LLM failure must NOT inject error message into context")
+            // TODO Phase 3: delete — cm.lastCompactionRanStage3 removed in Phase 1
         }
 
         @Test
