@@ -2043,6 +2043,15 @@ class AgentController(
                     update.streamDelta?.let { delta ->
                         dashboard.appendSubAgentStreamDelta(agentId, delta)
                     }
+                    // Thinking delta — incremental <thinking> block byte for the sub-agent
+                    // card's collapsible REASONING bubble. Mirrors the main agent's
+                    // appendToThinking path via the new bridge methods added in P2.T4.
+                    update.thinkingDelta?.let { delta ->
+                        dashboard.appendSubAgentThinking(agentId, delta)
+                    }
+                    if (update.thinkingEnd) {
+                        dashboard.endSubAgentThinking(agentId)
+                    }
                     update.stats?.let { stats ->
                         dashboard.updateSubAgentIteration(agentId, stats.toolCalls, stats.inputTokens + stats.outputTokens)
                     }

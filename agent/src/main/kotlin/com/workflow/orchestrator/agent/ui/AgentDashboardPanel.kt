@@ -719,6 +719,16 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.appendSubAgentStreamDelta(agentId, delta) }
     }
 
+    fun appendSubAgentThinking(agentId: String, delta: String) {
+        runOnEdt { cefPanel?.appendSubAgentThinking(agentId, delta) }
+        broadcast(replay = false) { it.appendSubAgentThinking(agentId, delta) }
+    }
+
+    fun endSubAgentThinking(agentId: String) {
+        runOnEdt { cefPanel?.endSubAgentThinking(agentId) }
+        broadcast(replay = false) { it.endSubAgentThinking(agentId) }
+    }
+
     fun completeSubAgent(agentId: String, textContent: String, tokensUsed: Int, isError: Boolean) {
         runOnEdt { cefPanel?.completeSubAgent(agentId, textContent, tokensUsed, isError) }
         broadcast(replay = false) { it.completeSubAgent(agentId, textContent, tokensUsed, isError) }

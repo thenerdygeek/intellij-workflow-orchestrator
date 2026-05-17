@@ -1226,6 +1226,30 @@ class AgentCefPanel(
         callJs("appendSubAgentStreamDelta(${JsEscape.toJsString(payload)})")
     }
 
+    /**
+     * Append a thinking-block delta to the matching sub-agent's collapsible
+     * <ThinkingView>. Mirrors the main agent's appendToThinking path. No-op if
+     * the agentId is unknown to the webview.
+     */
+    fun appendSubAgentThinking(agentId: String, delta: String) {
+        val payload = buildJsonObject {
+            put("agentId", agentId)
+            put("delta", delta)
+        }.toString()
+        callJs("if (window._appendSubAgentThinking) window._appendSubAgentThinking(${JsEscape.toJsString(payload)})")
+    }
+
+    /**
+     * Mark the close of the current <thinking> block for [agentId]. The webview
+     * flushes the accumulated buffer into the card's collapsible REASONING bubble.
+     */
+    fun endSubAgentThinking(agentId: String) {
+        val payload = buildJsonObject {
+            put("agentId", agentId)
+        }.toString()
+        callJs("if (window._endSubAgentThinking) window._endSubAgentThinking(${JsEscape.toJsString(payload)})")
+    }
+
     fun completeSubAgent(agentId: String, textContent: String, tokensUsed: Int, isError: Boolean) {
         val payload = buildJsonObject {
             put("agentId", agentId)
