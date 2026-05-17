@@ -472,6 +472,12 @@ class SubagentRunner(
                 textBatcher?.dispose()
             }
         } catch (e: Exception) {
+            // Defense in depth: if an exception fires AFTER textBatcher allocation but
+            // BEFORE the inner try { loop.run() } / finally { dispose() }, the inner
+            // finally never runs and the batcher's javax.swing.Timer would leak.
+            // Idempotent: dispose() is safe to call twice (the batcher's `disposed`
+            // AtomicBoolean prevents double-cleanup).
+            textBatcher?.dispose()
             // If aborted, return cancelled result
             if (abortRequested.get()) {
                 return cancelledResult(stats).also { cancelResult ->

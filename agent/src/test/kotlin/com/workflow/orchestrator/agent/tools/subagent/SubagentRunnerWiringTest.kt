@@ -67,6 +67,20 @@ class SubagentRunnerWiringTest {
     }
 
     @Test
+    fun `runInternal disposes textBatcher in the outer catch path`() {
+        val src = java.io.File(
+            "src/main/kotlin/com/workflow/orchestrator/agent/tools/subagent/SubagentRunner.kt"
+        ).readText()
+        // Find the catch (e: Exception) block (or whatever wraps the whole runInternal body)
+        // and assert it contains a textBatcher dispose call.
+        val outerCatch = src.substringAfter("} catch (e: Exception) {")
+            .substringBefore("\n        }")
+        assert("textBatcher?.dispose()" in outerCatch || "textBatcher.dispose()" in outerCatch) {
+            "runInternal's outer catch must dispose textBatcher to prevent Swing Timer leak. Block:\n$outerCatch"
+        }
+    }
+
+    @Test
     fun `SubagentRunner forwards the new params into the AgentLoop constructor call`() {
         val src = java.io.File(
             "src/main/kotlin/com/workflow/orchestrator/agent/tools/subagent/SubagentRunner.kt"
