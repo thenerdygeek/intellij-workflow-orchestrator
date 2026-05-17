@@ -106,6 +106,13 @@ class SubagentRunner(
      */
     private val agentConfig: AgentConfig? = null,
     /**
+     * Optional message-state handler scoped to the sub-agent's own session directory.
+     * When set, every assistant chunk, tool result, and user message is persisted to
+     * sessions/{parentId}/subagents/{agentId}/{api_conversation_history.json,ui_messages.json}.
+     * Null = ephemeral run (default, tests, legacy callers).
+     */
+    private val messageStateHandler: com.workflow.orchestrator.agent.session.MessageStateHandler? = null,
+    /**
      * Optional output spiller forwarded from the parent session. When set, sub-agent
      * tool outputs above the spill threshold are written to disk instead of inflating
      * the sub-agent's context window. Null = no spill (legacy behavior, tests).
@@ -382,6 +389,7 @@ class SubagentRunner(
                         }
                     }
                 },
+                messageStateHandler = messageStateHandler,
                 outputSpiller = outputSpiller,
                 attachmentStoreProvider = attachmentStoreProvider,
                 onCompactionState = onCompactionState,

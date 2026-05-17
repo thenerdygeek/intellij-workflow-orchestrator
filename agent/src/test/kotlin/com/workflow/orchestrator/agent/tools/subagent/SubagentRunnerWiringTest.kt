@@ -53,6 +53,20 @@ class SubagentRunnerWiringTest {
     }
 
     @Test
+    fun `SubagentRunner forwards messageStateHandler to AgentLoop when provided`() {
+        val src = java.io.File(
+            "src/main/kotlin/com/workflow/orchestrator/agent/tools/subagent/SubagentRunner.kt"
+        ).readText()
+        // The forwarding lives in runInternal (D7 split run() into a wrapper + runInternal).
+        // Match the AgentLoop(...) block inside runInternal.
+        val block = src.substringAfter("val loop = AgentLoop(")
+            .substringBefore("\n            )")
+        assert("messageStateHandler = messageStateHandler" in block) {
+            "SubagentRunner.runInternal must forward messageStateHandler. Block:\n$block"
+        }
+    }
+
+    @Test
     fun `SubagentRunner forwards the new params into the AgentLoop constructor call`() {
         val src = java.io.File(
             "src/main/kotlin/com/workflow/orchestrator/agent/tools/subagent/SubagentRunner.kt"
