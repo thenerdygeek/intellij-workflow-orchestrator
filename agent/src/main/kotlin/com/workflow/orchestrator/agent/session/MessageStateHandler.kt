@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.session
 
+import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.util.StringUtils
 import kotlinx.coroutines.sync.Mutex
@@ -460,22 +461,28 @@ class MessageStateHandler(
             modelId = lastModel
         )
 
-        val existingItems: MutableList<HistoryItem> = try {
-            if (globalIndexFile.exists()) {
-                prettyJson.decodeFromString<MutableList<HistoryItem>>(globalIndexFile.readText())
-            } else mutableListOf()
-        } catch (_: Exception) { mutableListOf() }
-
-        val idx = existingItems.indexOfFirst { it.id == sessionId }
-        if (idx >= 0) {
-            val preserved = item.copy(isFavorited = existingItems[idx].isFavorited)
-            existingItems[idx] = preserved
-        } else {
-            existingItems.add(0, item)
-        }
-
+        // Cross-process serialization: globalIndexMutex protects within this JVM, but two
+        // IDE windows on the same project share the same sessions.json on disk. Wrap the
+        // read-modify-write in a blocking FileLock so window A's update can't clobber
+        // window B's concurrent update of a different session.
         baseDir.mkdirs()
-        AtomicFileWriter.write(globalIndexFile, prettyJson.encodeToString(existingItems))
+        withGlobalIndexFileLock(baseDir) {
+            val existingItems: MutableList<HistoryItem> = try {
+                if (globalIndexFile.exists()) {
+                    prettyJson.decodeFromString<MutableList<HistoryItem>>(globalIndexFile.readText())
+                } else mutableListOf()
+            } catch (_: Exception) { mutableListOf() }
+
+            val idx = existingItems.indexOfFirst { it.id == sessionId }
+            if (idx >= 0) {
+                val preserved = item.copy(isFavorited = existingItems[idx].isFavorited)
+                existingItems[idx] = preserved
+            } else {
+                existingItems.add(0, item)
+            }
+
+            AtomicFileWriter.write(globalIndexFile, prettyJson.encodeToString(existingItems))
+        }
     }
 
     companion object {
@@ -487,6 +494,8 @@ class MessageStateHandler(
          * Phase 4 of multimodal-agent plan.
          */
         const val SCHEMA_VERSION_CURRENT: Int = 2
+
+        private val LOG = Logger.getInstance(MessageStateHandler::class.java)
 
         /** Separate mutex for sessions.json to prevent races between concurrent sessions (I2 fix). */
         private val globalIndexMutex = Mutex()
@@ -570,7 +579,16 @@ class MessageStateHandler(
             }.recoverCatching {
                 // v1 fallback: bare JSON array
                 compactJson.decodeFromString(ListSerializer(ApiMessage.serializer()), text)
-            }.getOrElse {
+            }.getOrElse { error ->
+                // Both shapes failed. Most likely cause: forward-version file (v3+) being
+                // read by this plugin, or a corrupted write. Log loudly so a user reporting
+                // "I lost my history" has a breadcrumb in idea.log instead of silent loss.
+                LOG.warn(
+                    "MessageStateHandler.loadApiHistory: both v2 and v1 parsers failed for " +
+                        "${file.absolutePath} (size=${text.length}); returning empty history. " +
+                        "Cause: ${error.message}",
+                    error
+                )
                 emptyList()
             }
         }
@@ -589,11 +607,13 @@ class MessageStateHandler(
             if (!sessionId.matches(SAFE_SESSION_ID)) return
             val indexFile = File(baseDir, "sessions.json")
             if (indexFile.exists()) {
-                try {
-                    val items = compactJson.decodeFromString<List<HistoryItem>>(indexFile.readText())
-                    val filtered = items.filter { it.id != sessionId }
-                    AtomicFileWriter.write(indexFile, prettyJsonStatic.encodeToString(filtered))
-                } catch (_: Exception) { /* corrupted index, skip */ }
+                withGlobalIndexFileLock(baseDir) {
+                    try {
+                        val items = compactJson.decodeFromString<List<HistoryItem>>(indexFile.readText())
+                        val filtered = items.filter { it.id != sessionId }
+                        AtomicFileWriter.write(indexFile, prettyJsonStatic.encodeToString(filtered))
+                    } catch (_: Exception) { /* corrupted index, skip */ }
+                }
             }
             val sessionDir = File(baseDir, "sessions/$sessionId")
             if (sessionDir.exists()) {
@@ -601,19 +621,115 @@ class MessageStateHandler(
             }
         }
 
+        /**
+         * Rewrite the `task` field on the existing index entry for [sessionId].
+         * Used to replace the auto-generated first-message-takes-200 task text with a
+         * descriptive title (e.g. from the Haiku-generated session title pass).
+         *
+         * No-op if the entry doesn't exist. Uses the same cross-process file lock as
+         * the rest of the index mutators so it can't race other windows.
+         */
+        fun updateSessionTitle(baseDir: File, sessionId: String, title: String) {
+            if (!sessionId.matches(SAFE_SESSION_ID)) return
+            val indexFile = File(baseDir, "sessions.json")
+            if (!indexFile.exists()) return
+            withGlobalIndexFileLock(baseDir) {
+                try {
+                    val items = compactJson.decodeFromString<List<HistoryItem>>(indexFile.readText())
+                    val idx = items.indexOfFirst { it.id == sessionId }
+                    if (idx < 0) return@withGlobalIndexFileLock
+                    val updated = items.toMutableList().also {
+                        it[idx] = it[idx].copy(task = title.take(200))
+                    }
+                    AtomicFileWriter.write(indexFile, prettyJsonStatic.encodeToString(updated))
+                } catch (_: Exception) { /* corrupted index, skip */ }
+            }
+        }
+
+        /**
+         * Orphan-session cleanup pass — removes top-level directories under
+         * `sessions/` that are NOT present in the global index AND whose last-modified
+         * time is older than [olderThanMs].
+         *
+         * Catches two real failure modes:
+         *  - a session that crashed between writing per-session files and updating
+         *    `sessions.json`, leaving an unreachable directory on disk
+         *  - residue from older plugin versions whose delete path didn't cascade
+         *
+         * Sub-agent dirs live at `sessions/{parentId}/subagents/{agentId}` — i.e. nested
+         * under their parent's directory. They are caught for free when the parent is
+         * either kept (no cleanup) or deleted (cascade); this pass only iterates
+         * top-level entries so we never remove a sub-agent whose parent is still live.
+         *
+         * Best-effort, never throws — startup must not be blocked on disk hiccups.
+         *
+         * @return number of directories removed
+         */
+        fun cleanupOrphanSessions(baseDir: File, olderThanMs: Long = 30L * 24 * 60 * 60 * 1000): Int {
+            val sessionsRoot = File(baseDir, "sessions")
+            if (!sessionsRoot.isDirectory) return 0
+            val knownIds: Set<String> = try {
+                loadGlobalIndex(baseDir).map { it.id }.toSet()
+            } catch (_: Exception) { return 0 }
+            val cutoff = System.currentTimeMillis() - olderThanMs
+            var removed = 0
+            val children = sessionsRoot.listFiles() ?: return 0
+            for (child in children) {
+                if (!child.isDirectory) continue
+                if (child.name in knownIds) continue
+                if (child.lastModified() >= cutoff) continue
+                try {
+                    if (child.deleteRecursively()) removed++
+                } catch (_: Exception) { /* skip, try next */ }
+            }
+            return removed
+        }
+
         fun toggleFavorite(baseDir: File, sessionId: String) {
             if (!sessionId.matches(SAFE_SESSION_ID)) return
             val indexFile = File(baseDir, "sessions.json")
             if (!indexFile.exists()) return
+            withGlobalIndexFileLock(baseDir) {
+                try {
+                    val items = compactJson.decodeFromString<List<HistoryItem>>(indexFile.readText())
+                    val updated = items.map { item ->
+                        if (item.id == sessionId) item.copy(isFavorited = !item.isFavorited) else item
+                    }
+                    if (updated != items) {
+                        AtomicFileWriter.write(indexFile, prettyJsonStatic.encodeToString(updated))
+                    }
+                } catch (_: Exception) { /* corrupted index, skip */ }
+            }
+        }
+
+        /**
+         * Serializes read-modify-write on `sessions.json` across processes.
+         *
+         * Within one JVM `globalIndexMutex` serializes coroutines; this helper adds a
+         * `java.nio` blocking [java.nio.channels.FileLock] on a sibling `sessions.json.lock`
+         * so two IDE windows that happen to share the same project agent directory
+         * (real case: a worktree + its main checkout pointing at the same SHA-keyed root)
+         * can't clobber each other's updates.
+         *
+         * Best-effort: on lock-acquire failure we still run [block] so a permission /
+         * filesystem error doesn't break history persistence outright — it just degrades
+         * back to the previous coroutine-mutex-only semantics for that one write.
+         */
+        private inline fun withGlobalIndexFileLock(baseDir: File, block: () -> Unit) {
+            baseDir.mkdirs()
+            val lockFile = File(baseDir, "sessions.json.lock")
+            var raf: java.io.RandomAccessFile? = null
+            var lock: java.nio.channels.FileLock? = null
             try {
-                val items = compactJson.decodeFromString<List<HistoryItem>>(indexFile.readText())
-                val updated = items.map { item ->
-                    if (item.id == sessionId) item.copy(isFavorited = !item.isFavorited) else item
-                }
-                if (updated != items) {
-                    AtomicFileWriter.write(indexFile, prettyJsonStatic.encodeToString(updated))
-                }
-            } catch (_: Exception) { /* corrupted index, skip */ }
+                raf = java.io.RandomAccessFile(lockFile, "rw")
+                lock = try {
+                    raf.channel.lock()
+                } catch (_: Exception) { null }
+                block()
+            } finally {
+                try { lock?.release() } catch (_: Exception) {}
+                try { raf?.close() } catch (_: Exception) {}
+            }
         }
 
         // ── Checkpoint operations (moved from SessionStore) ──────────────

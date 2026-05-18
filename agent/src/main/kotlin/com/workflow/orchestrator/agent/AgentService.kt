@@ -2466,6 +2466,24 @@ class AgentService(
                 )
                 if (hookResult is HookResult.Cancel) {
                     log.info("AgentService: TASK_RESUME hook cancelled resume: ${hookResult.reason}")
+                    // If the user typed a follow-up alongside the resume, surface it back
+                    // in the chat so the cancellation isn't silently swallowing their input.
+                    // Mirrors the fix shape from 56906e668 (completed-task resume drop).
+                    val cancelNote = buildString {
+                        append("Resume cancelled by TASK_RESUME hook")
+                        if (!hookResult.reason.isNullOrBlank()) append(": ${hookResult.reason}")
+                        append('.')
+                        if (!userText.isNullOrBlank()) {
+                            append("\n\nYour message was not sent:\n> ")
+                            append(userText.lineSequence().joinToString("\n> "))
+                        }
+                    }
+                    handler.addToClineMessages(UiMessage(
+                        ts = System.currentTimeMillis(),
+                        type = UiMessageType.SAY,
+                        say = UiSay.ERROR,
+                        text = cancelNote,
+                    ))
                     lock.release()
                     onComplete(LoopResult.Cancelled(iterations = 0))
                     return@launch
@@ -2624,22 +2642,14 @@ class AgentService(
     /**
      * Update the title of an existing session (e.g. after Haiku generates a descriptive title).
      * Updates the global index entry for this session with the new title/task text.
+     *
+     * Delegates to [MessageStateHandler.updateSessionTitle] so the same cross-process
+     * file lock that protects deleteSession / toggleFavorite / updateGlobalIndex
+     * also serializes this write.
      */
     fun updateSessionTitle(sessionId: String, title: String) {
-        // Title is stored in the global sessions.json index — reload, update, save
-        val indexFile = File(agentDir, "sessions.json")
         try {
-            val items = MessageStateHandler.loadGlobalIndex(agentDir).toMutableList()
-            if (items.isEmpty()) return
-            val idx = items.indexOfFirst { it.id == sessionId }
-            if (idx >= 0) {
-                items[idx] = items[idx].copy(task = title.take(200))
-                val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; prettyPrint = true }
-                AtomicFileWriter.write(indexFile, json.encodeToString(
-                    kotlinx.serialization.builtins.ListSerializer(HistoryItem.serializer()),
-                    items
-                ))
-            }
+            MessageStateHandler.updateSessionTitle(agentDir, sessionId, title)
         } catch (e: Exception) {
             log.warn("AgentService.updateSessionTitle: failed to update title (non-fatal)", e)
         }

@@ -38,6 +38,17 @@ class AgentStartupActivity : ProjectActivity {
             val basePath = project.basePath ?: return
             val baseDir = ProjectIdentifier.agentDir(basePath)
 
+            // Sweep orphan top-level session dirs that weren't recorded in the index —
+            // typically crashes between per-session writes and the index update, or
+            // residue from older plugin versions. Bounded to dirs older than 30 days
+            // so we never touch in-flight sessions.
+            try {
+                val orphans = MessageStateHandler.cleanupOrphanSessions(baseDir)
+                if (orphans > 0) LOG.info("AgentStartupActivity: cleaned up $orphans orphan session director(ies)")
+            } catch (e: Exception) {
+                LOG.warn("AgentStartupActivity: orphan cleanup failed (non-fatal)", e)
+            }
+
             val history = MessageStateHandler.loadGlobalIndex(baseDir)
 
             // Find sessions without a lock file that have recent timestamps

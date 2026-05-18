@@ -124,4 +124,119 @@ class MessageStateHandlerDeleteFavoriteTest {
 
         assertFalse(readIndex().single().isFavorited)
     }
+
+    // --- updateSessionTitle tests (cross-process-lock migration) ---
+
+    @Test
+    fun `updateSessionTitle rewrites task field`() {
+        writeIndex(listOf(HistoryItem(id = "s1", ts = 1000, task = "Old title")))
+
+        MessageStateHandler.updateSessionTitle(tempDir, "s1", "Fresh descriptive title")
+
+        assertEquals("Fresh descriptive title", readIndex().single().task)
+    }
+
+    @Test
+    fun `updateSessionTitle truncates to 200 chars`() {
+        writeIndex(listOf(HistoryItem(id = "s1", ts = 1000, task = "Old title")))
+        val longTitle = "x".repeat(500)
+
+        MessageStateHandler.updateSessionTitle(tempDir, "s1", longTitle)
+
+        assertEquals(200, readIndex().single().task.length)
+    }
+
+    @Test
+    fun `updateSessionTitle is no-op for unknown session id`() {
+        writeIndex(listOf(HistoryItem(id = "s1", ts = 1000, task = "Old title")))
+
+        MessageStateHandler.updateSessionTitle(tempDir, "unknown", "New title")
+
+        assertEquals("Old title", readIndex().single().task)
+    }
+
+    @Test
+    fun `updateSessionTitle is no-op when index does not exist`() {
+        assertDoesNotThrow {
+            MessageStateHandler.updateSessionTitle(tempDir, "s1", "Some title")
+        }
+    }
+
+    @Test
+    fun `updateSessionTitle rejects unsafe session id`() {
+        writeIndex(listOf(HistoryItem(id = "s1", ts = 1000, task = "Old title")))
+
+        MessageStateHandler.updateSessionTitle(tempDir, "../escape", "Hacked")
+
+        assertEquals("Old title", readIndex().single().task)
+    }
+
+    // --- cleanupOrphanSessions tests ---
+
+    @Test
+    fun `cleanupOrphanSessions removes dirs not in index when older than threshold`() {
+        writeIndex(listOf(HistoryItem(id = "kept", ts = 1000, task = "Kept")))
+        createSessionDir("kept")
+        createSessionDir("orphan-old")
+        // Age the orphan dir's mtime past the cutoff
+        val orphan = File(tempDir, "sessions/orphan-old")
+        orphan.setLastModified(System.currentTimeMillis() - 60L * 24 * 60 * 60 * 1000) // 60 days
+
+        val removed = MessageStateHandler.cleanupOrphanSessions(tempDir)
+
+        assertEquals(1, removed)
+        assertTrue(sessionDirExists("kept"))
+        assertFalse(sessionDirExists("orphan-old"))
+    }
+
+    @Test
+    fun `cleanupOrphanSessions spares recently-modified orphans`() {
+        writeIndex(emptyList())
+        createSessionDir("recent-orphan")
+        // Default mtime is "now" — well within the 30-day threshold
+
+        val removed = MessageStateHandler.cleanupOrphanSessions(tempDir)
+
+        assertEquals(0, removed)
+        assertTrue(sessionDirExists("recent-orphan"))
+    }
+
+    @Test
+    fun `cleanupOrphanSessions returns zero when sessions dir is missing`() {
+        // No writeIndex, no createSessionDir
+        val removed = MessageStateHandler.cleanupOrphanSessions(tempDir)
+
+        assertEquals(0, removed)
+    }
+
+    @Test
+    fun `cleanupOrphanSessions spares all entries listed in the index`() {
+        writeIndex(listOf(
+            HistoryItem(id = "s1", ts = 1000, task = "T1"),
+            HistoryItem(id = "s2", ts = 2000, task = "T2"),
+        ))
+        createSessionDir("s1")
+        createSessionDir("s2")
+        File(tempDir, "sessions/s1").setLastModified(System.currentTimeMillis() - 60L * 24 * 60 * 60 * 1000)
+        File(tempDir, "sessions/s2").setLastModified(System.currentTimeMillis() - 60L * 24 * 60 * 60 * 1000)
+
+        val removed = MessageStateHandler.cleanupOrphanSessions(tempDir)
+
+        assertEquals(0, removed)
+        assertTrue(sessionDirExists("s1"))
+        assertTrue(sessionDirExists("s2"))
+    }
+
+    @Test
+    fun `cleanupOrphanSessions respects custom olderThanMs`() {
+        writeIndex(emptyList())
+        createSessionDir("orphan")
+        File(tempDir, "sessions/orphan").setLastModified(System.currentTimeMillis() - 2000)
+
+        // Threshold of 1 second — orphan is past it
+        val removed = MessageStateHandler.cleanupOrphanSessions(tempDir, olderThanMs = 1000)
+
+        assertEquals(1, removed)
+        assertFalse(sessionDirExists("orphan"))
+    }
 }

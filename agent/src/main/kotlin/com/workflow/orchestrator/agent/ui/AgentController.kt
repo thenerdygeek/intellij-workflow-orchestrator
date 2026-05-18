@@ -2565,16 +2565,30 @@ class AgentController(
 
     /**
      * Delete a session from disk and refresh the history list.
+     *
+     * If the deleted session is the currently-viewed one, also clears
+     * [viewedSessionId] and dismisses the resume bar so the user isn't left
+     * looking at — or able to "Resume" — a session whose files no longer
+     * exist (resume would silently no-op since [AgentService.resumeSession]
+     * bails when the session directory is missing).
      */
     fun handleDeleteSession(sessionId: String) {
         if (!killBackgroundsOnTransition(sessionId, "Deleting this session")) return
         val basePath = project.basePath ?: return
         val baseDir = ProjectIdentifier.agentDir(basePath)
+        val wasViewed = viewedSessionId == sessionId
         controllerScope.launch(Dispatchers.IO) {
             MessageStateHandler.deleteSession(baseDir, sessionId)
             val items = MessageStateHandler.loadGlobalIndex(baseDir)
             val json = historyJson.encodeToString(items)
-            invokeLater { dashboard.loadSessionHistory(json) }
+            invokeLater {
+                if (wasViewed) {
+                    viewedSessionId = null
+                    dashboard.hideResumeBar()
+                    dashboard.reset()
+                }
+                dashboard.loadSessionHistory(json)
+            }
         }
     }
 
@@ -2605,23 +2619,45 @@ class AgentController(
 
     /**
      * Bulk-delete multiple sessions from disk and refresh the history list.
+     *
+     * Mirrors the single-session safeguards in [handleDeleteSession]:
+     *  - if the currently-running session is in the selection, prompt to kill
+     *    its background processes first; abort the whole delete if the user
+     *    declines.
+     *  - if the currently-viewed session is in the selection, clear
+     *    [viewedSessionId] and reset the chat view after the delete so the
+     *    user isn't looking at a session whose files have just been removed.
+     *
      * @param sessionIdsJson JSON array of session ID strings.
      */
     fun handleBulkDeleteSessions(sessionIdsJson: String) {
         val basePath = project.basePath ?: return
         val baseDir = ProjectIdentifier.agentDir(basePath)
+        val ids: List<String> = try {
+            historyJson.decodeFromString(sessionIdsJson)
+        } catch (e: Exception) {
+            LOG.warn("Failed to parse bulk delete session IDs", e)
+            return
+        }
+        val running = currentSessionId
+        if (running != null && running in ids &&
+            !killBackgroundsOnTransition(running, "Deleting ${ids.size} session(s)")
+        ) return
+        val viewedInSelection = viewedSessionId?.let { it in ids } ?: false
         controllerScope.launch(Dispatchers.IO) {
-            try {
-                val ids = historyJson.decodeFromString<List<String>>(sessionIdsJson)
-                for (id in ids) {
-                    MessageStateHandler.deleteSession(baseDir, id)
-                }
-            } catch (e: Exception) {
-                LOG.warn("Failed to parse bulk delete session IDs", e)
+            for (id in ids) {
+                MessageStateHandler.deleteSession(baseDir, id)
             }
             val items = MessageStateHandler.loadGlobalIndex(baseDir)
             val json = historyJson.encodeToString(items)
-            invokeLater { dashboard.loadSessionHistory(json) }
+            invokeLater {
+                if (viewedInSelection) {
+                    viewedSessionId = null
+                    dashboard.hideResumeBar()
+                    dashboard.reset()
+                }
+                dashboard.loadSessionHistory(json)
+            }
         }
     }
 
