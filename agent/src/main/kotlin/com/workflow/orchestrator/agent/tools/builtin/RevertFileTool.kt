@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
+import com.intellij.openapi.components.service
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -13,6 +14,7 @@ import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
 import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
 import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
+import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -117,10 +119,19 @@ class RevertFileTool : AgentTool {
         if (pathError != null) return pathError
         val resolvedPath = resolvedPathOrNull!!
 
+        // Resolve the git repo containing the target file. Submodules and
+        // worktrees have their own .git that aren't visible upward from
+        // project.basePath, so shelling out from the IDE root would fail with
+        // "not a git repository (or any of the parent directories)".
+        val gitRoot = project.service<RepoContextResolver>()
+            .findRepositoryForPath(resolvedPath)?.root?.path
+            ?: project.basePath
+            ?: "."
+
         // Use git checkout to revert
         return try {
             val process = ProcessBuilder("git", "checkout", "--", resolvedPath)
-                .directory(java.io.File(project.basePath ?: "."))
+                .directory(java.io.File(gitRoot))
                 .redirectErrorStream(true)
                 .start()
             val output = process.inputStream.bufferedReader().readText()
