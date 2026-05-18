@@ -650,7 +650,12 @@ class AgentDebugController internal constructor(
             return EvaluationResult(expression, error.message ?: "Evaluation failed", "error", isError = true)
         }
 
-        // Resolve the XValue's presentation to get displayable type + value strings
+        // Resolve the XValue's presentation to get displayable type + value strings.
+        // Note: resolvePresentation has its own 8s timeout (PRESENTATION_TIMEOUT_MS),
+        // sequential to the 10s JDI evaluation above — so a single call can take up
+        // to ~18s wall clock even though no individual phase exceeds 10s. The tool
+        // layer (DebugInspectTool.executeEvaluate) absorbs this with a sentinel-keyed
+        // single retry when JDI class-loading eats into the presentation budget.
         val presentation = resolvePresentation(xValue)
         return EvaluationResult(expression, presentation.second, presentation.first)
     }

@@ -1007,9 +1007,23 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
         }
 
         return try {
-            val evalResult = withTimeoutOrNull(EVALUATE_TIMEOUT_MS) {
+            // Feedback 2026-05-18: same-shape expressions (MDC.get("oemId") works,
+            // MDC.get("requestId") doesn't) randomly return the "<value not ready>"
+            // sentinel because the controller's stacked timeouts (10s JDI + 8s presentation
+            // = up to 18s wall) can be eaten by class-loading on the suspended thread.
+            // Strategy: single tool-level retry on the sentinel with a longer outer
+            // deadline. This re-executes the expression on the JVM (so we pay a
+            // side-effect cost for impure expressions), but the controller's in-loop
+            // retry — which would have been side-effect-free — was deleted on purpose
+            // because it queued duplicate listeners on the same XValue.
+            val first = withTimeoutOrNull(EVALUATE_TIMEOUT_MS) {
                 controller.evaluate(session, expression, 0)
             }
+            val evalResult = if (first != null && !first.isError && isValueNotReady(first.result)) {
+                withTimeoutOrNull(EVALUATE_RETRY_TIMEOUT_MS) {
+                    controller.evaluate(session, expression, 0)
+                } ?: first
+            } else first
 
             if (evalResult == null) {
                 return ToolResult(
@@ -1037,6 +1051,9 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
             ToolResult("Error evaluating expression: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
     }
+
+    private fun isValueNotReady(result: String): Boolean =
+        result.contains("value not ready", ignoreCase = true)
 
     // ── get_stack_frames ────────────────────────────────────────────────────
 
@@ -1843,6 +1860,11 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
     companion object {
         // EvaluateTool constants
         private const val EVALUATE_TIMEOUT_MS = 10_000L
+
+        // Retry deadline for evaluate when the first attempt returns the
+        // "<value not ready>" sentinel. Larger than EVALUATE_TIMEOUT_MS so the
+        // slow case (class-loading on first JDI dispatch) has headroom.
+        private const val EVALUATE_RETRY_TIMEOUT_MS = 20_000L
 
         // GetStackFramesTool constants
         private const val DEFAULT_MAX_FRAMES = 20
