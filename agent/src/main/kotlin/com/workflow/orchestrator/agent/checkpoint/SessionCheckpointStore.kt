@@ -74,5 +74,42 @@ class SessionCheckpointStore(private val sessionDir: File) {
         metaFile.writeText(json.encodeToString(updated))
     }
 
+    fun aggregateDiff(): AggregateDiff {
+        val checkpoints = listMessageCheckpoints()  // sorted ascending
+        if (checkpoints.isEmpty()) return AggregateDiff(0, 0, emptyList())
+
+        // Build a map of absolutePath -> earliest checkpoint that touched/created it
+        val earliestByPath = mutableMapOf<String, CheckpointMeta>()
+        for (cp in checkpoints) {
+            for (p in cp.touchedPaths) earliestByPath.putIfAbsent(p, cp)
+            for (p in cp.createdPaths) earliestByPath.putIfAbsent(p, cp)
+        }
+
+        val files = earliestByPath.map { (path, cp) ->
+            val isCreated = path in cp.createdPaths
+            val currentFile = File(path)
+            val current = if (currentFile.exists()) currentFile.readText() else ""
+            val baseline = if (isCreated) {
+                ""
+            } else {
+                File(File(checkpointsDir, "msg-${cp.messageTs}/files"), path.trimStart('/'))
+                    .takeIf { it.exists() }?.readText() ?: ""
+            }
+            val (added, removed) = DiffCalculator.countDiff(baseline, current)
+            val status = when {
+                isCreated && currentFile.exists() -> FileStatus.CREATED
+                !currentFile.exists() -> FileStatus.DELETED
+                else -> FileStatus.MODIFIED
+            }
+            FileChange(path = path, added = added, removed = removed, status = status)
+        }.sortedBy { it.path }
+
+        return AggregateDiff(
+            totalAdded = files.sumOf { it.added },
+            totalRemoved = files.sumOf { it.removed },
+            files = files,
+        )
+    }
+
     private fun msgDir(messageTs: Long): File = File(checkpointsDir, "msg-$messageTs")
 }
