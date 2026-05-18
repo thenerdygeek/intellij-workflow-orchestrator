@@ -752,6 +752,11 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.updateEditStats(added, removed, files) }
     }
 
+    fun updateAggregateDiff(json: String) {
+        runOnEdt { cefPanel?.updateAggregateDiff(json) }
+        broadcast(replay = false) { it.updateAggregateDiff(json) }
+    }
+
     fun setSmartWorkingPhrase(phrase: String) {
         runOnEdt { cefPanel?.setSmartWorkingPhrase(phrase) }
         broadcast(replay = false) { it.setSmartWorkingPhrase(phrase) }
@@ -922,6 +927,18 @@ class AgentDashboardPanel(
 
     fun setCefCancelSteeringCallback(onCancel: (String) -> Unit) {
         cefPanel?.onCancelSteering = onCancel
+    }
+
+    fun setCefRevertToUserMessageCallback(onRevert: (Long) -> Unit) {
+        cefPanel?.onRevertToUserMessage = onRevert
+    }
+
+    fun setCefRevertFileToBaselineCallback(onRevert: (String) -> Unit) {
+        cefPanel?.onRevertFileToBaseline = onRevert
+    }
+
+    fun setCefRevertAllCallback(onRevert: () -> Unit) {
+        cefPanel?.onRevertAll = onRevert
     }
 
     /**
