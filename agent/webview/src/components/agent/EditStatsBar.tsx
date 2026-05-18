@@ -26,7 +26,18 @@ export function EditStatsBar({ diff }: Props) {
         </button>
         <div className="flex-1" />
         <button
-          onClick={() => window._revertAll?.()}
+          onClick={() => {
+            const fileCount = diff.files.length;
+            const msg = `Revert all changes?\n\n` +
+                        `This will:\n` +
+                        `  • Revert ${fileCount} file${fileCount !== 1 ? 's' : ''} to their state before the conversation started\n` +
+                        `  • Remove all chat messages\n` +
+                        `  • Restore the first message text to your chat input\n\n` +
+                        `Continue?`;
+            if (window.confirm(msg)) {
+              window._revertAll?.();
+            }
+          }}
           className="hover:underline"
           style={{ color: 'var(--link)' }}
         >

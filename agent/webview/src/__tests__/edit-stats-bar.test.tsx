@@ -44,9 +44,19 @@ describe('EditStatsBar', () => {
   });
 
   it('global revert calls _revertAll', () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<EditStatsBar diff={sampleDiff} />);
     fireEvent.click(screen.getByText(/revert all/i));
     expect((window as any)._revertAll).toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it('global revert does NOT call _revertAll when user cancels confirmation', () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<EditStatsBar diff={sampleDiff} />);
+    fireEvent.click(screen.getByText(/revert all/i));
+    expect((window as any)._revertAll).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
   });
 
   it('hides MODIFIED files with zero added and zero removed from expanded list', () => {

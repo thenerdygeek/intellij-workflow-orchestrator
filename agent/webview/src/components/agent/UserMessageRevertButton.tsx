@@ -3,13 +3,30 @@ interface Props { ts: number; }
 export function UserMessageRevertButton({ ts }: Props) {
   return (
     <button
-      onClick={() => window._revertToUserMessage?.(ts)}
-      className="opacity-0 group-hover:opacity-100 transition-opacity text-[11px] hover:underline"
-      style={{ color: 'var(--link)' }}
-      aria-label="Time-travel to this message"
-      title="Time-travel: revert files & chat to this point, restore message to input"
+      onClick={(e) => {
+        e.stopPropagation();
+        const confirmed = window.confirm(
+          'Checkpoint to here?\n\n' +
+          'This will:\n' +
+          '  • Revert file changes made after this message\n' +
+          '  • Remove chat messages after this point\n' +
+          '  • Restore the message text to your chat input\n\n' +
+          'Continue?'
+        );
+        if (confirmed) {
+          window._revertToUserMessage?.(ts);
+        }
+      }}
+      className="px-3 py-1 rounded-md text-[11px] font-medium border shadow-sm transition-colors hover:bg-[var(--hover-overlay)]"
+      style={{
+        background: 'var(--toolbar-bg)',
+        color: 'var(--link)',
+        borderColor: 'var(--border)',
+      }}
+      aria-label="Checkpoint to here"
+      title="Revert files & chat to this point, restore message to input"
     >
-      ⟲ Time-travel here
+      ⟲ Checkpoint to here
     </button>
   );
 }
