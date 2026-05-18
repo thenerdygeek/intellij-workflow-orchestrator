@@ -112,4 +112,51 @@ class RunMavenGoalActionTest {
         assertEquals(emptyList<String>(), tokenizeExtraArgs(""))
         assertEquals(emptyList<String>(), tokenizeExtraArgs("   "))
     }
+
+    @Test
+    fun `assembleGoalTokens with goals only`() {
+        val tokens = assembleGoalTokens(
+            goals = "clean install",
+            modules = emptyList(),
+            extraTokens = emptyList(),
+            offline = false
+        )
+        assertEquals(listOf("clean", "install"), tokens)
+    }
+
+    @Test
+    fun `assembleGoalTokens with modules prepends -pl X -am`() {
+        val tokens = assembleGoalTokens(
+            goals = "clean install",
+            modules = listOf("jira", "agent"),
+            extraTokens = emptyList(),
+            offline = false
+        )
+        assertEquals(listOf("-pl", "jira,agent", "-am", "clean", "install"), tokens)
+    }
+
+    @Test
+    fun `assembleGoalTokens with offline appends -o`() {
+        val tokens = assembleGoalTokens(
+            goals = "verify",
+            modules = emptyList(),
+            extraTokens = emptyList(),
+            offline = true
+        )
+        assertEquals(listOf("verify", "-o"), tokens)
+    }
+
+    @Test
+    fun `assembleGoalTokens full combo`() {
+        val tokens = assembleGoalTokens(
+            goals = "clean install",
+            modules = listOf("jira", "agent"),
+            extraTokens = listOf("-DskipTests", "-Pdev"),
+            offline = true
+        )
+        assertEquals(
+            listOf("-pl", "jira,agent", "-am", "clean", "install", "-DskipTests", "-Pdev", "-o"),
+            tokens
+        )
+    }
 }

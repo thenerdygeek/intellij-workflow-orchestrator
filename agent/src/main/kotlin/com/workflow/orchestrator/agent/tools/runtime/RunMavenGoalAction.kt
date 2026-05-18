@@ -59,3 +59,16 @@ internal suspend fun executeRunMavenGoal(
 
 internal fun tokenizeExtraArgs(raw: String): List<String> =
     if (raw.isBlank()) emptyList() else ParametersListUtil.parse(raw)
+
+internal fun assembleGoalTokens(
+    goals: String,
+    modules: List<String>,
+    extraTokens: List<String>,
+    offline: Boolean
+): List<String> {
+    val moduleTokens =
+        if (modules.isNotEmpty()) listOf("-pl", modules.joinToString(","), "-am") else emptyList()
+    val goalsTokens = goals.trim().split("\\s+".toRegex())
+    val offlineToken = if (offline) listOf("-o") else emptyList()
+    return moduleTokens + goalsTokens + extraTokens + offlineToken
+}
