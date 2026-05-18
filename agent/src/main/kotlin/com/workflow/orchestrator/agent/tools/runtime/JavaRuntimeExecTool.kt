@@ -109,14 +109,15 @@ class JavaRuntimeExecTool : AgentTool {
     override val timeoutMs: Long get() = Long.MAX_VALUE
 
     override val description = """
-Java/Kotlin runtime execution — JUnit/TestNG test running, module compilation, and rerun of failed tests.
+Java/Kotlin runtime execution — JUnit/TestNG test running, module compilation, rerun of failed tests, and Maven goal execution via the IDE Maven plugin runner.
 
 Actions and their parameters:
 - run_tests(class_name, method?, timeout?, use_native_runner?) → Run tests for a specific Java/Kotlin class via IntelliJ's JUnit/TestNG runner, with Maven/Gradle shell fallback (timeout default 300s, max 900s). class_name is required and must be fully qualified — use test_finder to discover test classes first. `method` accepts a single name ('testFoo') or a comma-separated list ('testFoo,testBar,testBaz') to run several methods from the same class in one launch; output is aggregated into a single result.
 - compile_module(module?, check_dependents?, refresh_maven_first?) → Compile a Java/Kotlin module via CompilerManager. If `module` is omitted, compiles the entire project. When `module` is given and `check_dependents=true`, also recompiles modules that depend on it (catches downstream ABI breakage after editing an upstream module). Default check_dependents is false. Set `refresh_maven_first=true` after a CLI `mvn install` to trigger MavenProjectsManager reimport (~30s) before compiling so newly-published artifacts are picked up.
 - rerun_failed_tests(session_id?) → Re-run only the failed/errored tests from the last test session. Resolves the most-recent test run via RunContentManager (or the session matching session_id if provided). Returns NO_PRIOR_TEST_SESSION if no test session exists, or an informational message if all tests passed.
+- run_maven_goal(goals, modules?, offline?, extra_args?) → Execute Maven goals via IntelliJ's Maven plugin runner (appears in Run tool window; honors IDE-configured Maven home/JRE/settings.xml/VM options). `goals` is space-separated (e.g., "clean install", "dependency:tree"). `modules` prepends -pl <csv> -am for multi-module scoping. `extra_args` is free-form Maven flags (-DskipTests, -Pdev, -T 4, -U). 20 minute timeout.
 
-description optional: shown to user in approval dialog on run_tests, compile_module, rerun_failed_tests.
+description optional: shown to user in approval dialog on run_tests, compile_module, rerun_failed_tests, run_maven_goal.
 """.trimIndent()
 
     override val parameters = FunctionParameters(

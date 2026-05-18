@@ -879,6 +879,19 @@ class JavaRuntimeExecToolTest {
         }
     }
 
+    @Test
+    fun `description mentions run_maven_goal action`() {
+        val desc = tool.description
+        assertTrue(
+            desc.contains("run_maven_goal"),
+            "description must mention run_maven_goal so the LLM sees it"
+        )
+        assertTrue(
+            desc.contains("Maven goal") || desc.contains("Maven plugin runner"),
+            "description should reference Maven runner context"
+        )
+    }
+
     // ══════════════════════════════════════════════════════════════════════
     // T4 — argv-form ProcessBuilder security tests (no sh -c)
     //
