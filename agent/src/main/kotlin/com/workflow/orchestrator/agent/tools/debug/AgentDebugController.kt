@@ -624,7 +624,7 @@ class AgentDebugController internal constructor(
         // Pass frame.sourcePosition so the evaluator sees the right imports and
         // local scope. Previously we passed null, which worked for simple names
         // but dropped scope for anything needing imports. Audit finding C2.
-        val evalResult: Result<XValue>? = awaitCallback<Result<XValue>>(10_000L) { stopped, resume, _ ->
+        val evalResult: Result<XValue>? = awaitCallback<Result<XValue>>(JDI_DISPATCH_TIMEOUT_MS) { stopped, resume, _ ->
             evaluator.evaluate(
                 expression,
                 object : XDebuggerEvaluator.XEvaluationCallback {
@@ -643,7 +643,7 @@ class AgentDebugController internal constructor(
         }
 
         if (evalResult == null) {
-            return EvaluationResult(expression, "<timed out after 10s>", "error", isError = true)
+            return EvaluationResult(expression, "<timed out after ${JDI_DISPATCH_TIMEOUT_MS / 1000}s — JDI dispatch phase>", "error", isError = true)
         }
 
         val xValue = evalResult.getOrElse { error ->
@@ -651,9 +651,8 @@ class AgentDebugController internal constructor(
         }
 
         // Resolve the XValue's presentation to get displayable type + value strings.
-        // Note: resolvePresentation has its own 20s timeout (PRESENTATION_TIMEOUT_MS),
-        // sequential to the 10s JDI evaluation above — so a single call can take up
-        // to ~30s wall clock. The tool layer's outer timeout (EVALUATE_TIMEOUT_MS)
+        // The two phases stack: JDI_DISPATCH_TIMEOUT_MS (20s) + PRESENTATION_TIMEOUT_MS (20s)
+        // = up to 40s wall clock. The tool layer's outer timeout (EVALUATE_TIMEOUT_MS)
         // must be ≥ this sum or it'll truncate the inner wait prematurely.
         val presentation = resolvePresentation(xValue)
         return EvaluationResult(expression, presentation.second, presentation.first)
@@ -822,6 +821,17 @@ class AgentDebugController internal constructor(
         const val GET_STACK_FRAMES_TIMEOUT_MS = 15_000L
 
         /**
+         * Bounded wait for the JDI dispatch phase of [evaluate] — i.e. for
+         * `XDebuggerEvaluator.evaluate(...)` to invoke its callback with an `XValue`.
+         * Class-loading on the suspended thread happens inside this phase, so the
+         * ceiling has to be wide enough to cover a cold class load on a slow JVM.
+         * Raised from 10s to 20s (2026-05-18 review) to match [PRESENTATION_TIMEOUT_MS]:
+         * the two phases now have symmetric headroom so a stall in either phase is
+         * equally well absorbed.
+         */
+        const val JDI_DISPATCH_TIMEOUT_MS = 20_000L
+
+        /**
          * Bounded wait for one XValue's presentation to resolve.
          * Progression: 5s → 8s (placeholder-skip fix, 2026-05-17) → 20s (2026-05-18).
          *
@@ -831,9 +841,14 @@ class AgentDebugController internal constructor(
          * sometimes returned the sentinel). 20s is the same upper-bound the IntelliJ
          * Variables tree itself tolerates before showing an empty cell, so we match it.
          *
-         * The wall budget for [getVariables] is [GET_VARIABLES_WALL_BUDGET_MS] (90s),
-         * so a single slow variable can no longer eat all of get_variables' headroom —
-         * the budget short-circuits the walk regardless of per-value timeout.
+         * Interaction with [GET_VARIABLES_WALL_BUDGET_MS] (90s): the wall budget is
+         * checked once per variable (before [resolvePresentation], not inside it), so
+         * a single in-flight presentation can run the full 20s without interruption.
+         * With the new per-value ceiling, a frame with ~4 stuck values uses 80s
+         * (still under budget); a frame with 5+ stuck values can exceed the 90s wall
+         * and trip the partial-result sentinel earlier than the 8s ceiling would have.
+         * This is intentional: the symptom we were fixing was per-value timeouts on
+         * legitimate slow values, not aggregate walk slowness.
          */
         const val PRESENTATION_TIMEOUT_MS = 20_000L
 

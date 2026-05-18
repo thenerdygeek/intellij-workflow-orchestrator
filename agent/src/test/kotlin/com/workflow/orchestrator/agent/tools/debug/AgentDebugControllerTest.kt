@@ -356,11 +356,11 @@ class AgentDebugControllerTest {
 
         // When: we launch evaluate() and advance past any reasonable internal timeout.
         val deferred = async { controller.evaluate(session, "1 + 1") }
-        advanceTimeBy(11_000)   // > expected 10s internal timeout
+        advanceTimeBy(AgentDebugController.JDI_DISPATCH_TIMEOUT_MS + 1_000)   // > internal JDI dispatch timeout
         runCurrent()
 
         // Then: the fix guarantees evaluate() returns an error EvaluationResult
-        // via a `withTimeoutOrNull(10_000)` + `awaitCallback` guard.
+        // via a `withTimeoutOrNull(JDI_DISPATCH_TIMEOUT_MS)` + `awaitCallback` guard.
         //
         // Pre-fix: this assertion FAILS because there is no outer timeout —
         // the coroutine hangs awaiting the evaluator callback.

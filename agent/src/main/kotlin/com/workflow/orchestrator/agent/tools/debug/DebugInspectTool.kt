@@ -1844,10 +1844,10 @@ session_id defaults to the active/resolved session. If multiple sessions are ope
         // EvaluateTool constants
         //
         // Outer ceiling for the whole evaluate pipeline. Must be ≥ the controller's
-        // internal stacked timeouts (10s JDI dispatch + 20s PRESENTATION_TIMEOUT_MS),
+        // internal stacked timeouts (20s JDI_DISPATCH_TIMEOUT_MS + 20s PRESENTATION_TIMEOUT_MS),
         // otherwise the outer wraps cut the inner waits short and the LLM sees a
-        // spurious timeout. 35s gives ~5s of headroom over the worst-case inner sum.
-        private const val EVALUATE_TIMEOUT_MS = 35_000L
+        // spurious timeout. 45s gives ~5s of headroom over the worst-case inner sum.
+        private const val EVALUATE_TIMEOUT_MS = 45_000L
 
         // GetStackFramesTool constants
         private const val DEFAULT_MAX_FRAMES = 20

@@ -267,6 +267,22 @@ class SearchCodeTool : AgentTool {
             basePath
         }
         if (searchRoot.isFile) {
+            // Single-file mode: when the caller explicitly names a file, a silent zero-match
+            // on a file_type mismatch is almost always a mistake (the LLM picked the wrong
+            // extension). Fail loudly so the LLM can correct rather than retry the same
+            // wrong call. Binary-extension and >1MB rejections still surface as silent
+            // empty matches because those are legitimate skip conditions documented in the
+            // DSL, but file_type is an LLM-supplied filter we can validate up-front.
+            if (fileType != null && searchRoot.extension.lowercase() != fileType.lowercase()) {
+                return ToolResult(
+                    "Error: file_type='$fileType' does not match the extension of '${searchRoot.name}' " +
+                        "(extension is '${searchRoot.extension}'). Drop file_type to search this file, " +
+                        "or point path at a directory containing $fileType files.",
+                    "file_type mismatch on single file",
+                    ToolResult.ERROR_TOKEN_ESTIMATE,
+                    isError = true,
+                )
+            }
             matchSingleFile(searchRoot, canonicalProjectRoot, regex, fileType, collectContext, contextLines, matches, maxResults)
         } else {
             searchFiles(searchRoot, canonicalProjectRoot, regex, fileType, collectContext, contextLines, matches, maxResults)

@@ -291,6 +291,32 @@ class SearchCodeToolTest {
         assertTrue(lines.single().endsWith("Main.kt"), "expected the matched file path: ${lines.single()}")
     }
 
+    @Test
+    fun `execute on single file with mismatched file_type returns explicit error`() = runTest {
+        // Single-file mode + file_type that doesn't match the file's extension used to
+        // silently return "no matches" (matchSingleFile's quiet filter). Per 2026-05-18
+        // review finding #2: surface this loudly so the LLM can correct the call instead
+        // of looping on a guaranteed-zero search.
+        val tool = SearchCodeTool()
+        val params = buildJsonObject {
+            put("pattern", "anything")
+            put("path", "src/Main.kt")    // a .kt file
+            put("file_type", "java")      // but caller asked for .java
+        }
+
+        val result = tool.execute(params, project)
+
+        assertTrue(result.isError, "mismatch should error, not silently return zero matches")
+        assertTrue(
+            result.content.contains("file_type='java'"),
+            "error should name the bad file_type: ${result.content}",
+        )
+        assertTrue(
+            result.content.contains("Main.kt"),
+            "error should name the file whose extension didn't match: ${result.content}",
+        )
+    }
+
     // --- Output mode: files (default) ---
 
     @Test
