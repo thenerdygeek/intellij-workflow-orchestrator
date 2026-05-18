@@ -585,6 +585,14 @@ Actions and their parameters:
                                 }
                             }
 
+                            // Coverage launches go through the run-config's "Build before launch"
+                            // task, which delegates to ProjectTaskManager.build(module). Drop JPS's
+                            // in-memory snapshot first so that build re-stats source from disk —
+                            // otherwise a prior edit_file whose change-listener path was bypassed
+                            // can leave the snapshot believing nothing has changed, the build
+                            // silently no-ops, and the coverage fork loads a stale .class file
+                            // (matching the run_tests "newly-added test not found" symptom).
+                            try { com.workflow.orchestrator.core.vfs.PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
                             try {
                                 ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
                             } catch (_: NoSuchMethodError) {

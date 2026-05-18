@@ -236,6 +236,22 @@ class EditFileTool : AgentTool {
             )
         }
 
+        // Drop JPS's in-memory incremental-build snapshot so the next
+        // CompilerManager.make / ProjectTaskManager.build re-reads source stamps
+        // from disk. Without this, edits whose write path bypasses the standard
+        // VFS-change listener chain (notably the writeViaFileIo fallback, but
+        // also some Document-path edge cases under concurrent agent activity)
+        // can leave JPS believing nothing has changed; the next "build" then
+        // silently no-ops and downstream test runs load the old .class file —
+        // the long-standing "newly-added test method not found" symptom that
+        // previously required an IDE restart to clear. Best-effort: never let a
+        // cache-clear failure block a successful write.
+        try {
+            if (ApplicationManager.getApplication() != null) {
+                com.workflow.orchestrator.core.vfs.PostMutationRefresh.clearJpsCache(project)
+            }
+        } catch (_: Exception) { /* best-effort */ }
+
         // Change tracking: AgentLoop.modifiedFiles collects artifacts from ToolResult
 
         // Compute the 1-based line range of the edit for diff context display.
