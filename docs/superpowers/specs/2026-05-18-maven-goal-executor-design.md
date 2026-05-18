@@ -32,9 +32,13 @@ The agent today has three ways to interact with Maven:
 
 `java_runtime_exec(action="run_maven_goal", ...)` — a 4th action alongside `run_tests`, `compile_module`, `rerun_failed_tests`. Inherits:
 
-- Write-tool classification (in `WRITE_TOOLS` and `APPROVAL_TOOLS` in `AgentLoop`).
 - Conditional registration via `ToolRegistrationFilter.shouldRegisterJavaBuildTools` (`hasJavaPlugin`).
 - `BuildSystemValidator`-style pre-flight error categories.
+
+**Write-action classification (corrected from initial draft).** `java_runtime_exec` is NOT in `AgentLoop.WRITE_TOOLS` or `ApprovalPolicy.APPROVAL_TOOLS` — its existing actions (`run_tests`, `compile_module`, `rerun_failed_tests`) don't override `isWriteAction()`. Goal execution is different — `mvn install` deploys to local repo, `mvn deploy` to remote, custom plugins can mutate arbitrarily. So:
+
+1. `JavaRuntimeExecTool` adds `override fun isWriteAction(action: String?): Boolean = action == "run_maven_goal"`. Plan mode will block `run_maven_goal` (combined with `WRITE_TOOLS` via `AgentLoop`'s `planMode && (toolName in WRITE_TOOLS || tool.isWriteAction(action))` check at `AgentLoop.kt:~955`); the other three actions remain unaffected.
+2. The action implementation calls `tool.requestApproval(...)` internally — same pattern as `executeRefreshExternalProject` in `RefreshExternalProjectAction.kt`. The dispatcher passes `this` to the action function: `"run_maven_goal" -> executeRunMavenGoal(params, project, this)`.
 
 ### Files
 
@@ -168,9 +172,10 @@ Coroutine cancellation propagates naturally: if the scope is cancelled, `complet
 
 Run in order before invoking `MavenBuildService.runBuild`:
 
-1. **NOT_A_MAVEN_PROJECT** — `MavenUtils.getMavenManager(project) == null`. Return clean error so LLM can pivot to Gradle/run_command.
-2. **MAVEN_EXECUTABLE_NOT_FOUND** — `MavenBuildService.detectMavenExecutable()` returns an *absolute* path that fails `File.canExecute()` (e.g., stale `MAVEN_HOME`, mvnw without execute permission). Bare names (`"mvn"`, `"mvn.cmd"`) are not pre-checked — let `OSProcessHandler` surface PATH-resolution failures as `IO_ERROR` with the OS-native message.
-3. **INVALID_ARGS** — `ParametersListUtil.parse(extra_args)` throws (theoretically can't on valid strings, but guard against future API drift).
+1. **INVALID_ARGS — blank goals** — `goals.isBlank()`. Maven CLI accepts empty goal lists and emits `[INFO] BUILD SUCCESS` for a vacuous run; that's misleading to the LLM. Fail fast.
+2. **NOT_A_MAVEN_PROJECT** — `MavenUtils.getMavenManager(project) == null`. Return clean error so LLM can pivot to Gradle/run_command.
+3. **MAVEN_EXECUTABLE_NOT_FOUND** — `MavenBuildService.detectMavenExecutable()` returns an *absolute* path that fails `File.canExecute()` (e.g., stale `MAVEN_HOME`, mvnw without execute permission). Bare names (`"mvn"`, `"mvn.cmd"`) are not pre-checked — let `OSProcessHandler` surface PATH-resolution failures as `IO_ERROR` with the OS-native message.
+4. **INVALID_ARGS — tokenization** — `ParametersListUtil.parse(extra_args)` throws (theoretically can't on valid strings, but guard against future API drift).
 
 ### `extra_args` tokenization
 
@@ -181,6 +186,8 @@ Run in order before invoking `MavenBuildService.runBuild`:
 - Multiple spaces: collapsed.
 
 Tokens are appended in order to the `extraArgs` parameter of `runBuild`. The LLM is responsible for getting Maven flag syntax right; the action does not validate flag names (Maven itself will reject unknown flags with a clear error).
+
+**Threat model — `extra_args` injection is in-scope and accepted.** Property-injection attacks via `extra_args` (e.g., `-Dexec.executable=...` triggering the `exec` plugin to run arbitrary binaries; `-Dmaven.ext.class.path=...` loading a malicious extension JAR) are reachable. We do **not** sanitize. Rationale: the agent already exposes `run_command` with full shell access, so `extra_args` does not expand the threat surface — only parity. Any future hardening that scopes the agent's tool set should scope `run_command` and `run_maven_goal` together; do not re-flag `extra_args` as an oversight in isolation.
 
 ### Approval gate
 
@@ -202,9 +209,9 @@ Each error result's `content` begins with `<CATEGORY>:` so the LLM can switch on
 
 | Category | Trigger | Suggested LLM action |
 |---|---|---|
-| `NOT_A_MAVEN_PROJECT` | Pre-flight #1 | Use `./gradlew` or check project type with `project_modules` |
-| `MAVEN_EXECUTABLE_NOT_FOUND` | Pre-flight #2 | Install Maven, add mvnw, or set `MAVEN_HOME` |
-| `INVALID_ARGS` | Pre-flight #3 | Fix `extra_args` syntax |
+| `INVALID_ARGS` | Pre-flight #1 (blank goals) or #4 (extra_args tokenization) | Fix `goals` / `extra_args` |
+| `NOT_A_MAVEN_PROJECT` | Pre-flight #2 | Use `./gradlew` or check project type with `project_modules` |
+| `MAVEN_EXECUTABLE_NOT_FOUND` | Pre-flight #3 | Install Maven, add mvnw, or set `MAVEN_HOME` |
 | `APPROVAL_DENIED` | User declined approval | No retry; respect user intent |
 | `BUILD_FAILURE` | `exitCode != 0` (post-launch) | Inspect tail output for compile/test errors |
 | `TIMEOUT` | `MavenBuildResult.timedOut == true` | Narrow scope: smaller `modules`, skip tests, `-T` parallelism |
@@ -235,9 +242,12 @@ Each error result's `content` begins with `<CATEGORY>:` so the LLM can switch on
 
 | Test | Pins |
 |---|---|
-| `missing goals param returns INVALID_ARGS-style error` | Required-param validation |
-| `non-Maven project returns NOT_A_MAVEN_PROJECT` | Pre-flight #1 via `mockkObject(MavenUtils)` |
-| `unresolvable executable returns MAVEN_EXECUTABLE_NOT_FOUND` | Pre-flight #2 |
+| `missing goals param returns INVALID_ARGS` | Required-param validation |
+| `blank goals returns INVALID_ARGS` | Pre-flight #1 (the misleading-success guard) |
+| `non-Maven project returns NOT_A_MAVEN_PROJECT` | Pre-flight #2 via `mockkObject(MavenUtils)` |
+| `unresolvable executable returns MAVEN_EXECUTABLE_NOT_FOUND` | Pre-flight #3 |
+| `JavaRuntimeExecTool.isWriteAction("run_maven_goal") returns true` | Plan-mode gating contract |
+| `JavaRuntimeExecTool.isWriteAction("run_tests") still returns false` | No regression on existing actions |
 | `extra_args parsed via ParametersListUtil` | `-Dm="hello world"` → single token |
 | `BUILD_FAILURE on non-zero exit code` | `isError=true`, `BUILD_FAILURE:` prefix |
 | `output > 30KB triggers spillOrFormat` | `spillPath` non-null, content has preview |
