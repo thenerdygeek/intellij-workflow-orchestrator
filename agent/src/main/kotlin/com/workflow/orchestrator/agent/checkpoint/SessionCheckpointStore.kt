@@ -30,5 +30,44 @@ class SessionCheckpointStore(private val sessionDir: File) {
         }.sortedBy { it.messageTs }
     }
 
+    fun captureIfFirstTouch(messageTs: Long, absolutePath: String) {
+        val dir = msgDir(messageTs)
+        if (!dir.exists()) return  // beginUserMessage was not called — defensive no-op
+        val filesRoot = File(dir, "files")
+        val srcFile = File(absolutePath)
+
+        if (!srcFile.exists()) {
+            // File does not exist yet — record as "created during this turn"
+            updateMeta(messageTs) { meta ->
+                if (absolutePath in meta.createdPaths) meta
+                else meta.copy(createdPaths = meta.createdPaths + absolutePath)
+            }
+            return
+        }
+
+        // File exists — first-touch capture only
+        val snapPath = File(filesRoot, absolutePath.trimStart('/'))
+        if (snapPath.exists()) return  // already captured this turn
+
+        snapPath.parentFile.mkdirs()
+        srcFile.copyTo(snapPath, overwrite = false)
+
+        updateMeta(messageTs) { meta ->
+            if (absolutePath in meta.touchedPaths) meta
+            else meta.copy(touchedPaths = meta.touchedPaths + absolutePath)
+        }
+    }
+
+    private fun updateMeta(messageTs: Long, transform: (CheckpointMeta) -> CheckpointMeta) {
+        val metaFile = File(msgDir(messageTs), "meta.json")
+        val current = try {
+            json.decodeFromString<CheckpointMeta>(metaFile.readText())
+        } catch (_: Exception) {
+            return
+        }
+        val updated = transform(current)
+        metaFile.writeText(json.encodeToString(updated))
+    }
+
     private fun msgDir(messageTs: Long): File = File(checkpointsDir, "msg-$messageTs")
 }

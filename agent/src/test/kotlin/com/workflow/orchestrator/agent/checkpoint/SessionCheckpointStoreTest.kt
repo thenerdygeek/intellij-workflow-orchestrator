@@ -32,4 +32,34 @@ class SessionCheckpointStoreTest {
         val sorted = store.listMessageCheckpoints().map { it.messageTs }
         assertEquals(listOf(100L, 200L, 300L), sorted)
     }
+
+    @Test
+    fun `captureIfFirstTouch copies file bytes on first call only`(@TempDir tmp: java.nio.file.Path) {
+        val store = SessionCheckpointStore(sessionDir = tmp.toFile())
+        store.beginUserMessage(100L, "edit foo")
+
+        val foo = File(tmp.toFile(), "src/Foo.kt").apply { parentFile.mkdirs(); writeText("original") }
+        store.captureIfFirstTouch(100L, foo.absolutePath)
+
+        val snap = File(tmp.toFile(), "checkpoints/msg-100/files/${foo.absolutePath.trimStart('/')}")
+        assertTrue(snap.exists(), "snapshot file should exist")
+        assertEquals("original", snap.readText())
+
+        // Mutate; second call should NOT overwrite
+        foo.writeText("mutated")
+        store.captureIfFirstTouch(100L, foo.absolutePath)
+        assertEquals("original", snap.readText(), "snapshot must reflect pre-edit state from first capture")
+    }
+
+    @Test
+    fun `captureIfFirstTouch on non-existent file marks it as created in meta`(@TempDir tmp: java.nio.file.Path) {
+        val store = SessionCheckpointStore(sessionDir = tmp.toFile())
+        store.beginUserMessage(100L, "create bar")
+        val bar = File(tmp.toFile(), "src/Bar.kt").absolutePath  // does NOT exist on disk yet
+
+        store.captureIfFirstTouch(100L, bar)
+
+        val meta = store.listMessageCheckpoints().first()
+        assertTrue(meta.createdPaths.contains(bar), "created path should be tracked in meta")
+    }
 }
