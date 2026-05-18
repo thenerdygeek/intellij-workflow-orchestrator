@@ -99,3 +99,70 @@ internal fun assembleGoalTokens(
     val offlineToken = if (offline) listOf("-o") else emptyList()
     return moduleTokens + goalsTokens + extraTokens + offlineToken
 }
+
+private const val HEADER_DIVIDER = "─────────────────────────────────────────"
+
+internal fun formatHeader(
+    goals: String,
+    modules: List<String>,
+    workingDir: String,
+    mavenHome: String,
+    exitCode: Int,
+    durationSec: Double
+): String = buildString {
+    append("Maven goal: ").append(goals).append('\n')
+    append("Modules: ").append(if (modules.isEmpty()) "all" else modules.joinToString(", ")).append('\n')
+    append("Working directory: ").append(workingDir).append('\n')
+    append("Maven home (IDE-configured): ").append(mavenHome).append('\n')
+    append("Exit code: ").append(exitCode).append('\n')
+    append("Duration: ").append("%.1f".format(durationSec)).append("s\n")
+    append(HEADER_DIVIDER).append('\n')
+}
+
+internal fun buildSuccessResult(
+    goals: String,
+    modules: List<String>,
+    workingDir: String,
+    mavenHome: String,
+    exitCode: Int,
+    durationSec: Double,
+    output: String,
+    project: Project
+): ToolResult {
+    val header = formatHeader(goals, modules, workingDir, mavenHome, exitCode, durationSec)
+    val isFailure = exitCode != 0
+    val prefix = if (isFailure) "BUILD_FAILURE: exit code $exitCode\n\n" else ""
+    val body = prefix + header + output
+    val mark = if (isFailure) "✗" else "✓"
+    val summary = "mvn $goals $mark (${"%.0f".format(durationSec)}s, exit=$exitCode)"
+    return ToolResult(
+        content = body,
+        summary = summary,
+        tokenEstimate = body.length / 4 + 1,
+        isError = isFailure
+    )
+}
+
+internal fun buildTimeoutResult(
+    goals: String,
+    modules: List<String>,
+    workingDir: String,
+    mavenHome: String,
+    timeoutSec: Double,
+    output: String,
+    project: Project
+): ToolResult {
+    val header = formatHeader(
+        goals, modules, workingDir, mavenHome,
+        exitCode = -1, durationSec = timeoutSec
+    )
+    val body = "TIMEOUT: exceeded ${"%.0f".format(timeoutSec)}s — process killed.\n\n" +
+        "Narrow scope: smaller modules list, skip tests with -DskipTests, " +
+        "or use -T <n> for parallelism.\n\n" + header + output
+    return ToolResult(
+        content = body,
+        summary = "mvn $goals ⏱ TIMEOUT after ${"%.0f".format(timeoutSec)}s",
+        tokenEstimate = body.length / 4 + 1,
+        isError = true
+    )
+}

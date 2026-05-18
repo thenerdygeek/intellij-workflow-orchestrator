@@ -176,4 +176,92 @@ class RunMavenGoalActionTest {
             "expected APPROVAL_DENIED: prefix, was: ${result.content}"
         )
     }
+
+    @Test
+    fun `formatHeader contains goals modules and exit code`() {
+        val header = formatHeader(
+            goals = "clean install",
+            modules = listOf("jira", "agent"),
+            workingDir = "/proj",
+            mavenHome = "/usr/local/maven",
+            exitCode = 0,
+            durationSec = 12.5
+        )
+        assertTrue(header.contains("Maven goal: clean install"))
+        assertTrue(header.contains("Modules: jira, agent"))
+        assertTrue(header.contains("Working directory: /proj"))
+        assertTrue(header.contains("Exit code: 0"))
+        assertTrue(header.contains("Duration: 12.5s"))
+    }
+
+    @Test
+    fun `formatHeader Modules shows 'all' when modules empty`() {
+        val header = formatHeader(
+            goals = "test",
+            modules = emptyList(),
+            workingDir = "/proj",
+            mavenHome = "(IDE default)",
+            exitCode = 0,
+            durationSec = 1.0
+        )
+        assertTrue(header.contains("Modules: all"))
+    }
+
+    @Test
+    fun `buildSuccessResult on exit 0 has isError=false and check-mark summary`() {
+        val result = buildSuccessResult(
+            goals = "clean install",
+            modules = emptyList(),
+            workingDir = "/proj",
+            mavenHome = "(IDE default)",
+            exitCode = 0,
+            durationSec = 45.3,
+            output = "[INFO] BUILD SUCCESS\n",
+            project = project
+        )
+        assertFalse(result.isError, "exit=0 must produce isError=false")
+        assertTrue(
+            result.summary.contains("✓"),
+            "summary should contain check-mark for success, was: ${result.summary}"
+        )
+        assertTrue(result.summary.contains("45"))
+        assertTrue(result.content.contains("[INFO] BUILD SUCCESS"))
+    }
+
+    @Test
+    fun `buildSuccessResult on non-zero exit has isError=true and BUILD_FAILURE prefix`() {
+        val result = buildSuccessResult(
+            goals = "clean install",
+            modules = emptyList(),
+            workingDir = "/proj",
+            mavenHome = "(IDE default)",
+            exitCode = 1,
+            durationSec = 8.2,
+            output = "[ERROR] Failed to execute goal\n",
+            project = project
+        )
+        assertTrue(result.isError, "exit=1 must produce isError=true")
+        assertTrue(
+            result.content.startsWith("BUILD_FAILURE:"),
+            "expected BUILD_FAILURE: prefix on non-zero exit, was first 60 chars: ${result.content.take(60)}"
+        )
+        assertTrue(result.summary.contains("✗"))
+        assertTrue(result.summary.contains("exit=1"))
+    }
+
+    @Test
+    fun `buildTimeoutResult has TIMEOUT prefix and isError=true`() {
+        val result = buildTimeoutResult(
+            goals = "install",
+            modules = emptyList(),
+            workingDir = "/proj",
+            mavenHome = "(IDE default)",
+            timeoutSec = 1200.0,
+            output = "[INFO] partial output\n",
+            project = project
+        )
+        assertTrue(result.isError)
+        assertTrue(result.content.startsWith("TIMEOUT:"))
+        assertTrue(result.content.contains("1200"))
+    }
 }
