@@ -230,6 +230,24 @@ export interface EditStats {
   filesModified: number;
 }
 
+// ── Checkpoint v2 — aggregate diff types ──
+// Mirrors Kotlin `agent/checkpoint/CheckpointModels.kt`.
+
+export type FileChangeStatus = 'MODIFIED' | 'CREATED' | 'DELETED';
+
+export interface FileChange {
+  path: string;
+  added: number;
+  removed: number;
+  status: FileChangeStatus;
+}
+
+export interface AggregateDiff {
+  totalAdded: number;
+  totalRemoved: number;
+  files: FileChange[];
+}
+
 // ── Visualization settings ──
 
 export type VisualizationType = 'mermaid' | 'chart' | 'flow' | 'math' | 'diff' | 'interactiveHtml' | 'table' | 'output' | 'progress' | 'timeline' | 'image' | 'artifact';
