@@ -2564,7 +2564,7 @@ class AgentService(
      *  - Pushing the returned userText to the chat input via restoreInputText
      *  - Cancelling any in-flight job before calling this (prepareForReplay)
      */
-    fun revertToUserMessage(sessionId: String, messageTs: Long): com.workflow.orchestrator.agent.checkpoint.RevertResult {
+    suspend fun revertToUserMessage(sessionId: String, messageTs: Long): com.workflow.orchestrator.agent.checkpoint.RevertResult {
         val basePath = project.basePath ?: System.getProperty("user.home")
         val sessionBaseDir = ProjectIdentifier.agentDir(basePath)
         val sessionDir = java.io.File(sessionBaseDir, "sessions/$sessionId")
@@ -2584,9 +2584,7 @@ class AgentService(
         val handler = MessageStateHandler(baseDir = sessionBaseDir, sessionId = sessionId, taskText = "")
         if (existingUi.isNotEmpty()) handler.setClineMessages(existingUi)
         if (existingApi.isNotEmpty()) handler.setApiConversationHistory(existingApi)
-        com.intellij.openapi.progress.runBlockingCancellable {
-            handler.truncateMessagesAtTs(messageTs, droppedApiCount)
-        }
+        handler.truncateMessagesAtTs(messageTs, droppedApiCount)   // direct suspend call, no runBlockingCancellable
 
         log.info("AgentService.revertToUserMessage: session=$sessionId ts=$messageTs restored=${result.restoredFiles.size} deleted=${result.deletedFiles.size}")
         return result

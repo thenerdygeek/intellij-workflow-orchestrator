@@ -1012,6 +1012,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       viewMode: 'chat',
       resumeSessionId: null,
       nextStepHint: null,
+      aggregateDiff: null,
     });
   },
 

@@ -779,27 +779,34 @@ class AgentController(
         }
 
         // ── Checkpoint v2 — three revert callbacks ──
+        // JBCefJSQuery handlers dispatch on EDT; wrap in controllerScope.launch with
+        // Dispatchers.EDT so suspends park the coroutine instead of blocking the
+        // event thread. See lines 1570-1576 (executeTask) for the same Phase-4 Prong-A pattern.
         dashboard.setCefRevertToUserMessageCallback { messageTs ->
             val sid = currentSessionId
             if (sid == null) {
                 LOG.warn("AgentController: time-travel requested but no active session")
                 return@setCefRevertToUserMessageCallback
             }
-            revertToUserMessage(sid, messageTs)
+            controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.revertToUserMessage")) {
+                revertToUserMessage(sid, messageTs)
+            }
         }
 
         dashboard.setCefRevertFileToBaselineCallback { path ->
             val sid = currentSessionId ?: return@setCefRevertFileToBaselineCallback
-            if (service.revertFileToBaseline(sid, path)) {
-                pushAggregateDiff(sid)
+            controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.revertFileToBaseline")) {
+                val restored = withContext(Dispatchers.IO) { service.revertFileToBaseline(sid, path) }
+                if (restored) pushAggregateDiff(sid)
             }
         }
 
         dashboard.setCefRevertAllCallback {
             val sid = currentSessionId ?: return@setCefRevertAllCallback
-            // "Revert all" == revert to the earliest user-message checkpoint
-            val earliest = service.firstUserMessageTs(sid) ?: return@setCefRevertAllCallback
-            revertToUserMessage(sid, earliest)
+            controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.revertAll")) {
+                val earliest = withContext(Dispatchers.IO) { service.firstUserMessageTs(sid) } ?: return@launch
+                revertToUserMessage(sid, earliest)
+            }
         }
 
         // Wire AskQuestionsTool callbacks
@@ -2198,9 +2205,13 @@ class AgentController(
             }
         }
 
-        // Checkpoint v2: refresh aggregate-diff bar after write tools land.
-        if (progress.toolName in CHECKPOINT_RELEVANT_TOOLS && progress.durationMs > 0L) {
-            currentSessionId?.let { pushAggregateDiff(it) }
+        // Checkpoint v2: refresh aggregate-diff bar after successful write tools land.
+        if (progress.toolName in CHECKPOINT_RELEVANT_TOOLS && progress.durationMs > 0L && !progress.isError) {
+            currentSessionId?.let { sid ->
+                controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.pushAggregateDiff")) {
+                    pushAggregateDiff(sid)
+                }
+            }
         }
     }
 
@@ -2548,6 +2559,12 @@ class AgentController(
         dashboard.setPlanMode(false)                                // Exit plan mode in UI
         dashboard.setSteeringMode(false)                           // Exit steering mode
         dashboard.updateEditStats(0, 0, 0)                    // Reset edit counters
+        // Clear aggregate-diff bar on new chat (C2 — was stale from previous session).
+        dashboard.updateAggregateDiff(
+            taskEventJson.encodeToString(
+                com.workflow.orchestrator.agent.checkpoint.AggregateDiff(0, 0, emptyList())
+            )
+        )
         dashboard.updateProgress("", 0, 0)                    // Reset token budget bar
         dashboard.setSmartWorkingPhrase("")                         // Clear working phrase
         dashboard.setSessionTitle("")                               // Clear conversation title
@@ -3011,45 +3028,52 @@ class AgentController(
     }
 
     /**
-     * Time-travel revert to a specific user message.
+     * Time-travel revert flow. Suspend so the EDT-launched coroutine can park
+     * across I/O without freezing the event thread.
      *
-     * Flow:
-     *  1. Cancel any in-flight job and reset dashboard via prepareForReplay
-     *  2. Delegate to AgentService.revertToUserMessage — restores files, truncates
-     *     persisted ui_messages + api_conversation_history
-     *  3. Reload the truncated UI messages into the webview
-     *  4. Push the original user-typed text back into the chat input bar
-     *  5. Refresh the aggregate diff bar
-     *  6. Unlock input — the user is now sitting at the time-travelled state with
-     *     the original prompt restored in the input, free to edit and re-send
+     * Sequence:
+     *   1. prepareForReplay → cancel current job
+     *   2. job.join() with bounded timeout (I4 race-mitigation: ensures the
+     *      in-flight tool's coroutine has unwound before we touch its files)
+     *   3. service.revertToUserMessage (I/O dispatcher)
+     *   4. Push truncated UI + aggregate diff back to webview
+     *   5. Restore user-typed text to chat input — time-travel UX
+     *   6. Unlock input
      */
-    fun revertToUserMessage(sessionId: String, messageTs: Long) {
+    private suspend fun revertToUserMessage(sessionId: String, messageTs: Long) {
         LOG.info("AgentController.revertToUserMessage: session=$sessionId ts=$messageTs")
         currentSessionId = sessionId
+
+        // Snapshot the job reference before prepareForReplay nulls it.
+        val inflightJob = currentJob
         prepareForReplay("Reverting to checkpoint...")
+
+        // I4 race-mitigation: bounded wait for the cancelled job to unwind before
+        // we read+restore files it may still be writing to. 500ms upper bound so
+        // we never hang the revert if cancellation propagation gets stuck (e.g.
+        // WriteCommandAction holding a write lock).
+        inflightJob?.let { job ->
+            kotlinx.coroutines.withTimeoutOrNull(500L) { job.join() }
+        }
+
         contextManager = null
 
-        val result = service.revertToUserMessage(sessionId, messageTs)
+        val result = withContext(Dispatchers.IO) { service.revertToUserMessage(sessionId, messageTs) }
+        val uiMessages = withContext(Dispatchers.IO) { service.loadUiMessages(sessionId) }
 
-        // Reload truncated ui_messages into the webview.
-        postStateToWebview(service.loadUiMessages(sessionId))
-
-        // Restore the user-typed text into the chat input — time-travel UX.
+        // postStateToWebview, restoreInputText, etc. are EDT-safe — we're on EDT here.
+        postStateToWebview(uiMessages)
         dashboard.restoreInputText(result.userText)
-
-        // Refresh the bottom bar's aggregate diff (now reflects the reverted state).
         pushAggregateDiff(sessionId)
 
-        // Unlock input — we're not actively running a task, just sitting at the
-        // restored state waiting for the user to (optionally) re-send.
         dashboard.setBusy(false)
         dashboard.setInputLocked(false)
         dashboard.focusInput()
     }
 
     /** Push the latest aggregate diff to the webview's bottom bar. Cheap to call. */
-    private fun pushAggregateDiff(sessionId: String) {
-        val agg = service.getAggregateDiff(sessionId)
+    private suspend fun pushAggregateDiff(sessionId: String) {
+        val agg = withContext(Dispatchers.IO) { service.getAggregateDiff(sessionId) }
         val aggJson = taskEventJson.encodeToString(agg)
         dashboard.updateAggregateDiff(aggJson)
     }
