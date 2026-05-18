@@ -441,8 +441,7 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   updateAggregateDiff(json: string) {
     try {
       const diff = JSON.parse(json);
-      // TODO Task 18: remove cast once chatStore.updateAggregateDiff lands
-      (stores?.getChatStore() as any)?.updateAggregateDiff(diff);
+      stores?.getChatStore().updateAggregateDiff(diff);
     } catch (e) {
       console.warn('[bridge] updateAggregateDiff: malformed JSON', e);
     }

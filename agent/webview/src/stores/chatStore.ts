@@ -13,7 +13,7 @@ import type {
   EditDiff,
   Skill,
   ToastType,
-  EditStats,
+  AggregateDiff,
   UiMessage,
   SubAgentState,
   HistoryItem,
@@ -284,7 +284,9 @@ interface ChatState {
   // ToolCallView's local state so it survives Virtuoso unmount/remount when
   // the row scrolls out of the chat viewport.
   toolCallOpen: Record<string, boolean>;
-  editStats: EditStats | null;
+  aggregateDiff: AggregateDiff | null;
+  // TODO Task 19: remove once App.tsx migrates to aggregateDiff
+  readonly editStats: null;
   smartWorkingPhrase: string | null;
   sessionTitle: string | null;
   /** Monotonic counter bumped every time Kotlin asks for an animated title
@@ -413,8 +415,8 @@ interface ChatState {
   appendToolOutput(toolCallId: string, chunk: string): void;
   killToolCall(toolCallId: string): void;
 
-  // Edit Stats Actions
-  updateEditStats(stats: EditStats): void;
+  // Aggregate Diff Actions
+  updateAggregateDiff(diff: AggregateDiff): void;
   setSmartWorkingPhrase(phrase: string): void;
 
   // Queued Steering Actions
@@ -508,7 +510,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   debugLogEntries: [],
   toolOutputStreams: {},
   toolCallOpen: {},
-  editStats: null,
+  aggregateDiff: null,
   smartWorkingPhrase: null,
   sessionTitle: null,
   sessionTitleAnimateKey: 0,
@@ -556,7 +558,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       retryState: null,
       smartWorkingPhrase: null,
       sessionTitle: null,
-      editStats: null,
+      aggregateDiff: null,
       queuedSteeringMessages: [],
       restoredInputText: null,
       tasks: [],
@@ -1476,10 +1478,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  // ── Edit Stats Actions ──
-  updateEditStats(stats: EditStats) {
-    set({ editStats: stats });
+  // ── Aggregate Diff Actions ──
+  updateAggregateDiff(diff: AggregateDiff) {
+    set({ aggregateDiff: diff });
   },
+
+  // TODO Task 19: remove once App.tsx migrates to aggregateDiff
+  get editStats(): null { return null; },
 
   setSmartWorkingPhrase(phrase: string) {
     set({ smartWorkingPhrase: phrase });
