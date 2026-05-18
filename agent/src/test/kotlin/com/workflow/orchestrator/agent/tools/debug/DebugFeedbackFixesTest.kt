@@ -244,4 +244,65 @@ class DebugFeedbackFixesTest {
         // The startsWith() match in isPlaceholderValue covers the "& ellipsis decoded" case:
         assertTrue(ctrl.isPlaceholderValue("Collecting data&"))
     }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // §v32-4 — exception_breakpoint warning is PSI-conditional, not unconditional
+    //
+    // Feedback verbatim:
+    //   "The tool returned a note 'No validation that ... exists in the classpath'
+    //    but the breakpoint worked correctly when the exception was thrown. The
+    //    warning was confusing since the class clearly exists and the breakpoint
+    //    functioned as expected."
+    //
+    // Behavioural test isn't viable in a unit test — the executeExceptionBreakpoint
+    // path goes through `WriteAction.compute` on EDT and creates a real
+    // JavaExceptionBreakpoint. Pin the contract via source-text inspection of the
+    // tool implementation: it must use JavaPsiFacade.findClass + GlobalSearchScope
+    // and only append the warning when the lookup returns null.
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("§v32-4 — exception_breakpoint uses JavaPsiFacade.findClass to gate the warning")
+    fun `exception breakpoint warning is PSI-conditional`() {
+        val source = locateDebugBreakpointsToolSource()
+
+        assertTrue(
+            source.contains("import com.intellij.psi.JavaPsiFacade"),
+            "DebugBreakpointsTool must import JavaPsiFacade for the PSI verification fix"
+        )
+        assertTrue(
+            source.contains("import com.intellij.psi.search.GlobalSearchScope"),
+            "DebugBreakpointsTool must import GlobalSearchScope for the PSI verification fix"
+        )
+
+        // The warning must live inside an `if (psiClass == null) { ... }` guard.
+        // The unconditional `sb.append("\n  Note: No validation` from v0.85.31 must be gone.
+        assertFalse(
+            source.contains("Note: No validation that"),
+            "Old unconditional warning string must be removed"
+        )
+
+        // Positive: the conditional warning must reference the project classpath via PSI lookup.
+        val conditionalWarnRegex = Regex(
+            """JavaPsiFacade\.getInstance\(project\)\s*\.findClass\(exceptionClass,\s*GlobalSearchScope\.allScope\(project\)\)"""
+        )
+        assertTrue(
+            conditionalWarnRegex.containsMatchIn(source),
+            "executeExceptionBreakpoint must call JavaPsiFacade.getInstance(project).findClass(exceptionClass, GlobalSearchScope.allScope(project))"
+        )
+        assertTrue(
+            source.contains("if (psiClass == null)"),
+            "Warning must be gated on `if (psiClass == null)` so it only fires when the FQN is missing"
+        )
+    }
+
+    private fun locateDebugBreakpointsToolSource(): String {
+        val candidates = listOf(
+            java.nio.file.Path.of("src/main/kotlin/com/workflow/orchestrator/agent/tools/debug/DebugBreakpointsTool.kt"),
+            java.nio.file.Path.of("agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/debug/DebugBreakpointsTool.kt")
+        )
+        val path = candidates.firstOrNull { java.nio.file.Files.exists(it) }
+            ?: error("DebugBreakpointsTool.kt source not found in: $candidates")
+        return java.nio.file.Files.readString(path)
+    }
 }

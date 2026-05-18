@@ -14,6 +14,9 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.framework.maven.MavenDetectResult
+import com.workflow.orchestrator.agent.tools.framework.maven.awaitMavenImport
+import com.workflow.orchestrator.agent.tools.framework.maven.detectAndRegisterMaven
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import com.intellij.openapi.externalSystem.importing.ImportSpecBuilder
@@ -145,14 +148,51 @@ internal suspend fun executeRefreshExternalProject(
         )
     }
 
-    // ── Step 2: nothing linked ────────────────────────────────────────────────
+    // ── Step 2: nothing linked → try filesystem-based Maven auto-detect ───────
+    // Reported by LLM feedback (#5, 2026-05-17): on a fresh-clone project with a
+    // root pom.xml that hasn't been imported yet, the linked-projects list is empty
+    // and the tool used to bail with "Nothing to refresh." Walk the project root
+    // for pom.xml files (depth 2) and register them with MavenProjectsManager —
+    // which both adds the link AND triggers the resolve.
     if (rootsPerSystem.isEmpty()) {
-        return ToolResult(
-            content = "No external project roots are linked (no Gradle or Maven import). Nothing to refresh.",
-            summary = "No external roots",
-            tokenEstimate = 10,
-            isError = false
-        )
+        return when (val detection = detectAndRegisterMaven(project)) {
+            is MavenDetectResult.NewlyRegistered -> {
+                val imported = awaitMavenImport(project, timeoutMs = 30_000)
+                val pomList = detection.pomPaths.joinToString("\n  • ", prefix = "  • ")
+                val status = if (imported) "completed" else "still in progress (timed out waiting; reimport continues in background)"
+                ToolResult(
+                    content = "Detected unmanaged Maven project — registered ${detection.pomPaths.size} pom.xml file(s) " +
+                        "with MavenProjectsManager. Import $status.\n$pomList",
+                    summary = "Registered ${detection.pomPaths.size} pom(s); import $status",
+                    tokenEstimate = 40 + (pomList.length / 4)
+                )
+            }
+            is MavenDetectResult.Failed -> ToolResult(
+                // Failed = the Maven plugin is present but something went wrong (rare; usually
+                // mocked-Project test environments or API drift). Treat as non-blocking: fall
+                // back to the original "nothing to refresh" message and surface the cause as a
+                // diagnostic note so the user/LLM can see why auto-detect didn't help.
+                content = "No external project roots are linked (no Gradle or Maven import). Nothing to refresh.\n" +
+                    "Note: Maven auto-detect aborted: ${detection.message}",
+                summary = "No external roots (Maven auto-detect aborted)",
+                tokenEstimate = 25,
+                isError = false
+            )
+            is MavenDetectResult.AlreadyImported -> ToolResult(
+                content = "Maven reports ${detection.projectCount} project(s) imported, but no roots are exposed via " +
+                    "ExternalSystem. This is usually transient — IntelliJ may still be wiring the model. " +
+                    "Retry shortly, or open Maven tool window to inspect.",
+                summary = "Maven imported but no external roots yet",
+                tokenEstimate = 30
+            )
+            MavenDetectResult.NoPomFound,
+            MavenDetectResult.NoMavenPlugin -> ToolResult(
+                content = "No external project roots are linked (no Gradle or Maven import). Nothing to refresh.",
+                summary = "No external roots",
+                tokenEstimate = 10,
+                isError = false
+            )
+        }
     }
 
     // ── Step 3: parse mode + approval gate ────────────────────────────────────

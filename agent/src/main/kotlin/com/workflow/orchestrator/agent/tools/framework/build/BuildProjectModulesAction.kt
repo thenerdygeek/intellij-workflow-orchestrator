@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.framework.build
 
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModuleRootManager
@@ -15,23 +16,36 @@ private data class MavenModuleInfo(
     val dependencyCount: Int
 )
 
-internal fun executeProjectModules(params: JsonObject, project: Project): ToolResult {
+private data class SourceRootSnapshot(val relativePath: String, val isTest: Boolean)
+
+private data class ModuleSnapshot(
+    val name: String,
+    val contentRootRelativePath: String?,
+    val sourceRoots: List<SourceRootSnapshot>,
+    val sourceRootOverflow: Int
+)
+
+private data class ProjectModulesSnapshot(
+    val moduleCount: Int,
+    val modules: List<ModuleSnapshot>,
+    val mavenInfo: Map<String, MavenModuleInfo>
+)
+
+internal suspend fun executeProjectModules(params: JsonObject, project: Project): ToolResult {
     return try {
-        val modules = ModuleManager.getInstance(project).modules
-        if (modules.isEmpty()) {
+        val snapshot = readAction { collectProjectModulesSnapshot(project) }
+        if (snapshot.moduleCount == 0) {
             return ToolResult("No modules found in project.", "No modules", 5)
         }
 
-        val mavenInfo = tryGetMavenInfo(project)
-
         val content = buildString {
-            appendLine("Project modules (${modules.size}):")
+            appendLine("Project modules (${snapshot.moduleCount}):")
             appendLine()
 
-            for (module in modules.sortedBy { it.name }) {
+            for (module in snapshot.modules) {
                 appendLine("Module: ${module.name}")
 
-                val maven = mavenInfo[module.name]
+                val maven = snapshot.mavenInfo[module.name]
                 if (maven != null) {
                     appendLine("  Maven: ${maven.groupId}:${maven.artifactId}:${maven.version}")
                     if (maven.packaging.isNotBlank() && maven.packaging != "jar") {
@@ -39,30 +53,16 @@ internal fun executeProjectModules(params: JsonObject, project: Project): ToolRe
                     }
                 }
 
-                val rootManager = ModuleRootManager.getInstance(module)
-                val sourceRoots = rootManager.sourceRoots
-                val contentRoots = rootManager.contentRoots
+                module.contentRootRelativePath?.let { appendLine("  Path: $it") }
 
-                if (contentRoots.isNotEmpty()) {
-                    val modulePath = contentRoots.first().path
-                    val relativePath = project.basePath?.let { base ->
-                        if (modulePath.startsWith(base)) modulePath.removePrefix("$base/") else modulePath
-                    } ?: modulePath
-                    appendLine("  Path: $relativePath")
-                }
-
-                if (sourceRoots.isNotEmpty()) {
+                if (module.sourceRoots.isNotEmpty()) {
                     appendLine("  Sources:")
-                    sourceRoots.take(10).forEach { root ->
-                        val relativePath = project.basePath?.let { base ->
-                            if (root.path.startsWith(base)) root.path.removePrefix("$base/") else root.path
-                        } ?: root.path
-                        val isTest = rootManager.fileIndex.isInTestSourceContent(root)
-                        val tag = if (isTest) "test" else "main"
-                        appendLine("    [$tag] $relativePath")
+                    module.sourceRoots.forEach { root ->
+                        val tag = if (root.isTest) "test" else "main"
+                        appendLine("    [$tag] ${root.relativePath}")
                     }
-                    if (sourceRoots.size > 10) {
-                        appendLine("    ... and ${sourceRoots.size - 10} more")
+                    if (module.sourceRootOverflow > 0) {
+                        appendLine("    ... and ${module.sourceRootOverflow} more")
                     }
                 }
 
@@ -76,12 +76,55 @@ internal fun executeProjectModules(params: JsonObject, project: Project): ToolRe
 
         ToolResult(
             content = content,
-            summary = "${modules.size} module(s)",
+            summary = "${snapshot.moduleCount} module(s)",
             tokenEstimate = TokenEstimator.estimate(content)
         )
     } catch (e: Exception) {
         ToolResult("Error listing modules: ${e.message}", "Error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
     }
+}
+
+private fun collectProjectModulesSnapshot(project: Project): ProjectModulesSnapshot {
+    val modules = ModuleManager.getInstance(project).modules
+    if (modules.isEmpty()) {
+        return ProjectModulesSnapshot(0, emptyList(), emptyMap())
+    }
+
+    val basePath = project.basePath
+    val moduleSnapshots = modules.sortedBy { it.name }.map { module ->
+        val rootManager = ModuleRootManager.getInstance(module)
+        val contentRoots = rootManager.contentRoots
+        val sourceRoots = rootManager.sourceRoots
+
+        val contentRootRelativePath = contentRoots.firstOrNull()?.path?.let { p ->
+            basePath?.let { base ->
+                if (p.startsWith(base)) p.removePrefix("$base/") else p
+            } ?: p
+        }
+
+        val sourceRootSnapshots = sourceRoots.take(10).map { root ->
+            val relativePath = basePath?.let { base ->
+                if (root.path.startsWith(base)) root.path.removePrefix("$base/") else root.path
+            } ?: root.path
+            SourceRootSnapshot(
+                relativePath = relativePath,
+                isTest = rootManager.fileIndex.isInTestSourceContent(root)
+            )
+        }
+
+        ModuleSnapshot(
+            name = module.name,
+            contentRootRelativePath = contentRootRelativePath,
+            sourceRoots = sourceRootSnapshots,
+            sourceRootOverflow = (sourceRoots.size - 10).coerceAtLeast(0)
+        )
+    }
+
+    return ProjectModulesSnapshot(
+        moduleCount = modules.size,
+        modules = moduleSnapshots,
+        mavenInfo = tryGetMavenInfo(project)
+    )
 }
 
 private fun tryGetMavenInfo(project: Project): Map<String, MavenModuleInfo> {

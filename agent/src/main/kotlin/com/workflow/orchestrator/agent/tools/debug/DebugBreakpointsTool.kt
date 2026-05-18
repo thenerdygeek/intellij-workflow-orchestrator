@@ -229,8 +229,9 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
         )
         llmMistake(
             "Passes exception_class as a simple name ('NullPointerException') instead of fully " +
-            "qualified ('java.lang.NullPointerException'). The tool does not validate that the class " +
-            "exists in the classpath; the breakpoint is created but never fires."
+            "qualified ('java.lang.NullPointerException'). The tool PSI-verifies the FQN against " +
+            "the project classpath and warns when it isn't found, but the breakpoint is still " +
+            "created — a typo only fires its warning, never an error."
         )
         llmMistake(
             "Sets both watch_entry=false and watch_exit=false for method_breakpoint, or both " +
@@ -430,7 +431,8 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
                         "Adds a JavaExceptionBreakpointType breakpoint using addBreakpoint() (not " +
                         "addLineBreakpoint() — exception breakpoints have no file:line anchor). " +
                         "Accepted for caught, uncaught, or both. Supports conditional expressions. " +
-                        "Does NOT validate that the exception class exists in the classpath."
+                        "PSI-verifies the FQN against the project classpath via JavaPsiFacade.findClass " +
+                        "and appends a warning when the class is not found; the breakpoint is still created."
                     )
                     plain(
                         "Tell the debugger to pause whenever a specific exception is thrown — " +
@@ -445,7 +447,7 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
                 params {
                     required("exception_class", "string") {
                         llmSeesIt("Fully qualified exception class name — for exception_breakpoint")
-                        humanReadable("The exception to watch for. Must be fully qualified. The tool does not verify the class exists in the classpath — a typo creates a silent non-firing breakpoint.")
+                        humanReadable("The exception to watch for. Must be fully qualified. The tool PSI-verifies the class on the project classpath and warns when it isn't found — the breakpoint is still created.")
                         whenPresent("Passed to JavaExceptionBreakpointProperties(exceptionClass) as the qualified name.")
                         constraint("must be fully qualified, e.g. 'java.lang.NullPointerException' not 'NullPointerException'")
                         example("java.lang.NullPointerException")
@@ -474,7 +476,7 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
                 rejectsParam("file", "Exception breakpoints are not anchored to a file. list_breakpoints without a file filter shows them; file filter skips them.")
                 rejectsParam("line", "Exception breakpoints have no line anchor — they fire at the throw site, wherever that is.")
                 precondition("Java debugger plugin must be available (JavaExceptionBreakpointType class must be loadable)")
-                onSuccess("Returns 'Exception breakpoint set for {exceptionClass}' with caught/uncaught flags and a note that the class is not validated against the classpath.")
+                onSuccess("Returns 'Exception breakpoint set for {exceptionClass}' with caught/uncaught flags. Appends a warning line only if PSI lookup fails to find the FQN on the project classpath.")
                 onFailure("Java exception breakpoint type not available", "Returns structured error if the Java plugin is not loaded (e.g. running in a non-Java IDE).")
                 onFailure("blank exception_class", "Validated before the WriteAction; returns 'exception_class cannot be blank'.")
                 example("catch NullPointerException at throw site") {
@@ -792,9 +794,10 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
             "Always call list_breakpoints immediately before remove_breakpoint when using breakpoint_id."
         )
         downside(
-            "exception_breakpoint does not validate the exception class against the classpath. A typo " +
-            "(e.g. 'NullPointerException' instead of 'java.lang.NullPointerException') creates a silent " +
-            "non-firing breakpoint with no error feedback."
+            "exception_breakpoint's PSI verification appends a warning when the FQN is not found, " +
+            "but does not abort breakpoint creation. A typo (e.g. 'NullPointerException' instead of " +
+            "'java.lang.NullPointerException') still produces a non-firing breakpoint — the LLM must " +
+            "read the warning line and correct the FQN."
         )
         downside(
             "method_breakpoint carries a 5-10× JVM performance overhead because IntelliJ implements it " +
@@ -1141,7 +1144,15 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
                     sb.append("\n  Caught: $caught")
                     sb.append("\n  Uncaught: $uncaught")
                     if (condition != null) sb.append("\n  Condition: $condition")
-                    sb.append("\n  Note: No validation that '$exceptionClass' exists in the classpath — verify the class name is correct")
+
+                    // PSI verify the FQN against the project's classpath.
+                    // Only warn when we have positive evidence the class is missing.
+                    // Write actions imply read access, so findClass is safe here.
+                    val psiClass = JavaPsiFacade.getInstance(project)
+                        .findClass(exceptionClass, GlobalSearchScope.allScope(project))
+                    if (psiClass == null) {
+                        sb.append("\n  Warning: class '$exceptionClass' not found on the project classpath — verify the fully-qualified name; the breakpoint is created but may never fire")
+                    }
 
                     val content = sb.toString()
                     ToolResult(content, "Exception breakpoint on $simpleName", TokenEstimator.estimate(content))

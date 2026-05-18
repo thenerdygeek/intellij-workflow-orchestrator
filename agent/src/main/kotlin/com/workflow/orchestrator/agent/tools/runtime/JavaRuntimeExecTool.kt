@@ -113,7 +113,7 @@ Java/Kotlin runtime execution — JUnit/TestNG test running, module compilation,
 
 Actions and their parameters:
 - run_tests(class_name, method?, timeout?, use_native_runner?) → Run tests for a specific Java/Kotlin class via IntelliJ's JUnit/TestNG runner, with Maven/Gradle shell fallback (timeout default 300s, max 900s). class_name is required and must be fully qualified — use test_finder to discover test classes first. `method` accepts a single name ('testFoo') or a comma-separated list ('testFoo,testBar,testBaz') to run several methods from the same class in one launch; output is aggregated into a single result.
-- compile_module(module?, check_dependents?) → Compile a Java/Kotlin module via CompilerManager. If `module` is omitted, compiles the entire project. When `module` is given and `check_dependents=true`, also recompiles modules that depend on it (catches downstream ABI breakage after editing an upstream module). Default check_dependents is false.
+- compile_module(module?, check_dependents?, refresh_maven_first?) → Compile a Java/Kotlin module via CompilerManager. If `module` is omitted, compiles the entire project. When `module` is given and `check_dependents=true`, also recompiles modules that depend on it (catches downstream ABI breakage after editing an upstream module). Default check_dependents is false. Set `refresh_maven_first=true` after a CLI `mvn install` to trigger MavenProjectsManager reimport (~30s) before compiling so newly-published artifacts are picked up.
 - rerun_failed_tests(session_id?) → Re-run only the failed/errored tests from the last test session. Resolves the most-recent test run via RunContentManager (or the session matching session_id if provided). Returns NO_PRIOR_TEST_SESSION if no test session exists, or an informational message if all tests passed.
 
 description optional: shown to user in approval dialog on run_tests, compile_module, rerun_failed_tests.
@@ -152,6 +152,10 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             "check_dependents" to ParameterProperty(
                 type = "boolean",
                 description = "When true (and `module` is set), also recompile modules that depend on the target — catches downstream ABI breakage after editing an upstream module. Default: false — for compile_module"
+            ),
+            "refresh_maven_first" to ParameterProperty(
+                type = "boolean",
+                description = "When true, trigger a Maven reimport (MavenProjectsManager.forceUpdateAllProjects or addManagedFilesOrUnignore for unimported pom.xml) and wait up to 30s for it to finish before compiling — picks up classpath changes from a prior `run_command mvn install`. Default: false. Set true after any `mvn install`/`mvn deploy` that wrote new SNAPSHOT versions to ~/.m2 — for compile_module"
             ),
             "description" to ParameterProperty(
                 type = "string",
@@ -326,10 +330,10 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             }
             action("compile_module") {
                 description {
-                    technical("Compiles a module via CompilerManager.make on either a module compile scope (with optional includeDependents) or the whole project compile scope when module is omitted. Wraps in a 120s timeout; errors return per-file messages via formatCompileErrors.")
-                    plain("Triggers IntelliJ's Build for a module — same as Build > Build Module — and reports compile errors per file. Set check_dependents=true to also rebuild what depends on the module.")
+                    technical("Compiles a module via CompilerManager.make on either a module compile scope (with optional includeDependents) or the whole project compile scope when module is omitted. Wraps in a 120s timeout; errors return per-file messages via formatCompileErrors. Optional refresh_maven_first triggers MavenProjectsManager reimport (forceUpdateAllProjects, or addManagedFilesOrUnignore for unimported pom.xml) and awaits up to 30s before compile.")
+                    plain("Triggers IntelliJ's Build for a module — same as Build > Build Module — and reports compile errors per file. Set check_dependents=true to also rebuild what depends on the module. Set refresh_maven_first=true after a CLI `mvn install` so the build picks up the newly-published JARs.")
                 }
-                whenLLMUses("After editing source in a module to verify it still compiles, or after an upstream module change to catch downstream ABI breakage in dependents.")
+                whenLLMUses("After editing source in a module to verify it still compiles, or after an upstream module change to catch downstream ABI breakage in dependents. Also after `run_command mvn install` — set refresh_maven_first=true so the compile sees the freshly-published artifacts.")
                 params {
                     optional("module", "string") {
                         llmSeesIt("Module name — for compile_module (compiles entire project if omitted)")
@@ -343,6 +347,13 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                         humanReadable("Also recompile modules that depend on the target module.")
                         whenPresent("Compile scope includes the target plus its dependents.")
                         whenAbsent("Defaults to false — only the target module is compiled.")
+                        example("true")
+                    }
+                    optional("refresh_maven_first", "boolean") {
+                        llmSeesIt("When true, trigger a Maven reimport (MavenProjectsManager.forceUpdateAllProjects or addManagedFilesOrUnignore for unimported pom.xml) and wait up to 30s for it to finish before compiling — picks up classpath changes from a prior `run_command mvn install`. Default: false. Set true after any `mvn install`/`mvn deploy` that wrote new SNAPSHOT versions to ~/.m2 — for compile_module")
+                        humanReadable("Reimport Maven before compiling so the build picks up newly-installed JARs from ~/.m2.")
+                        whenPresent("MavenProjectsManager.forceUpdateAllProjectsOrFindAllAvailablePomFiles fires (or addManagedFilesOrUnignore for fresh-clone projects); compile waits up to 30s for the reimport to finish.")
+                        whenAbsent("Defaults to false — compiles against IntelliJ's current in-memory model, which can be stale after a CLI Maven build.")
                         example("true")
                     }
                     optional("description", "string") {
@@ -1956,6 +1967,37 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
     private suspend fun executeCompileModule(params: JsonObject, project: Project): ToolResult {
         val moduleName = params["module"]?.jsonPrimitive?.content
         val checkDependents = params["check_dependents"]?.jsonPrimitive?.booleanOrNull ?: false
+        val refreshMavenFirst = params["refresh_maven_first"]?.jsonPrimitive?.booleanOrNull ?: false
+
+        // Feedback #7 (2026-05-17): after `run_command mvn install`, IntelliJ's in-memory
+        // project model holds the previously-resolved JAR paths and versions. compile_module
+        // then recompiles against the stale classpath. Opt-in flag asks Maven to reimport
+        // first so the classpath is fresh before CompilerManager.compile.
+        val mavenRefreshNote: String = if (refreshMavenFirst) {
+            val detect = com.workflow.orchestrator.agent.tools.framework.maven.detectAndRegisterMaven(project)
+            when (detect) {
+                is com.workflow.orchestrator.agent.tools.framework.maven.MavenDetectResult.AlreadyImported -> {
+                    val mgrClass = Class.forName("org.jetbrains.idea.maven.project.MavenProjectsManager")
+                    val mgr = mgrClass.getMethod("getInstance", Project::class.java).invoke(null, project)
+                    runCatching {
+                        mgrClass.getMethod("forceUpdateAllProjectsOrFindAllAvailablePomFiles").invoke(mgr)
+                    }
+                    val completed = com.workflow.orchestrator.agent.tools.framework.maven.awaitMavenImport(project, timeoutMs = 30_000)
+                    if (completed) "Maven reimport completed before compile. " else "Maven reimport timed out (30s) — compiling against the current classpath. "
+                }
+                is com.workflow.orchestrator.agent.tools.framework.maven.MavenDetectResult.NewlyRegistered -> {
+                    val completed = com.workflow.orchestrator.agent.tools.framework.maven.awaitMavenImport(project, timeoutMs = 30_000)
+                    val status = if (completed) "completed" else "timed out (30s)"
+                    "Registered ${detect.pomPaths.size} pom.xml file(s) and waited for import ($status). "
+                }
+                com.workflow.orchestrator.agent.tools.framework.maven.MavenDetectResult.NoMavenPlugin ->
+                    "refresh_maven_first ignored — Maven plugin not loaded. "
+                com.workflow.orchestrator.agent.tools.framework.maven.MavenDetectResult.NoPomFound ->
+                    "refresh_maven_first ignored — no pom.xml found at the project root. "
+                is com.workflow.orchestrator.agent.tools.framework.maven.MavenDetectResult.Failed ->
+                    "refresh_maven_first failed: ${detect.message}. Continuing with stale classpath. "
+            }
+        } else ""
 
         return try {
             val result = withTimeoutOrNull(120_000L) {
@@ -2008,7 +2050,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                                 else -> {
                                     val warningNote = if (warnings > 0) " with $warnings warning(s)" else ""
                                     ToolResult(
-                                        "Compilation of $target successful$warningNote: 0 errors.",
+                                        "${mavenRefreshNote}Compilation of $target successful$warningNote: 0 errors.",
                                         "Build OK", ToolResult.ERROR_TOKEN_ESTIMATE
                                     )
                                 }

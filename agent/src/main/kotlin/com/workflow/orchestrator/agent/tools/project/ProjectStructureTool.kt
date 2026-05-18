@@ -442,10 +442,10 @@ Actions and their parameters:
 
             action("refresh_external_project") {
                 description {
-                    technical("Triggers a Gradle or Maven reimport via ExternalSystemUtil.refreshProjects. For Maven roots, supports additional mode values (generate_sources, download_sources, download_javadocs, download_sources_and_javadocs) that mirror the Maven tool window buttons. Fire-and-forget: enqueues the task and returns immediately without waiting for completion.")
-                    plain("Presses the 'Reload Gradle/Maven project' button in the IDE — like clicking the elephant/Maven icon in the sidebar. The actual sync runs in the background; this tool just kicks it off and returns.")
+                    technical("Triggers a Gradle or Maven reimport via ExternalSystemUtil.refreshProjects. For Maven roots, supports additional mode values (generate_sources, download_sources, download_javadocs, download_sources_and_javadocs) that mirror the Maven tool window buttons. If no external project roots are linked, walks the project basePath (depth 2) for pom.xml files and registers them via MavenProjectsManager.addManagedFilesOrUnignore, then awaits the import (~30s) before returning. Fire-and-forget for already-linked roots.")
+                    plain("Presses the 'Reload Gradle/Maven project' button in the IDE — like clicking the elephant/Maven icon in the sidebar. On fresh-clone Maven projects where the import hasn't happened yet, also auto-detects pom.xml files and registers them with the Maven plugin before reloading.")
                 }
-                whenLLMUses("After editing a build file (build.gradle, pom.xml, settings.gradle) or after calling set_module_sdk/set_language_level — to sync IntelliJ's model with the updated build file.")
+                whenLLMUses("After editing a build file (build.gradle, pom.xml, settings.gradle) or after calling set_module_sdk/set_language_level — to sync IntelliJ's model with the updated build file. Also on a freshly-cloned Maven project to trigger the first import.")
                 params {
                     optional("module", "string") {
                         llmSeesIt("Module name to scope the query/action. If omitted, uses root project or all modules depending on action.")
