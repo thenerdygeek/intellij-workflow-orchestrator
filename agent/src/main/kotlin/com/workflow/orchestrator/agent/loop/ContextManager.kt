@@ -159,6 +159,21 @@ class ContextManager(
         }
     }
 
+    /**
+     * Add a user-role-shaped message for internal agent-loop nudges (recovery hints,
+     * format reminders, doom-loop warnings, length-cut retries, etc.) — NOT real user
+     * input.
+     *
+     * Functionally identical to [addUserMessage] except it does NOT increment
+     * [totalUserMessageCount]. The Case B detector in [compact] uses that counter as
+     * "did the user speak since the last compaction" — synthetic nudges must not
+     * inflate it, or Case B will silently degrade to Case A and re-run L1 LLM calls
+     * on long-running sessions.
+     */
+    fun addNudgeMessage(content: String) {
+        messages.add(ChatMessage(role = "user", content = content))
+    }
+
     fun addAssistantMessage(message: ChatMessage) {
         messages.add(message)
     }

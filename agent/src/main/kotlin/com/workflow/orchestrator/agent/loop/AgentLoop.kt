@@ -1370,7 +1370,7 @@ class AgentLoop(
                         "Continue the text character-for-character from where it was cut off. " +
                         "(This is an automated message — do not acknowledge it.)"
                 }
-                contextManager.addUserMessage(lengthNudge)
+                contextManager.addNudgeMessage(lengthNudge)
                 continue
             }
 
@@ -1406,7 +1406,7 @@ class AgentLoop(
                     contextManager.addAssistantMessage(
                         ChatMessage(role = "assistant", content = assistantMessage.content ?: "")
                     )
-                    contextManager.addUserMessage(nudge)
+                    contextManager.addNudgeMessage(nudge)
                 }
                 continue
             }
@@ -1501,7 +1501,7 @@ class AgentLoop(
                     // after observing the results in the next turn.
                     if (hasCompletion && filteredCalls.size < rawCalls.size) {
                         val completionName = rawCalls.first { it.function.name in completionTools }.function.name
-                        contextManager.addUserMessage(
+                        contextManager.addNudgeMessage(
                             "[System] You tried to call $completionName in the same turn as other tool calls. " +
                                 "Your summary would be based on guesses, not observations. The other tools have now " +
                                 "executed — review their results and call $completionName again on its own."
@@ -1559,7 +1559,7 @@ class AgentLoop(
                         // after every successful tool call and shouldn't retroactively
                         // erase every earlier stall mid-run.
                         contextManager.pruneAllNudgePairs(TEXT_ONLY_NUDGE)
-                        contextManager.addUserMessage(TEXT_ONLY_NUDGE)
+                        contextManager.addNudgeMessage(TEXT_ONLY_NUDGE)
                         delay(computeBackoffMs(consecutiveMistakes))
                     }
                 }
@@ -1592,7 +1592,7 @@ class AgentLoop(
                     // accumulation when a "Continue" lands between two empty-response
                     // stalls within the same in-memory session.
                     contextManager.pruneAllNudgePairs(EMPTY_RESPONSE_ERROR)
-                    contextManager.addUserMessage(EMPTY_RESPONSE_ERROR)
+                    contextManager.addNudgeMessage(EMPTY_RESPONSE_ERROR)
                     delay(computeBackoffMs(consecutiveEmpties))
                 }
             }
@@ -1699,7 +1699,7 @@ class AgentLoop(
                     fileLogger?.logLoopDetection(sessionId ?: "", toolName, loopDetector.currentCount, isHard = false)
                     onDebugLog?.invoke("warn", "loop", "Loop warning: $toolName called ${loopDetector.currentCount}x", null)
                     // Inject warning but continue execution (give the model a chance to self-correct)
-                    contextManager.addUserMessage(LOOP_SOFT_WARNING)
+                    contextManager.addNudgeMessage(LOOP_SOFT_WARNING)
                 }
                 LoopStatus.OK -> { /* no action */ }
             }
@@ -2148,7 +2148,7 @@ class AgentLoop(
                             linesRemoved = totalLinesRemoved
                         )
                         awaitingFeedback = true
-                        contextManager.addUserMessage(
+                        contextManager.addNudgeMessage(
                             "Use the `feedback` tool to share any feedback about the tools you used during this task. " +
                             "Report tools that did not work as expected, had confusing or contradictory parameters, " +
                             "returned incorrect results, or failed unexpectedly. " +
