@@ -2552,6 +2552,77 @@ class AgentService(
         }
     }
 
+    // ── Checkpoint v2 — Reverts and Diff ──────────────────────────────────
+
+    /**
+     * Revert a session to a specific user message. Restores files via the
+     * SessionCheckpointStore, truncates persisted UI + api history, and returns
+     * the data the controller needs to push UI state.
+     *
+     * Caller (AgentController) is responsible for:
+     *  - Pushing truncated ui_messages to the webview via _loadSessionState
+     *  - Pushing the returned userText to the chat input via restoreInputText
+     *  - Cancelling any in-flight job before calling this (prepareForReplay)
+     */
+    fun revertToUserMessage(sessionId: String, messageTs: Long): com.workflow.orchestrator.agent.checkpoint.RevertResult {
+        val basePath = project.basePath ?: System.getProperty("user.home")
+        val sessionBaseDir = ProjectIdentifier.agentDir(basePath)
+        val sessionDir = java.io.File(sessionBaseDir, "sessions/$sessionId")
+
+        // 1. Compute droppedApiCount from the UI message's conversationHistoryIndex.
+        val existingUi = MessageStateHandler.loadUiMessages(sessionDir)
+        val targetUi = existingUi.firstOrNull { it.ts == messageTs }
+        val keepApiCount = targetUi?.conversationHistoryIndex ?: 0
+        val existingApi = MessageStateHandler.loadApiHistory(sessionDir)
+        val droppedApiCount = (existingApi.size - keepApiCount).coerceAtLeast(0)
+
+        // 2. Restore files via the checkpoint store.
+        val store = com.workflow.orchestrator.agent.checkpoint.SessionCheckpointStore(sessionDir = sessionDir)
+        val result = store.revertToMessage(messageTs)
+
+        // 3. Truncate persisted UI + api history.
+        val handler = MessageStateHandler(baseDir = sessionBaseDir, sessionId = sessionId, taskText = "")
+        if (existingUi.isNotEmpty()) handler.setClineMessages(existingUi)
+        if (existingApi.isNotEmpty()) handler.setApiConversationHistory(existingApi)
+        com.intellij.openapi.progress.runBlockingCancellable {
+            handler.truncateMessagesAtTs(messageTs, droppedApiCount)
+        }
+
+        log.info("AgentService.revertToUserMessage: session=$sessionId ts=$messageTs restored=${result.restoredFiles.size} deleted=${result.deletedFiles.size}")
+        return result
+    }
+
+    /** Single-file revert. No history truncation, no chat-input push. */
+    fun revertFileToBaseline(sessionId: String, absolutePath: String): Boolean {
+        val basePath = project.basePath ?: System.getProperty("user.home")
+        val sessionDir = java.io.File(ProjectIdentifier.agentDir(basePath), "sessions/$sessionId")
+        val store = com.workflow.orchestrator.agent.checkpoint.SessionCheckpointStore(sessionDir = sessionDir)
+        return store.revertFileToBaseline(absolutePath)
+    }
+
+    /** Returns the session's current baseline-to-current diff. Cheap to call after every write tool. */
+    fun getAggregateDiff(sessionId: String): com.workflow.orchestrator.agent.checkpoint.AggregateDiff {
+        val basePath = project.basePath ?: System.getProperty("user.home")
+        val sessionDir = java.io.File(ProjectIdentifier.agentDir(basePath), "sessions/$sessionId")
+        val store = com.workflow.orchestrator.agent.checkpoint.SessionCheckpointStore(sessionDir = sessionDir)
+        return store.aggregateDiff()
+    }
+
+    /** Earliest user-message checkpoint ts for the session, or null if no checkpoints exist. */
+    fun firstUserMessageTs(sessionId: String): Long? {
+        val basePath = project.basePath ?: System.getProperty("user.home")
+        val sessionDir = java.io.File(ProjectIdentifier.agentDir(basePath), "sessions/$sessionId")
+        val store = com.workflow.orchestrator.agent.checkpoint.SessionCheckpointStore(sessionDir = sessionDir)
+        return store.listMessageCheckpoints().firstOrNull()?.messageTs
+    }
+
+    /** Read persisted UI messages for a session — exposed for AgentController to push to the webview after a revert. */
+    fun loadUiMessages(sessionId: String): List<com.workflow.orchestrator.agent.session.UiMessage> {
+        val basePath = project.basePath ?: System.getProperty("user.home")
+        val sessionDir = java.io.File(ProjectIdentifier.agentDir(basePath), "sessions/$sessionId")
+        return MessageStateHandler.loadUiMessages(sessionDir)
+    }
+
     // ── Session Handoff (ported from Cline's new_task) ──────────────────────
 
     /**
