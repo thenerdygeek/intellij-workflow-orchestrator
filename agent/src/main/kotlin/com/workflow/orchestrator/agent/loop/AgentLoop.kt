@@ -474,6 +474,14 @@ class AgentLoop(
     private var awaitingFeedback = false
     private var pendingCompletion: LoopResult.Completed? = null
 
+    /**
+     * Set by [executeToolCalls] when a real user message arrives via [userInputChannel]
+     * inside a tool-result handler (e.g. plan-card approval). The outer [run] loop reads
+     * and clears this flag after each [executeToolCalls] call to reset
+     * [iterationsSinceLastUser], which cannot be touched directly from inside the function.
+     */
+    private var userInputReceivedInToolCall = false
+
     // Session-scoped approval is handled by the injected sessionApprovalStore
     // (lives at the session level, persists across loop runs within the same session).
 
@@ -1495,6 +1503,10 @@ class AgentLoop(
                     }
 
                     val completionResult = executeToolCalls(filteredCalls, iteration)
+                    if (userInputReceivedInToolCall) {
+                        iterationsSinceLastUser = 0
+                        userInputReceivedInToolCall = false
+                    }
                     if (completionResult != null) return completionResult
 
                     // If we stripped the completion signal, nudge the LLM so it re-issues it
@@ -1531,6 +1543,7 @@ class AgentLoop(
                         // Persist typed UI message override if provided (e.g. PLAN_APPROVED bubble).
                         onUserInputReceived?.invoke(receivedTask)?.let { messageStateHandler?.addToClineMessages(it) }
                         contextManager.addUserMessage(withEnvDetails(receivedTask))
+                        iterationsSinceLastUser = 0
                         consecutiveMistakes = 0
                         consecutiveEmpties = 0  // reset: plan-mode chat is a genuine exchange, not a stall
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes && userInputChannel != null) {
@@ -1544,6 +1557,7 @@ class AgentLoop(
                         // Persist typed UI message override if provided.
                         onUserInputReceived?.invoke(receivedTask)?.let { messageStateHandler?.addToClineMessages(it) }
                         contextManager.addUserMessage(withEnvDetails(receivedTask))
+                        iterationsSinceLastUser = 0
                         consecutiveMistakes = 0
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes) {
                         // No user input channel (sub-agent) — fail
@@ -2208,6 +2222,7 @@ class AgentLoop(
                         // Persist typed UI message override if provided (e.g. PLAN_APPROVED bubble).
                         onUserInputReceived?.invoke(receivedTask)?.let { messageStateHandler?.addToClineMessages(it) }
                         contextManager.addUserMessage(withEnvDetails(receivedTask))
+                        userInputReceivedInToolCall = true
                         // Continue the loop — LLM will see the user's message and respond
                     }
                     // needs_more_exploration=true OR no channel: loop continues immediately
