@@ -336,16 +336,29 @@ All context management runs through `ContextManager` — a single-stage Claude-C
 
 ### Flow
 
-`compact(brain, hookManager, force) → CompactResult`:
+`compact(brain, hookManager, force, iterationsSinceLastUser) → CompactResult`:
+
+Two-tier memory model: pre-user handoff (L1) + anchor user (L2) + post-user working memory summary (L3, optional) + verbatim recent tail (L4).
 
 1. **Threshold gate** — single 88% utilization. Returns `Skipped` if below (unless `force=true`).
-2. **`PRE_COMPACT` hook** — cancellable. Hook returns `Cancel` → returns `Cancelled`.
-3. **Dedup pre-pass** — `deduplicateFileReads()` collapses repeated `read_file`/`create_file`/`edit_file` results for the same path to a 75-char placeholder, keeping the most recent read. Cheap (~1ms, pure Kotlin); bounds the summarization prompt's own input so it doesn't blow past the model window.
-4. **Safe split point** — preserves last ~30% of messages (tail), biases to role boundary, doesn't split tool_call/result pairs.
-5. **LLM summarize the prefix** — single `brain.chat()` call, structured prompt (TASK/FILES/DECISIONS/STATE/ERRORS/PENDING), `maxTokens=2048`. Image-bearing messages get `[+N image(s) attached]` placeholders; tool-call-only turns fall back to the tool name; previous summary (from prior compaction) folded into the new prompt. Returns `Failed` if brain returns no content.
-6. **Replace prefix** with single assistant message containing the summary. Tail preserved verbatim.
-7. **Post-summary cleanup** — strip image parts (bytes survive on disk), re-inject active skill content, re-inject active plan pointer.
-8. **Persist** — invalidate `lastPromptTokens`, invoke `onHistoryOverwrite(messages, 0 to splitIdx)` (the `Pair<Int, Int>` is the **deleted-message-index-range**, not a token pair).
+2. **`PRE_COMPACT` hook** — cancellable.
+3. **Dedup pre-pass** — `deduplicateFileReads()` collapses repeated reads (unchanged).
+4. **Find last user message** — `findLastUserIndex()`. If -1, fall through to degenerate single-summary path.
+5. **Case detection** — Case B if `totalUserMessageCount == lastCompactionUserMessageCount` (no new user since last compaction), else Case A.
+6. **Build L1** — Case A: LLM-summarize messages before the anchor user, folding in `previousPreUserSummary`. Case B: reuse `previousPreUserSummary` verbatim, no LLM call. Skipped entirely if the pre-user prefix is empty.
+7. **L2** — the most recent user message, verbatim.
+8. **Decide L3** — build if `iterationsSinceLastUser > 5` OR estimated post-L1 utilization ≥ 88%. The 5-gate is a cost optimization; over-budget pressure always forces L3.
+9. **Build L3 + L4** — token-weighted cut: walk backward summing `estimateMessageTokens` until 20% of budget is reached; snap to tool-role boundary so L4 never starts with `assistant` (avoids the `MessageSanitizer.kt:70` consecutive-role merge). Layer 3 LLM-summarizes from `lastUserIdx+1` up to the cut, folding in `previousPostUserSummary`. Layer 4 is verbatim from the cut to the end.
+10. **Reassemble** — `[L1?][L2][L3?][L4...]`.
+11. **Post-cleanup** — strip image parts, re-inject active skill, re-inject active plan (unchanged).
+12. **Save state** — `previousPreUserSummary`, `previousPostUserSummary`, `lastCompactionUserMessageCount`.
+13. **Persist** — `lastPromptTokens = null`, invoke `onHistoryOverwrite`.
+
+Result: `CompactResult.Compacted` on any successful path (including partial successes). `CompactResult.Failed` only when summarization was attempted and no attempt succeeded (call site falls back to `slidingWindow(0.3)`).
+
+### Spec
+
+`docs/superpowers/specs/2026-05-18-context-compaction-two-tier-design.md`
 
 ### Failure handling
 
