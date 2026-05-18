@@ -686,6 +686,30 @@ class ContextManager(
         return sliceStart
     }
 
+    /**
+     * Adjust [candidateIdx] so the first message of Layer 4 is NOT an assistant turn.
+     * The Sourcegraph client (MessageSanitizer.kt:70) merges consecutive same-role turns,
+     * which would silently merge L3's assistant summary with an assistant-first L4.
+     *
+     * If messages[candidateIdx].role == "assistant", walk backward looking for a `tool`
+     * message. Return that tool's index.
+     *
+     * If we reach [sliceStart] without finding a tool (slice is all-assistant after sliceStart),
+     * return messages.size as a sentinel — the caller treats this as "skip L3 entirely."
+     *
+     * Pure function — does not mutate messages.
+     */
+    internal fun snapToToolBoundary(candidateIdx: Int, sliceStart: Int): Int {
+        if (candidateIdx >= messages.size) return messages.size
+        if (messages[candidateIdx].role != "assistant") return candidateIdx
+        var idx = candidateIdx
+        while (idx > sliceStart) {
+            idx--
+            if (messages[idx].role == "tool") return idx
+        }
+        return messages.size  // sentinel: all-assistant slice, skip L3
+    }
+
     // ── Image helpers ─────────────────────────────────────────────────────────
 
     private fun stripImagePartsFromAllMessages() {

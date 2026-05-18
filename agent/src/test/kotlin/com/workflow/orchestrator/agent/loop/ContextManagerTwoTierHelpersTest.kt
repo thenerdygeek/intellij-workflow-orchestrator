@@ -116,4 +116,38 @@ class ContextManagerTwoTierHelpersTest {
         )
         assertEquals(1, cut)
     }
+
+    // ---- snapToToolBoundary ----
+
+    @Test
+    fun `snap returns candidate when candidate is already a tool message`() {
+        seed(listOf(u("anchor"), a("call"), t("result"), a("call2"), t("result2")))
+        val snapped = cm.snapToToolBoundary(candidateIdx = 2, sliceStart = 1)
+        assertEquals(2, snapped)
+    }
+
+    @Test
+    fun `snap walks backward from assistant to nearest preceding tool`() {
+        seed(listOf(u("anchor"), a("call"), t("result"), a("call2"), t("result2"), a("call3")))
+        // candidateIdx 5 is assistant → walk back. idx 4 is tool → return 4.
+        val snapped = cm.snapToToolBoundary(candidateIdx = 5, sliceStart = 1)
+        assertEquals(4, snapped)
+    }
+
+    @Test
+    fun `snap returns sliceEnd when slice is all-assistant from sliceStart down`() {
+        seed(listOf(u("anchor"), a("call1"), a("call2"), a("call3")))
+        // candidateIdx 3 is assistant. Walk back to 2 (assistant), 1 (assistant) — all the
+        // way to sliceStart without finding tool. Return messages.size = 4.
+        val snapped = cm.snapToToolBoundary(candidateIdx = 3, sliceStart = 1)
+        assertEquals(4, snapped, "all-assistant slice signals 'skip L3' by returning sliceEnd")
+    }
+
+    @Test
+    fun `snap returns candidate when role is user`() {
+        // Defensive: should not be invoked with a user in the slice, but if it is, return as-is.
+        seed(listOf(u("anchor"), u("steer"), a("ack")))
+        val snapped = cm.snapToToolBoundary(candidateIdx = 1, sliceStart = 1)
+        assertEquals(1, snapped)
+    }
 }
