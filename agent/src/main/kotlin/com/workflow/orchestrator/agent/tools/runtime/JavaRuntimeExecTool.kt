@@ -124,7 +124,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             "action" to ParameterProperty(
                 type = "string",
                 description = "Operation to perform",
-                enumValues = listOf("run_tests", "compile_module", "rerun_failed_tests")
+                enumValues = listOf("run_tests", "compile_module", "rerun_failed_tests", "run_maven_goal")
             ),
             "class_name" to ParameterProperty(
                 type = "string",
@@ -172,6 +172,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
     override val allowedWorkers = setOf(
         WorkerType.CODER, WorkerType.REVIEWER, WorkerType.ANALYZER, WorkerType.ORCHESTRATOR, WorkerType.TOOLER
     )
+    override fun isWriteAction(action: String?): Boolean = action == "run_maven_goal"
     override val outputConfig = ToolOutputConfig.COMMAND
 
     override fun documentation(): ToolDocumentation = toolDoc("java_runtime_exec") {
@@ -457,8 +458,9 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             "run_tests" -> executeRunTests(params, project)
             "compile_module" -> executeCompileModule(params, project)
             "rerun_failed_tests" -> executeRerunFailedTests(params, project)
+            "run_maven_goal" -> executeRunMavenGoal(params, project, this)
             else -> ToolResult(
-                content = "Unknown action '$action' in java_runtime_exec. Valid actions: run_tests, compile_module, rerun_failed_tests",
+                content = "Unknown action '$action' in java_runtime_exec. Valid actions: run_tests, compile_module, rerun_failed_tests, run_maven_goal",
                 summary = "Unknown action '$action' in java_runtime_exec",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true

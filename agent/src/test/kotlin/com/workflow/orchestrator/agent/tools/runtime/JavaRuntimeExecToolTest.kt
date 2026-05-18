@@ -48,7 +48,41 @@ class JavaRuntimeExecToolTest {
     fun `action enum contains run_tests compile_module and rerun_failed_tests`() {
         val actions = tool.parameters.properties["action"]?.enumValues
         assertNotNull(actions)
-        assertEquals(setOf("run_tests", "compile_module", "rerun_failed_tests"), actions!!.toSet())
+        assertEquals(setOf("run_tests", "compile_module", "rerun_failed_tests", "run_maven_goal"), actions!!.toSet())
+    }
+
+    @Test
+    fun `action enum contains run_maven_goal`() {
+        val actions = tool.parameters.properties["action"]?.enumValues
+        assertNotNull(actions)
+        assertTrue(actions!!.contains("run_maven_goal"), "expected run_maven_goal in action enum, was: $actions")
+    }
+
+    @Test
+    fun `isWriteAction returns true for run_maven_goal`() {
+        assertTrue(tool.isWriteAction("run_maven_goal"))
+    }
+
+    @Test
+    fun `isWriteAction returns false for existing actions`() {
+        assertFalse(tool.isWriteAction("run_tests"))
+        assertFalse(tool.isWriteAction("compile_module"))
+        assertFalse(tool.isWriteAction("rerun_failed_tests"))
+        assertFalse(tool.isWriteAction(null))
+        assertFalse(tool.isWriteAction("unknown"))
+    }
+
+    @Test
+    fun `run_maven_goal without goals returns INVALID_ARGS via dispatcher`() = runTest {
+        val result = tool.execute(
+            buildJsonObject {
+                put("action", "run_maven_goal")
+                // no goals
+            },
+            project
+        )
+        assertTrue(result.isError)
+        assertTrue(result.content.startsWith("INVALID_ARGS:"))
     }
 
     @Test
