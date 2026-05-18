@@ -566,6 +566,47 @@ Faithful port of Cline's two-file session persistence (message-state.ts + disk.t
 6. Rebuild ContextManager with `ApiMessage.toChatMessage()` conversion
 7. Continue execution via `initiateTaskLoop(newUserContent)`
 
+## Checkpoint System v2
+
+Per-user-message file-copy snapshots backed by `SessionCheckpointStore`. Implemented in `agent/src/main/kotlin/.../checkpoint/`.
+
+### Storage layout
+```
+~/.workflow-orchestrator/{proj}/agent/sessions/{sid}/checkpoints/
+  msg-{ts}/
+    files/<absolute-path-tree>/  ← pre-edit bytes captured on first-touch
+    meta.json                    ← { messageTs, userText, createdAt, createdPaths, touchedPaths }
+```
+
+### Capture trigger
+`AgentLoop` calls `checkpointStore.captureIfFirstTouch(currentUserMsgTs, path)` for every path argument of every `WRITE_TOOLS` invocation, just before the tool executes. First touch per (msg, path) copies bytes; subsequent calls no-op. Non-existent paths are recorded in `meta.json.createdPaths` instead.
+
+### Aggregate diff
+`aggregateDiff()` walks all `msg-N` dirs, finds the earliest snapshot per file (the session baseline), and diffs baseline→current via LCS line-count. Total adds/removes summed across files. Updated in UI after every write tool via the `updateAggregateDiff` JCEF bridge.
+
+### Revert flavors
+- `revertToMessage(targetTs)` — undo target message and everything after. Restores files to their earliest snapshot in the to-be-reverted range; deletes files created in that range; drops invalidated `msg-N` dirs; returns the userText for input-restoration.
+- `revertFileToBaseline(path)` — single-file revert. No history truncation.
+
+### UX
+- **Bottom bar** (EditStatsBar): `+N −M  K files  ▾  ⟲ Revert all`. Expanded shows per-file rows with individual `⟲` buttons.
+- **Hover on user message** (UserMessageRevertButton): shows `⟲ Time-travel here`. Click → restores files, truncates chat history, **pushes the user-typed text back into the chat input** (true time-travel UX — user can edit and re-send).
+
+### Limitations
+- `run_command`, `background_process`, `send_stdin` writes are NOT snapshotted (no path arg). Documented.
+- `refactor_rename` snapshots both `from_path` and `to_path` independently; double-revert may produce duplicates.
+- External (non-agent) writes during an active turn are not tracked.
+
+### Key files
+- `checkpoint/CheckpointModels.kt` — data classes (`CheckpointMeta`, `FileChange`, `FileStatus`, `AggregateDiff`, `RevertResult`)
+- `checkpoint/SessionCheckpointStore.kt` — disk I/O + capture/restore/aggregate
+- `checkpoint/DiffCalculator.kt` — LCS line counter (pure function)
+- `AgentLoop.kt` — pre-write capture hook
+- `AgentService.kt` — `revertToUserMessage` / `revertFileToBaseline` / `getAggregateDiff` / `firstUserMessageTs` / `loadUiMessages`
+- `AgentController.kt` — bridge wiring + live push to UI after write tools
+- `webview/.../EditStatsBar.tsx` — bottom-bar UI
+- `webview/.../UserMessageRevertButton.tsx` — hover affordance
+
 ## Storage Tiers
 
 The plugin writes to four distinct roots. Anything the agent's read tools must reach has to live in one of the first two; anything else is invisible to `read_file` / `read_document` / `search_code` and the agent will reject the path with "outside project".
@@ -573,7 +614,7 @@ The plugin writes to four distinct roots. Anything the agent's read tools must r
 | Tier | Root | What lives here | Reachable by agent reads? |
 |---|---|---|---|
 | 1. Project | `{project.basePath}` | User code; project-scoped agent assets (`.workflow/skills/`, `.workflow/agents/`, `.agent-hooks.json`). Agent **writes** allowed here. | Yes |
-| 2. Per-session agent data | `~/.workflow-orchestrator/{slug}-{sha6}/agent/sessions/{id}/` | `api_conversation_history.json`, `ui_messages.json`, `tasks.json`, `plan.json`, `checkpoints/`, `attachments/` (image uploads), `tool-output/` (spilled tool output), **`downloads/`** (artifact downloads from feature modules). Agent **writes** allowed only into `{agentDir}/memory/` — see `PathValidator.resolveAndValidateForWrite`. | Yes — via `PathValidator.resolveAndValidateForRead` |
+| 2. Per-session agent data | `~/.workflow-orchestrator/{slug}-{sha6}/agent/sessions/{id}/` | `api_conversation_history.json`, `ui_messages.json`, `tasks.json`, `plan.json`, `checkpoints/msg-{ts}/files/<path-tree>/ + meta.json` (per-user-message copy-on-write snapshots; v2 system — see Checkpoint System v2 section above), `attachments/` (image uploads), `tool-output/` (spilled tool output), **`downloads/`** (artifact downloads from feature modules). Agent **writes** allowed only into `{agentDir}/memory/` — see `PathValidator.resolveAndValidateForWrite`. | Yes — via `PathValidator.resolveAndValidateForRead` |
 | 3. Cross-session agent data | `~/.workflow-orchestrator/{slug}-{sha6}/agent/` (parent of `sessions/`) and `~/.workflow-orchestrator/{slug}-{sha6}/logs/` | `sessions.json` global index, `pr-review-sessions.json`, `pr-review-findings/`, `agent-YYYY-MM-DD.jsonl` logs (7-day rotation). | Yes — same allowlisted root |
 | 4. User-global agent data | `~/.workflow-orchestrator/` | `agents/` (user personas), `skills/` (user skills), `pricing.json`, `trace-fallback/`, `diagnostics/`. | Yes — same allowlisted root |
 | OUT | `java.io.tmpdir`, `PathManager.systemPath/`, IntelliJ config | OkHttp HTTP cache, `PersistentStateComponent` XML, anything under system temp. | **No.** Anything written here is unreachable to agent read tools. |
