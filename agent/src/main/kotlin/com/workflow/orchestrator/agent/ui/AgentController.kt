@@ -2166,12 +2166,29 @@ class AgentController(
         }
         invokeLater {
             if (progress.result.isEmpty() && progress.durationMs == 0L) {
+                // Resolve the displayable per-call timeout for tools whose UI
+                // card shows a live "/ Nm Ss" cap next to the elapsed time.
+                // Only run_command exposes a configurable timeout today; route
+                // through the tool's own resolver so the label and the actual
+                // monitor share one source of truth.
+                val toolTimeoutSeconds: Long? = if (progress.toolName == "run_command") {
+                    try {
+                        val params = kotlinx.serialization.json.Json
+                            .parseToJsonElement(progress.args).jsonObject
+                        com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
+                            .resolveTimeoutSeconds(params, project)
+                    } catch (_: Exception) {
+                        null
+                    }
+                } else null
+
                 // Tool call starting
                 dashboard.appendToolCall(
                     toolCallId = progress.toolCallId,
                     toolName = progress.toolName,
                     args = progress.args,
-                    status = RichStreamingPanel.ToolCallStatus.RUNNING
+                    status = RichStreamingPanel.ToolCallStatus.RUNNING,
+                    toolTimeoutSeconds = toolTimeoutSeconds
                 )
             } else {
                 // Tool call completed

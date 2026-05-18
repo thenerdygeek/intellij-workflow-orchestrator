@@ -326,7 +326,7 @@ interface ChatState {
   addAgentText(text: string): void;
   appendToken(token: string): void;
   endStream(): void;
-  addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus): void;
+  addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus, toolTimeoutSeconds?: number): void;
   setToolCallOpen(toolCallId: string, open: boolean): void;
   updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string, toolCallId?: string, imageRefs?: ImageRef[]): void;
   finalizeToolChain(): void;
@@ -738,7 +738,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus) {
+  addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus, toolTimeoutSeconds?: number) {
     set(state => {
       // Use the LLM-assigned tool call ID so streaming output (keyed by the same ID) resolves correctly.
       // Fall back to a generated ID for legacy callers that don't supply one.
@@ -760,7 +760,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         id = dupKey;
       }
 
-      newMap.set(id, { id, name, args, status });
+      newMap.set(id, {
+        id,
+        name,
+        args,
+        status,
+        ...(toolTimeoutSeconds != null ? { toolTimeoutSeconds } : {}),
+      });
 
       // Flush any in-flight streaming buffer into messages so the tool call
       // below it renders as the next visual item chronologically.

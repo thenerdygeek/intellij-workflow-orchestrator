@@ -51,6 +51,15 @@ export interface ToolCall {
    * below the text output. Multimodal-agent Phase 6.
    */
   imageRefs?: ImageRef[];
+  /**
+   * Resolved per-call timeout (seconds) for tools that surface a live
+   * "/ Nm Ss" cap on their running indicator — currently only `run_command`.
+   * Computed Kotlin-side by `RunCommandTool.resolveTimeoutSeconds` so the
+   * displayed cap matches the actual cap that the in-tool monitor enforces.
+   * Absent for tools without a meaningful displayable timeout; the UI then
+   * suppresses the "/ ..." suffix entirely.
+   */
+  toolTimeoutSeconds?: number;
 }
 
 // ── Plan types ──

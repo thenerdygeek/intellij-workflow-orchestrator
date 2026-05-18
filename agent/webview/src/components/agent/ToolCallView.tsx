@@ -6,7 +6,7 @@ import { Terminal } from '@/components/ui/tool-ui/terminal';
 import { useChatStore } from '@/stores/chatStore';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { formatElapsedMs } from '@/lib/time';
+import { formatElapsedMs, formatElapsedSeconds } from '@/lib/time';
 import { Square } from 'lucide-react';
 
 // ── Tool Categories ──
@@ -215,12 +215,16 @@ export function ToolCallView({ toolCall, isLatest, rolledBack }: ToolCallViewPro
     }
   }, [isFinalized]);
 
-  const timeoutSeconds = (() => {
-    try {
-      const t = JSON.parse(toolCall.args)?.timeout;
-      return t ? Number(t) : (category === 'CMD' ? 120 : undefined);
-    } catch { return category === 'CMD' ? 120 : undefined; }
-  })();
+  // Resolved per-call timeout for the running indicator's "/ Nm Ss" suffix.
+  // Authoritative value comes from Kotlin (RunCommandTool.resolveTimeoutSeconds)
+  // via ToolCall.toolTimeoutSeconds; only render the cap when the bridge
+  // provided one, so the displayed limit can never disagree with the actual
+  // limit enforced server-side.
+  const timeoutSeconds = (typeof toolCall.toolTimeoutSeconds === 'number'
+    && Number.isFinite(toolCall.toolTimeoutSeconds)
+    && toolCall.toolTimeoutSeconds > 0)
+    ? toolCall.toolTimeoutSeconds
+    : undefined;
 
   // For CMD tools and any tool actively streaming output, suppress Tool's built-in output
   // rendering — the Terminal block will render it instead.
@@ -276,7 +280,7 @@ export function ToolCallView({ toolCall, isLatest, rolledBack }: ToolCallViewPro
       <span className="flex-1" />
       {isRunning && liveTimer && (
         <span className="text-[11px] font-mono tabular-nums text-[var(--accent)]">
-          {liveTimer}{timeoutSeconds ? ` / ${timeoutSeconds}s` : ''}
+          {liveTimer}{timeoutSeconds ? ` / ${formatElapsedSeconds(timeoutSeconds)}` : ''}
         </span>
       )}
       {isRunning && (

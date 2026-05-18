@@ -67,23 +67,20 @@ function extractTarget(args: string): string {
 const formatDuration = formatElapsedMs;
 
 /**
- * For run_command tool calls, surface the configured timeout (in seconds) as a
- * "/ Nm Ss" suffix on the running indicator, so users can see how much
- * headroom the command has before the watchdog fires. Falls back to the
- * server-side default of 120s when `timeout` is omitted from the LLM call.
+ * Surface the configured per-call timeout (in seconds) as a "/ Nm Ss" suffix on
+ * the running indicator so users can see how much headroom the tool has before
+ * its watchdog fires. The value is computed Kotlin-side
+ * (`RunCommandTool.resolveTimeoutSeconds`) and threaded through the bridge via
+ * `ToolCall.toolTimeoutSeconds`, so the displayed cap matches the cap the
+ * in-tool monitor actually enforces. Returns null when the tool doesn't expose
+ * a displayable timeout (currently every tool except `run_command`).
  */
 function extractRunCommandTimeoutLabel(toolCall: ToolCall): string | null {
-  if (toolCall.name !== 'run_command') return null;
-  try {
-    const parsed = JSON.parse(toolCall.args) as Record<string, unknown>;
-    const raw = parsed.timeout;
-    const seconds = typeof raw === 'number' && Number.isFinite(raw) && raw > 0
-      ? raw
-      : 120;
-    return formatElapsedSeconds(seconds);
-  } catch {
-    return formatElapsedSeconds(120);
+  const seconds = toolCall.toolTimeoutSeconds;
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) {
+    return null;
   }
+  return formatElapsedSeconds(seconds);
 }
 
 // ── Live elapsed timer (mounted only while RUNNING) ──

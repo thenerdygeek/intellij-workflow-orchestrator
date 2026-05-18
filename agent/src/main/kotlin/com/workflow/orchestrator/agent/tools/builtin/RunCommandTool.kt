@@ -453,7 +453,26 @@ class RunCommandTool(
 
     companion object {
         private val LOG = Logger.getInstance(RunCommandTool::class.java)
-        private const val DEFAULT_TIMEOUT_SECONDS = 300L
+        const val DEFAULT_TIMEOUT_SECONDS = 300L
+
+        /**
+         * Resolve the effective per-call timeout (in seconds) for a run_command
+         * invocation: caller-supplied `timeout` param, falling back to
+         * [DEFAULT_TIMEOUT_SECONDS], clamped to the user's
+         * `runCommandMaxTimeoutMinutes` setting. Single source of truth for
+         * both the in-tool monitor loop (which kills the process at the
+         * limit) and the chat-card timeout label rendered in the webview;
+         * keep both call sites going through this helper so the displayed
+         * cap and the actual cap never drift again.
+         */
+        fun resolveTimeoutSeconds(params: JsonObject, project: Project): Long {
+            val maxTimeoutSeconds = AgentSettings.getInstance(project).state
+                .runCommandMaxTimeoutMinutes
+                .coerceAtLeast(1)
+                .toLong() * 60L
+            return (params["timeout"]?.jsonPrimitive?.int?.toLong() ?: DEFAULT_TIMEOUT_SECONDS)
+                .coerceIn(1, maxTimeoutSeconds)
+        }
         // Max is configurable in settings (Process Tools → "Run-command max
         // timeout"). Default: 10 minutes. Read at execution time so changes
         // apply to subsequent tool calls without restarting the session.
@@ -656,12 +675,7 @@ class RunCommandTool(
                 shellConfig.executable, *shellConfig.args.toTypedArray(), command
             )
 
-            val maxTimeoutSeconds = AgentSettings.getInstance(project).state
-                .runCommandMaxTimeoutMinutes
-                .coerceAtLeast(1)
-                .toLong() * 60L
-            val timeoutSeconds = (params["timeout"]?.jsonPrimitive?.int?.toLong() ?: DEFAULT_TIMEOUT_SECONDS)
-                .coerceIn(1, maxTimeoutSeconds)
+            val timeoutSeconds = resolveTimeoutSeconds(params, project)
             val timeoutMs = timeoutSeconds * 1000
 
             commandLine.workDirectory = workDir

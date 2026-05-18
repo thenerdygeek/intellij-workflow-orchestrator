@@ -951,9 +951,18 @@ class AgentCefPanel(
     fun appendToolCall(
         toolCallId: String = "",
         toolName: String, args: String = "",
-        status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING
+        status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING,
+        // Resolved per-call timeout (seconds) for tools that expose a configurable
+        // wall-clock cap — currently only `run_command`. The webview renders this
+        // as the "/ Nm Ss" suffix on the live elapsed-time indicator. Null for
+        // tools without a meaningful displayable timeout; the webview suppresses
+        // the suffix entirely in that case. Single source of truth lives in
+        // Kotlin (`RunCommandTool.resolveTimeoutSeconds`) so the displayed cap
+        // matches the actual cap that the in-tool monitor enforces.
+        toolTimeoutSeconds: Long? = null
     ) {
-        callJs("appendToolCall(${JsEscape.toJsString(toolCallId)},${JsEscape.toJsString(toolName)},${JsEscape.toJsString(args)},'${status.name}')")
+        val timeoutArg = toolTimeoutSeconds?.toString() ?: "null"
+        callJs("appendToolCall(${JsEscape.toJsString(toolCallId)},${JsEscape.toJsString(toolName)},${JsEscape.toJsString(args)},'${status.name}',$timeoutArg)")
     }
 
     fun updateLastToolCall(

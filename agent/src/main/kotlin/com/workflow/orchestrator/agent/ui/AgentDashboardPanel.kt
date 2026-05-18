@@ -579,11 +579,13 @@ class AgentDashboardPanel(
     fun appendToolCall(
         toolCallId: String = "",
         toolName: String, args: String = "",
-        status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING
+        status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING,
+        toolTimeoutSeconds: Long? = null
     ) {
         val displayName = resolveToolDisplayName(toolName)
-        cefPanel?.appendToolCall(toolCallId, displayName, args, status) ?: fallbackPanel?.appendToolCall(displayName, args, status)
-        broadcast { it.appendToolCall(toolCallId, displayName, args, status) }
+        cefPanel?.appendToolCall(toolCallId, displayName, args, status, toolTimeoutSeconds)
+            ?: fallbackPanel?.appendToolCall(displayName, args, status)
+        broadcast { it.appendToolCall(toolCallId, displayName, args, status, toolTimeoutSeconds) }
     }
 
     fun updateLastToolCall(

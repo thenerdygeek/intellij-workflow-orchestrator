@@ -120,8 +120,16 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   appendToken(token: string) {
     stores?.getChatStore().appendToken(token);
   },
-  appendToolCall(toolCallId: string, toolName: string, args: string, status: string) {
-    stores?.getChatStore().addToolCall(toolCallId, toolName, args, status as ToolCallStatus);
+  appendToolCall(toolCallId: string, toolName: string, args: string, status: string, toolTimeoutSeconds?: number | null) {
+    stores?.getChatStore().addToolCall(
+      toolCallId,
+      toolName,
+      args,
+      status as ToolCallStatus,
+      typeof toolTimeoutSeconds === 'number' && Number.isFinite(toolTimeoutSeconds) && toolTimeoutSeconds > 0
+        ? toolTimeoutSeconds
+        : undefined,
+    );
   },
   updateToolResult(
     result: string,
