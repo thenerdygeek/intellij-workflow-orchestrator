@@ -292,10 +292,33 @@ class AgentDebugController internal constructor(
     /**
      * Gets variables from a stack frame, recursively resolving children up to maxDepth.
      * Caps output at MAX_VARIABLE_CHARS total characters and MAX_CHILDREN_PER_LEVEL children per node.
+     *
+     * Cumulative time budget (feedback.md 2026-05-17 #1): per-value resolution is bounded by
+     * [PRESENTATION_TIMEOUT_MS] (8s) but a frame with 15+ slow values can still walk past the
+     * 120s tool-wrapper timeout. We additionally enforce [GET_VARIABLES_WALL_BUDGET_MS] (90s)
+     * on the entire walk, leaving 30s for response assembly + the tool wrapper to never have
+     * to fire its generic "timed out after 120s" error. When the budget trips, the walk
+     * stops where it is and appends a sentinel so the LLM knows the list is partial.
      */
     suspend fun getVariables(frame: XStackFrame, maxDepth: Int = 2): List<VariableInfo> {
-        val charCounter = IntArray(1) { 0 }
-        return computeChildren(frame, maxDepth, charCounter)
+        val budget = WalkBudget(deadlineMs = System.currentTimeMillis() + GET_VARIABLES_WALL_BUDGET_MS)
+        val result = computeChildren(frame, maxDepth, IntArray(1) { 0 }, budget)
+        return if (budget.tripped) {
+            result + VariableInfo(
+                name = "<budget>",
+                type = "truncated",
+                value = "…wall-clock budget (${GET_VARIABLES_WALL_BUDGET_MS / 1000}s) hit before the full frame could be resolved. " +
+                    "Use evaluate(expression=\"…\") on specific variables you care about, or pass a smaller max_depth.",
+                children = emptyList(),
+                truncated = true,
+            )
+        } else result
+    }
+
+    /** Mutable wall-clock budget shared across the recursive `computeChildren` walk. */
+    private data class WalkBudget(val deadlineMs: Long, var tripped: Boolean = false) {
+        fun expired(): Boolean = tripped || System.currentTimeMillis() >= deadlineMs
+        fun trip() { tripped = true }
     }
 
     /**
@@ -358,9 +381,11 @@ class AgentDebugController internal constructor(
     private suspend fun computeChildren(
         node: XValueContainer,
         depth: Int,
-        charCounter: IntArray
+        charCounter: IntArray,
+        budget: WalkBudget,
     ): List<VariableInfo> {
         if (charCounter[0] >= MAX_VARIABLE_CHARS) return emptyList()
+        if (budget.expired()) { budget.trip(); return emptyList() }
 
         val children = awaitCallback<List<Pair<String, XValue>>>(5000L) { stopped, resume, _ ->
             val result = mutableListOf<XValue>()
@@ -428,9 +453,13 @@ class AgentDebugController internal constructor(
 
         if (children == null) return emptyList()
 
-        return children.map { (name, value) ->
+        // mapNotNull so we can bail mid-walk when the wall-clock budget trips — the
+        // accumulated VariableInfos so far are still returned by the caller, and
+        // the WalkBudget.tripped flag signals to getVariables that a sentinel is needed.
+        return children.mapNotNull { (name, value) ->
+            if (budget.expired()) { budget.trip(); return@mapNotNull null }
             if (value is TruncatedSentinelXValue) {
-                return@map VariableInfo(
+                return@mapNotNull VariableInfo(
                     name = "<truncated>",
                     type = "truncated",
                     value = "…and ${value.remaining} more child${if (value.remaining == 1) "" else "ren"} (use variable_name to expand a specific one)",
@@ -441,8 +470,8 @@ class AgentDebugController internal constructor(
             val presentation = resolvePresentation(value)
             charCounter[0] += name.length + presentation.first.length + presentation.second.length
 
-            val childVars = if (depth > 0 && charCounter[0] < MAX_VARIABLE_CHARS) {
-                computeChildren(value, depth - 1, charCounter)
+            val childVars = if (depth > 0 && charCounter[0] < MAX_VARIABLE_CHARS && !budget.expired()) {
+                computeChildren(value, depth - 1, charCounter, budget)
             } else {
                 emptyList()
             }
@@ -484,7 +513,11 @@ class AgentDebugController internal constructor(
                     if (stopped.get()) return
                     val pair = Pair(type ?: "unknown", value)
                     latest.set(pair)
-                    if (!isPlaceholderValue(value)) resume(pair)
+                    // Gate on BOTH the value AND type slots — feedback 2026-05-17 #2 showed
+                    // IntelliJ occasionally surfaces the "Collecting data…" placeholder in the
+                    // type field while the value side is still empty. Treating either as a
+                    // placeholder keeps us in the wait loop until the real call arrives.
+                    if (!isPlaceholderValue(value) && !isPlaceholderValue(type ?: "")) resume(pair)
                 }
 
                 override fun setPresentation(
@@ -513,9 +546,10 @@ class AgentDebugController internal constructor(
                         override fun renderError(error: String) { sb.append("<error: ").append(error).append('>') }
                     })
                     val rendered = sb.toString()
-                    val pair = Pair(presentation.type ?: "unknown", rendered)
+                    val type = presentation.type ?: "unknown"
+                    val pair = Pair(type, rendered)
                     latest.set(pair)
-                    if (!isPlaceholderValue(rendered)) resume(pair)
+                    if (!isPlaceholderValue(rendered) && !isPlaceholderValue(type)) resume(pair)
                 }
 
                 override fun setFullValueEvaluator(fullValueEvaluator: XFullValueEvaluator) {}
@@ -525,7 +559,19 @@ class AgentDebugController internal constructor(
         }
         // Resume succeeded → real value. Timed out → fall back to whatever placeholder we last saw
         // (better signal than "<timed out>" — the LLM can still see the type and the lazy-load note).
-        return result ?: latest.get() ?: Pair("unknown", "<timed out>")
+        if (result != null) return result
+        // Timed out. If the only thing we ever captured was the "Collecting data…" placeholder,
+        // returning it verbatim trains the LLM to think the value LITERALLY rendered as that
+        // string — exactly the regression behavior feedback 2026-05-17 #2 reported. Emit an
+        // explicit "not ready" signal instead, preserving the type if we saw a real one.
+        val captured = latest.get()
+        if (captured == null) return Pair("unknown", "<timed out>")
+        val (capType, capValue) = captured
+        val typeOut = if (isPlaceholderValue(capType)) "unknown" else capType
+        val valueOut = if (isPlaceholderValue(capValue)) {
+            "<value not ready — JDI evaluation didn't complete in ${PRESENTATION_TIMEOUT_MS / 1000}s; retry the evaluate / get_variables call>"
+        } else capValue
+        return Pair(typeOut, valueOut)
     }
 
     /**
@@ -778,6 +824,15 @@ class AgentDebugController internal constructor(
          * 50ms-2s but worst-case (heap-pressure debuggee, slow JDWP) up to ~6s observed.
          */
         const val PRESENTATION_TIMEOUT_MS = 8_000L
+
+        /**
+         * Cumulative wall-clock budget for a full [getVariables] walk. Chosen at 90s,
+         * leaving 30s of safety margin under the 120s per-tool wrapper timeout in
+         * AgentLoop so we never hit the generic "timed out after 120s" path —
+         * we instead emit a structured "budget tripped" sentinel and return what was
+         * collected. Feedback.md 2026-05-17 #1.
+         */
+        const val GET_VARIABLES_WALL_BUDGET_MS = 90_000L
     }
 }
 

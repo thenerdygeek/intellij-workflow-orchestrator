@@ -199,4 +199,49 @@ class DebugFeedbackFixesTest {
         // with the placeholder.
         assertFalse(ctrl.isPlaceholderValue("\"some data here\""))
     }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // v0.85.31 follow-up coverage — feedback 2026-05-17
+    // ──────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("§v31-1 — GET_VARIABLES_WALL_BUDGET_MS leaves safety margin under 120s tool wrap")
+    fun `wall budget under tool timeout`() {
+        // Defensive invariant: the 90s cumulative budget MUST be strictly less than the
+        // 120s per-tool default in AgentLoop, with enough margin to emit a sentinel and
+        // format the response. Bumping the budget without adjusting AgentLoop's tool
+        // timeout would re-introduce the v0.85.30 regression where get_variables blew
+        // past 120s on slow JDI sessions.
+        val budget = AgentDebugController.GET_VARIABLES_WALL_BUDGET_MS
+        assertTrue(budget < 120_000L, "Budget $budget must be < 120s tool timeout")
+        assertTrue(budget >= 60_000L, "Budget $budget should be ≥ 60s — too small starves users on slow JVMs")
+        assertTrue(120_000L - budget >= 20_000L,
+            "Need ≥ 20s of slack between budget and tool wrap so the sentinel and response can flush")
+    }
+
+    @Test
+    @DisplayName("§v31-1 — PRESENTATION_TIMEOUT_MS fits within the cumulative budget")
+    fun `presentation timeout fits in budget`() {
+        // Each per-value resolution can take up to PRESENTATION_TIMEOUT_MS; a frame of N
+        // variables can therefore take up to N × PRESENTATION_TIMEOUT_MS in the worst case.
+        // The cumulative budget is what stops that from blowing past 120s.
+        val presentation = AgentDebugController.PRESENTATION_TIMEOUT_MS
+        val budget = AgentDebugController.GET_VARIABLES_WALL_BUDGET_MS
+        assertTrue(presentation < budget,
+            "Per-value timeout ($presentation ms) must be smaller than wall budget ($budget ms)")
+    }
+
+    @Test
+    @DisplayName("§v31-2 — placeholder string in TYPE slot is detected (not just VALUE)")
+    fun `placeholder in type slot detected`() {
+        val ctrl = AgentDebugController(project)
+        // Feedback 2026-05-17 #2 said "Collecting data&" appeared as the result TYPE, not
+        // the value. The prior fix only checked value. The new fix gates on both slots —
+        // we exercise isPlaceholderValue against type-shaped strings the platform might
+        // surface.
+        assertTrue(ctrl.isPlaceholderValue("Collecting data…"))
+        assertTrue(ctrl.isPlaceholderValue("Collecting data"))
+        // The startsWith() match in isPlaceholderValue covers the "& ellipsis decoded" case:
+        assertTrue(ctrl.isPlaceholderValue("Collecting data&"))
+    }
 }

@@ -68,11 +68,31 @@ internal suspend fun executeStep(
         if (pauseEvent != null) {
             sb.append("Stepped to ${pauseEvent.file ?: "unknown"}:${pauseEvent.line ?: "?"}\n")
         } else {
-            sb.append("Step completed but session did not pause within 5s (may have hit end of execution)\n")
+            // Pause event didn't arrive in 5s, but the session is often actually paused already —
+            // we just missed the event because of EDT/listener race conditions (audit finding C5,
+            // mirrored from DebugStepTool.executeRunToCursor). Re-check the actual state so the
+            // LLM gets an accurate message and doesn't conclude "the step failed" when it didn't.
+            // Feedback 2026-05-17 #3.
+            val currentlySuspended = withContext(Dispatchers.EDT) {
+                session.isSuspended && session.currentStackFrame != null
+            }
+            val pos = withContext(Dispatchers.EDT) { session.currentPosition }
+            val posStr = pos?.let { "${it.file.path}:${(it.line + 1)}" } ?: "unknown location"
+            if (currentlySuspended) {
+                sb.append("Step $actionName completed. Pause event not observed within 5s, ")
+                    .append("but the session is currently SUSPENDED at $posStr — the step succeeded; ")
+                    .append("the wait simply didn't see the event in time.\n")
+            } else {
+                sb.append("Step $actionName completed but session is no longer suspended ")
+                    .append("(may have run past the next pause point or hit end of execution). ")
+                    .append("Use get_state to confirm session status.\n")
+            }
         }
         sb.append("Session: $name\n")
 
-        // Auto-include top-frame variables (depth 1) to save a round-trip
+        // Auto-include top-frame variables (depth 1) to save a round-trip — but only when the
+        // session is actually paused (currentStackFrame is non-null). Otherwise we'd waste a
+        // 90s wall budget on a session that won't return any meaningful frame state.
         val frame = session.currentStackFrame
         if (frame != null) {
             val variables = controller.getVariables(frame, 1)
