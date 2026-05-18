@@ -2,10 +2,13 @@ package com.workflow.orchestrator.agent.tools.runtime
 
 import com.intellij.openapi.project.Project
 import com.intellij.util.execution.ParametersListUtil
+import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.framework.MavenUtils
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 
 internal const val CATEGORY_INVALID_ARGS = "INVALID_ARGS"
@@ -53,6 +56,30 @@ internal suspend fun executeRunMavenGoal(
                 "Check for unbalanced quotes or invalid escape sequences."
         )
     }
+    val modules: List<String> = params["modules"]?.jsonArray
+        ?.mapNotNull { it.jsonPrimitive.content.takeIf { s -> s.isNotBlank() } }
+        ?: emptyList()
+    val offline: Boolean = params["offline"]?.jsonPrimitive?.booleanOrNull ?: false
+
+    val approvalArgs = buildString {
+        append("mvn ")
+        append(goals)
+        if (modules.isNotEmpty()) append(" -pl ").append(modules.joinToString(","))
+        if (offline) append(" -o")
+    }
+    val approval = tool.requestApproval(
+        toolName = "java_runtime_exec.run_maven_goal",
+        args = approvalArgs,
+        riskLevel = "medium",
+        allowSessionApproval = true
+    )
+    if (approval == ApprovalResult.DENIED) {
+        return buildPreflightError(
+            CATEGORY_APPROVAL_DENIED,
+            "user declined approval for: $approvalArgs"
+        )
+    }
+
     // Remaining pre-flights, approval, launch wired in later tasks
     return buildPreflightError(CATEGORY_EXECUTION_EXCEPTION, "not yet implemented past blank-goals pre-flight")
 }

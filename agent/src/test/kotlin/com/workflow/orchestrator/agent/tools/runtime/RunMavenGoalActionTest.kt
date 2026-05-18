@@ -159,4 +159,21 @@ class RunMavenGoalActionTest {
             tokens
         )
     }
+
+    @Test
+    fun `approval denial returns APPROVAL_DENIED`() = runTest {
+        coEvery {
+            tool.requestApproval(any(), any(), any(), any())
+        } returns ApprovalResult.DENIED
+        val params = buildJsonObject {
+            put("action", "run_maven_goal")
+            put("goals", "clean install")
+        }
+        val result = executeRunMavenGoal(params, project, tool)
+        assertTrue(result.isError)
+        assertTrue(
+            result.content.startsWith("APPROVAL_DENIED:"),
+            "expected APPROVAL_DENIED: prefix, was: ${result.content}"
+        )
+    }
 }
