@@ -34,6 +34,7 @@ import com.workflow.orchestrator.core.model.sonar.LineRange
 import com.workflow.orchestrator.core.model.sonar.SonarFileComponent
 import com.workflow.orchestrator.core.services.SonarService
 import com.workflow.orchestrator.core.services.ToolResult
+import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.sonar.api.SonarApiClient
 import com.workflow.orchestrator.sonar.util.SonarRatingUtils
 import kotlinx.coroutines.async
@@ -55,6 +56,29 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     private val client: SonarApiClient?
         get() = SonarDataService.getInstance(project).getSharedApiClient()
 
+    // Session cache for the issues-action preflight (`/api/components/show`). Keyed on
+    // (sonarUrl, projectKey) so a mid-session URL change in settings doesn't return
+    // stale "exists" verdicts for the new server. Only successful Sonar responses are
+    // cached — transient errors (NETWORK_ERROR / 5xx) are not, so a flaky probe can
+    // recover on the next call without waiting out the TTL.
+    private val componentExistsCache = java.util.concurrent.ConcurrentHashMap<Pair<String, String>, Pair<Long, Boolean>>()
+
+    private suspend fun componentExistsCached(api: SonarApiClient, projectKey: String): ApiResult<Boolean> {
+        val baseUrl = ConnectionSettings.getInstance().state.sonarUrl
+        val key = baseUrl to projectKey
+        val now = System.currentTimeMillis()
+        componentExistsCache[key]?.let { (expiryMs, exists) ->
+            if (now < expiryMs) return ApiResult.Success(exists)
+        }
+        return when (val result = api.componentExists(projectKey)) {
+            is ApiResult.Success -> {
+                componentExistsCache[key] = (now + COMPONENT_EXISTS_TTL_MS) to result.data
+                result
+            }
+            is ApiResult.Error -> result
+        }
+    }
+
     override suspend fun getIssues(
         projectKey: String,
         filePath: String?,
@@ -75,7 +99,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         // explicit error instead of silently masquerading as a clean project.
         // Transient preflight errors (network / 5xx) fall through to the main
         // call so a bad probe doesn't block a healthy fetch.
-        when (val precheck = api.componentExists(projectKey)) {
+        when (val precheck = componentExistsCached(api, projectKey)) {
             is ApiResult.Success -> if (!precheck.data) return ToolResult(
                 data = emptyList(),
                 summary = "SonarQube project '$projectKey' not found.",
@@ -1397,6 +1421,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
 
     companion object {
         private const val maxFilesDefault = 20
+        private const val COMPONENT_EXISTS_TTL_MS = 5L * 60 * 1000  // matches the 5-min cache convention used elsewhere
 
         @JvmStatic
         fun getInstance(project: Project): SonarServiceImpl =
