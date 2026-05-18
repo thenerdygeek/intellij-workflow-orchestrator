@@ -326,6 +326,43 @@ export function installMockBridge(): void {
     w.__bridge?.addDebugLogEntry?.(entryJson);
   };
 
+  // Dev seed: populate a user message + a sample aggregate diff so the
+  // Checkpoint v2 UI surfaces (hover button on user message, bottom bar
+  // with per-file revert) are visible immediately on page load. Browser-only.
+  const seedCheckpointDemo = () => {
+    // Pump in 3 user-side messages so the hover affordance is reachable on
+    // multiple bubbles (not just one).
+    w.appendUserMessage?.('Create a file test1.txt with content hello');
+    w.appendUserMessage?.('Now add the line "world" to test1.txt');
+    w.appendUserMessage?.('Refactor test1.txt to use upper-case');
+
+    // Aggregate diff with a few touched files so EditStatsBar renders the
+    // collapsed bar + expand-to-per-file rows. Mix of statuses (MODIFIED /
+    // CREATED) so Fix-Pass-5 zero-row filtering is visible too.
+    const sampleDiff = {
+      totalAdded: 57,
+      totalRemoved: 11,
+      files: [
+        { path: 'src/main/kotlin/.../UserService.kt', added: 45, removed: 8, status: 'MODIFIED' },
+        { path: 'src/main/kotlin/.../UserController.kt', added: 12, removed: 3, status: 'MODIFIED' },
+        { path: 'src/test/kotlin/.../UserServiceTest.kt', added: 0, removed: 0, status: 'CREATED' },
+      ],
+    };
+    w.updateAggregateDiff?.(JSON.stringify(sampleDiff));
+  };
+  // Defer to next tick so the bridge handlers are wired before we push state.
+  setTimeout(seedCheckpointDemo, 0);
+
+  // Mock _revertToUserMessage / _revertFileToBaseline / _revertAll so the
+  // confirmation modal flow is exerciseable in dev — they just log instead
+  // of actually reverting (no backend in dev).
+  w._revertToUserMessage = (ts: number) => console.log(`[bridge:dev] _revertToUserMessage(${ts})`);
+  w._revertFileToBaseline = (path: string) => console.log(`[bridge:dev] _revertFileToBaseline(${path})`);
+  w._revertAll = () => console.log('[bridge:dev] _revertAll()');
+  // _navigateToFile is the IDE "open this file in editor" bridge. Real impl
+  // routes to IntelliJ's FileEditorManager via AgentCefPanel; dev just logs.
+  w._navigateToFile = (path: string) => console.log(`[bridge:dev] _navigateToFile(${path})`);
+
   w.__mock = { simulateAgentResponse, simulatePlan, simulateQuestions, simulateToolCalls, simulateTheme, simulateStreaming, simulateDiff, clearChat };
   console.log(
     '%c[Mock Bridge] Dev mode active. Available simulations:\n' +
@@ -335,7 +372,12 @@ export function installMockBridge(): void {
     '  __mock.simulateToolCalls()\n' +
     '  __mock.simulateStreaming()\n' +
     '  __mock.simulateTheme(true|false)\n' +
-    '  __mock.clearChat()',
+    '  __mock.clearChat()\n' +
+    '\n' +
+    'Checkpoint v2 UI demo seeded automatically:\n' +
+    '  - 3 user messages (hover any to see "⟲ Checkpoint to here")\n' +
+    '  - aggregate diff with 3 files (click ▾ on the bottom bar to expand)\n' +
+    '  - revert callbacks log to console (no real backend in dev)',
     'color: #60a5fa; font-weight: bold'
   );
 }

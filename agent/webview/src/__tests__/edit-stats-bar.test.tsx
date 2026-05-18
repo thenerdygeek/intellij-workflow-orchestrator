@@ -14,6 +14,7 @@ describe('EditStatsBar', () => {
   beforeEach(() => {
     (window as any)._revertFileToBaseline = vi.fn();
     (window as any)._revertAll = vi.fn();
+    (window as any)._navigateToFile = vi.fn();
   });
 
   it('renders nothing when diff is null', () => {
@@ -41,6 +42,13 @@ describe('EditStatsBar', () => {
     const fooRow = screen.getByText('src/Foo.kt').closest('[data-testid="file-row"]')!;
     fireEvent.click(fooRow.querySelector('[aria-label="Revert this file"]')!);
     expect((window as any)._revertFileToBaseline).toHaveBeenCalledWith('src/Foo.kt');
+  });
+
+  it('clicking the file path opens the file via _navigateToFile', () => {
+    render(<EditStatsBar diff={sampleDiff} />);
+    fireEvent.click(screen.getByLabelText(/expand/i));
+    fireEvent.click(screen.getByText('src/Foo.kt'));
+    expect((window as any)._navigateToFile).toHaveBeenCalledWith('src/Foo.kt');
   });
 
   it('global revert calls _revertAll', () => {

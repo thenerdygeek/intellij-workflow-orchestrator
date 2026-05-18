@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { AggregateDiff } from '@/bridge/types';
+import { kotlinBridge } from '@/bridge/jcef-bridge';
 
 interface Props { diff: AggregateDiff | null; }
 
@@ -54,7 +55,15 @@ export function EditStatsBar({ diff }: Props) {
                 data-testid="file-row"
                 className="flex items-center gap-3 py-0.5 text-[11px] font-mono"
               >
-                <span className="flex-1 truncate" style={{ color: 'var(--fg)' }}>{f.path}</span>
+                <button
+                  className="flex-1 truncate text-left hover:underline cursor-pointer"
+                  style={{ color: 'var(--fg)' }}
+                  onClick={() => kotlinBridge.navigateToFile(f.path)}
+                  title={`Open ${f.path} in the IDE`}
+                  aria-label={`Open ${f.path}`}
+                >
+                  {f.path}
+                </button>
                 <span style={{ color: 'var(--diff-add-fg, #b5cea8)' }}>+{f.added}</span>
                 <span style={{ color: 'var(--diff-rem-fg, #f4a5a5)' }}>-{f.removed}</span>
                 <button
