@@ -175,7 +175,7 @@ class SonarTool : AgentTool {
                     optional("file", "string") {
                         llmSeesIt("Optional relative file path filter — for issues")
                         humanReadable("Scope the issue list to a single file. Pass the repo-relative path, not the full component key.")
-                        whenPresent("Sent as `files` query param to narrow the issue set to that file only.")
+                        whenPresent("Sent as `componentKeys=<project_key>:<file>` to narrow the issue set to that file only.")
                         whenAbsent("All files in the project are included (up to the 500-result cap).")
                         example("src/main/java/com/example/OrderService.java")
                     }

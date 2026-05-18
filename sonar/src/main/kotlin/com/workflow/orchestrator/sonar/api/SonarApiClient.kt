@@ -92,15 +92,8 @@ class SonarApiClient(
         inNewCodePeriod: Boolean = false
     ): ApiResult<List<SonarIssueDto>> {
         log.info("[Sonar:API] GET /api/issues/search for project '$projectKey' branch='${branch ?: "default"}' file='${filePath ?: "all"}' newCode=$inNewCodePeriod")
-        val params = buildString {
-            append("/api/issues/search?componentKeys=")
-            append(URLEncoder.encode(projectKey, "UTF-8"))
-            append("&resolved=false&ps=500")
-            branch?.let { append("&branch=${URLEncoder.encode(it, "UTF-8")}") }
-            filePath?.let { append("&components=${URLEncoder.encode(filePath, "UTF-8")}") }
-            if (inNewCodePeriod) append("&inNewCodePeriod=true")
-        }
-        return get<SonarIssueSearchResult>(params).map { it.issues }
+        return get<SonarIssueSearchResult>(buildIssuesSearchPath(projectKey, branch, filePath, inNewCodePeriod))
+            .map { it.issues }
     }
 
     /**
@@ -113,15 +106,24 @@ class SonarApiClient(
         inNewCodePeriod: Boolean = false
     ): ApiResult<SonarIssueSearchResult> {
         log.info("[Sonar:API] GET /api/issues/search (with paging) for project '$projectKey' branch='${branch ?: "default"}' newCode=$inNewCodePeriod")
-        val params = buildString {
-            append("/api/issues/search?componentKeys=")
-            append(URLEncoder.encode(projectKey, "UTF-8"))
-            append("&resolved=false&ps=500")
-            branch?.let { append("&branch=${URLEncoder.encode(it, "UTF-8")}") }
-            filePath?.let { append("&components=${URLEncoder.encode(filePath, "UTF-8")}") }
-            if (inNewCodePeriod) append("&inNewCodePeriod=true")
-        }
-        return get<SonarIssueSearchResult>(params)
+        return get<SonarIssueSearchResult>(buildIssuesSearchPath(projectKey, branch, filePath, inNewCodePeriod))
+    }
+
+    // Sonar's /api/issues/search filters by component via `componentKeys=<projectKey>:<path>`
+    // (or just `<projectKey>` for project-wide). The bare `&components=` parameter we used
+    // pre-2026-05-18 was silently ignored, returning the full 500-issue project result.
+    private fun buildIssuesSearchPath(
+        projectKey: String,
+        branch: String?,
+        filePath: String?,
+        inNewCodePeriod: Boolean,
+    ): String = buildString {
+        append("/api/issues/search?componentKeys=")
+        val componentKey = if (filePath != null) "$projectKey:$filePath" else projectKey
+        append(URLEncoder.encode(componentKey, "UTF-8"))
+        append("&resolved=false&ps=500")
+        branch?.let { append("&branch=${URLEncoder.encode(it, "UTF-8")}") }
+        if (inNewCodePeriod) append("&inNewCodePeriod=true")
     }
 
     suspend fun getMeasures(

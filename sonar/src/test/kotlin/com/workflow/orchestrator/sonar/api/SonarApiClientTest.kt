@@ -98,6 +98,52 @@ class SonarApiClientTest {
     }
 
     @Test
+    fun `getIssues with filePath scopes componentKeys to the file component`() = runTest {
+        // Sonar's /api/issues/search filters by component via componentKeys=projectKey:path.
+        // Sending a bare &components=path (the prior broken behavior) is silently ignored
+        // by Sonar, which then returns the unfiltered 500-issue project-wide result —
+        // exactly the symptom users reported on 2026-05-18.
+        server.enqueue(MockResponse().setBody(fixture("issues-search.json")))
+
+        client.getIssues(
+            projectKey = "com.myapp:my-app",
+            filePath = "src/main/java/com/example/AbstractService.java"
+        )
+
+        val path = server.takeRequest().path!!
+        val decoded = java.net.URLDecoder.decode(path, "UTF-8")
+        assertTrue(
+            decoded.contains("componentKeys=com.myapp:my-app:src/main/java/com/example/AbstractService.java"),
+            "expected componentKeys=<projectKey>:<filePath> in $decoded",
+        )
+        assertFalse(
+            decoded.contains("&components="),
+            "must NOT send the ignored &components= param: $decoded",
+        )
+    }
+
+    @Test
+    fun `getIssuesWithPaging with filePath scopes componentKeys to the file component`() = runTest {
+        server.enqueue(MockResponse().setBody(fixture("issues-search.json")))
+
+        client.getIssuesWithPaging(
+            projectKey = "com.myapp:my-app",
+            filePath = "src/main/java/com/example/AbstractService.java"
+        )
+
+        val path = server.takeRequest().path!!
+        val decoded = java.net.URLDecoder.decode(path, "UTF-8")
+        assertTrue(
+            decoded.contains("componentKeys=com.myapp:my-app:src/main/java/com/example/AbstractService.java"),
+            "expected componentKeys=<projectKey>:<filePath> in $decoded",
+        )
+        assertFalse(
+            decoded.contains("&components="),
+            "must NOT send the ignored &components= param: $decoded",
+        )
+    }
+
+    @Test
     fun `getMeasures returns per-file coverage`() = runTest {
         server.enqueue(MockResponse().setBody(fixture("measures-component-tree.json")))
 
