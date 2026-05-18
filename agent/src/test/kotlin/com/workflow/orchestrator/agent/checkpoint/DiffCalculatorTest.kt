@@ -34,4 +34,26 @@ class DiffCalculatorTest {
         val (a, r) = DiffCalculator.countDiff("", "x\ny\nz")
         assertEquals(3, a); assertEquals(0, r)
     }
+
+    @Test
+    fun `mixed line endings normalize to the same diff`() {
+        val (a1, r1) = DiffCalculator.countDiff("foo\r\nbar\r\nbaz", "foo\nbar\nbaz")
+        assertEquals(0, a1); assertEquals(0, r1)
+
+        val (a2, r2) = DiffCalculator.countDiff("foo\rbar\rbaz", "foo\nbar\nbaz")
+        assertEquals(0, a2); assertEquals(0, r2)
+    }
+
+    @Test
+    fun `over cap returns line-count fallback without OOM`() {
+        val big = "x\n".repeat(10_000)             // 10,000 lines
+        val same = "x\n".repeat(10_000)
+        val (a, r) = DiffCalculator.countDiff(big, same)
+        // Fallback returns net delta only — same-length lists report (0, 0).
+        assertEquals(0, a); assertEquals(0, r)
+
+        val bigger = "x\n".repeat(10_500)
+        val (a2, r2) = DiffCalculator.countDiff(big, bigger)
+        assertEquals(500, a2); assertEquals(0, r2)
+    }
 }

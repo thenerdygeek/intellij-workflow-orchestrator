@@ -578,6 +578,8 @@ Per-user-message file-copy snapshots backed by `SessionCheckpointStore`. Impleme
     meta.json                    ← { messageTs, userText, createdAt, createdPaths, touchedPaths }
 ```
 
+**Cross-platform snapshot paths.** Absolute paths are normalized via `snapshotRelative(path)`: backslashes → forward slashes, `C:` → `C` (drive letter sans colon), leading `/` stripped. So `/Users/me/Foo.kt` → `Users/me/Foo.kt` and `C:\Users\me\Foo.kt` → `C/Users/me/Foo.kt`. This prevents Java's `File(parent, child)` from discarding the parent when given a Windows-absolute child path, which would have written snapshots OVER the original source files.
+
 ### Capture trigger
 `AgentLoop` calls `checkpointStore.captureIfFirstTouch(currentUserMsgTs, path)` for every path argument of every `WRITE_TOOLS` invocation, just before the tool executes. First touch per (msg, path) copies bytes; subsequent calls no-op. Non-existent paths are recorded in `meta.json.createdPaths` instead.
 
