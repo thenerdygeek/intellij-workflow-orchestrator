@@ -57,4 +57,63 @@ class ContextManagerTwoTierHelpersTest {
         seed(listOf(u("only one")))
         assertEquals(0, cm.findLastUserIndex())
     }
+
+    // ---- findTokenWeightedCutForLayer4 ----
+
+    @Test
+    fun `token-weighted cut returns sliceStart when single small message in slice`() {
+        // estimateMessageTokens for "x" is ~ ceil(1/3.5) = 1, well under any realistic target.
+        seed(listOf(u("anchor"), a("x")))
+        val cut = cm.findTokenWeightedCutForLayer4(
+            sliceStart = 1,
+            sliceEnd = 2,
+            targetTokensFromEnd = 100,
+        )
+        assertEquals(1, cut, "cut should clamp to sliceStart when slice's total tokens are below target")
+    }
+
+    @Test
+    fun `token-weighted cut stops at the message that brings sum past target`() {
+        // estimateMessageTokens uses char/3.5. Each "x"*350 = 100 tokens.
+        val big = "x".repeat(350)
+        seed(listOf(
+            u("anchor"),
+            a(big),  // index 1, ~100 tokens
+            a(big),  // index 2, ~100 tokens
+            a(big),  // index 3, ~100 tokens
+            a(big),  // index 4, ~100 tokens
+        ))
+        // Walk backward from end (index 5) summing tokens. After including index 4 -> 100,
+        // index 3 -> 200, index 2 -> 300 (>= 250). Stop at index 2.
+        val cut = cm.findTokenWeightedCutForLayer4(
+            sliceStart = 1,
+            sliceEnd = 5,
+            targetTokensFromEnd = 250,
+        )
+        assertEquals(2, cut)
+    }
+
+    @Test
+    fun `token-weighted cut clamps to sliceStart never below`() {
+        val big = "x".repeat(350)
+        seed(listOf(u("anchor"), a(big), a(big)))
+        // Target much larger than slice can supply — cut clamps to sliceStart.
+        val cut = cm.findTokenWeightedCutForLayer4(
+            sliceStart = 1,
+            sliceEnd = 3,
+            targetTokensFromEnd = 10_000,
+        )
+        assertEquals(1, cut, "cut must not go below sliceStart")
+    }
+
+    @Test
+    fun `token-weighted cut returns sliceEnd when slice is empty`() {
+        seed(listOf(u("anchor")))
+        val cut = cm.findTokenWeightedCutForLayer4(
+            sliceStart = 1,
+            sliceEnd = 1,
+            targetTokensFromEnd = 100,
+        )
+        assertEquals(1, cut)
+    }
 }

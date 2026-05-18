@@ -663,6 +663,29 @@ class ContextManager(
         return -1
     }
 
+    /**
+     * Walk backward from [sliceEnd] (exclusive), accumulating estimateMessageTokens(msg).
+     * Return the lowest index where the running sum >= [targetTokensFromEnd].
+     * Clamped: result is always >= [sliceStart], so L4 never extends into L2 or earlier.
+     *
+     * Pure function — does not mutate messages.
+     */
+    internal fun findTokenWeightedCutForLayer4(
+        sliceStart: Int,
+        sliceEnd: Int,
+        targetTokensFromEnd: Int,
+    ): Int {
+        if (sliceEnd <= sliceStart) return sliceEnd
+        var runningTokens = 0
+        var idx = sliceEnd
+        while (idx > sliceStart) {
+            idx--
+            runningTokens += estimateMessageTokens(messages[idx])
+            if (runningTokens >= targetTokensFromEnd) return idx
+        }
+        return sliceStart
+    }
+
     // ── Image helpers ─────────────────────────────────────────────────────────
 
     private fun stripImagePartsFromAllMessages() {
