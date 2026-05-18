@@ -596,6 +596,7 @@ Per-user-message file-copy snapshots backed by `SessionCheckpointStore`. Impleme
 - `run_command`, `background_process`, `send_stdin` writes are NOT snapshotted (no path arg). Documented.
 - `refactor_rename` snapshots both `from_path` and `to_path` independently; double-revert may produce duplicates.
 - External (non-agent) writes during an active turn are not tracked.
+- **Steering-and-revert invariant**: steering messages are in-memory only (`ContextManager.addUserMessage`); they DO NOT call `messageStateHandler.addToApiConversationHistory`. Reverting to a user message correctly drops only the persisted api entries because `UiMessage.conversationHistoryIndex` reflects the apiHistory.size-1 at insertion time. Pinned by `MessageStateHandlerTruncateTest.truncateMessagesAtTs preserves correctness when STEERING_RECEIVED uiMessages interleave`. If a future change starts persisting steering to apiHistory, this test fails — re-derive the index math then.
 
 ### Key files
 - `checkpoint/CheckpointModels.kt` — data classes (`CheckpointMeta`, `FileChange`, `FileStatus`, `AggregateDiff`, `RevertResult`)
