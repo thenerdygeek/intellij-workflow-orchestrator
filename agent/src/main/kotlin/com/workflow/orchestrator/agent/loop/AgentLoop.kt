@@ -2168,6 +2168,19 @@ class AgentLoop(
                             "returned incorrect results, or failed unexpectedly. " +
                             "If you have no feedback, call it with an empty string."
                         )
+                        // Symmetric pre-exit drain: mirror the non-feedback else branch
+                        // below. The drain lands after the feedback nudge so the steering
+                        // is the most recent user turn — the LLM treats it as a follow-up
+                        // and addresses it; if it calls attempt_completion again instead
+                        // of feedback, that re-entry goes through this same Completion
+                        // branch with awaitingFeedback=true → falls through to else,
+                        // returning the new Completed and superseding pendingCompletion.
+                        // Without this drain, Stage 0.5 of the next iteration still picks
+                        // up the message, but the UI pill stays orphaned for an extra
+                        // iteration and history-ordering is brittle to future refactors.
+                        if (drainSteeringIntoContextOnExit()) {
+                            userInputReceivedInToolCall = true
+                        }
                         // Loop continues — LLM sees the feedback request next turn.
                     } else {
                         // Collapse the just-persisted [assistant w/ completion tool_call,
@@ -2181,6 +2194,16 @@ class AgentLoop(
                         // pair becomes a single plain assistant turn.
                         contextManager.collapseLastCompletionToolPair()
                         messageStateHandler?.collapseLastCompletionToolPair()
+                        // Pre-exit steering drain: if the user typed mid-final-stream
+                        // (between the iteration-start drain and this completion), do NOT
+                        // exit. Inject their text as a user turn after the just-collapsed
+                        // assistant text and let the LLM address the follow-up on the next
+                        // iteration. Mirrors the feedbackEnabled branch above which also
+                        // defers the exit instead of dropping the queued message.
+                        if (drainSteeringIntoContextOnExit()) {
+                            userInputReceivedInToolCall = true
+                            return null
+                        }
                         return LoopResult.Completed(
                             summary = toolResult.content,
                             iterations = iteration,
@@ -2196,6 +2219,16 @@ class AgentLoop(
                 }
                 is ToolResultType.SessionHandoff -> {
                     val handoff = toolResult.type
+                    // Pre-exit steering drain: if the user typed mid-final-stream, defer
+                    // the new_task handoff and address the follow-up first. The LLM can
+                    // re-issue new_task on a later turn if it still wants to hand off.
+                    // Without this, the queued message is silently dropped by the
+                    // controller's onComplete queue clear.
+                    if (drainSteeringIntoContextOnExit()) {
+                        userInputReceivedInToolCall = true
+                        LOG.info("[Loop] Steering arrived during new_task stream — deferring handoff to next turn")
+                        return null
+                    }
                     onDebugLog?.invoke("info", "loop_exit", "Exit: new_task_session_handoff", mapOf("iteration" to iteration))
                     sessionMetrics?.recordIterationEnd()
                     return LoopResult.SessionHandoff(
@@ -2257,17 +2290,20 @@ class AgentLoop(
     private fun filesModifiedList(): List<String> = modifiedFiles.toList()
 
     /** Build a Failed result with current loop tracking state. */
-    private fun makeFailed(error: String, iterations: Int, reason: FailureReason): LoopResult.Failed = LoopResult.Failed(
-        error = error,
-        reason = reason,
-        iterations = iterations,
-        tokensUsed = totalTokensUsed,
-        inputTokens = totalInputTokens,
-        outputTokens = totalOutputTokens,
-        filesModified = filesModifiedList(),
-        linesAdded = totalLinesAdded,
-        linesRemoved = totalLinesRemoved
-    )
+    private fun makeFailed(error: String, iterations: Int, reason: FailureReason): LoopResult.Failed {
+        promoteSteeringQueueOnFailure()
+        return LoopResult.Failed(
+            error = error,
+            reason = reason,
+            iterations = iterations,
+            tokensUsed = totalTokensUsed,
+            inputTokens = totalInputTokens,
+            outputTokens = totalOutputTokens,
+            filesModified = filesModifiedList(),
+            linesAdded = totalLinesAdded,
+            linesRemoved = totalLinesRemoved
+        )
+    }
 
     /** Build a Cancelled result with current loop tracking state. */
     private fun makeCancelled(iterations: Int): LoopResult.Cancelled = LoopResult.Cancelled(
@@ -2330,6 +2366,54 @@ class AgentLoop(
     private suspend fun withEnvDetails(message: String): String {
         val envDetails = environmentDetailsProvider?.invoke()
         return if (envDetails != null) "$message\n\n$envDetails" else message
+    }
+
+    /**
+     * Pre-exit drain for loop paths where the loop can productively continue
+     * (Completion, SessionHandoff). If the user typed a steering message during
+     * the stream that produced the exit-triggering tool call, inject it as a
+     * user turn and signal the caller to NOT return — the LLM will see the
+     * follow-up on the next iteration instead of having it silently dropped by
+     * the controller's queue clear at onComplete.
+     *
+     * Mirrors Stage 0.5 in [run]: same [STEERING_MESSAGE_PREFIX], same
+     * [withEnvDetails], same [onSteeringDrained] callback so the UI promotes
+     * the queued pills to real user-message bubbles. The caller is responsible
+     * for collapsing any dangling tool pair *before* invoking, so the steering
+     * text lands after a clean assistant turn (not a tool_result).
+     *
+     * Returns true when a drain happened (caller should `return null` from
+     * [executeToolCalls] to continue the loop) or false when there was nothing
+     * queued (caller proceeds with the normal exit).
+     */
+    private suspend fun drainSteeringIntoContextOnExit(): Boolean {
+        val q = steeringQueue ?: return false
+        if (q.isEmpty()) return false
+        val drained = generateSequence { q.poll() }.toList()
+        if (drained.isEmpty()) return false
+        val combinedText = drained.joinToString("\n\n") { it.text }
+        contextManager.addUserMessage(withEnvDetails(STEERING_MESSAGE_PREFIX + combinedText))
+        LOG.info("[Loop] Pre-exit drain: injected ${drained.size} steering message(s) — continuing loop instead of exiting")
+        onSteeringDrained?.invoke(drained.map { it.id })
+        return true
+    }
+
+    /**
+     * Failure-path drain. Continuing the loop into a hard failure (doom loop,
+     * exhausted retries, max consecutive empties) would just re-fail, so we
+     * don't inject the steering text into the LLM context. We do still drain
+     * the queue and fire [onSteeringDrained] so the UI promotes the queued
+     * pills to visible user-message bubbles — otherwise the controller's
+     * `onComplete` would silently `clear()` them and the user would see their
+     * typed message vanish without explanation.
+     */
+    private fun promoteSteeringQueueOnFailure() {
+        val q = steeringQueue ?: return
+        if (q.isEmpty()) return
+        val drained = generateSequence { q.poll() }.toList()
+        if (drained.isEmpty()) return
+        LOG.info("[Loop] Failure exit with ${drained.size} pending steering message(s); promoting to UI bubbles")
+        onSteeringDrained?.invoke(drained.map { it.id })
     }
 
     /**
