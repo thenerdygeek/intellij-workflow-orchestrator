@@ -2327,8 +2327,11 @@ class AgentService(
         // Determine resume ask type
         val resumeAskType = ResumeHelper.determineResumeAskType(savedUiMessages)
 
-        // If session was already completed, display the UI messages but do NOT re-execute
-        if (resumeAskType == UiAsk.RESUME_COMPLETED_TASK) {
+        // If session was already completed AND the user hasn't typed a follow-up,
+        // display the UI messages and stop — no re-execution. When the user *has*
+        // typed a follow-up message, fall through to the normal resume path so
+        // the message is appended as a new turn and the loop continues.
+        if (resumeAskType == UiAsk.RESUME_COMPLETED_TASK && userText.isNullOrBlank()) {
             log.info("AgentService.resumeSession: session $sessionId was already completed, displaying without re-execution")
             lock.release()
             onComplete(LoopResult.Completed(
@@ -2384,7 +2387,13 @@ class AgentService(
         val agoText = ResumeHelper.formatTimeAgo(lastActivityTs)
         val mode = if (planModeActive.get()) "plan" else "act"
         val cwd = project.basePath ?: ""
-        val basePreamble = ResumeHelper.buildTaskResumptionPreamble(mode, agoText, cwd, userText)
+        val basePreamble = ResumeHelper.buildTaskResumptionPreamble(
+            mode = mode,
+            agoText = agoText,
+            cwd = cwd,
+            userText = userText,
+            wasPreviouslyCompleted = (resumeAskType == UiAsk.RESUME_COMPLETED_TASK),
+        )
 
         // Task 6.2 — append any background-completion events that landed while the
         // session was idle. BackgroundPersistence accumulates them under

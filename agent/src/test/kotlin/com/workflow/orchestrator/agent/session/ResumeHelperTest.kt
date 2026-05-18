@@ -48,6 +48,25 @@ class ResumeHelperTest {
         assertTrue(preamble.contains("5 minutes ago"))
         assertTrue(preamble.contains("/Users/test/project"))
         assertTrue(preamble.contains("Keep going"))
+        assertTrue(preamble.contains("[TASK RESUMPTION]"))
+        assertFalse(preamble.contains("[TASK CONTINUATION]"))
+    }
+
+    @Test
+    fun `continuation preamble flags previously-completed task instead of interruption`() {
+        val preamble = ResumeHelper.buildTaskResumptionPreamble(
+            mode = "act",
+            agoText = "2 hours ago",
+            cwd = "/Users/test/project",
+            userText = "Now do X too",
+            wasPreviouslyCompleted = true,
+        )
+        assertTrue(preamble.contains("[TASK CONTINUATION]"))
+        assertTrue(preamble.contains("previous task in this conversation was completed"))
+        assertFalse(preamble.contains("interrupted"))
+        assertTrue(preamble.contains("Now do X too"))
+        // The LLM guidance must NOT tell the model to pick up mid-task on a completed continuation
+        assertFalse(preamble.contains("pick up from the last tool result"))
     }
 
     @Test

@@ -2808,6 +2808,12 @@ class AgentController(
     fun resumeSession(sessionId: String, userText: String? = null) {
         LOG.info("AgentController.resumeSession: $sessionId")
         viewedSessionId = null
+        // Track the resumed session as current so any subsequent user message
+        // is routed back into this session (instead of falling through to the
+        // new-session path in executeTask, which would wipe the chat view).
+        // AgentService.resumeSession has no onSessionStarted callback — we
+        // know the id directly, so set it here.
+        currentSessionId = sessionId
         prepareForReplay("Resuming session...")
 
         // Create a fresh input channel for the resumed loop
@@ -2964,6 +2970,10 @@ class AgentController(
      */
     fun revertToCheckpoint(sessionId: String, checkpointId: String) {
         LOG.info("AgentController.revertToCheckpoint: session=$sessionId, checkpoint=$checkpointId")
+        // Same rationale as resumeSession — track the reverted session as
+        // current so the next user message lands in this session instead of
+        // the new-session branch.
+        currentSessionId = sessionId
         prepareForReplay("Reverting to checkpoint...")
 
         // Restore the last task text in the input bar so user can edit and re-send

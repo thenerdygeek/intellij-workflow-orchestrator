@@ -79,10 +79,15 @@ object ResumeHelper {
         agoText: String,
         cwd: String,
         userText: String? = null,
+        wasPreviouslyCompleted: Boolean = false,
     ): String {
         val modeStr = if (mode == "plan") "Plan Mode" else "Act Mode"
         return buildString {
-            appendLine("[TASK RESUMPTION] This task was interrupted $agoText. The conversation history has been preserved.")
+            if (wasPreviouslyCompleted) {
+                appendLine("[TASK CONTINUATION] The previous task in this conversation was completed $agoText. The conversation history has been preserved and the user is sending a new message — treat it as the start of a new turn, not as a resumption of unfinished work.")
+            } else {
+                appendLine("[TASK RESUMPTION] This task was interrupted $agoText. The conversation history has been preserved.")
+            }
             appendLine("Mode: $modeStr")
             appendLine("Working directory: $cwd")
             if (!userText.isNullOrBlank()) {
@@ -90,7 +95,11 @@ object ResumeHelper {
                 appendLine("User message on resume: $userText")
             }
             appendLine()
-            appendLine("Continue where you left off. Do not repeat completed work. If you were mid-task, pick up from the last tool result in the conversation history.")
+            if (wasPreviouslyCompleted) {
+                appendLine("Address the user's new message. Do not redo prior completed work unless the user asks for changes.")
+            } else {
+                appendLine("Continue where you left off. Do not repeat completed work. If you were mid-task, pick up from the last tool result in the conversation history.")
+            }
         }
     }
 
