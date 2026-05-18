@@ -114,8 +114,11 @@ internal suspend fun executeRunMavenGoal(
     val allGoalTokens = assembleGoalTokens(goals, modules, extraTokens, offline)
 
     val mavenHome: String = try {
+        // MavenGeneralSettings has no toString() override (would emit a Java object reference).
+        // mavenHomeType holds a typed value (BundledMaven3 / MavenWrapper / a custom path) whose
+        // toString() is informative — exactly what the user sees in Settings → Build Tools → Maven.
         org.jetbrains.idea.maven.project.MavenProjectsManager
-            .getInstance(project).generalSettings.toString()
+            .getInstance(project).generalSettings.mavenHomeType.toString()
     } catch (_: Throwable) { "(IDE default)" }
     val workingDir = project.basePath ?: "(unknown)"
 
