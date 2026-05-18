@@ -47,7 +47,7 @@ Actions and their parameters:
 - list_sdks(scope?) → List all configured SDKs (project SDK, module-level overrides)
 - list_libraries(module?, scope?) → List libraries attached to a module or the project
 - list_facets(module?) → List facets (Spring, Android, JPA, etc.) attached to a module or all modules
-- refresh_external_project(module?, mode?) → Trigger Maven/Gradle reimport. Maven `mode`: reload (default) | generate_sources | download_sources | download_javadocs | download_sources_and_javadocs — mirrors the Maven tool window buttons. Non-reload modes are Maven-only.
+- refresh_external_project(module?, mode?, module_paths?) → Trigger Maven/Gradle reimport. Maven `mode`: reload (default) | generate_sources | download_sources | download_javadocs | download_sources_and_javadocs — mirrors the Maven tool window buttons. Non-reload modes are Maven-only. `module_paths` (array of pom.xml paths) scopes the operation to a subset of Maven modules; omit for all modules.
 - add_source_root(module, path, kind) → Add a source root to a module (kind: source/test_source/resource/test_resource)
 - set_module_dependency(module, dependsOn, scope?, exported?) → Add or update a module-to-module dependency (scope: compile/test/runtime/provided, default compile)
 - remove_module_dependency(module, dependsOn) → Remove an inter-module dependency from a non-external-system module
@@ -127,6 +127,11 @@ Actions and their parameters:
                     "download_javadocs",
                     "download_sources_and_javadocs"
                 )
+            ),
+            "module_paths" to ParameterProperty(
+                type = "array",
+                description = "Array of pom.xml paths to scope refresh_external_project to specific Maven modules — e.g. ['core/pom.xml', 'api/pom.xml']. Paths may be relative to project root or absolute. When omitted, the operation runs on every imported Maven module (legacy 'all' semantics). Per-module scoping flows through MavenAsyncProjectsManager.scheduleUpdateMavenProjects / MavenDownloadSourcesRequest.forProjects / MavenFolderResolver.resolveFoldersAndImport depending on `mode`.",
+                items = ParameterProperty(type = "string", description = "Pom.xml path (relative or absolute)")
             )
         ),
         required = listOf("action")
@@ -442,39 +447,60 @@ Actions and their parameters:
 
             action("refresh_external_project") {
                 description {
-                    technical("Triggers a Gradle or Maven reimport via ExternalSystemUtil.refreshProjects. For Maven roots, supports additional mode values (generate_sources, download_sources, download_javadocs, download_sources_and_javadocs) that mirror the Maven tool window buttons. If no external project roots are linked, walks the project basePath (depth 2) for pom.xml files and registers them via MavenProjectsManager.addManagedFilesOrUnignore, then awaits the import (~30s) before returning. Fire-and-forget for already-linked roots.")
-                    plain("Presses the 'Reload Gradle/Maven project' button in the IDE — like clicking the elephant/Maven icon in the sidebar. On fresh-clone Maven projects where the import hasn't happened yet, also auto-detects pom.xml files and registers them with the Maven plugin before reloading.")
+                    technical("Maven-aware reimport dispatcher. For Maven roots, routes through MavenAsyncProjectsManager: `reload` → scheduleUpdateAllMavenProjects (or scheduleUpdateMavenProjects when module_paths is set); `generate_sources` → MavenFolderResolver.resolveFoldersAndImport; `download_*` → scheduleDownloadArtifacts with MavenDownloadSourcesRequest.forProjects(...). All paths reflective so :agent compiles against IDEs without the Maven plugin. For Gradle roots: ExternalSystemUtil.refreshProject (reload mode only). On fresh-clone projects with no linked roots, walks basePath (depth 3) for pom.xml files and registers them via MavenOpenProjectProvider.forceLinkToExistingProjectAsync (trust-dialog-aware), then awaits MavenImportListener.TOPIC up to 30s.")
+                    plain("Reimports Maven or Gradle projects. Per-module scoping via `module_paths` (pass an array of pom.xml paths) — leave empty to refresh all modules. On fresh-clone Maven projects auto-detects pom.xml and registers with the Maven plugin before reloading.")
                 }
-                whenLLMUses("After editing a build file (build.gradle, pom.xml, settings.gradle) or after calling set_module_sdk/set_language_level — to sync IntelliJ's model with the updated build file. Also on a freshly-cloned Maven project to trigger the first import.")
+                whenLLMUses("After editing a build file (build.gradle, pom.xml, settings.gradle), after `run_command mvn install` that needs a classpath refresh, on a freshly-cloned Maven project to trigger the first import, or when the IDE shows the 'Reload Maven changes' popup top-right. Use `module_paths` to scope to specific modules in a multi-module project (e.g. only refresh `api/pom.xml` after editing it).")
                 params {
                     optional("module", "string") {
                         llmSeesIt("Module name to scope the query/action. If omitted, uses root project or all modules depending on action.")
-                        humanReadable("Scope the reload to one module's external project root. If not given, all external project roots are reloaded.")
+                        humanReadable("Legacy scoping by IDE module name. Prefer `module_paths` for Maven multi-module scoping.")
                         whenPresent("Only the external project root containing the named module is reloaded.")
                         whenAbsent("All external project roots (all Gradle / Maven roots in the project) are reloaded.")
                         example(":api")
                     }
                     optional("mode", "string") {
                         llmSeesIt("For refresh_external_project on Maven roots: which tool-window button to invoke. Default 'reload'. Non-reload modes are Maven-only.")
-                        humanReadable("Maven-specific reload variant. 'reload' = standard reimport. Other modes mirror the Maven tool window: generate_sources = run generate-sources phase, download_sources = fetch source JARs, download_javadocs = fetch javadoc JARs.")
-                        whenPresent("For Maven roots: the specified Maven lifecycle/download action is triggered. For Gradle roots: only 'reload' is meaningful; other modes are silently degraded.")
+                        humanReadable("Maven-specific reload variant. 'reload' = standard reimport. Other modes mirror the Maven tool window: generate_sources, download_sources, download_javadocs, download_sources_and_javadocs.")
+                        whenPresent("For Maven roots: the specified Maven operation runs. For Gradle roots: only 'reload' is meaningful; other modes are skipped with a warning.")
                         whenAbsent("Defaults to 'reload' — standard Gradle/Maven reimport.")
                         enumValue("reload", "generate_sources", "download_sources", "download_javadocs", "download_sources_and_javadocs")
                         example("download_sources")
                     }
+                    optional("module_paths", "array") {
+                        llmSeesIt("Array of pom.xml paths to scope refresh_external_project to specific Maven modules — e.g. ['core/pom.xml', 'api/pom.xml']. Paths may be relative to project root or absolute. When omitted, the operation runs on every imported Maven module (legacy 'all' semantics). Per-module scoping flows through MavenAsyncProjectsManager.scheduleUpdateMavenProjects / MavenDownloadSourcesRequest.forProjects / MavenFolderResolver.resolveFoldersAndImport depending on `mode`.")
+                        humanReadable("Per-module Maven scoping. Pass the pom.xml paths of the modules you want to operate on; omit for all modules.")
+                        whenPresent("Each path is resolved to VirtualFile + MavenProject. Reload uses scheduleUpdateMavenProjects(filesToUpdate=…); downloads use MavenDownloadSourcesRequest.forProjects(…); generate_sources calls MavenFolderResolver on the resolved subset.")
+                        whenAbsent("All-projects semantics — every imported Maven module is operated on.")
+                        example("[\"core/pom.xml\"]")
+                        example("[\"services/api/pom.xml\", \"services/auth/pom.xml\"]")
+                    }
                 }
-                precondition("At least one Gradle or Maven root must be configured in the project for this to have any effect.")
-                onSuccess("Returns 'Reimport triggered for <N> external project root(s): [<path>, ...]'. The sync runs asynchronously — a subsequent module_detail call can confirm the model was updated.")
-                onFailure("no external system roots", "Returns an informational result (not isError=true) saying no external project roots were found. Appropriate for pure IDE-managed projects.")
+                precondition("At least one Gradle or Maven root must be configured in the project, OR a pom.xml must exist in the project tree (depth 3 from basePath) for fresh-clone auto-detect.")
+                onSuccess("Returns 'Refresh triggered (mode=X) for N target(s)' with per-target lines. When module_paths is set, returns scoped 'N module(s)' result. The sync runs asynchronously — subsequent module_detail confirms the model was updated.")
+                onFailure("no external system roots and no pom.xml in tree", "Returns informational result (not isError=true): 'No external project roots are linked. Nothing to refresh.'")
+                onFailure("module_paths did not resolve", "Returns isError=true with list of unresolved paths. Verify the pom.xml files exist and are tracked as Maven modules.")
                 example("reload after editing build.gradle") {
                     param("action", "refresh_external_project")
-                    outcome("All Gradle/Maven roots enqueued for reimport. Module graph updated asynchronously.")
+                    outcome("All Gradle/Maven roots enqueued for reimport.")
                 }
-                example("download Maven sources") {
+                example("reload one Maven module after editing its pom") {
+                    param("action", "refresh_external_project")
+                    param("mode", "reload")
+                    param("module_paths", "[\"core/pom.xml\"]")
+                    outcome("Only the core module is reimported via scheduleUpdateMavenProjects — sibling modules untouched.")
+                }
+                example("download sources for specific modules") {
                     param("action", "refresh_external_project")
                     param("mode", "download_sources")
-                    outcome("Maven source JARs are downloaded for all dependencies; IDE source navigation becomes available.")
-                    notes("Maven-only mode. On Gradle projects this degrades to a standard reload.")
+                    param("module_paths", "[\"api/pom.xml\", \"core/pom.xml\"]")
+                    outcome("MavenDownloadSourcesRequest.forProjects([api, core]) — source JARs fetched for those modules only.")
+                }
+                example("download Maven sources for all modules") {
+                    param("action", "refresh_external_project")
+                    param("mode", "download_sources")
+                    outcome("All Maven modules: source JARs downloaded for every dependency.")
+                    notes("Maven-only mode. On Gradle projects this mode is skipped with a warning.")
                 }
                 verdict {
                     keep("Essential after any build-file mutation. Without it, the IDE model lags behind the build file changes.", VerdictSeverity.STRONG)

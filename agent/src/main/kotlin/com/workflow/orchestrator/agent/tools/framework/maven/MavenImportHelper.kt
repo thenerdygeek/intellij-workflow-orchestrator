@@ -4,10 +4,13 @@ import com.intellij.openapi.application.readAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import java.io.File
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
+import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 
 /**
  * Shared helper used by `project_structure.refresh_external_project` (feedback #5)
@@ -15,6 +18,15 @@ import java.io.File
  *
  * All Maven API access is reflective so `:agent` stays compile-clean against IDEs
  * without the bundled Maven plugin (e.g., PyCharm Community).
+ *
+ * **2026-05-18 migration (per JetBrains source audit):**
+ *  - Registration goes through `MavenOpenProjectProvider.forceLinkToExistingProjectAsync`
+ *    (the trust-dialog-aware path that the "+" button in the Maven tool window uses)
+ *    with `addManagedFilesOrUnignore` as fallback for older platforms.
+ *  - Import-completion await uses `MavenImportListener.TOPIC` message bus subscription
+ *    wrapped in `suspendCancellableCoroutine` — the prior polling `isImportingInProgress()`
+ *    method does not exist on current `MavenProjectsManager` (2025.1+), so the old poll
+ *    was effectively a no-op.
  */
 internal sealed interface MavenDetectResult {
     object NoMavenPlugin : MavenDetectResult
@@ -25,11 +37,9 @@ internal sealed interface MavenDetectResult {
 }
 
 /**
- * Detects pom.xml files at the project root + immediate subdirectories (top 2 levels)
- * and registers any newly-discovered ones with MavenProjectsManager.
- *
- * Returns a structured result the caller can use to decide whether to await the import,
- * report a warning, or fall through to other detection paths (e.g., Gradle).
+ * Detects pom.xml files at the project root + immediate subdirectories (depth 3)
+ * and registers any newly-discovered ones with `MavenOpenProjectProvider`
+ * (or `MavenProjectsManager.addManagedFilesOrUnignore` as fallback).
  */
 internal suspend fun detectAndRegisterMaven(project: Project): MavenDetectResult {
     val mavenManagerClass = try {
@@ -55,14 +65,13 @@ internal suspend fun detectAndRegisterMaven(project: Project): MavenDetectResult
         return MavenDetectResult.AlreadyImported(projectCount)
     }
 
-    // Slow path: walk top 2 levels for pom.xml.
+    // Slow path: walk for pom.xml.
     val basePath = project.basePath ?: return MavenDetectResult.NoPomFound
     val pomFiles = findPomFiles(basePath)
     if (pomFiles.isEmpty()) {
         return MavenDetectResult.NoPomFound
     }
 
-    // Resolve VirtualFiles (VFS access requires a read action).
     val vfs = LocalFileSystem.getInstance()
     val virtualPoms: List<VirtualFile> = readAction {
         pomFiles.mapNotNull { vfs.findFileByIoFile(it) }
@@ -71,6 +80,11 @@ internal suspend fun detectAndRegisterMaven(project: Project): MavenDetectResult
         return MavenDetectResult.NoPomFound
     }
 
+    // Preferred: MavenOpenProjectProvider — trust-dialog + auto-import-aware.
+    val providerResult = tryForceLinkViaProvider(project, virtualPoms)
+    if (providerResult != null) return providerResult
+
+    // Fallback: MavenProjectsManager.addManagedFilesOrUnignore (legacy path).
     return try {
         val method = mavenManagerClass.getMethod("addManagedFilesOrUnignore", List::class.java)
         method.invoke(manager, virtualPoms)
@@ -81,46 +95,83 @@ internal suspend fun detectAndRegisterMaven(project: Project): MavenDetectResult
 }
 
 /**
- * Polls `MavenProjectsManager.isImportingInProgress` until it reports false or [timeoutMs]
- * elapses. Returns true on completion, false on timeout. Returns true immediately when the
- * Maven plugin isn't installed (nothing to await).
+ * Tries the JetBrains-canonical `MavenOpenProjectProvider.forceLinkToExistingProjectAsync`
+ * (suspend, trust-dialog-aware) for each pom. Returns NewlyRegistered on success,
+ * null when the provider class is absent so the caller falls back to the legacy path.
+ */
+private suspend fun tryForceLinkViaProvider(project: Project, poms: List<VirtualFile>): MavenDetectResult? {
+    val providerClass = try {
+        Class.forName("org.jetbrains.idea.maven.wizards.MavenOpenProjectProvider")
+    } catch (_: ClassNotFoundException) { return null }
+
+    val provider = try { providerClass.getDeclaredConstructor().newInstance() } catch (_: Throwable) { return null }
+
+    val registered = mutableListOf<String>()
+    for (pom in poms) {
+        val ok = runCatching {
+            invokeSuspendUnit(
+                providerClass, "forceLinkToExistingProjectAsync",
+                arrayOf<Class<*>>(VirtualFile::class.java, Project::class.java),
+                arrayOf<Any?>(pom, project),
+                provider
+            )
+            true
+        }.getOrDefault(false)
+        if (ok) registered.add(pom.path)
+    }
+
+    return if (registered.isEmpty()) null
+    else MavenDetectResult.NewlyRegistered(registered)
+}
+
+/**
+ * Awaits Maven import completion via `MavenImportListener.TOPIC` message bus
+ * subscription, wrapped in `suspendCancellableCoroutine` with a timeout.
+ *
+ * Returns true when the listener fires (or the topic class is absent — nothing to wait
+ * for); false on timeout. Cancelling the coroutine cancels the subscription.
  */
 internal suspend fun awaitMavenImport(project: Project, timeoutMs: Long = 30_000): Boolean {
-    val mavenManagerClass = try {
-        Class.forName("org.jetbrains.idea.maven.project.MavenProjectsManager")
-    } catch (_: ClassNotFoundException) {
-        return true
+    val listenerClass = try {
+        Class.forName("org.jetbrains.idea.maven.project.MavenImportListener")
+    } catch (_: ClassNotFoundException) { return true }
+
+    val topicField = try {
+        listenerClass.getField("TOPIC")
+    } catch (_: NoSuchFieldException) {
+        // Topic moved/renamed — fall back to legacy companion lookup
+        runCatching { listenerClass.getDeclaredField("TOPIC").also { it.isAccessible = true } }.getOrNull()
+            ?: return true
     }
-    val manager = try {
-        mavenManagerClass.getMethod("getInstance", Project::class.java).invoke(null, project)
-    } catch (_: Throwable) {
-        return true
-    }
-    val isImportingMethod = try {
-        mavenManagerClass.getMethod("isImportingInProgress")
-    } catch (_: NoSuchMethodException) {
-        // API drift — assume done.
-        return true
-    }
+
+    @Suppress("UNCHECKED_CAST")
+    val topic = topicField.get(null) as? com.intellij.util.messages.Topic<Any> ?: return true
 
     return try {
         withTimeout(timeoutMs) {
-            while (true) {
-                val busy = try {
-                    isImportingMethod.invoke(manager) as? Boolean ?: false
-                } catch (_: Throwable) { false }
-                if (!busy) return@withTimeout true
-                delay(POLL_INTERVAL_MS)
+            val deferred = CompletableDeferred<Boolean>()
+            val connection = project.messageBus.connect()
+            // Use a JDK proxy implementing MavenImportListener; any callback completes the wait.
+            val listenerProxy = java.lang.reflect.Proxy.newProxyInstance(
+                listenerClass.classLoader, arrayOf(listenerClass)
+            ) { _, _, _ ->
+                if (!deferred.isCompleted) deferred.complete(true)
+                null
             }
-            @Suppress("UNREACHABLE_CODE") true
+            connection.subscribe(topic, listenerProxy)
+            try {
+                deferred.await()
+            } finally {
+                connection.disconnect()
+            }
         }
     } catch (_: TimeoutCancellationException) {
         false
+    } catch (_: Throwable) {
+        // Subscription failed (API drift, topic shape changed) — degrade to no-await.
+        true
     }
 }
-
-private const val POLL_INTERVAL_MS = 200L
-private const val MAX_DEPTH = 2
 
 internal fun findPomFiles(basePath: String): List<File> {
     val base = File(basePath)
@@ -141,7 +192,29 @@ private fun walk(dir: File, depth: Int, sink: MutableList<File>) {
     }
 }
 
+// Walk slightly deeper than JetBrains' depth-1 `streamPomFiles` to catch
+// micro-service layouts (apps/<svc>/service/pom.xml). The expanded EXCLUDED_DIRS
+// keeps false-positive cost low.
+private const val MAX_DEPTH = 3
+
 private val EXCLUDED_DIRS = setOf(
     "node_modules", "target", "build", "out", "dist", ".idea", ".gradle",
-    ".m2", "venv", ".venv", "__pycache__"
+    ".m2", "venv", ".venv", "__pycache__",
+    // Added 2026-05-18 per Maven plugin audit
+    "cmake-build-debug", "cmake-build-release", "coverage", ".tox", ".next", ".nuxt"
 )
+
+/** See `MavenAsyncFacade.invokeSuspendObj` — same pattern, Unit-return variant. */
+private suspend fun invokeSuspendUnit(
+    cls: Class<*>,
+    methodName: String,
+    paramTypes: Array<Class<*>>,
+    args: Array<Any?>,
+    instance: Any
+): Any? = suspendCoroutineUninterceptedOrReturn { cont: Continuation<Any?> ->
+    val allParamTypes: Array<Class<*>> = paramTypes + Continuation::class.java
+    val method = cls.getMethod(methodName, *allParamTypes)
+    val allArgs = args + cont
+    val result = method.invoke(instance, *allArgs)
+    if (result === COROUTINE_SUSPENDED) COROUTINE_SUSPENDED else result
+}

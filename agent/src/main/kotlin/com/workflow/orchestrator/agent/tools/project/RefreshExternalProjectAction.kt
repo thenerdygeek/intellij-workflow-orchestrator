@@ -1,122 +1,53 @@
 package com.workflow.orchestrator.agent.tools.project
 
-import com.intellij.openapi.actionSystem.ActionManager
-import com.intellij.openapi.actionSystem.ActionPlaces
-import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.actionSystem.Presentation
-import com.intellij.openapi.actionSystem.ex.ActionUtil
-import com.intellij.openapi.actionSystem.impl.SimpleDataContext
+import com.intellij.openapi.externalSystem.importing.ImportSpecBuilder
 import com.intellij.openapi.externalSystem.model.ProjectSystemId
+import com.intellij.openapi.externalSystem.service.execution.ProgressExecutionMode
 import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil
 import com.intellij.openapi.externalSystem.util.ExternalSystemUtil
-import com.intellij.openapi.externalSystem.service.execution.ProgressExecutionMode
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VirtualFile
 import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.framework.maven.MavenAsyncFacade
 import com.workflow.orchestrator.agent.tools.framework.maven.MavenDetectResult
 import com.workflow.orchestrator.agent.tools.framework.maven.awaitMavenImport
 import com.workflow.orchestrator.agent.tools.framework.maven.detectAndRegisterMaven
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
-import com.intellij.openapi.externalSystem.importing.ImportSpecBuilder
 import java.io.File
 
-/**
- * Mode → Maven action ID map. Single source of truth for both validation and dispatch.
- *
- *  - `null` = handled directly (currently only `reload`, which uses
- *    [forceMavenReimport] / [ExternalSystemUtil.refreshProject], not action invocation).
- *  - non-null = the Maven plugin action ID to invoke (mirrors a tool-window button click).
- *
- * Adding a new mode requires only an entry here — `VALID_REFRESH_MODES` derives from the keys.
- */
-private val MAVEN_MODE_ACTIONS: Map<String, String?> = mapOf(
-    "reload" to null,
-    "generate_sources" to "Maven.UpdateAllFolders",
-    "download_sources" to "Maven.DownloadAllSources",
-    "download_javadocs" to "Maven.DownloadAllDocs",
-    "download_sources_and_javadocs" to "Maven.DownloadAllSourcesAndDocs"
+private val VALID_REFRESH_MODES: Set<String> = setOf(
+    "reload",
+    "generate_sources",
+    "download_sources",
+    "download_javadocs",
+    "download_sources_and_javadocs"
 )
 
-private val VALID_REFRESH_MODES: Set<String> = MAVEN_MODE_ACTIONS.keys
-
 /**
- * Invokes a Maven tool window action by ID — the same code path the user clicks
- * trigger. Returns null on success; an error string when the action is unavailable
- * (Maven plugin not loaded) or invocation throws.
- */
-private fun invokePlatformAction(project: Project, actionId: String): String? = try {
-    val action = ActionManager.getInstance().getAction(actionId)
-        ?: return "Action '$actionId' not found — Maven plugin may be disabled in this IDE."
-    val dataContext = SimpleDataContext.getProjectContext(project)
-    val event = AnActionEvent.createEvent(
-        action,
-        dataContext,
-        Presentation(),
-        ActionPlaces.UNKNOWN,
-        com.intellij.openapi.actionSystem.ActionUiKind.NONE,
-        null
-    )
-    ActionUtil.invokeAction(action, event, null)
-    null
-} catch (e: Throwable) {
-    "Failed to invoke '$actionId': ${e::class.simpleName}: ${e.message}"
-}
-
-/**
- * Maven full-reload via MavenProjectsManager.forceUpdateAllProjectsOrFindAllAvailablePomFiles().
- * ExternalSystemUtil.refreshProject is the canonical Gradle path but for Maven only re-syncs the
- * project model without re-resolving dependencies.
- *
- * Reflective so :agent stays compile-clean against IDEs without the Maven plugin. Distinguishes:
- *  - [ClassNotFoundException] → expected (Maven plugin not loaded); silently return false.
- *  - any other throwable → unexpected (API drift / signature change in a future Platform);
- *    swallow but pass the cause into [warningSink] so the caller can include it in the result.
- *
- * Returns true on success, false on any failure.
- */
-private fun forceMavenReimport(project: Project, warningSink: MutableList<String>): Boolean {
-    val cls = try {
-        Class.forName("org.jetbrains.idea.maven.project.MavenProjectsManager")
-    } catch (_: ClassNotFoundException) {
-        return false
-    }
-    return try {
-        val mgr = cls.getMethod("getInstance", Project::class.java).invoke(null, project)
-        cls.getMethod("forceUpdateAllProjectsOrFindAllAvailablePomFiles").invoke(mgr)
-        true
-    } catch (e: Throwable) {
-        warningSink.add(
-            "Warning: MavenProjectsManager reflection failed (${e::class.simpleName}: ${e.message}). " +
-                "Falling back to ExternalSystemUtil.refreshProject — Platform API may have drifted."
-        )
-        false
-    }
-}
-
-/**
- * Write action: triggers an external system (Maven/Gradle) reimport for linked roots.
+ * Write action: triggers an external system (Maven/Gradle) reimport.
  *
  * Modes (Maven-only except `reload`):
- *  - `reload` → MavenProjectsManager.forceUpdateAllProjectsOrFindAllAvailablePomFiles
- *      (Gradle/others fall through to ExternalSystemUtil.refreshProject)
- *  - `generate_sources` → invokes Maven action `Maven.UpdateAllFolders`
- *  - `download_sources` → invokes `Maven.DownloadAllSources`
- *  - `download_javadocs` → invokes `Maven.DownloadAllDocs`
- *  - `download_sources_and_javadocs` → invokes `Maven.DownloadAllSourcesAndDocs`
+ *  - `reload` → MavenAsyncProjectsManager.scheduleUpdateAllMavenProjects, or
+ *    scheduleUpdateMavenProjects(filesToUpdate) when `module_paths` is set
+ *  - `generate_sources` → MavenFolderResolver.resolveFoldersAndImport
+ *  - `download_sources` / `download_javadocs` / `download_sources_and_javadocs`
+ *    → MavenAsyncProjectsManager.scheduleDownloadArtifacts with
+ *    MavenDownloadSourcesRequest scoped to all projects or `module_paths`
  *
- * Non-reload modes against Gradle/other roots are skipped with a warning, not failed,
- * so a mixed-build project can still partially complete.
+ * `module_paths` (optional array of pom.xml paths) restricts the operation to a
+ * subset of Maven modules. Absent ⇒ operates on every imported Maven module
+ * (legacy "all-projects" semantics). Non-Maven systems (Gradle) ignore the
+ * filter and use ExternalSystemUtil.refreshProject as before.
  *
- * 1. Collects all linked external project roots via [ExternalSystemApiUtil].
- * 2. If none are linked, returns a non-error "nothing to refresh" result immediately.
- * 3. Validates `mode`, requests approval — denied ⇒ error result.
- * 4. Filters to the requested `path` root when provided; no match ⇒ error result.
- * 5. Dispatches per target: Maven uses MavenProjectsManager / action invocation;
- *    Gradle uses [ExternalSystemUtil.refreshProject] in `IN_BACKGROUND_ASYNC`.
- *
- * This function is called from [ProjectStructureTool] for the "refresh_external_project" action.
+ * On a fresh-clone project where ExternalSystem reports no linked roots, the
+ * tool walks the project basePath for pom.xml files and registers them via
+ * MavenOpenProjectProvider (trust-dialog-aware) — see MavenImportHelper.
  */
 internal suspend fun executeRefreshExternalProject(
     params: JsonObject,
@@ -139,7 +70,6 @@ internal suspend fun executeRefreshExternalProject(
             if (roots.isEmpty()) null else systemId to roots
         }
     } catch (_: Exception) {
-        // ExternalSystem APIs unavailable (e.g., headless test environment without the plugin)
         return ToolResult(
             content = "No external project roots are linked. Nothing to refresh.",
             summary = "No external roots",
@@ -149,11 +79,6 @@ internal suspend fun executeRefreshExternalProject(
     }
 
     // ── Step 2: nothing linked → try filesystem-based Maven auto-detect ───────
-    // Reported by LLM feedback (#5, 2026-05-17): on a fresh-clone project with a
-    // root pom.xml that hasn't been imported yet, the linked-projects list is empty
-    // and the tool used to bail with "Nothing to refresh." Walk the project root
-    // for pom.xml files (depth 2) and register them with MavenProjectsManager —
-    // which both adds the link AND triggers the resolve.
     if (rootsPerSystem.isEmpty()) {
         return when (val detection = detectAndRegisterMaven(project)) {
             is MavenDetectResult.NewlyRegistered -> {
@@ -162,16 +87,12 @@ internal suspend fun executeRefreshExternalProject(
                 val status = if (imported) "completed" else "still in progress (timed out waiting; reimport continues in background)"
                 ToolResult(
                     content = "Detected unmanaged Maven project — registered ${detection.pomPaths.size} pom.xml file(s) " +
-                        "with MavenProjectsManager. Import $status.\n$pomList",
+                        "via MavenOpenProjectProvider. Import $status.\n$pomList",
                     summary = "Registered ${detection.pomPaths.size} pom(s); import $status",
                     tokenEstimate = 40 + (pomList.length / 4)
                 )
             }
             is MavenDetectResult.Failed -> ToolResult(
-                // Failed = the Maven plugin is present but something went wrong (rare; usually
-                // mocked-Project test environments or API drift). Treat as non-blocking: fall
-                // back to the original "nothing to refresh" message and surface the cause as a
-                // diagnostic note so the user/LLM can see why auto-detect didn't help.
                 content = "No external project roots are linked (no Gradle or Maven import). Nothing to refresh.\n" +
                     "Note: Maven auto-detect aborted: ${detection.message}",
                 summary = "No external roots (Maven auto-detect aborted)",
@@ -195,7 +116,7 @@ internal suspend fun executeRefreshExternalProject(
         }
     }
 
-    // ── Step 3: parse mode + approval gate ────────────────────────────────────
+    // ── Step 3: parse mode + module_paths + approval gate ────────────────────
     val path = params["path"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
     val mode = params["mode"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: "reload"
     if (mode !in VALID_REFRESH_MODES) {
@@ -206,8 +127,18 @@ internal suspend fun executeRefreshExternalProject(
             isError = true
         )
     }
+
+    val modulePaths: List<String>? = (params["module_paths"] as? JsonArray)?.jsonArray
+        ?.mapNotNull { it.jsonPrimitive.content.takeIf { c -> c.isNotBlank() } }
+        ?.takeIf { it.isNotEmpty() }
+
     val systemNames = rootsPerSystem.joinToString(", ") { (id, _) -> id.readableName }
-    val argsDescription = "refresh mode=$mode ${if (path != null) "root=$path" else "all external roots"} ($systemNames)"
+    val scopeDesc = when {
+        modulePaths != null -> "module_paths=${modulePaths.size} pom(s)"
+        path != null -> "root=$path"
+        else -> "all external roots"
+    }
+    val argsDescription = "refresh mode=$mode $scopeDesc ($systemNames)"
 
     val approval = tool.requestApproval(
         toolName = "project_structure.refresh_external_project",
@@ -224,7 +155,12 @@ internal suspend fun executeRefreshExternalProject(
         )
     }
 
-    // ── Step 4: determine targets ─────────────────────────────────────────────
+    // ── Step 4: module_paths takes precedence over the path-root filter ───────
+    if (modulePaths != null) {
+        return executeMavenScopedDispatch(project, mode, modulePaths)
+    }
+
+    // ── Step 5: determine targets (legacy path-root filter) ───────────────────
     val targets: List<Pair<ProjectSystemId, String>> = if (path != null) {
         val normalized = File(path).let {
             if (it.isAbsolute) it.canonicalPath else File(project.basePath ?: "", path).canonicalPath
@@ -249,7 +185,7 @@ internal suspend fun executeRefreshExternalProject(
         rootsPerSystem.flatMap { (systemId, roots) -> roots.map { systemId to it } }
     }
 
-    // ── Step 5: trigger refresh for each target ───────────────────────────────
+    // ── Step 6: dispatch per target ──────────────────────────────────────────
     val triggered = mutableListOf<String>()
     val warnings = mutableListOf<String>()
 
@@ -267,34 +203,7 @@ internal suspend fun executeRefreshExternalProject(
             }
 
             val noteSuffix: String = when {
-                isMaven && mode == "reload" -> {
-                    val ok = forceMavenReimport(project, warnings)
-                    if (!ok) {
-                        ExternalSystemUtil.refreshProject(
-                            root,
-                            ImportSpecBuilder(project, systemId)
-                                .use(ProgressExecutionMode.IN_BACKGROUND_ASYNC)
-                                .build()
-                        )
-                        " (via ExternalSystemUtil fallback)"
-                    } else " (via MavenProjectsManager)"
-                }
-                isMaven -> {
-                    val actionId = MAVEN_MODE_ACTIONS[mode]
-                    if (actionId == null) {
-                        // Defensive: VALID_REFRESH_MODES derives from the same map, so this can
-                        // only fire if a future contributor adds a mode key with a null value
-                        // and forgets to handle it directly above.
-                        warnings.add("Warning: no Maven action mapping for mode='$mode' (internal bug — please file).")
-                        continue
-                    }
-                    val err = invokePlatformAction(project, actionId)
-                    if (err != null) {
-                        warnings.add("Warning: $err")
-                        continue
-                    }
-                    " (via $actionId)"
-                }
+                isMaven -> dispatchMavenAllProjects(project, mode, warnings)
                 else -> {
                     ExternalSystemUtil.refreshProject(
                         root,
@@ -311,9 +220,9 @@ internal suspend fun executeRefreshExternalProject(
         }
     }
 
-    // ── Step 6: result ────────────────────────────────────────────────────────
+    // ── Step 7: result ───────────────────────────────────────────────────────
     val sb = StringBuilder()
-    sb.appendLine("Refresh triggered (mode=$mode) for ${triggered.size} root(s):")
+    sb.appendLine("Refresh triggered (mode=$mode) for ${triggered.size} target(s):")
     triggered.forEach { sb.appendLine("  • $it") }
     if (warnings.isNotEmpty()) {
         sb.appendLine()
@@ -326,4 +235,177 @@ internal suspend fun executeRefreshExternalProject(
         summary = "${triggered.size} refresh(es) triggered (mode=$mode)",
         tokenEstimate = (sb.length / 4) + 1
     )
+}
+
+/**
+ * Dispatches a Maven operation on *all* imported projects via the MavenAsyncFacade.
+ * Returns a one-line note suffix describing what fired.
+ */
+private fun dispatchMavenAllProjects(project: Project, mode: String, warnings: MutableList<String>): String {
+    return when (mode) {
+        "reload" -> {
+            val r = MavenAsyncFacade.scheduleUpdateAllMavenProjects(project, "agent-refresh-all")
+            describeCallResult(r, "scheduleUpdateAllMavenProjects", warnings, fallbackNote = "via legacy forceUpdateAllProjectsOrFindAllAvailablePomFiles") {
+                legacyForceUpdate(project)
+            }
+        }
+        "generate_sources" -> {
+            // Per the audit, Maven.UpdateAllFolders is not in current intellij.maven.xml.
+            // Resolve all MavenProjects and invoke MavenFolderResolver directly.
+            val projects = MavenAsyncFacade.getAllProjects(project)
+            if (projects.isEmpty()) {
+                warnings.add("Warning: generate_sources requested but no Maven projects found")
+                ""
+            } else {
+                val ok = invokeFolderResolver(project, projects, warnings)
+                if (ok) " (via MavenFolderResolver, ${projects.size} project(s))" else ""
+            }
+        }
+        "download_sources" -> dispatchDownload(project, sources = true, docs = false, warnings = warnings)
+        "download_javadocs" -> dispatchDownload(project, sources = false, docs = true, warnings = warnings)
+        "download_sources_and_javadocs" -> dispatchDownload(project, sources = true, docs = true, warnings = warnings)
+        else -> ""
+    }
+}
+
+/**
+ * Dispatches a Maven operation scoped to specific module pom.xml paths.
+ */
+private fun executeMavenScopedDispatch(project: Project, mode: String, modulePaths: List<String>): ToolResult {
+    val warnings = mutableListOf<String>()
+
+    val vfs = LocalFileSystem.getInstance()
+    val baseDir = project.basePath?.let { File(it) }
+    val resolvedVfs: List<Pair<String, VirtualFile>> = modulePaths.mapNotNull { p ->
+        val canonical = File(p).let { if (it.isAbsolute) it else File(baseDir, p) }.canonicalFile
+        val vf = vfs.findFileByIoFile(canonical)
+        if (vf == null || !vf.exists()) {
+            warnings.add("Warning: could not resolve pom file: $p")
+            null
+        } else p to vf
+    }
+
+    if (resolvedVfs.isEmpty()) {
+        return ToolResult(
+            content = "None of the supplied module_paths resolved to existing pom.xml files:\n" +
+                modulePaths.joinToString("\n  • ", prefix = "  • ") +
+                "\n\nPass canonical paths to per-module pom.xml files (e.g. 'core/pom.xml').",
+            summary = "module_paths did not resolve",
+            tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+            isError = true
+        )
+    }
+
+    val mavenProjects = resolvedVfs.mapNotNull { (path, vf) ->
+        val mp = MavenAsyncFacade.findProjectByPomFile(project, vf)
+        if (mp == null) {
+            warnings.add("Warning: pom not tracked as Maven module: $path")
+            null
+        } else mp
+    }
+
+    val noteSuffix = when (mode) {
+        "reload" -> {
+            val r = MavenAsyncFacade.scheduleUpdateMavenProjects(
+                project, "agent-refresh-scoped", resolvedVfs.map { it.second }
+            )
+            describeCallResult(r, "scheduleUpdateMavenProjects", warnings, fallbackNote = null) { false }
+        }
+        "generate_sources" -> {
+            if (mavenProjects.isEmpty()) "" else {
+                val ok = invokeFolderResolver(project, mavenProjects, warnings)
+                if (ok) " (MavenFolderResolver on ${mavenProjects.size} module(s))" else ""
+            }
+        }
+        "download_sources" -> {
+            if (mavenProjects.isEmpty()) "" else dispatchDownloadForProjects(project, mavenProjects, sources = true, docs = false, warnings = warnings)
+        }
+        "download_javadocs" -> {
+            if (mavenProjects.isEmpty()) "" else dispatchDownloadForProjects(project, mavenProjects, sources = false, docs = true, warnings = warnings)
+        }
+        "download_sources_and_javadocs" -> {
+            if (mavenProjects.isEmpty()) "" else dispatchDownloadForProjects(project, mavenProjects, sources = true, docs = true, warnings = warnings)
+        }
+        else -> ""
+    }
+
+    val sb = StringBuilder()
+    sb.appendLine("Refresh triggered (mode=$mode) for ${resolvedVfs.size} module(s):")
+    resolvedVfs.forEach { (_, vf) -> sb.appendLine("  • Maven: ${vf.path}$noteSuffix") }
+    if (warnings.isNotEmpty()) {
+        sb.appendLine()
+        warnings.forEach { sb.appendLine(it) }
+    }
+    sb.append("Refresh runs in the background — recheck module detail after a moment.")
+
+    return ToolResult(
+        content = sb.toString(),
+        summary = "${resolvedVfs.size} scoped refresh(es) (mode=$mode)",
+        tokenEstimate = (sb.length / 4) + 1
+    )
+}
+
+private fun dispatchDownload(project: Project, sources: Boolean, docs: Boolean, warnings: MutableList<String>): String {
+    val all = MavenAsyncFacade.getAllProjects(project)
+    if (all.isEmpty()) {
+        warnings.add("Warning: no Maven projects to download for")
+        return ""
+    }
+    return dispatchDownloadForProjects(project, all, sources, docs, warnings)
+}
+
+private fun dispatchDownloadForProjects(
+    project: Project, mavenProjects: List<Any>, sources: Boolean, docs: Boolean, warnings: MutableList<String>
+): String {
+    val request = MavenAsyncFacade.buildDownloadRequest(mavenProjects, sources, docs)
+    if (request == null) {
+        warnings.add("Warning: could not construct MavenDownloadSourcesRequest (API may have drifted)")
+        return ""
+    }
+    val r = MavenAsyncFacade.scheduleDownloadArtifacts(project, request)
+    return describeCallResult(r, "scheduleDownloadArtifacts", warnings, fallbackNote = null) { false }
+}
+
+private fun invokeFolderResolver(project: Project, mavenProjects: List<Any>, warnings: MutableList<String>): Boolean {
+    return try {
+        val resolverCls = Class.forName("org.jetbrains.idea.maven.project.MavenFolderResolver")
+        val resolver = resolverCls.getDeclaredConstructor(Project::class.java).newInstance(project)
+        val method = resolverCls.getMethod("resolveFoldersAndImport", List::class.java)
+        method.invoke(resolver, mavenProjects)
+        true
+    } catch (e: Throwable) {
+        warnings.add("Warning: MavenFolderResolver invocation failed (${e::class.simpleName}: ${e.message})")
+        false
+    }
+}
+
+/**
+ * Legacy fallback for the `reload` mode — used when scheduleUpdateAllMavenProjects
+ * is unavailable on this IDE/Platform version. Returns true on success.
+ */
+private fun legacyForceUpdate(project: Project): Boolean {
+    return try {
+        val cls = Class.forName("org.jetbrains.idea.maven.project.MavenProjectsManager")
+        val mgr = cls.getMethod("getInstance", Project::class.java).invoke(null, project)
+        cls.getMethod("forceUpdateAllProjectsOrFindAllAvailablePomFiles").invoke(mgr)
+        true
+    } catch (_: Throwable) { false }
+}
+
+private fun describeCallResult(
+    result: MavenAsyncFacade.CallResult,
+    methodName: String,
+    warnings: MutableList<String>,
+    fallbackNote: String?,
+    fallback: () -> Boolean
+): String = when (result) {
+    MavenAsyncFacade.CallResult.Triggered -> " (via $methodName)"
+    is MavenAsyncFacade.CallResult.Unavailable -> {
+        if (fallbackNote != null && fallback()) " ($fallbackNote)"
+        else { warnings.add("Warning: $methodName unavailable: ${result.reason}"); "" }
+    }
+    is MavenAsyncFacade.CallResult.Failed -> {
+        if (fallbackNote != null && fallback()) " ($fallbackNote)"
+        else { warnings.add("Warning: $methodName failed: ${result.message}"); "" }
+    }
 }

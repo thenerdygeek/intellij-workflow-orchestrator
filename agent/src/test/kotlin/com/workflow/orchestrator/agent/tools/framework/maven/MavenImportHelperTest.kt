@@ -52,13 +52,26 @@ class MavenImportHelperTest {
     }
 
     @Test
-    fun `does NOT recurse past depth 2`(@TempDir tmp: Path) {
+    fun `finds pom at depth 3 subdirectory (raised cap)`(@TempDir tmp: Path) {
+        // MAX_DEPTH raised from 2→3 on 2026-05-18 to catch micro-service layouts
+        // like apps/<svc>/services/<endpoint>/pom.xml. Walk excludes (target/build/...)
+        // keep the false-positive cost low.
         val deep = File(tmp.toFile(), "a/b/c").apply { mkdirs() }
         File(deep, "pom.xml").writeText("<project/>")
 
         val result = findPomFiles(tmp.toString())
 
-        assertTrue(result.isEmpty(), "pom.xml at depth 3 must NOT be discovered (perf cap)")
+        assertEquals(1, result.size, "pom.xml at depth 3 should be discovered after MAX_DEPTH=3")
+    }
+
+    @Test
+    fun `does NOT recurse past depth 3 (current cap)`(@TempDir tmp: Path) {
+        val deeper = File(tmp.toFile(), "a/b/c/d").apply { mkdirs() }
+        File(deeper, "pom.xml").writeText("<project/>")
+
+        val result = findPomFiles(tmp.toString())
+
+        assertTrue(result.isEmpty(), "pom.xml at depth 4 must NOT be discovered (current perf cap)")
     }
 
     @Test

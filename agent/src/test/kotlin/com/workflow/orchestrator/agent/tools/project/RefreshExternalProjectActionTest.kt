@@ -184,32 +184,63 @@ class RefreshExternalProjectActionTest {
     }
 
     // ────────────────────────────────────────────────────────────────────────
-    // Test 5 — Maven non-reload mode invokes the matching action ID; when the
-    //          action isn't registered (Maven plugin disabled), surface that as a warning.
+    // Test 5 — Maven generate_sources with no imported Maven projects → warning
+    //
+    // 2026-05-18 migration: action-ID dispatch (Maven.UpdateAllFolders) was
+    // replaced with direct MavenAsyncFacade calls. The equivalent failure
+    // surface is "no Maven projects to operate on" — emitted as a non-error
+    // warning so mixed-build projects can still partially complete.
     // ────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun testMavenNonReloadActionMissingProducesWarning() = runTest {
+    fun testMavenGenerateSourcesNoProjectsProducesWarning() = runTest {
         stubSingleRoot(ProjectSystemId("Maven"))
-
-        // Simulate Maven plugin disabled: ActionManager.getAction(...) returns null
-        mockkStatic(ActionManager::class)
-        val actionMgr = mockk<ActionManager>(relaxed = true)
-        every { ActionManager.getInstance() } returns actionMgr
-        every { actionMgr.getAction("Maven.UpdateAllFolders") } returns null
 
         val params = buildJsonObject { put("mode", JsonPrimitive("generate_sources")) }
         val result = executeRefreshExternalProject(params, project, tool)
 
-        // Action ID must appear in output so the operator can diagnose the disabled-plugin case.
+        // Overall non-error so mixed-build projects don't hard-fail.
+        assertFalse(result.isError, "Expected non-error result with warning, got: ${result.content}")
+        // Warning text mentions the action couldn't run for this Maven setup.
         assertTrue(
-            result.content.contains("Maven.UpdateAllFolders"),
-            "Expected action ID 'Maven.UpdateAllFolders' in output, got: ${result.content}"
+            result.content.contains("no Maven projects", ignoreCase = true) ||
+                result.content.contains("not available", ignoreCase = true) ||
+                result.content.contains("unavailable", ignoreCase = true),
+            "Expected diagnostic warning about missing Maven projects, got: ${result.content}"
         )
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Test 6 — module_paths parameter parsing: an empty/unresolvable array
+    //          produces an isError=true result with the unresolved paths listed.
+    // ────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun testModulePathsUnresolvedReturnsError() = runTest {
+        stubSingleRoot(ProjectSystemId("Maven"))
+        every { project.basePath } returns "/fake/project"
+
+        // VFS access requires a live IntelliJ Application — stub LocalFileSystem
+        // statically to return null for every io-file lookup so we exercise the
+        // "module_paths did not resolve" path without needing the platform.
+        mockkStatic(com.intellij.openapi.vfs.LocalFileSystem::class)
+        val vfs = mockk<com.intellij.openapi.vfs.LocalFileSystem>(relaxed = true)
+        every { com.intellij.openapi.vfs.LocalFileSystem.getInstance() } returns vfs
+        every { vfs.findFileByIoFile(any()) } returns null
+
+        val params = buildJsonObject {
+            put("mode", JsonPrimitive("reload"))
+            put("module_paths", kotlinx.serialization.json.buildJsonArray {
+                add(JsonPrimitive("nonexistent/pom.xml"))
+                add(JsonPrimitive("also/missing/pom.xml"))
+            })
+        }
+        val result = executeRefreshExternalProject(params, project, tool)
+
+        assertTrue(result.isError, "Expected isError=true when module_paths don't resolve")
         assertTrue(
-            result.content.contains("disabled", ignoreCase = true) ||
-                result.content.contains("not found", ignoreCase = true),
-            "Expected 'disabled' or 'not found' diagnostic, got: ${result.content}"
+            result.content.contains("nonexistent/pom.xml") && result.content.contains("also/missing/pom.xml"),
+            "Expected both unresolved paths listed in the error, got: ${result.content}"
         )
     }
 }
