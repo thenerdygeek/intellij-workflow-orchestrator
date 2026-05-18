@@ -483,26 +483,26 @@ class ContextManager(
     }
 
     /**
-     * Build the summarization prompt and call the LLM brain.
-     *
-     * CRITICAL: must include image-part placeholders AND tool-call name fallbacks
-     * because msg.content is null for tool-call-only turns and image bytes live in msg.parts.
+     * Summarize the pre-user prefix into a long-term context handoff.
+     * The result replaces messages before the most recent user message.
+     * Returns null on empty prefix (no LLM call) or on LLM error.
      */
-    private suspend fun summarizePrefix(
+    private suspend fun summarizePreUser(
         brain: LlmBrain,
         prefix: List<ChatMessage>,
-        previousSummary: String?,
+        priorSummary: String?,
     ): String? {
+        if (prefix.isEmpty()) return null
         val promptText = buildString {
-            append("Summarize the conversation prefix below into a structured handoff. ")
-            append("The summary REPLACES these messages; the agent must continue from it. ")
+            append("You are summarizing the conversation BEFORE the user's most recent instruction. ")
+            append("The summary REPLACES these messages; the agent must continue from it as a handoff. ")
             append("Capture: TASK (original user intent + sub-goals), FILES (paths touched + role of each), ")
             append("DECISIONS (key choices made and why), STATE (what's done, what's in progress), ")
             append("ERRORS (unresolved errors / blockers), PENDING (next steps).\n")
             append("If any [+N image(s)] markers appear, describe what was relevant about them from context.\n\n")
-            if (previousSummary != null) {
-                append("PREVIOUS SUMMARY (from prior compaction — fold into the new summary):\n")
-                append(previousSummary).append("\n\n")
+            if (priorSummary != null) {
+                append("PRIOR PRE-USER SUMMARY (from earlier compaction — fold into the new summary):\n")
+                append(priorSummary).append("\n\n")
             }
             append("CONVERSATION PREFIX:\n")
             prefix.forEach { msg ->
@@ -514,11 +514,50 @@ class ContextManager(
                 append("[${msg.role}] ").append(text).append(imageHint).append("\n\n")
             }
         }
+        return invokeSummaryBrain(brain, promptText)
+    }
 
+    /**
+     * Summarize the post-user working memory slice into a compressed working-state turn.
+     * The result replaces L3 in the rebuilt history. Folds [priorPostSummary] into the
+     * prompt so Case B re-compactions preserve continuity.
+     * Returns null on empty slice or on LLM error.
+     */
+    private suspend fun summarizePostUser(
+        brain: LlmBrain,
+        slice: List<ChatMessage>,
+        priorPostSummary: String?,
+    ): String? {
+        if (slice.isEmpty()) return null
+        val promptText = buildString {
+            append("You are summarizing the agent's work-so-far in response to the user's most recent instruction. ")
+            append("The summary REPLACES these messages as working memory; the agent must continue from it. ")
+            append("Capture: WORK (what tool calls were made and to what effect), ")
+            append("FILES (paths read/modified + role of each), ")
+            append("FINDINGS (key facts learned), DECISIONS (choices made and why), ")
+            append("ERRORS (unresolved errors / blockers), PENDING (next steps).\n")
+            append("If any [+N image(s)] markers appear, describe what was relevant about them from context.\n\n")
+            if (priorPostSummary != null) {
+                append("PRIOR POST-USER SUMMARY (from earlier compaction — fold into the new summary):\n")
+                append(priorPostSummary).append("\n\n")
+            }
+            append("CONVERSATION SLICE:\n")
+            slice.forEach { msg ->
+                val text = msg.content
+                    ?: msg.toolCalls?.firstOrNull()?.function?.name?.let { "(tool_call: $it)" }
+                    ?: "(empty)"
+                val imageCount = msg.parts?.count { it is ContentPart.Image } ?: 0
+                val imageHint = if (imageCount > 0) " [+${imageCount} image(s) attached]" else ""
+                append("[${msg.role}] ").append(text).append(imageHint).append("\n\n")
+            }
+        }
+        return invokeSummaryBrain(brain, promptText)
+    }
+
+    /** Shared LLM-invocation path for both summarizers. */
+    private suspend fun invokeSummaryBrain(brain: LlmBrain, promptText: String): String? {
         val summaryMessages = listOf(ChatMessage(role = "user", content = promptText))
-        val result = brain.chat(summaryMessages, maxTokens = 2048)
-
-        return when (result) {
+        return when (val result = brain.chat(summaryMessages, maxTokens = 2048)) {
             is ApiResult.Success -> result.data.choices.firstOrNull()?.message?.content
             is ApiResult.Error -> {
                 LOG.warn("[Context] Summarization LLM call failed: ${result.message}")
@@ -527,6 +566,23 @@ class ContextManager(
         }
     }
 
+    /** TEMP — removed in Task 6 when compact() is rewritten. */
+    @Deprecated("Use summarizePreUser / summarizePostUser", ReplaceWith(""))
+    private suspend fun summarizePrefix(
+        brain: LlmBrain,
+        prefix: List<ChatMessage>,
+        previousSummary: String?,
+    ): String? = summarizePreUser(brain, prefix, previousSummary)
+
+    private fun formatPreUserSummary(summary: String): String =
+        "[Context Handoff — earlier conversation was compacted]\n$summary"
+
+    private fun formatPostUserSummary(summary: String): String =
+        "[Working Memory — agent activity since the user's last message was compacted]\n$summary"
+
+    /** TEMP — removed in Task 6 when compact() stops using formatSummaryMessage. */
+    @Suppress("DEPRECATION")
+    @Deprecated("Use formatPreUserSummary / formatPostUserSummary", ReplaceWith(""))
     private fun formatSummaryMessage(summary: String): String =
         "[Context Summary — earlier conversation was compacted]\n$summary"
 
