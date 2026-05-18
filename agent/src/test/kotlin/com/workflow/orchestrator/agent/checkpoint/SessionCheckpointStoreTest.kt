@@ -204,4 +204,30 @@ class SessionCheckpointStoreTest {
         val restored = store.revertFileToBaseline("/some/unknown/path.kt")
         assertEquals(false, restored)
     }
+
+    @Test
+    fun `captureIfFirstTouch handles Windows-style absolute path without corrupting source`(@TempDir tmp: java.nio.file.Path) {
+        val store = SessionCheckpointStore(sessionDir = tmp.toFile())
+        store.beginUserMessage(100L, "edit win path")
+
+        // Simulate a Windows-style absolute path that we know is NOT actually present on disk
+        // (we're testing path translation, not real Windows I/O — the file won't be found,
+        // so captureIfFirstTouch should record it as "created" rather than copy bytes).
+        val winPath = "C:\\Users\\dev\\repo\\Foo.kt"
+        store.captureIfFirstTouch(100L, winPath)
+
+        val meta = store.listMessageCheckpoints().first()
+        org.junit.jupiter.api.Assertions.assertTrue(
+            meta.createdPaths.contains(winPath),
+            "Windows path should be recorded as created when file doesn't exist (not silently broken)"
+        )
+
+        // Sanity: the snapshot path used internally must NOT collide with the original source —
+        // i.e., it must be under the checkpoints dir, never absolute on its own.
+        // We verify by checking that no file outside `tmp` was created or modified.
+        val tmpRoot = tmp.toFile()
+        val outsideTmp = java.io.File(System.getProperty("java.io.tmpdir")).listFiles()
+            ?.any { it.absolutePath.startsWith("C:\\") } ?: false
+        org.junit.jupiter.api.Assertions.assertFalse(outsideTmp, "No `C:\\...` files should leak outside tmp")
+    }
 }

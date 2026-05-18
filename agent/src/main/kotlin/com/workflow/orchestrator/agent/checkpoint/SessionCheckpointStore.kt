@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.checkpoint
 
+import com.workflow.orchestrator.agent.session.AtomicFileWriter
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -17,7 +18,7 @@ class SessionCheckpointStore(private val sessionDir: File) {
             userText = userText,
             createdAt = System.currentTimeMillis(),
         )
-        File(dir, "meta.json").writeText(json.encodeToString(meta))
+        AtomicFileWriter.write(File(dir, "meta.json"), json.encodeToString(meta))
         File(dir, "files").mkdirs()
     }
 
@@ -51,7 +52,7 @@ class SessionCheckpointStore(private val sessionDir: File) {
         }
 
         // File exists — first-touch capture only
-        val snapPath = File(filesRoot, absolutePath.trimStart('/'))
+        val snapPath = File(filesRoot, snapshotRelative(absolutePath))
         if (snapPath.exists()) return  // already captured this turn
 
         snapPath.parentFile.mkdirs()
@@ -71,7 +72,7 @@ class SessionCheckpointStore(private val sessionDir: File) {
             return
         }
         val updated = transform(current)
-        metaFile.writeText(json.encodeToString(updated))
+        AtomicFileWriter.write(metaFile, json.encodeToString(updated))
     }
 
     fun aggregateDiff(): AggregateDiff {
@@ -92,7 +93,7 @@ class SessionCheckpointStore(private val sessionDir: File) {
             val baseline = if (isCreated) {
                 ""
             } else {
-                File(File(checkpointsDir, "msg-${cp.messageTs}/files"), path.trimStart('/'))
+                File(File(checkpointsDir, "msg-${cp.messageTs}/files"), snapshotRelative(path))
                     .takeIf { it.exists() }?.readText() ?: ""
             }
             val (added, removed) = DiffCalculator.countDiff(baseline, current)
@@ -150,7 +151,7 @@ class SessionCheckpointStore(private val sessionDir: File) {
         // Restore touched files (skip if also in createdInRange — already deleted)
         for ((path, cp) in earliestTouchedByPath) {
             if (path in createdInRange) continue
-            val snapFile = File(File(checkpointsDir, "msg-${cp.messageTs}/files"), path.trimStart('/'))
+            val snapFile = File(File(checkpointsDir, "msg-${cp.messageTs}/files"), snapshotRelative(path))
             if (!snapFile.exists()) continue
             val dst = File(path)
             dst.parentFile?.mkdirs()
@@ -188,7 +189,7 @@ class SessionCheckpointStore(private val sessionDir: File) {
                 return true
             }
             if (absolutePath in cp.touchedPaths) {
-                val snap = File(File(checkpointsDir, "msg-${cp.messageTs}/files"), absolutePath.trimStart('/'))
+                val snap = File(File(checkpointsDir, "msg-${cp.messageTs}/files"), snapshotRelative(absolutePath))
                 if (snap.exists()) {
                     val dst = File(absolutePath)
                     dst.parentFile?.mkdirs()
@@ -201,4 +202,22 @@ class SessionCheckpointStore(private val sessionDir: File) {
     }
 
     private fun msgDir(messageTs: Long): File = File(checkpointsDir, "msg-$messageTs")
+
+    /**
+     * Map an absolute filesystem path to a relative key under `msg-{ts}/files/`.
+     *
+     * Cross-platform: `/Users/me/Foo.kt` → `Users/me/Foo.kt`,
+     *                 `C:\Users\me\Foo.kt` → `C/Users/me/Foo.kt`,
+     *                 `/var/lib/foo.txt` → `var/lib/foo.txt`.
+     *
+     * Java's `File(parent, child)` discards `parent` when `child` is itself absolute.
+     * So we MUST strip both POSIX `/` prefixes and Windows drive letters before
+     * joining under `filesRoot`. Backslashes are normalized to forward slashes so
+     * the path tree under `files/` is consistent across platforms.
+     */
+    private fun snapshotRelative(absolutePath: String): String =
+        absolutePath
+            .replace('\\', '/')
+            .replace(Regex("^([A-Za-z]):"), "$1") // strip the ":" off "C:" → "C"
+            .trimStart('/')
 }
