@@ -21,6 +21,11 @@ class SessionCheckpointStore(private val sessionDir: File) {
         File(dir, "files").mkdirs()
     }
 
+    fun clear() {
+        if (checkpointsDir.exists()) checkpointsDir.deleteRecursively()
+        checkpointsDir.mkdirs()
+    }
+
     fun listMessageCheckpoints(): List<CheckpointMeta> {
         val dirs = checkpointsDir.listFiles { f -> f.isDirectory && f.name.startsWith("msg-") } ?: return emptyList()
         return dirs.mapNotNull { d ->

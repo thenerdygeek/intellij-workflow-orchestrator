@@ -62,4 +62,15 @@ class SessionCheckpointStoreTest {
         val meta = store.listMessageCheckpoints().first()
         assertTrue(meta.createdPaths.contains(bar), "created path should be tracked in meta")
     }
+
+    @Test
+    fun `clear removes all checkpoint dirs`(@TempDir tmp: java.nio.file.Path) {
+        val store = SessionCheckpointStore(sessionDir = tmp.toFile())
+        store.beginUserMessage(100L, "a"); store.beginUserMessage(200L, "b")
+        assertEquals(2, store.listMessageCheckpoints().size)
+
+        store.clear()
+
+        assertEquals(0, store.listMessageCheckpoints().size)
+    }
 }
