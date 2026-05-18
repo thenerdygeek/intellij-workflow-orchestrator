@@ -324,6 +324,30 @@ class MessageStateHandler(
     }
 
     /**
+     * Truncate persisted messages at and after [targetMessageTs].
+     *
+     * Drops UI messages with ts >= targetMessageTs from `ui_messages.json` and the
+     * trailing [droppedApiCount] entries from `api_conversation_history.json`.
+     *
+     * The caller (AgentService.revertToUserMessage) computes droppedApiCount because
+     * the UI-message-ts to api-history-index mapping is not always 1:1 (e.g. streaming
+     * partials, resume preambles). Passing it explicitly avoids guessing here.
+     */
+    suspend fun truncateMessagesAtTs(targetMessageTs: Long, droppedApiCount: Int) = mutex.withLock {
+        val keptUi = uiMessages.filter { it.ts < targetMessageTs }
+        uiMessages.clear()
+        uiMessages.addAll(keptUi)
+
+        val keepApiCount = (apiHistory.size - droppedApiCount).coerceAtLeast(0)
+        val keptApi = apiHistory.take(keepApiCount)
+        apiHistory.clear()
+        apiHistory.addAll(keptApi)
+
+        saveInternal()
+        saveApiHistoryInternal()
+    }
+
+    /**
      * Rewrites the content of the most recent tool-result message for a given tool name.
      * Used by the plan discard flow to prevent the LLM from re-surfacing a discarded plan.
      *
