@@ -648,6 +648,21 @@ class ContextManager(
         return messages.size
     }
 
+    // ── Two-tier split helpers ────────────────────────────────────────────────
+
+    /**
+     * Scan messages backward, return the index of the most recent `role == "user"` message.
+     * Returns -1 if no user message exists.
+     *
+     * Pure function — does not mutate messages.
+     */
+    internal fun findLastUserIndex(): Int {
+        for (i in messages.indices.reversed()) {
+            if (messages[i].role == "user") return i
+        }
+        return -1
+    }
+
     // ── Image helpers ─────────────────────────────────────────────────────────
 
     private fun stripImagePartsFromAllMessages() {
