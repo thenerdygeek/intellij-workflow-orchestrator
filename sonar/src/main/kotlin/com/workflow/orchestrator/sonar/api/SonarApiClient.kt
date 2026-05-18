@@ -70,6 +70,20 @@ class SonarApiClient(
             .map { it.components }
     }
 
+    /**
+     * Cheap existence probe used as a preflight before `/api/issues/search`, which
+     * returns 200-with-empty-array for unknown project keys and is therefore
+     * indistinguishable from "no open issues".
+     */
+    suspend fun componentExists(projectKey: String): ApiResult<Boolean> {
+        log.info("[Sonar:API] GET /api/components/show for project '$projectKey'")
+        val encoded = URLEncoder.encode(projectKey, "UTF-8")
+        return when (val result = get<SonarComponentShowResponse>("/api/components/show?component=$encoded")) {
+            is ApiResult.Success -> ApiResult.Success(true)
+            is ApiResult.Error -> if (result.type == ErrorType.NOT_FOUND) ApiResult.Success(false) else result
+        }
+    }
+
     suspend fun getBranches(projectKey: String): ApiResult<List<SonarBranchDto>> {
         log.info("[Sonar:API] GET /api/project_branches/list for project '$projectKey'")
         val encoded = URLEncoder.encode(projectKey, "UTF-8")

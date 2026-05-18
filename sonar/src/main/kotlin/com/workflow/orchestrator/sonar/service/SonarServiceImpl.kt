@@ -69,6 +69,22 @@ class SonarServiceImpl(private val project: Project) : SonarService {
             hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
+        // SonarQube's /api/issues/search returns 200 with an empty array when the
+        // project key doesn't exist, which is indistinguishable from "no open
+        // issues". Preflight via /api/components/show so a typo surfaces as an
+        // explicit error instead of silently masquerading as a clean project.
+        // Transient preflight errors (network / 5xx) fall through to the main
+        // call so a bad probe doesn't block a healthy fetch.
+        when (val precheck = api.componentExists(projectKey)) {
+            is ApiResult.Success -> if (!precheck.data) return ToolResult(
+                data = emptyList(),
+                summary = "SonarQube project '$projectKey' not found.",
+                isError = true,
+                hint = "Verify the project key. Maven artifact keys like 'group:artifact' often map to plain 'artifact' in SonarQube — try the short form or search via the Quality dashboard."
+            )
+            is ApiResult.Error -> log.debug("[SonarService] componentExists preflight failed (${precheck.type}: ${precheck.message}); proceeding to issues search")
+        }
+
         return when (val result = api.getIssues(projectKey, branch = branch, filePath = filePath, inNewCodePeriod = inNewCodePeriod)) {
             is ApiResult.Success -> {
                 val issues = result.data.map { dto ->

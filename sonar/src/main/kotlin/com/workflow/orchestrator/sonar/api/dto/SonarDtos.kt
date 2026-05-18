@@ -26,6 +26,11 @@ data class SonarProjectDto(
 )
 
 @Serializable
+data class SonarComponentShowResponse(
+    val component: SonarProjectDto
+)
+
+@Serializable
 data class SonarPagingDto(
     val pageIndex: Int = 1,
     val pageSize: Int = 100,

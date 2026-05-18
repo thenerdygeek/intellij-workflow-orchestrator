@@ -62,6 +62,42 @@ class SonarApiClientTest {
     }
 
     @Test
+    fun `componentExists returns true when SonarQube returns 200`() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"component":{"key":"acme-common-core","name":"acme-common-core","qualifier":"TRK"}}"""
+            )
+        )
+
+        val result = client.componentExists("acme-common-core")
+
+        assertTrue(result.isSuccess)
+        assertTrue((result as ApiResult.Success).data)
+        val req = server.takeRequest()
+        assertEquals("/api/components/show?component=acme-common-core", req.path)
+    }
+
+    @Test
+    fun `componentExists returns false when SonarQube returns 404`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"errors":[{"msg":"not found"}]}"""))
+
+        val result = client.componentExists("com.acme.platform:acme-common-core")
+
+        assertTrue(result.isSuccess)
+        assertFalse((result as ApiResult.Success).data)
+    }
+
+    @Test
+    fun `componentExists propagates non-404 errors so callers can fall through`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401))
+
+        val result = client.componentExists("acme-common-core")
+
+        assertFalse(result.isSuccess)
+        assertEquals(ErrorType.AUTH_FAILED, (result as ApiResult.Error).type)
+    }
+
+    @Test
     fun `getQualityGateStatus returns gate with conditions`() = runTest {
         server.enqueue(MockResponse().setBody(fixture("qualitygate-status-passed.json")))
 
