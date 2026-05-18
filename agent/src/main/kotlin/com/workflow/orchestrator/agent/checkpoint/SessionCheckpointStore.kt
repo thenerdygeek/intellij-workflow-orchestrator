@@ -171,5 +171,34 @@ class SessionCheckpointStore(private val sessionDir: File) {
         )
     }
 
+    /**
+     * Restore a single file to its session baseline (the earliest snapshot, or delete if created).
+     *
+     * Does NOT modify the conversation history. Caller is responsible for pushing the
+     * updated aggregate diff to the UI.
+     *
+     * @return true if the file was restored or deleted, false if the path is unknown to the store.
+     */
+    fun revertFileToBaseline(absolutePath: String): Boolean {
+        val all = listMessageCheckpoints()
+        for (cp in all) {
+            if (absolutePath in cp.createdPaths) {
+                // Created at this checkpoint — delete the file and remove tracking
+                if (File(absolutePath).exists()) File(absolutePath).delete()
+                return true
+            }
+            if (absolutePath in cp.touchedPaths) {
+                val snap = File(File(checkpointsDir, "msg-${cp.messageTs}/files"), absolutePath.trimStart('/'))
+                if (snap.exists()) {
+                    val dst = File(absolutePath)
+                    dst.parentFile?.mkdirs()
+                    snap.copyTo(dst, overwrite = true)
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     private fun msgDir(messageTs: Long): File = File(checkpointsDir, "msg-$messageTs")
 }

@@ -164,4 +164,44 @@ class SessionCheckpointStoreTest {
         assertEquals("fix it", result.userText)
         assertTrue(store.listMessageCheckpoints().isEmpty())
     }
+
+    @Test
+    fun `revertFileToBaseline restores single file to its earliest snapshot`(@TempDir tmp: java.nio.file.Path) {
+        val store = SessionCheckpointStore(sessionDir = tmp.toFile())
+        val foo = File(tmp.toFile(), "src/Foo.kt").apply { parentFile.mkdirs(); writeText("baseline-foo") }
+        val bar = File(tmp.toFile(), "src/Bar.kt").apply { parentFile.mkdirs(); writeText("baseline-bar") }
+
+        store.beginUserMessage(100L, "msg 1")
+        store.captureIfFirstTouch(100L, foo.absolutePath)
+        store.captureIfFirstTouch(100L, bar.absolutePath)
+        foo.writeText("changed-foo")
+        bar.writeText("changed-bar")
+
+        val restored = store.revertFileToBaseline(foo.absolutePath)
+
+        assertEquals(true, restored)
+        assertEquals("baseline-foo", foo.readText())
+        assertEquals("changed-bar", bar.readText(), "bar should NOT be touched")
+    }
+
+    @Test
+    fun `revertFileToBaseline for created file deletes it`(@TempDir tmp: java.nio.file.Path) {
+        val store = SessionCheckpointStore(sessionDir = tmp.toFile())
+        val newFile = File(tmp.toFile(), "src/New.kt").absolutePath
+        store.beginUserMessage(100L, "create new")
+        store.captureIfFirstTouch(100L, newFile)  // recorded as created
+        File(newFile).apply { parentFile.mkdirs(); writeText("new content") }
+
+        val restored = store.revertFileToBaseline(newFile)
+
+        assertEquals(true, restored)
+        assertFalse(File(newFile).exists())
+    }
+
+    @Test
+    fun `revertFileToBaseline returns false for unknown path`(@TempDir tmp: java.nio.file.Path) {
+        val store = SessionCheckpointStore(sessionDir = tmp.toFile())
+        val restored = store.revertFileToBaseline("/some/unknown/path.kt")
+        assertEquals(false, restored)
+    }
 }
