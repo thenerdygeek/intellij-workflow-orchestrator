@@ -8,6 +8,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.encoding.EncodingProjectManager
 import com.workflow.orchestrator.core.util.ProjectIdentifier
+import com.workflow.orchestrator.core.vfs.PostMutationRefresh
 import java.io.File
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
@@ -200,7 +201,7 @@ class CreateFileTool : AgentTool {
         // block a successful write.
         try {
             if (ApplicationManager.getApplication() != null) {
-                com.workflow.orchestrator.core.vfs.PostMutationRefresh.clearJpsCache(project)
+                PostMutationRefresh.clearJpsCache(project)
             }
         } catch (_: Exception) { /* best-effort */ }
 

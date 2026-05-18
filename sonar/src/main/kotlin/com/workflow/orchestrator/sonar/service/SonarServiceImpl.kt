@@ -82,7 +82,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                 isError = true,
                 hint = "Verify the project key. Maven artifact keys like 'group:artifact' often map to plain 'artifact' in SonarQube — try the short form or search via the Quality dashboard."
             )
-            is ApiResult.Error -> log.debug("[SonarService] componentExists preflight failed (${precheck.type}: ${precheck.message}); proceeding to issues search")
+            is ApiResult.Error -> log.info("[SonarService] componentExists preflight failed (${precheck.type}: ${precheck.message}); proceeding to issues search — a flaky preflight will not block the main fetch")
         }
 
         return when (val result = api.getIssues(projectKey, branch = branch, filePath = filePath, inNewCodePeriod = inNewCodePeriod)) {

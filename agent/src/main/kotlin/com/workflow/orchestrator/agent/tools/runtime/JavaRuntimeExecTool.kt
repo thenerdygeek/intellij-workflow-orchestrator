@@ -60,6 +60,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
 import com.intellij.task.ProjectTaskManager
+import com.workflow.orchestrator.core.vfs.PostMutationRefresh
 
 /**
  * Matches a real Gradle `> Task :...:test` progress line, ignoring `compileTestJava`,
@@ -770,7 +771,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                             // bypassed leaves JPS believing nothing has changed; build() silently
                             // no-ops, and the JUnit fork loads a .class file missing the new test
                             // method (the "newly-added test not found until restart" symptom).
-                            try { com.workflow.orchestrator.core.vfs.PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
+                            try { PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
                             try {
                                 ProjectTaskManager.getInstance(project)
                                     .build(testModule)
@@ -1847,7 +1848,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
 
                             val module = rerunModule
                             if (module != null) {
-                                try { com.workflow.orchestrator.core.vfs.PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
+                                try { PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
                                 try {
                                     com.intellij.task.ProjectTaskManager.getInstance(project)
                                         .build(module)
@@ -2019,7 +2020,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                         // incremental build trusts an in-memory snapshot that prior
                         // edit_file writes may have invalidated without notifying it,
                         // producing silent no-op compiles. See EditFileTool comment.
-                        try { com.workflow.orchestrator.core.vfs.PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
+                        try { PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
 
                         val compiler = CompilerManager.getInstance(project)
 

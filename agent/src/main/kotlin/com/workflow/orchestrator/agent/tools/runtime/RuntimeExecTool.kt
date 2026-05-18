@@ -32,6 +32,7 @@ import com.intellij.xdebugger.XDebugSessionListener
 import com.intellij.xdebugger.XDebuggerManager
 import com.intellij.xdebugger.XDebuggerManagerListener
 import com.workflow.orchestrator.agent.tools.debug.DebugInvocation
+import com.workflow.orchestrator.core.vfs.PostMutationRefresh
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
@@ -1322,7 +1323,7 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
             // Drop JPS's in-memory build snapshot so the run config's "Build before launch" task
             // re-stats sources from disk — matches the same pattern in run_tests / coverage to
             // avoid silent no-op builds against the stale dependency graph.
-            try { com.workflow.orchestrator.core.vfs.PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
+            try { PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
             try {
                 ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
             } catch (_: NoSuchMethodError) {

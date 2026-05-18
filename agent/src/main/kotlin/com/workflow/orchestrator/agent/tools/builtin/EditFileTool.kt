@@ -9,6 +9,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import com.workflow.orchestrator.core.util.ProjectIdentifier
+import com.workflow.orchestrator.core.vfs.PostMutationRefresh
 import java.io.File
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
@@ -248,7 +249,7 @@ class EditFileTool : AgentTool {
         // cache-clear failure block a successful write.
         try {
             if (ApplicationManager.getApplication() != null) {
-                com.workflow.orchestrator.core.vfs.PostMutationRefresh.clearJpsCache(project)
+                PostMutationRefresh.clearJpsCache(project)
             }
         } catch (_: Exception) { /* best-effort */ }
 

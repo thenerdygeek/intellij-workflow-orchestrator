@@ -20,6 +20,7 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.psi.JavaPsiFacade
 import com.intellij.psi.search.GlobalSearchScope
 import com.workflow.orchestrator.agent.AgentService
+import com.workflow.orchestrator.core.vfs.PostMutationRefresh
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.tools.WorkerType
@@ -592,7 +593,7 @@ Actions and their parameters:
                             // can leave the snapshot believing nothing has changed, the build
                             // silently no-ops, and the coverage fork loads a stale .class file
                             // (matching the run_tests "newly-added test not found" symptom).
-                            try { com.workflow.orchestrator.core.vfs.PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
+                            try { PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
                             try {
                                 ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
                             } catch (_: NoSuchMethodError) {

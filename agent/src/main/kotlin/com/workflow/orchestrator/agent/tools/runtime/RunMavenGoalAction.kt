@@ -25,6 +25,7 @@ import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.framework.MavenUtils
+import com.workflow.orchestrator.core.vfs.PostMutationRefresh
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
@@ -414,7 +415,7 @@ private suspend fun launchAndAwaitMavenBuild(
                 // Maven goal runs delegate compilation to Maven itself, but the IDE-side run
                 // config still consults JPS for any incremental-build step. Drop the snapshot
                 // so a stale dependency graph can't no-op the prepare phase.
-                try { com.workflow.orchestrator.core.vfs.PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
+                try { PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
                 try {
                     ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
                 } catch (_: NoSuchMethodError) {

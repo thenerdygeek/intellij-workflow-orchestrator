@@ -30,6 +30,7 @@ import com.intellij.xdebugger.impl.breakpoints.XExpressionImpl
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.core.ai.TokenEstimator
+import com.workflow.orchestrator.core.vfs.PostMutationRefresh
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -1545,7 +1546,7 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
                         // Drop JPS in-memory snapshot so the debug run config's "Build before
                         // launch" task re-stats sources from disk — same drift mitigation as
                         // run_tests / coverage.
-                        try { com.workflow.orchestrator.core.vfs.PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
+                        try { PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
                         ProgramRunnerUtil.executeConfiguration(env, true, true)
 
                         // Detect execution abort before debug attaches

@@ -25,6 +25,7 @@ import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.agent.tools.framework.build.executePytestRun
 import com.workflow.orchestrator.core.ai.TokenEstimator
+import com.workflow.orchestrator.core.vfs.PostMutationRefresh
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -524,7 +525,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                             if (!continuation.isActive) return@invokeLater
                             // No-op on pure-Python projects (no JPS state), but harmless and consistent
                             // with the Java path so mixed Java+Python projects are also covered.
-                            try { com.workflow.orchestrator.core.vfs.PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
+                            try { PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
                             try {
                                 ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
                             } catch (_: NoSuchMethodError) {
