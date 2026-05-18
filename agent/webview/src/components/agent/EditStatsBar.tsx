@@ -35,25 +35,27 @@ export function EditStatsBar({ diff }: Props) {
       </div>
       {expanded && (
         <div className="px-4 py-1.5 border-t" style={{ borderColor: 'var(--border)' }}>
-          {diff.files.map(f => (
-            <div
-              key={f.path}
-              data-testid="file-row"
-              className="flex items-center gap-3 py-0.5 text-[11px] font-mono"
-            >
-              <span className="flex-1 truncate" style={{ color: 'var(--fg)' }}>{f.path}</span>
-              <span style={{ color: 'var(--diff-add-fg, #b5cea8)' }}>+{f.added}</span>
-              <span style={{ color: 'var(--diff-rem-fg, #f4a5a5)' }}>-{f.removed}</span>
-              <button
-                aria-label="Revert this file"
-                onClick={() => window._revertFileToBaseline?.(f.path)}
-                className="hover:underline"
-                style={{ color: 'var(--link)' }}
+          {diff.files
+            .filter(f => f.status !== 'MODIFIED' || f.added > 0 || f.removed > 0)
+            .map(f => (
+              <div
+                key={f.path}
+                data-testid="file-row"
+                className="flex items-center gap-3 py-0.5 text-[11px] font-mono"
               >
-                ⟲
-              </button>
-            </div>
-          ))}
+                <span className="flex-1 truncate" style={{ color: 'var(--fg)' }}>{f.path}</span>
+                <span style={{ color: 'var(--diff-add-fg, #b5cea8)' }}>+{f.added}</span>
+                <span style={{ color: 'var(--diff-rem-fg, #f4a5a5)' }}>-{f.removed}</span>
+                <button
+                  aria-label="Revert this file"
+                  onClick={() => window._revertFileToBaseline?.(f.path)}
+                  className="hover:underline"
+                  style={{ color: 'var(--link)' }}
+                >
+                  ⟲
+                </button>
+              </div>
+            ))}
         </div>
       )}
     </div>

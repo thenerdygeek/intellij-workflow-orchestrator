@@ -48,4 +48,20 @@ describe('EditStatsBar', () => {
     fireEvent.click(screen.getByText(/revert all/i));
     expect((window as any)._revertAll).toHaveBeenCalled();
   });
+
+  it('hides MODIFIED files with zero added and zero removed from expanded list', () => {
+    const diffWithZeroRow = {
+      totalAdded: 12, totalRemoved: 3,
+      files: [
+        { path: 'src/Foo.kt', added: 12, removed: 3, status: 'MODIFIED' as const },
+        { path: 'src/Bar.kt', added: 0, removed: 0, status: 'MODIFIED' as const },
+        { path: 'src/Created.kt', added: 0, removed: 0, status: 'CREATED' as const },
+      ],
+    };
+    render(<EditStatsBar diff={diffWithZeroRow} />);
+    fireEvent.click(screen.getByLabelText(/expand/i));
+    expect(screen.getByText('src/Foo.kt')).toBeInTheDocument();
+    expect(screen.queryByText('src/Bar.kt')).not.toBeInTheDocument();
+    expect(screen.getByText('src/Created.kt')).toBeInTheDocument();
+  });
 });

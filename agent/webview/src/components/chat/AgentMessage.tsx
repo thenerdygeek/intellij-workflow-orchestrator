@@ -222,7 +222,7 @@ export const AgentMessage = memo(function AgentMessage({
 
         {isUser ? (
           <>
-            <div className="absolute right-2 top-2">
+            <div className="absolute right-12 top-2">
               <UserMessageRevertButton ts={message.ts} />
             </div>
             {/* Multimodal-agent — image attachments uploaded with this turn.
