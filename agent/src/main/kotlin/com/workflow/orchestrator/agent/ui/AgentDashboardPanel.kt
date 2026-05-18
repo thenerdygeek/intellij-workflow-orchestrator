@@ -745,21 +745,11 @@ class AgentDashboardPanel(
         cefPanel?.onKillSubAgent = onKill
     }
 
-    // ── Edit stats + checkpoint delegation ──
+    // ── Edit stats delegation ──
 
     fun updateEditStats(added: Int, removed: Int, files: Int) {
         runOnEdt { cefPanel?.updateEditStats(added, removed, files) }
         broadcast(replay = false) { it.updateEditStats(added, removed, files) }
-    }
-
-    fun updateCheckpoints(checkpointsJson: String) {
-        runOnEdt { cefPanel?.updateCheckpoints(checkpointsJson) }
-        broadcast(replay = false) { it.updateCheckpoints(checkpointsJson) }
-    }
-
-    fun notifyRollback(rollbackJson: String) {
-        runOnEdt { cefPanel?.notifyRollback(rollbackJson) }
-        broadcast(replay = false) { it.notifyRollback(rollbackJson) }
     }
 
     fun setSmartWorkingPhrase(phrase: String) {
@@ -778,10 +768,6 @@ class AgentDashboardPanel(
     fun setSessionTitleAnimated(title: String) {
         runOnEdt { cefPanel?.setSessionTitleAnimated(title) }
         broadcast(replay = false) { it.setSessionTitleAnimated(title) }
-    }
-
-    fun setCefRevertCheckpointCallback(onRevert: (String) -> Unit) {
-        cefPanel?.onRevertCheckpoint = onRevert
     }
 
     // ── Queued steering message delegation ──

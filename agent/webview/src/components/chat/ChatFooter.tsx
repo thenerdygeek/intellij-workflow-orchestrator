@@ -6,7 +6,6 @@ import { WorkingIndicator } from './WorkingIndicator';
 import { ToolCallChain } from '@/components/agent/ToolCallChain';
 import { ApprovalView } from '@/components/agent/ApprovalView';
 import { ProcessInputView } from '@/components/agent/ProcessInputView';
-import { RollbackCard } from '@/components/agent/RollbackCard';
 import { PlanSummaryCard } from '@/components/agent/PlanSummaryCard';
 import { PlanProgressWidget } from '@/components/agent/PlanProgressWidget';
 import { QuestionView } from '@/components/agent/QuestionView';
@@ -15,8 +14,8 @@ import { ThinkingView } from '@/components/agent/ThinkingView';
 /**
  * Trailing UI that flows below the last finalized message inside the
  * scrolling region: streaming bubble, active tool calls, approval gate,
- * process input, rollbacks, plan, questions, queued steering, working
- * indicator, retry, resume.
+ * process input, plan, questions, queued steering, working indicator,
+ * retry, resume.
  *
  * Architectural contract:
  * - Mounted exactly once as Virtuoso's `components.Footer` so it never
@@ -45,7 +44,6 @@ export const ChatFooter = memo(function ChatFooter() {
   const pendingProcessInput = useChatStore(s => s.pendingProcessInput);
   const resolveProcessInput = useChatStore(s => s.resolveProcessInput);
   const retryState = useChatStore(s => s.retryState);
-  const rollbackEvents = useChatStore(s => s.rollbackEvents);
   const queuedSteeringMessages = useChatStore(s => s.queuedSteeringMessages);
   const resumeSessionId = useChatStore(s => s.resumeSessionId);
 
@@ -129,12 +127,6 @@ export const ChatFooter = memo(function ChatFooter() {
           onSubmit={resolveProcessInput}
         />
       )}
-
-      {rollbackEvents.map(rb => (
-        <ErrorBoundary key={rb.id}>
-          <RollbackCard rollback={rb} />
-        </ErrorBoundary>
-      ))}
 
       {plan && !plan.approved && <PlanSummaryCard plan={plan} />}
       <PlanProgressWidget />

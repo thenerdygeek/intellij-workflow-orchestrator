@@ -16,6 +16,5 @@ data class HistoryItem(
     val cwdOnTaskInitialization: String? = null,
     val conversationHistoryDeletedRange: List<Int>? = null,
     val isFavorited: Boolean = false,
-    val checkpointManagerErrorMessage: String? = null,
     val modelId: String? = null,
 )

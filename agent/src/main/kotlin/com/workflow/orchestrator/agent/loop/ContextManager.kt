@@ -691,7 +691,7 @@ class ContextManager(
         }
     }
 
-    // ── Checkpoint persistence ────────────────────────────────────────────────
+    // ── Export / restore ──────────────────────────────────────────────────────
 
     fun exportMessages(): List<ChatMessage> = messages.toList()
 
@@ -699,7 +699,7 @@ class ContextManager(
         messages.clear()
         messages.addAll(savedMessages)
         lastPromptTokens = null
-        LOG.info("[Context] Restored ${savedMessages.size} messages from checkpoint")
+        LOG.info("[Context] Restored ${savedMessages.size} messages")
     }
 
     fun clearMessages() {

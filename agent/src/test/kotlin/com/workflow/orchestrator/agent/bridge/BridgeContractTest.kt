@@ -211,40 +211,6 @@ class BridgeContractTest {
         assertEquals(3, stats["files"]!!.jsonPrimitive.int)
     }
 
-    @Test
-    fun `checkpoints payload has required fields`() {
-        val contract = json.parseToJsonElement(loadContract("edit-stats.json")).jsonObject
-        val checkpoints = contract["checkpoints"]!!.jsonObject["valid_payload"]!!.jsonArray
-
-        for (cp in checkpoints) {
-            val obj = cp.jsonObject
-            assertTrue(obj.containsKey("id"))
-            assertTrue(obj.containsKey("description"))
-            assertTrue(obj.containsKey("timestamp"))
-            assertTrue(obj.containsKey("iteration"))
-            assertTrue(obj.containsKey("filesModified"))
-            assertTrue(obj.containsKey("totalLinesAdded"))
-            assertTrue(obj.containsKey("totalLinesRemoved"))
-
-            // Type checks
-            assertTrue(obj["id"] is JsonPrimitive)
-            assertTrue(obj["timestamp"]!!.jsonPrimitive.longOrNull != null)
-            assertTrue(obj["filesModified"] is JsonArray)
-        }
-    }
-
-    @Test
-    fun `checkpoints can be serialized and deserialized by Kotlin`() {
-        val contract = json.parseToJsonElement(loadContract("edit-stats.json")).jsonObject
-        val checkpoints = contract["checkpoints"]!!.jsonObject["valid_payload"]!!
-
-        val serialized = checkpoints.toString()
-        val deserialized = json.parseToJsonElement(serialized).jsonArray
-
-        assertEquals(2, deserialized.size)
-        assertEquals("cp-a1b2c3", deserialized[0].jsonObject["id"]!!.jsonPrimitive.content)
-    }
-
     // ── Plan Revise V2 Contract (per-line comments) ──
 
     @Test

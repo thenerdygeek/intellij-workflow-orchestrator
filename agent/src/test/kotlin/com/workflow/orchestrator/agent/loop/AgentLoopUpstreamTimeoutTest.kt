@@ -87,7 +87,6 @@ class AgentLoopUpstreamTimeoutTest {
         onToolCall = {},
         maxIterations = 5,
         planMode = false,
-        onCheckpoint = null
     )
 
     @Test

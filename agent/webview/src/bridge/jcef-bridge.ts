@@ -437,25 +437,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     stores?.getChatStore().appendToolOutput(toolCallId, chunk);
   },
 
-  // Edit stats + checkpoint methods from Kotlin
+  // Edit stats from Kotlin
   updateEditStats(added: number, removed: number, files: number) {
     stores?.getChatStore().updateEditStats({ totalLinesAdded: added, totalLinesRemoved: removed, filesModified: files });
-  },
-  updateCheckpoints(json: string) {
-    try {
-      const checkpoints = JSON.parse(json);
-      stores?.getChatStore().updateCheckpoints(checkpoints);
-    } catch (e) {
-      console.warn('[bridge] updateCheckpoints: malformed JSON', e);
-    }
-  },
-  notifyRollback(json: string) {
-    try {
-      const rollback = JSON.parse(json);
-      stores?.getChatStore().applyRollback(rollback);
-    } catch (e) {
-      console.warn('[bridge] notifyRollback: malformed JSON', e);
-    }
   },
   setSmartWorkingPhrase(phrase: string) {
     stores?.getChatStore().setSmartWorkingPhrase(phrase);

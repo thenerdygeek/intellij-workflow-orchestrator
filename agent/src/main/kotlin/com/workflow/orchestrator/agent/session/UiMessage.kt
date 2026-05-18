@@ -32,7 +32,7 @@ enum class UiSay {
     PLAN_APPROVED,
     REASONING,
     TOOL,
-    CHECKPOINT_CREATED,
+    STATUS,
     ERROR,
     PLAN_UPDATE,
     ARTIFACT_RESULT,
@@ -42,7 +42,6 @@ enum class UiSay {
     STEERING_RECEIVED,
     CONTEXT_COMPRESSED,
     MEMORY_SAVED,
-    ROLLBACK_PERFORMED,
 }
 
 @Serializable
@@ -142,7 +141,6 @@ data class UiMessage(
     val partial: Boolean = false,
     val conversationHistoryIndex: Int? = null,
     val conversationHistoryDeletedRange: List<Int>? = null,
-    val lastCheckpointHash: String? = null,
     val modelInfo: ModelInfo? = null,
     val artifactId: String? = null,
     val planData: PlanCardData? = null,

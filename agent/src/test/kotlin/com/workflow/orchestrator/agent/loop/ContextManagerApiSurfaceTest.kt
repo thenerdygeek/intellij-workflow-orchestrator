@@ -579,10 +579,10 @@ class ContextManagerApiSurfaceTest {
         }
     }
 
-    // ---- Checkpoint persistence ----
+    // ---- Export / restore / clear API ----
 
     @Nested
-    inner class CheckpointPersistence {
+    inner class MessageExportRestoreApi {
 
         @Test
         fun `exportMessages returns conversation messages without system prompt`() {

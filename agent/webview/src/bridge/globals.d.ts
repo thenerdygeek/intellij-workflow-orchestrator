@@ -50,7 +50,6 @@ declare global {
     _acceptDiffHunk?: (filePath: string, hunkIndex: number, editedContent?: string) => void;
     _rejectDiffHunk?: (filePath: string, hunkIndex: number) => void;
     _killToolCall?: (toolCallId: string) => void;
-    _revertCheckpoint?: (checkpointId: string) => void;
     _cancelSteering?: (steeringId: string) => void;
     _retryLastTask?: () => void;
     _reportInteractiveRender?: (json: string) => void;

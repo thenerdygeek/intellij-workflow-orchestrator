@@ -18,7 +18,6 @@ import { useEscapeHandler } from '@/hooks/useEscapeHandler'
 function App() {
   useEscapeHandler();
   const editStats = useChatStore(s => s.editStats);
-  const checkpoints = useChatStore(s => s.checkpoints);
   const viewMode = useChatStore(s => s.viewMode);
 
   useEffect(() => {
@@ -103,7 +102,7 @@ function App() {
           <SkillBanner />
           <ChatView />
           <DebugPanel />
-          <EditStatsBar stats={editStats} checkpoints={checkpoints} />
+          <EditStatsBar stats={editStats} />
           <ErrorBoundary
             fallback={
               <div className="px-4 py-3 text-[12px]" style={{ color: 'var(--error, #ef4444)', borderTop: '1px solid var(--border)' }}>

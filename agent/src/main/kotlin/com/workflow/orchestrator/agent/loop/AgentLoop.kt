@@ -98,15 +98,6 @@ data class SteeringMessage(val id: String, val text: String, val timestamp: Long
 
 /**
  * Core ReAct loop: call LLM -> execute tools -> repeat.
- *
- * Checkpoint callback (ported from Cline's message-state.ts):
- * Cline calls saveApiConversationHistory after every addToApiConversationHistory,
- * persisting the full conversation to disk after every tool result. We do the same
- * via [onCheckpoint]: after each tool result is added to context, the callback fires
- * to persist state without blocking the loop (caller runs on IO dispatcher).
- *
- * @param onCheckpoint called after every tool result is added to context.
- *   Matches Cline's "persist after every state change" pattern from message-state.ts.
  */
 class AgentLoop(
     private var brain: LlmBrain,
@@ -118,7 +109,6 @@ class AgentLoop(
     private val onToolCall: (ToolCallProgress) -> Unit = {},
     private val maxIterations: Int = 200,
     private val planMode: Boolean = false,
-    private val onCheckpoint: (suspend () -> Unit)? = null,
     /**
      * Optional Cline-style session persistence handler.
      * When provided, every streaming chunk, assistant message, and tool result is
@@ -150,15 +140,6 @@ class AgentLoop(
     private val onTokenUpdate: ((inputTokens: Int, outputTokens: Int) -> Unit)? = null,
     /** Max output tokens per LLM call. Default from AgentSettings: 64000. Passed as max_tokens in the API request. */
     private val maxOutputTokens: Int? = null,
-    /**
-     * Optional callback fired after write operations (edit_file, create_file, etc.)
-     * to create a named checkpoint. Ported from Cline's checkpoint reversion pattern:
-     * checkpoints are created at meaningful mutation points so the user can revert.
-     *
-     * @param toolName the tool that triggered the checkpoint
-     * @param args the tool arguments (used for description)
-     */
-    private val onWriteCheckpoint: (suspend (toolName: String, args: String) -> Unit)? = null,
     /**
      * Optional approval gate for write tool executions (ported from Cline's approval flow).
      *
@@ -2071,11 +2052,6 @@ class AgentLoop(
                 }
             }
 
-            // Checkpoint: persist state after every tool result (Cline's pattern).
-            // Cline calls saveApiConversationHistory inside addToApiConversationHistory.
-            // We fire the callback here so AgentService can persist asynchronously.
-            onCheckpoint?.invoke()
-
             // Gap 1+14: Track modified files from tool artifacts
             if (toolResult.artifacts.isNotEmpty()) {
                 modifiedFiles.addAll(toolResult.artifacts)
@@ -2084,12 +2060,6 @@ class AgentLoop(
             // Gap 21: Track line changes from diffs
             if (toolResult.diff != null) {
                 countDiffChanges(toolResult.diff)
-            }
-
-            // Write checkpoint: after write operations, create a named checkpoint
-            // for reversion support (ported from Cline's checkpoint reversion)
-            if (!toolResult.isError && toolName in WRITE_TOOLS) {
-                onWriteCheckpoint?.invoke(toolName, call.function.arguments)
             }
 
             // Notify callback (includes editDiff for file change tools ��� ported from Cline)
@@ -2376,7 +2346,7 @@ class AgentLoop(
      * Classify the risk level of a tool call for the approval gate.
      *
      * - run_command: delegates to [CommandSafetyAnalyzer] for pattern-based classification
-     * - edit_file / create_file: "low" (reversible via checkpoints)
+     * - edit_file / create_file: "low"
      * - revert_file: "medium" (destructive — discards changes)
      *
      * @param toolName the tool about to execute

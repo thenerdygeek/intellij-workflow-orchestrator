@@ -518,24 +518,32 @@ class MessageStateHandler(
             }
         }
 
+        // coerceInputValues = true: enum values absent from current source
+        // (after a removal) deserialize to the field's default — null for
+        // nullable enum fields — instead of throwing. Future-proofs against
+        // any enum drift across releases.
         private val configuredJson = Json {
             ignoreUnknownKeys = true
+            coerceInputValues = true
             encodeDefaults = true
             prettyPrint = false
             serializersModule = contentBlockModule
         }
         private val configuredPrettyJson = Json {
             ignoreUnknownKeys = true
+            coerceInputValues = true
             encodeDefaults = true
             prettyPrint = true
             serializersModule = contentBlockModule
         }
         private val compactJson = Json {
             ignoreUnknownKeys = true
+            coerceInputValues = true
             serializersModule = contentBlockModule
         }
         private val prettyJsonStatic = Json {
             ignoreUnknownKeys = true
+            coerceInputValues = true
             encodeDefaults = true
             prettyPrint = true
             serializersModule = contentBlockModule
@@ -732,98 +740,5 @@ class MessageStateHandler(
             }
         }
 
-        // ── Checkpoint operations (moved from SessionStore) ──────────────
-
-        private fun checkpointsDir(baseDir: File, sessionId: String): File =
-            File(baseDir, "sessions/$sessionId/checkpoints")
-
-        private fun checkpointFile(baseDir: File, sessionId: String, checkpointId: String): File =
-            File(checkpointsDir(baseDir, sessionId), "$checkpointId.jsonl")
-
-        private fun checkpointMetaFile(baseDir: File, sessionId: String, checkpointId: String): File =
-            File(checkpointsDir(baseDir, sessionId), "$checkpointId.meta.json")
-
-        /**
-         * Save a named checkpoint — a snapshot of messages at a specific point in time.
-         */
-        fun saveCheckpoint(
-            baseDir: File,
-            sessionId: String,
-            checkpointId: String,
-            messages: List<ChatMessage>,
-            description: String = ""
-        ) {
-            val dir = checkpointsDir(baseDir, sessionId)
-            dir.mkdirs()
-
-            val file = checkpointFile(baseDir, sessionId, checkpointId)
-            val content = buildString {
-                for (msg in messages) {
-                    appendLine(compactJson.encodeToString(msg))
-                }
-            }
-            AtomicFileWriter.write(file, content)
-
-            val meta = CheckpointInfo(
-                id = checkpointId,
-                createdAt = System.currentTimeMillis(),
-                messageCount = messages.size,
-                description = description
-            )
-            val metaFile = checkpointMetaFile(baseDir, sessionId, checkpointId)
-            AtomicFileWriter.write(metaFile, prettyJsonStatic.encodeToString(meta))
-        }
-
-        /**
-         * Load a specific checkpoint's messages.
-         */
-        fun loadCheckpoint(baseDir: File, sessionId: String, checkpointId: String): List<ChatMessage>? {
-            val file = checkpointFile(baseDir, sessionId, checkpointId)
-            if (!file.exists()) return null
-            return try {
-                file.readLines()
-                    .filter { it.isNotBlank() }
-                    .mapNotNull { line ->
-                        try {
-                            compactJson.decodeFromString<ChatMessage>(line)
-                        } catch (_: Exception) { null }
-                    }
-            } catch (_: Exception) { null }
-        }
-
-        /**
-         * List all checkpoints for a session, sorted by creation time (newest first).
-         */
-        fun listCheckpoints(baseDir: File, sessionId: String): List<CheckpointInfo> {
-            val dir = checkpointsDir(baseDir, sessionId)
-            if (!dir.exists()) return emptyList()
-            return dir.listFiles { f -> f.name.endsWith(".meta.json") }
-                ?.mapNotNull { file ->
-                    try {
-                        compactJson.decodeFromString<CheckpointInfo>(file.readText())
-                    } catch (_: Exception) { null }
-                }
-                ?.sortedByDescending { it.createdAt }
-                ?: emptyList()
-        }
-
-        /**
-         * Delete checkpoints that are newer than a given checkpoint.
-         */
-        fun deleteCheckpointsAfter(baseDir: File, sessionId: String, checkpointId: String) {
-            val targetMeta = checkpointMetaFile(baseDir, sessionId, checkpointId)
-            if (!targetMeta.exists()) return
-            val targetInfo = try {
-                compactJson.decodeFromString<CheckpointInfo>(targetMeta.readText())
-            } catch (_: Exception) { return }
-
-            val allCheckpoints = listCheckpoints(baseDir, sessionId)
-            for (cp in allCheckpoints) {
-                if (cp.createdAt > targetInfo.createdAt) {
-                    checkpointFile(baseDir, sessionId, cp.id).delete()
-                    checkpointMetaFile(baseDir, sessionId, cp.id).delete()
-                }
-            }
-        }
     }
 }

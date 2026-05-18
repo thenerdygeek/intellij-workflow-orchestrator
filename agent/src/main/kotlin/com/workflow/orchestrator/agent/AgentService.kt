@@ -1289,13 +1289,6 @@ class AgentService(
     /**
      * Execute a task in the agent loop. Returns a Job for cancellation.
      *
-     * Checkpoint integration (ported from Cline):
-     * Cline's message-state.ts calls saveApiConversationHistory inside every
-     * addToApiConversationHistory call, persisting the full conversation history
-     * after every message mutation. We replicate this via the AgentLoop's
-     * onCheckpoint callback, which fires after every tool result is added to
-     * context, writing both session metadata and the latest message to JSONL.
-     *
      * @param task The user's request.
      * @param sessionId Reuse existing session ID for resume, or null for new.
      * @param contextManager Reuse for multi-turn, or null for new conversation.
@@ -1362,13 +1355,6 @@ class AgentService(
          */
         sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
         /**
-         * Optional callback fired after a write checkpoint is saved.
-         * Used by the UI to update the checkpoint timeline display.
-         *
-         * @param sessionId the session the checkpoint belongs to
-         */
-        onCheckpointSaved: ((sessionId: String) -> Unit)? = null,
-        /**
          * Optional callback for sub-agent progress updates.
          * Streams sub-agent status (running/completed/failed) and tool calls to the dashboard.
          */
@@ -1406,8 +1392,8 @@ class AgentService(
         onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null,
         /**
          * Optional callback fired synchronously before the agent loop coroutine starts.
-         * Provides the session ID so callers can track the session early (e.g. before
-         * the first checkpoint fires). Called on the thread that invokes executeTask.
+         * Provides the session ID so callers can track the session early.
+         * Called on the thread that invokes executeTask.
          */
         onSessionStarted: ((sessionId: String) -> Unit)? = null,
         /**
@@ -1811,11 +1797,11 @@ class AgentService(
 
                 // Wire sub-agent progress callback and settings for this task execution.
                 // All parent-session callbacks — approvalGate, hookManager, sessionMetrics,
-                // fileLogger, onDebugLog, onCheckpoint — are forwarded so sub-agents honour
-                // the same approval UX, hooks, observability, and checkpoint timeline as
-                // the main agent. Without this plumbing, delegating a write tool to a
-                // sub-agent would bypass the modal; delegating any tool would leave its
-                // PRE/POST_TOOL_USE hooks silent and its timings off the scorecard.
+                // fileLogger, onDebugLog — are forwarded so sub-agents honour
+                // the same approval UX, hooks, and observability as the main agent.
+                // Without this plumbing, delegating a write tool to a sub-agent would
+                // bypass the modal; delegating any tool would leave its PRE/POST_TOOL_USE
+                // hooks silent and its timings off the scorecard.
                 val spawnAgentTool = registry.get("agent") as? com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool
                 if (spawnAgentTool != null) {
                     // v0.83.44 — sub-agent context budget follows the parent's
@@ -1831,13 +1817,6 @@ class AgentService(
                     spawnAgentTool.sessionMetrics = sessionMetrics
                     spawnAgentTool.fileLogger = fileLogger
                     spawnAgentTool.onDebugLog = onDebugLog
-                    spawnAgentTool.onCheckpoint = onCheckpointSaved?.let { cb ->
-                        // AgentLoop expects `suspend () -> Unit`; the outer callback is
-                        // `(String) -> Unit` keyed by sessionId. Close over the current
-                        // session id so parent-timeline checkpoint updates route correctly.
-                        val sidSnapshot = sid
-                        suspend { cb(sidSnapshot) }
-                    }
                     spawnAgentTool.onSubagentProgress = if (onSubagentProgress != null) {
                         { agentId, update -> onSubagentProgress(agentId, update) }
                     } else null
@@ -1934,9 +1913,6 @@ class AgentService(
                     )
                 }
 
-                // Write checkpoint counter — create checkpoint after write operations
-                var writeCheckpointCounter = 0
-
                 // Resolve default target branch asynchronously — DefaultBranchResolver.resolve()
                 // is suspend. environmentDetailsProvider is now also a suspend lambda (D8b),
                 // but resolution is fire-and-forget so the provider doesn't block on git per
@@ -2010,26 +1986,6 @@ class AgentService(
                     userInputChannel = userInputChannel,
                     approvalGate = approvalGate,
                     sessionApprovalStore = sessionApprovalStore,
-                    onWriteCheckpoint = { toolName, args ->
-                        // Create named checkpoint after write operations (ported from Cline)
-                        writeCheckpointCounter++
-                        try {
-                            val checkpointId = "cp-${writeCheckpointCounter}-${System.currentTimeMillis()}"
-                            val description = "After $toolName: ${args.take(100)}"
-                            MessageStateHandler.saveCheckpoint(
-                                baseDir = sessionBaseDir,
-                                sessionId = sid,
-                                checkpointId = checkpointId,
-                                messages = ctx.exportMessages(),
-                                description = description
-                            )
-                            log.debug("[Agent] Checkpoint saved: $sid/$checkpointId")
-                            // Notify UI to update checkpoint timeline
-                            onCheckpointSaved?.invoke(sid)
-                        } catch (e: Exception) {
-                            log.warn("AgentService: write checkpoint save failed (non-fatal)", e)
-                        }
-                    },
                     onDebugLog = onDebugLog,
                     onRetry = onRetry,
                     onCompactionState = onCompactionState,
@@ -2085,11 +2041,6 @@ class AgentService(
                     pendingModelChangeProvider = { pendingModelChange.get() },
                     onModelChangeApplied = { applied ->
                         pendingModelChange.compareAndSet(applied, null)
-                    },
-                    onCheckpoint = {
-                        // No-op: MessageStateHandler now handles per-change persistence
-                        // directly (Task 6). This callback is retained as a lifecycle hook
-                        // but the old SessionStore-based JSONL append path is removed.
                     },
                     messageStateHandler = messageState,
                     toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate",
@@ -2233,7 +2184,6 @@ class AgentService(
                     it.sessionMetrics = null
                     it.fileLogger = null
                     it.onDebugLog = null
-                    it.onCheckpoint = null
                 }
             }
         }
@@ -2281,7 +2231,6 @@ class AgentService(
         onPlanDiscarded: (() -> Unit)? = null,
         userInputChannel: Channel<String>? = null,
         approvalGate: (suspend (toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
-        onCheckpointSaved: ((sessionId: String) -> Unit)? = null,
         onSubagentProgress: ((agentId: String, update: SubagentProgressUpdate) -> Unit)? = null,
         onTokenUpdate: ((inputTokens: Int, outputTokens: Int) -> Unit)? = null,
         onSessionStats: ((modelId: String, tokensIn: Long, tokensOut: Long, costUsd: Double?) -> Unit)? = null,
@@ -2553,7 +2502,6 @@ class AgentService(
                 onPlanDiscarded = onPlanDiscarded,
                 userInputChannel = userInputChannel,
                 approvalGate = approvalGate,
-                onCheckpointSaved = onCheckpointSaved,
                 onSubagentProgress = onSubagentProgress,
                 onTokenUpdate = onTokenUpdate,
                 onSessionStats = onSessionStats,
@@ -2570,75 +2518,6 @@ class AgentService(
         return job
     }
 
-    // ── Checkpoint Reversion (ported from Cline's checkpoint reversion) ─────
-
-    /**
-     * Revert a session to a specific checkpoint.
-     *
-     * Ported from Cline's checkpoint reversion pattern:
-     * 1. Load the checkpoint messages
-     * 2. Restore ContextManager state to that point
-     * 3. Delete later checkpoints (they're invalidated)
-     * 4. Overwrite the session's messages with the checkpoint
-     * 5. Continue from that point
-     *
-     * @param sessionId the session to revert
-     * @param checkpointId the checkpoint to revert to
-     * @param onStreamChunk streaming callback
-     * @param onToolCall tool progress callback
-     * @param onComplete completion callback
-     * @return the Job for the continued session, or null if checkpoint not found
-     */
-    fun revertToCheckpoint(
-        sessionId: String,
-        checkpointId: String,
-        onStreamChunk: (String) -> Unit = {},
-        onToolCall: (ToolCallProgress) -> Unit = {},
-        onComplete: (LoopResult) -> Unit = {}
-    ): Job? {
-        // Load checkpoint
-        val checkpointMessages = MessageStateHandler.loadCheckpoint(agentDir, sessionId, checkpointId)
-        if (checkpointMessages == null) {
-            log.warn("AgentService.revertToCheckpoint: checkpoint $checkpointId not found for session $sessionId")
-            return null
-        }
-
-        // Rebuild ContextManager from checkpoint — v0.83.44 catalog-driven budget.
-        val ctx = ContextManager(
-            maxInputTokens = ContextManager.FALLBACK_MAX_INPUT_TOKENS,
-            modelCatalogService = sharedCatalogHolder.peek(),
-            currentModelRef = { currentBrainModelId },
-        )
-
-        ctx.restoreMessages(checkpointMessages)
-
-        // Delete checkpoints after this one (they're invalidated by reversion)
-        MessageStateHandler.deleteCheckpointsAfter(agentDir, sessionId, checkpointId)
-
-        log.info("AgentService.revertToCheckpoint: reverted session $sessionId to checkpoint $checkpointId " +
-            "(${checkpointMessages.size} messages)")
-
-        // Continue execution from the checkpoint
-        return executeTask(
-            task = "Continue from where you left off. The conversation has been reverted to an earlier checkpoint.",
-            sessionId = sessionId,
-            contextManager = ctx,
-            onStreamChunk = onStreamChunk,
-            onToolCall = onToolCall,
-            onComplete = onComplete
-        )
-    }
-
-    /**
-     * List checkpoints for a session.
-     *
-     * @param sessionId the session to list checkpoints for
-     * @return list of checkpoint metadata, newest first
-     */
-    fun listCheckpoints(sessionId: String): List<com.workflow.orchestrator.agent.session.CheckpointInfo> {
-        return MessageStateHandler.listCheckpoints(agentDir, sessionId)
-    }
-
     /**
      * Update the title of an existing session (e.g. after Haiku generates a descriptive title).
      * Updates the global index entry for this session with the new title/task text.
@@ -2652,42 +2531,6 @@ class AgentService(
             MessageStateHandler.updateSessionTitle(agentDir, sessionId, title)
         } catch (e: Exception) {
             log.warn("AgentService.updateSessionTitle: failed to update title (non-fatal)", e)
-        }
-    }
-
-    /**
-     * Get files modified between a checkpoint and the current session state.
-     * Used by the UI to highlight affected files after a rollback.
-     *
-     * Extracts file paths from tool calls (edit_file, create_file) in messages
-     * that exist after the checkpoint but before the current state.
-     */
-    fun getFilesModifiedSinceCheckpoint(sessionId: String, checkpointId: String): List<String> {
-        return try {
-            val checkpointMessages = MessageStateHandler.loadCheckpoint(agentDir, sessionId, checkpointId) ?: return emptyList()
-            val sessionDir = File(agentDir, "sessions/$sessionId")
-            val currentMessages = MessageStateHandler.loadApiHistory(sessionDir)
-            // Messages after the checkpoint = those beyond checkpointMessages.size
-            val afterCheckpoint = currentMessages.drop(checkpointMessages.size)
-            // Extract file paths from tool_use blocks in messages
-            val files = mutableSetOf<String>()
-            for (msg in afterCheckpoint) {
-                msg.content.filterIsInstance<ContentBlock.ToolUse>().forEach { toolUse ->
-                    if (toolUse.name in AgentLoop.WRITE_TOOLS) {
-                        try {
-                            val args = kotlinx.serialization.json.Json.parseToJsonElement(toolUse.input)
-                            val path = (args as? kotlinx.serialization.json.JsonObject)
-                                ?.get("path")
-                                ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
-                            if (path != null) files.add(path)
-                        } catch (_: Exception) { }
-                    }
-                }
-            }
-            files.toList()
-        } catch (e: Exception) {
-            log.debug("Failed to get files modified since checkpoint: ${e.message}")
-            emptyList()
         }
     }
 

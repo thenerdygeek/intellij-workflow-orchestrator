@@ -11,10 +11,10 @@ import kotlinx.serialization.Serializable
  * - Persistence is handled by MessageStateHandler which maintains sessions.json (global
  *   index) and per-session api_conversation_history.json + ui_messages.json files.
  *
- * New fields for checkpoint/resume (matching Cline's TaskState persistence):
+ * Resume-related fields (matching Cline's TaskState persistence):
  * - [systemPrompt]: the system prompt used, needed to rebuild ContextManager on resume
  * - [planModeEnabled]: whether plan mode was active, affects tool schema on resume
- * - [lastToolCallId]: last completed tool call, the resume checkpoint marker
+ * - [lastToolCallId]: last completed tool call, the resume marker
  *
  * @see <a href="https://github.com/cline/cline/blob/main/src/shared/HistoryItem.ts">Cline HistoryItem</a>
  * @see <a href="https://github.com/cline/cline/blob/main/src/core/task/TaskState.ts">Cline TaskState</a>
@@ -40,7 +40,7 @@ data class Session(
      * across all API calls in the task.
      */
     val outputTokens: Int = 0,
-    // Checkpoint/resume fields (ported from Cline's TaskState + task settings persistence)
+    // Resume fields (ported from Cline's TaskState + task settings persistence)
     val systemPrompt: String = "",
     val planModeEnabled: Boolean = false,
     val lastToolCallId: String? = null,

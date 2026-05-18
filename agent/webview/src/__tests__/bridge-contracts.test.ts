@@ -102,31 +102,12 @@ describe('Contract: renderPlan payload (Kotlin → React)', () => {
 
 // ── Edit Stats Contract ──
 
-describe('Contract: updateEditStats + updateCheckpoints (Kotlin → React)', () => {
+describe('Contract: updateEditStats (Kotlin → React)', () => {
   it('edit stats has numeric fields', () => {
     const stats = editStatsContract.edit_stats.valid_call;
     expect(typeof stats.added).toBe('number');
     expect(typeof stats.removed).toBe('number');
     expect(typeof stats.files).toBe('number');
-  });
-
-  it('checkpoints have required fields', () => {
-    for (const cp of editStatsContract.checkpoints.valid_payload) {
-      expect(typeof cp.id).toBe('string');
-      expect(typeof cp.description).toBe('string');
-      expect(typeof cp.timestamp).toBe('number');
-      expect(typeof cp.iteration).toBe('number');
-      expect(Array.isArray(cp.filesModified)).toBe(true);
-      expect(typeof cp.totalLinesAdded).toBe('number');
-      expect(typeof cp.totalLinesRemoved).toBe('number');
-    }
-  });
-
-  it('checkpoints can be JSON roundtripped', () => {
-    const json = JSON.stringify(editStatsContract.checkpoints.valid_payload);
-    const parsed = JSON.parse(json);
-    expect(parsed.length).toBe(2);
-    expect(parsed[0].id).toBe('cp-a1b2c3');
   });
 });
 

@@ -282,7 +282,7 @@ class GlobFilesToolTest {
     }
 
     @Test
-    fun `skips api-debug and checkpoints subdirs under agent sessions`() = runTest {
+    fun `skips api-debug subdir under agent sessions`() = runTest {
         val originalHome = System.getProperty("user.home")
         System.setProperty("user.home", fakeHomeDir.toFile().absolutePath)
         try {
@@ -291,8 +291,6 @@ class GlobFilesToolTest {
             File(sessionDir, "tool-output/keep.txt").writeText("keep")
             File(sessionDir, "api-debug").mkdirs()
             File(sessionDir, "api-debug/skip.txt").writeText("skip")
-            File(sessionDir, "checkpoints").mkdirs()
-            File(sessionDir, "checkpoints/also-skip.txt").writeText("also-skip")
 
             val result = GlobFilesTool().execute(
                 buildJsonObject {
@@ -304,7 +302,6 @@ class GlobFilesToolTest {
             assertFalse(result.isError)
             assertTrue(result.content.contains("keep.txt"))
             assertFalse(result.content.contains("skip.txt"), "api-debug/ should be skipped: ${result.content}")
-            assertFalse(result.content.contains("also-skip.txt"), "checkpoints/ should be skipped: ${result.content}")
         } finally {
             System.setProperty("user.home", originalHome)
         }

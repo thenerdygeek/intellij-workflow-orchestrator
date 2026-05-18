@@ -82,12 +82,6 @@ class SubagentRunner(
      */
     private val onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)? = null,
     /**
-     * Optional checkpoint callback forwarded from the parent session. Fired after
-     * sub-agent write tools so the checkpoint timeline on the parent UI reflects
-     * changes made inside the sub-agent.
-     */
-    private val onCheckpoint: (suspend () -> Unit)? = null,
-    /**
      * Test hook: called with the initial composed system prompt immediately after it is built.
      * Null in production. Allows tests to capture the composed prompt without running a full loop.
      */
@@ -375,7 +369,6 @@ class SubagentRunner(
                 sessionMetrics = sessionMetrics,
                 fileLogger = fileLogger,
                 onDebugLog = onDebugLog,
-                onCheckpoint = onCheckpoint,
                 onStreamChunk = { chunk ->
                     // Route through ThinkingTagSplitter so <thinking>...</thinking> blocks
                     // are separated from prose. Text parts are coalesced by textBatcher;

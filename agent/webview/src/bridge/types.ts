@@ -222,40 +222,12 @@ export interface EditDiff {
   accepted: boolean | null;
 }
 
-// ── Edit stats / checkpoint types ──
+// ── Edit stats ──
 
 export interface EditStats {
   totalLinesAdded: number;
   totalLinesRemoved: number;
   filesModified: number;
-}
-
-export interface CheckpointInfo {
-  id: string;
-  description: string;
-  timestamp: number;
-  iteration: number;
-  filesModified: string[];
-  totalLinesAdded: number;
-  totalLinesRemoved: number;
-}
-
-// ── Rollback types ──
-
-export type RollbackSource = 'LLM_TOOL' | 'USER_BUTTON' | 'USER_UNDO';
-export type RollbackMechanism = 'LOCAL_HISTORY' | 'GIT_FALLBACK';
-export type RollbackScope = 'FULL_CHECKPOINT' | 'SINGLE_FILE';
-
-export interface RollbackInfo {
-  id: string;
-  timestamp: number;
-  checkpointId: string;
-  description: string;
-  source: RollbackSource;
-  mechanism: RollbackMechanism;
-  affectedFiles: string[];
-  rolledBackEntryIds: string[];
-  scope: RollbackScope;
 }
 
 // ── Visualization settings ──
@@ -299,10 +271,10 @@ export type UiAsk =
 
 export type UiSay =
   | 'API_REQ_STARTED' | 'API_REQ_FINISHED' | 'TEXT' | 'USER_MESSAGE' | 'REASONING'
-  | 'TOOL' | 'CHECKPOINT_CREATED' | 'ERROR' | 'PLAN_UPDATE'
+  | 'TOOL' | 'STATUS' | 'ERROR' | 'PLAN_UPDATE'
   | 'ARTIFACT_RESULT' | 'SUBAGENT_STARTED' | 'SUBAGENT_PROGRESS'
   | 'SUBAGENT_COMPLETED' | 'STEERING_RECEIVED' | 'CONTEXT_COMPRESSED'
-  | 'MEMORY_SAVED' | 'ROLLBACK_PERFORMED' | 'PLAN_APPROVED'
+  | 'MEMORY_SAVED' | 'PLAN_APPROVED'
   | 'COMPACTION_MARKER';
 
 export interface UiMessageCompactionMarker {
@@ -407,7 +379,6 @@ export interface UiMessage {
   partial?: boolean;
   conversationHistoryIndex?: number;
   conversationHistoryDeletedRange?: number[];
-  lastCheckpointHash?: string;
   modelInfo?: UiMessageModelInfo;
   artifactId?: string;
   planData?: UiMessagePlanData;

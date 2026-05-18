@@ -24,4 +24,3 @@ Both sides test against the SAME fixtures to ensure format compatibility.
 - `plan-data.json` — renderPlan(json) payload (Kotlin → React)
 - `plan-step-update.json` — updatePlanStep(stepId, status) payload
 - `edit-stats.json` — updateEditStats(added, removed, files) payload
-- `checkpoints.json` — updateCheckpoints(json) payload

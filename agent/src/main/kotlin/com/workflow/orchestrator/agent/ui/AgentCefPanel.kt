@@ -106,7 +106,6 @@ class AgentCefPanel(
     private var rejectDiffHunkQuery: JBCefJSQuery? = null
     private var killToolCallQuery: JBCefJSQuery? = null
     private var killSubAgentQuery: JBCefJSQuery? = null
-    private var revertCheckpointQuery: JBCefJSQuery? = null
     private var cancelSteeringQuery: JBCefJSQuery? = null
     private var retryLastTaskQuery: JBCefJSQuery? = null
     private var processInputQuery: JBCefJSQuery? = null
@@ -259,8 +258,6 @@ class AgentCefPanel(
     var onKillSubAgent: ((String) -> Unit)? = null
     /** Callback when user submits process input from the ProcessInputView. Param: input string. */
     var onProcessInputResolved: ((String) -> Unit)? = null
-    /** Callback when user clicks "Revert" on a checkpoint in the timeline. Param: checkpointId. */
-    var onRevertCheckpoint: ((String) -> Unit)? = null
     /** Callback when user clicks "Cancel" on a queued steering message. Param: steeringId. */
     var onCancelSteering: ((String) -> Unit)? = null
     /**
@@ -592,7 +589,6 @@ class AgentCefPanel(
         }
         killToolCallQuery = registerQuery(b) { toolCallId -> onKillToolCall?.invoke(toolCallId); JBCefJSQuery.Response("ok") }
         killSubAgentQuery = registerQuery(b) { agentId -> onKillSubAgent?.invoke(agentId); JBCefJSQuery.Response("ok") }
-        revertCheckpointQuery = registerQuery(b) { checkpointId -> onRevertCheckpoint?.invoke(checkpointId); JBCefJSQuery.Response("ok") }
         cancelSteeringQuery = registerQuery(b) { steeringId -> onCancelSteering?.invoke(steeringId); JBCefJSQuery.Response("ok") }
         retryLastTaskQuery = registerQuery(b) { _ -> onRetryLastTask?.invoke(); JBCefJSQuery.Response("ok") }
         processInputQuery = registerQuery(b) { input -> onProcessInputResolved?.invoke(input); JBCefJSQuery.Response("ok") }
@@ -747,7 +743,6 @@ class AgentCefPanel(
                     injectBridge("_killToolCall") { killToolCallQuery?.let { q -> js("window._killToolCall = function(toolCallId) { ${q.inject("toolCallId")} }") } }
                     injectBridge("_killSubAgent") { killSubAgentQuery?.let { q -> js("window._killSubAgent = function(agentId) { ${q.inject("agentId")} }") } }
                     injectBridge("_resolveProcessInput") { processInputQuery?.let { q -> js("window._resolveProcessInput = function(input) { ${q.inject("input")} }") } }
-                    injectBridge("_revertCheckpoint") { revertCheckpointQuery?.let { q -> js("window._revertCheckpoint = function(id) { ${q.inject("id")} }") } }
                     injectBridge("_cancelSteering") { cancelSteeringQuery?.let { q -> js("window._cancelSteering = function(id) { ${q.inject("id")} }") } }
                     injectBridge("_retryLastTask") { retryLastTaskQuery?.let { q -> js("window._retryLastTask = function() { ${q.inject("''")} }") } }
                     injectBridge("_reportArtifactResult") { artifactResultQuery?.let { q -> js("window._reportArtifactResult = function(json) { ${q.inject("json")} }") } }
@@ -1415,18 +1410,10 @@ class AgentCefPanel(
         callJs("addDebugLogEntry(${JsEscape.toJsString(json)})")
     }
 
-    // ── Edit stats + checkpoints ──
+    // ── Edit stats ──
 
     fun updateEditStats(added: Int, removed: Int, files: Int) {
         callJs("updateEditStats($added,$removed,$files)")
-    }
-
-    fun updateCheckpoints(checkpointsJson: String) {
-        callJs("updateCheckpoints(${JsEscape.toJsString(checkpointsJson)})")
-    }
-
-    fun notifyRollback(rollbackJson: String) {
-        callJs("notifyRollback(${JsEscape.toJsString(rollbackJson)})")
     }
 
     fun setSmartWorkingPhrase(phrase: String) {

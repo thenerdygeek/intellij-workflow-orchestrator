@@ -204,7 +204,7 @@ class SearchCodeTool : AgentTool {
         private val SKIP_DIRS = setOf(
             ".git", ".idea", "node_modules", "target", "build", ".gradle", ".worktrees", ".workflow",
             "out", "dist", ".svn", ".hg", "__pycache__", ".tox", ".mypy_cache",
-            "api-debug", "checkpoints"
+            "api-debug"
         )
     }
 

@@ -180,8 +180,8 @@ export const ChatView = memo(function ChatView() {
       );
     }
 
-    if (msg.say === 'ERROR' || msg.say === 'CHECKPOINT_CREATED' || msg.say === 'CONTEXT_COMPRESSED' ||
-        msg.say === 'MEMORY_SAVED' || msg.say === 'ROLLBACK_PERFORMED' || msg.say === 'STEERING_RECEIVED') {
+    if (msg.say === 'ERROR' || msg.say === 'STATUS' || msg.say === 'CONTEXT_COMPRESSED' ||
+        msg.say === 'MEMORY_SAVED' || msg.say === 'STEERING_RECEIVED') {
       return (
         <div key={key} className="px-1 py-0.5 text-[11px]" style={{ color: 'var(--fg-muted, #888)' }}>
           {msg.text}

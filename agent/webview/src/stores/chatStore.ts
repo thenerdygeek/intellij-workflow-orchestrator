@@ -14,8 +14,6 @@ import type {
   Skill,
   ToastType,
   EditStats,
-  CheckpointInfo,
-  RollbackInfo,
   UiMessage,
   SubAgentState,
   HistoryItem,
@@ -287,8 +285,6 @@ interface ChatState {
   // the row scrolls out of the chat viewport.
   toolCallOpen: Record<string, boolean>;
   editStats: EditStats | null;
-  checkpoints: CheckpointInfo[];
-  rollbackEvents: RollbackInfo[];
   smartWorkingPhrase: string | null;
   sessionTitle: string | null;
   /** Monotonic counter bumped every time Kotlin asks for an animated title
@@ -417,10 +413,8 @@ interface ChatState {
   appendToolOutput(toolCallId: string, chunk: string): void;
   killToolCall(toolCallId: string): void;
 
-  // Edit Stats + Checkpoint + Rollback Actions
+  // Edit Stats Actions
   updateEditStats(stats: EditStats): void;
-  updateCheckpoints(checkpoints: CheckpointInfo[]): void;
-  applyRollback(rollback: RollbackInfo): void;
   setSmartWorkingPhrase(phrase: string): void;
 
   // Queued Steering Actions
@@ -515,8 +509,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   toolOutputStreams: {},
   toolCallOpen: {},
   editStats: null,
-  checkpoints: [],
-  rollbackEvents: [],
   smartWorkingPhrase: null,
   sessionTitle: null,
   sessionTitleAnimateKey: 0,
@@ -565,7 +557,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       smartWorkingPhrase: null,
       sessionTitle: null,
       editStats: null,
-      checkpoints: [],
       queuedSteeringMessages: [],
       restoredInputText: null,
       tasks: [],
@@ -891,12 +882,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   addStatus(message: string, type: StatusType) {
-    // ERROR gets its own say; all other status types use CHECKPOINT_CREATED
-    // which the ChatView renders as a muted status line.
+    // ERROR gets its own say; all other status types use the generic STATUS
+    // SAY which the ChatView renders as a muted status line.
     const msg: UiMessage = {
       ts: uniqueTs(),
       type: 'SAY',
-      say: type === 'ERROR' ? 'ERROR' : 'CHECKPOINT_CREATED',
+      say: type === 'ERROR' ? 'ERROR' : 'STATUS',
       text: message,
     };
     set(state => ({ messages: [...state.messages, msg] }));
@@ -1485,44 +1476,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  // ── Edit Stats + Checkpoint Actions ──
+  // ── Edit Stats Actions ──
   updateEditStats(stats: EditStats) {
     set({ editStats: stats });
-  },
-
-  updateCheckpoints(checkpoints: CheckpointInfo[]) {
-    set({ checkpoints });
-  },
-
-  applyRollback(rollback: RollbackInfo) {
-    set((state) => {
-      const rolledBackIds = new Set(rollback.rolledBackEntryIds);
-      const rolledBackFiles = new Set(rollback.affectedFiles);
-
-      const messages = state.messages.map((msg) => {
-        // Mark tool messages whose toolCallId matches a rolled-back entry
-        if (msg.toolCallData) {
-          const tcId = msg.toolCallData.toolCallId;
-          if (rolledBackIds.has(tcId)) {
-            return { ...msg, toolCallData: { ...msg.toolCallData, isError: true } };
-          }
-          // Also check by file path in args
-          try {
-            const parsed = JSON.parse(msg.toolCallData.args || '{}') as Record<string, unknown>;
-            const filePath = parsed.file_path || parsed.path;
-            if (typeof filePath === 'string' && rolledBackFiles.has(filePath)) {
-              return { ...msg, toolCallData: { ...msg.toolCallData, isError: true } };
-            }
-          } catch { /* not JSON, skip */ }
-        }
-        return msg;
-      });
-
-      return {
-        messages,
-        rollbackEvents: [...state.rollbackEvents, rollback],
-      };
-    });
   },
 
   setSmartWorkingPhrase(phrase: string) {

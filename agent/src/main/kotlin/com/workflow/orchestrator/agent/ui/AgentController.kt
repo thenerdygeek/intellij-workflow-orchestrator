@@ -171,7 +171,7 @@ class AgentController(
     private var pendingApprovalToolName: String? = null
 
     /**
-     * Current session ID -- tracked so checkpoint display and revert can reference it.
+     * Current session ID -- tracked so resume can reference it.
      * Set when executeTask creates or resumes a session, cleared on newChat.
      */
     private var currentSessionId: String? = null
@@ -461,7 +461,7 @@ class AgentController(
      * the agent needs to continue), [AgentService] fires the listener with the target
      * [sessionId] and an optional [syntheticMessage] to inject as the next user turn.
      * We route the call through [resumeSession] so all UI callbacks (streaming,
-     * approval gates, checkpoints, stats) are properly wired — identical to a
+     * approval gates, stats) are properly wired — identical to a
      * user-initiated resume.
      */
     private fun wireAutoWakeListener() {
@@ -776,16 +776,6 @@ class AgentController(
             steeringQueue.removeIf { it.id == steeringId }
             dashboard.removeQueuedSteeringMessage(steeringId)
             LOG.info("AgentController: cancelled steering message $steeringId")
-        }
-
-        // Checkpoint revert callback — user clicks "Revert" on a checkpoint in the timeline
-        dashboard.setCefRevertCheckpointCallback { checkpointId ->
-            val sid = currentSessionId
-            if (sid != null) {
-                revertToCheckpoint(sid, checkpointId)
-            } else {
-                LOG.warn("AgentController: revert requested but no active session")
-            }
         }
 
         // Wire AskQuestionsTool callbacks
@@ -1768,7 +1758,6 @@ class AgentController(
             userInputChannel = userInputChannel,
             approvalGate = ::approvalGate,
             sessionApprovalStore = sessionApprovalStore,
-            onCheckpointSaved = ::onCheckpointSaved,
             onSubagentProgress = ::onSubagentProgress,
             onTokenUpdate = ::onTokenUpdate,
             onSessionStats = ::onSessionStats,
@@ -1959,21 +1948,6 @@ class AgentController(
                 pendingApproval = null
                 pendingApprovalToolName = null
             }
-        }
-    }
-
-    /**
-     * Called by AgentService after a write checkpoint is saved.
-     * Updates the checkpoint timeline in the dashboard UI.
-     *
-     * @param sessionId the session the checkpoint belongs to
-     */
-    private fun onCheckpointSaved(sessionId: String) {
-        currentSessionId = sessionId
-        invokeLater {
-            val checkpoints = service.listCheckpoints(sessionId)
-            val checkpointsJson = buildCheckpointsJson(checkpoints)
-            dashboard.updateCheckpoints(checkpointsJson)
         }
     }
 
@@ -2533,7 +2507,6 @@ class AgentController(
         dashboard.setInputLocked(false)                            // Unlock input bar
         dashboard.setPlanMode(false)                                // Exit plan mode in UI
         dashboard.setSteeringMode(false)                           // Exit steering mode
-        dashboard.updateCheckpoints("[]")                          // Clear checkpoint timeline
         dashboard.updateEditStats(0, 0, 0)                    // Reset edit counters
         dashboard.updateProgress("", 0, 0)                    // Reset token budget bar
         dashboard.setSmartWorkingPhrase("")                         // Clear working phrase
@@ -2760,13 +2733,13 @@ class AgentController(
     }
 
     /**
-     * Resume a previous session from its checkpoint.
+     * Resume a previous session.
      *
      * Port of Cline's task resumption flow:
      * - Cline's webview sends "resumeTask" with taskId
      * - ClineProvider loads HistoryItem + apiConversationHistory from disk
      * - Creates new Task instance with restored state
-     * - Task picks up execution from the checkpoint
+     * - Task picks up execution
      *
      * We replicate this: load session + messages from MessageStateHandler,
      * rebuild ContextManager, and re-enter the agent loop.
@@ -2860,9 +2833,9 @@ class AgentController(
 
         val debugEnabled = AgentSettings.getInstance(project).state.showDebugLog
 
-        // Attempt resume — AgentService rebuilds the ContextManager from JSONL checkpoint.
+        // Attempt resume — AgentService rebuilds the ContextManager from persisted history.
         // Pass ALL interactive callbacks so the resumed session has full functionality
-        // (approvals, plans, checkpoints, steering, token display, etc.).
+        // (approvals, plans, steering, token display, etc.).
         val job = service.resumeSession(
             sessionId = sessionId,
             userText = userText,
@@ -2919,7 +2892,6 @@ class AgentController(
             onPlanDiscarded = { invokeLater { onPlanDiscardedByLlm() } },
             userInputChannel = userInputChannel,
             approvalGate = ::approvalGate,
-            onCheckpointSaved = ::onCheckpointSaved,
             onSubagentProgress = ::onSubagentProgress,
             onTokenUpdate = ::onTokenUpdate,
             onSessionStats = ::onSessionStats,
@@ -2955,7 +2927,7 @@ class AgentController(
 
     /**
      * Cancel the current task and reset the dashboard UI before replaying a saved
-     * session (resume / checkpoint revert). Shows the supplied status message.
+     * session. Shows the supplied status message.
      */
     private fun prepareForReplay(statusMessage: String) {
         if (currentJob?.isActive == true) {
@@ -2996,51 +2968,6 @@ class AgentController(
         val tasks = service.currentTaskStore()?.listTasks().orEmpty()
         val tasksJson = taskEventJson.encodeToString(tasks)
         dashboard.setTasks(tasksJson)
-    }
-
-    /**
-     * Revert to a specific checkpoint in a session.
-     *
-     * Ported from Cline's checkpoint reversion:
-     * restores the conversation to the checkpoint state and continues.
-     */
-    fun revertToCheckpoint(sessionId: String, checkpointId: String) {
-        LOG.info("AgentController.revertToCheckpoint: session=$sessionId, checkpoint=$checkpointId")
-        // Same rationale as resumeSession — track the reverted session as
-        // current so the next user message lands in this session instead of
-        // the new-session branch.
-        currentSessionId = sessionId
-        prepareForReplay("Reverting to checkpoint...")
-
-        // Restore the last task text in the input bar so user can edit and re-send
-        (lastDisplayText ?: lastTaskText)?.let { dashboard.restoreInputText(it) }
-
-        // Collect files modified since the target checkpoint for rollback notification
-        val affectedFiles = service.getFilesModifiedSinceCheckpoint(sessionId, checkpointId)
-
-        // Reset context manager — the reverted session creates its own
-        contextManager = null
-
-        val job = service.revertToCheckpoint(
-            sessionId = sessionId,
-            checkpointId = checkpointId,
-            onStreamChunk = ::onStreamChunk,
-            onToolCall = ::onToolCall,
-            onComplete = ::onComplete
-        )
-
-        if (job != null) {
-            currentJob = job
-            // Notify UI which files were affected by the rollback
-            if (affectedFiles.isNotEmpty()) {
-                val rollbackJson = affectedFiles.joinToString(",", """{"affectedFiles":[""", "]}") { file ->
-                    "\"${file.replace("\"", "\\\"")}\""
-                }
-                dashboard.notifyRollback(rollbackJson)
-            }
-        } else {
-            failReplay("Could not revert to checkpoint. The checkpoint may have been deleted.")
-        }
     }
 
     // ═══════════════════════════════════════════════════
@@ -3631,17 +3558,6 @@ class AgentController(
                 LOG.debug("AgentController: completion-title eval failed: ${e.message}")
             }
         }
-    }
-
-    /**
-     * Build a JSON array of checkpoint metadata for the dashboard UI.
-     * Format: [{"id":"cp-1-123","description":"After edit_file: ...","timestamp":123456}]
-     */
-    private fun buildCheckpointsJson(
-        checkpoints: List<com.workflow.orchestrator.agent.session.CheckpointInfo>
-    ): String = checkpoints.joinToString(",", "[", "]") { cp ->
-        val escapedDesc = cp.description.replace("\"", "\\\"").replace("\n", " ")
-        """{"id":"${cp.id}","description":"$escapedDesc","timestamp":${cp.createdAt}}"""
     }
 
     /**

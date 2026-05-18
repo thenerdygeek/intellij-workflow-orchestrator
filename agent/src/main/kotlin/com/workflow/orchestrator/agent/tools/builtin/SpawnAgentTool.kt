@@ -77,8 +77,6 @@ class SpawnAgentTool(
     var fileLogger: com.workflow.orchestrator.agent.observability.AgentFileLogger? = null,
     /** Parent debug-log callback — sub-agent warnings/events reach the JCEF debug panel. */
     var onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)? = null,
-    /** Parent checkpoint callback — fires after sub-agent write tools. */
-    var onCheckpoint: (suspend () -> Unit)? = null,
     private val configLoader: AgentConfigLoader? = null,
     private val ideContext: IdeContext? = null,
     /**
@@ -830,7 +828,6 @@ Tips:
             sessionMetrics = sessionMetrics,
             fileLogger = fileLogger,
             onDebugLog = onDebugLog,
-            onCheckpoint = onCheckpoint,
             ideContext = ideContext,
             agentConfig = config,
             messageStateHandler = subagentStateHandler,
@@ -952,7 +949,6 @@ Tips:
                         sessionMetrics = sessionMetrics,
                         fileLogger = fileLogger,
                         onDebugLog = onDebugLog,
-                        onCheckpoint = onCheckpoint,
                         ideContext = ideContext,
                         agentConfig = config,
                         messageStateHandler = childSubagentStateHandler,
