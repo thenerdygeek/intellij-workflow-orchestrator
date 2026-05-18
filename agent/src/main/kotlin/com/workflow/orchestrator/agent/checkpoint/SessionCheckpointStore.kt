@@ -111,5 +111,65 @@ class SessionCheckpointStore(private val sessionDir: File) {
         )
     }
 
+    /**
+     * Revert files to their state immediately BEFORE [targetMessageTs] was processed.
+     *
+     * For every checkpoint with ts >= targetMessageTs (i.e. the target message and all later),
+     * any file touched there is restored to its earliest snapshot (within that range), and
+     * any file created there is deleted.
+     *
+     * Truncation of conversation history is the caller's responsibility (AgentService).
+     *
+     * The msg-{ts} dirs for ts >= targetMessageTs are removed at the end.
+     *
+     * Returns the userText from the target checkpoint so the caller can push it back to the
+     * chat input.
+     */
+    fun revertToMessage(targetMessageTs: Long): RevertResult {
+        val all = listMessageCheckpoints()
+        val target = all.firstOrNull { it.messageTs == targetMessageTs }
+            ?: error("checkpoint for messageTs=$targetMessageTs not found")
+        val rangeFromTarget = all.filter { it.messageTs >= targetMessageTs }
+
+        // Build earliest-snapshot map across the to-be-reverted range
+        val earliestTouchedByPath = mutableMapOf<String, CheckpointMeta>()
+        val createdInRange = mutableSetOf<String>()
+        for (cp in rangeFromTarget) {
+            for (p in cp.touchedPaths) earliestTouchedByPath.putIfAbsent(p, cp)
+            for (p in cp.createdPaths) createdInRange.add(p)
+        }
+
+        val restored = mutableListOf<String>()
+        val deleted = mutableListOf<String>()
+
+        // Delete created files
+        for (path in createdInRange) {
+            if (File(path).exists() && File(path).delete()) deleted.add(path)
+        }
+
+        // Restore touched files (skip if also in createdInRange — already deleted)
+        for ((path, cp) in earliestTouchedByPath) {
+            if (path in createdInRange) continue
+            val snapFile = File(File(checkpointsDir, "msg-${cp.messageTs}/files"), path.trimStart('/'))
+            if (!snapFile.exists()) continue
+            val dst = File(path)
+            dst.parentFile?.mkdirs()
+            snapFile.copyTo(dst, overwrite = true)
+            restored.add(path)
+        }
+
+        // Drop invalidated checkpoint dirs
+        for (cp in rangeFromTarget) {
+            File(checkpointsDir, "msg-${cp.messageTs}").deleteRecursively()
+        }
+
+        return RevertResult(
+            userText = target.userText,
+            restoredFiles = restored.sorted(),
+            deletedFiles = deleted.sorted(),
+            truncatedAtTs = targetMessageTs,
+        )
+    }
+
     private fun msgDir(messageTs: Long): File = File(checkpointsDir, "msg-$messageTs")
 }

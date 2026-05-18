@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.checkpoint
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -116,5 +117,51 @@ class SessionCheckpointStoreTest {
         assertEquals(FileStatus.CREATED, agg.files[0].status)
         assertEquals(3, agg.files[0].added)
         assertEquals(0, agg.files[0].removed)
+    }
+
+    @Test
+    fun `revertToMessage restores files to earliest snapshot and deletes created files`(@TempDir tmp: java.nio.file.Path) {
+        val store = SessionCheckpointStore(sessionDir = tmp.toFile())
+        val foo = File(tmp.toFile(), "src/Foo.kt").apply { parentFile.mkdirs(); writeText("original") }
+        val bar = File(tmp.toFile(), "src/Bar.kt").absolutePath  // will be created at msg 200
+
+        // msg 100: edit Foo
+        store.beginUserMessage(100L, "first user msg")
+        store.captureIfFirstTouch(100L, foo.absolutePath)
+        foo.writeText("edited-by-msg-100")
+
+        // msg 200: edit Foo again, create Bar
+        store.beginUserMessage(200L, "second user msg")
+        store.captureIfFirstTouch(200L, foo.absolutePath)
+        foo.writeText("edited-by-msg-200")
+        store.captureIfFirstTouch(200L, bar)
+        File(bar).writeText("brand new bar")
+
+        // Revert to msg 200 (means: undo everything from msg 200 onwards)
+        val result = store.revertToMessage(200L)
+
+        assertEquals("second user msg", result.userText)
+        assertEquals("edited-by-msg-100", foo.readText(), "Foo should be restored to msg-200's pre-state == msg-100's final")
+        assertFalse(File(bar).exists(), "Bar created at msg 200 should be deleted")
+        assertEquals(listOf(foo.absolutePath), result.restoredFiles)
+        assertEquals(listOf(bar), result.deletedFiles)
+
+        // msg-200 dir should be gone
+        assertEquals(listOf(100L), store.listMessageCheckpoints().map { it.messageTs })
+    }
+
+    @Test
+    fun `revertToMessage to earliest message restores files to session baseline`(@TempDir tmp: java.nio.file.Path) {
+        val store = SessionCheckpointStore(sessionDir = tmp.toFile())
+        val foo = File(tmp.toFile(), "src/Foo.kt").apply { parentFile.mkdirs(); writeText("ORIGINAL") }
+        store.beginUserMessage(100L, "fix it")
+        store.captureIfFirstTouch(100L, foo.absolutePath)
+        foo.writeText("CHANGED")
+
+        val result = store.revertToMessage(100L)
+
+        assertEquals("ORIGINAL", foo.readText())
+        assertEquals("fix it", result.userText)
+        assertTrue(store.listMessageCheckpoints().isEmpty())
     }
 }
