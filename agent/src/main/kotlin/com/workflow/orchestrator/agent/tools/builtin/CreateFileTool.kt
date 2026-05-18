@@ -189,6 +189,21 @@ class CreateFileTool : AgentTool {
             )
         }
 
+        // Drop JPS's in-memory incremental-build snapshot so the next
+        // CompilerManager.make / ProjectTaskManager.build re-reads source
+        // stamps from disk. Brand-new files (especially new test classes) are
+        // the primary trigger for the "newly-added test method not found until
+        // restart" symptom — the prior dependency graph has no entry for the
+        // new file and may not be invalidated by the VFS change-listener
+        // chain, leaving the next build a silent no-op. Mirrors the same
+        // best-effort call in EditFileTool. Never let a cache-clear failure
+        // block a successful write.
+        try {
+            if (ApplicationManager.getApplication() != null) {
+                com.workflow.orchestrator.core.vfs.PostMutationRefresh.clearJpsCache(project)
+            }
+        } catch (_: Exception) { /* best-effort */ }
+
         val lineCount = content.lines().size
 
         // Change tracking: AgentLoop.modifiedFiles collects artifacts from ToolResult
