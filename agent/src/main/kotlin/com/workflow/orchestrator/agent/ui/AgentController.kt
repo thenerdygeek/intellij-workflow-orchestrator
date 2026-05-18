@@ -778,6 +778,30 @@ class AgentController(
             LOG.info("AgentController: cancelled steering message $steeringId")
         }
 
+        // ── Checkpoint v2 — three revert callbacks ──
+        dashboard.setCefRevertToUserMessageCallback { messageTs ->
+            val sid = currentSessionId
+            if (sid == null) {
+                LOG.warn("AgentController: time-travel requested but no active session")
+                return@setCefRevertToUserMessageCallback
+            }
+            revertToUserMessage(sid, messageTs)
+        }
+
+        dashboard.setCefRevertFileToBaselineCallback { path ->
+            val sid = currentSessionId ?: return@setCefRevertFileToBaselineCallback
+            if (service.revertFileToBaseline(sid, path)) {
+                pushAggregateDiff(sid)
+            }
+        }
+
+        dashboard.setCefRevertAllCallback {
+            val sid = currentSessionId ?: return@setCefRevertAllCallback
+            // "Revert all" == revert to the earliest user-message checkpoint
+            val earliest = service.firstUserMessageTs(sid) ?: return@setCefRevertAllCallback
+            revertToUserMessage(sid, earliest)
+        }
+
         // Wire AskQuestionsTool callbacks
         // Simple mode: show question in chat stream, user types answer via chat input.
         // The tool blocks on pendingQuestions deferred. When the user sends a message,
@@ -2088,6 +2112,17 @@ class AgentController(
         "attempt_completion",  // Rendered by onComplete callback → CompletionCard
     )
 
+    /**
+     * Tools whose successful completion changes the file tree and should trigger
+     * an aggregate-diff refresh. Subset of AgentLoop.WRITE_TOOLS — excludes
+     * `run_command`, `background_process`, `send_stdin` since those don't carry
+     * path args and aren't snapshotted by the checkpoint store.
+     */
+    private val CHECKPOINT_RELEVANT_TOOLS = setOf(
+        "edit_file", "create_file", "revert_file",
+        "format_code", "optimize_imports", "refactor_rename"
+    )
+
     private fun onToolCall(progress: ToolCallProgress) {
         // ── Communication tools: render as text, not tool cards ──
         // These tools have dedicated UI rendering paths (callbacks, cards, wizards).
@@ -2161,6 +2196,11 @@ class AgentController(
                 }
 
             }
+        }
+
+        // Checkpoint v2: refresh aggregate-diff bar after write tools land.
+        if (progress.toolName in CHECKPOINT_RELEVANT_TOOLS && progress.durationMs > 0L) {
+            currentSessionId?.let { pushAggregateDiff(it) }
         }
     }
 
@@ -2968,6 +3008,50 @@ class AgentController(
         val tasks = service.currentTaskStore()?.listTasks().orEmpty()
         val tasksJson = taskEventJson.encodeToString(tasks)
         dashboard.setTasks(tasksJson)
+    }
+
+    /**
+     * Time-travel revert to a specific user message.
+     *
+     * Flow:
+     *  1. Cancel any in-flight job and reset dashboard via prepareForReplay
+     *  2. Delegate to AgentService.revertToUserMessage — restores files, truncates
+     *     persisted ui_messages + api_conversation_history
+     *  3. Reload the truncated UI messages into the webview
+     *  4. Push the original user-typed text back into the chat input bar
+     *  5. Refresh the aggregate diff bar
+     *  6. Unlock input — the user is now sitting at the time-travelled state with
+     *     the original prompt restored in the input, free to edit and re-send
+     */
+    fun revertToUserMessage(sessionId: String, messageTs: Long) {
+        LOG.info("AgentController.revertToUserMessage: session=$sessionId ts=$messageTs")
+        currentSessionId = sessionId
+        prepareForReplay("Reverting to checkpoint...")
+        contextManager = null
+
+        val result = service.revertToUserMessage(sessionId, messageTs)
+
+        // Reload truncated ui_messages into the webview.
+        postStateToWebview(service.loadUiMessages(sessionId))
+
+        // Restore the user-typed text into the chat input — time-travel UX.
+        dashboard.restoreInputText(result.userText)
+
+        // Refresh the bottom bar's aggregate diff (now reflects the reverted state).
+        pushAggregateDiff(sessionId)
+
+        // Unlock input — we're not actively running a task, just sitting at the
+        // restored state waiting for the user to (optionally) re-send.
+        dashboard.setBusy(false)
+        dashboard.setInputLocked(false)
+        dashboard.focusInput()
+    }
+
+    /** Push the latest aggregate diff to the webview's bottom bar. Cheap to call. */
+    private fun pushAggregateDiff(sessionId: String) {
+        val agg = service.getAggregateDiff(sessionId)
+        val aggJson = taskEventJson.encodeToString(agg)
+        dashboard.updateAggregateDiff(aggJson)
     }
 
     // ═══════════════════════════════════════════════════
