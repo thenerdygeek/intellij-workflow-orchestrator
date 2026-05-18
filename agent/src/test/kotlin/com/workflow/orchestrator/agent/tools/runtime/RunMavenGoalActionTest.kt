@@ -1,0 +1,81 @@
+package com.workflow.orchestrator.agent.tools.runtime
+
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.loop.ApprovalResult
+import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.framework.MavenUtils
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkAll
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+
+class RunMavenGoalActionTest {
+
+    private val project = mockk<Project>(relaxed = true)
+    private val tool = mockk<AgentTool>(relaxed = true)
+
+    @BeforeEach
+    fun setup() {
+        mockkObject(MavenUtils)
+        // Default: pretend project IS Maven. Tests override per case.
+        every { MavenUtils.getMavenManager(any()) } returns Any()
+        // Default: approval granted. Tests override per case.
+        coEvery {
+            tool.requestApproval(any(), any(), any(), any())
+        } returns ApprovalResult.APPROVED
+    }
+
+    @AfterEach
+    fun teardown() {
+        unmockkAll()
+    }
+
+    @Test
+    fun `blank goals returns INVALID_ARGS`() = runTest {
+        val params = buildJsonObject {
+            put("action", "run_maven_goal")
+            put("goals", "   ")
+        }
+        val result = executeRunMavenGoal(params, project, tool)
+        assertTrue(result.isError, "expected isError=true for blank goals")
+        assertTrue(
+            result.content.startsWith("INVALID_ARGS:"),
+            "expected content to begin with INVALID_ARGS: prefix, was: ${result.content}"
+        )
+    }
+
+    @Test
+    fun `missing goals param returns INVALID_ARGS`() = runTest {
+        val params = buildJsonObject {
+            put("action", "run_maven_goal")
+            // no "goals" key
+        }
+        val result = executeRunMavenGoal(params, project, tool)
+        assertTrue(result.isError)
+        assertTrue(result.content.startsWith("INVALID_ARGS:"))
+    }
+
+    @Test
+    fun `non-blank goals does not return INVALID_ARGS for blank-goals reason`() = runTest {
+        val params = buildJsonObject {
+            put("action", "run_maven_goal")
+            put("goals", "clean install")
+        }
+        val result = executeRunMavenGoal(params, project, tool)
+        // Result will still error somewhere downstream (no real Maven runner in tests),
+        // but the failure reason must not be "goals is blank".
+        assertFalse(
+            result.content.contains("goals is blank"),
+            "expected NOT to fail with blank-goals reason, was: ${result.content}"
+        )
+    }
+}
