@@ -294,8 +294,8 @@ class AgentDebugController internal constructor(
      * Caps output at MAX_VARIABLE_CHARS total characters and MAX_CHILDREN_PER_LEVEL children per node.
      *
      * Cumulative time budget (feedback.md 2026-05-17 #1): per-value resolution is bounded by
-     * [PRESENTATION_TIMEOUT_MS] (8s) but a frame with 15+ slow values can still walk past the
-     * 120s tool-wrapper timeout. We additionally enforce [GET_VARIABLES_WALL_BUDGET_MS] (90s)
+     * [PRESENTATION_TIMEOUT_MS] (20s) but a frame with several slow values can still walk past
+     * the 120s tool-wrapper timeout. We additionally enforce [GET_VARIABLES_WALL_BUDGET_MS] (90s)
      * on the entire walk, leaving 30s for response assembly + the tool wrapper to never have
      * to fire its generic "timed out after 120s" error. When the budget trips, the walk
      * stops where it is and appends a sentinel so the LLM knows the list is partial.
@@ -651,11 +651,10 @@ class AgentDebugController internal constructor(
         }
 
         // Resolve the XValue's presentation to get displayable type + value strings.
-        // Note: resolvePresentation has its own 8s timeout (PRESENTATION_TIMEOUT_MS),
+        // Note: resolvePresentation has its own 20s timeout (PRESENTATION_TIMEOUT_MS),
         // sequential to the 10s JDI evaluation above — so a single call can take up
-        // to ~18s wall clock even though no individual phase exceeds 10s. The tool
-        // layer (DebugInspectTool.executeEvaluate) absorbs this with a sentinel-keyed
-        // single retry when JDI class-loading eats into the presentation budget.
+        // to ~30s wall clock. The tool layer's outer timeout (EVALUATE_TIMEOUT_MS)
+        // must be ≥ this sum or it'll truncate the inner wait prematurely.
         val presentation = resolvePresentation(xValue)
         return EvaluationResult(expression, presentation.second, presentation.first)
     }
@@ -823,12 +822,20 @@ class AgentDebugController internal constructor(
         const val GET_STACK_FRAMES_TIMEOUT_MS = 15_000L
 
         /**
-         * Bounded wait for one XValue's presentation to resolve. Bumped from 5s to 8s
-         * after the placeholder-skip fix: now that we ignore "Collecting data…", we need
-         * enough room for the second async setPresentation call to arrive — typically
-         * 50ms-2s but worst-case (heap-pressure debuggee, slow JDWP) up to ~6s observed.
+         * Bounded wait for one XValue's presentation to resolve.
+         * Progression: 5s → 8s (placeholder-skip fix, 2026-05-17) → 20s (2026-05-18).
+         *
+         * The platform contract on `computePresentation` is "we'll call setPresentation
+         * when we can" — no SLA. The 8s ceiling tripped on JDI class-loading and
+         * proxy-heavy renderers (feedback 2026-05-18: same-shape MDC.get(...) calls
+         * sometimes returned the sentinel). 20s is the same upper-bound the IntelliJ
+         * Variables tree itself tolerates before showing an empty cell, so we match it.
+         *
+         * The wall budget for [getVariables] is [GET_VARIABLES_WALL_BUDGET_MS] (90s),
+         * so a single slow variable can no longer eat all of get_variables' headroom —
+         * the budget short-circuits the walk regardless of per-value timeout.
          */
-        const val PRESENTATION_TIMEOUT_MS = 8_000L
+        const val PRESENTATION_TIMEOUT_MS = 20_000L
 
         /**
          * Cumulative wall-clock budget for a full [getVariables] walk. Chosen at 90s,
