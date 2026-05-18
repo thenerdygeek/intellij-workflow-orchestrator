@@ -689,6 +689,13 @@ class AgentLoop(
         sessionMetrics?.recordUserTurn()
 
         var iteration = 0
+        /**
+         * Iterations since the most recent user/steering message arrived in [ContextManager].
+         * Resets to 0 when steering messages are drained into the context at the iteration
+         * boundary. Passed to [ContextManager.compact] so the two-tier algorithm's 5-iteration
+         * gate has an accurate source of truth.
+         */
+        var iterationsSinceLastUser = 0
         /** Tracks the last accumulated assistant text across iterations for abort persistence. */
         var lastAccumulatedText = ""
         var consecutiveEmpties = 0
@@ -721,6 +728,7 @@ class AgentLoop(
 
         while (!cancelled.get() && iteration < maxIterations) {
             iteration++
+            iterationsSinceLastUser++
             val iterationStartTime = System.currentTimeMillis()
             sessionMetrics?.recordIterationStart()
             LOG.info("[Loop] Iteration $iteration -- ${contextManager.messageCount()} messages, ${"%.1f".format(contextManager.utilizationPercent())}% context")
@@ -750,7 +758,7 @@ class AgentLoop(
                 LOG.info("[Loop] Context compaction triggered at ${"%.1f".format(utilBefore)}%")
                 onCompactionState?.invoke(true, "Compacting context — utilization ${"%.0f".format(utilBefore)}%…")
                 try {
-                    when (val compactResult = contextManager.compact(brain)) {
+                    when (val compactResult = contextManager.compact(brain, iterationsSinceLastUser = iterationsSinceLastUser)) {
                         is ContextManager.CompactResult.Failed -> {
                             LOG.warn("[Context] auto-compaction failed: ${compactResult.reason}; falling back to slidingWindow(0.3)")
                             contextManager.slidingWindow(0.3)
@@ -777,6 +785,7 @@ class AgentLoop(
                 if (drained.isNotEmpty()) {
                     val combinedText = drained.joinToString("\n\n") { it.text }
                     contextManager.addUserMessage(withEnvDetails(STEERING_MESSAGE_PREFIX + combinedText))
+                    iterationsSinceLastUser = 0
                     LOG.info("[Loop] Injected ${drained.size} steering message(s) into context")
                     onSteeringDrained?.invoke(drained.map { it.id })
                 }
@@ -951,7 +960,7 @@ class AgentLoop(
                     // Force aggressive compaction
                     onCompactionState?.invoke(true, "Compacting context after overflow…")
                     try {
-                        when (val compactResult = contextManager.compact(brain)) {
+                        when (val compactResult = contextManager.compact(brain, iterationsSinceLastUser = iterationsSinceLastUser)) {
                             is ContextManager.CompactResult.Failed -> {
                                 LOG.warn("[Context] length-overflow compaction failed: ${compactResult.reason}; falling back to slidingWindow(0.3)")
                                 contextManager.slidingWindow(0.3)
@@ -1203,7 +1212,7 @@ class AgentLoop(
                     onRetry?.invoke(compactionRetries, MAX_COMPACTION_RETRIES, "Compacting context and retrying", 0)
                     onCompactionState?.invoke(true, "Compacting context after repeated timeouts…")
                     try {
-                        when (val compactResult = contextManager.compact(brain)) {
+                        when (val compactResult = contextManager.compact(brain, iterationsSinceLastUser = iterationsSinceLastUser)) {
                             is ContextManager.CompactResult.Failed -> {
                                 LOG.warn("[Context] timeout-recovery compaction failed: ${compactResult.reason}; falling back to slidingWindow(0.3)")
                                 contextManager.slidingWindow(0.3)
