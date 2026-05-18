@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.tools.runtime
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.framework.MavenUtils
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -32,6 +33,13 @@ internal suspend fun executeRunMavenGoal(
         return buildPreflightError(
             CATEGORY_INVALID_ARGS,
             "goals is blank — Maven CLI silently produces BUILD SUCCESS for an empty goal list, which is misleading. Provide at least one goal (e.g., \"clean\", \"install\", \"dependency:tree\")."
+        )
+    }
+    if (MavenUtils.getMavenManager(project) == null) {
+        return buildPreflightError(
+            CATEGORY_NOT_A_MAVEN_PROJECT,
+            "this project is not Mavenized (MavenProjectsManager reports isMavenizedProject=false). " +
+                "Use ./gradlew goals via run_command for Gradle projects, or open the project's pom.xml to import as Maven first."
         )
     }
     // Remaining pre-flights, approval, launch wired in later tasks

@@ -78,4 +78,19 @@ class RunMavenGoalActionTest {
             "expected NOT to fail with blank-goals reason, was: ${result.content}"
         )
     }
+
+    @Test
+    fun `non-Maven project returns NOT_A_MAVEN_PROJECT`() = runTest {
+        every { MavenUtils.getMavenManager(any()) } returns null
+        val params = buildJsonObject {
+            put("action", "run_maven_goal")
+            put("goals", "clean install")
+        }
+        val result = executeRunMavenGoal(params, project, tool)
+        assertTrue(result.isError)
+        assertTrue(
+            result.content.startsWith("NOT_A_MAVEN_PROJECT:"),
+            "expected content to begin with NOT_A_MAVEN_PROJECT: prefix, was: ${result.content}"
+        )
+    }
 }
