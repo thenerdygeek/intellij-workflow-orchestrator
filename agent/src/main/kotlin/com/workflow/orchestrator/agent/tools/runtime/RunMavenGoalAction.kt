@@ -1,16 +1,40 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
+import com.intellij.execution.ExecutionListener
+import com.intellij.execution.ExecutionManager
+import com.intellij.execution.ProgramRunnerUtil
+import com.intellij.execution.RunManager
+import com.intellij.execution.RunnerAndConfigurationSettings
 import com.intellij.execution.configurations.ConfigurationType
+import com.intellij.execution.executors.DefaultRunExecutor
+import com.intellij.execution.process.ProcessAdapter
+import com.intellij.execution.process.ProcessEvent
+import com.intellij.execution.runners.ExecutionEnvironment
+import com.intellij.execution.runners.ExecutionEnvironmentBuilder
+import com.intellij.execution.runners.ProgramRunner
+import com.intellij.execution.ui.RunContentDescriptor
+import com.intellij.execution.ui.RunContentManager
+import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.Key
 import com.intellij.util.execution.ParametersListUtil
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.framework.MavenUtils
+import kotlin.coroutines.resume
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
+import org.jetbrains.idea.maven.execution.MavenRunnerParameters
+import org.jetbrains.idea.maven.project.MavenProjectsManager
 
 internal const val CATEGORY_INVALID_ARGS = "INVALID_ARGS"
 internal const val CATEGORY_NOT_A_MAVEN_PROJECT = "NOT_A_MAVEN_PROJECT"
@@ -19,6 +43,8 @@ internal const val CATEGORY_EXECUTION_EXCEPTION = "EXECUTION_EXCEPTION"
 internal const val CATEGORY_PROCESS_NOT_STARTED = "PROCESS_NOT_STARTED"
 internal const val CATEGORY_BUILD_FAILURE = "BUILD_FAILURE"
 internal const val CATEGORY_TIMEOUT = "TIMEOUT"
+
+internal const val MAVEN_GOAL_TIMEOUT_MS = 1_200_000L  // 20 minutes
 
 internal fun buildPreflightError(category: String, message: String): ToolResult =
     ToolResult(
@@ -81,8 +107,18 @@ internal suspend fun executeRunMavenGoal(
         )
     }
 
-    // Remaining pre-flights, approval, launch wired in later tasks
-    return buildPreflightError(CATEGORY_EXECUTION_EXCEPTION, "not yet implemented past blank-goals pre-flight")
+    val allGoalTokens = assembleGoalTokens(goals, modules, extraTokens, offline)
+
+    val result = launchAndAwaitMavenBuild(project, goals, modules, allGoalTokens)
+    return result ?: buildTimeoutResult(
+        goals = goals,
+        modules = modules,
+        workingDir = project.basePath ?: "(unknown)",
+        mavenHome = "(IDE default)",
+        timeoutSec = MAVEN_GOAL_TIMEOUT_MS / 1000.0,
+        output = "",
+        project = project
+    )
 }
 
 internal fun tokenizeExtraArgs(raw: String): List<String> =
@@ -176,4 +212,183 @@ internal fun buildTimeoutResult(
         tokenEstimate = body.length / 4 + 1,
         isError = true
     )
+}
+
+/**
+ * Build a transient MavenRunConfiguration and run it through the IDE Run executor.
+ * Output is captured via the descriptor's ProcessHandler. RunInvocation disposal
+ * guarantees process+listener teardown on every exit path.
+ *
+ * Returns null on TIMEOUT (caller handles); otherwise a ToolResult.
+ */
+private suspend fun launchAndAwaitMavenBuild(
+    project: Project,
+    goals: String,
+    modules: List<String>,
+    allGoalTokens: List<String>
+): ToolResult? {
+    val output = StringBuilder()
+    val startNs = System.nanoTime()
+
+    val mavenHome: String = try {
+        MavenProjectsManager.getInstance(project).generalSettings.toString()
+    } catch (_: Throwable) {
+        "(IDE default — could not resolve)"
+    }
+
+    return withTimeoutOrNull(MAVEN_GOAL_TIMEOUT_MS) {
+        suspendCancellableCoroutine<ToolResult> { continuation ->
+            val agentService: AgentService = try {
+                project.service<AgentService>()
+            } catch (e: Throwable) {
+                continuation.resume(buildPreflightError(
+                    CATEGORY_EXECUTION_EXCEPTION,
+                    "AgentService not available: ${e::class.simpleName}: ${e.message}"
+                ))
+                return@suspendCancellableCoroutine
+            }
+            val invocation = agentService
+                .newRunInvocation("run-maven-${goals.take(20).replace(" ", "_")}")
+
+            continuation.invokeOnCancellation {
+                Disposer.dispose(invocation)
+            }
+
+            invokeLater {
+                if (!continuation.isActive) return@invokeLater
+
+                val types = com.intellij.execution.configurations.ConfigurationType
+                    .CONFIGURATION_TYPE_EP.extensionList
+                val mavenType = findMavenConfigurationType(types) ?: run {
+                    continuation.resume(buildPreflightError(
+                        CATEGORY_EXECUTION_EXCEPTION,
+                        "MavenRunConfigurationType is not registered. Is the Maven plugin enabled in this IDE?"
+                    ))
+                    return@invokeLater
+                }
+                val factory = mavenType.configurationFactories.firstOrNull() ?: run {
+                    continuation.resume(buildPreflightError(
+                        CATEGORY_EXECUTION_EXCEPTION,
+                        "Maven ConfigurationType has no configuration factories registered."
+                    ))
+                    return@invokeLater
+                }
+
+                val configName = "[Agent] mvn ${goals.take(40)}"
+                val settings: RunnerAndConfigurationSettings =
+                    RunManager.getInstance(project).createConfiguration(configName, factory)
+                val config = settings.configuration
+
+                // Populate runner parameters. Kotlin Java-bean property-access synthesis
+                // turns the setter into property assignment. If a future Maven plugin
+                // removes the setter, fall back to reflection (see spec §Step 4).
+                val params = MavenRunnerParameters(
+                    /* workingDirPath     */ project.basePath ?: ".",
+                    /* pomFileName        */ "pom.xml",
+                    /* isPomExecution     */ true,
+                    /* goals              */ allGoalTokens,
+                    /* explicitProfiles   */ emptyMap<String, Boolean>()
+                )
+                try {
+                    config.javaClass.getMethod(
+                        "setRunnerParameters", MavenRunnerParameters::class.java
+                    ).invoke(config, params)
+                } catch (e: Throwable) {
+                    continuation.resume(buildPreflightError(
+                        CATEGORY_EXECUTION_EXCEPTION,
+                        "could not populate MavenRunnerParameters: ${e::class.simpleName}: ${e.message}"
+                    ))
+                    return@invokeLater
+                }
+
+                // Do NOT call RunManager.setTemporaryConfiguration(settings) — that
+                // overwrites the user's selectedConfiguration and causes
+                // "initialization error on next manual run" (regression documented
+                // by run_tests commit 9b164bf3).
+                settings.isTemporary = true
+
+                val executor = DefaultRunExecutor.getRunExecutorInstance()
+                val env: ExecutionEnvironment = ExecutionEnvironmentBuilder
+                    .createOrNull(executor, settings)
+                    ?.build()
+                    ?: run {
+                        continuation.resume(buildPreflightError(
+                            CATEGORY_EXECUTION_EXCEPTION,
+                            "ExecutionEnvironmentBuilder.createOrNull returned null — no runner registered for MavenRunConfiguration."
+                        ))
+                        return@invokeLater
+                    }
+
+                val callback = object : ProgramRunner.Callback {
+                    override fun processStarted(descriptor: RunContentDescriptor?) {
+                        if (descriptor == null) {
+                            if (continuation.isActive) continuation.resume(buildPreflightError(
+                                CATEGORY_PROCESS_NOT_STARTED,
+                                "ProgramRunner.Callback received no RunContentDescriptor."
+                            ))
+                            return
+                        }
+                        invocation.descriptorRef.set(descriptor)
+
+                        descriptor.processHandler?.addProcessListener(object : ProcessAdapter() {
+                            override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) {
+                                output.append(event.text)
+                            }
+                            override fun processTerminated(event: ProcessEvent) {
+                                if (!continuation.isActive) return
+                                val durationSec = (System.nanoTime() - startNs) / 1_000_000_000.0
+                                continuation.resume(buildSuccessResult(
+                                    goals = goals,
+                                    modules = modules,
+                                    workingDir = project.basePath ?: "(unknown)",
+                                    mavenHome = mavenHome,
+                                    exitCode = event.exitCode,
+                                    durationSec = durationSec,
+                                    output = output.toString(),
+                                    project = project
+                                ))
+                            }
+                        })
+
+                        // Belt-and-suspenders descriptor cleanup. Maven's own runner
+                        // self-cleans the RunContentDescriptor on normal termination
+                        // — so this is NOT required the way it is for JUnit (where
+                        // TestResultsViewer is Disposable with no removeEventsListener
+                        // API). It IS still needed for abnormal termination and
+                        // agent-cancel paths where the runner may not get a chance to
+                        // clean up. RunContentManager.removeRunContent is idempotent.
+                        invocation.onDispose {
+                            val d = invocation.descriptorRef.get() ?: return@onDispose
+                            invokeLater {
+                                RunContentManager.getInstance(project).removeRunContent(executor, d)
+                            }
+                        }
+                    }
+                }
+
+                // Defence-in-depth: ExecutionListener.processNotStarted catches cases
+                // the runner refuses (no ProgramRunner registered, executor disabled,
+                // JDK lookup failed) that the callback above doesn't surface.
+                val conn = project.messageBus.connect()
+                invocation.subscribeTopic(conn)
+                conn.subscribe(ExecutionManager.EXECUTION_TOPIC, object : ExecutionListener {
+                    override fun processNotStarted(executorId: String, e: ExecutionEnvironment) {
+                        if (e === env && continuation.isActive) {
+                            continuation.resume(buildPreflightError(
+                                CATEGORY_PROCESS_NOT_STARTED,
+                                "Execution framework aborted before launch: $executorId."
+                            ))
+                        }
+                    }
+                })
+
+                try {
+                    ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
+                } catch (_: NoSuchMethodError) {
+                    env.callback = callback
+                    ProgramRunnerUtil.executeConfiguration(env, false, true)
+                }
+            }
+        }
+    }
 }
