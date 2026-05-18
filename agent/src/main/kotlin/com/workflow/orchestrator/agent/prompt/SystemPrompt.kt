@@ -366,7 +366,7 @@ In each user message, the environment_details will specify the current mode. The
             append("- **Running tests / building** → ")
             val parts = mutableListOf<String>()
             if (ideContext == null || ideContext.supportsJava) {
-                parts.add("java_runtime_exec (run_tests, compile_module, rerun_failed_tests)")
+                parts.add("java_runtime_exec (run_tests, compile_module, rerun_failed_tests, run_maven_goal)")
             }
             if (ideContext?.supportsPython == true) {
                 parts.add("python_runtime_exec (run_tests, compile_module)")
@@ -610,6 +610,7 @@ In each user message, the environment_details will specify the current mode. The
             appendLine("- Use java_runtime_exec(action=\"run_tests\") instead of `run_command(\"./gradlew test\")` or `run_command(\"mvn test\")`. A pre-flight validator blocks dispatch with an actionable error if the target class is under main sources (not a test root), has zero `@Test` methods, or belongs to a module that isn't registered in `settings.gradle` / the Maven reactor. Read the blocked-result suggestion — do not work around it with shell commands.")
             appendLine("- Use java_runtime_exec(action=\"compile_module\") for module compilation. Upstream dependencies are always resolved by IntelliJ, but downstream consumers are NOT recompiled by default. In multi-module projects, after editing an upstream module, pass `check_dependents=true` to also recompile modules that depend on it (catches downstream ABI breakage). Omit `module` entirely to compile the whole project.")
             appendLine("- Use java_runtime_exec(action=\"rerun_failed_tests\") to re-run only the tests that failed in the last test session — faster than a full run_tests when iterating on a fix. Pass `session_id=<partial-name>` to target a specific prior session. Returns `NO_PRIOR_TEST_SESSION` when no prior test session is available; returns an informational (non-error) message when all tests already pass.")
+            appendLine("- Use java_runtime_exec(action=\"run_maven_goal\") to execute Maven goals via the IDE's Maven plugin runner (honors IDE-configured Maven home/JRE/settings.xml/VM options). Pass `goals` as a space-separated string (e.g., \"clean install\", \"dependency:tree\"). Use `modules` for -pl/-am scoping in multi-module builds. Prefer this over `run_command(\"mvn ...\")` for goal execution that should appear in the IDE Run tool window.")
             appendLine("- For Maven-authoritative cross-module builds (when reactor order matters), use `run_command(\"mvn compile -pl :<module> --also-make\")` — `--also-make` builds the module and every module it depends on.")
             appendLine("- Use project_structure to set module dependencies, SDK, or language level on intrinsic (non-Gradle/Maven) modules instead of editing build files — changes take effect immediately and support undo")
         }
