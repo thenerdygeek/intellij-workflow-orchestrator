@@ -285,8 +285,6 @@ interface ChatState {
   // the row scrolls out of the chat viewport.
   toolCallOpen: Record<string, boolean>;
   aggregateDiff: AggregateDiff | null;
-  // TODO Task 19: remove once App.tsx migrates to aggregateDiff
-  readonly editStats: null;
   smartWorkingPhrase: string | null;
   sessionTitle: string | null;
   /** Monotonic counter bumped every time Kotlin asks for an animated title
@@ -1482,9 +1480,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   updateAggregateDiff(diff: AggregateDiff) {
     set({ aggregateDiff: diff });
   },
-
-  // TODO Task 19: remove once App.tsx migrates to aggregateDiff
-  get editStats(): null { return null; },
 
   setSmartWorkingPhrase(phrase: string) {
     set({ smartWorkingPhrase: phrase });
