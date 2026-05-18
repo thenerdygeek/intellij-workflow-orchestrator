@@ -28,6 +28,7 @@ import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
@@ -470,7 +471,7 @@ class RunCommandTool(
                 .runCommandMaxTimeoutMinutes
                 .coerceAtLeast(1)
                 .toLong() * 60L
-            return (params["timeout"]?.jsonPrimitive?.int?.toLong() ?: DEFAULT_TIMEOUT_SECONDS)
+            return (params["timeout"]?.jsonPrimitive?.intOrNull?.toLong() ?: DEFAULT_TIMEOUT_SECONDS)
                 .coerceIn(1, maxTimeoutSeconds)
         }
         // Max is configurable in settings (Process Tools → "Run-command max
