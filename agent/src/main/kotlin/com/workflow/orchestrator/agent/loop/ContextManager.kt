@@ -88,10 +88,6 @@ class ContextManager(
      */
     private var lastCompactionUserMessageCount: Int? = null
 
-    /** TEMP — removed in Task 6 when compact() is rewritten. Do not use in new code. */
-    @Deprecated("Use previousPreUserSummary / previousPostUserSummary", ReplaceWith(""))
-    private var previousSummary: String? = null
-
     // Test-only accessors (internal — visible from same module's test classes).
     internal fun getTotalUserMessageCountForTest(): Int = totalUserMessageCount
     internal fun getPreviousPreUserSummaryForTest(): String? = previousPreUserSummary
@@ -387,26 +383,27 @@ class ContextManager(
 
     fun messageCount(): Int = messages.size
 
-    // ── Compaction (single-stage CC-style summarizer) ────────────────────────
+    // ── Compaction (two-tier layered summarizer) ────────────────────────────
 
     /**
-     * Single-stage LLM compaction. Eight steps:
-     *   1. Threshold check — bail if below 88% and !force
-     *   2. PRE_COMPACT hook — bail with Cancelled if hook vetoes
-     *   3. Dedup pre-pass — replace repeated file reads with placeholder (no LLM call)
-     *   4. Find split — keep last 30% of messages
-     *   5. LLM summarize — structured handoff prompt sent to brain
-     *   6. Replace prefix — swap the prefix with a single assistant summary message
-     *   7. Strip images — remove image parts (bytes remain on disk)
-     *   8. Re-inject — active skill + active plan
-     *   9. Persist — invalidate tokens, invoke onHistoryOverwrite
+     * Two-tier compaction. See docs/superpowers/specs/2026-05-18-context-compaction-two-tier-design.md.
      *
-     * @return [CompactResult] describing what happened
+     * Layered post-compaction structure:
+     *   [L1 assistant] pre-user handoff summary (omitted if pre-user prefix is empty)
+     *   [L2 user]      the most recent user message, verbatim
+     *   [L3 assistant] post-user working memory summary (omitted if iterations <= 5 and util OK)
+     *   [L4 tool/...]  most recent ~20% of post-user tokens, verbatim
+     *
+     * @param iterationsSinceLastUser agent-loop iterations since the most recent user/steering
+     *   message. Defaults to Int.MAX_VALUE so manual triggers (Compact button, programmatic) always
+     *   allow L3 to be built. The 5-iteration gate is a cost optimization; when post-L1 utilization
+     *   would still be >= 88%, L3 is forced regardless.
      */
     suspend fun compact(
         brain: LlmBrain,
         hookManager: HookManager? = null,
         force: Boolean = false,
+        iterationsSinceLastUser: Int = Int.MAX_VALUE,
     ): CompactResult {
         lastCompactionRanSummary = false
         val utilBefore = utilizationPercent()
@@ -417,7 +414,7 @@ class ContextManager(
             return CompactResult.Skipped(utilBefore)
         }
 
-        LOG.info("[Context] Compacting at ${"%.1f".format(utilBefore)}% utilization (${messages.size} messages)${if (force) " [forced]" else ""}")
+        LOG.info("[Context] Compacting at ${"%.1f".format(utilBefore)}% utilization (${messages.size} messages, iters=$iterationsSinceLastUser)${if (force) " [forced]" else ""}")
 
         // Step 2: PRE_COMPACT hook (cancellable)
         if (hookManager != null && hookManager.hasHooks(HookType.PRE_COMPACT)) {
@@ -426,9 +423,9 @@ class ContextManager(
                     type = HookType.PRE_COMPACT,
                     data = mapOf(
                         "utilizationPercent" to utilBefore,
-                        "messageCount" to messages.size
-                    )
-                )
+                        "messageCount" to messages.size,
+                    ),
+                ),
             )
             if (hookResult is HookResult.Cancel) {
                 LOG.info("[Context] Compaction cancelled by PRE_COMPACT hook: ${hookResult.reason}")
@@ -436,49 +433,135 @@ class ContextManager(
             }
         }
 
-        // Step 3: Dedup pre-pass — lazy-build file read index and replace duplicates.
-        // Without this, a session that re-reads foo.kt 5 times feeds 5x80K-char tool
-        // results into brain.chat(), which can exceed the model's context window.
+        // Step 3: Dedup pre-pass — collapses repeated file reads before LLM input
         deduplicateFileReads()
 
-        // Step 4: Find safe split — preserve last 30% of messages (rounded to role boundary)
-        val targetSplitIdx = (messages.size * (1.0 - KEEP_FRACTION)).toInt()
-        val splitIdx = findSafeSplitPoint(targetSplitIdx)
-        if (splitIdx <= 1) {
-            LOG.info("[Context] Not enough history to split (splitIdx=$splitIdx), skipping")
-            return CompactResult.Skipped(utilBefore)
+        // Step 4: Find last user message
+        val lastUserIdx = findLastUserIndex()
+        if (lastUserIdx == -1) {
+            // Degenerate: no user message in history → fall back to single-summary path
+            return compactDegenerate(brain, utilBefore, tokensBefore)
         }
 
-        // Step 5: LLM-summarize the prefix
-        val prefix = messages.subList(0, splitIdx).toList()
-        val summary = summarizePrefix(brain, prefix, previousSummary)
-            ?: return CompactResult.Failed("Summarization LLM call returned no content")
+        // Step 5: Case A vs Case B detection
+        val isCaseB = lastCompactionUserMessageCount != null
+                && totalUserMessageCount == lastCompactionUserMessageCount
 
-        // Step 6: Replace prefix with single assistant message containing summary
-        val tail = messages.subList(splitIdx, messages.size).toList()
+        // Step 6: Build L1
+        val prefix = messages.subList(0, lastUserIdx).toList()
+        var l1Failed = false
+        val l1Content: String? = when {
+            prefix.isEmpty() -> null  // skip — no L1 needed
+            isCaseB && previousPreUserSummary != null -> previousPreUserSummary
+            else -> {
+                val summary = summarizePreUser(brain, prefix, previousPreUserSummary)
+                if (summary == null) l1Failed = true
+                summary
+            }
+        }
+
+        // Step 7: L2 = last user message
+        val l2 = messages[lastUserIdx]
+
+        // Step 8: Decide whether to build L3 + L4
+        val postUserStart = lastUserIdx + 1
+        val postUserSlice = messages.subList(postUserStart, messages.size).toList()
+        val l1EstTokens = if (l1Content != null) 2048 else 0
+        val postL1EstTokens = l1EstTokens + postUserSlice.sumOf { estimateMessageTokens(it) }
+        val postL1Utilization = (postL1EstTokens.toDouble() / effectiveMaxInputTokens()) * 100.0
+        val needsL3 = (iterationsSinceLastUser > 5) || (postL1Utilization >= 88.0)
+        val buildL3 = needsL3 && postUserSlice.isNotEmpty()
+
+        // Step 9: Build L3 + L4
+        var l3Failed = false
+        var l3Content: String? = null
+        var cutIdx = messages.size
+        if (buildL3) {
+            val targetTokensInL4 = (0.20 * effectiveMaxInputTokens()).toInt()
+            val rawCutIdx = findTokenWeightedCutForLayer4(
+                sliceStart = postUserStart,
+                sliceEnd = messages.size,
+                targetTokensFromEnd = targetTokensInL4,
+            )
+            val snappedCutIdx = snapToToolBoundary(rawCutIdx, sliceStart = postUserStart)
+            if (snappedCutIdx < messages.size) {
+                cutIdx = snappedCutIdx
+                val l3Input = messages.subList(postUserStart, cutIdx).toList()
+                if (l3Input.isNotEmpty()) {
+                    val summary = summarizePostUser(brain, l3Input, previousPostUserSummary)
+                    if (summary == null) {
+                        l3Failed = true
+                    } else {
+                        l3Content = summary
+                    }
+                }
+            }
+        }
+
+        // Step 10: Reassemble
+        val l4 = if (l3Content != null) messages.subList(cutIdx, messages.size).toList()
+                 else postUserSlice
         messages.clear()
-        messages.add(ChatMessage(role = "assistant", content = formatSummaryMessage(summary)))
-        messages.addAll(tail)
+        if (l1Content != null) messages.add(ChatMessage(role = "assistant", content = formatPreUserSummary(l1Content)))
+        messages.add(l2)
+        if (l3Content != null) messages.add(ChatMessage(role = "assistant", content = formatPostUserSummary(l3Content)))
+        messages.addAll(l4)
 
-        previousSummary = summary
-        lastCompactionRanSummary = true
-
-        // Step 7: Strip image parts (consolidated into summary text now)
+        // Step 11: Post-summary cleanup (unchanged behavior)
         stripImagePartsFromAllMessages()
-
-        // Step 8: Re-inject active skill + active plan
         reInjectActiveSkill()
         reInjectActivePlan()
 
-        // Step 9: Invalidate token cache and persist
+        // Step 12: Save state for next compaction
+        previousPreUserSummary = l1Content ?: previousPreUserSummary
+        previousPostUserSummary = l3Content ?: previousPostUserSummary
+        lastCompactionUserMessageCount = totalUserMessageCount
+        lastCompactionRanSummary = (l1Content != null && !isCaseB) || l3Content != null
+
+        // Step 13: Invalidate token cache and persist
         lastPromptTokens = null
         val tokensAfter = currentInputTokens()
+        val deletedRangeEnd = if (l3Content != null) cutIdx else lastUserIdx
+        onHistoryOverwrite?.invoke(messages.toList(), 0 to deletedRangeEnd)
 
-        // NOTE: onHistoryOverwrite Pair<Int, Int> is the DELETED MESSAGE INDEX RANGE
-        // (0 to splitIdx), NOT a (tokensBefore, tokensAfter) pair.
-        onHistoryOverwrite?.invoke(messages.toList(), 0 to splitIdx)
+        LOG.info("[Context] Compacted: ${"%.1f".format(utilBefore)}% → ${"%.1f".format(utilizationPercent())}% ($tokensBefore → $tokensAfter tokens, L1=${l1Content?.length ?: 0} chars, L3=${l3Content?.length ?: 0} chars, case=${if (isCaseB) "B" else "A"})")
 
-        LOG.info("[Context] Compacted: ${"%.1f".format(utilBefore)}% → ${"%.1f".format(utilizationPercent())}% ($tokensBefore → $tokensAfter tokens, summary ${summary.length} chars)")
+        // Step 14: Result — if at least one summarization was attempted and none succeeded, fail
+        val anySummarizationAttempted = l1Failed || l3Failed
+        val anySummarizationSucceeded = l1Content != null || l3Content != null
+        return if (anySummarizationAttempted && !anySummarizationSucceeded) {
+            CompactResult.Failed("Summarization failed (L1=${if (l1Failed) "failed" else "ok"}, L3=${if (l3Failed) "failed" else "skipped/ok"})")
+        } else {
+            CompactResult.Compacted(tokensBefore, tokensAfter, (l1Content?.length ?: 0) + (l3Content?.length ?: 0))
+        }
+    }
+
+    /**
+     * Degenerate fallback for histories with no user message at all.
+     * Summarize everything into a single assistant message; matches the no-user-anchor
+     * pathology fallback described in the spec's "Edge cases" table.
+     */
+    private suspend fun compactDegenerate(
+        brain: LlmBrain,
+        utilBefore: Double,
+        tokensBefore: Int,
+    ): CompactResult {
+        if (messages.isEmpty()) return CompactResult.Skipped(utilBefore)
+        val all = messages.toList()
+        val summary = summarizePreUser(brain, all, previousPreUserSummary)
+            ?: return CompactResult.Failed("Degenerate-path summarization failed")
+        messages.clear()
+        messages.add(ChatMessage(role = "assistant", content = formatPreUserSummary(summary)))
+        stripImagePartsFromAllMessages()
+        reInjectActiveSkill()
+        reInjectActivePlan()
+        previousPreUserSummary = summary
+        lastCompactionUserMessageCount = totalUserMessageCount
+        lastCompactionRanSummary = true
+        lastPromptTokens = null
+        val tokensAfter = currentInputTokens()
+        onHistoryOverwrite?.invoke(messages.toList(), 0 to all.size)
+        LOG.info("[Context] Compacted (degenerate, no user): ${"%.1f".format(utilBefore)}% → ${"%.1f".format(utilizationPercent())}% ($tokensBefore → $tokensAfter tokens)")
         return CompactResult.Compacted(tokensBefore, tokensAfter, summary.length)
     }
 
@@ -566,25 +649,11 @@ class ContextManager(
         }
     }
 
-    /** TEMP — removed in Task 6 when compact() is rewritten. */
-    @Deprecated("Use summarizePreUser / summarizePostUser", ReplaceWith(""))
-    private suspend fun summarizePrefix(
-        brain: LlmBrain,
-        prefix: List<ChatMessage>,
-        previousSummary: String?,
-    ): String? = summarizePreUser(brain, prefix, previousSummary)
-
     private fun formatPreUserSummary(summary: String): String =
         "[Context Handoff — earlier conversation was compacted]\n$summary"
 
     private fun formatPostUserSummary(summary: String): String =
         "[Working Memory — agent activity since the user's last message was compacted]\n$summary"
-
-    /** TEMP — removed in Task 6 when compact() stops using formatSummaryMessage. */
-    @Suppress("DEPRECATION")
-    @Deprecated("Use formatPreUserSummary / formatPostUserSummary", ReplaceWith(""))
-    private fun formatSummaryMessage(summary: String): String =
-        "[Context Summary — earlier conversation was compacted]\n$summary"
 
     // ── File-read deduplication (pre-pass, NOT a stage) ──────────────────────
 
@@ -860,7 +929,6 @@ class ContextManager(
         messages.clear()
         previousPreUserSummary = null
         previousPostUserSummary = null
-        @Suppress("DEPRECATION") previousSummary = null  // removed in Task 6
         totalUserMessageCount = 0
         lastCompactionUserMessageCount = null
         lastPromptTokens = null

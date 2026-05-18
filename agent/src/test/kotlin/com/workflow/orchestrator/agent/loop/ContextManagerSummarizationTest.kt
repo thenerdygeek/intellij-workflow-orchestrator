@@ -324,7 +324,7 @@ class ContextManagerSummarizationTest {
 
             assertTrue(result is ContextManager.CompactResult.Compacted, "Expected Compacted, got $result")
             val messages = cm.getMessages()
-            val summaryMsg = messages.find { it.content?.contains("Context Summary") == true }
+            val summaryMsg = messages.find { it.content?.contains("Context Handoff") == true }
             assertNotNull(summaryMsg, "Summary message should exist after compaction")
             assertEquals("assistant", summaryMsg!!.role, "Summary must be inserted as assistant role")
         }
@@ -342,7 +342,7 @@ class ContextManagerSummarizationTest {
 
             cm.compact(brain, force = false)
 
-            val summaryMsg = cm.getMessages().find { it.content?.contains("[Context Summary") == true }
+            val summaryMsg = cm.getMessages().find { it.content?.contains("[Context Handoff") == true }
             assertNotNull(summaryMsg)
             assertTrue(summaryMsg!!.content!!.contains("My summary content"))
         }
