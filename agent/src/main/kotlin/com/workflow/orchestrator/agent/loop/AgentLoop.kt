@@ -291,6 +291,18 @@ class AgentLoop(
      */
     private val onCompactionState: ((active: Boolean, phase: String) -> Unit)? = null,
     /**
+     * Optional checkpoint store. When set, the loop captures file pre-state
+     * before each write tool runs (per-user-message snapshot dirs). Sub-agents
+     * and tests pass null.
+     */
+    private val checkpointStore: com.workflow.orchestrator.agent.checkpoint.SessionCheckpointStore? = null,
+    /**
+     * Provider for the current user-message ts. Read inline at write time so the
+     * store knows which msg-N dir to write into. Returns 0 if no user message is
+     * active (e.g. resume preamble) — store no-ops in that case.
+     */
+    private val currentUserMessageTsProvider: (() -> Long)? = null,
+    /**
      * Bug 3 — checked at the top of every iteration boundary. When non-null AND
      * different from the current `brain.modelId`, the loop calls [brainFactory] with
      * the returned model id and clears the pending state. Lets the user pick a
@@ -1813,6 +1825,21 @@ class AgentLoop(
             BackgroundProcessTool.currentSessionId.set(sessionId)
             if (toolName in STREAMING_TOOLS) RunCommandTool.currentToolCallId.set(toolCallId)
             if (toolName in STREAMING_TOOLS) RunCommandTool.currentSessionId.set(sessionId)
+            // Per-user-message checkpoint capture: copy pre-edit state of touched files.
+            if (toolName in WRITE_TOOLS) {
+                val msgTs = currentUserMessageTsProvider?.invoke() ?: 0L
+                if (msgTs > 0L && checkpointStore != null) {
+                    for (path in extractPathsFromToolArgs(toolName, call.function.arguments)) {
+                        try {
+                            val resolved = if (java.io.File(path).isAbsolute) path
+                                           else java.io.File(project.basePath ?: ".", path).absolutePath
+                            checkpointStore.captureIfFirstTouch(msgTs, resolved)
+                        } catch (e: Exception) {
+                            LOG.warn("[Loop] checkpoint capture failed for $path (non-fatal): ${e.message}")
+                        }
+                    }
+                }
+            }
             val toolResult = try {
                 val timeout = tool.timeoutMs
                 val attachmentStore = attachmentStoreProvider()
@@ -2371,5 +2398,30 @@ class AgentLoop(
         "revert_file" -> "medium"
         "edit_file", "create_file" -> "low"
         else -> "medium"
+    }
+
+    /**
+     * Extract file paths from a write-tool's JSON args. Used for checkpoint capture.
+     * Returns absolute or project-relative paths; caller resolves to absolute.
+     *
+     * Recognised tools and their path-arg keys:
+     *  - edit_file / create_file / revert_file / format_code / optimize_imports: "path" or "file_path"
+     *  - refactor_rename: "from_path" and "to_path"
+     *
+     * Tools without path args (run_command, background_process, send_stdin) return empty list —
+     * their side effects are intentionally not snapshotted (documented limitation).
+     */
+    private fun extractPathsFromToolArgs(toolName: String, argsJson: String): List<String> {
+        return try {
+            val obj = kotlinx.serialization.json.Json.parseToJsonElement(argsJson) as? kotlinx.serialization.json.JsonObject ?: return emptyList()
+            val keys = when (toolName) {
+                "edit_file", "create_file", "revert_file", "format_code", "optimize_imports" -> listOf("path", "file_path")
+                "refactor_rename" -> listOf("from_path", "to_path")
+                else -> return emptyList()
+            }
+            keys.mapNotNull { k ->
+                (obj[k] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+            }
+        } catch (_: Exception) { emptyList() }
     }
 }
