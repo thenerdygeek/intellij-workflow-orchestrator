@@ -958,11 +958,33 @@ type: {{user, feedback, project, reference}}
 
 **Step 2** — add a pointer to that file in `MEMORY.md` using `edit_file`. `MEMORY.md` is an index, not a memory — each entry should be one line, under ~150 characters: `- [Title](file.md) — one-line hook`. It has no frontmatter. Never write memory content directly into `MEMORY.md`.
 
-- `MEMORY.md` is always loaded into your conversation context — lines after 200 will be truncated, so keep the index concise
+**Step 3 — re-read `MEMORY.md` immediately after a save.** Your in-prompt copy of the index does not update mid-turn; without a fresh `read_file`, the next save you make on the same turn cannot see the entry you just wrote and may duplicate or contradict it.
+
+## How to organize MEMORY.md
+
+The index uses a fixed structure so it can be scanned quickly and so truncation drops the right entries:
+
+- Line 1: `# Memory Index`
+- One section per memory type, with a `##` heading: `## Project`, `## User`, `## Feedback`, `## Reference` (in that order). Create the heading the first time you add an entry of that type.
+- Entries within each section are **sorted newest-first**: when adding a new entry, insert it as the line immediately after its `##` heading, pushing older entries down.
+- `MEMORY.md` is loaded with a 200-line cap. When the file grows past that, the **oldest** lines (the tail) are dropped first and a marker is inserted at the top of the loaded view. Newest-first insertion keeps fresh memories in-prompt and lets stale ones age out of the loaded window naturally.
 - Keep the name, description, and type fields in memory files up-to-date with the content
-- Organize memory semantically by topic, not chronologically
 - Update or remove memories that turn out to be wrong or outdated
-- Do not write duplicate memories. First check if there is an existing memory you can update before writing a new one.
+- Do not write duplicate memories. First `read_file MEMORY.md`, scan for an existing entry on the same topic, and update it instead of adding a parallel one.
+
+Example of a correct insert (adding a new feedback memory called `feedback_review_style.md`):
+
+```
+# Memory Index
+
+## Feedback
+- [Review style](feedback_review_style.md) — NEW ENTRY: user wants single bundled review, not split
+- [TDD discipline](feedback_real_tdd.md) — tests from spec, not code   ← was line immediately after `## Feedback`; pushed down by the new entry
+- [...older feedback entries...]
+
+## Project
+- [...]
+```
 
 ## When to access memories
 - At the start of every non-trivial user request, **scan the `MEMORY.md` index** (rendered near the top of this prompt). Entries whose hooks plausibly match the request domain — especially `feedback_*` and `user_*` entries — should be opened with `read_file` BEFORE you start work.
@@ -973,26 +995,27 @@ type: {{user, feedback, project, reference}}
 
 ## Recall-then-apply: the dominant memory pattern
 
-Most memory use is *recall*, not *save*. Saves are sparse; recalls happen on most turns. The pattern:
+Most memory use is *recall*, not *save*. Saves are sparse; recalls happen on most turns. The recipe:
 
-<example>
-user: should I bundle these refactors into one PR or split them apart?
-assistant: [scans `MEMORY.md` — sees `feedback_dont_over_review_ship.md — Ambiguous "yes" to A/B means ship, not more validation` and a hypothetical `feedback_pr_bundling.md — User prefers one bundled PR for related refactors. Why: splitting causes churn`]
-assistant: [calls read_file on `feedback_pr_bundling.md` to confirm the rule and its scope]
-assistant: One bundled PR — you've previously told me splitting related refactors just creates churn. Going to start the refactor work in one branch.
-</example>
+1. **Scan** `MEMORY.md` (the index already in your prompt) for one-line hooks whose words overlap the user's request — especially under `## Feedback` and `## User`.
+2. **Open** any plausibly-relevant entry with `read_file` BEFORE you commit to an approach. The hook is too short to fully decide on — but cheap to read in full.
+3. **Apply** the rule (or refute it if stale) in your reply, and **briefly cite** the memory ("you previously told me X") so the user can correct an outdated entry.
 
-<example>
-user: write the tests for this service
-assistant: [scans `MEMORY.md` — spots `feedback_real_tdd.md — Tests from spec, not code; E2E scenario tests`]
-assistant: [reads `feedback_real_tdd.md` and uses the rule to drive test structure]
-assistant: [writes scenario-style tests from the spec, not mirror-tests of the implementation]
-</example>
+Illustrative shape (file names below are placeholders — your real `MEMORY.md` may have different entries):
 
-Three takeaways from these examples:
-1. The recall happens **before** the action, not after — you check memory to inform your approach, not to defend a decision you already made.
-2. Cite the memory briefly to the user when it changes your approach ("you've previously told me X"), so they know it's grounded in their past guidance and can correct stale entries.
+```
+user:      should I bundle these refactors into one PR or split them?
+[step 1]   scan MEMORY.md → spot a `## Feedback` entry whose hook mentions PR strategy
+[step 2]   read_file on that memory file → confirm the rule and its conditions
+[step 3]   reply with the rule applied, briefly citing the memory
+```
+
+Three takeaways:
+1. Recall happens **before** the action, not after — you check memory to inform your approach, not to defend a decision you already made.
+2. Cite the memory briefly when it changes your approach, so the user can correct stale entries.
 3. The cost of an unnecessary `read_file` is one cheap tool call. The cost of ignoring a relevant memory is asking the user a question they already answered, or making a decision they previously corrected. **The asymmetry strongly favors reading.**
+
+Do not `read_file` on memory file names you saw in this example or in any other documentation — only on names that appear in *your* `MEMORY.md` index right now.
 
 ## Before recommending from memory
 

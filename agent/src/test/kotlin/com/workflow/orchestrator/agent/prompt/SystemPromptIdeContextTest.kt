@@ -170,7 +170,10 @@ class SystemPromptIdeContextTest {
             shell = "/bin/bash"
         )
 
-        // Verify section order by checking index positions
+        // Verify section order by checking index positions.
+        // Markers are chosen so each appears only once in the prompt — bare section
+        // titles like "MEMORY" or "RULES" can otherwise collide with body text in
+        // earlier sections (e.g. "YOUR MEMORY INDEX" in the Capabilities bullet).
         val sections = listOf(
             "IntelliJ IDEA",        // Agent Role (section 1)
             "EDITING FILES",        // Section 3
@@ -179,7 +182,7 @@ class SystemPromptIdeContextTest {
             "RULES",                // Section 7
             "SYSTEM INFORMATION",   // Section 8
             "OBJECTIVE",            // Section 9
-            "MEMORY"                // Section 10
+            "MEMORY\n\nYou have a persistent" // Section 10 header
         )
 
         var lastIndex = -1

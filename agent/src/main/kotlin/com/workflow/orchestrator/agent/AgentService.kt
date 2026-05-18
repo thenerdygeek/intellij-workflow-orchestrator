@@ -1717,6 +1717,10 @@ class AgentService(
                 // MEMORY INDEX: Load per-project MEMORY.md for injection into Section 10.
                 // Ensure the memory directory exists so the LLM's first create_file into it
                 // (and edit_file against a not-yet-created MEMORY.md) cannot NoSuchFileException.
+                // Seed an empty MEMORY.md when missing so `MemoryIndex.load` returns non-null
+                // on first session — the prompt's `Contents of <path>:` block (Section 10b)
+                // is the only place the LLM sees the memory directory's absolute path, and
+                // that block is gated on the index file existing.
                 val memoryDirPath = java.io.File(agentDir, "memory").toPath()
                 try {
                     java.nio.file.Files.createDirectories(memoryDirPath)
@@ -1724,7 +1728,7 @@ class AgentService(
                     // Non-fatal: if we cannot create the dir (permission, read-only FS),
                     // memory just stays unavailable for the session.
                 }
-                val memoryIndexContent = com.workflow.orchestrator.agent.memory.MemoryIndex.load(memoryDirPath)
+                com.workflow.orchestrator.agent.memory.MemoryIndex.seedIfMissing(memoryDirPath)
                 val memoryIndexPath = memoryDirPath.resolve("MEMORY.md").toString()
 
                 // Forward-reference holder for [messageState] (declared further down in
@@ -1734,8 +1738,13 @@ class AgentService(
                 // until then `consumeDialectDriftFlag()` returns false via the elvis.
                 var messageStateRef: MessageStateHandler? = null
 
-                // Build system prompt — XML tool definitions added dynamically below
+                // Build system prompt — XML tool definitions added dynamically below.
+                // MEMORY.md is RE-READ on every rebuild (not captured at session start) so
+                // mid-session saves via `edit_file MEMORY.md` are visible to the LLM on its
+                // very next iteration. The lambda runs whenever the tool set changes; the
+                // file read is small (≤200 lines) and unconditional misses are tolerated.
                 val systemPromptBuilder = { toolDefsMarkdown: String? ->
+                    val freshMemoryIndex = com.workflow.orchestrator.agent.memory.MemoryIndex.load(memoryDirPath)
                     SystemPrompt.build(
                         projectName = projectName,
                         projectPath = projectPath,
@@ -1746,7 +1755,7 @@ class AgentService(
                         taskProgress = ctx.renderTaskProgressMarkdown(),
                         deferredToolCatalog = deferredCatalog,
                         toolDefinitionsMarkdown = toolDefsMarkdown,
-                        memoryIndex = memoryIndexContent,
+                        memoryIndex = freshMemoryIndex,
                         memoryIndexPath = memoryIndexPath,
                         ideContext = ideContext,
                         availableShells = allowedShells,

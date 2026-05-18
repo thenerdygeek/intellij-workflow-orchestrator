@@ -757,7 +757,7 @@ User-definable agent definitions via markdown files with YAML frontmatter:
 | `model` | inherit | Model override |
 | `max-turns` | — | Not parsed — all sub-agents use `DEFAULT_MAX_ITERATIONS = 200` |
 | `skills` | [] | Skills preloaded at startup |
-| `memory` | none | Persistent memory: user/project/local |
+| `memory` | none | Persistent memory: `none` (no memory injected) or `project` (inherit orchestrator's project memory). Aliases `inherit`/`user` are accepted and treated as `project` — there is only one memory dir today. |
 | `prompt-sections` | _(all on)_ | Per-section opt-in/opt-out — see table below |
 
 **`prompt-sections` sub-fields** (kebab-case in YAML, all optional):
@@ -767,7 +767,7 @@ User-definable agent definitions via markdown files with YAML frontmatter:
 | `capabilities` | bool | true | Section 5 — core tools listing + hints |
 | `rules` | bool | true | Section 7 — IDE preference, safety, communication |
 | `editing-files` | `auto`/`true`/`false` | `auto` | Section 3; `auto` = include iff `edit_file`/`create_file` in tool set |
-| `memory` | `none`/`inherit`/`project`/`user` | `none` | Section 10 + memory XML blocks; `none` suppresses both |
+| `memory` | `none`/`project` | `none` | Section 10 + memory XML blocks; `none` suppresses both. `inherit`/`user` are aliases for `project` (kept for backward-compat). |
 | `objective` | bool | true | Section 9 — iterative task execution instructions |
 | `system-info` | bool | true | Section 8 — OS, IDE, shell, home dir |
 | `user-instructions` | bool | true | Section 11 — project name, repo structure, custom instructions |
