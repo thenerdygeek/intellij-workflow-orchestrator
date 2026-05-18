@@ -324,6 +324,7 @@ When to use filtering:
 - Git logs: Use grep_pattern for relevant commits
 
 Outputs exceeding 30K characters are automatically saved to disk — you'll receive a preview with the file path. Use read_file or search_code on the saved file to explore the full output.
+`search_code`'s `path` accepts both a directory (walked recursively) and a single file (greps that one file's lines) — so you can grep a spilled tool-output dump directly without falling back to `run_command grep`.
 
 Prefer dedicated tools over raw commands: Use search_code instead of run_command with grep. Use glob_files instead of run_command with find.
 

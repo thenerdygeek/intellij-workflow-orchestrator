@@ -23,11 +23,11 @@ import kotlin.coroutines.coroutineContext
 
 class SearchCodeTool : AgentTool {
     override val name = "search_code"
-    override val description = "Perform a regex search across files in a specified directory, providing context-rich results. This tool searches for patterns or specific content across multiple files, displaying each match with encapsulating context. Use this for finding code patterns, function definitions, imports, error messages, or any text content across the codebase. The path may also point under the agent's data directory (~/.workflow-orchestrator/) to grep through spilled tool output (look under sessions/{id}/tool-output/); matches outside the project are emitted as absolute canonical paths. Supports three output modes: 'files' (paths only — default, lightweight), 'content' (matching lines with context), 'count' (match counts per file)."
+    override val description = "Perform a regex search across files in a specified directory OR within a single file, providing context-rich results. This tool searches for patterns or specific content, displaying each match with encapsulating context. Use this for finding code patterns, function definitions, imports, error messages, or any text content across the codebase — or for grepping inside one specific file (e.g. a spilled tool-output dump). The path may also point under the agent's data directory (~/.workflow-orchestrator/) to grep through spilled tool output (look under sessions/{id}/tool-output/); matches outside the project are emitted as absolute canonical paths. Supports three output modes: 'files' (paths only — default, lightweight), 'content' (matching lines with context), 'count' (match counts per file)."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "pattern" to ParameterProperty(type = "string", description = "The regular expression pattern to search for. Uses standard regex syntax. Literal strings are also accepted and will be auto-escaped if they contain invalid regex."),
-            "path" to ParameterProperty(type = "string", description = "The path of the directory to search in (absolute or relative to the project root). May also point under ~/.workflow-orchestrator/ (e.g. agent session tool-output dir) to search spilled output. This directory will be recursively searched. Defaults to project root."),
+            "path" to ParameterProperty(type = "string", description = "The path of a directory or single file to search in (absolute or relative to the project root). Directories are walked recursively; a file path greps the lines of that one file. May also point under ~/.workflow-orchestrator/ (e.g. agent session tool-output dir) to search spilled output. Defaults to project root."),
             "output_mode" to ParameterProperty(type = "string", description = "Output mode: 'files' (file paths only, default — lightweight for discovery), 'content' (matching lines with surrounding context), 'count' (match counts per file).", enumValues = listOf("files", "content", "count")),
             "file_type" to ParameterProperty(type = "string", description = "File extension filter (e.g., 'kt' for Kotlin files, 'java' for Java files). If not provided, it will search all files."),
             "case_insensitive" to ParameterProperty(type = "boolean", description = "Case-insensitive search. Default: false."),
@@ -68,14 +68,15 @@ class SearchCodeTool : AgentTool {
                 example("List<String>")
             }
             optional("path", "string") {
-                llmSeesIt("The path of the directory to search in (absolute or relative to the project root). May also point under ~/.workflow-orchestrator/ (e.g. agent session tool-output dir) to search spilled output. This directory will be recursively searched. Defaults to project root.")
-                humanReadable("Where to start the recursive search. Relative paths anchor on the project root; absolute paths must still resolve under the project (or under the agent's `~/.workflow-orchestrator/` data dir). Narrowing this is the single biggest lever for keeping the result set small — `path='src/main'` excludes tests, `path='agent'` excludes other modules.")
-                whenPresent("Resolved + canonicalized via `PathValidator.resolveAndValidateForRead`. The walk descends from this directory; emitted match paths are relative-to-project for files inside the project, absolute canonical otherwise.")
-                whenAbsent("Defaults to the project root.")
-                constraint("must be a directory — pointing to a file returns 'Search path not found'")
-                constraint("must resolve under the project root or `~/.workflow-orchestrator/` — paths outside both are rejected by PathValidator before any walk")
+                llmSeesIt("The path of a directory or single file to search in (absolute or relative to the project root). Directories are walked recursively; a file path greps the lines of that one file. May also point under ~/.workflow-orchestrator/ (e.g. agent session tool-output dir) to search spilled output. Defaults to project root.")
+                humanReadable("Where to grep. A directory walks all matching files recursively; a single file path narrows the grep to that one file (handy for spilled tool-output dumps). Relative paths anchor on the project root; absolute paths must still resolve under the project or under the agent's `~/.workflow-orchestrator/` data dir.")
+                whenPresent("Resolved + canonicalized via `PathValidator.resolveAndValidateForRead`. If it's a directory, the walk descends from it (honoring the skip-list and `file_type` filter). If it's a file, only that file is grepped (still subject to the 1MB cap and binary-extension filter). Emitted match paths are relative-to-project for files inside the project, absolute canonical otherwise.")
+                whenAbsent("Defaults to the project root (walked recursively).")
+                constraint("must resolve under the project root or `~/.workflow-orchestrator/` — paths outside both are rejected by PathValidator before any read")
+                constraint("if pointing to a file, the file's extension still has to clear the binary-extension filter (`jar`, `png`, `zip`, etc. are rejected) and the 1MB size cap; otherwise it returns zero matches with no warning")
                 example("src/main/kotlin")
                 example("agent/src/main")
+                example(".workflow-orchestrator/repo-abc123/agent/sessions/<id>/tool-output/bamboo_builds-1234567-output.txt")
             }
             optional("output_mode", "string") {
                 llmSeesIt("Output mode: 'files' (file paths only, default — lightweight for discovery), 'content' (matching lines with surrounding context), 'count' (match counts per file).")
@@ -165,24 +166,27 @@ class SearchCodeTool : AgentTool {
             flowchart TD
                 A[LLM calls search_code] --> B{path validates?}
                 B -- no --> X1[Return path-traversal error]
-                B -- yes --> C{searchRoot is directory?}
-                C -- no --> X2[Return path-not-found error]
+                B -- yes --> C{searchRoot exists?}
+                C -- no --> X2[Return path-does-not-exist error]
                 C -- yes --> D{Compile regex}
                 D -- invalid --> E[Fall back to Regex.escape literal]
-                D -- valid --> F[Walk searchRoot]
+                D -- valid --> F{searchRoot type?}
                 E --> F
-                F --> G{In SKIP_DIRS?}
-                G -- yes --> F
+                F -- file --> S[Match one file (matchSingleFile)]
+                F -- directory --> W[Walk searchRoot]
+                S --> M{matches >= max_results?}
+                W --> G{In SKIP_DIRS?}
+                G -- yes --> W
                 G -- no --> H{Binary ext or >1MB?}
-                H -- yes --> F
+                H -- yes --> W
                 H -- no --> I{file_type matches?}
-                I -- no --> F
+                I -- no --> W
                 I -- yes --> J{output_mode=content with context?}
                 J -- yes --> K[Read full file, collect ctxBefore+ctxAfter]
                 J -- no --> L[Stream lines, collect matches only]
-                K --> M{matches >= max_results?}
+                K --> M
                 L --> M
-                M -- no --> F
+                M -- no --> W
                 M -- yes --> N[Stop walk]
                 N --> O{output_mode}
                 O -- files --> P1[Distinct paths]
@@ -243,8 +247,8 @@ class SearchCodeTool : AgentTool {
             File(basePath)
         }
 
-        if (!searchRoot.exists() || !searchRoot.isDirectory) {
-            return ToolResult("Error: Search path not found: $searchRoot", "Error: path not found", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+        if (!searchRoot.exists()) {
+            return ToolResult("Error: Search path does not exist: $searchRoot", "Error: path does not exist", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
         val regexOpts = if (caseInsensitive) setOf(RegexOption.IGNORE_CASE) else emptySet()
@@ -262,7 +266,11 @@ class SearchCodeTool : AgentTool {
             log.warn("canonicalPath failed for $basePath; falling back to non-canonical (inside-project relative paths may degrade)", e)
             basePath
         }
-        searchFiles(searchRoot, canonicalProjectRoot, regex, fileType, collectContext, contextLines, matches, maxResults)
+        if (searchRoot.isFile) {
+            matchSingleFile(searchRoot, canonicalProjectRoot, regex, fileType, collectContext, contextLines, matches, maxResults)
+        } else {
+            searchFiles(searchRoot, canonicalProjectRoot, regex, fileType, collectContext, contextLines, matches, maxResults)
+        }
 
         if (matches.isEmpty()) {
             return ToolResult(
@@ -361,58 +369,72 @@ class SearchCodeTool : AgentTool {
                 continue
             }
 
-            if (file.extension.lowercase() in BINARY_EXTENSIONS) continue
-            if (file.length() > 1_000_000) continue // Skip files > 1MB
-            if (fileType != null && file.extension.lowercase() != fileType) continue
+            matchSingleFile(file, canonicalProjectRoot, regex, fileType, collectContext, contextLines, matches, maxResults)
+        }
+    }
 
-            try {
-                val canonical = try { file.canonicalPath } catch (_: Exception) { file.absolutePath }
-                val relativePath = if (canonical.startsWith(canonicalProjectRoot + File.separator)) {
-                    canonical.removePrefix(canonicalProjectRoot + File.separator).replace('\\', '/')
-                } else {
-                    canonical.replace('\\', '/')
+    private fun matchSingleFile(
+        file: File,
+        canonicalProjectRoot: String,
+        regex: Regex,
+        fileType: String?,
+        collectContext: Boolean,
+        contextLines: Int,
+        matches: MutableList<SearchMatch>,
+        maxResults: Int
+    ) {
+        if (matches.size >= maxResults) return
+        if (file.extension.lowercase() in BINARY_EXTENSIONS) return
+        if (file.length() > 1_000_000) return // Skip files > 1MB
+        if (fileType != null && file.extension.lowercase() != fileType) return
+
+        try {
+            val canonical = try { file.canonicalPath } catch (_: Exception) { file.absolutePath }
+            val relativePath = if (canonical.startsWith(canonicalProjectRoot + File.separator)) {
+                canonical.removePrefix(canonicalProjectRoot + File.separator).replace('\\', '/')
+            } else {
+                canonical.replace('\\', '/')
+            }
+            if (collectContext) {
+                // Need full file lines for context window — read all lines
+                val lines = file.readLines(Charsets.UTF_8)
+                for ((lineIdx, line) in lines.withIndex()) {
+                    if (matches.size >= maxResults) return
+                    if (regex.containsMatchIn(line)) {
+                        val ctxBefore = run {
+                            val start = maxOf(0, lineIdx - contextLines)
+                            lines.subList(start, lineIdx)
+                        }
+                        val ctxAfter = run {
+                            val end = minOf(lines.size, lineIdx + 1 + contextLines)
+                            lines.subList(lineIdx + 1, end)
+                        }
+                        matches.add(SearchMatch(
+                            relativePath = relativePath,
+                            lineNumber = lineIdx + 1,
+                            lineContent = line.trim(),
+                            contextBefore = ctxBefore,
+                            contextAfter = ctxAfter
+                        ))
+                    }
                 }
-                if (collectContext) {
-                    // Need full file lines for context window — read all lines
-                    val lines = file.readLines(Charsets.UTF_8)
-                    for ((lineIdx, line) in lines.withIndex()) {
-                        if (matches.size >= maxResults) return
+            } else {
+                // Stream lines — avoid loading entire file into memory
+                file.bufferedReader(Charsets.UTF_8).useLines { lines ->
+                    lines.forEachIndexed { lineIdx, line ->
+                        if (matches.size >= maxResults) return@useLines
                         if (regex.containsMatchIn(line)) {
-                            val ctxBefore = run {
-                                val start = maxOf(0, lineIdx - contextLines)
-                                lines.subList(start, lineIdx)
-                            }
-                            val ctxAfter = run {
-                                val end = minOf(lines.size, lineIdx + 1 + contextLines)
-                                lines.subList(lineIdx + 1, end)
-                            }
                             matches.add(SearchMatch(
                                 relativePath = relativePath,
                                 lineNumber = lineIdx + 1,
-                                lineContent = line.trim(),
-                                contextBefore = ctxBefore,
-                                contextAfter = ctxAfter
+                                lineContent = line.trim()
                             ))
                         }
                     }
-                } else {
-                    // Stream lines — avoid loading entire file into memory
-                    file.bufferedReader(Charsets.UTF_8).useLines { lines ->
-                        lines.forEachIndexed { lineIdx, line ->
-                            if (matches.size >= maxResults) return@useLines
-                            if (regex.containsMatchIn(line)) {
-                                matches.add(SearchMatch(
-                                    relativePath = relativePath,
-                                    lineNumber = lineIdx + 1,
-                                    lineContent = line.trim()
-                                ))
-                            }
-                        }
-                    }
                 }
-            } catch (_: Exception) {
-                // Skip unreadable files
             }
+        } catch (_: Exception) {
+            // Skip unreadable file
         }
     }
 }

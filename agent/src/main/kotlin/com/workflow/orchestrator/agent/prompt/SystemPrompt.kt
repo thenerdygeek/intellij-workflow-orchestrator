@@ -150,6 +150,22 @@ object SystemPrompt {
             append(capabilities(projectPath, ideContext))
         }
 
+        // 5b. MEMORY INDEX CONTENT (moved from post-Objective to land in the primacy zone)
+        // The bare `MEMORY.md` index now sits near the top of the prompt; the full memory
+        // protocol still lives at Section 10 below, but the entries themselves are visible
+        // where the LLM's attention is strongest. Empty/missing index → block is suppressed.
+        if (includeMemorySection && memoryIndex != null) {
+            append(SECTION_SEP)
+            append("YOUR MEMORY INDEX\n\n")
+            append("This is your file-based memory for this project — entries you've saved across previous sessions. ")
+            append("At the start of every non-trivial request, scan these one-line hooks; if an entry's hook looks plausibly relevant to the user's ask, call `read_file` on the linked file BEFORE answering. ")
+            append("The full memory protocol (when to save, what to skip, staleness handling) is in the Memory section further below.\n\n")
+            append("Contents of ")
+            append(memoryIndexPath ?: "MEMORY.md")
+            append(" (persists across sessions):\n\n")
+            append(memoryIndex)
+        }
+
         // 6. SKILLS (optional)
         skills(availableSkills, activeSkillContent)?.let {
             append(SECTION_SEP)
@@ -187,18 +203,11 @@ object SystemPrompt {
         }
 
         // 10. MEMORY
+        // Index content is rendered at Section 5b (primacy zone) — this section keeps
+        // the full save/recall/staleness protocol.
         if (includeMemorySection) {
             append(SECTION_SEP)
-            append(memory())
-        }
-
-        // 10b. MEMORY INDEX CONTENT (per-project MEMORY.md, always loaded when present)
-        if (includeMemorySection && memoryIndex != null) {
-            append(SECTION_SEP)
-            append("Contents of ")
-            append(memoryIndexPath ?: "MEMORY.md")
-            append(" (your auto-memory for this project, persists across sessions):\n\n")
-            append(memoryIndex)
+            append(memory(memoryIndexPath))
         }
 
         // 11. USER INSTRUCTIONS (optional)
@@ -333,7 +342,7 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- Tasks: task_create, task_update, task_list, task_get")
         appendLine("- Visualization: render_artifact (interactive React components in chat)")
         appendLine("- Session: new_task (hand off to fresh session with structured context)")
-        appendLine("- Memory: read_file / create_file / edit_file on memory files (see the Memory section below)")
+        appendLine("- Memory: read_file / create_file / edit_file on memory files. **Your saved entries are in the YOUR MEMORY INDEX block immediately after this section — scan it before non-trivial requests.** Full protocol in the Memory section further below.")
         appendLine("- Skills: use_skill, tool_search")
         appendLine("- Delegation: agent (sub-agent with isolated context)")
         appendLine()
@@ -670,6 +679,7 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("- Git logs: Use grep_pattern for relevant commits")
         appendLine()
         appendLine("Outputs exceeding 30K characters are automatically saved to disk — you'll receive a preview with the file path. Use read_file or search_code on the saved file to explore the full output.")
+        appendLine("`search_code`'s `path` accepts both a directory (walked recursively) and a single file (greps that one file's lines) — so you can grep a spilled tool-output dump directly without falling back to `run_command grep`.")
         appendLine()
         appendLine("Prefer dedicated tools over raw commands: Use search_code instead of run_command with grep. Use glob_files instead of run_command with find.")
         appendLine()
@@ -835,10 +845,22 @@ Accomplish the user's task iteratively: analyze, break into steps, execute with 
      *
      * No specialized memory tools — the LLM operates on `MEMORY.md` and individual
      * memory files using the generic `read_file`, `create_file`, `edit_file` tools.
+     *
+     * @param memoryIndexPath When non-null, its parent directory is substituted for
+     *   the `{agentDir}/memory/` placeholder so the LLM sees the absolute path inline
+     *   — not just buried in the `Contents of …` block. Null falls back to the
+     *   placeholder (preserves snapshot-test output for legacy callers).
      */
-    private fun memory(): String = """MEMORY
+    private fun memory(memoryIndexPath: String? = null): String {
+        val memoryDirAbsolute = memoryIndexPath?.let { java.io.File(it).parent }
+        val locationLine = if (memoryDirAbsolute != null) {
+            "You have a persistent, file-based memory system at `$memoryDirAbsolute/`. Write to it with `create_file` and `edit_file`; the `MEMORY.md` index is rendered near the top of this prompt (Section 5b)."
+        } else {
+            "You have a persistent, file-based memory system at `{agentDir}/memory/` (the exact path is supplied near the top of this prompt as a \"YOUR MEMORY INDEX\" block when `MEMORY.md` exists)."
+        }
+        return """MEMORY
 
-You have a persistent, file-based memory system at `{agentDir}/memory/` (the exact path is supplied below as a "Contents of …" block when `MEMORY.md` exists).
+$locationLine
 
 You should build up this memory system over time so that future conversations can have a complete picture of who the user is, how they'd like to collaborate with you, what behaviors to avoid or repeat, and the context behind the work the user gives you.
 
@@ -943,10 +965,34 @@ type: {{user, feedback, project, reference}}
 - Do not write duplicate memories. First check if there is an existing memory you can update before writing a new one.
 
 ## When to access memories
+- At the start of every non-trivial user request, **scan the `MEMORY.md` index** (rendered near the top of this prompt). Entries whose hooks plausibly match the request domain — especially `feedback_*` and `user_*` entries — should be opened with `read_file` BEFORE you start work.
 - When memories seem relevant, or the user references prior-conversation work.
 - You MUST access memory when the user explicitly asks you to check, recall, or remember.
 - If the user says to *ignore* or *not use* memory: Do not apply remembered facts, cite, compare against, or mention memory content.
 - Memory records can become stale over time. Use memory as context for what was true at a given point in time. Before answering the user or building assumptions based solely on information in memory records, verify that the memory is still correct and up-to-date by reading the current state of the files or resources. If a recalled memory conflicts with current information, trust what you observe now — and update or remove the stale memory rather than acting on it.
+
+## Recall-then-apply: the dominant memory pattern
+
+Most memory use is *recall*, not *save*. Saves are sparse; recalls happen on most turns. The pattern:
+
+<example>
+user: should I bundle these refactors into one PR or split them apart?
+assistant: [scans `MEMORY.md` — sees `feedback_dont_over_review_ship.md — Ambiguous "yes" to A/B means ship, not more validation` and a hypothetical `feedback_pr_bundling.md — User prefers one bundled PR for related refactors. Why: splitting causes churn`]
+assistant: [calls read_file on `feedback_pr_bundling.md` to confirm the rule and its scope]
+assistant: One bundled PR — you've previously told me splitting related refactors just creates churn. Going to start the refactor work in one branch.
+</example>
+
+<example>
+user: write the tests for this service
+assistant: [scans `MEMORY.md` — spots `feedback_real_tdd.md — Tests from spec, not code; E2E scenario tests`]
+assistant: [reads `feedback_real_tdd.md` and uses the rule to drive test structure]
+assistant: [writes scenario-style tests from the spec, not mirror-tests of the implementation]
+</example>
+
+Three takeaways from these examples:
+1. The recall happens **before** the action, not after — you check memory to inform your approach, not to defend a decision you already made.
+2. Cite the memory briefly to the user when it changes your approach ("you've previously told me X"), so they know it's grounded in their past guidance and can correct stale entries.
+3. The cost of an unnecessary `read_file` is one cheap tool call. The cost of ignoring a relevant memory is asking the user a question they already answered, or making a decision they previously corrected. **The asymmetry strongly favors reading.**
 
 ## Before recommending from memory
 
@@ -965,6 +1011,7 @@ Memory is one of several persistence mechanisms available to you as you assist t
 - When to use or update a plan instead of memory: If you are about to start a non-trivial implementation task and would like to reach alignment with the user on your approach you should use a Plan rather than saving this information to memory. Similarly, if you already have a plan within the conversation and you have changed your approach persist that change by updating the plan rather than saving a memory.
 - When to use or update tasks instead of memory: When you need to break your work in current conversation into discrete steps or keep track of your progress use tasks instead of saving to memory. Tasks are great for persisting information about the work that needs to be done in the current conversation, but memory should be reserved for information that will be useful in future conversations.
 """
+    }
 
     /**
      * Section 11: User Instructions

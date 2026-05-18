@@ -216,7 +216,79 @@ class SearchCodeToolTest {
         val result = tool.execute(params, project)
 
         assertTrue(result.isError)
-        assertTrue(result.content.contains("not found"))
+        assertTrue(
+            result.content.contains("does not exist"),
+            "expected 'does not exist' wording in error: ${result.content}",
+        )
+    }
+
+    // ── path may point at a single file (2026-05-18 feedback bug 3) ──────────
+    //
+    // The spilled-tool-output banner advises "Use read_file or search_code to
+    // explore the full output", but pre-fix search_code rejected any file path
+    // with "Search path not found" (it only walked directories). Forcing
+    // run_command grep instead — flaky on Windows, approval-gated everywhere.
+    // search_code now accepts a file path and greps the lines of that one file.
+
+    @Test
+    fun `execute accepts a single file path and returns matches from that file`() = runTest {
+        val tool = SearchCodeTool()
+        val params = buildJsonObject {
+            put("pattern", "Hello world")
+            put("path", "src/Main.kt")
+            put("output_mode", "content")
+        }
+
+        val result = tool.execute(params, project)
+
+        assertFalse(result.isError, "single-file mode should not error: ${result.content}")
+        assertTrue(
+            result.content.contains("Main.kt"),
+            "expected match line referencing Main.kt: ${result.content}",
+        )
+        assertTrue(
+            result.content.contains("Hello world"),
+            "expected matched text in result: ${result.content}",
+        )
+        // Sibling files in src/ exist but must not appear when path is a single file.
+        assertFalse(
+            result.content.contains("Service.kt"),
+            "single-file mode must not bleed into siblings: ${result.content}",
+        )
+    }
+
+    @Test
+    fun `execute on a nonexistent file path returns does-not-exist error`() = runTest {
+        val tool = SearchCodeTool()
+        val params = buildJsonObject {
+            put("pattern", "anything")
+            put("path", "src/DoesNotExist.kt")
+        }
+
+        val result = tool.execute(params, project)
+
+        assertTrue(result.isError)
+        assertTrue(
+            result.content.contains("does not exist"),
+            "expected 'does not exist' wording: ${result.content}",
+        )
+    }
+
+    @Test
+    fun `execute on a single file in files mode returns the file path on match`() = runTest {
+        val tool = SearchCodeTool()
+        val params = buildJsonObject {
+            put("pattern", "Hello world")
+            put("path", "src/Main.kt")
+            // default output_mode = files
+        }
+
+        val result = tool.execute(params, project)
+
+        assertFalse(result.isError, "single-file mode (files output) should not error: ${result.content}")
+        val lines = result.content.lines().filter { it.isNotBlank() }
+        assertEquals(1, lines.size, "files mode on a single matching file should return one path: $lines")
+        assertTrue(lines.single().endsWith("Main.kt"), "expected the matched file path: ${lines.single()}")
     }
 
     // --- Output mode: files (default) ---
