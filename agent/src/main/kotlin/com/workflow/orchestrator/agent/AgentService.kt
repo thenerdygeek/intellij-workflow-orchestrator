@@ -1834,6 +1834,11 @@ class AgentService(
                 // Persists ui_messages.json + api_conversation_history.json per session.
                 // Reuses basePath from API debug dir setup above.
                 val sessionBaseDir = ProjectIdentifier.agentDir(basePath)
+                // Captured from inside the `run { ... }` block if a new user-message UiMessage
+                // is created there. Stays 0L when [messageStateHandler] is pre-built (resume path).
+                // Used to key the per-user-message checkpoint dir and threaded into AgentLoop
+                // via [currentUserMessageTsProvider].
+                var userMessageTs: Long = 0L
                 val messageState = messageStateHandler ?: run {
                     // Check if this is a follow-up turn in an existing session
                     val sessionDir = java.io.File(sessionBaseDir, "sessions/$sid")
@@ -1883,7 +1888,18 @@ class AgentService(
                         attachments = attachments.takeIf { it.isNotEmpty() },
                     )
                     handler.addToClineMessages(uiMsg)
+                    userMessageTs = uiMsg.ts
                     handler
+                }
+
+                // Per-user-message file checkpoint store. Captures pre-edit bytes of files
+                // touched during this turn into `sessions/{sid}/checkpoints/msg-{ts}/files/`.
+                // Drives the bottom-bar aggregate diff and the per-message time-travel revert.
+                val checkpointStore = com.workflow.orchestrator.agent.checkpoint.SessionCheckpointStore(
+                    sessionDir = java.io.File(sessionBaseDir, "sessions/$sid")
+                )
+                if (userMessageTs > 0L) {
+                    checkpointStore.beginUserMessage(messageTs = userMessageTs, userText = task)
                 }
 
                 // Expose active handler so AgentController.dismissPlan() can rewrite history.
@@ -2055,6 +2071,8 @@ class AgentService(
                     // BrainRouter routes through.
                     attachmentStoreProvider = { activeAttachmentStore },
                     feedbackEnabled = agentSettings.state.agentFeedbackEnabled,
+                    checkpointStore = checkpointStore,
+                    currentUserMessageTsProvider = { userMessageTs },
                 )
 
                 // I4: Set activeTask atomically after both loop and job are available
