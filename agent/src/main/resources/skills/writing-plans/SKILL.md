@@ -220,6 +220,6 @@ ask_followup_question(
 ```
 
 - If **Subagent-Driven**: load `use_skill(skill_name="subagent-driven")`
-- If **Direct Execution**: implement tasks sequentially, creating and updating tasks via task_create and task_update
+- If **Direct Execution**: load `use_skill(skill_name="executing-plans")`
 
 During execution (either approach), use task_create and task_update to track progress. Tasks appear in the progress widget with spinner/check icons reflecting status.

@@ -616,7 +616,7 @@ Agent has full programmatic access to IntelliJ's debugger via `AgentDebugControl
 - Discovery: descriptions loaded at session start, full content on activation
 - Invocation: `/skill-name args` in chat, toolbar dropdown, or LLM calls `use_skill(skill_name="name")`
 - Active skill injected into system prompt (survives compaction via rebuild)
-- Built-in skills: `systematic-debugging`, `interactive-debugging`, `create-skill`, `git-workflow`, `brainstorm`, `writing-plans`, `tdd`, `subagent-driven`
+- Built-in skills: `systematic-debugging`, `interactive-debugging`, `create-skill`, `git-workflow`, `brainstorm`, `writing-plans`, `tdd`, `subagent-driven`, `executing-plans`
 
 **Frontmatter fields:**
 | Field | Default | Description |
