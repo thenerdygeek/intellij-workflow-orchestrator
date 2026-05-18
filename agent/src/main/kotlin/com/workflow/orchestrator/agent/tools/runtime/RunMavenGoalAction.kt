@@ -411,6 +411,10 @@ private suspend fun launchAndAwaitMavenBuild(
                     }
                 })
 
+                // Maven goal runs delegate compilation to Maven itself, but the IDE-side run
+                // config still consults JPS for any incremental-build step. Drop the snapshot
+                // so a stale dependency graph can't no-op the prepare phase.
+                try { com.workflow.orchestrator.core.vfs.PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
                 try {
                     ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
                 } catch (_: NoSuchMethodError) {

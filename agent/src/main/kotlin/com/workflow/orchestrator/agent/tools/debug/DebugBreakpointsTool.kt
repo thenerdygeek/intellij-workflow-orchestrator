@@ -1542,6 +1542,10 @@ To launch a run configuration in debug mode, use runtime_exec(action=run_config,
                             }
                         })
 
+                        // Drop JPS in-memory snapshot so the debug run config's "Build before
+                        // launch" task re-stats sources from disk — same drift mitigation as
+                        // run_tests / coverage.
+                        try { com.workflow.orchestrator.core.vfs.PostMutationRefresh.clearJpsCache(project) } catch (_: Exception) {}
                         ProgramRunnerUtil.executeConfiguration(env, true, true)
 
                         // Detect execution abort before debug attaches
