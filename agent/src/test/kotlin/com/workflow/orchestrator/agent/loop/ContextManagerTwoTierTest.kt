@@ -262,4 +262,100 @@ class ContextManagerTwoTierTest {
         assertTrue((result as ContextManager.CompactResult.Failed).reason.contains("failed", ignoreCase = true),
             "Failed reason should mention summarization failure")
     }
+
+    @Test
+    fun `case A with L1 success and L3 failure returns Compacted with L1 only`() = runTest {
+        // L1 succeeds; L3 LLM call fails. Per step-14 predicate, this is partial success → Compacted.
+        val big = "x".repeat(1050)  // ~300 tokens/msg; ensures L3 path actually engages
+        repeat(3) {
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = big))
+            cm.addToolResult(toolCallId = "p$it", content = big, isError = false, toolName = "read_file")
+        }
+        cm.addUserMessage("anchor")
+        repeat(10) {
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = big))
+            cm.addToolResult(toolCallId = "t$it", content = big, isError = false, toolName = "read_file")
+        }
+        // First brain call (L1) succeeds, second (L3) fails
+        var callCount = 0
+        coEvery { brain.chat(any(), any(), any(), any()) } answers {
+            callCount++
+            if (callCount == 1) {
+                ApiResult.Success(
+                    ChatCompletionResponse(
+                        id = "ok",
+                        choices = listOf(
+                            Choice(
+                                index = 0,
+                                message = ChatMessage(role = "assistant", content = "L1 OK"),
+                                finishReason = "stop",
+                            ),
+                        ),
+                        usage = UsageInfo(promptTokens = 0, completionTokens = 0, totalTokens = 0),
+                    ),
+                )
+            } else {
+                ApiResult.Error(ErrorType.SERVER_ERROR, "simulated L3 failure")
+            }
+        }
+
+        val result = cm.compact(brain, force = true, iterationsSinceLastUser = 10)
+
+        assertTrue(result is ContextManager.CompactResult.Compacted, "L1 ok + L3 fail → still Compacted, got $result")
+        val msgs = cm.exportMessages()
+        // L1 present (handoff header), L2 present, no L3 (because L3 failed → kept post-user verbatim)
+        assertEquals("assistant", msgs[0].role, "L1 should be present")
+        assertTrue(msgs[0].content!!.startsWith("[Context Handoff"), "L1 must carry handoff header")
+        assertEquals("user", msgs[1].role, "L2 must follow L1")
+        // L3 must NOT be present
+        assertFalse(msgs.any { it.content?.startsWith("[Working Memory") == true },
+            "L3 must be absent when summarizePostUser failed")
+    }
+
+    @Test
+    fun `case A with L1 failure and L3 success returns Compacted with L3 only`() = runTest {
+        // L1 fails; L3 succeeds. Per step-14 predicate, this is partial success → Compacted.
+        val big = "x".repeat(1050)
+        repeat(3) {
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = big))
+            cm.addToolResult(toolCallId = "p$it", content = big, isError = false, toolName = "read_file")
+        }
+        cm.addUserMessage("anchor")
+        repeat(10) {
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = big))
+            cm.addToolResult(toolCallId = "t$it", content = big, isError = false, toolName = "read_file")
+        }
+        // First brain call (L1) fails, second (L3) succeeds
+        var callCount = 0
+        coEvery { brain.chat(any(), any(), any(), any()) } answers {
+            callCount++
+            if (callCount == 1) {
+                ApiResult.Error(ErrorType.SERVER_ERROR, "simulated L1 failure")
+            } else {
+                ApiResult.Success(
+                    ChatCompletionResponse(
+                        id = "ok",
+                        choices = listOf(
+                            Choice(
+                                index = 0,
+                                message = ChatMessage(role = "assistant", content = "L3 OK"),
+                                finishReason = "stop",
+                            ),
+                        ),
+                        usage = UsageInfo(promptTokens = 0, completionTokens = 0, totalTokens = 0),
+                    ),
+                )
+            }
+        }
+
+        val result = cm.compact(brain, force = true, iterationsSinceLastUser = 10)
+
+        assertTrue(result is ContextManager.CompactResult.Compacted, "L1 fail + L3 ok → still Compacted, got $result")
+        val msgs = cm.exportMessages()
+        // Without L1, L2 is at index 0. L3 should be present at index 1.
+        assertEquals("user", msgs[0].role, "without L1, L2 is at index 0")
+        assertEquals("anchor", msgs[0].content)
+        assertEquals("assistant", msgs[1].role, "L3 should follow L2")
+        assertTrue(msgs[1].content!!.startsWith("[Working Memory"), "L3 must carry working memory header")
+    }
 }
