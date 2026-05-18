@@ -66,8 +66,37 @@ class ContextManager(
     /** Path to the saved plan file on disk. Survives compaction via re-injection. */
     private var activePlanPath: String? = null
 
-    /** Summary from the most recent LLM compaction. Fed into the next summarization prompt (chaining). */
+    /**
+     * Summary of pre-user prefix from the most recent compaction. Reused verbatim in Case B
+     * (no new user message since last compaction); folded into the new L1 prompt in Case A.
+     */
+    private var previousPreUserSummary: String? = null
+
+    /**
+     * Summary of post-user working memory from the most recent compaction. Folded into the
+     * new L3 prompt (Case A summarizes from scratch; Case B chains over this).
+     */
+    private var previousPostUserSummary: String? = null
+
+    /** Monotonic counter incremented every time a user message is added. */
+    private var totalUserMessageCount: Int = 0
+
+    /**
+     * Snapshot of [totalUserMessageCount] at the end of the previous compaction.
+     * Null until the first compaction completes. Equal to [totalUserMessageCount] →
+     * Case B (no new user since last compaction). Less than → Case A.
+     */
+    private var lastCompactionUserMessageCount: Int? = null
+
+    /** TEMP — removed in Task 6 when compact() is rewritten. Do not use in new code. */
+    @Deprecated("Use previousPreUserSummary / previousPostUserSummary", ReplaceWith(""))
     private var previousSummary: String? = null
+
+    // Test-only accessors (internal — visible from same module's test classes).
+    internal fun getTotalUserMessageCountForTest(): Int = totalUserMessageCount
+    internal fun getPreviousPreUserSummaryForTest(): String? = previousPreUserSummary
+    internal fun getPreviousPostUserSummaryForTest(): String? = previousPostUserSummary
+    internal fun getLastCompactionUserMessageCountForTest(): Int? = lastCompactionUserMessageCount
 
     /** Optional TaskStore reference for the typed task system. */
     private var taskStore: com.workflow.orchestrator.agent.session.TaskStore? = null
@@ -115,6 +144,7 @@ class ContextManager(
 
     fun addUserMessage(content: String) {
         messages.add(ChatMessage(role = "user", content = content))
+        totalUserMessageCount++
     }
 
     fun addUserMessageWithParts(parts: List<ContentPart>) {
@@ -127,6 +157,7 @@ class ContextManager(
                 parts = parts,
             ),
         )
+        totalUserMessageCount++
         if (images.isNotEmpty()) {
             LOG.info("[multimodal] ContextManager seeded user turn with ${images.size} image part(s)")
         }
@@ -699,12 +730,21 @@ class ContextManager(
         messages.clear()
         messages.addAll(savedMessages)
         lastPromptTokens = null
-        LOG.info("[Context] Restored ${savedMessages.size} messages")
+        // Two-tier compaction state — recompute counter from history, clear chained summaries.
+        totalUserMessageCount = savedMessages.count { it.role == "user" }
+        lastCompactionUserMessageCount = null
+        previousPreUserSummary = null
+        previousPostUserSummary = null
+        LOG.info("[Context] Restored ${savedMessages.size} messages, totalUserMessageCount=$totalUserMessageCount")
     }
 
     fun clearMessages() {
         messages.clear()
-        previousSummary = null
+        previousPreUserSummary = null
+        previousPostUserSummary = null
+        @Suppress("DEPRECATION") previousSummary = null  // removed in Task 6
+        totalUserMessageCount = 0
+        lastCompactionUserMessageCount = null
         lastPromptTokens = null
         LOG.info("[Context] Messages cleared")
     }
