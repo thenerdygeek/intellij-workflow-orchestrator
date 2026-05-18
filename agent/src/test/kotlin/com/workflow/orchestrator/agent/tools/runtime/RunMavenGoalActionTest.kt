@@ -294,4 +294,20 @@ class RunMavenGoalActionTest {
         }
         assertEquals(null, findMavenConfigurationType(listOf(mavenLikeDisplayName)))
     }
+
+    @Test
+    fun `buildSuccessResult accepts spillPath and surfaces it on ToolResult`() {
+        val result = buildSuccessResult(
+            goals = "clean install",
+            modules = emptyList(),
+            workingDir = "/proj",
+            mavenHome = "(IDE default)",
+            exitCode = 0,
+            durationSec = 1.0,
+            output = "preview text",
+            spillPath = "/tmp/spill.txt",
+            project = project
+        )
+        assertEquals("/tmp/spill.txt", result.spillPath)
+    }
 }

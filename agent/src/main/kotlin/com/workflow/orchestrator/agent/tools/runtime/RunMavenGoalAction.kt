@@ -26,7 +26,6 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.framework.MavenUtils
 import kotlin.coroutines.resume
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
@@ -34,7 +33,6 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import org.jetbrains.idea.maven.execution.MavenRunnerParameters
-import org.jetbrains.idea.maven.project.MavenProjectsManager
 
 internal const val CATEGORY_INVALID_ARGS = "INVALID_ARGS"
 internal const val CATEGORY_NOT_A_MAVEN_PROJECT = "NOT_A_MAVEN_PROJECT"
@@ -45,6 +43,12 @@ internal const val CATEGORY_BUILD_FAILURE = "BUILD_FAILURE"
 internal const val CATEGORY_TIMEOUT = "TIMEOUT"
 
 internal const val MAVEN_GOAL_TIMEOUT_MS = 1_200_000L  // 20 minutes
+
+internal sealed class BuildOutcome {
+    data class Completed(val exitCode: Int, val output: String, val durationSec: Double) : BuildOutcome()
+    data class TimedOut(val output: String, val timeoutSec: Double) : BuildOutcome()
+    data class FailedPreflight(val toolResult: ToolResult) : BuildOutcome()
+}
 
 internal fun buildPreflightError(category: String, message: String): ToolResult =
     ToolResult(
@@ -109,16 +113,42 @@ internal suspend fun executeRunMavenGoal(
 
     val allGoalTokens = assembleGoalTokens(goals, modules, extraTokens, offline)
 
-    val result = launchAndAwaitMavenBuild(project, goals, modules, allGoalTokens)
-    return result ?: buildTimeoutResult(
-        goals = goals,
-        modules = modules,
-        workingDir = project.basePath ?: "(unknown)",
-        mavenHome = "(IDE default)",
-        timeoutSec = MAVEN_GOAL_TIMEOUT_MS / 1000.0,
-        output = "",
-        project = project
-    )
+    val mavenHome: String = try {
+        org.jetbrains.idea.maven.project.MavenProjectsManager
+            .getInstance(project).generalSettings.toString()
+    } catch (_: Throwable) { "(IDE default)" }
+    val workingDir = project.basePath ?: "(unknown)"
+
+    return when (val outcome = launchAndAwaitMavenBuild(project, goals, modules, allGoalTokens)) {
+        is BuildOutcome.FailedPreflight -> outcome.toolResult
+        is BuildOutcome.Completed -> {
+            val spill = tool.spillOrFormat(outcome.output, project)
+            buildSuccessResult(
+                goals = goals,
+                modules = modules,
+                workingDir = workingDir,
+                mavenHome = mavenHome,
+                exitCode = outcome.exitCode,
+                durationSec = outcome.durationSec,
+                output = spill.preview,
+                spillPath = spill.spilledToFile,
+                project = project
+            )
+        }
+        is BuildOutcome.TimedOut -> {
+            val spill = tool.spillOrFormat(outcome.output, project)
+            buildTimeoutResult(
+                goals = goals,
+                modules = modules,
+                workingDir = workingDir,
+                mavenHome = mavenHome,
+                timeoutSec = outcome.timeoutSec,
+                output = spill.preview,
+                spillPath = spill.spilledToFile,
+                project = project
+            )
+        }
+    }
 }
 
 internal fun tokenizeExtraArgs(raw: String): List<String> =
@@ -174,6 +204,7 @@ internal fun buildSuccessResult(
     exitCode: Int,
     durationSec: Double,
     output: String,
+    spillPath: String? = null,
     project: Project
 ): ToolResult {
     val header = formatHeader(goals, modules, workingDir, mavenHome, exitCode, durationSec)
@@ -186,7 +217,8 @@ internal fun buildSuccessResult(
         content = body,
         summary = summary,
         tokenEstimate = body.length / 4 + 1,
-        isError = isFailure
+        isError = isFailure,
+        spillPath = spillPath
     )
 }
 
@@ -197,6 +229,7 @@ internal fun buildTimeoutResult(
     mavenHome: String,
     timeoutSec: Double,
     output: String,
+    spillPath: String? = null,
     project: Project
 ): ToolResult {
     val header = formatHeader(
@@ -210,7 +243,8 @@ internal fun buildTimeoutResult(
         content = body,
         summary = "mvn $goals ⏱ TIMEOUT after ${"%.0f".format(timeoutSec)}s",
         tokenEstimate = body.length / 4 + 1,
-        isError = true
+        isError = true,
+        spillPath = spillPath
     )
 }
 
@@ -219,32 +253,29 @@ internal fun buildTimeoutResult(
  * Output is captured via the descriptor's ProcessHandler. RunInvocation disposal
  * guarantees process+listener teardown on every exit path.
  *
- * Returns null on TIMEOUT (caller handles); otherwise a ToolResult.
+ * Returns a [BuildOutcome] — either [BuildOutcome.Completed], [BuildOutcome.TimedOut],
+ * or [BuildOutcome.FailedPreflight]. The suspend-friendly caller ([executeRunMavenGoal])
+ * is responsible for calling [AgentTool.spillOrFormat] on the raw output before building
+ * the final [ToolResult].
  */
 private suspend fun launchAndAwaitMavenBuild(
     project: Project,
     goals: String,
     modules: List<String>,
     allGoalTokens: List<String>
-): ToolResult? {
+): BuildOutcome {
     val output = StringBuilder()
     val startNs = System.nanoTime()
 
-    val mavenHome: String = try {
-        MavenProjectsManager.getInstance(project).generalSettings.toString()
-    } catch (_: Throwable) {
-        "(IDE default — could not resolve)"
-    }
-
     return withTimeoutOrNull(MAVEN_GOAL_TIMEOUT_MS) {
-        suspendCancellableCoroutine<ToolResult> { continuation ->
+        suspendCancellableCoroutine<BuildOutcome> { continuation ->
             val agentService: AgentService = try {
                 project.service<AgentService>()
             } catch (e: Throwable) {
-                continuation.resume(buildPreflightError(
+                continuation.resume(BuildOutcome.FailedPreflight(buildPreflightError(
                     CATEGORY_EXECUTION_EXCEPTION,
                     "AgentService not available: ${e::class.simpleName}: ${e.message}"
-                ))
+                )))
                 return@suspendCancellableCoroutine
             }
             val invocation = agentService
@@ -260,17 +291,17 @@ private suspend fun launchAndAwaitMavenBuild(
                 val types = com.intellij.execution.configurations.ConfigurationType
                     .CONFIGURATION_TYPE_EP.extensionList
                 val mavenType = findMavenConfigurationType(types) ?: run {
-                    continuation.resume(buildPreflightError(
+                    continuation.resume(BuildOutcome.FailedPreflight(buildPreflightError(
                         CATEGORY_EXECUTION_EXCEPTION,
                         "MavenRunConfigurationType is not registered. Is the Maven plugin enabled in this IDE?"
-                    ))
+                    )))
                     return@invokeLater
                 }
                 val factory = mavenType.configurationFactories.firstOrNull() ?: run {
-                    continuation.resume(buildPreflightError(
+                    continuation.resume(BuildOutcome.FailedPreflight(buildPreflightError(
                         CATEGORY_EXECUTION_EXCEPTION,
                         "Maven ConfigurationType has no configuration factories registered."
-                    ))
+                    )))
                     return@invokeLater
                 }
 
@@ -294,10 +325,10 @@ private suspend fun launchAndAwaitMavenBuild(
                         "setRunnerParameters", MavenRunnerParameters::class.java
                     ).invoke(config, params)
                 } catch (e: Throwable) {
-                    continuation.resume(buildPreflightError(
+                    continuation.resume(BuildOutcome.FailedPreflight(buildPreflightError(
                         CATEGORY_EXECUTION_EXCEPTION,
                         "could not populate MavenRunnerParameters: ${e::class.simpleName}: ${e.message}"
-                    ))
+                    )))
                     return@invokeLater
                 }
 
@@ -312,20 +343,20 @@ private suspend fun launchAndAwaitMavenBuild(
                     .createOrNull(executor, settings)
                     ?.build()
                     ?: run {
-                        continuation.resume(buildPreflightError(
+                        continuation.resume(BuildOutcome.FailedPreflight(buildPreflightError(
                             CATEGORY_EXECUTION_EXCEPTION,
                             "ExecutionEnvironmentBuilder.createOrNull returned null — no runner registered for MavenRunConfiguration."
-                        ))
+                        )))
                         return@invokeLater
                     }
 
                 val callback = object : ProgramRunner.Callback {
                     override fun processStarted(descriptor: RunContentDescriptor?) {
                         if (descriptor == null) {
-                            if (continuation.isActive) continuation.resume(buildPreflightError(
+                            if (continuation.isActive) continuation.resume(BuildOutcome.FailedPreflight(buildPreflightError(
                                 CATEGORY_PROCESS_NOT_STARTED,
                                 "ProgramRunner.Callback received no RunContentDescriptor."
-                            ))
+                            )))
                             return
                         }
                         invocation.descriptorRef.set(descriptor)
@@ -337,15 +368,10 @@ private suspend fun launchAndAwaitMavenBuild(
                             override fun processTerminated(event: ProcessEvent) {
                                 if (!continuation.isActive) return
                                 val durationSec = (System.nanoTime() - startNs) / 1_000_000_000.0
-                                continuation.resume(buildSuccessResult(
-                                    goals = goals,
-                                    modules = modules,
-                                    workingDir = project.basePath ?: "(unknown)",
-                                    mavenHome = mavenHome,
+                                continuation.resume(BuildOutcome.Completed(
                                     exitCode = event.exitCode,
-                                    durationSec = durationSec,
                                     output = output.toString(),
-                                    project = project
+                                    durationSec = durationSec
                                 ))
                             }
                         })
@@ -374,10 +400,10 @@ private suspend fun launchAndAwaitMavenBuild(
                 conn.subscribe(ExecutionManager.EXECUTION_TOPIC, object : ExecutionListener {
                     override fun processNotStarted(executorId: String, e: ExecutionEnvironment) {
                         if (e === env && continuation.isActive) {
-                            continuation.resume(buildPreflightError(
+                            continuation.resume(BuildOutcome.FailedPreflight(buildPreflightError(
                                 CATEGORY_PROCESS_NOT_STARTED,
                                 "Execution framework aborted before launch: $executorId."
-                            ))
+                            )))
                         }
                     }
                 })
@@ -390,5 +416,5 @@ private suspend fun launchAndAwaitMavenBuild(
                 }
             }
         }
-    }
+    } ?: BuildOutcome.TimedOut(output.toString(), MAVEN_GOAL_TIMEOUT_MS / 1000.0)
 }
