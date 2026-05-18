@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
 import com.intellij.openapi.project.Project
+import com.intellij.util.execution.ParametersListUtil
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.framework.MavenUtils
@@ -42,6 +43,19 @@ internal suspend fun executeRunMavenGoal(
                 "Use ./gradlew goals via run_command for Gradle projects, or open the project's pom.xml to import as Maven first."
         )
     }
+    val extraArgsRaw = params["extra_args"]?.jsonPrimitive?.content ?: ""
+    val extraTokens: List<String> = try {
+        tokenizeExtraArgs(extraArgsRaw)
+    } catch (e: Exception) {
+        return buildPreflightError(
+            CATEGORY_INVALID_ARGS,
+            "extra_args tokenization failed (${e::class.simpleName}: ${e.message}). " +
+                "Check for unbalanced quotes or invalid escape sequences."
+        )
+    }
     // Remaining pre-flights, approval, launch wired in later tasks
     return buildPreflightError(CATEGORY_EXECUTION_EXCEPTION, "not yet implemented past blank-goals pre-flight")
 }
+
+internal fun tokenizeExtraArgs(raw: String): List<String> =
+    if (raw.isBlank()) emptyList() else ParametersListUtil.parse(raw)

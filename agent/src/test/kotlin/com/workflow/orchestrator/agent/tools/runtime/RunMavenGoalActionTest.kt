@@ -13,6 +13,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -92,5 +93,23 @@ class RunMavenGoalActionTest {
             result.content.startsWith("NOT_A_MAVEN_PROJECT:"),
             "expected content to begin with NOT_A_MAVEN_PROJECT: prefix, was: ${result.content}"
         )
+    }
+
+    @Test
+    fun `tokenizeExtraArgs splits whitespace`() {
+        val tokens = tokenizeExtraArgs("-DskipTests -Pdev -T 4 -U")
+        assertEquals(listOf("-DskipTests", "-Pdev", "-T", "4", "-U"), tokens)
+    }
+
+    @Test
+    fun `tokenizeExtraArgs preserves quoted values`() {
+        val tokens = tokenizeExtraArgs("""-Dmessage="hello world" -Pdev""")
+        assertEquals(listOf("-Dmessage=hello world", "-Pdev"), tokens)
+    }
+
+    @Test
+    fun `tokenizeExtraArgs returns empty list for blank input`() {
+        assertEquals(emptyList<String>(), tokenizeExtraArgs(""))
+        assertEquals(emptyList<String>(), tokenizeExtraArgs("   "))
     }
 }
