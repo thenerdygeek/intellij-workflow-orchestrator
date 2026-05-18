@@ -106,6 +106,9 @@ class AgentCefPanel(
     private var rejectDiffHunkQuery: JBCefJSQuery? = null
     private var killToolCallQuery: JBCefJSQuery? = null
     private var killSubAgentQuery: JBCefJSQuery? = null
+    private var revertToUserMessageQuery: JBCefJSQuery? = null
+    private var revertFileToBaselineQuery: JBCefJSQuery? = null
+    private var revertAllQuery: JBCefJSQuery? = null
     private var cancelSteeringQuery: JBCefJSQuery? = null
     private var retryLastTaskQuery: JBCefJSQuery? = null
     private var processInputQuery: JBCefJSQuery? = null
@@ -258,6 +261,12 @@ class AgentCefPanel(
     var onKillSubAgent: ((String) -> Unit)? = null
     /** Callback when user submits process input from the ProcessInputView. Param: input string. */
     var onProcessInputResolved: ((String) -> Unit)? = null
+    /** Callback when user clicks the time-travel button on a user message. Param: messageTs. */
+    var onRevertToUserMessage: ((Long) -> Unit)? = null
+    /** Callback when user clicks the per-file revert button. Param: absolutePath. */
+    var onRevertFileToBaseline: ((String) -> Unit)? = null
+    /** Callback when user clicks "Revert all". No params. */
+    var onRevertAll: (() -> Unit)? = null
     /** Callback when user clicks "Cancel" on a queued steering message. Param: steeringId. */
     var onCancelSteering: ((String) -> Unit)? = null
     /**
@@ -589,6 +598,12 @@ class AgentCefPanel(
         }
         killToolCallQuery = registerQuery(b) { toolCallId -> onKillToolCall?.invoke(toolCallId); JBCefJSQuery.Response("ok") }
         killSubAgentQuery = registerQuery(b) { agentId -> onKillSubAgent?.invoke(agentId); JBCefJSQuery.Response("ok") }
+        revertToUserMessageQuery = registerQuery(b) { tsStr ->
+            val ts = tsStr.toLongOrNull(); if (ts != null) onRevertToUserMessage?.invoke(ts)
+            JBCefJSQuery.Response("ok")
+        }
+        revertFileToBaselineQuery = registerQuery(b) { path -> onRevertFileToBaseline?.invoke(path); JBCefJSQuery.Response("ok") }
+        revertAllQuery = registerQuery(b) { _ -> onRevertAll?.invoke(); JBCefJSQuery.Response("ok") }
         cancelSteeringQuery = registerQuery(b) { steeringId -> onCancelSteering?.invoke(steeringId); JBCefJSQuery.Response("ok") }
         retryLastTaskQuery = registerQuery(b) { _ -> onRetryLastTask?.invoke(); JBCefJSQuery.Response("ok") }
         processInputQuery = registerQuery(b) { input -> onProcessInputResolved?.invoke(input); JBCefJSQuery.Response("ok") }
@@ -743,6 +758,9 @@ class AgentCefPanel(
                     injectBridge("_killToolCall") { killToolCallQuery?.let { q -> js("window._killToolCall = function(toolCallId) { ${q.inject("toolCallId")} }") } }
                     injectBridge("_killSubAgent") { killSubAgentQuery?.let { q -> js("window._killSubAgent = function(agentId) { ${q.inject("agentId")} }") } }
                     injectBridge("_resolveProcessInput") { processInputQuery?.let { q -> js("window._resolveProcessInput = function(input) { ${q.inject("input")} }") } }
+                    injectBridge("_revertToUserMessage") { revertToUserMessageQuery?.let { q -> js("window._revertToUserMessage = function(ts) { ${q.inject("String(ts)")} }") } }
+                    injectBridge("_revertFileToBaseline") { revertFileToBaselineQuery?.let { q -> js("window._revertFileToBaseline = function(p) { ${q.inject("p")} }") } }
+                    injectBridge("_revertAll") { revertAllQuery?.let { q -> js("window._revertAll = function() { ${q.inject("''")} }") } }
                     injectBridge("_cancelSteering") { cancelSteeringQuery?.let { q -> js("window._cancelSteering = function(id) { ${q.inject("id")} }") } }
                     injectBridge("_retryLastTask") { retryLastTaskQuery?.let { q -> js("window._retryLastTask = function() { ${q.inject("''")} }") } }
                     injectBridge("_reportArtifactResult") { artifactResultQuery?.let { q -> js("window._reportArtifactResult = function(json) { ${q.inject("json")} }") } }
@@ -1414,6 +1432,10 @@ class AgentCefPanel(
 
     fun updateEditStats(added: Int, removed: Int, files: Int) {
         callJs("updateEditStats($added,$removed,$files)")
+    }
+
+    fun updateAggregateDiff(json: String) {
+        callJs("updateAggregateDiff(${JsEscape.toJsString(json)})")
     }
 
     fun setSmartWorkingPhrase(phrase: String) {
