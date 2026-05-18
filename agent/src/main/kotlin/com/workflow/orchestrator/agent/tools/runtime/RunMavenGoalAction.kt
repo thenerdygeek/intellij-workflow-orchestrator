@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
+import com.intellij.execution.configurations.ConfigurationType
 import com.intellij.openapi.project.Project
 import com.intellij.util.execution.ParametersListUtil
 import com.workflow.orchestrator.agent.loop.ApprovalResult
@@ -86,6 +87,16 @@ internal suspend fun executeRunMavenGoal(
 
 internal fun tokenizeExtraArgs(raw: String): List<String> =
     if (raw.isBlank()) emptyList() else ParametersListUtil.parse(raw)
+
+/**
+ * Locale-independent lookup. The id "MavenRunConfiguration" is registered by
+ * the bundled Maven plugin (`org.jetbrains.idea.maven.execution.MavenRunConfigurationType`)
+ * and is stable across IntelliJ versions. The historical displayName "Maven" would
+ * have been locale-sensitive (it flows through MavenRunnerBundle) and is intentionally
+ * not used as a fallback.
+ */
+internal fun findMavenConfigurationType(types: List<ConfigurationType>): ConfigurationType? =
+    types.firstOrNull { it.id == "MavenRunConfiguration" }
 
 internal fun assembleGoalTokens(
     goals: String,

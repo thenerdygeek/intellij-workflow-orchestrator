@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
+import com.intellij.execution.configurations.ConfigurationType
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -263,5 +264,34 @@ class RunMavenGoalActionTest {
         assertTrue(result.isError)
         assertTrue(result.content.startsWith("TIMEOUT:"))
         assertTrue(result.content.contains("1200"))
+    }
+
+    @Test
+    fun `findMavenConfigurationType finds type with id MavenRunConfiguration`() {
+        val maven = mockk<ConfigurationType>(relaxed = true).also {
+            every { it.id } returns "MavenRunConfiguration"
+        }
+        val other = mockk<ConfigurationType>(relaxed = true).also {
+            every { it.id } returns "JUnit"
+        }
+        val found = findMavenConfigurationType(listOf(other, maven))
+        assertEquals(maven, found)
+    }
+
+    @Test
+    fun `findMavenConfigurationType returns null when absent`() {
+        val other = mockk<ConfigurationType>(relaxed = true).also {
+            every { it.id } returns "JUnit"
+        }
+        assertEquals(null, findMavenConfigurationType(listOf(other)))
+    }
+
+    @Test
+    fun `findMavenConfigurationType is locale-independent (does not match displayName)`() {
+        val mavenLikeDisplayName = mockk<ConfigurationType>(relaxed = true).also {
+            every { it.id } returns "SomeOtherId"
+            every { it.displayName } returns "Maven"
+        }
+        assertEquals(null, findMavenConfigurationType(listOf(mavenLikeDisplayName)))
     }
 }
