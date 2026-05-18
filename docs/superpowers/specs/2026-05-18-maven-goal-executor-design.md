@@ -163,8 +163,11 @@ val allGoalTokens: List<String> = moduleTokens + goalsTokens + extraTokens + off
 ```kotlin
 val runManager = RunManager.getInstance(project)
 val mavenType = ConfigurationType.CONFIGURATION_TYPE_EP.extensionList.firstOrNull {
-    it.id == "MavenRunConfiguration" || it.displayName == "Maven"
+    it.id == "MavenRunConfiguration"
 } ?: return ToolResult.error("EXECUTION_EXCEPTION: MavenRunConfigurationType not registered…")
+// The `id` is locale-independent; the historical `displayName == "Maven"` fallback
+// would have been locale-sensitive (the display name flows through MavenRunnerBundle)
+// and is intentionally omitted.
 val factory = mavenType.configurationFactories.firstOrNull()
     ?: return ToolResult.error("EXECUTION_EXCEPTION: Maven ConfigurationType has no factories…")
 
@@ -191,106 +194,119 @@ settings.isTemporary = true
 
 Profiles are explicitly empty: the user's IDE-configured profile activation (`MavenProjectsManager.explicitProfiles`) is consulted by the Maven runner automatically. The LLM passes profile selection via `extra_args="-Pdev,docker"` rather than the typed param to keep the surface minimal.
 
-Note on Kotlin/reflection: `MavenRunConfiguration.runnerParameters` is a public Kotlin property in current Maven plugin versions, so direct assignment works. If a future Maven plugin restricts it, fall back to `config.javaClass.getMethod("setRunnerParameters", MavenRunnerParameters::class.java).invoke(config, params)` — the same reflective-fallback hardening `run_tests` uses for its persistent-data field accesses.
+Note on the property access: `MavenRunConfiguration` is a Java class exposing `getRunnerParameters()` / `setRunnerParameters(MavenRunnerParameters)`. Kotlin's Java-bean property-access synthesis lets us write `config.runnerParameters = params` — this is **not** a native Kotlin property, it's the Kotlin compiler synthesizing the setter call. The synthesis is stable Kotlin behavior, not a bet on Maven plugin internals; direct assignment is the primary path. If a future Maven plugin removes the setter entirely, fall back to `config.javaClass.getMethod("setRunnerParameters", MavenRunnerParameters::class.java).invoke(config, params)` — the same reflective-fallback hardening `run_tests` uses for its persistent-data field accesses.
 
 #### Step 5: launch via `ProgramRunnerUtil` + capture via `ProcessListener`
 
+The structural pattern is `withTimeoutOrNull(N) { suspendCancellableCoroutine { cont -> ... } }` — timeout wraps the suspending wait, never the other way around. **Do not** call `runBlockingCancellable { withTimeoutOrNull { deferredExit.await() } }` inside `suspendCancellableCoroutine`; that nests a blocking call inside a continuation handler and cannot propagate the outer continuation's cancellation correctly. The deferred completes inside `processTerminated`; the continuation resumes from the same callback.
+
 ```kotlin
-suspendCancellableCoroutine<ToolResult> { continuation ->
-    val invocation = project.service<AgentService>().newRunInvocation("run-maven-${goals.take(20)}")
-    val output = StringBuilder()
-    val deferredExit = CompletableDeferred<Int>()
+val output = StringBuilder()
+val startNs = System.nanoTime()
 
-    invokeLater {                                  // EDT — required by executor framework
-        val executor = DefaultRunExecutor.getRunExecutorInstance()
-        val env = ExecutionEnvironmentBuilder.createOrNull(executor, settings)?.build()
-            ?: return@invokeLater continuation.resume(
-                ToolResult.error("EXECUTION_EXCEPTION: ExecutionEnvironmentBuilder returned null", …)
-            )
+val result: ToolResult? = withTimeoutOrNull(1200_000L) {
+    suspendCancellableCoroutine<ToolResult> { continuation ->
+        val invocation = project.service<AgentService>()
+            .newRunInvocation("run-maven-${goals.take(20)}")
 
-        val callback = object : ProgramRunner.Callback {
-            override fun processStarted(descriptor: RunContentDescriptor?) {
-                if (descriptor == null) {
-                    continuation.resume(
-                        ToolResult.error("PROCESS_NOT_STARTED: runner produced no RunContentDescriptor", …)
-                    )
-                    return
-                }
-                invocation.descriptorRef.set(descriptor)
+        continuation.invokeOnCancellation {
+            // Coroutine cancellation (agent kill, or withTimeoutOrNull's own
+            // cancellation when 1200s elapses) kills the Maven process via
+            // RunInvocation disposal — kills the ProcessHandler and removes
+            // the Run window content.
+            Disposer.dispose(invocation)
+        }
 
-                val handler = descriptor.processHandler
-                handler?.addProcessListener(object : ProcessAdapter() {
-                    override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) {
-                        output.append(event.text)
+        // EDT: the executor framework requires UI thread for env build + launch.
+        invokeLater {
+            val executor = DefaultRunExecutor.getRunExecutorInstance()
+            val env = ExecutionEnvironmentBuilder.createOrNull(executor, settings)?.build()
+            if (env == null) {
+                if (continuation.isActive) continuation.resume(
+                    ToolResult.error("EXECUTION_EXCEPTION: ExecutionEnvironmentBuilder returned null", …)
+                )
+                return@invokeLater
+            }
+
+            val callback = object : ProgramRunner.Callback {
+                override fun processStarted(descriptor: RunContentDescriptor?) {
+                    if (descriptor == null) {
+                        if (continuation.isActive) continuation.resume(
+                            ToolResult.error("PROCESS_NOT_STARTED: runner produced no RunContentDescriptor", …)
+                        )
+                        return
                     }
-                    override fun processTerminated(event: ProcessEvent) {
-                        deferredExit.complete(event.exitCode)
-                    }
-                })
+                    invocation.descriptorRef.set(descriptor)
 
-                // Detach-on-complete pattern (same as run_tests): when the agent's
-                // disposal cascade fires, remove the RunContentDescriptor from the
-                // IDE's Run tool window. Until that, the user can see the build
-                // running and can stop it manually via the IDE.
-                invocation.onDispose {
-                    val d = invocation.descriptorRef.get() ?: return@onDispose
-                    invokeLater {
-                        RunContentManager.getInstance(project).removeRunContent(executor, d)
+                    descriptor.processHandler?.addProcessListener(object : ProcessAdapter() {
+                        override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) {
+                            output.append(event.text)
+                        }
+                        override fun processTerminated(event: ProcessEvent) {
+                            // Resume directly from the listener; no separate wait needed.
+                            if (continuation.isActive) {
+                                val durationSec = (System.nanoTime() - startNs) / 1_000_000_000.0
+                                continuation.resume(
+                                    buildResult(event.exitCode, output, durationSec, …)
+                                )
+                            }
+                        }
+                    })
+
+                    // Belt-and-suspenders descriptor cleanup. Maven's own runner
+                    // self-cleans its RunContentDescriptor on normal process
+                    // termination via ProcessHandler.destroyProcess — so this is
+                    // NOT required the way it is for JUnit (where TestResultsViewer
+                    // has no removeEventsListener API). It IS still needed for
+                    // abnormal termination and agent-cancel paths where the runner
+                    // may not get a chance to clean up. RunContentManager.removeRunContent
+                    // is idempotent, so a double-call from the runner + this block is safe.
+                    invocation.onDispose {
+                        val d = invocation.descriptorRef.get() ?: return@onDispose
+                        invokeLater {
+                            RunContentManager.getInstance(project).removeRunContent(executor, d)
+                        }
                     }
                 }
             }
-        }
 
-        // Defence-in-depth: ExecutionListener.processNotStarted catches cases the
-        // runner refuses (no ProgramRunner registered, executor disabled, JDK lookup
-        // failed) that the callback above doesn't surface.
-        val conn = project.messageBus.connect()
-        invocation.subscribeTopic(conn)
-        conn.subscribe(ExecutionManager.EXECUTION_TOPIC, object : ExecutionListener {
-            override fun processNotStarted(executorId: String, e: ExecutionEnvironment) {
-                if (e == env && continuation.isActive) {
-                    continuation.resume(
-                        ToolResult.error("PROCESS_NOT_STARTED: execution framework aborted before launch", …)
-                    )
+            // Defence-in-depth: ExecutionListener.processNotStarted catches cases
+            // the runner refuses (no ProgramRunner registered, executor disabled,
+            // JDK lookup failed) that the callback above doesn't surface.
+            val conn = project.messageBus.connect()
+            invocation.subscribeTopic(conn)
+            conn.subscribe(ExecutionManager.EXECUTION_TOPIC, object : ExecutionListener {
+                override fun processNotStarted(executorId: String, e: ExecutionEnvironment) {
+                    if (e == env && continuation.isActive) {
+                        continuation.resume(
+                            ToolResult.error("PROCESS_NOT_STARTED: execution framework aborted before launch", …)
+                        )
+                    }
                 }
+            })
+
+            try {
+                ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
+            } catch (_: NoSuchMethodError) {
+                env.callback = callback
+                ProgramRunnerUtil.executeConfiguration(env, false, true)
             }
-        })
-
-        try {
-            ProgramRunnerUtil.executeConfigurationAsync(env, false, true, callback)
-        } catch (_: NoSuchMethodError) {
-            env.callback = callback
-            ProgramRunnerUtil.executeConfiguration(env, false, true)
         }
-    }
-
-    continuation.invokeOnCancellation {
-        // Coroutine cancellation kills the Maven process via RunInvocation disposal,
-        // which kills the ProcessHandler and removes the Run window content.
-        Disposer.dispose(invocation)
-    }
-
-    // Await termination with timeout. The agent loop's outer cancellation can fire
-    // any time; invokeOnCancellation above handles the kill. Natural timeout below.
-    val startNs = System.nanoTime()
-    val exitCode: Int? = runBlockingCancellable {        // non-EDT path — see :agent/CLAUDE.md
-        withTimeoutOrNull(1200_000L) { deferredExit.await() }
-    }
-    val durationSec = (System.nanoTime() - startNs) / 1_000_000_000.0
-
-    try {
-        if (exitCode == null) {
-            continuation.resume(buildTimeoutResult(output, durationSec, …))
-        } else {
-            continuation.resume(buildResult(exitCode, output, durationSec, …))
-        }
-    } finally {
-        Disposer.dispose(invocation)
+        // suspendCancellableCoroutine block ends; continuation resolved from
+        // processTerminated, callback failure paths, or processNotStarted.
     }
 }
+
+// If withTimeoutOrNull returned null, the 1200s wall clock elapsed. Coroutine
+// cancellation already disposed the invocation (and thus killed the Maven
+// process) via invokeOnCancellation above — we just need to format the result.
+result ?: buildTimeoutResult(output, durationSec = 1200.0, …)
 ```
 
-(This is illustrative — actual code routes through helper functions and avoids `runBlockingCancellable` inside `suspendCancellableCoroutine`; the real implementation will `await` directly. Pattern stays the same.)
+Key invariants:
+- Timeout is **outside** the suspending block, never inside.
+- Cancellation flows: outer agent kill → coroutine cancel → `invokeOnCancellation` → `Disposer.dispose(invocation)` → `ProcessHandler` killed → Run window cleared. Same flow whether triggered by user kill, by `withTimeoutOrNull`'s elapsed wall clock, or by the agent's `SessionDisposableHolder` reset.
+- The continuation is resumed exactly once per dispatch — guarded by `continuation.isActive` checks at every resume site to avoid `IllegalStateException` from double-resume in race-y failure paths (e.g., `processNotStarted` fires after the callback already resumed with `PROCESS_NOT_STARTED`).
 
 ### Error category taxonomy
 
@@ -321,7 +337,7 @@ Each error result's `content` begins with `<CATEGORY>:` so the LLM can switch on
 
 Coroutine cancellation goes through `suspendCancellableCoroutine.invokeOnCancellation` → `Disposer.dispose(invocation)`. The `RunInvocation` disposal:
 
-1. Removes the `RunContentDescriptor` from `RunContentManager` (clears the IDE Run window tab).
+1. Removes the `RunContentDescriptor` from `RunContentManager` (clears the IDE Run window tab). The Maven runner itself also self-cleans the descriptor on normal `ProcessHandler.destroyProcess` — so for normal termination this is redundant. For abnormal termination (kill, timeout, crash) and the agent's `SessionDisposableHolder.resetSession()` cascade, the agent-side `onDispose` is the cleanup that fires. `RunContentManager.removeRunContent` is idempotent — a double-call from both sources is safe.
 2. Kills the `ProcessHandler` (terminates the `mvn` subprocess that the Maven plugin spawned under the hood).
 3. Disconnects the `messageBus` connection and process listener.
 
@@ -344,7 +360,7 @@ No `catch (CancellationException)` is needed; the exception propagates per `:age
 | `approval denial returns APPROVAL_DENIED` | Mock `requestApproval` |
 | `goal-and-flag token assembly: modules + goals + extra + offline` | `-pl X,Y -am clean install -DskipTests -o` order |
 | `summary format follows mvn <goals> ✓/✗ (<sec>s, exit=<int>)` | UI/notification rendering invariant via the helper that builds it (no launch) |
-| `MavenRunConfigurationType lookup falls back to displayName when id changes` | The `it.id == "MavenRunConfiguration" || it.displayName == "Maven"` predicate |
+| `MavenRunConfigurationType lookup by id="MavenRunConfiguration" succeeds when plugin is present` | Pinpoints the locale-independent id; pre-flight fails cleanly otherwise |
 
 ### `:agent` snapshot regeneration
 
