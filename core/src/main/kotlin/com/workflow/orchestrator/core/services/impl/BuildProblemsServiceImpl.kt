@@ -34,7 +34,7 @@ interface MavenProblemsProbe {
  * Same pattern as `agent/tools/runtime/BuildSystemValidator.ReflectiveMavenModuleResolver`.
  */
 @Service(Service.Level.PROJECT)
-class BuildProblemsServiceImpl(
+class BuildProblemsServiceImpl @JvmOverloads constructor(
     private val project: Project,
     private val mavenProbe: MavenProblemsProbe = ReflectiveMavenProblemsProbe,
 ) : BuildProblemsService {
