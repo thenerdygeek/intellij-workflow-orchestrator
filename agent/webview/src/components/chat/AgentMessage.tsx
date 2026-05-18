@@ -6,6 +6,7 @@ import {
   MessageAvatar,
 } from '@/components/ui/prompt-kit/message';
 import { CopyButton } from '@/components/ui/copy-button';
+import { UserMessageRevertButton } from '@/components/agent/UserMessageRevertButton';
 import { cn } from '@/lib/utils';
 import { PlanApprovedBubble } from './PlanApprovedBubble';
 import { scanAndLinkify } from '@/util/file-link-scanner';
@@ -189,7 +190,7 @@ export const AgentMessage = memo(function AgentMessage({
         className={cn(
           'relative max-w-[85%] rounded-lg px-4 py-3 whitespace-normal [overflow-wrap:anywhere]',
           isUser
-            ? 'bg-[var(--user-bg)] text-[var(--fg)]'
+            ? 'group bg-[var(--user-bg)] text-[var(--fg)]'
             : 'bg-transparent text-[var(--fg)]',
         )}
       >
@@ -221,6 +222,9 @@ export const AgentMessage = memo(function AgentMessage({
 
         {isUser ? (
           <>
+            <div className="absolute right-2 top-2">
+              <UserMessageRevertButton ts={message.ts} />
+            </div>
             {/* Multimodal-agent — image attachments uploaded with this turn.
                 Bytes are served from disk by the Kotlin AttachmentReadHandler
                 via http://workflow-agent/attachments/{sha256}. */}
