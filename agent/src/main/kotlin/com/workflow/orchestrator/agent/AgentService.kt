@@ -825,7 +825,7 @@ class AgentService(
         if (!force && !contextManager.shouldCompact()) return null
 
         val brain = createBrain()
-        return when (val result = contextManager.compact(brain, hookManager, force = force)) {
+        return when (val result = contextManager.compact(brain, hookManager, force = force, iterationsSinceLastUser = Int.MAX_VALUE)) {
             is ContextManager.CompactResult.Compacted -> result.tokensBefore to result.tokensAfter
             is ContextManager.CompactResult.Failed -> {
                 log.warn("[AgentService] compactContext failed: ${result.reason}; applying slidingWindow(0.3) as safety net")
