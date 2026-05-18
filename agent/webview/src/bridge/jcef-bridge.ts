@@ -437,9 +437,15 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     stores?.getChatStore().appendToolOutput(toolCallId, chunk);
   },
 
-  // Edit stats from Kotlin
-  updateEditStats(added: number, removed: number, files: number) {
-    stores?.getChatStore().updateEditStats({ totalLinesAdded: added, totalLinesRemoved: removed, filesModified: files });
+  // Aggregate diff pushed from Kotlin (replaces updateEditStats, removed in Task 13)
+  updateAggregateDiff(json: string) {
+    try {
+      const diff = JSON.parse(json);
+      // TODO Task 18: remove cast once chatStore.updateAggregateDiff lands
+      (stores?.getChatStore() as any)?.updateAggregateDiff(diff);
+    } catch (e) {
+      console.warn('[bridge] updateAggregateDiff: malformed JSON', e);
+    }
   },
   setSmartWorkingPhrase(phrase: string) {
     stores?.getChatStore().setSmartWorkingPhrase(phrase);

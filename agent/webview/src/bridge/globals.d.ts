@@ -51,6 +51,9 @@ declare global {
     _rejectDiffHunk?: (filePath: string, hunkIndex: number) => void;
     _killToolCall?: (toolCallId: string) => void;
     _cancelSteering?: (steeringId: string) => void;
+    _revertToUserMessage?: (ts: number) => void;
+    _revertFileToBaseline?: (path: string) => void;
+    _revertAll?: () => void;
     _retryLastTask?: () => void;
     _reportInteractiveRender?: (json: string) => void;
     _resumeViewedSession?: () => void;
