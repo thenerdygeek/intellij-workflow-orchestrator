@@ -144,13 +144,20 @@ class TagHistoryService : Disposable {
     }
 
     fun getActiveQueueEntries(): List<QueueEntry> {
+        // Drive the exclusion list off the canonical [QueueEntryStatus.TERMINAL] set so
+        // FAILED / FAILED_TO_TRIGGER / TAG_INVALID rows don't leak back as "active" on
+        // IDE restart. Matches the contract documented in :automation CLAUDE.md
+        // ("Across IDE restarts, terminal entries are dropped by getActiveQueueEntries()").
+        val terminalStatuses = QueueEntryStatus.TERMINAL
+        val placeholders = terminalStatuses.joinToString(",") { "?" }
         return connection.prepareStatement("""
             SELECT * FROM queue_entries
-            WHERE status NOT IN (?, ?)
+            WHERE status NOT IN ($placeholders)
             ORDER BY sequence_order ASC
         """).use { stmt ->
-            stmt.setString(1, QueueEntryStatus.COMPLETED.name)
-            stmt.setString(2, QueueEntryStatus.CANCELLED.name)
+            terminalStatuses.forEachIndexed { idx, status ->
+                stmt.setString(idx + 1, status.name)
+            }
             val rs = stmt.executeQuery()
             val results = mutableListOf<QueueEntry>()
             while (rs.next()) {

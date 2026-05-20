@@ -141,6 +141,45 @@ class TagHistoryServiceTest {
     }
 
     @Test
+    fun `getActiveQueueEntries excludes every terminal status from QueueEntryStatus_TERMINAL`() {
+        // Regression for the persistence ↔ memory contract drift: the SQL
+        // exclusion list MUST be aligned with QueueEntryStatus.TERMINAL.  Pre-fix
+        // the WHERE clause only excluded COMPLETED + CANCELLED, so FAILED /
+        // FAILED_TO_TRIGGER / TAG_INVALID rows resurrected as "active" on every
+        // IDE restart — contradicting the documented "terminal entries are dropped
+        // by getActiveQueueEntries() on restart" contract in :automation CLAUDE.md.
+
+        // One live entry that MUST come back.
+        service.saveQueueEntry(
+            QueueEntry("live-1", "P", "{}", emptyMap(), null, Instant.now(),
+                QueueEntryStatus.WAITING_LOCAL, null),
+            sequenceOrder = 1
+        )
+
+        // One persisted row per terminal status — every single one of these must be filtered out.
+        @Suppress("DEPRECATION")
+        val terminalStatuses = listOf(
+            QueueEntryStatus.COMPLETED,
+            QueueEntryStatus.FAILED,
+            QueueEntryStatus.CANCELLED,
+            QueueEntryStatus.FAILED_TO_TRIGGER,
+            QueueEntryStatus.TAG_INVALID
+        )
+        terminalStatuses.forEachIndexed { idx, status ->
+            service.saveQueueEntry(
+                QueueEntry("term-${status.name}", "P", "{}", emptyMap(), null,
+                    Instant.now(), status, null),
+                sequenceOrder = idx + 2
+            )
+        }
+
+        val active = service.getActiveQueueEntries()
+        assertEquals(1, active.size,
+            "Only the WAITING_LOCAL row should be returned; got ${active.map { it.id to it.status }}")
+        assertEquals("live-1", active[0].id)
+    }
+
+    @Test
     fun `deleteQueueEntry removes entry`() {
         service.saveQueueEntry(
             QueueEntry("q-1", "P", "{}", emptyMap(), null, Instant.now(), QueueEntryStatus.WAITING_LOCAL, null),

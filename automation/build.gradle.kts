@@ -1,3 +1,5 @@
+import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+
 plugins {
     alias(libs.plugins.kotlin)
     alias(libs.plugins.kotlinSerialization)
@@ -66,6 +68,7 @@ dependencies {
         bundledPlugins(providers.gradleProperty("platformBundledPlugins").map {
             it.split(',').map(String::trim).filter(String::isNotEmpty)
         })
+        testFramework(TestFrameworkType.Platform)
     }
 
     implementation(project(":core"))

@@ -116,7 +116,14 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         val isLocalWait: Boolean = false,  // true when WAITING_LOCAL (no bambooResultKey)
         val isTerminal: Boolean = false,   // derived from QueueEntryStatus; avoids string-matching downstream
         /** Bucket used by the filter chips. Derived once in [toRunEntry]. */
-        val filterBucket: MonitorFilter = MonitorFilter.ALL
+        val filterBucket: MonitorFilter = MonitorFilter.ALL,
+        /**
+         * Failure reason, surfaced by [buildRunEntry] for terminal-failed statuses
+         * (currently `FAILED_TO_TRIGGER`). Mirrors `QueueEntry.errorMessage` so the
+         * detail panel can tell the user *why* a trigger failed without forcing them
+         * into `idea.log`. `null` for non-failed rows.
+         */
+        val errorMessage: String? = null
     )
 
     data class StageInfo(
@@ -342,79 +349,8 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         val suiteName = AutomationSettingsService
             .getInstance().getSuiteConfig(queueEntry.suitePlanKey)?.displayName
             ?: queueEntry.suitePlanKey
-        val resultKey = queueEntry.bambooResultKey ?: ""
-        val bambooUrl = if (resultKey.isNotBlank()) {
-            settings.connections.bambooUrl.orEmpty().trimEnd('/').let { base ->
-                if (base.isBlank()) "" else "$base/browse/$resultKey"
-            }
-        } else ""
-
-        // PR 8 status mapping. Terminal statuses now persist in _stateFlow; we render them
-        // here just like live ones. Each status is tagged with its filter bucket so the
-        // chips can filter without re-inspecting the string.
-        return when (queueEntry.status) {
-            QueueEntryStatus.FAILED_TO_TRIGGER -> RunEntry(
-                queueId = queueEntry.id, suiteName = suiteName,
-                planKey = queueEntry.suitePlanKey, resultKey = "",
-                status = "Failed to trigger",
-                isTerminal = true,
-                filterBucket = MonitorFilter.FAILED
-            )
-            QueueEntryStatus.WAITING_LOCAL -> RunEntry(
-                queueId = queueEntry.id, suiteName = suiteName,
-                planKey = queueEntry.suitePlanKey, resultKey = resultKey,
-                status = "Waiting (local queue)",
-                bambooUrl = bambooUrl, isLocalWait = true, isTerminal = false,
-                filterBucket = MonitorFilter.QUEUED
-            )
-            QueueEntryStatus.QUEUED_ON_BAMBOO -> RunEntry(
-                queueId = queueEntry.id, suiteName = suiteName,
-                planKey = queueEntry.suitePlanKey, resultKey = resultKey,
-                status = "Queued",
-                bambooUrl = bambooUrl, isTerminal = false,
-                filterBucket = MonitorFilter.QUEUED
-            )
-            QueueEntryStatus.RUNNING -> RunEntry(
-                queueId = queueEntry.id, suiteName = suiteName,
-                planKey = queueEntry.suitePlanKey, resultKey = resultKey,
-                status = "Running",
-                bambooUrl = bambooUrl, isTerminal = false,
-                filterBucket = MonitorFilter.RUNNING
-            )
-            QueueEntryStatus.COMPLETED -> RunEntry(
-                queueId = queueEntry.id, suiteName = suiteName,
-                planKey = queueEntry.suitePlanKey, resultKey = resultKey,
-                status = "Successful",
-                bambooUrl = bambooUrl, isTerminal = true,
-                filterBucket = MonitorFilter.COMPLETED
-            )
-            QueueEntryStatus.FAILED -> RunEntry(
-                queueId = queueEntry.id, suiteName = suiteName,
-                planKey = queueEntry.suitePlanKey, resultKey = resultKey,
-                status = "Failed",
-                bambooUrl = bambooUrl, isTerminal = true,
-                filterBucket = MonitorFilter.FAILED
-            )
-            QueueEntryStatus.CANCELLED -> RunEntry(
-                queueId = queueEntry.id, suiteName = suiteName,
-                planKey = queueEntry.suitePlanKey, resultKey = resultKey,
-                status = "Cancelled",
-                bambooUrl = bambooUrl, isTerminal = true,
-                // CANCELLED bucketed under Failed — terminal-not-success. See visibleEntries() KDoc.
-                filterBucket = MonitorFilter.FAILED
-            )
-            // TRIGGERING currently unused by QueueService — render generically if reintroduced.
-            // TAG_INVALID is a deprecated SQLite-only legacy state; treat as terminal Failed.
-            else -> RunEntry(
-                queueId = queueEntry.id, suiteName = suiteName,
-                planKey = queueEntry.suitePlanKey, resultKey = resultKey,
-                status = queueEntry.status.name,
-                bambooUrl = bambooUrl,
-                isTerminal = queueEntry.status in QueueEntryStatus.TERMINAL,
-                filterBucket = if (queueEntry.status in QueueEntryStatus.TERMINAL)
-                    MonitorFilter.FAILED else MonitorFilter.QUEUED
-            )
-        }
+        val bambooUrlBase = settings.connections.bambooUrl.orEmpty().trimEnd('/')
+        return buildRunEntry(queueEntry, suiteName, bambooUrlBase)
     }
 
     // -------------------------------------------------------------------------
@@ -634,6 +570,17 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
             content.add(JBLabel(statusDuration).apply {
                 foreground = StatusColors.SECONDARY_TEXT
             })
+            // Failure reason from QueueEntry.errorMessage — surfaces the underlying
+            // Bamboo cause (auth/plan/race) so the user does not have to dig through
+            // idea.log when an automation run fails to trigger.
+            val errorMessage = entry.errorMessage?.takeIf { it.isNotBlank() }
+            if (errorMessage != null) {
+                content.add(Box.createVerticalStrut(JBUI.scale(4)))
+                content.add(JBLabel("Reason: $errorMessage").apply {
+                    foreground = StatusColors.ERROR
+                    font = font.deriveFont(JBUI.scale(11).toFloat())
+                })
+            }
         }
         content.add(Box.createVerticalStrut(JBUI.scale(8)))
 
@@ -826,12 +773,104 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
         scope.cancel()
     }
 
-    private companion object {
+    companion object {
         private val BAMBOO_POLLABLE_STATUSES = setOf(
             QueueEntryStatus.QUEUED_ON_BAMBOO,
             QueueEntryStatus.RUNNING
         )
         private val BAMBOO_TERMINAL_STATES = setOf("Successful", "Failed", "Unknown")
+
+        /**
+         * Pure helper that maps a persisted [QueueEntry] to a [RunEntry] view-model.
+         * Extracted from the instance method [toRunEntry] so its mapping logic
+         * (status text, filter bucket, terminal flag, errorMessage propagation) is
+         * unit-testable without an IntelliJ project / Swing harness.
+         *
+         * @param suiteName the resolved display name for the suite (caller looks up
+         *   via [AutomationSettingsService]).
+         * @param bambooUrlBase the configured Bamboo base URL with no trailing slash,
+         *   or `""` when no connection is configured.
+         */
+        @JvmStatic
+        fun buildRunEntry(
+            queueEntry: QueueEntry,
+            suiteName: String,
+            bambooUrlBase: String
+        ): RunEntry {
+            val resultKey = queueEntry.bambooResultKey ?: ""
+            val bambooUrl = if (resultKey.isNotBlank() && bambooUrlBase.isNotBlank()) {
+                "$bambooUrlBase/browse/$resultKey"
+            } else ""
+
+            // PR 8 status mapping. Terminal statuses now persist in _stateFlow; we render them
+            // here just like live ones. Each status is tagged with its filter bucket so the
+            // chips can filter without re-inspecting the string.
+            return when (queueEntry.status) {
+                QueueEntryStatus.FAILED_TO_TRIGGER -> RunEntry(
+                    queueId = queueEntry.id, suiteName = suiteName,
+                    planKey = queueEntry.suitePlanKey, resultKey = "",
+                    status = "Failed to trigger",
+                    isTerminal = true,
+                    filterBucket = MonitorFilter.FAILED,
+                    errorMessage = queueEntry.errorMessage
+                )
+                QueueEntryStatus.WAITING_LOCAL -> RunEntry(
+                    queueId = queueEntry.id, suiteName = suiteName,
+                    planKey = queueEntry.suitePlanKey, resultKey = resultKey,
+                    status = "Waiting (local queue)",
+                    bambooUrl = bambooUrl, isLocalWait = true, isTerminal = false,
+                    filterBucket = MonitorFilter.QUEUED
+                )
+                QueueEntryStatus.QUEUED_ON_BAMBOO -> RunEntry(
+                    queueId = queueEntry.id, suiteName = suiteName,
+                    planKey = queueEntry.suitePlanKey, resultKey = resultKey,
+                    status = "Queued",
+                    bambooUrl = bambooUrl, isTerminal = false,
+                    filterBucket = MonitorFilter.QUEUED
+                )
+                QueueEntryStatus.RUNNING -> RunEntry(
+                    queueId = queueEntry.id, suiteName = suiteName,
+                    planKey = queueEntry.suitePlanKey, resultKey = resultKey,
+                    status = "Running",
+                    bambooUrl = bambooUrl, isTerminal = false,
+                    filterBucket = MonitorFilter.RUNNING
+                )
+                QueueEntryStatus.COMPLETED -> RunEntry(
+                    queueId = queueEntry.id, suiteName = suiteName,
+                    planKey = queueEntry.suitePlanKey, resultKey = resultKey,
+                    status = "Successful",
+                    bambooUrl = bambooUrl, isTerminal = true,
+                    filterBucket = MonitorFilter.COMPLETED
+                )
+                QueueEntryStatus.FAILED -> RunEntry(
+                    queueId = queueEntry.id, suiteName = suiteName,
+                    planKey = queueEntry.suitePlanKey, resultKey = resultKey,
+                    status = "Failed",
+                    bambooUrl = bambooUrl, isTerminal = true,
+                    filterBucket = MonitorFilter.FAILED,
+                    errorMessage = queueEntry.errorMessage
+                )
+                QueueEntryStatus.CANCELLED -> RunEntry(
+                    queueId = queueEntry.id, suiteName = suiteName,
+                    planKey = queueEntry.suitePlanKey, resultKey = resultKey,
+                    status = "Cancelled",
+                    bambooUrl = bambooUrl, isTerminal = true,
+                    // CANCELLED bucketed under Failed — terminal-not-success. See visibleEntries() KDoc.
+                    filterBucket = MonitorFilter.FAILED
+                )
+                // TRIGGERING currently unused by QueueService — render generically if reintroduced.
+                // TAG_INVALID is a deprecated SQLite-only legacy state; treat as terminal Failed.
+                else -> RunEntry(
+                    queueId = queueEntry.id, suiteName = suiteName,
+                    planKey = queueEntry.suitePlanKey, resultKey = resultKey,
+                    status = queueEntry.status.name,
+                    bambooUrl = bambooUrl,
+                    isTerminal = queueEntry.status in QueueEntryStatus.TERMINAL,
+                    filterBucket = if (queueEntry.status in QueueEntryStatus.TERMINAL)
+                        MonitorFilter.FAILED else MonitorFilter.QUEUED
+                )
+            }
+        }
     }
 
     // -------------------------------------------------------------------------

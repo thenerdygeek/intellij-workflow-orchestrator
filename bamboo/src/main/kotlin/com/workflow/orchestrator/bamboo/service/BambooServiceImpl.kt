@@ -139,7 +139,11 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                         ErrorType.VALIDATION_ERROR ->
                             result.message
                         else -> "Check Bamboo connection in Settings."
-                    }
+                    },
+                    // Carry the structured ErrorType so QueueService can distinguish
+                    // transient (retry on next poll tick) from permanent (mark
+                    // FAILED_TO_TRIGGER). See QueueService.handleWaitingLocal.
+                    payload = result.type
                 )
             }
         }

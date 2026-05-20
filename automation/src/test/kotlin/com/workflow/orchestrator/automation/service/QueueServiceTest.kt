@@ -1,10 +1,12 @@
 package com.workflow.orchestrator.automation.service
 
 import app.cash.turbine.test
+import com.intellij.testFramework.LoggedErrorProcessorEnabler
 import com.workflow.orchestrator.automation.model.QueueEntry
 import com.workflow.orchestrator.automation.model.QueueEntryStatus
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.core.model.bamboo.BuildResultData
 import com.workflow.orchestrator.core.model.bamboo.BuildTriggerData
 import com.workflow.orchestrator.core.services.BambooService
@@ -24,6 +26,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import java.time.Instant
@@ -451,6 +454,195 @@ class QueueServiceTest {
         assertEquals(1, capturedStages.size)
         assertNull(capturedStages[0],
             "doTrigger must pass null stages when entry.stages is null (run all stages)")
+    }
+
+    @Test
+    fun `dismiss physically deletes the SQLite row not just the in-memory entry`() = runTest {
+        // Regression for the persistence ↔ memory contract: dismiss() must call
+        // TagHistoryService.deleteQueueEntry so the row does not accumulate in
+        // automation.db forever (unbounded growth + #3 amplifier on restart).
+        val dbFile = tempDir.resolve("dismiss-db.db").toString()
+        val tagHistory = TagHistoryService(dbFile)
+        val scopeForTest = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val testService = QueueService(
+            bambooService = bambooService,
+            eventBus = eventBus,
+            tagHistoryService = tagHistory,
+            scope = scopeForTest,
+            autoTriggerEnabled = false,
+            maxDepthPerSuite = 10
+        )
+
+        val entry = makeEntry(id = "dismiss-1", status = QueueEntryStatus.WAITING_LOCAL)
+        testService.enqueue(entry)
+        awaitState(2000) { testService.stateFlow.value.size == 1 }
+
+        testService.cancel("dismiss-1")
+        awaitState(2000) {
+            testService.stateFlow.value.firstOrNull()?.status == QueueEntryStatus.CANCELLED
+        }
+
+        testService.dismiss("dismiss-1")
+        awaitState(2000) { testService.stateFlow.value.isEmpty() }
+
+        // Probe SQLite directly — only physical deletion proves we are not leaking
+        // terminal rows.  `getActiveQueueEntries` would mask the bug because
+        // CANCELLED is in QueueEntryStatus.TERMINAL and therefore filtered out by
+        // the SQL exclusion list regardless of whether the row still exists.
+        Class.forName("org.sqlite.JDBC")
+        val conn = java.sql.DriverManager.getConnection("jdbc:sqlite:$dbFile")
+        try {
+            conn.prepareStatement("SELECT COUNT(*) FROM queue_entries WHERE id = ?").use { stmt ->
+                stmt.setString(1, "dismiss-1")
+                val rs = stmt.executeQuery()
+                assertTrue(rs.next())
+                assertEquals(0, rs.getInt(1),
+                    "dismiss() must call TagHistoryService.deleteQueueEntry so the row is removed from automation.db")
+            }
+        } finally {
+            conn.close()
+            tagHistory.close()
+            scopeForTest.cancel()
+        }
+    }
+
+    @Test
+    @ExtendWith(LoggedErrorProcessorEnabler.DoNoRethrowErrors::class)
+    fun `an exception in enqueue does not poison subsequent operations (flaw 9)`() = runTest {
+        // Flaw #9: every cs.launch body was a silent failure point — a single SQLite
+        // hiccup or unexpected NPE would disappear into the void and leave the user
+        // with no idea why their "Trigger Now" did nothing. After the fix, the launch
+        // body catches throwables, logs them, and fires a balloon notification — but
+        // the *primary* invariant is that the service stays alive: subsequent ops
+        // must keep working.
+        val brokenHistory = mockk<TagHistoryService>(relaxed = true)
+        var failNextSave = true
+        coEvery { brokenHistory.saveQueueEntry(any(), any()) } answers {
+            if (failNextSave) {
+                failNextSave = false
+                throw RuntimeException("Simulated SQLite I/O error")
+            }
+            // Subsequent saves succeed (relaxed mock returns Unit by default).
+        }
+        coEvery { brokenHistory.getActiveQueueEntries() } returns emptyList()
+
+        val scopeForTest = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val testService = QueueService(
+            bambooService = bambooService,
+            eventBus = eventBus,
+            tagHistoryService = brokenHistory,
+            scope = scopeForTest,
+            autoTriggerEnabled = false,
+            maxDepthPerSuite = 10
+        )
+
+        // First enqueue triggers the simulated failure. It must NOT propagate as an
+        // uncaught exception (which would tear down the scope under most JobConfigs)
+        // and must NOT leave a half-written entry in _stateFlow.
+        testService.enqueue(makeEntry(id = "broken"))
+        runBlocking(Dispatchers.IO) { delay(100) }
+        assertTrue(
+            testService.stateFlow.value.none { it.id == "broken" },
+            "Failed enqueue must not leak an entry into _stateFlow"
+        )
+
+        // Second enqueue uses the now-working mock — proves the service is still alive.
+        testService.enqueue(makeEntry(id = "ok"))
+        awaitState(2000) { testService.stateFlow.value.any { it.id == "ok" } }
+
+        assertTrue(testService.stateFlow.value.any { it.id == "ok" },
+            "After a swallowed exception in a prior op, subsequent enqueues must still succeed")
+        scopeForTest.cancel()
+    }
+
+    @Test
+    fun `transient triggerBuild error keeps entry in WAITING_LOCAL for next poll tick`() = runTest {
+        // Flaw #6/#7: if Bamboo refused the trigger because of a transient condition
+        // (5xx after RetryInterceptor's HTTP retries, network blip, 429, or a
+        // concurrent-trigger 409 surfaced as SERVER_ERROR), the entry must STAY
+        // in WAITING_LOCAL so the poll loop retries on the next 3 s tick — not be
+        // burned terminally as FAILED_TO_TRIGGER. Permanent classes
+        // (AUTH_FAILED / FORBIDDEN / NOT_FOUND / VALIDATION_ERROR) still
+        // transition terminally — that's covered by an existing test.
+        coEvery { bambooService.getRunningBuilds("PROJ-AUTO") } returns ToolResult.success(
+            data = emptyList(),
+            summary = "none running"
+        )
+        coEvery { bambooService.triggerBuild(any(), any(), any()) } returns ToolResult(
+            data = BuildTriggerData(buildKey = "", buildNumber = 0, link = ""),
+            summary = "Error triggering build for PROJ-AUTO: Bamboo 503: Service Unavailable",
+            isError = true,
+            payload = ErrorType.SERVER_ERROR
+        )
+
+        val scopeForTest = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val testService = QueueService(
+            bambooService = bambooService,
+            eventBus = eventBus,
+            tagHistoryService = TagHistoryService(tempDir.resolve("test-transient.db").toString()),
+            scope = scopeForTest,
+            autoTriggerEnabled = false,   // drive via pollOnce, not fast-path
+            maxDepthPerSuite = 10
+        )
+
+        val entry = makeEntry(id = "transient-1", status = QueueEntryStatus.WAITING_LOCAL)
+        testService.enqueue(entry)
+        awaitState(2000) { testService.stateFlow.value.size == 1 }
+
+        runBlocking(Dispatchers.IO) { testService.pollOnce() }
+
+        val state = testService.stateFlow.value
+        assertEquals(1, state.size)
+        assertEquals(
+            QueueEntryStatus.WAITING_LOCAL, state[0].status,
+            "Transient SERVER_ERROR must NOT mark the entry FAILED_TO_TRIGGER — the poll loop should retry on the next tick"
+        )
+        scopeForTest.cancel()
+    }
+
+    @Test
+    @ExtendWith(LoggedErrorProcessorEnabler.DoNoRethrowErrors::class)
+    fun `FAILED_TO_TRIGGER preserves bamboo failure summary on in-memory entry`() = runTest {
+        // Bamboo reports idle (so handleWaitingLocal will attempt the trigger)
+        // but triggerBuild returns an error with a specific summary — the entry
+        // in _stateFlow must carry that summary as errorMessage so the UI can
+        // surface it. Regression test for QueueService.kt:317-319 dropping the
+        // message on entry.copy(status = FAILED_TO_TRIGGER).
+        coEvery { bambooService.getRunningBuilds("PROJ-AUTO") } returns ToolResult.success(
+            data = emptyList(),
+            summary = "none running"
+        )
+        coEvery { bambooService.triggerBuild(any(), any(), any()) } returns ToolResult(
+            data = BuildTriggerData(buildKey = "", buildNumber = 0, link = ""),
+            summary = "Bamboo 401: token expired",
+            isError = true
+        )
+
+        val scopeForTest = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val testService = QueueService(
+            bambooService = bambooService,
+            eventBus = eventBus,
+            tagHistoryService = TagHistoryService(tempDir.resolve("test-ftt.db").toString()),
+            scope = scopeForTest,
+            autoTriggerEnabled = false,   // disables fast-path so we drive via pollOnce
+            maxDepthPerSuite = 10
+        )
+
+        val entry = makeEntry(id = "ftt-1", status = QueueEntryStatus.WAITING_LOCAL)
+        testService.enqueue(entry)
+        awaitState(2000) { testService.stateFlow.value.size == 1 }
+
+        runBlocking(Dispatchers.IO) { testService.pollOnce() }
+
+        val state = testService.stateFlow.value
+        assertEquals(1, state.size)
+        assertEquals(QueueEntryStatus.FAILED_TO_TRIGGER, state[0].status)
+        assertEquals(
+            "Bamboo 401: token expired",
+            state[0].errorMessage,
+            "FAILED_TO_TRIGGER entry must carry the bamboo failure summary so the UI can show it"
+        )
+        scopeForTest.cancel()
     }
 
     @Test
