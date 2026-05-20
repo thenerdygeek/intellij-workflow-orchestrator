@@ -326,8 +326,10 @@ class AgentService(
         // steering queue so the LLM learns about process exits at the next iteration
         // boundary. One completion event produces exactly one steering message
         // (no batching) so the LLM can react to each process exit individually.
-        com.workflow.orchestrator.agent.tools.background.BackgroundPool.getInstance(project)
-            .addCompletionListener { event -> onBackgroundCompletion(event) }
+        com.intellij.openapi.util.Disposer.register(this,
+            com.workflow.orchestrator.agent.tools.background.BackgroundPool.getInstance(project)
+                .addCompletionListener { event -> onBackgroundCompletion(event) }
+        )
     }
 
     /**

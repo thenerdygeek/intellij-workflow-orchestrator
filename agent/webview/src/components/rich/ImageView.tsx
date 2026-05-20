@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useState, useEffect } from 'react';
 import { RichBlock } from './RichBlock';
 import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog';
 import { ImageIcon } from 'lucide-react';
@@ -16,6 +16,21 @@ interface ImageViewProps {
 function ImageViewInner({ imageSource }: ImageViewProps) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
+
+  // Parse src early so we can reference it in the cleanup effect (hooks must run before early returns).
+  let parsedSrc: string | undefined;
+  try {
+    parsedSrc = (JSON.parse(imageSource) as ImageData).src;
+  } catch {
+    // Parsing failed — handled below
+  }
+
+  // Revoke blob URLs on unmount to prevent Chromium from pinning the binary bytes.
+  useEffect(() => {
+    if (!parsedSrc?.startsWith('blob:')) return;
+    const blobUrl = parsedSrc;
+    return () => URL.revokeObjectURL(blobUrl);
+  }, [parsedSrc]);
 
   let data: ImageData;
   try {

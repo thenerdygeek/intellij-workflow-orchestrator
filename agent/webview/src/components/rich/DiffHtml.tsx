@@ -126,7 +126,10 @@ function DiffHtmlInner({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlProps
 
       containerRef.current.innerHTML = html;
 
-      // Add accept/reject/edit buttons to each hunk if callbacks provided
+      // Add accept/reject/edit buttons to each hunk if callbacks provided.
+      // Buttons carry data-diff-action and data-hunk-index attributes;
+      // the actual click handling is performed by the delegated listener
+      // added in the useEffect below — no per-button addEventListener needed.
       if (onAcceptHunk || onRejectHunk) {
         const hunks = containerRef.current.querySelectorAll('.d2h-diff-tbody');
         hunks.forEach((hunk, index) => {
@@ -141,7 +144,8 @@ function DiffHtmlInner({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlProps
             acceptBtn.className = 'diff-hunk-btn diff-hunk-accept';
             acceptBtn.style.cssText =
               BTN_BASE + 'background:var(--success,#22c55e);';
-            acceptBtn.addEventListener('click', () => onAcceptHunk(index));
+            acceptBtn.setAttribute('data-diff-action', 'accept');
+            acceptBtn.setAttribute('data-hunk-index', String(index));
             btnContainer.appendChild(acceptBtn);
           }
 
@@ -152,9 +156,8 @@ function DiffHtmlInner({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlProps
             editBtn.className = 'diff-hunk-btn diff-hunk-edit';
             editBtn.style.cssText =
               BTN_BASE + 'background:var(--info,#3b82f6);';
-            editBtn.addEventListener('click', () => {
-              enterEditMode(hunk, index, btnContainer);
-            });
+            editBtn.setAttribute('data-diff-action', 'edit');
+            editBtn.setAttribute('data-hunk-index', String(index));
             btnContainer.appendChild(editBtn);
           }
 
@@ -164,7 +167,8 @@ function DiffHtmlInner({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlProps
             rejectBtn.className = 'diff-hunk-btn diff-hunk-reject';
             rejectBtn.style.cssText =
               BTN_BASE + 'background:var(--error,#ef4444);';
-            rejectBtn.addEventListener('click', () => onRejectHunk(index));
+            rejectBtn.setAttribute('data-diff-action', 'reject');
+            rejectBtn.setAttribute('data-hunk-index', String(index));
             btnContainer.appendChild(rejectBtn);
           }
 
@@ -253,30 +257,39 @@ function DiffHtmlInner({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlProps
     const saveBtn = document.createElement('button');
     saveBtn.textContent = 'Save & Accept';
     saveBtn.style.cssText = BTN_BASE + 'background:var(--success,#22c55e);';
-    saveBtn.addEventListener('click', () => {
-      const editedContent = textarea.value;
-      exitEditMode();
-
-      // Call the accept callback with edited content
-      if (onAcceptHunk) {
-        onAcceptHunk(hunkIndex, editedContent);
-      }
-
-      // Also call the bridge function directly if available
-      if (window._acceptDiffHunk) {
-        window._acceptDiffHunk(filePath, hunkIndex, editedContent);
-      }
-    });
+    // Handled inline via click handler on editContainer (not the outer container)
+    saveBtn.setAttribute('data-edit-action', 'save');
 
     const cancelBtn = document.createElement('button');
     cancelBtn.textContent = 'Cancel';
     cancelBtn.style.cssText =
       BTN_BASE + 'background:var(--fg-muted,#6b7280);';
-    cancelBtn.addEventListener('click', exitEditMode);
+    cancelBtn.setAttribute('data-edit-action', 'cancel');
 
     editBtnRow.appendChild(saveBtn);
     editBtnRow.appendChild(cancelBtn);
     editContainer.appendChild(editBtnRow);
+
+    // Delegated click handler for edit-mode save/cancel buttons
+    const onEditClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const btn = target.closest('[data-edit-action]') as HTMLElement | null;
+      if (!btn) return;
+      const editAction = btn.getAttribute('data-edit-action');
+      if (editAction === 'save') {
+        const editedContent = textarea.value;
+        exitEditMode();
+        if (onAcceptHunk) {
+          onAcceptHunk(hunkIndex, editedContent);
+        }
+        if (window._acceptDiffHunk) {
+          window._acceptDiffHunk(filePath, hunkIndex, editedContent);
+        }
+      } else if (editAction === 'cancel') {
+        exitEditMode();
+      }
+    };
+    editContainer.addEventListener('click', onEditClick);
 
     // Insert edit container after the table
     table.parentElement?.insertBefore(editContainer, table.nextSibling);
@@ -288,6 +301,7 @@ function DiffHtmlInner({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlProps
       // Restore original display
       table.style.display = originalTableDisplay;
       btnContainer.style.display = originalBtnDisplay;
+      editContainer.removeEventListener('click', onEditClick);
       editContainer.remove();
     }
   }
@@ -295,6 +309,35 @@ function DiffHtmlInner({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlProps
   useEffect(() => {
     void renderDiff();
   }, [renderDiff]);
+
+  // Single delegated click handler on the diff container — removes itself on cleanup
+  // so per-button addEventListener/removeEventListener is never needed.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const btn = target.closest('[data-diff-action]') as HTMLElement | null;
+      if (!btn) return;
+      const action = btn.getAttribute('data-diff-action');
+      const hunkIndex = parseInt(btn.getAttribute('data-hunk-index') ?? '0', 10);
+      if (action === 'accept' && onAcceptHunk) {
+        onAcceptHunk(hunkIndex);
+      } else if (action === 'reject' && onRejectHunk) {
+        onRejectHunk(hunkIndex);
+      } else if (action === 'edit' && onAcceptHunk) {
+        // Resolve the hunk DOM element and its btnContainer by index
+        const hunks = el.querySelectorAll('.d2h-diff-tbody');
+        const hunk = hunks[hunkIndex];
+        const btnContainer = btn.closest('.diff-hunk-actions') as HTMLDivElement | null;
+        if (hunk && btnContainer) {
+          enterEditMode(hunk, hunkIndex, btnContainer);
+        }
+      }
+    };
+    el.addEventListener('click', onClick);
+    return () => el.removeEventListener('click', onClick);
+  }, [onAcceptHunk, onRejectHunk]);
 
   // Inline raw diff renderer — shown immediately while diff2html loads (no skeleton)
   const rawDiff = (

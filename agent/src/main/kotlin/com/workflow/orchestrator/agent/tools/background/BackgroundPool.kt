@@ -77,12 +77,18 @@ class BackgroundPool(
 
     private val completionListeners = java.util.concurrent.CopyOnWriteArrayList<(BackgroundCompletionEvent) -> Unit>()
 
-    fun addCompletionListener(listener: (BackgroundCompletionEvent) -> Unit) {
+    fun addCompletionListener(listener: (BackgroundCompletionEvent) -> Unit): Disposable {
         completionListeners.add(listener)
+        return Disposable { completionListeners.remove(listener) }
     }
 
-    fun removeCompletionListener(listener: (BackgroundCompletionEvent) -> Unit) {
-        completionListeners.remove(listener)
+    // Test-only helper — package-private; do NOT call from production.
+    internal fun notifyCompletionForTest(event: BackgroundCompletionEvent) {
+        completionListeners.forEach { listener ->
+            runCatching { listener(event) }.onFailure {
+                LOG.warn("[BackgroundPool] test completion listener failed: ${it.message}", it)
+            }
+        }
     }
 
     fun emitCompletion(sessionId: String, event: BackgroundCompletionEvent) {

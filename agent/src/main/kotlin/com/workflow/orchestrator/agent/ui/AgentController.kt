@@ -499,7 +499,7 @@ class AgentController(
      */
     private fun subscribeToBackgroundCompletions() {
         val pool = com.workflow.orchestrator.agent.tools.background.BackgroundPool.getInstance(project)
-        pool.addCompletionListener { event ->
+        Disposer.register(this, pool.addCompletionListener { event ->
             val active = currentSessionId
             if (active == null || event.sessionId != active) {
                 LOG.info("[Background] completion for session=${event.sessionId} — not active (active=$active); skipping UI bubble")
@@ -526,7 +526,7 @@ class AgentController(
             }
             LOG.info("[Background] pushing completion bubble — $message")
             invokeLater { dashboard.appendStatus(message, statusType) }
-        }
+        })
     }
 
     /**

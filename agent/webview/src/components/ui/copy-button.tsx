@@ -5,7 +5,7 @@
  * a successful copy. Supports two sizes and an optional hover-only mode.
  */
 
-import { useState, useCallback, type CSSProperties } from 'react';
+import { useState, useCallback, useEffect, useRef, type CSSProperties } from 'react';
 import { cn } from '@/lib/utils';
 import { kotlinBridge, isJcefEnvironment } from '@/bridge/jcef-bridge';
 
@@ -37,16 +37,22 @@ export function CopyButton({
   label = 'Copy',
 }: CopyButtonProps) {
   const [copied, setCopied] = useState(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (timeoutRef.current != null) clearTimeout(timeoutRef.current);
+  }, []);
 
   const handleCopy = useCallback(() => {
+    if (timeoutRef.current != null) clearTimeout(timeoutRef.current);
     if (isJcefEnvironment()) {
       kotlinBridge.copyToClipboard(text);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      timeoutRef.current = setTimeout(() => setCopied(false), 2000);
     } else {
       navigator.clipboard.writeText(text).then(() => {
         setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
+        timeoutRef.current = setTimeout(() => setCopied(false), 2000);
       });
     }
   }, [text]);

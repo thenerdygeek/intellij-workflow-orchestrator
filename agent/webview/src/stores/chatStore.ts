@@ -148,8 +148,9 @@ function capMessages(messages: UiMessage[]): UiMessage[] {
   const tail = messages.slice(messages.length - keepCount);
   // If the tail's head is the previous SPILL marker (i.e. the marker survived
   // into the kept window), drop it so we don't end up with two markers stacked.
+  const firstMsg = tail[0];
   const cleanedTail =
-    tail.length > 0 && tail[0].say === 'SYSTEM' && tail[0].text === SPILL_MARKER_TEXT
+    tail.length > 0 && firstMsg != null && firstMsg.say === 'SYSTEM' && firstMsg.text === SPILL_MARKER_TEXT
       ? tail.slice(1)
       : tail;
   const marker: UiMessage = {

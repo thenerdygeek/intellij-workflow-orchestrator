@@ -11,6 +11,9 @@ import type {
 import { preloadDiff2Html } from '../components/rich/DiffHtml';
 import { updateChartById } from '../components/rich/chartUtils';
 
+// Gate all debug logging behind this flag — eliminated in production builds.
+const BRIDGE_DEBUG = import.meta.env?.MODE !== 'production';
+
 // Zustand store accessors — set by initBridge() after stores are created
 type StoreAccessors = {
   getChatStore: () => any;
@@ -237,11 +240,11 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
               : q.type === 'multiple' ? 'multi-select'
               : q.type,
         }));
-        console.log(`[bridge] showQuestions: ${questions.length} question(s), types=[${questions.map((q: any) => q.type).join(',')}], options=[${questions.map((q: any) => q.options?.length ?? 0).join(',')}]`);
+        if (BRIDGE_DEBUG) console.log(`[bridge] showQuestions: ${questions.length} question(s), types=[${questions.map((q: any) => q.type).join(',')}], options=[${questions.map((q: any) => q.options?.length ?? 0).join(',')}]`);
         stores?.getChatStore().showQuestions(questions);
         // Verify the store accepted the questions
         const storeQuestions = stores?.getChatStore().questions;
-        console.log(`[bridge] showQuestions: store has ${storeQuestions?.length ?? 'null'} questions after set`);
+        if (BRIDGE_DEBUG) console.log(`[bridge] showQuestions: store has ${storeQuestions?.length ?? 'null'} questions after set`);
         // Round-trip: confirm successful render back to Kotlin
         window._reportInteractiveRender?.(JSON.stringify({ type: 'question', status: 'ok', count: questions.length }));
       } else {
@@ -259,7 +262,7 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
       window._reportInteractiveRender?.(JSON.stringify({ type: 'question', status: 'error', message: String(e) }));
     }
     // Always ensure busy is cleared and steering enabled — the agent is waiting for user input.
-    console.log('[bridge] showQuestions: clearing busy, unlocking input, enabling steering');
+    if (BRIDGE_DEBUG) console.log('[bridge] showQuestions: clearing busy, unlocking input, enabling steering');
     stores?.getChatStore().setBusy(false);
     stores?.getChatStore().setInputLocked(false);
     stores?.getChatStore().setSteeringMode(true);
@@ -577,7 +580,7 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
 // These are registered in initBridge() after stores are ready.
 function registerTaskBridges(): void {
   (window as any)._applyTaskCreate = (raw: string) => {
-    console.log('[Tasks] _applyTaskCreate: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
+    if (BRIDGE_DEBUG) console.log('[Tasks] _applyTaskCreate: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
     try {
       const task: Task = typeof raw === 'string' ? JSON.parse(raw) : raw;
       stores?.getChatStore().applyTaskCreate(task);
@@ -586,7 +589,7 @@ function registerTaskBridges(): void {
     }
   };
   (window as any)._applyTaskUpdate = (raw: string) => {
-    console.log('[Tasks] _applyTaskUpdate: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
+    if (BRIDGE_DEBUG) console.log('[Tasks] _applyTaskUpdate: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
     try {
       const task: Task = typeof raw === 'string' ? JSON.parse(raw) : raw;
       stores?.getChatStore().applyTaskUpdate(task);
@@ -595,7 +598,7 @@ function registerTaskBridges(): void {
     }
   };
   (window as any)._setTasks = (raw: string) => {
-    console.log('[Tasks] _setTasks: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
+    if (BRIDGE_DEBUG) console.log('[Tasks] _setTasks: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
     try {
       const tasks: Task[] = typeof raw === 'string' ? JSON.parse(raw) : raw;
       stores?.getChatStore().setTasks(tasks);
@@ -613,7 +616,7 @@ function callKotlin(fnName: string, ...args: any[]): void {
   if (typeof fn === 'function') {
     fn(...args);
   } else {
-    console.log(`[bridge:dev] ${fnName}(${args.map(a => JSON.stringify(a)).join(', ')})`);
+    if (BRIDGE_DEBUG) console.log(`[bridge:dev] ${fnName}(${args.map(a => JSON.stringify(a)).join(', ')})`);
   }
 }
 
@@ -836,17 +839,17 @@ for (const [name, fn] of Object.entries(bridgeFunctions)) {
 // In initBridge(), these are replaced with direct functions via registerTaskBridges().
 const taskBridgeFunctions: Record<string, (...args: any[]) => void> = {
   _applyTaskCreate: (raw: string) => {
-    console.log('[Tasks-early] _applyTaskCreate: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
+    if (BRIDGE_DEBUG) console.log('[Tasks-early] _applyTaskCreate: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
     try { stores?.getChatStore().applyTaskCreate(typeof raw === 'string' ? JSON.parse(raw) : raw); }
     catch (e) { console.error('[Tasks-early] _applyTaskCreate parse error', e); }
   },
   _applyTaskUpdate: (raw: string) => {
-    console.log('[Tasks-early] _applyTaskUpdate: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
+    if (BRIDGE_DEBUG) console.log('[Tasks-early] _applyTaskUpdate: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
     try { stores?.getChatStore().applyTaskUpdate(typeof raw === 'string' ? JSON.parse(raw) : raw); }
     catch (e) { console.error('[Tasks-early] _applyTaskUpdate parse error', e); }
   },
   _setTasks: (raw: string) => {
-    console.log('[Tasks-early] _setTasks: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
+    if (BRIDGE_DEBUG) console.log('[Tasks-early] _setTasks: typeof=', typeof raw, 'preview=', String(raw).slice(0, 120));
     try { stores?.getChatStore().setTasks(typeof raw === 'string' ? JSON.parse(raw) : raw); }
     catch (e) { console.error('[Tasks-early] _setTasks parse error', e); }
   },
