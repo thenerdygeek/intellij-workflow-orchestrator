@@ -1518,20 +1518,75 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   promoteQueuedSteeringMessages(ids: string[]) {
-    // Promote only the specific messages that were drained by the agent
+    // Promote only the specific messages that were drained by the agent.
+    // Before appending the user messages, we must flush any in-flight streaming
+    // buffer AND drain any still-active tool calls into `messages[]` so the
+    // visual order matches the real-time order: prior agent text and tool calls
+    // first, then the user's steering message at the bottom.
+    //
+    // Without this drain, the user message would land at the end of `messages[]`
+    // while the active tool calls remained in `activeToolCalls` (rendered inside
+    // `ChatFooter` below the message list), producing the inversion bug where
+    // the user's "wait, also do C" appears above tool calls that completed
+    // before it was typed.
     set((state) => {
       const idSet = new Set(ids);
       const toPromote = state.queuedSteeringMessages.filter(m => idSet.has(m.id));
       const remaining = state.queuedSteeringMessages.filter(m => !idSet.has(m.id));
+
+      // 1. Flush in-flight stream into a finalized TEXT message.
+      const streamFlush: UiMessage[] = (state.streamingText != null && state.streamingMsgTs != null)
+        ? [{
+            ts: state.streamingMsgTs,
+            type: 'SAY' as const,
+            say: 'TEXT' as const,
+            text: state.streamingText,
+            partial: false,
+          }]
+        : [];
+
+      // 2. Drain still-active tool calls into TOOL messages (mirrors the
+      //    drain logic at appendToken:676-703 and finalizeToolChain).
+      const streams = state.toolOutputStreams;
+      const toolDrain: UiMessage[] = state.activeToolCalls.size > 0
+        ? Array.from(state.activeToolCalls.values()).map(tc => {
+            const s = streams[tc.id];
+            const output = tc.output || s || undefined;
+            return {
+              ts: uniqueTs(),
+              type: 'SAY' as const,
+              say: 'TOOL' as const,
+              toolCallData: {
+                toolCallId: tc.id,
+                toolName: tc.name,
+                args: tc.args,
+                status: tc.status,
+                result: tc.result,
+                output,
+                durationMs: tc.durationMs,
+                diff: tc.diff,
+                imageRefs: tc.imageRefs,
+              },
+            };
+          })
+        : [];
+
+      // 3. Build the promoted user messages last.
       const newMessages: UiMessage[] = toPromote.map(m => ({
         ts: m.timestamp,
         type: 'SAY' as const,
         say: 'USER_MESSAGE' as const,
         text: m.text,
       }));
+
       return {
-        messages: [...state.messages, ...newMessages],
+        messages: [...state.messages, ...streamFlush, ...toolDrain, ...newMessages],
         queuedSteeringMessages: remaining,
+        streamingText: null,
+        streamingMsgTs: null,
+        activeToolCalls: state.activeToolCalls.size > 0 ? new Map() : state.activeToolCalls,
+        toolOutputStreams: state.activeToolCalls.size > 0 ? {} : state.toolOutputStreams,
+        toolCallOpen: state.activeToolCalls.size > 0 ? {} : state.toolCallOpen,
       };
     });
   },

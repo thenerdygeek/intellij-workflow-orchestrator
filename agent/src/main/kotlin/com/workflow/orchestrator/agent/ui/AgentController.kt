@@ -76,6 +76,81 @@ class AgentController(
 ) : Disposable {
     companion object {
         private val LOG = Logger.getInstance(AgentController::class.java)
+
+        /**
+         * Test-only seam — constructs a minimal controller from a mocked
+         * dashboard and delegates to the **real** [handleSteeringDrained]
+         * implementation. Avoids the parallel-re-implementation drift risk
+         * that a separate `flushStreamBuffer/finalizeToolChain/promote`
+         * sequence in the companion would create: if a future change reorders
+         * those three calls in the production method, every call site
+         * (including this test) picks up the change automatically.
+         */
+        internal fun invokeOnSteeringDrainedForTest(
+            dashboard: AgentDashboardPanel,
+            drainedIds: List<String>,
+        ) {
+            handleSteeringDrainedWithDashboard(dashboard, drainedIds)
+        }
+
+        /**
+         * Test-only seam mirroring the post-approval resume flush. Delegates
+         * to the same private static helper [handleApprovalResumeFlushWithDashboard]
+         * the production `approvalGate` invokes when an approval resolves to
+         * APPROVED / ALLOWED_FOR_SESSION.
+         */
+        internal fun invokeOnApprovalResumeForTest(dashboard: AgentDashboardPanel) {
+            handleApprovalResumeFlushWithDashboard(dashboard)
+        }
+
+        /**
+         * Single source of truth for the steering-drain UI flush sequence.
+         * Both `onSteeringDrained` lambdas in [executeTask] and [resumeTask]
+         * call this — directly, via [handleSteeringDrained] — and the test
+         * exercises it via [invokeOnSteeringDrainedForTest]. Keep this method
+         * the only place the three-call order is defined.
+         *
+         * Bug 2: flush in-flight stream so the next iteration's tokens start
+         * a fresh bubble rather than concatenating onto the pre-drain text.
+         * Bug 1: finalize active tool calls so the promoted user message
+         * lands BELOW them in visual order. The JS-side endStream/finalize
+         * are idempotent so this is safe even on text-only iterations with
+         * no active tools.
+         */
+        private fun handleSteeringDrainedWithDashboard(
+            dashboard: AgentDashboardPanel,
+            drainedIds: List<String>,
+        ) {
+            dashboard.flushStreamBuffer()
+            dashboard.finalizeToolChain()
+            dashboard.promoteQueuedSteeringMessages(drainedIds)
+        }
+
+        /**
+         * Single source of truth for the post-approval resume flush. Called
+         * by [approvalGate] when the result is APPROVED or ALLOWED_FOR_SESSION,
+         * and by the test seam.
+         */
+        private fun handleApprovalResumeFlushWithDashboard(dashboard: AgentDashboardPanel) {
+            dashboard.flushStreamBuffer()
+        }
+    }
+
+    /**
+     * Instance-level wrapper around [handleSteeringDrainedWithDashboard] so
+     * the two `onSteeringDrained` lambdas don't have to plumb [dashboard]
+     * through manually. Test code uses the companion static directly.
+     */
+    private fun handleSteeringDrained(drainedIds: List<String>) {
+        handleSteeringDrainedWithDashboard(dashboard, drainedIds)
+    }
+
+    /**
+     * Instance-level wrapper around [handleApprovalResumeFlushWithDashboard]
+     * for use inside [approvalGate].
+     */
+    private fun handleApprovalResumeFlush() {
+        handleApprovalResumeFlushWithDashboard(dashboard)
     }
 
     private val service = AgentService.getInstance(project)
@@ -1798,9 +1873,7 @@ class AgentController(
             onSessionStarted = { sid -> currentSessionId = sid },
             steeringQueue = steeringQueue,
             onSteeringDrained = { drainedIds ->
-                invokeLater {
-                    dashboard.promoteQueuedSteeringMessages(drainedIds)
-                }
+                invokeLater { handleSteeringDrained(drainedIds) }
             },
             onAwaitingUserInput = ::onLoopAwaitingUserInput,
             uiMessageOverride = uiMessageOverride,
@@ -1971,7 +2044,16 @@ class AgentController(
 
         // Suspend until the user responds (approve/deny/allow for session)
         return try {
-            deferred.await()
+            val result = deferred.await()
+            // Bug 2: flush any tokens that streamed before the approval gate
+            // suspended the loop, so post-approval tokens start a fresh bubble
+            // rather than concatenating onto the pre-gate text. Only the
+            // "proceed" outcomes resume tool execution and subsequent streaming;
+            // DENIED reports the denial and finalizes naturally.
+            if (result == ApprovalResult.APPROVED || result == ApprovalResult.ALLOWED_FOR_SESSION) {
+                invokeLater { handleApprovalResumeFlush() }
+            }
+            result
         } finally {
             // Only clear the slot if we still own it — if a reentrant caller
             // replaced our deferred while we were suspended, leave its entry alone.
@@ -2975,9 +3057,7 @@ class AgentController(
             onSessionStarted = { sid -> currentSessionId = sid },
             steeringQueue = steeringQueue,
             onSteeringDrained = { drainedIds ->
-                invokeLater {
-                    dashboard.promoteQueuedSteeringMessages(drainedIds)
-                }
+                invokeLater { handleSteeringDrained(drainedIds) }
             },
             sessionApprovalStore = sessionApprovalStore,
             onAwaitingUserInput = ::onLoopAwaitingUserInput,
