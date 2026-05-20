@@ -687,13 +687,20 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
      * [WorkflowContextService.focusPr] when a matching open PR exists for [branchName].
      *
      * Concrete flow:
-     * 1. Look up open PRs via [OpenPrLister]. If a PR with `fromBranch == branchName` is
-     *    found, call [WorkflowContextService.focusPr] with the highest-`prId` match (mirrors
+     * 1. Read the currently-focused repo from [WorkflowContextService.state]. When set,
+     *    scopes the PR lookup to that repo via [findMatchingPrForBranch]'s
+     *    `preferredRepoName` parameter so a cross-repo branch-name collision cannot
+     *    silently re-target focus to a foreign repo's PR (the bug fix: previously
+     *    selecting a PR on a non-primary repo would revert to primary when both repos
+     *    had open PRs for the same source branch and primary's prId was higher).
+     * 2. Look up open PRs via [OpenPrLister]. If a PR matches `(branchName, focusedRepo)`,
+     *    call [WorkflowContextService.focusPr] with the highest-`prId` match (mirrors
      *    `findOpenPrMatchingTicket` semantics). The focus cascade fires and
      *    [BuildMonitorService] retargets via its focusBuild subscription (T-B2/B3-a).
-     * 2. If NO matching PR exists (e.g. user selected a branch with no open PR), this is a
-     *    "view a non-PR branch's build" edge case. We log it and skip the focus update —
-     *    ambient polling continues against the previously-focused build, which is correct:
+     * 3. If NO matching PR exists (e.g. user selected a branch with no open PR, or the
+     *    focused repo has no PR for this branch), this is a "view a non-PR branch's
+     *    build" edge case. We log it and skip the focus update — ambient polling
+     *    continues against the previously-focused build, which is correct:
      *    // local override: branch has no open PR — skip focusPr; ambient polling unchanged.
      *
      * Note: this is a suspend function so the OpenPrLister call can be made on IO without
@@ -702,14 +709,15 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
      */
     private suspend fun reroutableFocusPr(branchName: String) {
         val openPrs = OpenPrLister.getInstance()?.listOpenPrs(project) ?: emptyList()
-        val matchedPr = findMatchingPrForBranch(openPrs, branchName)
+        val focusedRepoName = workflowContextService.state.value.focusPr?.repoName
+        val matchedPr = findMatchingPrForBranch(openPrs, branchName, focusedRepoName)
 
         if (matchedPr != null) {
-            log.info("[Build:Dashboard] reroutableFocusPr: branch '$branchName' → PR #${matchedPr.prId} (${matchedPr.repoName}) — calling focusPr")
+            log.info("[Build:Dashboard] reroutableFocusPr: branch '$branchName' (scope=${focusedRepoName ?: "<any>"}) → PR #${matchedPr.prId} (${matchedPr.repoName}) — calling focusPr")
             workflowContextService.focusPr(matchedPr)
         } else {
-            // local override: branch has no open PR — skip focusPr; ambient polling unchanged.
-            log.info("[Build:Dashboard] reroutableFocusPr: branch '$branchName' has no open PR — focus unchanged; ambient polling continues on previously-focused build")
+            // local override: branch has no open PR in scope — skip focusPr; ambient polling unchanged.
+            log.info("[Build:Dashboard] reroutableFocusPr: branch '$branchName' (scope=${focusedRepoName ?: "<any>"}) has no open PR — focus unchanged; ambient polling continues on previously-focused build")
         }
     }
 
@@ -1286,6 +1294,16 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
          * Given a list of open PRs and a branch name, returns the PR with the highest
          * `prId` whose `fromBranch` matches [branchName], or `null` when no match exists.
          *
+         * When [preferredRepoName] is non-null, the lookup is strictly scoped to that
+         * repo: PRs from other repos are excluded even if they share the same branch
+         * name and have a higher prId. Returns `null` if no PR in [preferredRepoName]
+         * matches [branchName] — the caller must NOT silently switch focus to a foreign
+         * repo's PR. This is the fix for the "Build tab reverts to primary after PR
+         * selection on non-primary repo" bug: when [BuildDashboardPanel.reroutableFocusPr]
+         * re-runs the lookup after the focus cascade, two repos sharing the same source
+         * branch name would otherwise resolve to whichever has the higher prId (usually
+         * the older/primary repo), silently overwriting the user's choice.
+         *
          * Extracted as a `companion object` function so it can be unit-tested without
          * IntelliJ infrastructure. Mirrors the `findOpenPrMatchingTicket` semantics
          * (prefer highest prId when multiple PRs share the same fromBranch — rare but
@@ -1297,8 +1315,14 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         fun findMatchingPrForBranch(
             openPrs: List<com.workflow.orchestrator.core.model.workflow.PrRef>,
             branchName: String,
+            preferredRepoName: String? = null,
         ): com.workflow.orchestrator.core.model.workflow.PrRef? =
-            openPrs.filter { it.fromBranch == branchName }.maxByOrNull { it.prId }
+            openPrs
+                .filter {
+                    it.fromBranch == branchName &&
+                        (preferredRepoName == null || it.repoName == preferredRepoName)
+                }
+                .maxByOrNull { it.prId }
     }
 
     /**

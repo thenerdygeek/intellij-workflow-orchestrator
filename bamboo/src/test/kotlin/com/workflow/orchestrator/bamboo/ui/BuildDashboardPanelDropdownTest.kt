@@ -125,19 +125,79 @@ class BuildDashboardPanelDropdownTest {
     }
 
     // ---------------------------------------------------------------------------------
-    // Scenario 6 — single PR, different repo: fromBranch determines match, repoName is irrelevant
+    // Scenario 6 — no preferred repo: fromBranch alone selects, highest prId wins
     // ---------------------------------------------------------------------------------
 
     @Test
-    fun `fromBranch match ignores repoName — branch is the selector key`() {
+    fun `fromBranch match with no preferred repo — branch is the selector key`() {
         val prs = listOf(
             pr(7, "feature/api", repo = "repo-a"),
             pr(8, "feature/api", repo = "repo-b"),
         )
-        // Both match "feature/api"; highest prId (8) must win regardless of repo
+        // No preferredRepoName: both match "feature/api"; highest prId (8) wins regardless of repo.
         val result = BuildDashboardPanel.findMatchingPrForBranch(prs, "feature/api")
         assertEquals(8, result?.prId)
         assertEquals("repo-b", result?.repoName)
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Scenario 7 — preferred repo scopes the lookup: cross-repo branch-name collision
+    // must NOT revert focus to a foreign repo's PR. Regression test for the
+    // "Build tab reverts to primary after PR selection on non-primary repo" bug.
+    // ---------------------------------------------------------------------------------
+
+    @Test
+    fun `preferredRepoName scopes lookup — does not reroute to foreign repo with same branch`() {
+        val prs = listOf(
+            pr(99, "feature/api", repo = "primary-repo"),
+            pr(42, "feature/api", repo = "secondary-repo"),
+        )
+        // User focused secondary-repo's PR (id 42). Reroute lookup must stay in secondary-repo
+        // even though primary-repo has a higher prId for the same branch.
+        val result = BuildDashboardPanel.findMatchingPrForBranch(
+            prs,
+            branchName = "feature/api",
+            preferredRepoName = "secondary-repo",
+        )
+        assertEquals(42, result?.prId,
+            "When preferredRepoName is set, must return that repo's PR even when a foreign " +
+                "repo's PR has a higher prId for the same branch")
+        assertEquals("secondary-repo", result?.repoName)
+    }
+
+    @Test
+    fun `preferredRepoName with no PR in that repo — returns null, does not fall through`() {
+        val prs = listOf(
+            pr(99, "feature/api", repo = "primary-repo"),
+        )
+        // User focused secondary-repo, but it has no PR for this branch. Strict scoping
+        // returns null rather than silently switching to primary-repo's PR — the previously
+        // focused PR remains untouched.
+        val result = BuildDashboardPanel.findMatchingPrForBranch(
+            prs,
+            branchName = "feature/api",
+            preferredRepoName = "secondary-repo",
+        )
+        assertNull(result,
+            "When preferredRepoName has no matching PR, must return null — must NOT fall back " +
+                "to a foreign repo's PR (that would silently move focus to the wrong repo)")
+    }
+
+    @Test
+    fun `preferredRepoName with multiple PRs in that repo — highest prId wins within scope`() {
+        val prs = listOf(
+            pr(5, "feature/retried", repo = "secondary-repo"),
+            pr(99, "feature/retried", repo = "primary-repo"),
+            pr(42, "feature/retried", repo = "secondary-repo"),
+        )
+        val result = BuildDashboardPanel.findMatchingPrForBranch(
+            prs,
+            branchName = "feature/retried",
+            preferredRepoName = "secondary-repo",
+        )
+        assertEquals(42, result?.prId,
+            "Within the preferred-repo scope, highest prId must win (primary-repo's 99 is ignored)")
+        assertEquals("secondary-repo", result?.repoName)
     }
 
     // ---------------------------------------------------------------------------------
