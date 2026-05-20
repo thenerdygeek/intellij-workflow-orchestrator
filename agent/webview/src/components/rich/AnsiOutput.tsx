@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { AnsiUp } from 'ansi_up';
 import { CopyButton } from '@/components/ui/copy-button';
 import { highlightPlainText } from '@/lib/terminal-highlight';
@@ -17,7 +17,7 @@ interface AnsiOutputProps {
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1B\[[0-9;]*[a-zA-Z]/g;
 
-export function AnsiOutput({ text }: AnsiOutputProps) {
+function AnsiOutputInner({ text }: AnsiOutputProps) {
   const strippedText = useMemo(() => text.replace(ANSI_RE, ''), [text]);
   const html = useMemo(
     () => strippedText === text ? highlightPlainText(text) : ansiUp.ansi_to_html(text),
@@ -63,3 +63,7 @@ export function AnsiOutput({ text }: AnsiOutputProps) {
     </div>
   );
 }
+
+// Memoize so a streaming token append on the parent message doesn't re-run
+// the ansi-up conversion + DOM diff for the entire terminal block.
+export const AnsiOutput = memo(AnsiOutputInner);

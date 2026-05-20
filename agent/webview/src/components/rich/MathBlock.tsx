@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { memo, useEffect, useRef, useState, useCallback } from 'react';
 import { RichBlock } from './RichBlock';
 
 // ── Singleton lazy-load for KaTeX ──
@@ -29,7 +29,7 @@ interface MathBlockProps {
   displayMode?: boolean;
 }
 
-export function MathBlock({ latex, displayMode = true }: MathBlockProps) {
+function MathBlockInner({ latex, displayMode = true }: MathBlockProps) {
   const [html, setHtml] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -116,3 +116,6 @@ export function MathBlock({ latex, displayMode = true }: MathBlockProps) {
     </RichBlock>
   );
 }
+
+// Memoize: KaTeX rendering is expensive and the latex string is stable.
+export const MathBlock = memo(MathBlockInner);

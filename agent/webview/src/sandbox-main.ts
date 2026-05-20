@@ -989,8 +989,11 @@ function renderComponent(source: string, scope: Record<string, unknown>) {
 }
 
 // ── Message listener ──
+// Named handler + explicit teardown on `beforeunload` — every artifact iframe
+// would otherwise leak this listener (and its closures) for the lifetime of
+// the JCEF process. See sandbox-lifecycle.test.ts for the contract.
 
-window.addEventListener('message', (e: MessageEvent) => {
+function handleParentMessage(e: MessageEvent) {
   const data = e.data
   if (!data || typeof data !== 'object' || typeof data.type !== 'string') return
 
@@ -1004,7 +1007,7 @@ window.addEventListener('message', (e: MessageEvent) => {
       renderComponent(data.source as string, (data.scope as Record<string, unknown>) || {})
       break
 
-    case 'theme':
+    case 'theme': {
       bridgeState.isDark = Boolean(data.isDark)
       bridgeState.colors = (data.colors as Record<string, string>) || {}
       bridgeState.projectName = (data.projectName as string) || ''
@@ -1019,16 +1022,30 @@ window.addEventListener('message', (e: MessageEvent) => {
       // Toggle Tailwind dark mode class
       document.documentElement.classList.toggle('dark', bridgeState.isDark)
       break
+    }
   }
-})
+}
+
+window.addEventListener('message', handleParentMessage)
 
 // ── Height observer ──
 
 const rootEl = document.getElementById('root')
+let heightObserver: ResizeObserver | null = null
 if (rootEl) {
-  const resizeObserver = new ResizeObserver(() => reportHeight())
-  resizeObserver.observe(rootEl)
+  heightObserver = new ResizeObserver(() => reportHeight())
+  heightObserver.observe(rootEl)
 }
+
+// ── Cleanup on iframe teardown ──
+// The sandbox iframe is destroyed when the parent React tree unmounts the
+// hosting ArtifactRenderer. JCEF fires `beforeunload` in that path; without
+// this teardown, the module-scope listener + observer would leak.
+window.addEventListener('beforeunload', () => {
+  window.removeEventListener('message', handleParentMessage)
+  heightObserver?.disconnect()
+  heightObserver = null
+})
 
 // ── Initialize ──
 

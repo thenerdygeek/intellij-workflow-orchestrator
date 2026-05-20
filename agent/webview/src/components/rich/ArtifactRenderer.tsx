@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { memo, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { RichBlock } from './RichBlock';
 import { useThemeStore } from '@/stores/themeStore';
 import { kotlinBridge } from '@/bridge/jcef-bridge';
@@ -31,7 +31,7 @@ interface ArtifactRendererProps {
 
 // ── Component ──
 
-export function ArtifactRenderer({ source, title, renderId }: ArtifactRendererProps) {
+function ArtifactRendererInner({ source, title, renderId }: ArtifactRendererProps) {
   const isDark = useThemeStore((s) => s.isDark);
   const cssVariables = useThemeStore((s) => s.cssVariables);
 
@@ -276,3 +276,7 @@ export function ArtifactRenderer({ source, title, renderId }: ArtifactRendererPr
     </RichBlock>
   );
 }
+
+// Memoize: the sandbox iframe lifecycle is expensive — only rerender when
+// source/title/renderId actually change.
+export const ArtifactRenderer = memo(ArtifactRendererInner);

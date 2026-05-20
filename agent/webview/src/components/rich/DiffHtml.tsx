@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { memo, useEffect, useRef, useState, useCallback } from 'react';
 import { RichBlock } from './RichBlock';
 
 // ── Singleton lazy-load for diff2html ──
@@ -93,7 +93,7 @@ interface DiffHtmlProps {
   onRejectHunk?: (hunkIndex: number) => void;
 }
 
-export function DiffHtml({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlProps) {
+function DiffHtmlInner({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // Start loading immediately (not just in useEffect) so JCEF has max time to fetch the chunk.
   // If the module is already cached from a preloadDiff2Html() call, this is a no-op.
@@ -384,3 +384,7 @@ export function DiffHtml({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlPro
     </RichBlock>
   );
 }
+
+// Memoize: diff2html parsing + DOM injection is expensive, and the diff source
+// is immutable once a tool call completes.
+export const DiffHtml = memo(DiffHtmlInner);

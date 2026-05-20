@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { memo, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { RichBlock } from './RichBlock';
 import { PlayControls } from './PlayControls';
 import { useThemeStore } from '@/stores/themeStore';
@@ -85,7 +85,7 @@ interface MermaidDiagramProps {
   source: string;
 }
 
-export function MermaidDiagram({ source }: MermaidDiagramProps) {
+function MermaidDiagramInner({ source }: MermaidDiagramProps) {
   const isDark = useThemeStore((s) => s.isDark);
   const [svgContent, setSvgContent] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -235,3 +235,9 @@ export function MermaidDiagram({ source }: MermaidDiagramProps) {
     </RichBlock>
   );
 }
+
+// React.memo skips re-renders when props (just `source` here) are
+// shallow-equal — prevents the mermaid SVG render pipeline from re-running
+// every time the parent message re-renders for an unrelated reason
+// (streaming token append, theme toggle elsewhere, etc.).
+export const MermaidDiagram = memo(MermaidDiagramInner);

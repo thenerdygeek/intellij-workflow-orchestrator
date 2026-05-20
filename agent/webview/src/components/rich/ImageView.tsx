@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { RichBlock } from './RichBlock';
 import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog';
 import { ImageIcon } from 'lucide-react';
@@ -13,7 +13,7 @@ interface ImageViewProps {
   imageSource: string;
 }
 
-export function ImageView({ imageSource }: ImageViewProps) {
+function ImageViewInner({ imageSource }: ImageViewProps) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
 
@@ -87,3 +87,7 @@ export function ImageView({ imageSource }: ImageViewProps) {
     </RichBlock>
   );
 }
+
+// Memoize: image src is immutable; the only state change is the load/error
+// flags, which already trigger local re-renders.
+export const ImageView = memo(ImageViewInner);

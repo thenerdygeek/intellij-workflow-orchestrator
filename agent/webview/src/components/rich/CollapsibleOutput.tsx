@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { memo, useState, useMemo } from 'react';
 import { AnsiUp } from 'ansi_up';
 import { RichBlock } from './RichBlock';
 import {
@@ -135,7 +135,7 @@ function SectionBlock({
 
 // ── Main component ──
 
-export function CollapsibleOutput({ outputSource }: CollapsibleOutputProps) {
+function CollapsibleOutputInner({ outputSource }: CollapsibleOutputProps) {
   const sections = useMemo(() => parseSections(outputSource), [outputSource]);
 
   // No sections (no ### headers) — render as single scrollable block
@@ -167,3 +167,7 @@ export function CollapsibleOutput({ outputSource }: CollapsibleOutputProps) {
     </RichBlock>
   );
 }
+
+// Memoize: re-parsing sections + re-rendering the collapsible tree is expensive
+// for long tool-output blocks; props are stable in steady state.
+export const CollapsibleOutput = memo(CollapsibleOutputInner);

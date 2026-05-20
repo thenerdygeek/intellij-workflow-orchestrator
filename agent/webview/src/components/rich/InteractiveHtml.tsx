@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useId } from 'react';
+import { memo, useEffect, useMemo, useRef, useId } from 'react';
 import { RichBlock } from './RichBlock';
 import { useThemeStore } from '@/stores/themeStore';
 
@@ -9,7 +9,7 @@ interface InteractiveHtmlProps {
   height?: number;
 }
 
-export function InteractiveHtml({ htmlContent, height = 400 }: InteractiveHtmlProps) {
+function InteractiveHtmlInner({ htmlContent, height = 400 }: InteractiveHtmlProps) {
   const cssVariables = useThemeStore((s) => s.cssVariables);
   const isDark = useThemeStore((s) => s.isDark);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -86,6 +86,10 @@ ${htmlContent}
     </RichBlock>
   );
 }
+
+// Memoize: re-running useMemo's srcdoc rebuild on every parent re-render
+// would force the sandboxed iframe to reload its document.
+export const InteractiveHtml = memo(InteractiveHtmlInner);
 
 // ── Global API for Kotlin to send data into iframes ──
 

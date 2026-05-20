@@ -302,7 +302,11 @@ export type UiSay =
   | 'ARTIFACT_RESULT' | 'SUBAGENT_STARTED' | 'SUBAGENT_PROGRESS'
   | 'SUBAGENT_COMPLETED' | 'STEERING_RECEIVED' | 'CONTEXT_COMPRESSED'
   | 'MEMORY_SAVED' | 'PLAN_APPROVED'
-  | 'COMPACTION_MARKER';
+  | 'COMPACTION_MARKER'
+  // UI-only spill marker inserted by chatStore.capMessages when the
+  // messages[] hard cap evicts an older prefix (see MESSAGES_HARD_CAP).
+  // Never emitted by Kotlin; never persisted to api_conversation_history.json.
+  | 'SYSTEM';
 
 export interface UiMessageCompactionMarker {
   tokensBefore: number;

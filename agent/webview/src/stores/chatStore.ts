@@ -119,6 +119,48 @@ function uniqueTs(): number {
   return _lastTs;
 }
 
+// ── messages[] hard cap (2026-05-20 P0 perf audit) ──
+// The UI keeps at most MESSAGES_HARD_CAP entries to bound heap growth on
+// multi-hour sessions; the agent itself still sees the full conversation
+// through ContextManager — this cap is UI-only. When the cap is exceeded,
+// the evicted prefix is replaced by a single SYSTEM "spill marker" so the
+// user knows older messages were archived (and can scroll up to see it).
+//
+// Contract: the SPILL marker counts AGAINST the cap, not in addition to it.
+// On first cap and every successive cap the total array length is exactly
+// MESSAGES_HARD_CAP (marker + MESSAGES_HARD_CAP - 1 retained entries). The
+// previous helper produced cap + 1 on first cap and cap on re-cap; that
+// off-by-one was invisible to the first test but a latent footgun for any
+// caller that ever indexed against an exact size. Exported so tests can
+// refer to the named constant rather than repeating the literal.
+export const MESSAGES_HARD_CAP = 1000;
+const SPILL_MARKER_TEXT =
+  'Older messages were archived to keep the chat responsive. ' +
+  'The agent still sees the full conversation in its context.';
+
+function capMessages(messages: UiMessage[]): UiMessage[] {
+  if (messages.length <= MESSAGES_HARD_CAP) return messages;
+  // Reserve 1 slot for the SPILL marker; keep the most-recent
+  // MESSAGES_HARD_CAP - 1 entries. This produces the same final array size
+  // on first cap and every subsequent cap — otherwise the hasMarker /
+  // no-marker paths drift by 1.
+  const keepCount = MESSAGES_HARD_CAP - 1;
+  const tail = messages.slice(messages.length - keepCount);
+  // If the tail's head is the previous SPILL marker (i.e. the marker survived
+  // into the kept window), drop it so we don't end up with two markers stacked.
+  const cleanedTail =
+    tail.length > 0 && tail[0].say === 'SYSTEM' && tail[0].text === SPILL_MARKER_TEXT
+      ? tail.slice(1)
+      : tail;
+  const marker: UiMessage = {
+    ts: uniqueTs(),
+    type: 'SAY',
+    say: 'SYSTEM',
+    text: SPILL_MARKER_TEXT,
+  };
+  return [marker, ...cleanedTail];
+}
+
 // ── Background process snapshot ──
 export interface BackgroundProcessSnapshot {
   bgId: string;
@@ -635,7 +677,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ...(mentions && mentions.length > 0 ? { mentions } : {}),
       ...(attachments && attachments.length > 0 ? { attachments } : {}),
     };
-    set(state => ({ messages: [...state.messages, msg], nextStepHint: null }));
+    set(state => ({ messages: capMessages([...state.messages, msg]), nextStepHint: null }));
   },
 
   addPlanApprovedMessage(planMarkdown: string) {
@@ -646,7 +688,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       text: 'Implementation plan approved',
       planApprovalData: { planMarkdown },
     };
-    set(state => ({ messages: [...state.messages, msg] }));
+    set(state => ({ messages: capMessages([...state.messages, msg]) }));
   },
 
   addAgentText(text: string) {
@@ -656,7 +698,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         : [];
       const msg: UiMessage = { ts: uniqueTs(), type: 'SAY', say: 'TEXT', text };
       return {
-        messages: [...state.messages, ...flushed, msg],
+        messages: capMessages([...state.messages, ...flushed, msg]),
         streamingText: null,
         streamingMsgTs: null,
         streamingThinkingText: null,
@@ -728,7 +770,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         partial: false,
       };
       return {
-        messages: [...state.messages, finalized],
+        messages: capMessages([...state.messages, finalized]),
         streamingText: null,
         streamingMsgTs: null,
         streamingThinkingText: null,
@@ -779,7 +821,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           partial: false,
         };
         return {
-          messages: [...state.messages, finalized],
+          messages: capMessages([...state.messages, finalized]),
           streamingText: null,
           streamingMsgTs: null,
           activeToolCalls: newMap,
@@ -852,7 +894,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         status: 'COMPLETED',
       },
     };
-    set(state => ({ messages: [...state.messages, msg] }));
+    set(state => ({ messages: capMessages([...state.messages, msg]) }));
   },
 
   addDiffExplanation(title: string, diffSource: string) {
@@ -862,7 +904,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       say: 'TEXT',
       text: JSON.stringify({ type: 'diff-explanation', title, diffSource }),
     };
-    set(state => ({ messages: [...state.messages, msg] }));
+    set(state => ({ messages: capMessages([...state.messages, msg]) }));
   },
 
   addCompletionCard(data: CompletionData) {
@@ -873,7 +915,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const msg: UiMessage = { ts: uniqueTs(), type: 'ASK', ask: 'COMPLETION_RESULT', completionData: data };
       const hint = data.nextStep && data.nextStep.trim().length > 0 ? data.nextStep.trim() : null;
       return {
-        messages: [...state.messages, ...flushed, msg],
+        messages: capMessages([...state.messages, ...flushed, msg]),
         streamingText: null,
         streamingMsgTs: null,
         streamingThinkingText: null,
@@ -896,7 +938,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       say: type === 'ERROR' ? 'ERROR' : 'STATUS',
       text: message,
     };
-    set(state => ({ messages: [...state.messages, msg] }));
+    set(state => ({ messages: capMessages([...state.messages, msg]) }));
   },
 
   addThinking(text: string) {
@@ -906,7 +948,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       say: 'REASONING',
       text,
     };
-    set(state => ({ messages: [...state.messages, msg] }));
+    set(state => ({ messages: capMessages([...state.messages, msg]) }));
   },
 
   /**
@@ -949,7 +991,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...(durationMs > 0 && { thinkingDurationMs: durationMs }),
       };
       return {
-        messages: [...state.messages, finalized],
+        messages: capMessages([...state.messages, finalized]),
         streamingThinkingText: null,
         streamingThinkingTs: null,
       };
@@ -988,7 +1030,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
     });
     set({
-      messages: [...state.messages, ...toolMessages],
+      messages: capMessages([...state.messages, ...toolMessages]),
       activeToolCalls: new Map(),
       toolOutputStreams: {},
       toolCallOpen: {},
@@ -1115,7 +1157,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       };
       return {
-        messages: [...state.messages, msg],
+        messages: capMessages([...state.messages, msg]),
         questions: null,
         questionSummary: null,
         activeQuestionIndex: 0,
@@ -1180,7 +1222,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       say: 'COMPACTION_MARKER',
       compactionMarker: payload,
     };
-    set((state) => ({ messages: [...state.messages, marker] }));
+    set((state) => ({ messages: capMessages([...state.messages, marker]) }));
   },
 
   setSteeringMode(enabled: boolean) {
@@ -1241,7 +1283,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       say: 'TEXT',
       text: JSON.stringify({ type: 'chart', config: chartConfigJson }),
     };
-    set(state => ({ messages: [...state.messages, msg] }));
+    set(state => ({ messages: capMessages([...state.messages, msg]) }));
   },
 
   addAnsiOutput(text: string) {
@@ -1251,7 +1293,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       say: 'TEXT',
       text: JSON.stringify({ type: 'ansi', text }),
     };
-    set(state => ({ messages: [...state.messages, msg] }));
+    set(state => ({ messages: capMessages([...state.messages, msg]) }));
   },
 
   addTabs(tabsJson: string) {
@@ -1261,7 +1303,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       say: 'TEXT',
       text: JSON.stringify({ type: 'tabs', data: tabsJson }),
     };
-    set(state => ({ messages: [...state.messages, msg] }));
+    set(state => ({ messages: capMessages([...state.messages, msg]) }));
   },
 
   addTimeline(itemsJson: string) {
@@ -1271,7 +1313,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       say: 'TEXT',
       text: JSON.stringify({ type: 'timeline', data: itemsJson }),
     };
-    set(state => ({ messages: [...state.messages, msg] }));
+    set(state => ({ messages: capMessages([...state.messages, msg]) }));
   },
 
   addProgressBar(percent: number, type: string) {
@@ -1281,7 +1323,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       say: 'TEXT',
       text: JSON.stringify({ type: 'progressBar', percent, barType: type }),
     };
-    set(state => ({ messages: [...state.messages, msg] }));
+    set(state => ({ messages: capMessages([...state.messages, msg]) }));
   },
 
   addJiraCard(cardJson: string) {
@@ -1291,7 +1333,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       say: 'TEXT',
       text: JSON.stringify({ type: 'jiraCard', data: cardJson }),
     };
-    set(state => ({ messages: [...state.messages, msg] }));
+    set(state => ({ messages: capMessages([...state.messages, msg]) }));
   },
 
   addSonarBadge(badgeJson: string) {
@@ -1301,7 +1343,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       say: 'TEXT',
       text: JSON.stringify({ type: 'sonarBadge', data: badgeJson }),
     };
-    set(state => ({ messages: [...state.messages, msg] }));
+    set(state => ({ messages: capMessages([...state.messages, msg]) }));
   },
 
   showSkeleton() {
@@ -1400,7 +1442,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...(hadStream ? { streamingText: null, streamingMsgTs: null } : {}),
         ...(state.streamingThinkingTs != null ? { streamingThinkingText: null, streamingThinkingTs: null } : {}),
         ...(tools.length > 0 ? { activeToolCalls: new Map(), toolOutputStreams: {}, toolCallOpen: {} } : {}),
-        ...(newMessages.length !== state.messages.length ? { messages: newMessages } : {}),
+        ...(newMessages.length !== state.messages.length ? { messages: capMessages(newMessages) } : {}),
       };
     });
   },
@@ -1580,7 +1622,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }));
 
       return {
-        messages: [...state.messages, ...streamFlush, ...toolDrain, ...newMessages],
+        messages: capMessages([...state.messages, ...streamFlush, ...toolDrain, ...newMessages]),
         queuedSteeringMessages: remaining,
         streamingText: null,
         streamingMsgTs: null,
@@ -1615,7 +1657,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         artifactId: renderId,
       };
       set((state) => ({
-        messages: [...state.messages, msg],
+        messages: capMessages([...state.messages, msg]),
       }));
     } catch (e) {
       console.warn('[chatStore] addArtifact: malformed payload', e);
@@ -1658,7 +1700,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
 
       return {
-        messages: [...state.messages, msg],
+        messages: capMessages([...state.messages, msg]),
       };
     });
   },
@@ -2056,7 +2098,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     set({
-      messages: withSubagentUpgrade,
+      // capMessages on the hydration entry point so loading a multi-hour
+      // session that already contains >1000 messages doesn't reintroduce the
+      // long-conversation OOM trajectory that the live append paths now
+      // guard against. UI-only — the agent's ContextManager still sees the
+      // full persisted api_conversation_history.json.
+      messages: capMessages(withSubagentUpgrade),
       streamingText: null,
       streamingMsgTs: null,
       streamingThinkingText: null,

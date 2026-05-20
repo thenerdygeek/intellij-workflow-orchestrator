@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { memo, useState, useMemo } from 'react';
 import { RichBlock } from './RichBlock';
 import { cn } from '@/lib/utils';
 import { Search, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
@@ -14,7 +14,7 @@ interface DataTableProps {
   tableSource: string;
 }
 
-export function DataTable({ tableSource }: DataTableProps) {
+function DataTableInner({ tableSource }: DataTableProps) {
   const [sortCol, setSortCol] = useState<number | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [search, setSearch] = useState('');
@@ -158,3 +158,7 @@ export function DataTable({ tableSource }: DataTableProps) {
     </RichBlock>
   );
 }
+
+// Memoize: re-parsing JSON and rebuilding the row index on every parent
+// re-render is wasted work; props are stable in steady state.
+export const DataTable = memo(DataTableInner);

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { memo, useEffect, useRef, useState, useCallback } from 'react';
 import { RichBlock } from './RichBlock';
 import { useThemeStore } from '@/stores/themeStore';
 import { chartRegistry, updateChartById, removeChartFromRegistry, deepMergeChartConfig } from './chartUtils';
@@ -74,7 +74,7 @@ interface ChartViewProps {
   source: string;
 }
 
-export function ChartView({ source }: ChartViewProps) {
+function ChartViewInner({ source }: ChartViewProps) {
   const isDark = useThemeStore((s) => s.isDark);
   const cssVariables = useThemeStore((s) => s.cssVariables);
   const [isReady, setIsReady] = useState(() => chartResolved !== null);
@@ -270,6 +270,10 @@ export function ChartView({ source }: ChartViewProps) {
     </RichBlock>
   );
 }
+
+// Memoize so unrelated parent re-renders don't re-trigger the chart.js
+// pipeline. Props are a small string + callbacks — shallow-equal in steady state.
+export const ChartView = memo(ChartViewInner);
 
 // ── Helpers ──
 

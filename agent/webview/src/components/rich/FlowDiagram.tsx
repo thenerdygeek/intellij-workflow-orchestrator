@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { memo, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { RichBlock } from './RichBlock';
 import { PlayControls } from './PlayControls';
 import { useThemeStore } from '@/stores/themeStore';
@@ -342,7 +342,7 @@ interface FlowDiagramProps {
   source: string;
 }
 
-export function FlowDiagram({ source }: FlowDiagramProps) {
+function FlowDiagramInner({ source }: FlowDiagramProps) {
   const isDark = useThemeStore((s) => s.isDark);
   const getVar = useThemeStore((s) => s.getVar);
   const [layout, setLayout] = useState<{
@@ -757,3 +757,6 @@ export function FlowDiagram({ source }: FlowDiagramProps) {
     </RichBlock>
   );
 }
+
+// Memoize to skip the dagre layout pipeline on parent re-renders with stable props.
+export const FlowDiagram = memo(FlowDiagramInner);

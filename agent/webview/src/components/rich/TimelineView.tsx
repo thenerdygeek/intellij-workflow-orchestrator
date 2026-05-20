@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { RichBlock } from './RichBlock';
 
 interface TimelineEvent {
@@ -24,7 +24,7 @@ const STATUS_COLORS: Record<string, string> = {
   error: 'var(--error)',
 };
 
-export function TimelineView({ timelineSource }: TimelineViewProps) {
+function TimelineViewInner({ timelineSource }: TimelineViewProps) {
   const data = useMemo<TimelineData | null>(() => {
     try { return JSON.parse(timelineSource); } catch { return null; }
   }, [timelineSource]);
@@ -96,3 +96,6 @@ export function TimelineView({ timelineSource }: TimelineViewProps) {
     </RichBlock>
   );
 }
+
+// Memoize: timeline data is parsed from a stable JSON string.
+export const TimelineView = memo(TimelineViewInner);

@@ -37,6 +37,7 @@ export default defineConfig(({ mode }) => ({
           // these rules, large libraries like d3 would be duplicated into
           // both bundles since Vite's default shared-chunk heuristic is
           // conservative with dynamic-lookup scoped imports.
+          if (id.includes('shiki')) return 'shiki'
           if (id.includes('mermaid') || id.includes('dagre')) return 'mermaid'
           if (id.includes('katex')) return 'katex'
           if (id.includes('chart.js')) return 'chartjs'

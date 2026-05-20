@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import type { UiMessage, Mention, Question } from '@/bridge/types';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import {
@@ -139,6 +139,14 @@ export const AgentMessage = memo(function AgentMessage({
   const isUser = message.say === 'USER_MESSAGE';
   const isFinalized = !isStreaming && !isUser;
 
+  // Memoize the content string so the scanner effect's deps key off a stable
+  // primitive value, not the parent's UiMessage object reference. When a
+  // parent re-renders with a fresh `message` object but the same `text`,
+  // `scanContent` keeps its identity and the effect doesn't re-fire. When
+  // content actually changes (e.g., resumed-session edit), the effect re-runs
+  // and re-scans the new DOM.
+  const scanContent = useMemo(() => message.text ?? '', [message.text]);
+
   useEffect(() => {
     if (!isFinalized) return;
     const node = contentRef.current;
@@ -160,7 +168,7 @@ export const AgentMessage = memo(function AgentMessage({
       void scanAndSymbolLinkify(node);
     });
     return () => cancelAnimationFrame(handle);
-  }, [isFinalized]);
+  }, [isFinalized, scanContent]);
 
   if (message.say === 'PLAN_APPROVED') {
     return <PlanApprovedBubble message={message} />;
