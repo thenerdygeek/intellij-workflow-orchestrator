@@ -251,7 +251,10 @@ class AgentDebugController internal constructor(
                 override fun isObsolete(): Boolean = false
             })
         }
-        return result ?: partial.get()
+        // On timeout (result == null): surface partial frames if any were collected,
+        // otherwise return null so callers can distinguish "timed out with no data"
+        // from "session has no frames" (the emptyList() early-return above).
+        return result ?: partial.get().ifEmpty { null }
     }
 
     /**

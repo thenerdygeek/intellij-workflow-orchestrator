@@ -69,7 +69,10 @@ describe('PlanDocumentViewer', () => {
 
   it('displays existing comments inline', () => {
     const comments = [
-      { lineNumber: 3, text: 'Should also handle empty strings', lineContent: 'val customer = order.customer' }
+      // lineNumber 2 is "Fix null pointer..." — the first non-heading content block.
+      // Line 3 in the markdown is a blank line that groupLinesIntoBlocks skips, so it
+      // never becomes a block and the comment would never render there.
+      { lineNumber: 2, text: 'Should also handle empty strings', lineContent: 'Fix null pointer exception in PaymentService.processRefund()' }
     ];
     render(<PlanDocumentViewer markdown={sampleMarkdown} comments={comments} />);
     expect(screen.getByText(/Should also handle empty strings/)).toBeInTheDocument();

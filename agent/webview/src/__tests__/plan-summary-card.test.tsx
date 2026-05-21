@@ -90,14 +90,16 @@ describe('PlanSummaryCard', () => {
     expect(screen.getByText('View Implementation Plan')).toBeInTheDocument();
   });
 
-  it('shows markdown preview when plan has markdown field', () => {
+  it('shows markdown preview when plan has markdown field', async () => {
     const planWithMarkdown: Plan = {
       ...mockPlan,
       markdown: '## Goal\nFix the NPE in PaymentService\n\n## Steps\n### 1. Read file\nUnderstand the flow.',
     };
     render(<PlanSummaryCard plan={planWithMarkdown} />);
-    // Should show a preview of the markdown content
-    expect(screen.getByText(/Fix the NPE/)).toBeInTheDocument();
+    // TypewriterReveal animates the text character-by-character via setInterval.
+    // Use findByText so the assertion retries until the typewriter has revealed
+    // enough characters for the pattern to match.
+    expect(await screen.findByText(/Fix the NPE/)).toBeInTheDocument();
   });
 
   it('Dismiss button calls kotlinBridge.dismissPlan', () => {

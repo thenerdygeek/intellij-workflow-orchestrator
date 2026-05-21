@@ -91,13 +91,16 @@ export function useDropdownKeyboard<T>({
 
         case 'Enter':
         case 'Tab':
-          // Consume Enter/Tab whenever the dropdown is open — even if items haven't
-          // loaded yet. This prevents Enter from falling through to form-submit while
-          // the debounced search is still in-flight. If items exist, select; if not,
-          // dismiss (user can press Enter again to send the message).
+          // When the dropdown is open but has no items (e.g. debounce still in-flight
+          // or the query returned zero results), dismiss and return false so the event
+          // can bubble up to the form's submit handler.
+          if (items.length === 0) {
+            onDismiss();
+            return false;
+          }
           e.preventDefault();
           e.stopPropagation();
-          if (items.length > 0 && items[selectedIndex] !== undefined) {
+          if (items[selectedIndex] !== undefined) {
             onSelect(items[selectedIndex]!);
           } else {
             onDismiss();
