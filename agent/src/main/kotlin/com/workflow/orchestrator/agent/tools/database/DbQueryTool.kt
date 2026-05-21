@@ -14,6 +14,8 @@ import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
 import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
@@ -187,6 +189,7 @@ class DbQueryTool : AgentTool {
         val database = params["database"]?.jsonPrimitive?.content?.trim()?.takeIf { it.isNotEmpty() }
         val sql = params["sql"]?.jsonPrimitive?.content?.trim()
             ?: return error("'sql' parameter is required.")
+        val outputFileRequested = (params["output_file"] as? JsonPrimitive)?.booleanOrNull == true
 
         // Validate read-only before touching the database
         DatabaseConnectionManager.validateReadOnly(sql)?.let { msg -> return error(msg) }
@@ -220,7 +223,7 @@ class DbQueryTool : AgentTool {
             onSuccess = { (table, rowCount) ->
                 val raw = "Query against **$targetLabel** (${profile.dbType.displayName}):\n\n" +
                     "```sql\n$sql\n```\n\n$table\n_$rowCount row(s) returned._"
-                val spilled = spillOrFormat(raw, project)
+                val spilled = spillOrFormat(raw, project, forceSpill = outputFileRequested)
                 ToolResult(
                     content = spilled.preview,
                     summary = "db_query on '${profile.id}${database?.let { "/$it" } ?: ""}': $rowCount row(s)",

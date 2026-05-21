@@ -149,6 +149,7 @@ interface AgentTool {
     suspend fun spillOrFormat(
         content: String,
         project: Project,
+        forceSpill: Boolean = false,
     ): ToolOutputSpiller.SpillResult {
         // getServiceIfCreated returns null when the service hasn't been started yet
         // (headless tests, early plugin lifecycle). ClassCastException only occurs in
@@ -166,7 +167,11 @@ interface AgentTool {
             )
             return ToolOutputSpiller.SpillResult(preview = content, spilledToFile = null)
         }
-        return spiller.spill(name, content)
+        return if (forceSpill) {
+            spiller.spill(name, content, threshold = 0)
+        } else {
+            spiller.spill(name, content)
+        }
     }
 
     companion object {

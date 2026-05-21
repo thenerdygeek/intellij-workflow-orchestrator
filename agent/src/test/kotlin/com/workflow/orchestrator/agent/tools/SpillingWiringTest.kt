@@ -61,7 +61,12 @@ class SpillingWiringTest {
         override suspend fun spillOrFormat(
             content: String,
             project: Project,
-        ): ToolOutputSpiller.SpillResult = spiller.spill(name, content)
+            forceSpill: Boolean,
+        ): ToolOutputSpiller.SpillResult = if (forceSpill) {
+            spiller.spill(name, content, threshold = 0)
+        } else {
+            spiller.spill(name, content)
+        }
     }
 
     /**
