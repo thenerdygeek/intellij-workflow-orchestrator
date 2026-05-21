@@ -362,9 +362,15 @@ class StartWorkDialog(
     private fun onActivateOnlyToggled() {
         val activateOnly = activateOnlyCheckbox.isSelected
         if (activateOnly) {
-            // Disable every descendant of the content pane EXCEPT the checkbox.
+            // Disable every descendant of the content pane EXCEPT the checkbox
+            // and the dialog's OK/Cancel buttons. The OK/Cancel JButtons live
+            // inside the south panel which is part of contentPane; touching
+            // them directly bypasses DialogWrapper.setOKActionEnabled and
+            // leaves the button stuck disabled (the follow-up
+            // isOKActionEnabled=true is a no-op when the action's enabled
+            // state didn't change).
             val pane = contentPane ?: return
-            disableAllExcept(pane, activateOnlyCheckbox)
+            disableAllExcept(pane, activateOnlyCheckbox, getButton(okAction), getButton(cancelAction))
         } else {
             // Restore the legitimate enabled-state by re-running each subsystem's
             // existing state-restoration logic. This preserves AI-loading,
@@ -387,11 +393,11 @@ class StartWorkDialog(
         }
     }
 
-    private fun disableAllExcept(root: java.awt.Container, exclude: java.awt.Component) {
+    private fun disableAllExcept(root: java.awt.Container, vararg excludes: java.awt.Component?) {
         for (c in root.components) {
-            if (c === exclude) continue
+            if (excludes.any { it != null && it === c }) continue
             c.isEnabled = false
-            if (c is java.awt.Container) disableAllExcept(c, exclude)
+            if (c is java.awt.Container) disableAllExcept(c, *excludes)
         }
     }
 
@@ -634,6 +640,14 @@ class StartWorkDialog(
     }
 
     internal fun isActivateOnlyForTest(): Boolean = activateOnlyCheckbox.isSelected
+
+    /**
+     * Reports the OK JButton's actual `isEnabled` state (not the action's),
+     * because the visible enabled state of the button is what the user sees
+     * and clicks. Catches regressions where the recursive disable used by
+     * activate-only mode leaks into the south button panel.
+     */
+    internal fun isOkButtonEnabledForTest(): Boolean = getButton(okAction)?.isEnabled == true
 
     /**
      * Drives only the business-logic portion of [doOKAction] — sets [result]

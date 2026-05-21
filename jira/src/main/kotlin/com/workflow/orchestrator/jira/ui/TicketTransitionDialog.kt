@@ -64,11 +64,20 @@ class TicketTransitionDialog(
         bindBoundedWidth(ComboBoxWidth.WIDE)
     }
 
+    // Guards the combo's actionListener while [loadTransitions] rebuilds the model.
+    // Without this, the first `addItem` flips selection from -1 to 0 and fires
+    // [selectTransition], which would race the explicit pre-selection logic below.
+    private var suppressComboEvents = false
+
     init {
         title = "Transition $ticketKey"
         setOKButtonText("Transition")
         transitionCombo.addActionListener { selectTransition(transitionCombo.selectedIndex) }
         init()
+        // Start with OK disabled; [loadTransitions] re-enables it once a valid
+        // pre-selection is resolved (either the caller's target id or, when the
+        // caller passed null, the first available transition).
+        isOKActionEnabled = false
         loadTransitions()
     }
 
@@ -100,19 +109,54 @@ class TicketTransitionDialog(
         scope.launch {
             val result = transitionService.getAvailableTransitions(ticketKey)
             invokeLater {
-                if (!result.isError) {
-                    val list = result.data ?: emptyList()
-                    transitions = list
+                if (result.isError) {
+                    setErrorText(result.summary.ifBlank { "Failed to load transitions" })
+                    return@invokeLater
+                }
+                val list = result.data ?: emptyList()
+                transitions = list
+
+                // Rebuild combo items without firing the actionListener — the first
+                // addItem auto-selects index 0 and would otherwise commit a stale
+                // selection before the resolution logic below picks the right one.
+                suppressComboEvents = true
+                try {
                     transitionCombo.removeAllItems()
                     transitions.forEach { transitionCombo.addItem(it.toStatus.name) }
-                    val idx = transitions
-                        .indexOfFirst { it.id == initialTransitionId }
-                        .coerceAtLeast(0)
-                    if (transitions.isNotEmpty()) {
-                        transitionCombo.selectedIndex = idx
+                } finally {
+                    suppressComboEvents = false
+                }
+
+                val preIdx = resolveInitialSelectionIndex(transitions, initialTransitionId)
+                when {
+                    transitions.isEmpty() -> {
+                        setErrorText("No transitions available for this ticket.")
+                        // OK stays disabled (set in init).
                     }
-                } else {
-                    setErrorText(result.summary.ifBlank { "Failed to load transitions" })
+                    preIdx != null -> {
+                        // Either the caller's target id matched, or no target was
+                        // specified and we default to the first transition. Setting
+                        // selectedIndex fires the actionListener which sets `selected`
+                        // and enables OK.
+                        transitionCombo.selectedIndex = preIdx
+                    }
+                    else -> {
+                        // Caller asked for a specific transition that isn't in the
+                        // current available set. Don't silently swap to index 0 —
+                        // historically that produced "I clicked Start Work but the
+                        // ticket went to In Review" bugs, because the Start Work
+                        // target ("In Progress") wasn't a configured transition for
+                        // the ticket's current status (either due to a Jira-side
+                        // automation moving the ticket between fetch and dialog open,
+                        // or a status-name mismatch with the user's setting). Require
+                        // an explicit pick.
+                        transitionCombo.selectedIndex = -1
+                        setErrorText(
+                            "The configured Start Work target isn't a valid transition from " +
+                                "this ticket's current status. Pick a transition to proceed."
+                        )
+                        // OK stays disabled until the user actively selects.
+                    }
                 }
             }
         }
@@ -123,10 +167,19 @@ class TicketTransitionDialog(
     // ---------------------------------------------------------------------------
 
     private fun selectTransition(idx: Int) {
-        if (idx < 0 || idx >= transitions.size) return
+        if (suppressComboEvents) return
+        if (idx < 0 || idx >= transitions.size) {
+            // No real selection — leave OK in whatever state loadTransitions set.
+            selected = null
+            return
+        }
         val t = transitions[idx]
         selected = t
         rebuildFieldPanel(t)
+        // The user (or the resolution logic) committed to a transition: clear any
+        // "pick one" warning and enable OK.
+        setErrorText(null)
+        isOKActionEnabled = true
     }
 
     private fun rebuildFieldPanel(t: TransitionMeta) {
@@ -242,5 +295,32 @@ class TicketTransitionDialog(
         val cp = contentPanel
         val modality = if (cp != null) ModalityState.stateForComponent(cp) else ModalityState.any()
         ApplicationManager.getApplication().invokeLater(block, modality)
+    }
+
+    companion object {
+        /**
+         * Pure helper: resolves which combo index to pre-select when the dialog loads.
+         *
+         *  - `null` when there are no transitions at all OR when [initialTransitionId]
+         *    was specified by the caller but doesn't appear in [transitions]. The
+         *    caller must distinguish these two by inspecting `transitions.isEmpty()`.
+         *  - `0` when [initialTransitionId] is null — caller didn't request a target,
+         *    so default to the first available transition (this preserves the existing
+         *    UX for the TicketDetailPanel "transition" button and the post-commit
+         *    notification path).
+         *  - the matched index when [initialTransitionId] is found.
+         *
+         * Extracted so the "no silent fallback to index 0 when requested target is
+         * missing" guarantee can be tested without spinning up `BasePlatformTestCase`.
+         */
+        internal fun resolveInitialSelectionIndex(
+            transitions: List<TransitionMeta>,
+            initialTransitionId: String?
+        ): Int? {
+            if (transitions.isEmpty()) return null
+            if (initialTransitionId == null) return 0
+            val idx = transitions.indexOfFirst { it.id == initialTransitionId }
+            return if (idx >= 0) idx else null
+        }
     }
 }

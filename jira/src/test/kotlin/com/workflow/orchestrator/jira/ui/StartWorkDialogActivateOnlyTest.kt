@@ -87,5 +87,27 @@ class StartWorkDialogActivateOnlyTest : BasePlatformTestCase() {
                 assertEquals("scenario 4: sourceBranch must be the initial source", "main", r.sourceBranch)
             } finally { d.disposeIfNeeded() }
         }
+
+        // Scenario 5 — toggling activateOnly must NOT disable the OK button itself.
+        // Regression guard: the recursive disable used to walk into the south
+        // button panel and call setEnabled(false) on the OK JButton; the
+        // follow-up isOKActionEnabled=true was a no-op (action enabled flag
+        // unchanged → no PropertyChangeEvent → button stayed disabled).
+        run {
+            val d = newDialog()
+            try {
+                assertTrue("scenario 5: OK button starts enabled", d.isOkButtonEnabledForTest())
+                d.setActivateOnlyForTest(true)
+                assertTrue(
+                    "scenario 5: OK button must remain enabled after activateOnly is checked",
+                    d.isOkButtonEnabledForTest(),
+                )
+                d.setActivateOnlyForTest(false)
+                assertTrue(
+                    "scenario 5: OK button must still be enabled after activateOnly is unchecked",
+                    d.isOkButtonEnabledForTest(),
+                )
+            } finally { d.disposeIfNeeded() }
+        }
     }
 }
