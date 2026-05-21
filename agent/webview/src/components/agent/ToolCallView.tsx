@@ -8,10 +8,11 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { formatElapsedMs, formatElapsedSeconds } from '@/lib/time';
 import { Square } from 'lucide-react';
+import { describeMemoryOp } from '@/lib/describeMemoryOp';
 
 // ── Tool Categories ──
 
-type ToolCategory = 'READ' | 'WRITE' | 'EDIT' | 'CMD' | 'SEARCH' | 'TOOL';
+type ToolCategory = 'READ' | 'WRITE' | 'EDIT' | 'CMD' | 'SEARCH' | 'TOOL' | 'MEMORY';
 
 const CATEGORY_MAP: Record<string, ToolCategory> = {
   // Read operations
@@ -76,6 +77,7 @@ const CATEGORY_STYLES: Record<ToolCategory, { className: string; label: string }
   CMD:    { className: 'bg-[var(--badge-cmd-bg,#1a2e1a)] text-[var(--badge-cmd-fg,#6ee77a)]',       label: 'CMD' },
   SEARCH: { className: 'bg-[var(--badge-search-bg,#1a2e3b)] text-[var(--badge-search-fg,#67d4e8)]', label: 'SEARCH' },
   TOOL:   { className: 'bg-[var(--chip-bg,#2a2a2a)] text-[var(--accent)]',                          label: 'TOOL' },
+  MEMORY: { className: 'bg-[var(--badge-memory-bg,#2a1f3d)] text-[var(--badge-memory-fg,#b48fff)]', label: 'MEMORY' },
 };
 
 // ── Live Timer Hook ──
@@ -194,7 +196,14 @@ interface ToolCallViewProps {
 
 export function ToolCallView({ toolCall, isLatest, rolledBack }: ToolCallViewProps) {
   const { name, status, durationMs } = toolCall;
-  const category = getCategory(name);
+
+  // Parse args once so both memoryOp and target extraction share the same parse.
+  let parsedArgs: Record<string, unknown> | undefined;
+  try { parsedArgs = JSON.parse(toolCall.args) as Record<string, unknown>; } catch { /* ignored */ }
+  const path = typeof parsedArgs?.path === 'string' ? parsedArgs.path : undefined;
+
+  const memoryOp = describeMemoryOp(name, path);
+  const category: ToolCategory = memoryOp ? 'MEMORY' : getCategory(name);
   const catStyle = CATEGORY_STYLES[category];
   const target = extractTarget(toolCall.args);
   const liveTimer = useLiveTimer(status);
@@ -266,7 +275,18 @@ export function ToolCallView({ toolCall, isLatest, rolledBack }: ToolCallViewPro
       >
         {catStyle.label}
       </Badge>
-      {target && (
+      {memoryOp ? (
+        <span
+          className={cn(
+            'flex items-center gap-1.5 truncate text-[11px] text-[var(--fg-muted)]',
+            rolledBack && 'line-through',
+          )}
+          style={{ maxWidth: '300px' }}
+        >
+          <memoryOp.icon size={14} aria-hidden="true" />
+          <span className="truncate">{memoryOp.title}</span>
+        </span>
+      ) : target ? (
         <span
           className={cn(
             'truncate text-[11px] font-mono text-[var(--fg-muted)]',
@@ -276,7 +296,7 @@ export function ToolCallView({ toolCall, isLatest, rolledBack }: ToolCallViewPro
         >
           {category === 'CMD' ? `(${target})` : target}
         </span>
-      )}
+      ) : null}
       <span className="flex-1" />
       {isRunning && liveTimer && (
         <span className="text-[11px] font-mono tabular-nums text-[var(--accent)]">
