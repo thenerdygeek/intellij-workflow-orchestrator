@@ -1,4 +1,5 @@
 import { CodeBlock } from '@/components/markdown/CodeBlock';
+import { formatShellCommand } from '@/lib/formatShellCommand';
 
 export interface CommandPreviewEnv {
   key: string;
@@ -20,6 +21,7 @@ export function CommandPreview({
   env,
   separateStderr,
 }: CommandPreviewProps) {
+  const formatted = formatShellCommand(command, shell);
   return (
     <div
       data-testid="command-preview"
@@ -29,7 +31,7 @@ export function CommandPreview({
         borderColor: 'var(--border)',
       }}
     >
-      <CodeBlock code={command} language="bash" isStreaming={false} />
+      <CodeBlock code={formatted} language="bash" isStreaming={false} />
       <div className="flex flex-wrap items-center gap-1 px-2 pb-1 text-[10px]">
         <Chip label={shell} />
         <Chip label={cwd} />

@@ -84,6 +84,37 @@ describe('CommandPreview', () => {
     expect(screen.getByText('BAZ=qux')).toBeInTheDocument();
   });
 
+  it('pretty-prints a long chained bash command across multiple lines', () => {
+    const cmd = 'git fetch origin main && git rebase origin/main && git status';
+    render(
+      <CommandPreview command={cmd} shell="/bin/bash" cwd="/x" env={[]} />
+    );
+    const container = screen.getByTestId('command-preview');
+    // The formatted code passed to <CodeBlock> contains real newlines + backslash continuations.
+    const codeText = container.querySelector('.shiki')?.textContent ?? '';
+    expect(codeText).toContain('git fetch origin main && \\');
+    expect(codeText).toContain('\n    git rebase origin/main && \\');
+    expect(codeText).toContain('\n    git status');
+  });
+
+  it('pretty-prints a long chained powershell command with backtick continuations', () => {
+    const cmd = 'git fetch origin main && git rebase origin/main && git status';
+    render(
+      <CommandPreview command={cmd} shell="pwsh.exe" cwd="/x" env={[]} />
+    );
+    const codeText = screen.getByTestId('command-preview').querySelector('.shiki')?.textContent ?? '';
+    expect(codeText).toContain('git fetch origin main && `');
+    expect(codeText).toContain('\n    git rebase origin/main && `');
+  });
+
+  it('leaves short single-line commands unformatted (copy still gives the raw command)', () => {
+    render(
+      <CommandPreview command="git status" shell="/bin/bash" cwd="/x" env={[]} />
+    );
+    fireEvent.click(screen.getByTitle('Copy code'));
+    expect((window as any)._copyToClipboard).toHaveBeenCalledWith('git status');
+  });
+
   it('shows a separate-stderr chip only when separateStderr=true', () => {
     const { rerender } = render(
       <CommandPreview command="x" shell="/bin/bash" cwd="/x" env={[]} />

@@ -4,6 +4,7 @@ import { ModelPickerRow } from '@/components/input/InputBar';
 import { ChipPreview } from '@/components/input/ChipPreview';
 import { AttachmentManager, type PendingAttachment } from '@/components/input/AttachmentManager';
 import { ThinkingView } from '@/components/agent/ThinkingView';
+import { CommandPreview } from '@/components/agent/CommandPreview';
 
 /**
  * Playwright harness — renders the three Phase 7 / Phase 5 UI components in
@@ -495,6 +496,99 @@ export function HarnessApp() {
       </section>
 
       <ThinkingBugSection />
+
+      {/* ─────────── §6 CommandPreview shell-aware formatting ─────────── */}
+      <section data-testid="section-command-preview" className="space-y-4">
+        <h2 className="text-sm font-semibold">
+          §6 CommandPreview — shell-aware multi-line formatting
+        </h2>
+        <p className="text-[11px]" style={{ color: 'var(--fg-muted, #9ca3af)' }}>
+          Same chained command, three shells. Verifies the formatted code block
+          breaks before each top-level operator and appends the shell-appropriate
+          continuation char (<code>\</code> bash, <code>`</code> powershell,{' '}
+          <code>^</code> cmd). Short commands stay single-line; quoted operators
+          aren't split.
+        </p>
+        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))' }}>
+          <div data-testid="cmd-case-bash-chain">
+            <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: 'var(--fg-muted)' }}>
+              bash — 3-step chain (60 chars)
+            </div>
+            <CommandPreview
+              command="git fetch origin main && git rebase origin/main && git status"
+              shell="/bin/bash"
+              cwd="/home/me/project"
+              env={[]}
+            />
+          </div>
+          <div data-testid="cmd-case-powershell-chain">
+            <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: 'var(--fg-muted)' }}>
+              powershell — backtick continuations
+            </div>
+            <CommandPreview
+              command="git fetch origin main && git rebase origin/main && git status"
+              shell="C:\\Program Files\\PowerShell\\7\\pwsh.exe"
+              cwd="C:\\src\\project"
+              env={[]}
+            />
+          </div>
+          <div data-testid="cmd-case-cmd-chain">
+            <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: 'var(--fg-muted)' }}>
+              cmd.exe — caret continuations
+            </div>
+            <CommandPreview
+              command="git fetch origin main && git rebase origin/main && git status"
+              shell="C:\\Windows\\System32\\cmd.exe"
+              cwd="C:\\src\\project"
+              env={[]}
+            />
+          </div>
+          <div data-testid="cmd-case-short">
+            <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: 'var(--fg-muted)' }}>
+              bash — short, unchanged
+            </div>
+            <CommandPreview
+              command="git status"
+              shell="/bin/bash"
+              cwd="/home/me/project"
+              env={[]}
+            />
+          </div>
+          <div data-testid="cmd-case-quoted-operators">
+            <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: 'var(--fg-muted)' }}>
+              bash — operators inside quotes are protected
+            </div>
+            <CommandPreview
+              command={'git commit -m "feat: a && b || c" && git push --force-with-lease origin feature'}
+              shell="/bin/bash"
+              cwd="/home/me/project"
+              env={[]}
+            />
+          </div>
+          <div data-testid="cmd-case-pipeline">
+            <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: 'var(--fg-muted)' }}>
+              bash — pipeline
+            </div>
+            <CommandPreview
+              command={'git log --oneline --since="last week" | grep -v Merge | head -n 20'}
+              shell="/bin/bash"
+              cwd="/home/me/project"
+              env={[]}
+            />
+          </div>
+          <div data-testid="cmd-case-subshell">
+            <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: 'var(--fg-muted)' }}>
+              bash — subshell preserves inner operators
+            </div>
+            <CommandPreview
+              command='(cd build && make && make test) || echo "build failed and we stop here"'
+              shell="/bin/bash"
+              cwd="/home/me/project"
+              env={[]}
+            />
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
