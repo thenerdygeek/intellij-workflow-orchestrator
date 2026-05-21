@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, useCallback } from 'react';
+import React, { memo, useEffect, useRef, useState, useCallback } from 'react';
 import { RichBlock } from './RichBlock';
 
 // ── Singleton lazy-load for diff2html ──
@@ -104,6 +104,27 @@ function DiffHtmlInner({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlProps
 
   // Extract file path from diff header
   const filePath = diffSource.match(/^(?:---|\+\+\+)\s+(?:a\/|b\/)?(.+)$/m)?.[1] ?? '';
+
+  // Extract the 1-based starting line of the first hunk from the @@ -L,N +M,K @@ header.
+  // Falls back to 1 when no hunk header is present (e.g., a header-only diff).
+  // Used to make the filename a clickable hyperlink that opens the file at the match line.
+  const startLine = (() => {
+    const m = diffSource.match(/^@@\s+-(\d+)(?:,\d+)?\s+\+\d+/m);
+    const captured = m?.[1];
+    return captured ? parseInt(captured, 10) : 1;
+  })();
+
+  const navigateToFile = useCallback(() => {
+    if (!filePath) return;
+    window._navigateToFile?.(`${filePath}:${startLine}`);
+  }, [filePath, startLine]);
+
+  const handleFilenameKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      navigateToFile();
+    }
+  }, [navigateToFile]);
 
   const renderDiff = useCallback(async () => {
     const currentRender = ++renderIdRef.current;
@@ -366,8 +387,15 @@ function DiffHtmlInner({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlProps
     return (
       <div className="my-2 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--code-bg)]">
         {filePath && (
-          <div className="border-b border-[var(--border)] px-3 py-1.5 text-[11px] font-mono text-[var(--fg-muted)]">
-            {filePath}
+          <div
+            className="border-b border-[var(--border)] px-3 py-1.5 text-[11px] font-mono text-[var(--fg-muted)] cursor-pointer hover:underline"
+            onClick={navigateToFile}
+            title={`Open ${filePath}:${startLine}`}
+            role="button"
+            tabIndex={0}
+            onKeyDown={handleFilenameKeyDown}
+          >
+            {filePath}<span className="opacity-60">:{startLine}</span>
           </div>
         )}
         {rawDiff}
@@ -384,8 +412,15 @@ function DiffHtmlInner({ diffSource, onAcceptHunk, onRejectHunk }: DiffHtmlProps
       onRetry={() => void renderDiff()}
     >
       {filePath && (
-        <div className="border-b border-[var(--border)] px-3 py-1 text-[11px] font-mono text-[var(--fg-muted)]">
-          {filePath}
+        <div
+          className="border-b border-[var(--border)] px-3 py-1 text-[11px] font-mono text-[var(--fg-muted)] cursor-pointer hover:underline"
+          onClick={navigateToFile}
+          title={`Open ${filePath}:${startLine}`}
+          role="button"
+          tabIndex={0}
+          onKeyDown={handleFilenameKeyDown}
+        >
+          {filePath}<span className="opacity-60">:{startLine}</span>
         </div>
       )}
       {/* Force IDE theme on diff2html — its bundled CSS uses hardcoded light colors */}

@@ -35,6 +35,128 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 class EditFileTool : AgentTool {
 
+    /**
+     * Result of [preview] — pre-validation outcome consumed by the approval gate.
+     *
+     * The approval gate uses this to decide whether to even show the user a card:
+     *  - [ValidationFailed] → skip the card; let [execute] run, fail, and surface the precise
+     *    error to the LLM (defense-in-depth: execute re-validates everything).
+     *  - [Ready] → show a card whose diff is anchored on real file contents, so the diff2html
+     *    hunk header carries the actual match offset instead of `@@ -1,N +1,M @@`.
+     */
+    sealed class EditPreview {
+        /** Validation will fail in [execute]; don't show the approval card. */
+        object ValidationFailed : EditPreview()
+
+        /**
+         * Validation passed; safe to show this real file-anchored diff.
+         *
+         * @param realDiff unified diff built from full file contents (carries real line offsets in the @@ header).
+         * @param matchStartLine 1-based line number of the first occurrence of `old_string`.
+         */
+        data class Ready(val realDiff: String, val matchStartLine: Int) : EditPreview()
+    }
+
+    companion object {
+        /**
+         * Pre-validate `edit_file` params and compute the real file-anchored diff for the
+         * approval card. Returns [EditPreview.ValidationFailed] for any error (missing param,
+         * path traversal, file not found, old_string not matched, ambiguous match without
+         * `replace_all`); returns [EditPreview.Ready] on success.
+         *
+         * Defense-in-depth: [execute] re-validates everything. [preview] is purely a UX
+         * concern — it determines whether the approval card is shown and what diff/line
+         * numbers it displays. This function MUST NOT mutate the file under any circumstance.
+         *
+         * Wrapped in a try/catch — any unexpected exception → [EditPreview.ValidationFailed]
+         * so the approval gate falls back to "let execute() surface the real error".
+         */
+        suspend fun preview(params: JsonObject, project: Project): EditPreview {
+            return try {
+                val rawPath = params["path"]?.jsonPrimitive?.content
+                    ?: return EditPreview.ValidationFailed
+                val oldString = params["old_string"]?.jsonPrimitive?.content
+                    ?: return EditPreview.ValidationFailed
+                val newString = params["new_string"]?.jsonPrimitive?.content
+                    ?: return EditPreview.ValidationFailed
+                val replaceAll = params["replace_all"]?.jsonPrimitive?.boolean ?: false
+
+                val memoryDir = project.basePath?.let { File(ProjectIdentifier.agentDir(it), "memory").absolutePath }
+                val (path, pathError) = PathValidator.resolveAndValidateForWrite(rawPath, project.basePath, memoryDir)
+                if (pathError != null) return EditPreview.ValidationFailed
+                val resolvedPath = path ?: return EditPreview.ValidationFailed
+
+                val vFile = findVirtualFileForPreview(resolvedPath)
+                val file = java.io.File(resolvedPath)
+                if (vFile == null && (!file.exists() || !file.isFile)) {
+                    return EditPreview.ValidationFailed
+                }
+
+                val content = readFileContentForPreview(vFile, file)
+                val occurrences = countOccurrencesShared(content, oldString)
+                if (occurrences == 0) return EditPreview.ValidationFailed
+                if (occurrences > 1 && !replaceAll) return EditPreview.ValidationFailed
+
+                val newContent = if (replaceAll) content.replace(oldString, newString)
+                else content.replaceFirst(oldString, newString)
+
+                val matchOffset = content.indexOf(oldString)
+                // matchOffset must be >= 0 because occurrences > 0; guard anyway.
+                if (matchOffset < 0) return EditPreview.ValidationFailed
+                val matchStartLine = content.substring(0, matchOffset).count { it == '\n' } + 1
+
+                val realDiff = DiffUtil.unifiedDiff(content, newContent, rawPath)
+                EditPreview.Ready(realDiff = realDiff, matchStartLine = matchStartLine)
+            } catch (_: Exception) {
+                EditPreview.ValidationFailed
+            }
+        }
+
+        /**
+         * Read-only VFS lookup for [preview]. Mirrors the instance [findVirtualFile] —
+         * duplicated here because [preview] is a companion-level entry point and cannot
+         * call instance methods.
+         */
+        private fun findVirtualFileForPreview(resolvedPath: String): VirtualFile? {
+            return try {
+                if (ApplicationManager.getApplication() == null) return null
+                LocalFileSystem.getInstance().findFileByPath(resolvedPath)
+                    ?: LocalFileSystem.getInstance().refreshAndFindFileByPath(resolvedPath)
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        /**
+         * Read-only content fetch for [preview]. Mirrors the instance [readFileContent] —
+         * Document → VFS → java.io.File fallback chain. Strictly read-only.
+         */
+        private suspend fun readFileContentForPreview(vFile: VirtualFile?, file: java.io.File): String {
+            if (vFile != null) {
+                try {
+                    return readAction {
+                        val document = FileDocumentManager.getInstance().getDocument(vFile)
+                        document?.text ?: String(vFile.contentsToByteArray(), vFile.charset)
+                    }
+                } catch (_: Exception) {
+                    // readAction unavailable — fall through to java.io.File
+                }
+            }
+            return file.readText(Charsets.UTF_8)
+        }
+
+        private fun countOccurrencesShared(text: String, search: String): Int {
+            if (search.isEmpty()) return 0
+            var count = 0
+            var index = text.indexOf(search)
+            while (index >= 0) {
+                count++
+                index = text.indexOf(search, index + 1)
+            }
+            return count
+        }
+    }
+
     override val name = "edit_file"
     override val description = "Make targeted edits to an existing file using exact string replacement. This tool should be used when you need to make targeted changes to specific parts of a file. The old_string must match EXACTLY — character-for-character including whitespace, indentation, and line endings. Include enough surrounding context (3-5 lines) to ensure old_string matches uniquely in the file. If old_string matches multiple times, the edit will fail — provide a larger context to disambiguate, or set replace_all=true to replace all occurrences. You MUST read the file with read_file before editing to see the exact content. Keep edits concise — include just the changing lines, and a few surrounding lines if needed for uniqueness. Do not include long runs of unchanging lines. Prefer this over create_file for modifying existing files."
     override val parameters = FunctionParameters(

@@ -1963,6 +1963,40 @@ class AgentController(
         val originAgentId = origin?.agentId
         val originLabel = origin?.label
 
+        // Hoisted ABOVE the pendingApproval reentry guard so the edit_file preview short-circuit
+        // can return APPROVED without installing a deferred that would leak through `finally`.
+        val parsedArgs = try {
+            kotlinx.serialization.json.Json.parseToJsonElement(args).jsonObject
+        } catch (_: Exception) { null }
+
+        // Upstream edit_file preview: pre-validate (path/file/match/ambiguity) and compute the
+        // real file-anchored diff. ValidationFailed → return APPROVED immediately so execute()
+        // runs, fails with the precise error, and surfaces it to the LLM — without bothering
+        // the user with a false-positive approval card. Defense-in-depth: execute() revalidates
+        // everything.
+        var editPreviewReady: com.workflow.orchestrator.agent.tools.builtin.EditFileTool.EditPreview.Ready? = null
+        if (toolName == "edit_file" && parsedArgs != null) {
+            val previewResult = runCatching {
+                com.workflow.orchestrator.agent.tools.builtin.EditFileTool.preview(parsedArgs, project)
+            }.getOrNull()
+            when (previewResult) {
+                is com.workflow.orchestrator.agent.tools.builtin.EditFileTool.EditPreview.ValidationFailed -> {
+                    LOG.debug(
+                        "AgentController: edit_file preview failed for $toolName — " +
+                            "skipping approval card, execute() will surface the error"
+                    )
+                    return ApprovalResult.APPROVED
+                }
+                is com.workflow.orchestrator.agent.tools.builtin.EditFileTool.EditPreview.Ready -> {
+                    editPreviewReady = previewResult
+                }
+                null -> {
+                    // Unexpected exception escaped runCatching — fall back to the naive snippet diff
+                    // path so the user still sees something rather than a misleading early approve.
+                }
+            }
+        }
+
         val deferred = CompletableDeferred<ApprovalResult>()
         // Defensive reentry guard — see the invariant described on [pendingApproval].
         // If a second approvalGate call arrives while the first is still waiting,
@@ -1983,11 +2017,6 @@ class AgentController(
         pendingApproval = deferred
         pendingApprovalToolName = toolName
 
-        // Build description, metadata, and diff content for the approval card
-        val parsedArgs = try {
-            kotlinx.serialization.json.Json.parseToJsonElement(args).jsonObject
-        } catch (_: Exception) { null }
-
         val description: String
         val diffContent: String?
         var commandPreviewJson: String? = null
@@ -1999,7 +2028,11 @@ class AgentController(
                 val newString = parsedArgs?.get("new_string")?.jsonPrimitive?.content ?: ""
                 val editDesc = parsedArgs?.get("description")?.jsonPrimitive?.content
                 description = editDesc ?: "Edit $path"
-                diffContent = com.workflow.orchestrator.agent.util.DiffUtil.unifiedDiff(oldString, newString, path)
+                // Prefer the real file-anchored diff (so @@ hunk headers carry real line offsets
+                // and diff2html renders correct line numbers). Fall back to the naive snippet
+                // diff only when preview() couldn't compute one (e.g., transient exception).
+                diffContent = editPreviewReady?.realDiff
+                    ?: com.workflow.orchestrator.agent.util.DiffUtil.unifiedDiff(oldString, newString, path)
             }
             "create_file" -> {
                 val path = parsedArgs?.get("path")?.jsonPrimitive?.content ?: "unknown"
