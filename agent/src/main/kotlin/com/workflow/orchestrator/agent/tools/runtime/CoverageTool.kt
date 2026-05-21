@@ -14,6 +14,7 @@ import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.application.smartReadAction
 import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
@@ -49,6 +50,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
 
@@ -114,6 +117,12 @@ Actions and their parameters:
                     "'ignore': silently discard the new run's data. " +
                     "'ask': surface IntelliJ's native merge dialog (will block the agent until the user clicks). " +
                     "Default 'replace' prevents the merge dialog from freezing the agent loop."
+            ),
+            "package_filter" to ParameterProperty(
+                type = "string",
+                description = "Comma-separated package prefixes to include in coverage results " +
+                    "(e.g., \"com.example,com.other\"). Defaults to auto-derive from " +
+                    "pom.xml groupId or build.gradle group. Set to empty string to disable filtering."
             )
         ),
         required = listOf("action")
@@ -213,6 +222,17 @@ Actions and their parameters:
                         enumValue("replace", "append", "ignore", "ask")
                         example("replace")
                         example("append")
+                    }
+                    optional("package_filter", "string") {
+                        llmSeesIt(
+                            "Comma-separated package prefixes to include in coverage results " +
+                            "(e.g., \"com.example,com.other\"). Defaults to auto-derive from " +
+                            "pom.xml groupId or build.gradle group. Set to empty string to disable filtering."
+                        )
+                        humanReadable("Restricts the coverage snapshot to your project's own packages, hiding framework internals like ByteBuddy proxies, Mockito-generated classes, CGLIB proxies, and transitive dependencies.")
+                        whenAbsent("Auto-derived from pom.xml <groupId>, build.gradle/kts group, or src/main/java source-tree walk (in that order). If none is derivable, all classes are returned with a warning.")
+                        example("com.example.app")
+                        example("com.example,com.other")
                     }
                 }
                 rejectsParam("file_path", "Only `get_file_coverage` reads `file_path` — `run_with_coverage` ignores it.")
@@ -445,6 +465,11 @@ Actions and their parameters:
         }
         val priorSuiteOption: SuitePolicyPrior? = applyCoverageOptionProviderPolicy(project, suitePolicyInt)
 
+        // A2: resolve package filter — hides framework internals (ByteBuddy, Mockito, CGLIB proxies)
+        val packageFilterParam = params["package_filter"]?.jsonPrimitive?.contentOrNull
+        val projectRoot = project.basePath?.let { Path.of(it) } ?: Path.of(".")
+        val packageFilter = resolvePackageFilter(packageFilterParam, projectRoot)
+
         // Phase 3 / Task 2.5: route all listener/connection/descriptor tracking through
         // a single RunInvocation, mirroring the Task 2.3+2.4 refactor in JavaRuntimeExecTool.
         // The try/finally block below disposes the invocation on every exit path (success /
@@ -655,10 +680,10 @@ Actions and their parameters:
 
             val snapshot = if (listenerDisposable != null) {
                 withTimeoutOrNull(COVERAGE_LISTENER_TIMEOUT_MS) { coverageDeferred.await() }
-                    ?: extractCoverageSnapshot(project)
+                    ?: extractCoverageSnapshot(project, packageFilter)
             } else {
                 delay(COVERAGE_FALLBACK_DELAY_MS)
-                extractCoverageSnapshot(project)
+                extractCoverageSnapshot(project, packageFilter)
             }
 
             lastSnapshot = snapshot
@@ -835,7 +860,7 @@ Actions and their parameters:
     // internally, so the same reflection path handles both runners.
     // ══════════════════════════════════════════════════════════════════════
 
-    private fun extractCoverageSnapshot(project: Project): CoverageSnapshot? {
+    private fun extractCoverageSnapshot(project: Project, packageFilter: List<String> = emptyList()): CoverageSnapshot? {
         val diag = StringBuilder()
         return try {
             val dataManagerClass = Class.forName("com.intellij.coverage.CoverageDataManager")
@@ -886,17 +911,23 @@ Actions and their parameters:
             }
 
             @Suppress("UNCHECKED_CAST")
-            val classes = projectData.javaClass.getMethod("getClasses").invoke(projectData) as? Map<String, Any>
-            if (classes == null || classes.isEmpty()) {
+            val classes = (projectData.javaClass.getMethod("getClasses").invoke(projectData) as? Map<String, Any>) ?: emptyMap()
+            if (classes.isEmpty()) {
                 diag.appendLine("getClasses() returned null or empty")
                 lastExtractionDiag = diag.toString()
                 return null
             }
             diag.appendLine("Classes: ${classes.size}")
 
+            if (packageFilter.isEmpty()) {
+                LOG.warn("CoverageTool: no package filter derivable; returning all classes (may include framework internals)")
+            }
+            val filteredClasses = filterClasses(classes, packageFilter)
+            diag.appendLine("Filtered classes: ${filteredClasses.size} (filter=$packageFilter)")
+
             val files = mutableMapOf<String, FileCoverageDetail>()
             var processed = 0; var skipped = 0
-            for ((className, classData) in classes) {
+            for ((className, classData) in filteredClasses) {
                 val detail = extractFileCoverageDetail(classData)
                 if (detail != null) { files[className] = detail; processed++ } else skipped++
             }
@@ -1350,11 +1381,76 @@ Actions and their parameters:
     }
 
     companion object {
+        private val LOG = Logger.getInstance(CoverageTool::class.java)
+
         private const val DEFAULT_TIMEOUT = 300L
         private const val MAX_TIMEOUT = 900L
         private const val COVERAGE_LISTENER_TIMEOUT_MS = 30_000L
         private const val COVERAGE_FALLBACK_DELAY_MS = 5_000L
         private const val MAX_UNCOVERED_ENTRIES = 50
+
+        /**
+         * Resolves the package filter for coverage reporting.
+         * Precedence: explicit param > Maven groupId > Gradle group > source-tree > empty.
+         */
+        fun resolvePackageFilter(explicitParam: String?, projectRoot: Path): List<String> {
+            if (!explicitParam.isNullOrBlank()) {
+                return explicitParam.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            }
+
+            val pom = projectRoot.resolve("pom.xml")
+            if (Files.exists(pom)) {
+                val text = Files.readString(pom)
+                val groupIdMatch = Regex("<groupId>([^<]+)</groupId>").find(text)
+                if (groupIdMatch != null) {
+                    return listOf(groupIdMatch.groupValues[1].trim())
+                }
+            }
+
+            for (gradleName in listOf("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")) {
+                val gradleFile = projectRoot.resolve(gradleName)
+                if (Files.exists(gradleFile)) {
+                    val text = Files.readString(gradleFile)
+                    val groupMatch = Regex("""group\s*=\s*["']([^"']+)["']""").find(text)
+                    if (groupMatch != null) {
+                        return listOf(groupMatch.groupValues[1].trim())
+                    }
+                }
+            }
+
+            for (srcDir in listOf("src/main/java", "src/main/kotlin")) {
+                val srcRoot = projectRoot.resolve(srcDir)
+                if (Files.exists(srcRoot)) {
+                    val packagePath = walkDeepestSingleChildPath(srcRoot)
+                    if (packagePath.isNotEmpty()) {
+                        return listOf(packagePath.joinToString("."))
+                    }
+                }
+            }
+
+            return emptyList()
+        }
+
+        private fun walkDeepestSingleChildPath(root: Path): List<String> {
+            val parts = mutableListOf<String>()
+            var current = root
+            while (true) {
+                val children = Files.list(current).use { stream ->
+                    stream.filter { Files.isDirectory(it) }.toList()
+                }
+                if (children.size != 1) break
+                parts.add(children[0].fileName.toString())
+                current = children[0]
+            }
+            return parts
+        }
+
+        fun <V> filterClasses(all: Map<String, V>, filter: List<String>): Map<String, V> {
+            if (filter.isEmpty()) return all
+            return all.filterKeys { className ->
+                filter.any { prefix -> className.startsWith("$prefix.") || className == prefix }
+            }
+        }
 
         /**
          * Collapse a sorted list of line numbers into contiguous ranges.
