@@ -817,6 +817,23 @@ description optional: for approval dialog on trigger/stop/cancel.
                 isError = true
             )
 
+        // Validate required parameters before service lookup so callers get a
+        // helpful error even when Bamboo is not yet configured.
+        if (action == "recent_builds" && params["plan_key"]?.jsonPrimitive?.content == null) {
+            return ToolResult.error(
+                "'plan_key' parameter required. Call project_context(action=get_project) to find the " +
+                "value under 'Bamboo Plan Key', or configure it in Settings > Workflow Orchestrator > " +
+                "Connections > Bamboo."
+            )
+        }
+        if (action == "get_running_builds" && params["plan_key"]?.jsonPrimitive?.content == null) {
+            return ToolResult.error(
+                "'plan_key' parameter required. Call project_context(action=get_project) to find the " +
+                "value under 'Bamboo Plan Key', or configure it in Settings > Workflow Orchestrator > " +
+                "Connections > Bamboo."
+            )
+        }
+
         val service = ServiceLookup.bamboo(project)
             ?: return ServiceLookup.notConfigured("Bamboo")
 
@@ -928,7 +945,12 @@ description optional: for approval dialog on trigger/stop/cancel.
             }
 
             "recent_builds" -> {
-                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("plan_key")
+                val planKey = params["plan_key"]?.jsonPrimitive?.content
+                    ?: return ToolResult.error(
+                        "'plan_key' parameter required. Call project_context(action=get_project) to find the " +
+                        "value under 'Bamboo Plan Key', or configure it in Settings > Workflow Orchestrator > " +
+                        "Connections > Bamboo."
+                    )
                 val maxResults = params["max_results"]?.jsonPrimitive?.content?.toIntOrNull() ?: 10
                 ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
                 val branch = params["branch"]?.jsonPrimitive?.content
@@ -948,7 +970,12 @@ description optional: for approval dialog on trigger/stop/cancel.
             }
 
             "get_running_builds" -> {
-                val planKey = params["plan_key"]?.jsonPrimitive?.content ?: return ToolValidation.missingParam("plan_key")
+                val planKey = params["plan_key"]?.jsonPrimitive?.content
+                    ?: return ToolResult.error(
+                        "'plan_key' parameter required. Call project_context(action=get_project) to find the " +
+                        "value under 'Bamboo Plan Key', or configure it in Settings > Workflow Orchestrator > " +
+                        "Connections > Bamboo."
+                    )
                 ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
                 service.getRunningBuilds(planKey, repoName = repoName).toAgentToolResult()
