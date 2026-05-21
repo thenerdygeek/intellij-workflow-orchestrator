@@ -4,6 +4,8 @@ import remarkGfm from 'remark-gfm';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { visit } from 'unist-util-visit';
 import { CodeBlock } from '@/components/markdown/CodeBlock';
+import { ChatLink } from '@/components/markdown/ChatLink';
+import { remarkChatLinkify } from '@/components/markdown/ChatLinkifier';
 import { MermaidDiagram } from '@/components/rich/MermaidDiagram';
 import { ChartView } from '@/components/rich/ChartView';
 import { FlowDiagram } from '@/components/rich/FlowDiagram';
@@ -129,12 +131,19 @@ function remarkCodeMeta() {
  */
 const SANITIZE_SCHEMA = {
   ...defaultSchema,
-  // Allow the symbol: URI scheme so PSI symbol links survive sanitization.
-  // Without this, rehype-sanitize strips symbol: hrefs (only http/https/mailto
-  // are whitelisted by default) and scanAndSymbolLinkify never finds them.
+  // Allow custom URI schemes so chat hyperlinks survive sanitization. Without
+  // this, rehype-sanitize strips non-(http|https|mailto) hrefs and the
+  // ChatLink override never sees them. `symbol` powers the legacy PSI-symbol
+  // scanner; `file`, `class`, `jira` power the Phase 4 LinkResolver pipeline.
   protocols: {
     ...defaultSchema.protocols,
-    href: [...(defaultSchema.protocols?.href ?? []), 'symbol'],
+    href: [
+      ...(defaultSchema.protocols?.href ?? []),
+      'symbol',
+      'file',
+      'class',
+      'jira',
+    ],
   },
   attributes: {
     ...defaultSchema.attributes,
@@ -149,7 +158,7 @@ const SANITIZE_SCHEMA = {
   },
 };
 
-const REMARK_PLUGINS = [remarkGfm, remarkCodeMeta] as const;
+const REMARK_PLUGINS = [remarkGfm, remarkChatLinkify, remarkCodeMeta] as const;
 const REHYPE_PLUGINS = [
   [rehypeSanitize, SANITIZE_SCHEMA] as const,
 ] as const;
@@ -272,26 +281,33 @@ function CodeNode({ className, children, node, ...props }: any) {
 }
 
 function AnchorNode({ href, children, ...props }: any) {
-  return (
-    <a
-      href={href}
-      className="text-[var(--link)] underline decoration-[var(--link)]/30 hover:decoration-[var(--link)]"
-      onClick={(e: React.MouseEvent) => {
-        e.preventDefault();
-        if (!href) return;
-        if (href.startsWith('symbol:')) {
+  // `symbol:` links keep the legacy direct-navigation behavior because the
+  // PSI scanner stamps data-canonical/data-line onto the anchor and uses them
+  // to skip the resolver round-trip. Every other scheme routes through the
+  // confirmation-modal pipeline in ChatLink.
+  if (typeof href === 'string' && href.startsWith('symbol:')) {
+    return (
+      <a
+        href={href}
+        className="text-[var(--link)] underline decoration-[var(--link)]/30 hover:decoration-[var(--link)]"
+        onClick={(e: React.MouseEvent) => {
+          e.preventDefault();
+          if (!href) return;
           const el = e.currentTarget as HTMLAnchorElement;
           const canonical = el.dataset.canonical;
           const line = parseInt(el.dataset.line ?? '0', 10);
           if (canonical) (window as any)._navigateToFile?.(`${canonical}:${line + 1}`);
-          return;
-        }
-        (window as any)._navigateToFile?.(href);
-      }}
-      {...props}
-    >
+        }}
+        {...props}
+      >
+        {children}
+      </a>
+    );
+  }
+  return (
+    <ChatLink href={href} {...props}>
       {children}
-    </a>
+    </ChatLink>
   );
 }
 

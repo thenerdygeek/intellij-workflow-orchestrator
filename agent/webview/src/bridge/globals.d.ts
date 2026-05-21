@@ -80,6 +80,13 @@ declare global {
     // Multimodal-agent Phase 7 — chat input usage indicator + Phase 5/6 followups
     _getContextUsage?: () => Promise<{ used: number; max: number }>;
     _getImageSettings?: () => Promise<{ maxBytes: number; mimeWhitelist: string[]; maxPerTurn: number; enabled: boolean } | null>;
+    // Phase 4 chat hyperlink bridges. `_resolveLink` returns the raw JSON
+    // string from the bridge (parsed inside the modal). `_openLink` is
+    // fire-and-forget — the Kotlin side dispatches into the LinkResolver's
+    // coroutine scope and never blocks.
+    _resolveLink?: (href: string) => Promise<string>;
+    _openLink?: (href: string) => void;
+    _copyToClipboard?: (text: string) => void;
     /**
      * Phase 7 — namespace for new bridges. Distinct from the legacy `window._xxx`
      * flat namespace; the picker / usage indicator / image-settings push live

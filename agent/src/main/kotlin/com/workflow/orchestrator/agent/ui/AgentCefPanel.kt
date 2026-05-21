@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.ui
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.jcef.JBCefApp
@@ -129,6 +130,8 @@ class AgentCefPanel(
     private var attachmentExistsQuery: JBCefJSQuery? = null
     private var contextUsageQuery: JBCefJSQuery? = null
     private var imageSettingsQuery: JBCefJSQuery? = null
+    private var resolveLinkQuery: JBCefJSQuery? = null
+    private var openLinkQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String, String?) -> Unit)? = null  // (text, mentionsJson, attachmentsJson?)
 
@@ -682,6 +685,43 @@ class AgentCefPanel(
             JBCefJSQuery.Response(payload)
         }
 
+        // Phase 4 chat hyperlink bridges. The webview's <ChatLink> intercepts
+        // every <a> click, calls _resolveLink to populate the confirmation
+        // modal, and (on the user's confirm) calls _openLink to fire the
+        // navigation through the :core resolver. The modal always shows the
+        // verbatim `raw` href alongside the resolver's friendly description so
+        // the user can spot spoofed labels before opening.
+        resolveLinkQuery = registerQuery(b) { href ->
+            val proj = com.intellij.openapi.project.ProjectManager.getInstance().openProjects.firstOrNull()
+                ?: com.intellij.openapi.project.ProjectManager.getInstance().defaultProject
+            val link = com.workflow.orchestrator.core.services.LinkParser.parse(href)
+            val json = if (link == null) {
+                """{"kind":"UNKNOWN","raw":${JsEscape.toJsonString(href)},"displayLabel":${JsEscape.toJsonString(href)},"targetDescription":${JsEscape.toJsonString("Unrecognised link")}}"""
+            } else {
+                val service = proj.service<com.workflow.orchestrator.core.services.LinkResolver>()
+                val res = service.resolve(link)
+                """{"kind":${JsEscape.toJsonString(res.kind.name)},"raw":${JsEscape.toJsonString(res.raw)},"displayLabel":${JsEscape.toJsonString(res.displayLabel)},"targetDescription":${JsEscape.toJsonString(res.targetDescription)}}"""
+            }
+            JBCefJSQuery.Response(json)
+        }
+        openLinkQuery = registerQuery(b) { href ->
+            val proj = com.intellij.openapi.project.ProjectManager.getInstance().openProjects.firstOrNull()
+                ?: com.intellij.openapi.project.ProjectManager.getInstance().defaultProject
+            val link = com.workflow.orchestrator.core.services.LinkParser.parse(href)
+            if (link != null) {
+                val service = proj.service<com.workflow.orchestrator.core.services.LinkResolver>()
+                service.open(link)
+            } else if (href.startsWith("http://") || href.startsWith("https://")) {
+                // Unparseable but http(s) — fall back to platform browser so the
+                // user isn't silently stuck. Parseable web hrefs already route
+                // through WebLinkResolver above.
+                try { com.intellij.ide.BrowserUtil.browse(href) } catch (e: Exception) {
+                    LOG.warn("openLinkQuery: BrowserUtil.browse failed for $href", e)
+                }
+            }
+            JBCefJSQuery.Response("ok")
+        }
+
         // Wait for page load before executing JS
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
             override fun onLoadingStateChange(
@@ -823,6 +863,25 @@ class AgentCefPanel(
                                     " ${q.inject("sha256", "function(r) { try { resolve(JSON.parse(r)); } catch(e) { resolve({exists:false}); } }", "function(err) { resolve({exists:false}); }")}" +
                                     " }); };"
                             )
+                        }
+                    }
+                    // Phase 4 chat hyperlink — resolver returns the JSON
+                    // payload as a string; JS parses it inside the modal.
+                    // _openLink is fire-and-forget but we still go through the
+                    // bridge so the resolver can fan out to file/class/jira/web.
+                    injectBridge("_resolveLink") {
+                        resolveLinkQuery?.let { q ->
+                            js(
+                                "window._resolveLink = function(href) {" +
+                                    " return new Promise(function(resolve, reject) {" +
+                                    " ${q.inject("href", "function(r) { resolve(r); }", "function(err) { reject(err); }")}" +
+                                    " }); };"
+                            )
+                        }
+                    }
+                    injectBridge("_openLink") {
+                        openLinkQuery?.let { q ->
+                            js("window._openLink = function(href) { ${q.inject("href")} }")
                         }
                     }
 

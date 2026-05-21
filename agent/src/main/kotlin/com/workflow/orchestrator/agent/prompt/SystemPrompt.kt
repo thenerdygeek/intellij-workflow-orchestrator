@@ -64,6 +64,8 @@ object SystemPrompt {
         includeTaskManagement: Boolean = true,
         /** When false, skips section 3 (Editing Files). */
         includeEditingFiles: Boolean = true,
+        /** When false, skips section 3b (Output Formatting — hyperlink rules for code/file/ticket mentions). */
+        includeOutputFormatting: Boolean = true,
         /** When false, skips section 4 (Act vs Plan Mode) entirely. Orthogonal to planModeEnabled. */
         includePlanModeSection: Boolean = true,
         /** When false, skips section 5 (Capabilities). */
@@ -136,6 +138,12 @@ object SystemPrompt {
         if (includeEditingFiles) {
             append(SECTION_SEP)
             append(editingFiles())
+        }
+
+        // 3b. OUTPUT FORMATTING (hyperlinks for code/file/ticket mentions in prose)
+        if (includeOutputFormatting) {
+            append(SECTION_SEP)
+            append(outputFormatting())
         }
 
         // 4. ACT VS PLAN MODE
@@ -285,6 +293,26 @@ Key rules:
 - You MUST read the file with read_file before editing — match against the raw file text (not the line-number prefix from read_file output).
 - After create_file or edit_file, the IDE may auto-format the file (indentation, imports, quotes). The tool response includes a diff context (≈3 lines before/after the edit). If you need to verify formatting of unrelated regions, re-read the file with read_file.
 - Do not create files unless absolutely necessary. Prefer editing existing files to avoid file bloat."""
+
+    private fun outputFormatting(): String = """OUTPUT FORMATTING
+
+When mentioning code or work items in prose, ALWAYS format the mention as a markdown link with one of the custom URL schemes below. The chat UI renders these as clickable navigation; a plain-text mention is dead text the user cannot click.
+
+Schemes:
+- Files: [path/to/Foo.kt](file:path/to/Foo.kt)
+- Files with a line: [Foo.kt:42](file:path/to/Foo.kt:42)
+- Files with a line range: [Foo.kt:42-58](file:path/to/Foo.kt:42-58)
+- Classes: [Foo](class:com.example.Foo)
+- Methods on a class: [Foo#run](class:com.example.Foo#run)
+- Jira tickets: [PROJ-1234](jira:PROJ-1234)
+- External URLs: standard markdown link
+
+EXAMPLE (well-formatted response in prose):
+I traced the bug to [AgentService#run](class:com.workflow.orchestrator.agent.service.AgentService#run) at [AgentService.kt:142-156](file:agent/src/main/kotlin/AgentService.kt:142-156). It's a regression from the work tracked in [WORK-1234](jira:WORK-1234). The fix is one line at [FileLinkResolver.kt:88](file:core/src/main/kotlin/FileLinkResolver.kt:88).
+
+NEGATIVE RULE: in prose, NEVER mention a file, class, method, or Jira ticket as plain text. If you write `AgentService.kt` in a sentence, wrap it as `[AgentService.kt](file:...)`. If you write `WORK-1234`, wrap it as `[WORK-1234](jira:WORK-1234)`.
+
+CARVE-OUT: inside fenced code blocks (triple backticks) and inline code spans (single backticks), do NOT linkify. Code must remain verbatim so it can be copied. Hyperlink formatting applies to prose only."""
 
     /**
      * Section 4: Act vs Plan Mode

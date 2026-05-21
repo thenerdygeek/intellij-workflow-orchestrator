@@ -156,4 +156,54 @@ class MessageSanitizerTest {
             "Conversation must start with a user message")
     }
 
+    // ---- Phase 6: ensure conversation ends with user ----
+
+    @Test
+    fun `conversation ending with assistant gets a synthetic user suffix`() {
+        val result = sanitize(
+            ChatMessage(role = "user", content = "Hello"),
+            ChatMessage(role = "assistant", content = "Hi there"),
+        )
+        assertEquals("user", result.last().role,
+            "Anthropic-via-Vertex rejects assistant-prefill — final message must be user")
+        assertEquals("[Continue]", result.last().content)
+    }
+
+    @Test
+    fun `conversation ending with user is unchanged at the tail`() {
+        val result = sanitize(
+            ChatMessage(role = "user", content = "Hello"),
+            ChatMessage(role = "assistant", content = "Hi"),
+            ChatMessage(role = "user", content = "Continue please"),
+        )
+        assertEquals("user", result.last().role)
+        assertEquals("Continue please", result.last().content,
+            "Already-user tail must not be touched")
+    }
+
+    @Test
+    fun `conversation ending with tool result becomes user tail via Phase 1 coercion`() {
+        val result = sanitize(
+            ChatMessage(role = "user", content = "Read foo"),
+            ChatMessage(role = "assistant", content = "Reading"),
+            ChatMessage(role = "tool", content = "file contents", toolCallId = "tc_1"),
+        )
+        assertEquals("user", result.last().role,
+            "Tool tail is coerced to user in Phase 1 — Phase 6 must not double-append")
+        assertTrue(result.last().content!!.contains("TOOL RESULT:"))
+    }
+
+    @Test
+    fun `reInject-style assistant tail after compaction yields user-ending request`() {
+        // Mimics ContextManager.reInjectActiveSkill's append of an "[Active Skill]"
+        // assistant message at the tail after a compact() rebuild. Phase 6 guards
+        // the API-boundary invariant so the request still ships.
+        val result = sanitize(
+            ChatMessage(role = "assistant", content = "[Pre-user summary]"),
+            ChatMessage(role = "user", content = "do the thing"),
+            ChatMessage(role = "assistant", content = "[Active Skill] still active"),
+        )
+        assertEquals("user", result.last().role)
+    }
+
 }

@@ -73,10 +73,10 @@ Now editing.
         val raw = "Reading.\n<read_file>\n<path>x.kt</path>\n</read_file>"
         val history = listOf(userTurn("read x.kt"), assistantTurn(raw))
         val wire = renderForNextTurn(history)
-        // After sanitizer: user message + assistant message; assistant content
-        // contains the FULL raw XML, no separate tool_calls field.
-        val assistant = wire.last()
-        assertEquals("assistant", assistant.role)
+        // After sanitizer: user message + assistant message + Phase 6 synthetic user
+        // tail. The assistant content contains the FULL raw XML, no separate
+        // tool_calls field.
+        val assistant = wire.last { it.role == "assistant" }
         assertNull(assistant.toolCalls)
         assertTrue(assistant.content!!.contains("<read_file>"))
         assertTrue(assistant.content!!.contains("<path>x.kt</path>"))

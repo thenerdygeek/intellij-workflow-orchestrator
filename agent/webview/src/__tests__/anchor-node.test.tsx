@@ -107,18 +107,21 @@ describe('AnchorNode — regular link regression', () => {
     vi.clearAllMocks();
   });
 
-  it('calls _navigateToFile with the raw href for non-symbol links', () => {
+  it('does NOT call _navigateToFile directly for non-symbol links — the confirmation modal is now the gate', () => {
+    // Phase 4 hyperlink modal: non-symbol clicks open the LinkConfirmModal
+    // instead of dispatching straight to _navigateToFile. The Kotlin-side
+    // _openLink bridge handles navigation only after the user confirms in
+    // the modal. _navigateToFile remains available for legacy callers but
+    // is no longer invoked by the AnchorNode click path.
     const { container } = render(
-      <MarkdownRenderer content="[see file](agent/src/main/kotlin/AgentLoop.kt:42)" />,
+      <MarkdownRenderer content="[see file](file:agent/src/main/kotlin/AgentLoop.kt:42)" />,
     );
 
     const anchor = container.querySelector('a') as HTMLAnchorElement | null;
-    // Relative paths may or may not survive the sanitizer depending on config —
-    // what matters is: if href is present, clicking calls _navigateToFile with it.
     if (!anchor || !anchor.getAttribute('href')) return;
 
     fireEvent.click(anchor);
 
-    expect(getNavigateMock()).toHaveBeenCalledWith(anchor.getAttribute('href'));
+    expect(getNavigateMock()).not.toHaveBeenCalled();
   });
 });

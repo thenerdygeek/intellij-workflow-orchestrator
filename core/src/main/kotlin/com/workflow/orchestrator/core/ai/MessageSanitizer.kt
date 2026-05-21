@@ -45,6 +45,10 @@ object MessageSanitizer {
      *
      * **Phase 5** — final same-role merge pass after Phase 3 removals.
      *
+     * **Phase 6** — ensure the conversation ends with `user`. Anthropic-via-Vertex
+     * rejects requests whose final message is assistant ("This model does not
+     * support assistant message prefill"). Symmetric counterpart to Phase 4.
+     *
      * @param messages Raw conversation history from the agent loop.
      * @return Sanitized list safe to submit to Sourcegraph / Anthropic.
      */
@@ -155,6 +159,16 @@ object MessageSanitizer {
             } else {
                 result.add(msg)
             }
+        }
+
+        // Phase 6: ensure conversation ends with "user". Anthropic-via-Vertex rejects
+        // requests whose final message is assistant with: "This model does not support
+        // assistant message prefill. The conversation must end with a user message."
+        // Tool-role tails are coerced to user in Phase 1, so this only fires when an
+        // upstream path (ContextManager.reInjectActiveSkill / reInjectActivePlan, or a
+        // compact() whose verbatim L4 tail was assistant) leaves assistant at the end.
+        if (result.isNotEmpty() && result.last().role == "assistant") {
+            result.add(ChatMessage(role = "user", content = "[Continue]"))
         }
 
         return result

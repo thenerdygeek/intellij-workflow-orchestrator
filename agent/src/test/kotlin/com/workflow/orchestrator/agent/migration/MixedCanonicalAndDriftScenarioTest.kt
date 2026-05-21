@@ -117,8 +117,8 @@ And let me also call: <function_calls><invoke name="search_code"><parameter name
         val history = listOf(userTurn("read src/Foo.kt"), redactedAssistantTurn)
         val wire = renderForNextTurn(history)
 
-        val assistantMessage = wire.last()
-        assertEquals("assistant", assistantMessage.role)
+        // Phase 6 may append a synthetic [Continue] user tail — grab the assistant explicitly.
+        val assistantMessage = wire.last { it.role == "assistant" }
 
         val content = assistantMessage.content!!
 

@@ -200,6 +200,11 @@
         <postStartupActivity
             implementation="com.workflow.orchestrator.core.services.impl.BuildEventCaptureProjectActivity"/>
 
+        <!-- Chat link resolution (file:/class:/jira:/http(s):// hrefs from agent chat) -->
+        <projectService
+            serviceInterface="com.workflow.orchestrator.core.services.LinkResolver"
+            serviceImplementation="com.workflow.orchestrator.core.services.impl.LinkResolverImpl"/>
+
         <!-- Health Check -->
         <vcsCheckinHandlerFactory
             implementation="com.workflow.orchestrator.core.healthcheck.HealthCheckCheckinHandlerFactory"/>
