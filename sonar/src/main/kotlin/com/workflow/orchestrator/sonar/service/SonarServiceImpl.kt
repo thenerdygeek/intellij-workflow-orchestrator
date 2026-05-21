@@ -1196,6 +1196,32 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                 }
             }
         }
+
+        // Conditional legend: explain the apparent contradiction between a gate ERROR at 0.0
+        // and coverage percentage metrics showing 100% when the branch has no new lines.
+        // Emitted only when both signals are simultaneously present (empty-new-code case).
+        val hasGateZeroCoverageError = data.qualityGate.conditions.any { c ->
+            (c.metric.contains("new_coverage")) &&
+                c.status.equals("ERROR", ignoreCase = true) &&
+                (c.value.toDoubleOrNull() ?: 1.0) <= 0.01
+        }
+        val hasCoveragePctNearHundred = listOf("new_line_coverage", "new_branch_coverage").any { key ->
+            val v = when (key) {
+                "new_line_coverage"   -> cov.lineCoverage
+                "new_branch_coverage" -> cov.branchCoverage
+                else                  -> null
+            }
+            v != null && v >= 99.0
+        }
+        if (hasGateZeroCoverageError && hasCoveragePctNearHundred) {
+            appendLine()
+            appendLine(
+                "_Note: Quality Gate evaluates ratio conditions (e.g., new_coverage ≥ 80%) and " +
+                "returns 0.0 / ERROR when the branch has no new lines. The coverage percentage " +
+                "metrics (new_line_coverage, new_branch_coverage) return 100% in the same " +
+                "empty-new-code case (0 of 0 lines covered). Both reflect the same state._"
+            )
+        }
     }
 
     /**
