@@ -3,10 +3,13 @@ package com.workflow.orchestrator.agent.tools.builtin
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.invokeAndWaitIfNeeded
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.encoding.EncodingProjectManager
+import com.workflow.orchestrator.agent.memory.MemoryIndex
+import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import com.workflow.orchestrator.core.vfs.PostMutationRefresh
 import java.io.File
@@ -34,6 +37,8 @@ import kotlinx.serialization.json.jsonPrimitive
  * checkpoint for rollback capability.
  */
 class CreateFileTool : AgentTool {
+    private val log = Logger.getInstance(CreateFileTool::class.java)
+
     override val name = "create_file"
     override val description = "Create a new file with specified content at the specified path. If the file exists, it will fail unless overwrite=true. If the file doesn't exist, it will be created. This tool will automatically create any directories needed to write the file. ALWAYS provide the COMPLETE intended content of the file, without any truncation or omissions. You MUST include ALL parts of the file, even if they haven't been modified. Prefer edit_file for modifying existing files — only use create_file for new files or complete rewrites with overwrite=true."
     override val parameters = FunctionParameters(
@@ -190,6 +195,19 @@ class CreateFileTool : AgentTool {
             )
         }
 
+        // Auto-sync MEMORY.md if this is a memory file (and not MEMORY.md itself).
+        // Best-effort: failures never propagate.
+        // ClassCastException only occurs in relaxed MockK tests where the generic service
+        // return type resolves to Object — treated as "settings unavailable, use default (enabled)".
+        val autoIndexEnabled = try {
+            PluginSettings.getInstance(project).state.memoryAutoIndexEnabled
+        } catch (_: ClassCastException) {
+            true
+        }
+        if (autoIndexEnabled) {
+            tryMemoryIndexHook(project, file)
+        }
+
         // Drop JPS's in-memory incremental-build snapshot so the next
         // CompilerManager.make / ProjectTaskManager.build re-reads source
         // stamps from disk. Brand-new files (especially new test classes) are
@@ -267,6 +285,20 @@ class CreateFileTool : AgentTool {
             true
         } catch (_: Exception) {
             false
+        }
+    }
+
+    private fun tryMemoryIndexHook(project: Project, createdFile: java.io.File) {
+        try {
+            val memoryDir = project.basePath?.let {
+                java.io.File(ProjectIdentifier.agentDir(it), "memory")
+            } ?: return
+            if (!memoryDir.exists()) return
+            if (createdFile.parentFile?.absolutePath != memoryDir.absolutePath) return
+            if (createdFile.name == "MEMORY.md") return
+            MemoryIndex.onMemoryFileCreated(memoryDir.toPath(), createdFile.toPath())
+        } catch (t: Throwable) {
+            log.warn("MemoryIndex.onMemoryFileCreated failed for ${createdFile.name}", t)
         }
     }
 }

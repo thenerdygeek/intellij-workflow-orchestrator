@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.tools.builtin
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.encoding.EncodingProjectManager
+import com.workflow.orchestrator.agent.memory.MemoryIndex
 import io.mockk.*
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.nio.file.Files
 import java.nio.file.Path
 
 /**
@@ -275,5 +277,36 @@ class CreateFileToolTest {
             diff.contains("-hello"),
             "New-file diff must NOT contain '-hello' (nothing removed).\nActual diff:\n$diff"
         )
+    }
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // Task 4 — MemoryIndex auto-sync hook
+    // ────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `create of a memory file appends entry to MEMORY_md via MemoryIndex hook`(@TempDir tmp: Path) {
+        // We exercise MemoryIndex directly here — the wired-from-CreateFileTool path is observable
+        // by post-condition: writing a feedback_*.md under memoryDir leaves MEMORY.md with a new bullet.
+        val memoryDir = Files.createDirectories(tmp.resolve(".test-agent-dir/memory"))
+        val newFile = memoryDir.resolve("feedback_alpha.md")
+        Files.writeString(newFile, "---\nname: alpha\ndescription: alpha desc.\ntype: feedback\n---\n")
+
+        MemoryIndex.onMemoryFileCreated(memoryDir, newFile)
+
+        val index = Files.readString(memoryDir.resolve("MEMORY.md"))
+        assertTrue(index.contains("- [alpha](feedback_alpha.md) — alpha desc."))
+        assertTrue(index.contains("## Feedback"))
+    }
+
+    @Test
+    fun `CreateFileTool source contains MemoryIndex onMemoryFileCreated call`() {
+        // Source-text contract — catches accidental hook removal without an integration env.
+        val src = File("src/main/kotlin/com/workflow/orchestrator/agent/tools/builtin/CreateFileTool.kt")
+        assertTrue(src.exists(), "CreateFileTool source must exist at the expected path: ${src.absolutePath}")
+        val text = src.readText()
+        assertTrue(text.contains("MemoryIndex.onMemoryFileCreated"),
+            "CreateFileTool must call MemoryIndex.onMemoryFileCreated after a successful memory-dir write")
+        assertTrue(text.contains("memoryAutoIndexEnabled"),
+            "CreateFileTool must respect the memoryAutoIndexEnabled kill switch")
     }
 }
