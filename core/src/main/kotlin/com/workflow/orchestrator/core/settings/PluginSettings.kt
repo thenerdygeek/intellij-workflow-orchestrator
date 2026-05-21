@@ -344,6 +344,15 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var enableStreamingEditPreview: Boolean = true
 
         /**
+         * When true (default), `create_file` and `delete_file` automatically sync `MEMORY.md`
+         * whenever a memory file under `{agentDir}/memory/` is created or deleted.
+         *
+         * Kill switch — flip to false to disable the hook entirely. The underlying file
+         * operation (create / delete) still proceeds; only the index update is suppressed.
+         */
+        var memoryAutoIndexEnabled: Boolean = true
+
+        /**
          * MIME types eligible for tool-produced image auto-load. Default mirrors
          * the user-paste whitelist surface (PNG, JPEG, WebP, GIF) — the user-paste
          * path uses [imageMimeWhitelist] for input validation, this mirror is the

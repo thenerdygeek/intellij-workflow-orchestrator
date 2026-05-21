@@ -887,6 +887,7 @@ class AgentService(
         safeRegisterCore { SendStdinTool() }
         safeRegisterCore { BackgroundProcessTool() }
         safeRegisterCore { RevertFileTool() }
+        safeRegisterCore { DeleteFileTool() }
         safeRegisterCore { AttemptCompletionTool() }
         safeRegisterCore { TaskReportTool() }
         safeRegisterCore { AskQuestionsTool() }

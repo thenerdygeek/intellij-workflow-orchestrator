@@ -659,7 +659,7 @@ class AgentLoop(
 
         /** Tools that mutate state — blocked when plan mode is active. */
         val WRITE_TOOLS = setOf(
-            "edit_file", "create_file", "run_command", "revert_file",
+            "edit_file", "create_file", "delete_file", "run_command", "revert_file",
             "send_stdin", "format_code", "optimize_imports",
             "refactor_rename",
             "background_process",

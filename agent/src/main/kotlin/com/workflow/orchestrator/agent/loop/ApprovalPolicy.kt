@@ -16,7 +16,7 @@ data class ApprovalPolicy(
         private val ALWAYS_PER_INVOCATION = setOf("run_command")
 
         /** Tools that require approval but can be allowed for the session. */
-        private val SESSION_APPROVABLE = setOf("edit_file", "create_file", "revert_file")
+        private val SESSION_APPROVABLE = setOf("edit_file", "create_file", "delete_file", "revert_file")
 
         /** All tools that go through the approval gate. */
         val APPROVAL_TOOLS = ALWAYS_PER_INVOCATION + SESSION_APPROVABLE
