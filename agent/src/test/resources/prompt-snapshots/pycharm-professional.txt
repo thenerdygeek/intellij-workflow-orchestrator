@@ -462,6 +462,12 @@ type: {{user, feedback, project, reference}}
 
 **Step 3 — re-read `MEMORY.md` immediately after a save.** Your in-prompt copy of the index does not update mid-turn; without a fresh `read_file`, the next save you make on the same turn cannot see the entry you just wrote and may duplicate or contradict it.
 
+**The plugin auto-maintains `MEMORY.md` for you.** When you `create_file` a new `<type>_<topic>.md` under the memory directory, the plugin appends the corresponding index line under `## <Type>` automatically (read from your YAML frontmatter's `name`, `description`, `type`). When you `delete_file` a memory file, the matching index line is removed. Do not call `edit_file MEMORY.md` immediately after `create_file` to add the same entry — it will already be there.
+
+You may still `edit_file MEMORY.md` to curate entries (prefix with status like `**SHIPPED 2026-05-21:**`, reorder, add emojis, group). Those edits are preserved across future create/delete operations on other memory files.
+
+Use `delete_file` (not an edit-with-empty-content trick) to retire stale memories.
+
 ## How to organize MEMORY.md
 
 The index uses a fixed structure so it can be scanned quickly and so truncation drops the right entries:
