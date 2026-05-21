@@ -57,7 +57,7 @@ class ApprovalPolicyTest {
     @Test
     fun `APPROVAL_TOOLS contains all approval-required tools`() {
         assertEquals(
-            setOf("run_command", "edit_file", "create_file", "revert_file"),
+            setOf("run_command", "edit_file", "create_file", "delete_file", "revert_file"),
             ApprovalPolicy.APPROVAL_TOOLS
         )
     }
