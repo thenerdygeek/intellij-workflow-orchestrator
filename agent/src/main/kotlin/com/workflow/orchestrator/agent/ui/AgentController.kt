@@ -289,6 +289,16 @@ class AgentController(
      */
     @Volatile private var liveQuestions: LiveQuestions? = null
 
+    /**
+     * Per-wizard accumulated answers. Hoisted from `wireCallbacks` so the
+     * setCefQuestionCallbacks closure can be invoked on both the primary
+     * dashboard panel AND any mirror panels ("View in Editor" tab) without
+     * each panel having its own private answer map. All access is on EDT
+     * (JBCefJSQuery handlers run on EDT), so a regular MutableMap is safe.
+     */
+    private val collectedAnswers = mutableMapOf<String, String>()
+    private val skippedQuestionIds = mutableSetOf<String>()
+
     /** Reusable lenient JSON instance for parsing question metadata. */
     private val lenientJson = Json { ignoreUnknownKeys = true }
 
@@ -641,6 +651,249 @@ class AgentController(
         panel.setImageSettingsProvider {
             buildImageSettingsJson()
         }
+
+        // ════════════════════════════════════════════════════════════════
+        // Bug 2026-05-21 fix — Mirror panels (e.g. the "View in Editor" chat
+        // tab via AgentChatEditor) used to only get the small subset of
+        // callbacks above. Plan approve/revise, tool approval, revert,
+        // question wizard, history actions, etc. were wired only on the
+        // primary dashboard's cefPanel, so the SAME buttons in the mirror
+        // silently did nothing. Every JCEF query that originates from the
+        // user's clicks must be wired per-panel — JS contexts and bridges
+        // are panel-local. State mutations inside each callback body still
+        // reference `dashboard.xxx` because the dashboard broadcasts state
+        // changes to all mirrors (so primary and mirror UIs stay in sync).
+        // ════════════════════════════════════════════════════════════════
+
+        // Retry callback — sends "continue" so the LLM resumes its prior plan rather than
+        // restarting from scratch (replaying the original task makes the model think its
+        // previous work was wrong and pick a different approach).
+        panel.setCefRetryCallback {
+            if (lastTaskText == null) return@setCefRetryCallback
+            controllerScope.launch(Dispatchers.IO) {
+                runCatching { service.cancelCurrentTask() }
+                    .onFailure { LOG.warn("retry cancel-prior-task failed (continuing anyway)", it) }
+                runCatching { service.cleanEmptyArtifactsBeforeRetry() }
+                    .onFailure { LOG.warn("retry cleanup failed (continuing anyway)", it) }
+                invokeLater { executeTask("continue", "continue", null) }
+            }
+        }
+
+        // Plan approval callbacks — full plan lifecycle
+        panel.setCefPlanCallbacks(
+            onApprove = ::approvePlan,
+            onRevise = ::revisePlan
+        )
+        panel.setCefPlanDismissCallback { dismissPlan() }
+
+        // "View Plan" button — opens the plan in a full JCEF editor tab
+        panel.setCefFocusPlanEditorCallback { openPlanInEditor() }
+
+        // "Open Plan" button on the approved-plan card — reuses the same editor-open logic
+        panel.setCefOpenApprovedPlanCallback(::openPlanInEditor)
+
+        // "Revise" button in the chat card — delegates to the open plan editor tab
+        panel.setCefRevisePlanFromEditorCallback {
+            val editors = FileEditorManager.getInstance(project).allEditors
+            val planEditor = editors.filterIsInstance<AgentPlanEditor>().firstOrNull()
+            planEditor?.triggerRevise()
+        }
+
+        // Tool kill callback
+        panel.setCefKillCallback { toolCallId ->
+            LOG.info("AgentController: kill requested for tool call $toolCallId")
+            ProcessRegistry.kill(toolCallId)
+        }
+
+        // Artifact render-result callback — sandbox iframe posts render outcome back
+        panel.setCefArtifactResultCallback { json ->
+            parseAndDispatchArtifactResult(json)
+        }
+
+        // Interactive render round-trip — JS reports whether interactive UI rendered successfully
+        panel.setCefInteractiveRenderCallback { json ->
+            handleInteractiveRenderResult(json)
+        }
+
+        // Approval gate callbacks — user responds to approval cards for write tools
+        panel.setCefApprovalCallbacks(
+            onApprove = {
+                LOG.info("AgentController: tool call approved")
+                pendingApproval?.complete(ApprovalResult.APPROVED)
+            },
+            onDeny = {
+                LOG.info("AgentController: tool call denied")
+                pendingApproval?.complete(ApprovalResult.DENIED)
+            },
+            onAllowForSession = { _ ->
+                LOG.info("AgentController: tool '${pendingApprovalToolName}' allowed for session")
+                pendingApproval?.complete(ApprovalResult.ALLOWED_FOR_SESSION)
+            }
+        )
+
+        // Steering cancel callback
+        panel.setCefCancelSteeringCallback { steeringId ->
+            steeringQueue.removeIf { it.id == steeringId }
+            dashboard.removeQueuedSteeringMessage(steeringId)
+            LOG.info("AgentController: cancelled steering message $steeringId")
+        }
+
+        // Checkpoint v2 — three revert callbacks
+        panel.setCefRevertToUserMessageCallback { messageTs ->
+            val sid = currentSessionId
+            if (sid == null) {
+                LOG.warn("AgentController: time-travel requested but no active session")
+                return@setCefRevertToUserMessageCallback
+            }
+            controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.revertToUserMessage")) {
+                revertToUserMessage(sid, messageTs)
+            }
+        }
+
+        panel.setCefRevertFileToBaselineCallback { path ->
+            val sid = currentSessionId ?: return@setCefRevertFileToBaselineCallback
+            controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.revertFileToBaseline")) {
+                val restored = withContext(Dispatchers.IO) { service.revertFileToBaseline(sid, path) }
+                if (restored) pushAggregateDiff(sid)
+            }
+        }
+
+        panel.setCefRevertAllCallback {
+            val sid = currentSessionId ?: return@setCefRevertAllCallback
+            controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.revertAll")) {
+                val earliest = withContext(Dispatchers.IO) { service.firstUserMessageTs(sid) } ?: return@launch
+                revertToUserMessage(sid, earliest)
+            }
+        }
+
+        // Question wizard callbacks — collectedAnswers/skippedQuestionIds are
+        // controller-level fields so primary and mirror panels share the same
+        // accumulating state (a single wizard interaction at a time).
+        panel.setCefQuestionCallbacks(
+            onAnswered = { questionId, selectedOptionsJson ->
+                collectedAnswers[questionId] = selectedOptionsJson
+                skippedQuestionIds.remove(questionId)
+            },
+            onSkipped = { questionId ->
+                collectedAnswers[questionId] = "[]"
+                skippedQuestionIds.add(questionId)
+            },
+            onChatAbout = { _, _, _ -> /* Chat about option not used for tool flow */ },
+            onSubmitted = {
+                dashboard.finalizeQuestionsAsMessage()
+                if (pendingApprovalChoice) {
+                    handleApprovalChoice(collectedAnswers)
+                } else {
+                    dashboard.setBusy(true)
+                    val snapshot = liveQuestions
+                    val enrichedPayload = if (snapshot != null) {
+                        buildEnrichedAnswerPayload(snapshot, collectedAnswers, skippedQuestionIds)
+                    } else {
+                        collectedAnswers.entries.joinToString(",", "{", "}") { (qid, opts) ->
+                            "\"$qid\":$opts"
+                        }
+                    }
+                    askQuestionsTool.resolveQuestions(enrichedPayload)
+                }
+                liveQuestions = null
+                collectedAnswers.clear()
+                skippedQuestionIds.clear()
+            },
+            onCancelled = {
+                liveQuestions = null
+                if (pendingApprovalChoice) {
+                    pendingApprovalChoice = false
+                    AgentService.planModeActive.set(true)
+                    dashboard.setPlanMode(true)
+                    collectedAnswers.clear()
+                    skippedQuestionIds.clear()
+                    executeTask("The user is still reviewing the plan. Continue in plan mode.")
+                } else {
+                    dashboard.setBusy(true)
+                    askQuestionsTool.cancelQuestions()
+                    collectedAnswers.clear()
+                    skippedQuestionIds.clear()
+                }
+            },
+            onEdit = { _ -> /* Re-editing handled by wizard */ }
+        )
+
+        // AskUserInputTool's process input callback
+        panel.setCefProcessInputCallbacks { input ->
+            com.workflow.orchestrator.agent.tools.builtin.AskUserInputTool.resolveInput(input)
+        }
+
+        // "Open in editor tab" button on artifact/visualization blocks
+        panel.setCefEditorTabCallback { payload ->
+            try {
+                val root = lenientJson.parseToJsonElement(payload).jsonObject
+                val type = root["type"]?.jsonPrimitive?.content ?: "artifact"
+                val content = root["content"]?.jsonPrimitive?.content ?: return@setCefEditorTabCallback
+                AgentVisualizationEditor.openVisualization(project, type, content)
+            } catch (e: Exception) {
+                LOG.warn("openInEditorTab: bad payload", e)
+            }
+        }
+
+        // Tool toggle — user enables/disables a tool via the Tools panel checkbox
+        panel.setCefToolToggleCallback { toolName, enabled ->
+            LOG.info("AgentController: tool toggle — $toolName enabled=$enabled")
+            ToolPreferences.getInstance(project).setToolEnabled(toolName, enabled)
+        }
+
+        // Skill dismiss — user clicks the X on the active skill banner
+        panel.setCefSkillCallbacks(onDismiss = {
+            LOG.info("AgentController: skill dismissed by user")
+            contextManager?.clearActiveSkill()
+            dashboard.hideSkillBanner()
+        })
+
+        // Kill sub-agent
+        panel.setCefKillSubAgentCallback { agentId ->
+            LOG.info("AgentController: kill sub-agent requested — $agentId")
+            val spawnTool = service.registry.get("agent")
+                as? com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool
+            val killed = spawnTool?.cancelAgent(agentId) ?: false
+            if (killed) {
+                LOG.info("AgentController: subagent $agentId cancelled")
+            } else {
+                LOG.warn("AgentController: subagent $agentId not found in running agents")
+            }
+        }
+
+        // Session history callbacks
+        panel.setCefHistoryCallbacks(
+            onShowSession = { sessionId -> showSession(sessionId) },
+            onDeleteSession = { sessionId -> handleDeleteSession(sessionId) },
+            onToggleFavorite = { sessionId -> handleToggleFavorite(sessionId) },
+            onStartNewSession = { handleStartNewSession() },
+            onBulkDeleteSessions = { json -> handleBulkDeleteSessions(json) },
+            onExportSession = { sessionId -> handleExportSession(sessionId) },
+            onExportAllSessions = { handleExportAllSessions() },
+            onRequestHistory = { showHistory() },
+            onResumeViewedSession = { resumeViewedSession() },
+        )
+
+        // Re-push initial state when this panel's page finishes loading. Idempotent.
+        panel.setCefPageReadyCallback { pushInitialState() }
+
+        // Background snapshot loader for this panel's webview top-bar indicator
+        panel.setCefLoadBackgroundSnapshotCallback { sessionId ->
+            val pool = BackgroundPool.getInstance(project)
+            val snapshot = pool.list(sessionId).map { h ->
+                BackgroundProcessSnapshotDto(
+                    bgId = h.bgId,
+                    kind = h.kind,
+                    label = h.label,
+                    state = h.state().name,
+                    startedAt = h.startedAt,
+                    exitCode = h.exitCode(),
+                    outputBytes = h.outputBytes(),
+                    runtimeMs = h.runtimeMs(),
+                )
+            }
+            backgroundJson.encodeToString(ListSerializer(BackgroundProcessSnapshotDto.serializer()), snapshot)
+        }
     }
 
     /**
@@ -826,127 +1079,13 @@ class AgentController(
     }
 
     private fun wireCallbacks() {
-        // Action callbacks shared with mirror panels
+        // All panel-wirable callbacks (retry, plan, approval, revert, question wizard,
+        // history, tool toggles, etc.) are now wired by `wireSharedDashboardCallbacks`
+        // so mirror panels (chat-in-editor-tab) receive the same wiring on add. This
+        // function only sets up state that is NOT panel-local: tool-level callbacks
+        // shared across all panels, the primary's "View in Editor" button, the initial
+        // state push, and the JVM-static run_command stream callback.
         wireSharedDashboardCallbacks(dashboard)
-
-        // Retry callback — sends "continue" so the LLM resumes its prior plan rather than
-        // restarting from scratch (replaying the original task makes the model think its
-        // previous work was wrong and pick a different approach).
-        dashboard.setCefRetryCallback {
-            if (lastTaskText == null) return@setCefRetryCallback
-            // Dispatchers.IO — cleanup performs an atomic disk write via MessageStateHandler.
-            controllerScope.launch(Dispatchers.IO) {
-                // Cancel any in-flight loop BEFORE starting a new executeTask call.
-                // executeTask does not auto-cancel the existing activeTask, so without this
-                // explicit cancel two loops would concurrently write to the same
-                // MessageStateHandler — corrupting both persistence files.
-                // This is safe when the loop is suspended on userInputChannel.receive()
-                // (onLoopAwaitingUserInput path): cancelCurrentTask() propagates
-                // CancellationException through the coroutine, the loop exits cleanly,
-                // and the new executeTask("continue") starts with a clean activeTask slot.
-                runCatching { service.cancelCurrentTask() }
-                    .onFailure { LOG.warn("retry cancel-prior-task failed (continuing anyway)", it) }
-                runCatching { service.cleanEmptyArtifactsBeforeRetry() }
-                    .onFailure { LOG.warn("retry cleanup failed (continuing anyway)", it) }
-                invokeLater { executeTask("continue", "continue", null) }
-            }
-        }
-
-        // Plan approval callbacks — full plan lifecycle (Priority 1)
-        dashboard.setCefPlanCallbacks(
-            onApprove = ::approvePlan,
-            onRevise = ::revisePlan
-        )
-        dashboard.setCefPlanDismissCallback { dismissPlan() }
-
-        // "View Plan" button — opens the plan in a full JCEF editor tab
-        dashboard.setCefFocusPlanEditorCallback {
-            openPlanInEditor()
-        }
-
-        // "Open Plan" button on the approved-plan card — reuses the same editor-open logic
-        dashboard.setCefOpenApprovedPlanCallback(::openPlanInEditor)
-
-        // "Revise" button in the chat card — delegates to the open plan editor tab
-        dashboard.setCefRevisePlanFromEditorCallback {
-            val editors = FileEditorManager.getInstance(project).allEditors
-            val planEditor = editors.filterIsInstance<AgentPlanEditor>().firstOrNull()
-            planEditor?.triggerRevise()
-        }
-
-        // Tool kill callback — Gap 5
-        dashboard.setCefKillCallback { toolCallId ->
-            LOG.info("AgentController: kill requested for tool call $toolCallId")
-            ProcessRegistry.kill(toolCallId)
-        }
-
-        // Artifact render-result callback — sandbox iframe posts render outcome back
-        // to Kotlin. Decode the JSON into an ArtifactRenderResult and hand off to the
-        // ArtifactResultRegistry so the suspended render_artifact tool call resumes.
-        dashboard.setCefArtifactResultCallback { json ->
-            parseAndDispatchArtifactResult(json)
-        }
-
-        // Interactive render round-trip — JS reports whether interactive UI
-        // (questions, plans, approvals) rendered successfully. On failure, Kotlin
-        // shows a fallback so the user is never stuck with an invisible widget.
-        dashboard.setCefInteractiveRenderCallback { json ->
-            handleInteractiveRenderResult(json)
-        }
-
-        // Approval gate callbacks — user responds to approval cards for write tools
-        dashboard.setCefApprovalCallbacks(
-            onApprove = {
-                LOG.info("AgentController: tool call approved")
-                pendingApproval?.complete(ApprovalResult.APPROVED)
-            },
-            onDeny = {
-                LOG.info("AgentController: tool call denied")
-                pendingApproval?.complete(ApprovalResult.DENIED)
-            },
-            onAllowForSession = { _ ->
-                LOG.info("AgentController: tool '${pendingApprovalToolName}' allowed for session")
-                pendingApproval?.complete(ApprovalResult.ALLOWED_FOR_SESSION)
-            }
-        )
-
-        // Steering cancel callback — user clicks "Cancel" on a queued steering message
-        dashboard.setCefCancelSteeringCallback { steeringId ->
-            steeringQueue.removeIf { it.id == steeringId }
-            dashboard.removeQueuedSteeringMessage(steeringId)
-            LOG.info("AgentController: cancelled steering message $steeringId")
-        }
-
-        // ── Checkpoint v2 — three revert callbacks ──
-        // JBCefJSQuery handlers dispatch on EDT; wrap in controllerScope.launch with
-        // Dispatchers.EDT so suspends park the coroutine instead of blocking the
-        // event thread. See lines 1570-1576 (executeTask) for the same Phase-4 Prong-A pattern.
-        dashboard.setCefRevertToUserMessageCallback { messageTs ->
-            val sid = currentSessionId
-            if (sid == null) {
-                LOG.warn("AgentController: time-travel requested but no active session")
-                return@setCefRevertToUserMessageCallback
-            }
-            controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.revertToUserMessage")) {
-                revertToUserMessage(sid, messageTs)
-            }
-        }
-
-        dashboard.setCefRevertFileToBaselineCallback { path ->
-            val sid = currentSessionId ?: return@setCefRevertFileToBaselineCallback
-            controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.revertFileToBaseline")) {
-                val restored = withContext(Dispatchers.IO) { service.revertFileToBaseline(sid, path) }
-                if (restored) pushAggregateDiff(sid)
-            }
-        }
-
-        dashboard.setCefRevertAllCallback {
-            val sid = currentSessionId ?: return@setCefRevertAllCallback
-            controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.revertAll")) {
-                val earliest = withContext(Dispatchers.IO) { service.firstUserMessageTs(sid) } ?: return@launch
-                revertToUserMessage(sid, earliest)
-            }
-        }
 
         // Wire AskQuestionsTool callbacks
         // Simple mode: show question in chat stream, user types answer via chat input.
@@ -1078,154 +1217,21 @@ class AgentController(
                 dashboard.focusInput()
             }
         }
-        // Accumulate individual question answers so we can pass them on submit
-        val collectedAnswers = mutableMapOf<String, String>()
-        val skippedQuestionIds = mutableSetOf<String>()
-        dashboard.setCefQuestionCallbacks(
-            onAnswered = { questionId, selectedOptionsJson ->
-                collectedAnswers[questionId] = selectedOptionsJson
-                skippedQuestionIds.remove(questionId)
-            },
-            onSkipped = { questionId ->
-                collectedAnswers[questionId] = "[]"
-                skippedQuestionIds.add(questionId)
-            },
-            onChatAbout = { _, _, _ -> /* Chat about option not used for tool flow */ },
-            onSubmitted = {
-                // Convert the live question wizard into a frozen Q&A chat bubble
-                // BEFORE resolving the tool, so the snapshot reflects what was answered.
-                dashboard.finalizeQuestionsAsMessage()
-                if (pendingApprovalChoice) {
-                    // System-level approval choice — route to our handler, not AskQuestionsTool
-                    handleApprovalChoice(collectedAnswers)
-                } else {
-                    // Normal LLM-initiated question — resolve the pending deferred.
-                    // Restore busy state so the user sees the agent is processing their answer.
-                    dashboard.setBusy(true)
-                    val snapshot = liveQuestions
-                    val enrichedPayload = if (snapshot != null) {
-                        buildEnrichedAnswerPayload(snapshot, collectedAnswers, skippedQuestionIds)
-                    } else {
-                        // Fallback: liveQuestions unexpectedly null — send raw ids
-                        collectedAnswers.entries.joinToString(",", "{", "}") { (qid, opts) ->
-                            "\"$qid\":$opts"
-                        }
-                    }
-                    askQuestionsTool.resolveQuestions(enrichedPayload)
-                }
-                liveQuestions = null
-                collectedAnswers.clear()
-                skippedQuestionIds.clear()
-            },
-            onCancelled = {
-                liveQuestions = null
-                if (pendingApprovalChoice) {
-                    // User cancelled the approval choice — revert to plan mode and
-                    // resume the suspended loop so the user can continue discussing
-                    pendingApprovalChoice = false
-                    AgentService.planModeActive.set(true)
-                    dashboard.setPlanMode(true)
-                    collectedAnswers.clear()
-                    skippedQuestionIds.clear()
-                    executeTask("The user is still reviewing the plan. Continue in plan mode.")
-                } else {
-                    dashboard.setBusy(true)
-                    askQuestionsTool.cancelQuestions()
-                    collectedAnswers.clear()
-                    skippedQuestionIds.clear()
-                }
-            },
-            onEdit = { _ -> /* Re-editing handled by wizard */ }
-        )
-
-        // Gap 11: Wire AskUserInputTool's show callback to dashboard process input view
+        // AskUserInputTool's tool-side show callback — single global registration,
+        // not per-panel. The setCefProcessInputCallbacks JCEF wiring is per-panel
+        // and lives in `wireSharedDashboardCallbacks`.
         com.workflow.orchestrator.agent.tools.builtin.AskUserInputTool.showInputCallback = { processId, description, prompt, command ->
             invokeLater { dashboard.showProcessInput(processId, description, prompt, command) }
         }
-        dashboard.setCefProcessInputCallbacks { input ->
-            com.workflow.orchestrator.agent.tools.builtin.AskUserInputTool.resolveInput(input)
-        }
 
-        // "View in Editor" toolbar button — opens the chat in a full editor tab
+        // "View in Editor" toolbar button — primary-only by design (already in the
+        // editor tab when triggered from a mirror, so wiring it on mirrors would
+        // duplicate / re-open). Intentionally NOT in wireSharedDashboardCallbacks.
         dashboard.setOnViewInEditor(::openChatInEditorTab)
 
-        // "Open in editor tab" button on artifact/visualization blocks
-        dashboard.setCefEditorTabCallback { payload ->
-            try {
-                val root = lenientJson.parseToJsonElement(payload).jsonObject
-                val type = root["type"]?.jsonPrimitive?.content ?: "artifact"
-                val content = root["content"]?.jsonPrimitive?.content ?: return@setCefEditorTabCallback
-                AgentVisualizationEditor.openVisualization(project, type, content)
-            } catch (e: Exception) {
-                LOG.warn("openInEditorTab: bad payload", e)
-            }
-        }
-
-        // Tool toggle — user enables/disables a tool via the Tools panel checkbox
-        dashboard.setCefToolToggleCallback { toolName, enabled ->
-            LOG.info("AgentController: tool toggle — $toolName enabled=$enabled")
-            ToolPreferences.getInstance(project).setToolEnabled(toolName, enabled)
-        }
-
-        // Skill dismiss — user clicks the X on the active skill banner
-        dashboard.setCefSkillCallbacks(onDismiss = {
-            LOG.info("AgentController: skill dismissed by user")
-            contextManager?.clearActiveSkill()
-            dashboard.hideSkillBanner()
-        })
-
-        // Kill sub-agent — user clicks the kill button on a running sub-agent card
-        dashboard.setCefKillSubAgentCallback { agentId ->
-            LOG.info("AgentController: kill sub-agent requested — $agentId")
-            val spawnTool = service.registry.get("agent")
-                as? com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool
-            val killed = spawnTool?.cancelAgent(agentId) ?: false
-            if (killed) {
-                LOG.info("AgentController: subagent $agentId cancelled")
-            } else {
-                LOG.warn("AgentController: subagent $agentId not found in running agents")
-            }
-        }
-
-        // Session history callbacks — user navigates, deletes, favorites sessions
-        dashboard.setCefHistoryCallbacks(
-            onShowSession = { sessionId -> showSession(sessionId) },
-            onDeleteSession = { sessionId -> handleDeleteSession(sessionId) },
-            onToggleFavorite = { sessionId -> handleToggleFavorite(sessionId) },
-            onStartNewSession = { handleStartNewSession() },
-            onBulkDeleteSessions = { json -> handleBulkDeleteSessions(json) },
-            onExportSession = { sessionId -> handleExportSession(sessionId) },
-            onExportAllSessions = { handleExportAllSessions() },
-            onRequestHistory = { showHistory() },
-            onResumeViewedSession = { resumeViewedSession() },
-        )
-
         // Push initial state (model, skills, memory) — buffered if page isn't loaded yet.
+        // Per-panel page-ready re-push is wired in wireSharedDashboardCallbacks.
         pushInitialState()
-
-        // Re-push when page actually finishes loading, in case the initial push was
-        // buffered and the page took longer than expected (slow machines, heavy IDE startup).
-        // If the buffered calls already flushed successfully, this is a harmless idempotent re-push.
-        dashboard.setCefPageReadyCallback { pushInitialState() }
-
-        // Wire the _loadBackgroundSnapshot JCEF bridge so the webview can request an
-        // initial snapshot for a given session when it first mounts the top-bar indicator.
-        dashboard.setCefLoadBackgroundSnapshotCallback { sessionId ->
-            val pool = BackgroundPool.getInstance(project)
-            val snapshot = pool.list(sessionId).map { h ->
-                BackgroundProcessSnapshotDto(
-                    bgId = h.bgId,
-                    kind = h.kind,
-                    label = h.label,
-                    state = h.state().name,
-                    startedAt = h.startedAt,
-                    exitCode = h.exitCode(),
-                    outputBytes = h.outputBytes(),
-                    runtimeMs = h.runtimeMs(),
-                )
-            }
-            backgroundJson.encodeToString(ListSerializer(BackgroundProcessSnapshotDto.serializer()), snapshot)
-        }
 
         // Route tool process output to per-tool-call Terminal blocks via toolStreamBatcher.
         // TODO: RunCommandTool.streamCallback is a JVM-static field — if two projects are open
