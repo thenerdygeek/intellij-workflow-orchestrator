@@ -92,8 +92,6 @@ class FindDefinitionTool(
     }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
-        if (PsiToolUtils.isDumb(project)) return PsiToolUtils.dumbModeError()
-
         val symbol = params["symbol"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'symbol' parameter required", "Error: missing symbol", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 

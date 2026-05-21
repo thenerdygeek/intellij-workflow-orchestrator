@@ -40,9 +40,11 @@ class FindReferencesToolTest {
     }
 
     @Test
-    fun `execute returns dumbModeError when indexing`() = runTest {
+    fun `execute does not bail early when indexer is busy`() = runTest {
+        // The eager isDumb guard was removed: inSmartMode().executeSynchronously() defers
+        // internally, so a dumb-mode state should NOT produce the short-circuit error.
         val tool = FindReferencesTool(registry)
-        val project = mockk<com.intellij.openapi.project.Project> {
+        val project = mockk<com.intellij.openapi.project.Project>(relaxed = true) {
             every { basePath } returns "/tmp"
         }
         val params = kotlinx.serialization.json.buildJsonObject {
@@ -52,10 +54,18 @@ class FindReferencesToolTest {
         mockkStatic(com.intellij.openapi.project.DumbService::class)
         every { com.intellij.openapi.project.DumbService.isDumb(project) } returns true
 
-        val result = tool.execute(params, project)
+        val result = try {
+            tool.execute(params, project)
+        } catch (e: Exception) {
+            // An exception past the guard is acceptable proof that the guard is gone.
+            unmockkStatic(com.intellij.openapi.project.DumbService::class)
+            return@runTest
+        }
 
-        assertTrue(result.isError)
-        assertTrue(result.content.contains("indexing"))
+        assertFalse(
+            result.content.contains("IDE is still indexing", ignoreCase = true),
+            "Eager dumb-mode guard must be absent; got: ${result.content}"
+        )
         unmockkStatic(com.intellij.openapi.project.DumbService::class)
     }
 
