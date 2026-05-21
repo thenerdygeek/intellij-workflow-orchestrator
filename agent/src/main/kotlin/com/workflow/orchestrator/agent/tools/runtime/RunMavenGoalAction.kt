@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.runtime
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.execution.ExecutionListener
 import com.intellij.execution.ExecutionManager
 import com.intellij.execution.ProgramRunnerUtil
@@ -35,6 +36,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import org.jetbrains.idea.maven.execution.MavenRunnerParameters
 
+private val LOG = Logger.getInstance("com.workflow.orchestrator.agent.tools.runtime.RunMavenGoalAction")
+
 internal const val CATEGORY_INVALID_ARGS = "INVALID_ARGS"
 internal const val CATEGORY_NOT_A_MAVEN_PROJECT = "NOT_A_MAVEN_PROJECT"
 internal const val CATEGORY_APPROVAL_DENIED = "APPROVAL_DENIED"
@@ -66,6 +69,7 @@ internal suspend fun executeRunMavenGoal(
 ): ToolResult {
     val goals = params["goals"]?.jsonPrimitive?.content ?: ""
     if (goals.isBlank()) {
+        LOG.warn("run_maven_goal: goals blank. Received param keys: ${params.keys}")
         return buildPreflightError(
             CATEGORY_INVALID_ARGS,
             "goals is blank — Maven CLI silently produces BUILD SUCCESS for an empty goal list, which is misleading. Provide at least one goal (e.g., \"clean\", \"install\", \"dependency:tree\")."
