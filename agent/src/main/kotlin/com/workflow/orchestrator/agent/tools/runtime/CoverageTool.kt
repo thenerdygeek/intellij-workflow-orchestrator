@@ -230,6 +230,7 @@ Actions and their parameters:
                             "pom.xml groupId or build.gradle group. Set to empty string to disable filtering."
                         )
                         humanReadable("Restricts the coverage snapshot to your project's own packages, hiding framework internals like ByteBuddy proxies, Mockito-generated classes, CGLIB proxies, and transitive dependencies.")
+                        whenPresent("Split on commas, trimmed; each entry is a prefix matched via `className.startsWith(prefix + \".\")` (so `com.example` includes `com.example.app.UserService` but excludes `com.example2`). Empty string disables filtering entirely.")
                         whenAbsent("Auto-derived from pom.xml <groupId>, build.gradle/kts group, or src/main/java source-tree walk (in that order). If none is derivable, all classes are returned with a warning.")
                         example("com.example.app")
                         example("com.example,com.other")
