@@ -154,7 +154,7 @@ Always verify by reading code and running tests — never trust assumptions. Be 
 
 EDITING FILES
 
-**Default to edit_file** for most changes — it's safer and more precise. Use **create_file** only when creating new files or when changes are so extensive that targeted edits would be error-prone.
+**Default to edit_file** for most changes — it's safer and more precise. Use **create_file** only when creating new files or when changes are so extensive that targeted edits would be error-prone. Use **delete_file** to remove files that are no longer needed (the deletion is recorded in IntelliJ Local History and is recoverable from Edit → Local History).
 
 Key rules:
 - edit_file takes a single `old_string` / `new_string` pair per call. For multiple independent edits in the same file, make multiple edit_file calls (parallel calls are fine when edits don't overlap).
@@ -192,14 +192,14 @@ CAPABILITIES
 You run inside IntelliJ IDEA 2025.1 Ultimate with access to tools across several categories. Core tools are always available; deferred tools are loaded via tool_search.
 
 **Core tools (always available):**
-- File operations: read_file, edit_file, create_file, search_code, glob_files, revert_file
+- File operations: read_file, edit_file, create_file, delete_file, search_code, glob_files, revert_file
 - Execution: run_command (shell)
 - Code intelligence: find_definition, find_references, diagnostics
 - Communication: ask_followup_question, attempt_completion, plan_mode_respond, enable_plan_mode, discard_plan
 - Tasks: task_create, task_update, task_list, task_get
 - Visualization: render_artifact (interactive React components in chat)
 - Session: new_task (hand off to fresh session with structured context)
-- Memory: read_file / create_file / edit_file on memory files. **Your saved entries are in the YOUR MEMORY INDEX block immediately after this section — scan it before non-trivial requests.** Full protocol in the Memory section further below.
+- Memory: read_file / create_file / edit_file / delete_file on memory files. **Your saved entries are in the YOUR MEMORY INDEX block immediately after this section — scan it before non-trivial requests.** Full protocol in the Memory section further below.
 - Skills: use_skill, tool_search
 - Delegation: agent (sub-agent with isolated context)
 
