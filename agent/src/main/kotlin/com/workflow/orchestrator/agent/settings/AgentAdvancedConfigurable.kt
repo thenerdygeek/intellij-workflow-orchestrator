@@ -70,6 +70,21 @@ class AgentAdvancedConfigurable(
                         .comment("accumulate: execute all tools after response completes (default). " +
                             "stream_interrupt: execute each tool as soon as it appears.")
                 }
+                row {
+                    checkBox("Stream edit_file diff preview into the chat as it generates")
+                        .bindSelected(
+                            { pluginSettings.state.enableStreamingEditPreview },
+                            { pluginSettings.state.enableStreamingEditPreview = it }
+                        )
+                        .comment(
+                            "When the LLM streams an <code>edit_file</code> tool call, " +
+                                "the chat panel renders the unified diff live as " +
+                                "<code>new_string</code> arrives (throttled to 100ms ticks). " +
+                                "When the tool call completes, the approval card (or " +
+                                "session-approved write) takes over. Disable if you find it " +
+                                "laggy or noisy."
+                        )
+                }
             }
 
             group("Network") {

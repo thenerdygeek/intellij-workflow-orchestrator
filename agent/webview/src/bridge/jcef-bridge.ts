@@ -114,6 +114,47 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   endStream() {
     stores?.getChatStore().endStream();
   },
+
+  // ── Streaming `edit_file` preview bridges (Commit 2 of live-preview feature) ──
+  // Driven by Kotlin's StreamingEditTracker. Each Kotlin call wraps args in JSON
+  // (so quoting / multiline diff bodies survive the JS literal); the JS side
+  // parses each arg back. Safe for both production and the chatStore test setup
+  // — bridge calls before initBridge() get buffered in pendingCalls.
+  _streamingEditOpen(callIdJson: string, pathJson: string, initialDiffJson: string) {
+    try {
+      const callId = JSON.parse(callIdJson) as string;
+      const path = JSON.parse(pathJson) as string;
+      const diff = JSON.parse(initialDiffJson) as string;
+      stores?.getChatStore().streamingEditOpen(callId, path, diff);
+    } catch (e) {
+      if (BRIDGE_DEBUG) console.warn('[bridge] _streamingEditOpen malformed', e);
+    }
+  },
+  _streamingEditUpdate(callIdJson: string, diffJson: string) {
+    try {
+      const callId = JSON.parse(callIdJson) as string;
+      const diff = JSON.parse(diffJson) as string;
+      stores?.getChatStore().streamingEditUpdate(callId, diff);
+    } catch (e) {
+      if (BRIDGE_DEBUG) console.warn('[bridge] _streamingEditUpdate malformed', e);
+    }
+  },
+  _streamingEditFinalize(callIdJson: string) {
+    try {
+      const callId = JSON.parse(callIdJson) as string;
+      stores?.getChatStore().streamingEditFinalize(callId);
+    } catch (e) {
+      if (BRIDGE_DEBUG) console.warn('[bridge] _streamingEditFinalize malformed', e);
+    }
+  },
+  _streamingEditCancel(callIdJson: string) {
+    try {
+      const callId = JSON.parse(callIdJson) as string;
+      stores?.getChatStore().streamingEditCancel(callId);
+    } catch (e) {
+      if (BRIDGE_DEBUG) console.warn('[bridge] _streamingEditCancel malformed', e);
+    }
+  },
   completeSession(status: string, tokensUsed: number, durationMs: number, iterations: number, filesModified: string[]) {
     stores?.getChatStore().completeSession({
       status: status as SessionStatus, tokensUsed, durationMs, iterations,

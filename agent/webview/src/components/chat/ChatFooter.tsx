@@ -10,6 +10,7 @@ import { PlanSummaryCard } from '@/components/agent/PlanSummaryCard';
 import { PlanProgressWidget } from '@/components/agent/PlanProgressWidget';
 import { QuestionView } from '@/components/agent/QuestionView';
 import { ThinkingView } from '@/components/agent/ThinkingView';
+import { StreamingEditPreviewView } from '@/components/agent/StreamingEditPreviewView';
 
 /**
  * Trailing UI that flows below the last finalized message inside the
@@ -96,6 +97,12 @@ export const ChatFooter = memo(function ChatFooter() {
           />
         </ErrorBoundary>
       )}
+
+      {/* Live streaming-diff preview for in-flight edit_file tool calls. Renders
+          one card per active preview from `chatStore.streamingEdits`; quiet when
+          the map is empty. Sits below the prose stream and above the tool-call
+          chain so the user sees the diff growing as the LLM emits new_string. */}
+      <StreamingEditPreviewView />
 
       {toolCallsArray.length > 0 && <ToolCallChain toolCalls={toolCallsArray} />}
 

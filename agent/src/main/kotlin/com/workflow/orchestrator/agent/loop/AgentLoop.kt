@@ -97,6 +97,25 @@ private class ApprovalGatedTool(
 data class SteeringMessage(val id: String, val text: String, val timestamp: Long = System.currentTimeMillis())
 
 /**
+ * UI fan-out for the live `edit_file` diff preview during streaming.
+ * Wired by [com.workflow.orchestrator.agent.ui.AgentController] into the JCEF bridge
+ * — see `pushStreamingEditOpen` / `pushStreamingEditUpdate` / `pushStreamingEditFinalize`
+ * / `pushStreamingEditCancel`. AgentLoop owns the per-loop
+ * [com.workflow.orchestrator.agent.preview.StreamingEditTracker] and routes its callbacks
+ * through this interface. Null in sub-agents and tests (no UI surface).
+ *
+ * All methods are fire-and-forget — they run on Dispatchers.IO inside the SSE chunk
+ * handler and must not block. Implementors push onto the JCEF dispatcher which
+ * coalesces calls on the EDT.
+ */
+interface StreamingEditCallback {
+    fun open(callId: String, path: String, initialDiff: String)
+    fun update(callId: String, diff: String)
+    fun finalize(callId: String)
+    fun cancel(callId: String)
+}
+
+/**
  * Core ReAct loop: call LLM -> execute tools -> repeat.
  */
 class AgentLoop(
@@ -442,8 +461,43 @@ class AgentLoop(
      * active tool set (done by [AgentService] when [AgentSettings.agentFeedbackEnabled]).
      */
     private val feedbackEnabled: Boolean = false,
+    /**
+     * Optional callback that lets the loop push a streaming `edit_file` diff into
+     * the chat panel while the LLM is still emitting `<new_string>`. When non-null,
+     * an internal [com.workflow.orchestrator.agent.preview.StreamingEditTracker] is
+     * instantiated per AgentLoop instance and driven from the parser blocks inside
+     * [onChunk]. The callback fans out to the JCEF bridge — see
+     * [com.workflow.orchestrator.agent.ui.AgentController.pushStreamingEditOpen] et al.
+     *
+     * Null in sub-agents and tests (no UI surface to push into); gated behind
+     * [com.workflow.orchestrator.core.settings.PluginSettings.State.enableStreamingEditPreview]
+     * at the wiring site so the feature is dark when the user turns it off.
+     */
+    private val streamingEditCallback: StreamingEditCallback? = null,
 ) {
     private val cancelled = AtomicBoolean(false)
+
+    /**
+     * Per-loop tracker for streaming `edit_file` diff previews. Constructed lazily on
+     * first use; null until [streamingEditCallback] is provided AND the feature flag
+     * [com.workflow.orchestrator.core.settings.PluginSettings.State.enableStreamingEditPreview]
+     * is on at the construction site (checked in [maybeObserveStreamingEditBlock]).
+     *
+     * Owned by AgentLoop because the tracker's per-call state is meaningful only for
+     * the lifetime of a single ReAct loop; on cancellation / completion the tracker is
+     * dropped along with the AgentLoop instance.
+     */
+    private val streamingEditTracker: com.workflow.orchestrator.agent.preview.StreamingEditTracker? =
+        streamingEditCallback?.let { cb ->
+            com.workflow.orchestrator.agent.preview.StreamingEditTracker(
+                project = project,
+                onOpen = { id, path, diff -> cb.open(id, path, diff) },
+                onUpdate = { id, diff -> cb.update(id, diff) },
+                onFinalize = { id -> cb.finalize(id) },
+                onCancel = { id -> cb.cancel(id) },
+            )
+        }
+
     private var totalTokensUsed = 0
     /** Cumulative input (prompt) tokens across all API calls in this session (seeded from prior turns). */
     private var totalInputTokens = initialInputTokens
@@ -822,6 +876,16 @@ class AgentLoop(
             val currentToolNames = toolNameProvider?.invoke() ?: brain.toolNameSet
             val currentParamNames = paramNameProvider?.invoke() ?: brain.paramNameSet
 
+            // Read the streaming-edit feature flag once per iteration. Cheap (singleton
+            // PersistentStateComponent lookup), but no need to re-read inside the chunk
+            // lambda. Null project state (test environment) treated as "feature off".
+            val streamingEditPreviewEnabled = try {
+                com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
+                    .state.enableStreamingEditPreview
+            } catch (_: Throwable) {
+                false
+            }
+
             // Parser-leak diagnostic — if a deferred tool the LLM is likely to call
             // is missing from this snapshot, AssistantMessageParser cannot recognize
             // its XML and the call body leaks as raw text into the assistant bubble.
@@ -869,6 +933,32 @@ class AgentLoop(
                         ).also { cachedBlocks = it }
                     } else {
                         cachedBlocks!!
+                    }
+
+                    // Streaming edit-preview hook — feed every parsed edit_file ToolUseContent
+                    // into the tracker so the chat panel sees the diff grow line-by-line
+                    // while the LLM is still emitting <new_string>. Gated by feature flag.
+                    // No-op when the tracker is null (sub-agents / tests) or the flag is off.
+                    if (streamingEditPreviewEnabled && streamingEditTracker != null && needsParse) {
+                        for ((idx, block) in blocks.withIndex()) {
+                            if (block is ToolUseContent && block.name == "edit_file") {
+                                // Stable per-call ID: block index + tool name. The parser is
+                                // deterministic over the accumulated buffer so the same logical
+                                // tool at the same list position keeps the same id across re-parses.
+                                val callId = "edit-${iteration}-${idx}"
+                                try {
+                                    streamingEditTracker.observe(
+                                        callId = callId,
+                                        params = block.params.toMap(),
+                                        isPartial = block.partial,
+                                    )
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (_: Throwable) {
+                                    // Best-effort: a preview failure must never break streaming.
+                                }
+                            }
+                        }
                     }
 
                     // Extract visible text (TextContent blocks only)
@@ -1630,10 +1720,20 @@ class AgentLoop(
 
     /**
      * Cancel the running loop. Safe to call from any thread.
+     *
+     * Also drops every open streaming-edit preview so the chat panel doesn't keep
+     * stale "live" cards after a user cancel / interrupt. The real file is never
+     * touched during streaming — the preview is purely a UI affordance, so dropping
+     * it is correct.
      */
     fun cancel() {
         cancelled.set(true)
         brain.cancelActiveRequest()
+        try {
+            streamingEditTracker?.cancelAll()
+        } catch (_: Throwable) {
+            // best-effort — never let a cancel-side bug block the brain cancel
+        }
     }
 
     /**

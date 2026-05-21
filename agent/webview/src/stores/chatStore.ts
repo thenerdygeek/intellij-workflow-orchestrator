@@ -254,6 +254,22 @@ interface ChatState {
    */
   streamingThinkingText: string | null;
   streamingThinkingTs: number | null;
+  /**
+   * In-flight streaming `edit_file` previews — one entry per active LLM tool
+   * call. Keyed by the AgentLoop-side callId (block index + tool name).
+   *
+   * Driven by four Kotlin → JS bridge calls: `_streamingEditOpen` (insert),
+   * `_streamingEditUpdate` (refresh `.diff`), `_streamingEditFinalize` (flip
+   * `.status` to 'finalized'), `_streamingEditCancel` (delete). On
+   * `endStream` / `clearChat` / `startSession` the map is reset so stale
+   * previews never bleed across sessions.
+   *
+   * The map is rendered by `<StreamingEditPreviewView />` mounted inside
+   * `ChatFooter`. Empty map → nothing renders. The user sees the diff grow
+   * inside the chat while the LLM is still emitting `<new_string>` — Commit 2
+   * of the live-preview feature.
+   */
+  streamingEdits: Record<string, { path: string; diff: string; status: 'streaming' | 'finalized' }>;
   activeToolCalls: Map<string, ToolCall>;  // key = unique tool call ID
   plan: Plan | null;
   planCommentCount: number;
@@ -382,6 +398,14 @@ interface ChatState {
   addThinking(text: string): void;
   appendToThinking(text: string): void;
   endThinking(): void;
+
+  // Streaming `edit_file` preview actions (Commit 2 of live-preview feature)
+  streamingEditOpen(callId: string, path: string, initialDiff: string): void;
+  streamingEditUpdate(callId: string, diff: string): void;
+  streamingEditFinalize(callId: string): void;
+  streamingEditCancel(callId: string): void;
+  /** Drop every active streaming-edit preview. Called on stream end / new chat. */
+  clearStreamingEdits(): void;
   clearChat(): void;
   setPlan(plan: Plan): void;
   clearPlan(): void;
@@ -508,6 +532,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingMsgTs: null,
   streamingThinkingText: null,
   streamingThinkingTs: null,
+  streamingEdits: {},
   activeToolCalls: new Map(),
   plan: null,
   planCommentCount: 0,
@@ -583,6 +608,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingMsgTs: null,
       streamingThinkingText: null,
       streamingThinkingTs: null,
+      streamingEdits: {},
       activeToolCalls: new Map(),
       // Reset tool output streams alongside activeToolCalls — they are keyed by
       // the same tool call IDs and would otherwise leak across sessions.
@@ -660,6 +686,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingMsgTs: null,
       streamingThinkingText: null,
       streamingThinkingTs: null,
+      streamingEdits: {},
       activeToolCalls: new Map(),
       // Drop all tool output streams — the map was keyed by the now-cleared
       // tool call IDs and would otherwise leak for the rest of the app's life.
@@ -760,8 +787,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   endStream() {
     set(state => {
       const shouldClearPlan = state.planCompletedPendingClear;
+      // Drop any in-flight streaming edit previews. By the time endStream fires,
+      // the tool call has either finalized (approval card now owns the diff) or
+      // been cancelled. Either way, the live preview should disappear so the user
+      // doesn't see two cards rendering the same diff.
+      const haveStreamingEdits = Object.keys(state.streamingEdits).length > 0;
       if (state.streamingText == null || state.streamingMsgTs == null) {
-        return shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {};
+        return {
+          ...(haveStreamingEdits ? { streamingEdits: {} } : {}),
+          ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
+        };
       }
       const finalized: UiMessage = {
         ts: state.streamingMsgTs,
@@ -776,6 +811,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streamingMsgTs: null,
         streamingThinkingText: null,
         streamingThinkingTs: null,
+        ...(haveStreamingEdits ? { streamingEdits: {} } : {}),
         ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
       };
     });
@@ -999,6 +1035,72 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
+  // ── Streaming `edit_file` preview actions (Commit 2 of live-preview feature) ──
+  //
+  // These are driven by Kotlin's StreamingEditTracker via the four
+  // `_streamingEdit{Open,Update,Finalize,Cancel}` JCEF bridges. The map
+  // `streamingEdits` is rendered by <StreamingEditPreviewView /> inside
+  // ChatFooter; an empty map renders nothing. On stream end / new chat
+  // we drop the whole map (see endStream / clearChat / startSession /
+  // completeSession) — same lifecycle as `streamingText`.
+
+  streamingEditOpen(callId: string, path: string, initialDiff: string) {
+    set(state => {
+      if (state.streamingEdits[callId]) {
+        // Kotlin should never re-open the same callId, but guard anyway —
+        // a duplicate open could be a re-parse fluke at the parser boundary.
+        return {};
+      }
+      return {
+        streamingEdits: {
+          ...state.streamingEdits,
+          [callId]: { path, diff: initialDiff, status: 'streaming' as const },
+        },
+      };
+    });
+  },
+
+  streamingEditUpdate(callId: string, diff: string) {
+    set(state => {
+      const entry = state.streamingEdits[callId];
+      if (!entry) return {};  // late update after cancel — drop silently
+      if (entry.diff === diff) return {};  // no-op — same content
+      return {
+        streamingEdits: {
+          ...state.streamingEdits,
+          [callId]: { ...entry, diff },
+        },
+      };
+    });
+  },
+
+  streamingEditFinalize(callId: string) {
+    set(state => {
+      const entry = state.streamingEdits[callId];
+      if (!entry) return {};
+      if (entry.status === 'finalized') return {};
+      return {
+        streamingEdits: {
+          ...state.streamingEdits,
+          [callId]: { ...entry, status: 'finalized' as const },
+        },
+      };
+    });
+  },
+
+  streamingEditCancel(callId: string) {
+    set(state => {
+      if (!(callId in state.streamingEdits)) return {};
+      const next = { ...state.streamingEdits };
+      delete next[callId];
+      return { streamingEdits: next };
+    });
+  },
+
+  clearStreamingEdits() {
+    set(state => Object.keys(state.streamingEdits).length === 0 ? {} : { streamingEdits: {} });
+  },
+
   finalizeToolChain() {
     // Move current active tool calls into individual UiMessage entries.
     // Before clearing toolOutputStreams, merge any accumulated stream output
@@ -1045,6 +1147,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingMsgTs: null,
       streamingThinkingText: null,
       streamingThinkingTs: null,
+      streamingEdits: {},
       activeToolCalls: new Map(),
       // Drop tool output streams in lockstep with activeToolCalls.
       toolOutputStreams: {},

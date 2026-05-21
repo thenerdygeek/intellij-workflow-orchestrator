@@ -331,6 +331,19 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var enableToolImageAutoload: Boolean = true
 
         /**
+         * Live streaming-diff preview for `edit_file` tool calls. When true (default),
+         * the chat panel renders the unified diff for an in-flight `edit_file` while
+         * the LLM is still emitting `<new_string>` — the diff refreshes on 100ms ticks
+         * so the user watches lines appear in the preview. When false, no preview is
+         * shown until the tool call completes and (where applicable) the approval card
+         * appears with the final diff.
+         *
+         * Kill switch — gate evaluated in `AgentLoop.onChunk`. Default true since the
+         * feature only improves UX; flip to false if it ever turns out to be laggy.
+         */
+        var enableStreamingEditPreview: Boolean = true
+
+        /**
          * MIME types eligible for tool-produced image auto-load. Default mirrors
          * the user-paste whitelist surface (PNG, JPEG, WebP, GIF) — the user-paste
          * path uses [imageMimeWhitelist] for input validation, this mirror is the

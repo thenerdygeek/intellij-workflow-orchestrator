@@ -904,6 +904,38 @@ Three layers between raw SSE token and rendered DOM:
 **Incomplete code fences** render as plain `<pre class="streaming-code-plain">` until closed, then swap to Shiki-backed `CodeBlock`.
 **Module-scope invariant:** `MarkdownRenderer.tsx` declares `COMPONENTS`, `REMARK_PLUGINS`, `REHYPE_PLUGINS` at module scope (inline literals defeat Streamdown's per-block `React.memo`).
 
+**Partial tool-call hook (streaming edit preview):** the per-chunk `AssistantMessageParser.parse` output is also fed into `StreamingEditTracker.observe(callId, params, isPartial)` for every `ToolUseContent` whose `name == "edit_file"`. Gated by `PluginSettings.enableStreamingEditPreview` (default on) — see "Streaming Edit Preview" below.
+
+## Streaming Edit Preview
+
+Live unified-diff preview for `edit_file` tool calls — the chat panel renders the diff growing inside the chat while the LLM is still emitting `<new_string>`, instead of waiting until the full tool call arrives and an approval card appears.
+
+**Pipeline:**
+
+1. `AgentLoop.onChunk` re-parses the SSE buffer (existing logic) → `List<AssistantMessageContent>`.
+2. For each `ToolUseContent` block where `name == "edit_file"`, the loop calls `streamingEditTracker.observe(callId, params, isPartial)`. `callId` is a stable per-loop-iteration block-index key (`"edit-{iter}-{idx}"`); deterministic across re-parses because the parser is deterministic over the accumulated buffer.
+3. `StreamingEditTracker` (in `preview/StreamingEditTracker.kt`) decides:
+   - **First sighting** with both `old_string` AND `new_string` keys present in params (the parser opens `new_string` only after `</old_string>` closes) → runs `EditFileTool.preview()` (reused from Commit 1) to validate. On any validation failure (path traversal, file missing, no match, ambiguous match without `replace_all`) the preview is silently dropped; `execute()` will surface the precise error when the tool call completes. On `EditPreview.Ready` → snapshots the original content, fires `onOpen(callId, path, realDiff)`.
+   - **Update** (`isPartial=true` after first sighting) → throttled to 100ms ticks (configurable). Identical `new_string` across re-parses is suppressed. Each accepted update rebuilds the unified diff (`originalContent` with `old_string → new_string`) and fires `onUpdate(callId, diff)`.
+   - **Finalize** (`isPartial=false`) → pushes final diff via `onUpdate`, fires `onFinalize(callId)`, marks state as finalized. Subsequent stray re-parses for the same id are no-ops.
+4. Callbacks fan out via `StreamingEditCallback` (typed interface in `loop/AgentLoop.kt`) — `AgentController` implements it as four JSON-encoded `dashboard.callJs("if (window._streamingEdit{Open|Update|Finalize|Cancel}) {...}")` pushes.
+5. JCEF bridge (`webview/src/bridge/jcef-bridge.ts`) parses the JSON args and dispatches into `chatStore.streamingEdit{Open|Update|Finalize|Cancel}`.
+6. `chatStore.streamingEdits: Record<callId, {path, diff, status}>` projection rendered by `<StreamingEditPreviewView />` mounted inside `ChatFooter`. Empty map → nothing renders.
+
+**Lifecycle:**
+- `AgentLoop.cancel()` calls `streamingEditTracker?.cancelAll()` — every open preview drops cleanly via `onCancel(callId)`. The real file is never touched during streaming, so cancellation is purely a UI affordance.
+- `chatStore.endStream()` resets `streamingEdits` to `{}`. By the time the approval card appears for an `edit_file`, the streaming preview is already gone — the approval card shows the same diff statically. Users never see two cards rendering the same diff.
+- `clearChat()` / `startSession()` / `completeSession()` also reset `streamingEdits`.
+
+**Feature flag:** `PluginSettings.enableStreamingEditPreview` (default `true`). Read once per AgentLoop iteration; checked together with `streamingEditTracker != null` to gate the observe call inside `onChunk`. Sub-agents and tests pass `streamingEditCallback = null` → no tracker constructed, zero overhead. Settings UI lives in `AgentAdvancedConfigurable` → "AI Agent ▸ Advanced ▸ Tool Calling".
+
+**Invariants pinned by tests:**
+- `StreamingEditTrackerTest` — 10 behavioural cases (validation failure paths, throttle, finalization, cancellation, real-file hunk-offset anchoring).
+- `AgentLoopStreamingEditTest` — 3 source-text pins: `streamingEditTracker.observe` is in `onChunk`; the `enableStreamingEditPreview` flag gates it; `cancel()` calls `cancelAll()`.
+- `StreamingEditPreviewView.test.tsx` — 7 React cases (empty map → null, multi-entry, live indicator on `streaming`, no indicator on `finalized`, path display, `DiffHtml` receives the diff, cancel removes the card).
+
+Why a tracker rather than push-on-execute: this mirrors Cline's `DiffViewProvider` UX but routes through the JCEF chat panel rather than a separate IntelliJ diff editor. Editor-pane streaming can be a follow-up.
+
 ## Testing
 
 ```bash

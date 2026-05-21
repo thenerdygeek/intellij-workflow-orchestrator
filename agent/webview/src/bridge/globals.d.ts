@@ -88,6 +88,16 @@ declare global {
     _openLink?: (href: string) => void;
     _copyToClipboard?: (text: string) => void;
     /**
+     * Streaming `edit_file` preview bridges (Commit 2 of live-preview feature).
+     * Driven by Kotlin's StreamingEditTracker during partial edit_file tool
+     * calls. Args are JSON-encoded so multiline diffs and quotes survive the
+     * literal. See `StreamingEditPreviewView.tsx` for the chat-side renderer.
+     */
+    _streamingEditOpen?: (callIdJson: string, pathJson: string, initialDiffJson: string) => void;
+    _streamingEditUpdate?: (callIdJson: string, diffJson: string) => void;
+    _streamingEditFinalize?: (callIdJson: string) => void;
+    _streamingEditCancel?: (callIdJson: string) => void;
+    /**
      * Phase 7 — namespace for new bridges. Distinct from the legacy `window._xxx`
      * flat namespace; the picker / usage indicator / image-settings push live
      * here so future additions don't pollute the global object.

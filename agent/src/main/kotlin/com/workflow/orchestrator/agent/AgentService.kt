@@ -1446,7 +1446,18 @@ class AgentService(
          *
          * Forwarded directly to [AgentLoop] — see its own KDoc for the contract.
          */
-        onUserInputReceived: ((task: String) -> com.workflow.orchestrator.agent.session.UiMessage?)? = null
+        onUserInputReceived: ((task: String) -> com.workflow.orchestrator.agent.session.UiMessage?)? = null,
+        /**
+         * Optional fan-out for the live `edit_file` streaming-diff preview. When
+         * provided, the AgentLoop instantiates a
+         * [com.workflow.orchestrator.agent.preview.StreamingEditTracker] that pushes
+         * partial diffs into the chat panel via this callback. Null in sub-agents
+         * and tests (no UI surface). The setting flag
+         * [com.workflow.orchestrator.core.settings.PluginSettings.State.enableStreamingEditPreview]
+         * is checked inside [AgentLoop.onChunk]; this parameter is the wire that
+         * lets AgentController push to the JCEF bridge without a module cycle.
+         */
+        streamingEditCallback: com.workflow.orchestrator.agent.loop.StreamingEditCallback? = null,
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
 
@@ -2084,6 +2095,7 @@ class AgentService(
                     feedbackEnabled = agentSettings.state.agentFeedbackEnabled,
                     checkpointStore = checkpointStore,
                     currentUserMessageTsProvider = { userMessageTs },
+                    streamingEditCallback = streamingEditCallback,
                 )
 
                 // I4: Set activeTask atomically after both loop and job are available
@@ -2270,6 +2282,7 @@ class AgentService(
         sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
         onAwaitingUserInput: ((reason: String) -> Unit)? = null,
         onUserInputReceived: ((task: String) -> com.workflow.orchestrator.agent.session.UiMessage?)? = null,
+        streamingEditCallback: com.workflow.orchestrator.agent.loop.StreamingEditCallback? = null,
     ): Job? {
         val basePath = project.basePath ?: System.getProperty("user.home")
         val sessionBaseDir = ProjectIdentifier.agentDir(basePath)
@@ -2541,6 +2554,7 @@ class AgentService(
                 sessionApprovalStore = sessionApprovalStore,
                 onAwaitingUserInput = onAwaitingUserInput,
                 onUserInputReceived = onUserInputReceived,
+                streamingEditCallback = streamingEditCallback,
             )
             innerJob.join()
         }

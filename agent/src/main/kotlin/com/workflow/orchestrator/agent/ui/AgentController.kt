@@ -662,6 +662,70 @@ class AgentController(
      * [com.workflow.orchestrator.core.settings.MultimodalSettingsConfigurable]
      * can call it through the dashboard reference held by `AgentTabProvider`.
      */
+    /**
+     * Streaming `edit_file` preview — Kotlin → JS push helpers wired into the
+     * JCEF bridge as `_streamingEditOpen` / `_streamingEditUpdate` /
+     * `_streamingEditFinalize` / `_streamingEditCancel`. Driven by
+     * [com.workflow.orchestrator.agent.loop.AgentLoop]'s per-loop
+     * `StreamingEditTracker` via a [StreamingEditCallback] supplied at AgentLoop
+     * construction in [com.workflow.orchestrator.agent.AgentService].
+     *
+     * All four are fire-and-forget — JSON-encoded args dispatched onto the JCEF
+     * dispatcher (which coalesces calls onto the EDT). Safe to call from any
+     * thread; in production they fire from `Dispatchers.IO` inside the SSE
+     * chunk handler.
+     */
+    fun pushStreamingEditOpen(callId: String, path: String, initialDiff: String) {
+        val cb = Json.encodeToString(callId)
+        val pa = Json.encodeToString(path)
+        val di = Json.encodeToString(initialDiff)
+        dashboard.callJs("if (window._streamingEditOpen) { window._streamingEditOpen($cb, $pa, $di); }")
+    }
+
+    fun pushStreamingEditUpdate(callId: String, diff: String) {
+        val cb = Json.encodeToString(callId)
+        val di = Json.encodeToString(diff)
+        dashboard.callJs("if (window._streamingEditUpdate) { window._streamingEditUpdate($cb, $di); }")
+    }
+
+    fun pushStreamingEditFinalize(callId: String) {
+        val cb = Json.encodeToString(callId)
+        dashboard.callJs("if (window._streamingEditFinalize) { window._streamingEditFinalize($cb); }")
+    }
+
+    fun pushStreamingEditCancel(callId: String) {
+        val cb = Json.encodeToString(callId)
+        dashboard.callJs("if (window._streamingEditCancel) { window._streamingEditCancel($cb); }")
+    }
+
+    /**
+     * Concrete [com.workflow.orchestrator.agent.loop.StreamingEditCallback] that
+     * fans out to the four push helpers above. Single instance per controller —
+     * [com.workflow.orchestrator.agent.AgentService] reads this via
+     * [streamingEditCallback] when building each new AgentLoop.
+     */
+    private val streamingEditCallbackImpl = object : com.workflow.orchestrator.agent.loop.StreamingEditCallback {
+        override fun open(callId: String, path: String, initialDiff: String) {
+            pushStreamingEditOpen(callId, path, initialDiff)
+        }
+        override fun update(callId: String, diff: String) {
+            pushStreamingEditUpdate(callId, diff)
+        }
+        override fun finalize(callId: String) {
+            pushStreamingEditFinalize(callId)
+        }
+        override fun cancel(callId: String) {
+            pushStreamingEditCancel(callId)
+        }
+    }
+
+    /**
+     * Public accessor so [com.workflow.orchestrator.agent.AgentService] can wire
+     * the same instance into every AgentLoop construction for this session/project.
+     */
+    val streamingEditCallback: com.workflow.orchestrator.agent.loop.StreamingEditCallback
+        get() = streamingEditCallbackImpl
+
     fun pushImageSettingsToWebview() {
         dashboard.pushImageSettings()
         // Also re-evaluate the view_image registration so the master kill switch
@@ -1884,6 +1948,7 @@ class AgentController(
                 // (e.g. PLAN_APPROVED) rather than the raw XML instruction text.
                 pendingUiMessageOverride.getAndSet(null)
             },
+            streamingEditCallback = streamingEditCallback,
         )
 
         // Start 30s Haiku phrase timer (if smart working indicator is enabled)
@@ -3098,6 +3163,7 @@ class AgentController(
                 // Consumed and cleared atomically — same contract as the executeTask path.
                 pendingUiMessageOverride.getAndSet(null)
             },
+            streamingEditCallback = streamingEditCallback,
         )
 
         if (job != null) {
