@@ -1048,6 +1048,23 @@ class RunCommandTool(
             contentBuilder.append(stderrProcessed.content)
         }
 
+        // B2: Submodule hint when git fails with "fatal: not a git repository".
+        // The error lands in combined stdout/stderr (rawOutput) when separate_stderr=false,
+        // or in the separate stderr block when separate_stderr=true.
+        val combinedForHint = rawOutput + (stderrLines?.joinToString("") ?: "")
+        if (
+            command.trim().startsWith("git ") &&
+            combinedForHint.contains("fatal: not a git repository")
+        ) {
+            val effectiveWorkingDir = params["working_dir"]?.jsonPrimitive?.content
+                ?: "project root"
+            contentBuilder.append(
+                "\n\nHint: this command ran from $effectiveWorkingDir. " +
+                "If the target path is inside a git submodule, set working_dir to that " +
+                "submodule's root (e.g., working_dir=\"sample-common-core\")."
+            )
+        }
+
         val content = contentBuilder.toString()
         val description = params["description"]?.jsonPrimitive?.content
         val summary = if (description != null) {
