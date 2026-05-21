@@ -82,7 +82,9 @@ class AgentAdvancedConfigurable(
                                 "<code>new_string</code> arrives (throttled to 100ms ticks). " +
                                 "When the tool call completes, the approval card (or " +
                                 "session-approved write) takes over. Disable if you find it " +
-                                "laggy or noisy."
+                                "laggy or noisy. Note: toggling this off takes effect at the " +
+                                "next iteration — any preview already streaming will finish " +
+                                "in the current iteration."
                         )
                 }
             }
