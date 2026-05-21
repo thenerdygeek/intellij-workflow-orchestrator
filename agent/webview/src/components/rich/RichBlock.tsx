@@ -3,6 +3,7 @@ import type { VisualizationType } from '@/bridge/types';
 import { openInEditorTab } from '@/bridge/jcef-bridge';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useThemeStore } from '@/stores/themeStore';
+import { useChatStore } from '@/stores/chatStore';
 import { CopyButton } from '@/components/ui/copy-button';
 import {
   Dialog,
@@ -136,6 +137,7 @@ export function RichBlock({
   const config = useSettingsStore((s) => s.visualizations[type]);
   const isDark = useThemeStore((s) => s.isDark);
   const cssVariables = useThemeStore((s) => s.cssVariables);
+  const editorTabMode = useChatStore((s) => s.editorTabMode);
 
   const [isExpanded, setIsExpanded] = useState(config?.defaultExpanded ?? false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -174,10 +176,10 @@ export function RichBlock({
   }
 
   const maxHeight = config?.maxHeight ?? 300;
-  const shouldConstrain = maxHeight > 0 && !isExpanded;
+  const shouldConstrain = maxHeight > 0 && !isExpanded && !editorTabMode;
 
   const renderedContent = (
-    <div key={themeKey}>
+    <div key={themeKey} className={editorTabMode ? 'h-full w-full' : undefined}>
       {isLoading ? (
         <LoadingSkeleton />
       ) : error ? (
@@ -190,10 +192,19 @@ export function RichBlock({
     </div>
   );
 
+  // Editor-tab fullscreen: drop chrome (border / margin / header / fullscreen+expand
+  // buttons) so the single block fills the pane like a webpage. `position: fixed`
+  // escapes the markdown-body wrapper chain (Streamdown / .markdown-body have no
+  // explicit height) and pins the block to the viewport directly.
+  const wrapperClass = editorTabMode
+    ? 'fixed inset-0 flex flex-col overflow-hidden bg-[var(--bg)] z-0'
+    : 'my-2 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--code-bg)]';
+
   return (
     <>
-      <div className="my-2 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--code-bg)]">
-        {/* Header */}
+      <div className={wrapperClass}>
+        {/* Header — hidden in editor-tab mode */}
+        {!editorTabMode && (
         <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-1.5">
           <div className="flex items-center gap-2">
             <span className="text-xs text-[var(--fg-muted)]">{meta?.icon}</span>
@@ -237,11 +248,16 @@ export function RichBlock({
             </ActionButton>
           </div>
         </div>
+        )}
 
         {/* Content area */}
-        <div className="relative">
+        <div className={editorTabMode ? 'relative flex-1 min-h-0' : 'relative'}>
           <div
-            className="overflow-hidden transition-[max-height] duration-300 ease-in-out"
+            className={
+              editorTabMode
+                ? 'h-full w-full'
+                : 'overflow-hidden transition-[max-height] duration-300 ease-in-out'
+            }
             style={shouldConstrain ? { maxHeight: `${maxHeight}px` } : undefined}
           >
             {renderedContent}

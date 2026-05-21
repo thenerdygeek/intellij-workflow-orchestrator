@@ -241,6 +241,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   clearChat() {
     stores?.getChatStore().clearChat();
   },
+  setEditorTabMode(enabled: boolean) {
+    stores?.getChatStore().setEditorTabMode(enabled);
+  },
   showToolsPanel(toolsJson: string) {
     stores?.getChatStore().showToolsPanel(toolsJson);
   },

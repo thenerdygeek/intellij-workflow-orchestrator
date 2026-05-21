@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
 import type { UiMessage, Mention, Question } from '@/bridge/types';
+import { useChatStore } from '@/stores/chatStore';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import {
   Message as PkMessage,
@@ -135,6 +136,7 @@ export const AgentMessage = memo(function AgentMessage({
   isStreaming = false,
 }: AgentMessageProps) {
   const contentRef = useRef<HTMLDivElement>(null);
+  const editorTabMode = useChatStore((s) => s.editorTabMode);
 
   const isUser = message.say === 'USER_MESSAGE';
   const isFinalized = !isStreaming && !isUser;
@@ -175,6 +177,17 @@ export const AgentMessage = memo(function AgentMessage({
   }
 
   const content = message.text ?? '';
+
+  // Editor-tab fullscreen: skip avatar / "Agent" label / max-w-[85%] bubble
+  // chrome and render the markdown directly. The flex chain below propagates
+  // height all the way down to the artifact iframe / mermaid SVG.
+  if (editorTabMode) {
+    return (
+      <div ref={contentRef} className="flex h-full w-full flex-col">
+        <MarkdownRenderer content={content} isStreaming={isStreaming} />
+      </div>
+    );
+  }
 
   return (
     <PkMessage

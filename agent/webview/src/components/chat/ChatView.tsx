@@ -20,6 +20,7 @@ export const ChatView = memo(function ChatView() {
   const messages = useChatStore(s => s.messages);
   const streamingText = useChatStore(s => s.streamingText);
   const activeSubAgents = useChatStore(useShallow(selectActiveSubAgents));
+  const editorTabMode = useChatStore(s => s.editorTabMode);
 
   const messageListRef = useRef<MessageListHandle>(null);
   const wasStreamingRef = useRef(false);
@@ -238,6 +239,26 @@ export const ChatView = memo(function ChatView() {
 
     return null;
   }, [renderItems, activeSubAgents]);
+
+  // Editor-tab mode: bypass Virtuoso so the single block isn't capped at its
+  // natural content height. We render every item in a flex column where the
+  // last one — the visualization — gets `flex-1` and absorbs all remaining
+  // height. This is what lets the artifact iframe / mermaid SVG / etc. fill
+  // the editor pane like a webpage.
+  if (editorTabMode) {
+    return (
+      <div className="relative flex-1 min-h-0 flex flex-col">
+        {renderItems.map((item, i) => (
+          <div
+            key={item.kind === 'message' ? `m-${item.msg.ts}` : `tg-${item.idx}`}
+            className={i === renderItems.length - 1 ? 'flex-1 min-h-0 flex flex-col' : ''}
+          >
+            {renderItem(i)}
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="relative flex-1 min-h-0 flex flex-col">

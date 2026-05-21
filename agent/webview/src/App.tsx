@@ -19,6 +19,7 @@ function App() {
   useEscapeHandler();
   const aggregateDiff = useChatStore(s => s.aggregateDiff);
   const viewMode = useChatStore(s => s.viewMode);
+  const editorTabMode = useChatStore(s => s.editorTabMode);
 
   useEffect(() => {
     initBridge({
@@ -90,6 +91,15 @@ function App() {
     document.addEventListener('click', handler);
     return () => document.removeEventListener('click', handler);
   }, []);
+
+  if (editorTabMode) {
+    return (
+      <div className="flex h-screen flex-col bg-[var(--bg,#1e1e1e)] text-[var(--fg,#cccccc)]">
+        <ScreenReaderAnnouncer />
+        <ChatView />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen flex-col bg-[var(--bg,#1e1e1e)] text-[var(--fg,#cccccc)]">

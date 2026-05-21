@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { RichBlock } from './RichBlock';
 import { useThemeStore } from '@/stores/themeStore';
+import { useChatStore } from '@/stores/chatStore';
 import { kotlinBridge } from '@/bridge/jcef-bridge';
 
 // ── Constants ──
@@ -34,6 +35,7 @@ interface ArtifactRendererProps {
 function ArtifactRendererInner({ source, title, renderId }: ArtifactRendererProps) {
   const isDark = useThemeStore((s) => s.isDark);
   const cssVariables = useThemeStore((s) => s.cssVariables);
+  const editorTabMode = useChatStore((s) => s.editorTabMode);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const readyRef = useRef(false);
@@ -243,12 +245,15 @@ function ArtifactRendererInner({ source, title, renderId }: ArtifactRendererProp
       error={error}
       onRetry={handleRetry}
     >
-      {title && (
+      {title && !editorTabMode && (
         <div className="border-b border-[var(--border)] px-3 py-1.5 text-xs font-medium text-[var(--fg-secondary)]">
           {title}
         </div>
       )}
-      <div className="relative" style={{ minHeight: isLoading ? 120 : undefined }}>
+      <div
+        className={editorTabMode ? 'relative h-full w-full' : 'relative'}
+        style={editorTabMode ? undefined : { minHeight: isLoading ? 120 : undefined }}
+      >
         {/* Loading overlay — shown on top of the iframe while sandbox initializes */}
         {isLoading && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-[var(--code-bg)]">
@@ -264,13 +269,17 @@ function ArtifactRendererInner({ source, title, renderId }: ArtifactRendererProp
           src={SANDBOX_URL}
           sandbox="allow-scripts"
           title="Interactive artifact"
-          className="w-full border-0"
-          style={{
-            height: `${iframeHeight}px`,
-            transition: 'height 200ms ease-out',
-            background: 'transparent',
-            opacity: isLoading ? 0 : 1,
-          }}
+          className={editorTabMode ? 'h-full w-full border-0' : 'w-full border-0'}
+          style={
+            editorTabMode
+              ? { background: 'transparent', opacity: isLoading ? 0 : 1 }
+              : {
+                  height: `${iframeHeight}px`,
+                  transition: 'height 200ms ease-out',
+                  background: 'transparent',
+                  opacity: isLoading ? 0 : 1,
+                }
+          }
         />
       </div>
     </RichBlock>

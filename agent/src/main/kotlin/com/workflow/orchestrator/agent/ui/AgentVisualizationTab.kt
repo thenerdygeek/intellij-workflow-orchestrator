@@ -105,12 +105,18 @@ class AgentVisualizationEditor(
         // Poll for React bridge readiness — initBridge() registers functions on window
         // after React mounts (useEffect), which is AFTER onLoadEnd fires.
         // Poll every 50ms up to 3s for the bridge to be ready.
+        //
+        // Editor-tab mode: `setEditorTabMode(true)` flips the chatStore flag so App.tsx
+        // hides TopBar/InputBar/etc., RichBlock drops its chrome, and ArtifactRenderer's
+        // iframe fills the pane. Toggled BEFORE appendToken so the message renders
+        // straight into fullscreen layout (no flash of chat-shell chrome).
         val js = """
             (function waitForBridge(attempt) {
                 if (typeof appendToken === 'function') {
                     applyTheme({$jsObj});
                     if (typeof setPrismTheme === 'function') setPrismTheme($isDarkJs);
                     if (typeof setMermaidTheme === 'function') setMermaidTheme($isDarkJs);
+                    if (typeof setEditorTabMode === 'function') setEditorTabMode(true);
                     clearChat();
                     appendToken('```$escapedType\n$escapedContent\n' + '```');
                     endStream();

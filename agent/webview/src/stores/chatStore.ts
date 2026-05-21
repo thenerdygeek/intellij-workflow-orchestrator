@@ -368,6 +368,10 @@ interface ChatState {
   historyItems: HistoryItem[];
   historySearch: string;
 
+  // Editor-tab fullscreen mode — when true, chrome (TopBar/InputBar/etc.) is hidden
+  // and the single block fills the pane. Toggled by AgentVisualizationEditor.
+  editorTabMode: boolean;
+
   // Resume bar state — non-null when viewing a resumable session
   resumeSessionId: string | null;
 
@@ -518,6 +522,9 @@ interface ChatState {
   setHistoryItems(items: HistoryItem[]): void;
   setHistorySearch(query: string): void;
 
+  // Editor-tab fullscreen mode
+  setEditorTabMode(enabled: boolean): void;
+
   // Resume bar
   setResumeSessionId(sessionId: string | null): void;
 
@@ -591,6 +598,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   resumeSessionId: null,
   tasks: [],
   backgroundProcesses: [],
+  editorTabMode: false,
 
   // Actions
   startSession(task: string, mentions?: Mention[], attachments?: ImageRef[]) {
@@ -2220,6 +2228,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // ── History View ──
   setViewMode(mode: 'history' | 'chat') {
     set({ viewMode: mode });
+  },
+  setEditorTabMode(enabled: boolean) {
+    set({ editorTabMode: enabled });
   },
   setHistoryItems(items: HistoryItem[]) {
     set({ historyItems: items });
