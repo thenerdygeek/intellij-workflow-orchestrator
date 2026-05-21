@@ -561,6 +561,14 @@ description optional: for approval dialog on write actions.
                         whenAbsent("Worklog has no description.")
                         example("Investigated timezone bug in OrderService")
                     }
+                    optional("started", "string") {
+                        llmSeesIt("Optional ISO 8601 datetime when the work was performed (e.g. '2026-05-10T09:00:00+00:00' or '2026-05-10') — for log_work. Backdating worklogs requires the underlying user to have permission; otherwise Jira returns 403. Defaults to 'now' when omitted.")
+                        humanReadable("When the work was performed. Omit to use the current time; provide a past datetime to backdate the entry (requires permission).")
+                        whenPresent("Passed as the worklog's `started` field; Jira stores it verbatim.")
+                        whenAbsent("Defaults to the current date and time.")
+                        example("2026-05-10T09:00:00+00:00")
+                        example("2026-05-10")
+                    }
                 }
                 precondition("ticket must exist (pre-flight check enforces this)")
                 precondition("user must have Work On Issues permission")
@@ -593,6 +601,29 @@ description optional: for approval dialog on write actions.
                         whenPresent("Validated as a Jira key.")
                         constraint("must match Jira issue-key format")
                         example("PROJ-1234")
+                    }
+                    optional("author", "string") {
+                        llmSeesIt("Optional Jira username/accountId filter — for get_worklogs (returns only worklogs by this user)")
+                        humanReadable("Filter results to entries logged by this specific user. Accepts Jira username (DC) or accountId (Cloud).")
+                        whenPresent("Only worklogs by that user are returned.")
+                        whenAbsent("All authors' worklogs for the ticket are returned.")
+                        example("jdoe")
+                    }
+                    optional("since", "string") {
+                        llmSeesIt("Optional ISO date (YYYY-MM-DD or full ISO 8601) lower bound — for get_worklogs, my_worklogs. Inclusive.")
+                        humanReadable("Only include worklogs started on or after this date. Inclusive.")
+                        whenPresent("Worklogs whose `started` field is on or after this value are included.")
+                        whenAbsent("No lower bound applied; all dates included.")
+                        example("2026-05-01")
+                        example("2026-05-01T00:00:00+00:00")
+                    }
+                    optional("until", "string") {
+                        llmSeesIt("Optional ISO date (YYYY-MM-DD or full ISO 8601) upper bound — for get_worklogs, my_worklogs. Inclusive.")
+                        humanReadable("Only include worklogs started on or before this date. Inclusive.")
+                        whenPresent("Worklogs whose `started` field is on or before this value are included.")
+                        whenAbsent("No upper bound applied; all dates included.")
+                        example("2026-05-31")
+                        example("2026-05-31T23:59:59+00:00")
                     }
                 }
                 onSuccess("Returns worklog entries (author, time spent, started date, comment).")
@@ -711,6 +742,14 @@ description optional: for approval dialog on write actions.
                         whenPresent("Parsed as integer.")
                         constraint("must be a numeric string convertible via toIntOrNull")
                         example("123")
+                    }
+                    optional("assignee", "string") {
+                        llmSeesIt("Optional Jira username filter — for get_sprint_issues. Pass 'currentUser()' to filter to the authenticated user.")
+                        humanReadable("Filter sprint issues to those assigned to this user. Pass 'currentUser()' to scope to the current user.")
+                        whenPresent("Issues not assigned to this user are excluded from the result.")
+                        whenAbsent("All assignees included; the full sprint issue list is returned.")
+                        example("jdoe")
+                        example("currentUser()")
                     }
                 }
                 onSuccess("Returns the sprint's issue list.")
@@ -973,6 +1012,68 @@ description optional: for approval dialog on write actions.
                 }
                 verdict {
                     keep("Without this, screenshots/design-docs attached to tickets are invisible to the agent. The image-autoload integration is what makes 'look at this screenshot on the ticket' a one-call workflow.", VerdictSeverity.STRONG)
+                }
+            }
+            action("my_worklogs") {
+                description {
+                    technical("Lists worklogs authored by the current user across all tickets. Supports optional date-range filtering via `since`/`until`.")
+                    plain("Shows all time entries logged by you — across all tickets — optionally scoped to a date window.")
+                }
+                whenLLMUses("When the user asks 'what did I log this week' or wants a summary of their own time entries.")
+                params {
+                    optional("since", "string") {
+                        llmSeesIt("Optional ISO date (YYYY-MM-DD or full ISO 8601) lower bound — for get_worklogs, my_worklogs. Inclusive.")
+                        humanReadable("Only include worklogs started on or after this date. Inclusive.")
+                        whenPresent("Worklogs whose `started` field is on or after this value are included.")
+                        whenAbsent("No lower bound applied; all dates included.")
+                        example("2026-05-01")
+                    }
+                    optional("until", "string") {
+                        llmSeesIt("Optional ISO date (YYYY-MM-DD or full ISO 8601) upper bound — for get_worklogs, my_worklogs. Inclusive.")
+                        humanReadable("Only include worklogs started on or before this date. Inclusive.")
+                        whenPresent("Worklogs whose `started` field is on or before this value are included.")
+                        whenAbsent("No upper bound applied; all dates included.")
+                        example("2026-05-31")
+                    }
+                }
+                onSuccess("Returns the current user's worklog entries (ticket key, time spent, started date, comment) across all projects.")
+                onFailure("no worklogs found", "Returns an empty list; not an error.")
+                example("this week's log") {
+                    param("action", "my_worklogs")
+                    param("since", "2026-05-19")
+                    param("until", "2026-05-23")
+                    outcome("Returns time entries the current user logged between Mon and Fri of the week.")
+                }
+                verdict {
+                    keep("Useful for quick 'what did I log this week' queries without needing a ticket key.", VerdictSeverity.NORMAL)
+                }
+            }
+            action("user_search") {
+                description {
+                    technical("Searches Jira users by display name, username, or email. Returns a list of matching user profiles.")
+                    plain("Finds Jira users by name or email — useful before populating assignee/reviewer fields.")
+                }
+                whenLLMUses("When the LLM needs to resolve a human name ('John Doe') to a Jira username/accountId before setting an assignee or reviewer field.")
+                params {
+                    required("query", "string") {
+                        llmSeesIt("Search query for user lookup — for user_search. Matches displayName, username, and email.")
+                        humanReadable("A name fragment, username prefix, or email address to search for.")
+                        whenPresent("Sent as the search query to Jira's user-search endpoint.")
+                        constraint("must be non-blank")
+                        example("John")
+                        example("jdoe@example.com")
+                    }
+                }
+                onSuccess("Returns matching user profiles (displayName, username/accountId, email, avatar URL).")
+                onFailure("no users found", "Empty list — either the query is too specific or the user doesn't exist.")
+                onFailure("403", "User-search may require Browse Users permission.")
+                example("resolve an assignee name") {
+                    param("action", "user_search")
+                    param("query", "Jane Smith")
+                    outcome("Returns profile(s) matching 'Jane Smith'; LLM picks the right username for the transition `fields` param.")
+                }
+                verdict {
+                    keep("Required precondition for setting user-picker fields in `transition`. Without it the LLM guesses usernames and gets 400 errors.", VerdictSeverity.NORMAL)
                 }
             }
         }

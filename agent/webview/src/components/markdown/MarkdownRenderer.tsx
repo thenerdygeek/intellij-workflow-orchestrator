@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react';
 import { Streamdown, useIsCodeFenceIncomplete } from 'streamdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { visit } from 'unist-util-visit';
 import { CodeBlock } from '@/components/markdown/CodeBlock';
@@ -145,6 +146,16 @@ const SANITIZE_SCHEMA = {
       'jira',
     ],
   },
+  tagNames: [
+    ...(defaultSchema.tagNames ?? []),
+    // Collapsible disclosure elements — common in LLM responses
+    'details',
+    'summary',
+    // Keyboard input hint — e.g. "Press <kbd>Ctrl+C</kbd>"
+    'kbd',
+    // Subscript — e.g. chemical formulas like H₂O
+    'sub',
+  ],
   attributes: {
     ...defaultSchema.attributes,
     pre: [
@@ -155,11 +166,18 @@ const SANITIZE_SCHEMA = {
       ...(defaultSchema.attributes?.code ?? []),
       'dataMeta',
     ],
+    // Allow the `open` attribute so <details open> renders correctly
+    details: ['open'],
   },
 };
 
 const REMARK_PLUGINS = [remarkGfm, remarkChatLinkify, remarkCodeMeta] as const;
 const REHYPE_PLUGINS = [
+  // rehype-raw must come BEFORE rehype-sanitize so raw HTML nodes are parsed
+  // into real HAST nodes before sanitization runs. Without this, Streamdown
+  // adds its own HTML-stripping plugin when it doesn't see rehype-raw in the
+  // pipeline, which converts <kbd>, <sub>, <details> etc. to escaped text.
+  rehypeRaw,
   [rehypeSanitize, SANITIZE_SCHEMA] as const,
 ] as const;
 

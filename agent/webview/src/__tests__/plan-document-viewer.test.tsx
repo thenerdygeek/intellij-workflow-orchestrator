@@ -56,14 +56,14 @@ describe('PlanDocumentViewer', () => {
   it('displays line numbers in gutter', () => {
     render(<PlanDocumentViewer markdown={sampleMarkdown} showLineNumbers={true} />);
     // Should render line number elements
-    const lineNumbers = document.querySelectorAll('[data-line-number]');
+    const lineNumbers = document.querySelectorAll('[data-line]');
     expect(lineNumbers.length).toBeGreaterThan(0);
   });
 
   it('shows comment button on line hover', () => {
     render(<PlanDocumentViewer markdown={sampleMarkdown} showLineNumbers={true} onComment={vi.fn()} />);
     // Line gutter should have interactive elements
-    const gutterLines = document.querySelectorAll('[data-line-number]');
+    const gutterLines = document.querySelectorAll('[data-line]');
     expect(gutterLines.length).toBeGreaterThan(0);
   });
 

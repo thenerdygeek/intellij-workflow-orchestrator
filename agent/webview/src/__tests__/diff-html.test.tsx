@@ -69,15 +69,18 @@ describe('DiffHtml', () => {
       expect(diffContainer).toHaveStyle({ display: 'none' });
     });
 
-    it('shows loading skeleton while diff2html is loading', () => {
+    it('shows raw diff immediately while diff2html is loading (no skeleton)', () => {
       render(<DiffHtmlMod.DiffHtml diffSource={SAMPLE_DIFF} />);
-      expect(screen.getByLabelText('Loading diff')).toBeInTheDocument();
+      // No skeleton — the component renders the raw coloured diff immediately.
+      expect(screen.queryByLabelText('Loading diff')).not.toBeInTheDocument();
+      // The raw diff lines from the source should be visible.
+      expect(screen.getByText(/fun oldMethod/)).toBeInTheDocument();
     });
 
-    it('does not show file path header during loading', () => {
+    it('shows file path header immediately (present from first paint)', () => {
       render(<DiffHtmlMod.DiffHtml diffSource={SAMPLE_DIFF} />);
-      // File path header is conditionally hidden during loading
-      expect(screen.queryByText('src/main/kotlin/Service.kt')).not.toBeInTheDocument();
+      // File path header is rendered synchronously from the diffSource string.
+      expect(screen.getByText('src/main/kotlin/Service.kt')).toBeInTheDocument();
     });
   });
 

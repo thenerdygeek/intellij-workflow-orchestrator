@@ -1,6 +1,7 @@
 import { memo, useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { CodeBlock } from '@/components/markdown/CodeBlock';
 import { remarkPlanAdmonition } from './remarkPlanAdmonition';
@@ -144,7 +145,17 @@ function groupLinesIntoBlocks(lines: string[]): LineBlock[] {
  */
 const PLAN_SANITIZE_SCHEMA = {
   ...defaultSchema,
-  tagNames: [...(defaultSchema.tagNames ?? []), 'div'],
+  tagNames: [
+    ...(defaultSchema.tagNames ?? []),
+    'div',
+    // Collapsible disclosure elements — common in plan documents
+    'details',
+    'summary',
+    // Keyboard input hint — e.g. "Press <kbd>Ctrl+Z</kbd> to undo"
+    'kbd',
+    // Subscript — e.g. chemical formulas like H₂O
+    'sub',
+  ],
   attributes: {
     ...defaultSchema.attributes,
     div: [
@@ -153,10 +164,16 @@ const PLAN_SANITIZE_SCHEMA = {
       'dataAdmonitionLabel',
       'dataAdmonitionKnown',
     ],
+    // Allow the `open` attribute so <details open> renders correctly
+    details: ['open'],
   },
 };
 
 const PLAN_REMARK_PLUGINS = [remarkGfm, remarkPlanAdmonition];
+// rehype-raw MUST precede rehype-sanitize: it converts raw HTML nodes in the
+// HAST tree into proper element nodes before sanitization runs. Without it,
+// react-markdown silently strips <kbd>, <sub>, <details>, <summary> etc.
+const PLAN_REHYPE_PLUGINS = [[rehypeRaw], [rehypeSanitize, PLAN_SANITIZE_SCHEMA]] as const;
 
 export const PlanDocumentViewer = memo(function PlanDocumentViewer({
   markdown,
@@ -199,7 +216,7 @@ export const PlanDocumentViewer = memo(function PlanDocumentViewer({
         <div className="plan-document-body">
           <Markdown
             remarkPlugins={PLAN_REMARK_PLUGINS}
-            rehypePlugins={[[rehypeSanitize, PLAN_SANITIZE_SCHEMA]]}
+            rehypePlugins={PLAN_REHYPE_PLUGINS as any}
             components={createDocumentComponents()}
           >
             {markdown}
@@ -247,7 +264,7 @@ export const PlanDocumentViewer = memo(function PlanDocumentViewer({
               <div className="plan-block-content">
                 <Markdown
                   remarkPlugins={PLAN_REMARK_PLUGINS}
-                  rehypePlugins={[[rehypeSanitize, PLAN_SANITIZE_SCHEMA]]}
+                  rehypePlugins={PLAN_REHYPE_PLUGINS as any}
                   components={createDocumentComponents()}
                 >
                   {block.content}
