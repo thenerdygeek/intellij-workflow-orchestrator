@@ -8,6 +8,7 @@ import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -66,6 +67,17 @@ class DelegationCloseTool : AgentTool {
     )
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        // F3: runtime gate — closing a channel when outbound is disabled in the middle of a
+        // session should still work (there may be open channels from before the toggle), but
+        // the same gate is applied for consistency: if outbound was never enabled the tool
+        // couldn't have sent anything, so "no open channels" is the correct semantics.
+        if (!PluginSettings.getInstance(project).state.enableOutboundCrossIdeDelegation) {
+            return ToolResult.error(
+                "DelegationOutboundDisabled: cross-IDE delegation is currently disabled in settings " +
+                    "(Tools → Workflow Orchestrator → Agent → Enable outbound cross-IDE delegation)"
+            )
+        }
+
         val handle = params["handle"]?.jsonPrimitive?.content
             ?: return ToolResult.error("delegation_close: 'handle' is required")
 

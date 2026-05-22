@@ -1587,6 +1587,16 @@ class AgentService(
          * lets AgentController push to the JCEF bridge without a module cycle.
          */
         streamingEditCallback: com.workflow.orchestrator.agent.loop.StreamingEditCallback? = null,
+        /**
+         * Non-null when this session is started by an incoming cross-IDE delegation
+         * ([startDelegatedSession]). Populates [Session.delegated] on the live in-memory
+         * session object and writes the metadata into the sessions.json HistoryItem via
+         * [MessageStateHandler.updateSessionDelegationMetadata] so the session-list UI
+         * can show a delegation badge without a secondary file read.
+         *
+         * F2 + F6: spec §9.1.
+         */
+        delegationMetadata: com.workflow.orchestrator.agent.session.DelegationMetadata? = null,
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
 
@@ -1600,6 +1610,9 @@ class AgentService(
             title = task.take(100),
             status = SessionStatus.ACTIVE,
             planModeEnabled = persistedPlanMode,
+            // F6: populate delegated on the live in-memory Session so any code that
+            // reads currentSession?.delegated sees the metadata immediately.
+            delegated = delegationMetadata,
         )
         currentSessionId = session.id
         sessionStateFor(session.id)
@@ -2052,6 +2065,13 @@ class AgentService(
                     handler.addToClineMessages(uiMsg)
                     userMessageTs = uiMsg.ts
                     handler
+                }
+
+                // F2: write delegation metadata into the sessions.json HistoryItem so
+                // the session-list UI can show a badge without a secondary file read.
+                // This call is a no-op (skipped) for non-delegated sessions.
+                if (delegationMetadata != null) {
+                    messageState.updateSessionDelegationMetadata(delegationMetadata)
                 }
 
                 // Per-user-message file checkpoint store. Captures pre-edit bytes of files
@@ -2912,18 +2932,19 @@ class AgentService(
      *
      * Lifecycle:
      * 1. Generate a new session ID (UUID).
-     * 2. Persist [DelegationMetadata] to `sessions/{id}/delegation.json` so the session
-     *    directory records that this was a delegated run even before the LLM takes its
-     *    first turn. This is a lightweight sidecar file; [HistoryItem] in `sessions.json`
-     *    continues to record the token/cost/model summary as normal.
-     * 3. Call [executeTask] with [request] as the initial user prompt and the generated
-     *    session ID, wiring an [onComplete] callback to capture the terminal [LoopResult].
+     * 2. Call [executeTask] with [request] as the initial user prompt and the generated
+     *    session ID, passing [delegationMetadata] so the HistoryItem in sessions.json is
+     *    populated with the delegation marker (spec §9.1) and the live [Session.delegated]
+     *    field is set on the in-memory session object. No separate delegation.json sidecar.
+     * 3. An [onComplete] callback captures the terminal [LoopResult].
      * 4. Map the [LoopResult] to a [DelegationMessage.Result] and invoke [onResult].
      *
      * Threading: launched on [Dispatchers.IO]; [onResult] is called from the same context
      * after the job completes.
      *
      * Spec: §6.1, §7, §9.1.
+     * F2: metadata written to HistoryItem.delegated (replaces delegation.json sidecar).
+     * F6: metadata threaded into Session.delegated via executeTask's delegationMetadata param.
      */
     fun startDelegatedSession(
         request: String,
@@ -2937,24 +2958,6 @@ class AgentService(
                 "repo=${delegationMetadata.delegatorRepo}, request='${request.take(60)}'"
         )
 
-        // Persist delegation sidecar before the loop starts so the directory always
-        // contains delegation.json when inspected during or after the session.
-        try {
-            val basePath = project.basePath ?: System.getProperty("user.home")
-            val sessionDir = java.io.File(
-                ProjectIdentifier.agentDir(basePath),
-                "sessions/$sid"
-            )
-            sessionDir.mkdirs()
-            val delegationFile = java.io.File(sessionDir, "delegation.json")
-            val json = kotlinx.serialization.json.Json { prettyPrint = true }
-            AtomicFileWriter.write(delegationFile, json.encodeToString(delegationMetadata))
-            log.debug("[Agent] Delegated session $sid: wrote delegation.json for delegatorSessionId=${delegationMetadata.delegatorSessionId}")
-        } catch (e: Exception) {
-            // Non-fatal: the session still runs; delegation.json is informational only.
-            log.warn("[Agent] startDelegatedSession $sid: failed to write delegation.json — continuing", e)
-        }
-
         // Run the agent loop. executeTask returns a Job immediately; we capture the
         // LoopResult via the onComplete callback using a CompletableDeferred so we can
         // map it to a DelegationMessage.Result and call onResult after the job finishes.
@@ -2964,6 +2967,7 @@ class AgentService(
         val job = executeTask(
             task = request,
             sessionId = sid,
+            delegationMetadata = delegationMetadata,
             uiMessageOverride = com.workflow.orchestrator.agent.session.UiMessage(
                 ts = System.currentTimeMillis(),
                 type = com.workflow.orchestrator.agent.session.UiMessageType.SAY,
