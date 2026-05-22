@@ -130,6 +130,13 @@
             nonDefaultProject="true"/>
 
         <projectConfigurable
+            parentId="workflow.orchestrator.agent"
+            instance="com.workflow.orchestrator.core.settings.CrossIdeDelegationConfigurable"
+            id="com.workflow.orchestrator.core.settings.CrossIdeDelegationConfigurable"
+            displayName="Cross-IDE Delegation"
+            nonDefaultProject="true"/>
+
+        <projectConfigurable
             parentId="workflow.orchestrator"
             instance="com.workflow.orchestrator.core.settings.HandoverConfigurable"
             id="workflow.orchestrator.handover"
