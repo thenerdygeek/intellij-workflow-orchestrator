@@ -57,9 +57,14 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
             inboundEnabled != settings.enableInboundCrossIdeDelegation
 
     override fun apply() {
+        val prevOutbound = settings.enableOutboundCrossIdeDelegation
         val prevInbound = settings.enableInboundCrossIdeDelegation
         settings.enableOutboundCrossIdeDelegation = outboundEnabled
         settings.enableInboundCrossIdeDelegation = inboundEnabled
+        if (prevOutbound != outboundEnabled) {
+            project.messageBus.syncPublisher(CrossIdeDelegationSettingsListener.TOPIC)
+                .outboundSettingChanged(outboundEnabled)
+        }
         if (prevInbound != inboundEnabled) {
             project.messageBus.syncPublisher(CrossIdeDelegationSettingsListener.TOPIC)
                 .inboundSettingChanged(inboundEnabled)

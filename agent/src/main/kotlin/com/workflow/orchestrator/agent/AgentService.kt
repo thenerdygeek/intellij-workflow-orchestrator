@@ -346,6 +346,19 @@ class AgentService(
             com.workflow.orchestrator.agent.tools.background.BackgroundPool.getInstance(project)
                 .addCompletionListener { event -> onBackgroundCompletion(event) }
         )
+
+        // Plan 1 Task 11 — Re-register (or unregister) delegation_* tools when the
+        // outbound setting is toggled at runtime, so the LLM sees them only when the
+        // feature is on (§3.3). No restart required.
+        project.messageBus.connect().subscribe(
+            com.workflow.orchestrator.core.settings.CrossIdeDelegationSettingsListener.TOPIC,
+            object : com.workflow.orchestrator.core.settings.CrossIdeDelegationSettingsListener {
+                override fun inboundSettingChanged(enabled: Boolean) = Unit
+                override fun outboundSettingChanged(enabled: Boolean) {
+                    reregisterCrossIdeDelegationTools()
+                }
+            },
+        )
     }
 
     /**
@@ -1154,13 +1167,17 @@ class AgentService(
         safeRegisterDeferred("Utilities") { CurrentTimeTool() }
         safeRegisterDeferred("Utilities") { AskUserInputTool() }
 
-        // Delegation — cross-IDE agent delegation (deferred so the schema only appears
-        // when the LLM explicitly searches for "delegation" or "cross-ide")
-        safeRegisterDeferred("Delegation") {
-            com.workflow.orchestrator.agent.tools.delegation.DelegationSendTool()
-        }
-        safeRegisterDeferred("Delegation") {
-            com.workflow.orchestrator.agent.tools.delegation.DelegationCloseTool()
+        // Cross-IDE delegation tools — registered only when outbound is enabled.
+        // §3.3 of the spec: when off, the LLM does not see the tools at all.
+        if (com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
+                .state.enableOutboundCrossIdeDelegation
+        ) {
+            safeRegisterDeferred("Delegation") {
+                com.workflow.orchestrator.agent.tools.delegation.DelegationSendTool()
+            }
+            safeRegisterDeferred("Delegation") {
+                com.workflow.orchestrator.agent.tools.delegation.DelegationCloseTool()
+            }
         }
 
         // File — binary/structured document reading (PDF, DOCX, XLSX, PPTX, RTF, ODT, CSV …)
@@ -1292,6 +1309,37 @@ class AgentService(
             if (registry.getTool("view_image") == null) safeRegisterDeferred("File") { ViewImageTool() }
         } else {
             if (registry.getTool("view_image") != null) registry.unregisterDeferred("view_image")
+        }
+    }
+
+    /**
+     * Re-evaluates the outbound cross-IDE delegation setting and adds or
+     * removes the delegation_* tools accordingly. Called from the
+     * [com.workflow.orchestrator.core.settings.CrossIdeDelegationSettingsListener]
+     * when the outbound toggle changes, so a flip in Settings takes effect
+     * mid-session without an IDE restart.
+     *
+     * Idempotent: add when absent + enabled, remove when present + disabled.
+     *
+     * Spec: §3.3 of docs/superpowers/specs/2026-05-22-cross-ide-agent-delegation-design.md.
+     */
+    fun reregisterCrossIdeDelegationTools() {
+        val enabled = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
+            .state.enableOutboundCrossIdeDelegation
+        if (enabled) {
+            if (registry.getTool("delegation_send") == null) {
+                safeRegisterDeferred("Delegation") {
+                    com.workflow.orchestrator.agent.tools.delegation.DelegationSendTool()
+                }
+            }
+            if (registry.getTool("delegation_close") == null) {
+                safeRegisterDeferred("Delegation") {
+                    com.workflow.orchestrator.agent.tools.delegation.DelegationCloseTool()
+                }
+            }
+        } else {
+            if (registry.getTool("delegation_send") != null) registry.unregisterDeferred("delegation_send")
+            if (registry.getTool("delegation_close") != null) registry.unregisterDeferred("delegation_close")
         }
     }
 
