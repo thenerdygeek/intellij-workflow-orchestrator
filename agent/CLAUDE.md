@@ -32,7 +32,7 @@ AgentController (UI entry point, owns AgentCefPanel + JCEF bridges)
 ## Key Components
 
 - **AgentLoop** (`loop/AgentLoop.kt`, ~1471 lines) — Core ReAct loop. Tool call processing, context compaction on overflow, parallel read-only tool execution (via coroutineScope+async), sequential write tool execution. Truncated tool call recovery — detects invalid JSON when finishReason=length, asks LLM to retry with smaller operation. Mid-loop cancellation support. Context overflow replay (compress + retry same request). Doom loop detection before each tool call. Streaming token estimate when usage is null. Plan mode execution guard (blocks `WRITE_TOOLS` even if LLM hallucinates them).
-- **AgentService** (`AgentService.kt`, ~1549 lines) — Main orchestration service. Manages tool registration, session lifecycle, plan mode state (`planModeActive: AtomicBoolean`), network-error recovery setup (brainFactory + cachedFallbackChain wiring), context management setup. Builds `AgentLoop` with all callbacks wired. Schema filtering for plan mode (removes write tools + `enable_plan_mode` from tool definitions before LLM call). Dynamic tool definition provider rebuilds system prompt when tool set changes.
+- **AgentService** (`AgentService.kt`, ~1549 lines) — Main orchestration service. Manages tool registration, session lifecycle, plan mode state (per-session via `PerSessionAgentState`, accessed by `isPlanModeActive()` / `setPlanModeActive(enabled)`), network-error recovery setup (brainFactory + cachedFallbackChain wiring), context management setup. Builds `AgentLoop` with all callbacks wired. Schema filtering for plan mode (removes write tools + `enable_plan_mode` from tool definitions before LLM call). Dynamic tool definition provider rebuilds system prompt when tool set changes.
 - **AgentController** (`ui/AgentController.kt`) — UI entry point. Owns `AgentCefPanel`, routes user messages, handles steering, dispatches JCEF bridge callbacks (tool approval, plan approval, session history, artifact results). Wires `AgentService.executeTask()` with UI callbacks.
 - **ContextManager** (`loop/ContextManager.kt`, ~795 lines) — Single-stage Claude-Code-style compactor (rewritten 2026-05-17 from the 1,427-line 3-stage Cline port):
   - Trigger: single 88% utilization gate (was 70/85/95% banding); per-model budget from `ModelCatalogService.getContextWindow()` via `effectiveMaxInputTokens()`
@@ -489,7 +489,9 @@ Two-layer enforcement:
 **Blocked in plan mode:** edit_file, create_file, run_command, revert_file, background_process, send_stdin, format_code, optimize_imports, refactor_rename, enable_plan_mode
 **Always available:** read_file, search_code, glob_files, diagnostics, find_definition, find_references, think, agent, tool_search, ask_followup_question, plan_mode_respond, etc.
 
-**Transition:** `AgentService.planModeActive.set(false)` → tools restored on next LLM call → dashboard UI updated.
+**Transition:** `AgentService.setPlanModeActive(false)` → tools restored on next LLM call → dashboard UI updated.
+
+**Per-session state:** Plan-mode is per-session. Each `Session` holds the persisted boolean (`Session.planModeEnabled`); the in-memory mutable counterpart is `PerSessionAgentState.planModeActive`, keyed by session ID in `AgentService.perSessionStates`. Read via `AgentService.isPlanModeActive()`, write via `setPlanModeActive(enabled)`. The application-scoped `AtomicBoolean` previously held on `AgentService` was removed in the cross-IDE-delegation Plan 0 refactor.
 
 ## Error Handling
 
