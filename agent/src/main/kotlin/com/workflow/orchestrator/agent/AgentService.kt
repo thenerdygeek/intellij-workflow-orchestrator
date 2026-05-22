@@ -1512,13 +1512,19 @@ class AgentService(
     ): Job {
         val sid = sessionId ?: UUID.randomUUID().toString()
 
+        // Seed plan-mode from the persisted HistoryItem so a session that was
+        // paused in plan mode resumes in plan mode (F1/F2 fix).
+        val persistedPlanMode =
+            MessageStateHandler.findHistoryItem(agentDir, sid)?.planModeEnabled ?: false
+
         var session = Session(
             id = sid,
             title = task.take(100),
-            status = SessionStatus.ACTIVE
+            status = SessionStatus.ACTIVE,
+            planModeEnabled = persistedPlanMode,
         )
         currentSessionId = session.id
-        sessionStateFor(session.id, initialPlanMode = session.planModeEnabled)
+        sessionStateFor(session.id)
             .planModeActive.set(session.planModeEnabled)
         onSessionStarted?.invoke(sid)
 
@@ -2293,6 +2299,9 @@ class AgentService(
                 fileLogger.logSessionEnd(sid, 0, 0, System.currentTimeMillis() - sessionStartTime, error = e.message)
                 onComplete(LoopResult.Failed(error = e.message ?: "Unknown error", reason = FailureReason.EXCEPTION))
             } finally {
+                // F3 fix: release per-session state so perSessionStates doesn't
+                // grow unbounded over the lifetime of the IDE window.
+                releaseSessionState(sid)
                 // D1: clear both fields under the same mutex so a concurrent executeTask
                 // that is waiting to register never sees a partially-cleared state.
                 activeTaskMutex.withLock {
@@ -2413,10 +2422,15 @@ class AgentService(
         }
 
         currentSessionId = sessionId
-        // Seed per-session state; plan mode defaults to false on resume.
-        // Session.planModeEnabled is the on-disk source of truth and will be
-        // re-applied by executeTask when the resumed loop is re-launched.
-        sessionStateFor(sessionId, initialPlanMode = false)
+        // Seed per-session plan-mode from the persisted HistoryItem so that the
+        // resumed session is in the correct mode from the very first iteration
+        // (F1/F2 fix — executeTask will reinforce this value again via its own
+        // persistedPlanMode lookup, but setting it here ensures isPlanModeActive()
+        // returns the right value for any code that runs before executeTask).
+        val resumedPlanMode =
+            MessageStateHandler.findHistoryItem(agentDir, sessionId)?.planModeEnabled ?: false
+        sessionStateFor(sessionId)
+            .planModeActive.set(resumedPlanMode)
 
         // Trim trailing resume messages and cost-less api_req_started (Cline pattern)
         savedUiMessages = ResumeHelper.trimResumeMessages(savedUiMessages)
@@ -2862,8 +2876,14 @@ class AgentService(
      * is torn down cleanly before the next session starts. Phase 3 / Task 2.2.
      */
     fun resetForNewChat() {
+        // F3/F6 fix: capture and release the per-session state BEFORE
+        // cancelCurrentTask(), which may null out currentSessionId.
+        // This ensures releaseSessionState is always called even if
+        // setPlanModeActive() would no-op because currentSessionId was
+        // already cleared by a concurrent cancel.
+        val sid = currentSessionId
+        if (sid != null) releaseSessionState(sid)
         cancelCurrentTask()
-        setPlanModeActive(false)
         registry.resetActiveDeferred()
         ProcessRegistry.killAll()
         activeTask.set(null)
@@ -2914,24 +2934,39 @@ class AgentService(
     /**
      * Returns (creating if absent) the per-session state for the given session ID.
      * Used by tools and the loop that have a session ID in hand.
+     *
+     * Note: the state is always created with the default plan-mode (false). Callers
+     * that need to seed a specific value must call `.planModeActive.set(value)` on
+     * the returned instance explicitly. This prevents the previous `initialPlanMode`
+     * parameter from being silently ignored when `computeIfAbsent` hits an existing
+     * entry (F5 fix).
      */
     fun sessionStateFor(
         sessionId: String,
-        initialPlanMode: Boolean = false,
     ): com.workflow.orchestrator.agent.session.PerSessionAgentState =
         perSessionStates.computeIfAbsent(sessionId) {
-            com.workflow.orchestrator.agent.session.PerSessionAgentState(it, initialPlanMode)
+            com.workflow.orchestrator.agent.session.PerSessionAgentState(it)
         }
 
     /**
      * Returns the per-session state for the session currently being driven, or
      * null if no session is active (e.g., between tasks). Used by call sites
      * that historically read `planModeActive.get()` directly.
+     *
+     * @Synchronized with [releaseSessionState] so neither observes a torn state
+     * where currentSessionId is non-null but the map entry is already gone.
      */
+    @Synchronized
     fun currentSessionState(): com.workflow.orchestrator.agent.session.PerSessionAgentState? =
         currentSessionId?.let { perSessionStates[it] }
 
-    /** Removes per-session state. Call when a session is closed/disposed. */
+    /**
+     * Removes per-session state. Call when a session is closed/disposed.
+     *
+     * @Synchronized with [currentSessionState] so both methods observe a
+     * consistent snapshot of (currentSessionId, perSessionStates).
+     */
+    @Synchronized
     fun releaseSessionState(sessionId: String) {
         perSessionStates.remove(sessionId)
         if (currentSessionId == sessionId) currentSessionId = null
@@ -2945,8 +2980,9 @@ class AgentService(
         currentSessionState()?.planModeActive?.get() ?: false
 
     /**
-     * Set plan-mode for the current session. Also persists to the on-disk
-     * Session.planModeEnabled so resume sees the right value.
+     * Set plan-mode for the current session. Updates the in-memory flag and
+     * asynchronously persists to `sessions.json` so that a subsequent resume
+     * sees the correct mode.
      */
     fun setPlanModeActive(enabled: Boolean) {
         val state = currentSessionState()
@@ -2955,6 +2991,16 @@ class AgentService(
             return
         }
         state.planModeActive.set(enabled)
+        // Persist to disk on a background coroutine so the UI thread is never
+        // blocked by the file lock. Fire-and-forget — failures are non-fatal.
+        val handler = activeMessageStateHandler ?: return
+        cs.launch(Dispatchers.IO) {
+            try {
+                handler.updateSessionPlanMode(enabled)
+            } catch (e: Exception) {
+                log.warn("AgentService: failed to persist plan-mode toggle (non-fatal)", e)
+            }
+        }
     }
 
     companion object {

@@ -69,6 +69,13 @@ class MessageStateHandler(
     @Volatile private var globalIndexDirty = false
     private val globalIndexThrottleMs = 1000L
 
+    /**
+     * In-memory plan-mode flag for this session. Written by
+     * [updateSessionPlanMode] and threaded into every [updateGlobalIndex] call
+     * so the on-disk HistoryItem stays in sync.
+     */
+    @Volatile private var sessionPlanModeEnabled: Boolean = false
+
     private val sessionDir: File get() = File(baseDir, "sessions/$sessionId")
     private val uiMessagesFile: File get() = File(sessionDir, "ui_messages.json")
     private val apiHistoryFile: File get() = File(sessionDir, "api_conversation_history.json")
@@ -469,6 +476,22 @@ class MessageStateHandler(
         AtomicFileWriter.write(apiHistoryFile, json.encodeToString(ApiHistoryFile.serializer(), payload))
     }
 
+    /**
+     * Persist the plan-mode toggle for this session.
+     *
+     * Updates the in-memory flag (so the next [updateGlobalIndex] call picks it
+     * up) and immediately rewrites `sessions.json` via the same atomic
+     * globalIndexMutex + file-lock path used by all other index mutations.
+     *
+     * Safe to call from any coroutine — suspends only on the mutex, no EDT.
+     */
+    suspend fun updateSessionPlanMode(enabled: Boolean) {
+        sessionPlanModeEnabled = enabled
+        // Force a full global index flush so the new value lands on disk now,
+        // not just on the next token-update throttle tick.
+        updateGlobalIndex()
+    }
+
     suspend fun saveBoth() = mutex.withLock {
         saveInternal()
         saveApiHistoryInternal()
@@ -500,7 +523,8 @@ class MessageStateHandler(
             tokensIn = totalTokensIn.toLong(),
             tokensOut = totalTokensOut.toLong(),
             totalCost = totalCost,
-            modelId = lastModel
+            modelId = lastModel,
+            planModeEnabled = sessionPlanModeEnabled,
         )
 
         // Cross-process serialization: globalIndexMutex protects within this JVM, but two
@@ -517,6 +541,9 @@ class MessageStateHandler(
 
             val idx = existingItems.indexOfFirst { it.id == sessionId }
             if (idx >= 0) {
+                // Preserve user-controlled fields (isFavorited) from the existing entry.
+                // planModeEnabled comes from the freshly-built item (already has the
+                // in-memory sessionPlanModeEnabled value threaded in above).
                 val preserved = item.copy(isFavorited = existingItems[idx].isFavorited)
                 existingItems[idx] = preserved
             } else {
@@ -676,6 +703,17 @@ class MessageStateHandler(
                 configuredJson.decodeFromString<List<HistoryItem>>(file.readText())
             } catch (_: Exception) { emptyList() }
         }
+
+        /**
+         * Look up a single [HistoryItem] by [sessionId] from the global index on
+         * disk. Returns null if the entry does not exist or the index is unreadable.
+         *
+         * Used by [AgentService] to seed [Session.planModeEnabled] from the
+         * persisted value on session start and resume so that a session toggled
+         * into plan mode and then paused resumes in the correct mode.
+         */
+        fun findHistoryItem(baseDir: File, sessionId: String): HistoryItem? =
+            loadGlobalIndex(baseDir).firstOrNull { it.id == sessionId }
 
         private val SAFE_SESSION_ID = Regex("^[a-zA-Z0-9_-]+$")
 

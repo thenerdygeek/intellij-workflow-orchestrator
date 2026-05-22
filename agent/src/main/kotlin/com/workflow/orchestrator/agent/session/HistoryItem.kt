@@ -17,4 +17,10 @@ data class HistoryItem(
     val conversationHistoryDeletedRange: List<Int>? = null,
     val isFavorited: Boolean = false,
     val modelId: String? = null,
+    /**
+     * Persisted plan-mode toggle for this session. Default false keeps
+     * backward-compat: old entries without this field deserialize to false
+     * via kotlinx.serialization's missing-key → default semantics.
+     */
+    val planModeEnabled: Boolean = false,
 )
