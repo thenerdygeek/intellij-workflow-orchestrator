@@ -1159,6 +1159,9 @@ class AgentService(
         safeRegisterDeferred("Delegation") {
             com.workflow.orchestrator.agent.tools.delegation.DelegationSendTool()
         }
+        safeRegisterDeferred("Delegation") {
+            com.workflow.orchestrator.agent.tools.delegation.DelegationCloseTool()
+        }
 
         // File — binary/structured document reading (PDF, DOCX, XLSX, PPTX, RTF, ODT, CSV …)
         // Falls in the deferred tier so the full Tika + POI dependency is only paid when
