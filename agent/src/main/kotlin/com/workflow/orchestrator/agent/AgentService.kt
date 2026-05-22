@@ -488,6 +488,26 @@ class AgentService(
     }
 
     /**
+     * Inject a synthetic nudge message into the loop that owns [sessionId].
+     *
+     * Called by [com.workflow.orchestrator.agent.tools.delegation.DelegationSendTool]'s
+     * `onResult` closure when an async delegation result arrives — the loop is still
+     * running, and the nudge surfaces at the next iteration boundary via the steering
+     * queue.  Safe to call from any thread.
+     *
+     * If the loop is no longer active (session ended / new chat) the nudge is silently
+     * dropped — the session is over and there is nowhere to inject it.
+     */
+    fun enqueueNudgeForSession(sessionId: String, text: String) {
+        val loop = activeLoopForSession(sessionId)
+        if (loop != null) {
+            loop.enqueueSteeringMessage(text)
+        } else {
+            log.warn("[AgentService] enqueueNudgeForSession: no active loop for session $sessionId — nudge dropped")
+        }
+    }
+
+    /**
      * Persist the completion for later resumption when no loop is active. Task 6
      * will read this store at session start and replay queued completions as
      * steering messages before the first LLM call.
@@ -1133,6 +1153,12 @@ class AgentService(
         safeRegisterDeferred("Utilities") { ProjectContextTool() }
         safeRegisterDeferred("Utilities") { CurrentTimeTool() }
         safeRegisterDeferred("Utilities") { AskUserInputTool() }
+
+        // Delegation — cross-IDE agent delegation (deferred so the schema only appears
+        // when the LLM explicitly searches for "delegation" or "cross-ide")
+        safeRegisterDeferred("Delegation") {
+            com.workflow.orchestrator.agent.tools.delegation.DelegationSendTool()
+        }
 
         // File — binary/structured document reading (PDF, DOCX, XLSX, PPTX, RTF, ODT, CSV …)
         // Falls in the deferred tier so the full Tika + POI dependency is only paid when
