@@ -15,7 +15,15 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class PerSessionAgentState(
     val sessionId: String,
-    initialPlanMode: Boolean = false,
 ) {
-    val planModeActive: AtomicBoolean = AtomicBoolean(initialPlanMode)
+    /**
+     * Plan-mode toggle for this session. Always starts false; callers that need to
+     * seed a specific value (e.g. from the persisted HistoryItem on resume) must call
+     * `.planModeActive.set(value)` explicitly after construction.
+     *
+     * Removing the `initialPlanMode` constructor parameter prevents the subtle bug
+     * where `computeIfAbsent` silently returns the existing instance and ignores the
+     * requested initial value on the second call (F5 fix).
+     */
+    val planModeActive: AtomicBoolean = AtomicBoolean(false)
 }
