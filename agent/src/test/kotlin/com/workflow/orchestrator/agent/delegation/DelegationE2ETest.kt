@@ -22,7 +22,7 @@ class DelegationE2ETest {
             val server = DelegationServer(
                 socketPath = socketPath,
                 projectPath = "/projects/B",
-                onConnect = { connect, replyWith ->
+                onConnect = { connect, replyWith, closeChannel ->
                     assertEquals("backend-test", connect.delegatorRepo)
                     assertEquals("Add a createUser endpoint", connect.request)
                     replyWith(DelegationMessage.AcceptResult(accepted = true))
@@ -36,6 +36,8 @@ class DelegationE2ETest {
                             durationSeconds = 12,
                         )
                     )
+                    // F1: close the channel after the terminal Result is written
+                    closeChannel()
                 },
                 scope = this,
             )
@@ -76,8 +78,9 @@ class DelegationE2ETest {
             val server = DelegationServer(
                 socketPath = socketPath,
                 projectPath = "/projects/B",
-                onConnect = { _, replyWith ->
+                onConnect = { _, replyWith, closeChannel ->
                     replyWith(DelegationMessage.AcceptResult(accepted = false, reason = "user_rejected"))
+                    closeChannel()
                 },
                 scope = this,
             )
@@ -110,7 +113,7 @@ class DelegationE2ETest {
             val server = DelegationServer(
                 socketPath = socketPath,
                 projectPath = "/p",
-                onConnect = { _, replyWith ->
+                onConnect = { _, replyWith, closeChannel ->
                     replyWith(DelegationMessage.AcceptResult(accepted = true))
                     replyWith(
                         DelegationMessage.Result(
@@ -119,6 +122,7 @@ class DelegationE2ETest {
                             durationSeconds = 3,
                         )
                     )
+                    closeChannel()
                 },
                 scope = this,
             )
@@ -156,7 +160,7 @@ class DelegationE2ETest {
             val serverA = DelegationServer(
                 socketPath = socketA,
                 projectPath = "/A",
-                onConnect = { c, replyWith ->
+                onConnect = { c, replyWith, closeChannel ->
                     replyWith(DelegationMessage.AcceptResult(accepted = true))
                     replyWith(
                         DelegationMessage.Result(
@@ -164,13 +168,14 @@ class DelegationE2ETest {
                             summary = "from-A:${c.request}",
                         )
                     )
+                    closeChannel()
                 },
                 scope = this,
             )
             val serverB = DelegationServer(
                 socketPath = socketB,
                 projectPath = "/B",
-                onConnect = { c, replyWith ->
+                onConnect = { c, replyWith, closeChannel ->
                     replyWith(DelegationMessage.AcceptResult(accepted = true))
                     replyWith(
                         DelegationMessage.Result(
@@ -178,6 +183,7 @@ class DelegationE2ETest {
                             summary = "from-B:${c.request}",
                         )
                     )
+                    closeChannel()
                 },
                 scope = this,
             )

@@ -12,6 +12,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.core.delegation.DelegationMessage
+import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -82,6 +83,16 @@ class DelegationSendTool : AgentTool {
     )
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        // F3: runtime gate — if outbound delegation was disabled after the tool was registered,
+        // return a typed error instead of relying on tool unregistration alone. The LLM
+        // would otherwise receive a confusing "Unknown tool" error for the mid-session race.
+        if (!PluginSettings.getInstance(project).state.enableOutboundCrossIdeDelegation) {
+            return ToolResult.error(
+                "DelegationOutboundDisabled: cross-IDE delegation is currently disabled in settings " +
+                    "(Tools → Workflow Orchestrator → Agent → Enable outbound cross-IDE delegation)"
+            )
+        }
+
         val request = params["request"]?.jsonPrimitive?.content
             ?: return ToolResult.error("delegation_send: 'request' is required")
 

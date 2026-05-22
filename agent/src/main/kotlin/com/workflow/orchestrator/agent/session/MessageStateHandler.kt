@@ -76,6 +76,16 @@ class MessageStateHandler(
      */
     @Volatile private var sessionPlanModeEnabled: Boolean = false
 
+    /**
+     * In-memory delegation metadata for this session. Written by
+     * [updateSessionDelegationMetadata] and threaded into every [updateGlobalIndex]
+     * call so the on-disk HistoryItem carries the delegation marker (spec §9.1).
+     *
+     * F2: populates HistoryItem.delegated in sessions.json; replaces the need for
+     * a delegation.json sidecar as the canonical source of truth for the session list.
+     */
+    @Volatile private var sessionDelegationMetadata: DelegationMetadata? = null
+
     private val sessionDir: File get() = File(baseDir, "sessions/$sessionId")
     private val uiMessagesFile: File get() = File(sessionDir, "ui_messages.json")
     private val apiHistoryFile: File get() = File(sessionDir, "api_conversation_history.json")
@@ -492,6 +502,23 @@ class MessageStateHandler(
         updateGlobalIndex()
     }
 
+    /**
+     * Set the delegation metadata for this session.
+     *
+     * Updates the in-memory field and immediately rewrites `sessions.json` so the
+     * HistoryItem in the global index carries the delegation marker as soon as the
+     * delegated session starts (spec §9.1, F2 fix).
+     *
+     * Called by [AgentService.startDelegatedSession] before [executeTask] runs, so
+     * the index entry is populated even before the first LLM turn.
+     *
+     * Safe to call from any coroutine — suspends only on the mutex, no EDT.
+     */
+    suspend fun updateSessionDelegationMetadata(metadata: DelegationMetadata) {
+        sessionDelegationMetadata = metadata
+        updateGlobalIndex()
+    }
+
     suspend fun saveBoth() = mutex.withLock {
         saveInternal()
         saveApiHistoryInternal()
@@ -525,6 +552,9 @@ class MessageStateHandler(
             totalCost = totalCost,
             modelId = lastModel,
             planModeEnabled = sessionPlanModeEnabled,
+            // F2: thread delegation metadata into the index entry so sessions.json
+            // carries the delegation marker without a secondary delegation.json read.
+            delegated = sessionDelegationMetadata,
         )
 
         // Cross-process serialization: globalIndexMutex protects within this JVM, but two

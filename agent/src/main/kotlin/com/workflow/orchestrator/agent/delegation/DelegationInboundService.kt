@@ -57,7 +57,7 @@ class DelegationInboundService(
         val srv = DelegationServer(
             socketPath = socketPath,
             projectPath = projectPath,
-            onConnect = ::handleConnect,
+            onConnect = { connect, replyWith, closeChannel -> handleConnect(connect, replyWith, closeChannel) },
             scope = cs,
         )
         srv.start()
@@ -72,6 +72,7 @@ class DelegationInboundService(
     private suspend fun handleConnect(
         connect: DelegationMessage.Connect,
         replyWith: suspend (DelegationMessage) -> Unit,
+        closeChannel: suspend () -> Unit,
     ) {
         // Show the Accept dialog on the EDT.
         val accepted = withContext(Dispatchers.EDT) {
@@ -81,12 +82,13 @@ class DelegationInboundService(
         }
         if (!accepted) {
             replyWith(DelegationMessage.AcceptResult(accepted = false, reason = "user_rejected"))
+            // Rejection is a terminal message — close the channel immediately.
+            closeChannel()
             return
         }
         replyWith(DelegationMessage.AcceptResult(accepted = true))
 
         // Hand off to AgentService to actually start the delegated session.
-        // (Implementation lands in Task 7; for now the stub on AgentService accepts the call.)
         val agentService = project.getService(AgentService::class.java)
         val metadata = DelegationMetadata(
             delegatorIde = connect.delegatorIde,
@@ -94,10 +96,15 @@ class DelegationInboundService(
             delegatorSessionId = connect.delegatorSessionId,
             startedAt = System.currentTimeMillis(),
         )
+        // F1: close the socket channel after writing the terminal Result so the FD is
+        // released immediately rather than leaking until JVM exit.
         agentService.startDelegatedSession(
             request = connect.request,
             delegationMetadata = metadata,
-            onResult = { result -> replyWith(result) },
+            onResult = { result ->
+                replyWith(result)
+                closeChannel()
+            },
         )
     }
 

@@ -68,10 +68,11 @@ class StartDelegatedSessionTest {
     }
 
     @Test
-    fun `startDelegatedSession persists delegation metadata to delegation json`() {
+    fun `startDelegatedSession passes delegationMetadata to executeTask`() {
         assertTrue(
-            sourceText.contains("delegation.json"),
-            "startDelegatedSession must persist DelegationMetadata to sessions/<id>/delegation.json"
+            sourceText.contains("delegationMetadata = delegationMetadata"),
+            "startDelegatedSession must pass delegationMetadata to executeTask so HistoryItem.delegated " +
+                "is populated in sessions.json (F2) and Session.delegated is set in-memory (F6)"
         )
     }
 

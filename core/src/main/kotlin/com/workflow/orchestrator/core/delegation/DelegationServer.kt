@@ -24,13 +24,15 @@ import java.nio.file.Path
  * the [scope]'s own dispatcher so tests using a [kotlinx.coroutines.test.TestCoroutineScheduler]
  * can observe [CompletableDeferred] completions without needing real-time timeouts.
  *
- * Channel ownership: the [onConnect] handler receives a [replyWith] suspend
- * closure that captures the per-connection [SocketChannel]. Holding this
- * closure keeps the connection alive — the caller may invoke [replyWith]
- * multiple times (first for AcceptResult, later for Result) before letting
- * the connection close.
+ * Channel ownership: the [onConnect] handler receives both a [replyWith] suspend
+ * closure and a [closeChannel] suspend closure. The caller may invoke [replyWith]
+ * multiple times (first for AcceptResult, later for terminal Result). After sending
+ * the final Result message the handler must invoke [closeChannel] so the per-connection
+ * [SocketChannel] file-descriptor is released. Not calling [closeChannel] leaks the FD
+ * until JVM exit.
  *
- * Spec: docs/superpowers/specs/2026-05-22-cross-ide-agent-delegation-design.md §6.
+ * F1: socket leak fix — [closeChannel] replaces the prior "caller owns it" convention
+ * that had no concrete close path after the terminal Result write. Spec §6.1.
  */
 class DelegationServer(
     private val socketPath: Path,
@@ -38,6 +40,7 @@ class DelegationServer(
     private val onConnect: suspend (
         connect: DelegationMessage.Connect,
         replyWith: suspend (DelegationMessage) -> Unit,
+        closeChannel: suspend () -> Unit,
     ) -> Unit,
     private val scope: CoroutineScope,
 ) {
@@ -102,9 +105,15 @@ class DelegationServer(
                     val replyWith: suspend (DelegationMessage) -> Unit = { reply ->
                         withContext(Dispatchers.IO) { DelegationFraming.writeFramed(client, reply, json) }
                     }
-                    onConnect(msg, replyWith)
-                    // NOTE: caller may close client when done, or it may stay open for
-                    // further messages. We deliberately do NOT close here.
+                    val closeChannel: suspend () -> Unit = {
+                        try { client.close() } catch (_: Exception) {}
+                    }
+                    onConnect(msg, replyWith, closeChannel)
+                    // F1: the onConnect handler is now responsible for calling closeChannel()
+                    // after the terminal Result is sent. The server does NOT close here because
+                    // the handler may send multiple messages before the terminal one. The channel
+                    // will also be closed (harmlessly/idempotently) by the catch block below on
+                    // any exception path.
                 }
                 else -> {
                     LOG.warn("Unexpected first message on inbound connection: $msg")
