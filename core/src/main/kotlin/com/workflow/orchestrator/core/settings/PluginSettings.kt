@@ -373,6 +373,11 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
             "image/png", "image/jpeg", "image/webp", "image/gif"
         )
 
+        // Cross-IDE agent delegation (default off — feature is opt-in).
+        // Spec: docs/superpowers/specs/2026-05-22-cross-ide-agent-delegation-design.md §3.3.
+        var enableOutboundCrossIdeDelegation by property(false)
+        var enableInboundCrossIdeDelegation by property(false)
+
         init {
             // Populate default whitelist on first instantiation. Persisted lists
             // round-trip independently — if the user clears the list it stays
