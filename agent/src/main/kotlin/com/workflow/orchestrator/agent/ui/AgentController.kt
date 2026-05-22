@@ -821,7 +821,7 @@ class AgentController(
                 liveQuestions = null
                 if (pendingApprovalChoice) {
                     pendingApprovalChoice = false
-                    AgentService.planModeActive.set(true)
+                    service.setPlanModeActive(true)
                     dashboard.setPlanMode(true)
                     collectedAnswers.clear()
                     skippedQuestionIds.clear()
@@ -3504,7 +3504,7 @@ class AgentController(
         }
 
         // Switch to act mode
-        AgentService.planModeActive.set(false)
+        service.setPlanModeActive(false)
         dashboard.setPlanMode(false)
 
         // Mark the plan as approved in the UI — switches PlanSummaryCard → PlanProgressWidget
@@ -3652,7 +3652,7 @@ class AgentController(
 
     private fun togglePlanMode(enabled: Boolean) {
         LOG.info("AgentController.togglePlanMode: $enabled")
-        AgentService.planModeActive.set(enabled)
+        service.setPlanModeActive(enabled)
         dashboard.setPlanMode(enabled)
     }
 

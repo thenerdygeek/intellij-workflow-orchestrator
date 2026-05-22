@@ -87,7 +87,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -1818,7 +1817,7 @@ class AgentService(
                     SystemPrompt.build(
                         projectName = projectName,
                         projectPath = projectPath,
-                        planModeEnabled = planModeActive.get(),
+                        planModeEnabled = isPlanModeActive(),
                         additionalContext = projectInstructions,
                         availableSkills = availableSkills,
                         activeSkillContent = ctx.getActiveSkill(),
@@ -1850,7 +1849,7 @@ class AgentService(
                 val hasSkills = availableSkills != null
                 var lastXmlToolDefsHash = 0
                 val toolDefinitionProvider: () -> List<com.workflow.orchestrator.core.ai.dto.ToolDefinition> = {
-                    val isPlanMode = planModeActive.get()
+                    val isPlanMode = isPlanModeActive()
                     val defs = registry.getActiveTools().values
                         .filter { tool ->
                             // Port of Cline's contextRequirements: omit use_skill when no skills available
@@ -2059,7 +2058,7 @@ class AgentService(
                     project = project,
                     onStreamChunk = onStreamChunk,
                     onToolCall = onToolCall,
-                    planMode = planModeActive.get(),
+                    planMode = isPlanModeActive(),
                     maxOutputTokens = agentSettings.state.maxOutputTokens,
                     toolDefinitionProvider = toolDefinitionProvider,
                     toolResolver = { name -> registry.get(name) },
@@ -2083,7 +2082,7 @@ class AgentService(
                     onHandoffProposed = onHandoffProposed,
                     onPlanPartialContent = onPlanPartialContent,
                     onPlanModeToggle = { enabled ->
-                        planModeActive.set(enabled)
+                        setPlanModeActive(enabled)
                         onPlanModeToggled?.invoke(enabled)
                     },
                     onPlanDiscarded = {
@@ -2128,7 +2127,7 @@ class AgentService(
                         } catch (_: Exception) { emptyList() }
                         EnvironmentDetailsBuilder.build(
                             project = project,
-                            planModeEnabled = planModeActive.get(),
+                            planModeEnabled = isPlanModeActive(),
                             contextManager = ctx,
                             activeTicketId = pluginSettings.state.activeTicketId,
                             activeTicketSummary = pluginSettings.state.activeTicketSummary,
@@ -2411,8 +2410,10 @@ class AgentService(
         }
 
         currentSessionId = sessionId
-        sessionStateFor(sessionId, initialPlanMode = planModeActive.get())
-            .planModeActive.set(planModeActive.get())
+        // Seed per-session state; plan mode defaults to false on resume.
+        // Session.planModeEnabled is the on-disk source of truth and will be
+        // re-applied by executeTask when the resumed loop is re-launched.
+        sessionStateFor(sessionId, initialPlanMode = false)
 
         // Trim trailing resume messages and cost-less api_req_started (Cline pattern)
         savedUiMessages = ResumeHelper.trimResumeMessages(savedUiMessages)
@@ -2481,7 +2482,7 @@ class AgentService(
         // Build task resumption preamble
         val lastActivityTs = savedUiMessages.lastOrNull()?.ts ?: System.currentTimeMillis()
         val agoText = ResumeHelper.formatTimeAgo(lastActivityTs)
-        val mode = if (planModeActive.get()) "plan" else "act"
+        val mode = if (isPlanModeActive()) "plan" else "act"
         val cwd = project.basePath ?: ""
         val basePreamble = ResumeHelper.buildTaskResumptionPreamble(
             mode = mode,
@@ -2602,7 +2603,7 @@ class AgentService(
             val systemPrompt = SystemPrompt.build(
                 projectName = project.name,
                 projectPath = project.basePath ?: "",
-                planModeEnabled = planModeActive.get(),
+                planModeEnabled = isPlanModeActive(),
                 ideContext = ideContext,
                 availableShells = allowedShells,
                 availableModels = formatModelsForPrompt(ModelCache.getCached()),
@@ -2859,7 +2860,7 @@ class AgentService(
      */
     fun resetForNewChat() {
         cancelCurrentTask()
-        planModeActive.set(false)
+        setPlanModeActive(false)
         registry.resetActiveDeferred()
         ProcessRegistry.killAll()
         activeTask.set(null)
@@ -2933,9 +2934,27 @@ class AgentService(
         if (currentSessionId == sessionId) currentSessionId = null
     }
 
-    companion object {
-        val planModeActive = AtomicBoolean(false)
+    /**
+     * Current plan-mode flag, sourced from per-session state. Returns false
+     * if no session is active (defensive default).
+     */
+    fun isPlanModeActive(): Boolean =
+        currentSessionState()?.planModeActive?.get() ?: false
 
+    /**
+     * Set plan-mode for the current session. Also persists to the on-disk
+     * Session.planModeEnabled so resume sees the right value.
+     */
+    fun setPlanModeActive(enabled: Boolean) {
+        val state = currentSessionState()
+        if (state == null) {
+            log.warn("setPlanModeActive($enabled) called with no active session — ignoring")
+            return
+        }
+        state.planModeActive.set(enabled)
+    }
+
+    companion object {
         fun getInstance(project: Project): AgentService =
             project.service<AgentService>()
     }
