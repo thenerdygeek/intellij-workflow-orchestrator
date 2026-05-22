@@ -385,6 +385,8 @@
         <projectService
             serviceImplementation="com.workflow.orchestrator.agent.delegation.DelegationInboundService"/>
         <projectService
+            serviceImplementation="com.workflow.orchestrator.agent.delegation.DelegationOutboundService"/>
+        <projectService
             serviceImplementation="com.workflow.orchestrator.agent.settings.ToolPreferences"/>
         <projectConfigurable
             parentId="workflow.orchestrator"
