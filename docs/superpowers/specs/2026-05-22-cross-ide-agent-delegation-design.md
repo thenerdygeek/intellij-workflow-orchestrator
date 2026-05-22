@@ -26,6 +26,8 @@ Explicitly NOT what this feature is: it is not Code With Me, JetBrains Gateway, 
 
 ## 3. User-visible behavior
 
+**Feature is opt-in via two settings (§3.3): *outbound delegation* and *inbound acceptance*. Both default off.** Users must explicitly enable each in `Tools → Workflow Orchestrator` before the feature has any effect. This section describes behavior with the relevant gate(s) enabled.
+
 ### 3.1 The human's view in IDE-A
 
 When Agent-A wants to delegate, the user sees a **delegation tool-call card** in the chat (the same UI lane as other tool calls). The card progresses through visible states:
@@ -65,7 +67,10 @@ Agent-A interacts via four tools, all under the `delegation_*` namespace:
 
 Agent-A does NOT poll for results. Result delivery is push-driven via the existing nudge mechanism (see §6.5).
 
-Settings exposed to the user (in IDE-A):
+Settings exposed to the user (under `Tools → Workflow Orchestrator`):
+
+- **Allow this IDE to delegate to other IDEs** (off by default) — outbound gate. When off, the four `delegation_*` tools are NOT registered in Agent-A's tool registry; the LLM does not know delegation exists. No picker, no outbound IPC. Toggling off mid-session leaves any in-flight nudges deliverable, but new `delegation_*` calls fail with `DelegationOutboundDisabled` (§10).
+- **Accept incoming delegations from other IDEs** (off by default) — inbound gate. When off, the plugin does NOT bind the deterministic per-project socket when projects open. Other IDEs probing for liveness see this IDE as Closed (§5.2) and indistinguishable from "not running." Toggling off mid-session keeps existing accepted channels live until they naturally terminate; new inbound `CONNECT` requests are refused.
 - **Auto-approve Agent-A's answers in delegations** (off by default) — when on, Agent-A's proposed answer to a question Agent-B raises is forwarded without an IDE-A confirmation prompt. See §6.3.
 
 ## 4. Tool surface (detailed)
@@ -125,6 +130,8 @@ The picker is populated from `RecentProjectsManager.getInstance()` — the same 
 
 **Cross-installation supplement.** `RecentProjectsManager` is per-IntelliJ-installation; different JetBrains Toolbox slots maintain different recents lists, so a project open in IDE-B may be absent from IDE-A's recents. To cover this, the picker also globs `~/.workflow-orchestrator/ipc/*.sock` for live plugin instances. Entries discovered this way but not in `RecentProjectsManager` are shown under a *"Discovered (not in recents)"* section in the picker. The project path is resolved by asking the responding plugin via the IPC `PING` handshake (it includes the project path in the `PONG` reply).
 
+**Inbound-disabled IDEs are invisible.** An IDE with the *Accept incoming delegations* setting (§3.3) turned off does not bind its deterministic socket — so the socket-glob discovery sees nothing for that IDE, and probes for its currently-open projects time out as if the IDE were not running. This is by design: a user who has opted out of accepting delegations should not appear as a delegation target.
+
 ### 5.2 Liveness detection
 
 Each plugin instance, when it opens a project, starts listening on a **deterministic IPC endpoint derived from the project's absolute path** (e.g., a Unix Domain Socket at `~/.workflow-orchestrator/ipc/<sha256(projectPath).short>.sock`). When the project closes, it stops listening. The OS reaps the socket file on process death — no stale-file cleanup needed.
@@ -133,7 +140,7 @@ To determine "is this project currently open in some running IDE?":
 
 1. Compute the deterministic IPC path for the project root.
 2. Attempt a non-blocking connect with a `PING` exchange, ~50ms timeout.
-3. `PONG` → **Running**. Connection refused / timeout → **Closed**. Project path doesn't exist on disk → **Missing**.
+3. `PONG` → **Running**. Connection refused / timeout → **Closed** (which could mean: IDE not running, project not open in any running IDE, or the target IDE has *Accept incoming delegations* disabled — these are deliberately indistinguishable). Project path doesn't exist on disk → **Missing**.
 
 Probing happens **on picker open**, not in a background loop. N probes for N recent projects is fine as a one-shot dialog cost; it would be unacceptable as a continuous poll.
 
@@ -396,6 +403,7 @@ Specific error kinds Agent-A may receive from delegation tools:
 | `DelegationTargetNotReachable` | Picker target IDE not running and auto-launch failed or was canceled by the user. |
 | `DelegationNoPendingQuestion` | `delegation_answer` called when no question is pending on the handle. |
 | `DelegationUserCanceledPicker` | First-contact picker was dismissed without picking. |
+| `DelegationOutboundDisabled` | The *Allow this IDE to delegate to other IDEs* setting (§3.3) was turned off after Agent-A's session started, so the LLM still has the `delegation_*` tools cached but their runtime is gated. New calls fail; in-flight nudges still deliver. |
 
 All errors are clearly distinguishable so Agent-A's LLM can reason about whether to retry, fall back, or escalate to the human.
 
