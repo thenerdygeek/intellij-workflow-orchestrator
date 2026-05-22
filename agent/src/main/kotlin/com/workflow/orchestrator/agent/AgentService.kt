@@ -1518,6 +1518,9 @@ class AgentService(
             title = task.take(100),
             status = SessionStatus.ACTIVE
         )
+        currentSessionId = session.id
+        sessionStateFor(session.id, initialPlanMode = session.planModeEnabled)
+            .planModeActive.set(session.planModeEnabled)
         onSessionStarted?.invoke(sid)
 
         val sessionMetrics = SessionMetrics()
@@ -2410,6 +2413,10 @@ class AgentService(
             return null
         }
 
+        currentSessionId = sessionId
+        sessionStateFor(sessionId, initialPlanMode = planModeActive.get())
+            .planModeActive.set(planModeActive.get())
+
         // Trim trailing resume messages and cost-less api_req_started (Cline pattern)
         savedUiMessages = ResumeHelper.trimResumeMessages(savedUiMessages)
 
@@ -2885,6 +2892,48 @@ class AgentService(
         cancelCurrentTask()
         ProcessRegistry.killAll()
         debugController?.dispose()
+    }
+
+    /**
+     * Per-session mutable state, keyed by session ID. Populated lazily by
+     * [sessionStateFor]. Cleared by [releaseSessionState] when a session ends.
+     *
+     * Phase 0 of the cross-IDE delegation feature — see
+     * docs/superpowers/specs/2026-05-22-cross-ide-agent-delegation-design.md §6.1.
+     */
+    private val perSessionStates = java.util.concurrent.ConcurrentHashMap<
+        String,
+        com.workflow.orchestrator.agent.session.PerSessionAgentState
+    >()
+
+    /** Session ID currently driving this AgentService — set by [executeTask] / resume paths. */
+    @Volatile
+    private var currentSessionId: String? = null
+
+    /**
+     * Returns (creating if absent) the per-session state for the given session ID.
+     * Used by tools and the loop that have a session ID in hand.
+     */
+    fun sessionStateFor(
+        sessionId: String,
+        initialPlanMode: Boolean = false,
+    ): com.workflow.orchestrator.agent.session.PerSessionAgentState =
+        perSessionStates.computeIfAbsent(sessionId) {
+            com.workflow.orchestrator.agent.session.PerSessionAgentState(it, initialPlanMode)
+        }
+
+    /**
+     * Returns the per-session state for the session currently being driven, or
+     * null if no session is active (e.g., between tasks). Used by call sites
+     * that historically read `planModeActive.get()` directly.
+     */
+    fun currentSessionState(): com.workflow.orchestrator.agent.session.PerSessionAgentState? =
+        currentSessionId?.let { perSessionStates[it] }
+
+    /** Removes per-session state. Call when a session is closed/disposed. */
+    fun releaseSessionState(sessionId: String) {
+        perSessionStates.remove(sessionId)
+        if (currentSessionId == sessionId) currentSessionId = null
     }
 
     companion object {
