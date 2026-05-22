@@ -85,6 +85,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.encodeToString
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
@@ -2829,25 +2830,124 @@ class AgentService(
     // ── Cross-IDE Delegation ────────────────────────────────────────────────
 
     /**
-     * Starts a new AgentSession driven by an incoming cross-IDE delegation.
+     * Starts a first-class delegated [AgentSession] driven by an incoming cross-IDE
+     * delegation request (Plan 1 Task 7).
      *
-     * Implementation: Plan 1 Task 7. This is a stub so DelegationInboundService
-     * compiles. Calling it currently logs a warning and immediately invokes
-     * onResult with a FAILED result.
+     * Lifecycle:
+     * 1. Generate a new session ID (UUID).
+     * 2. Persist [DelegationMetadata] to `sessions/{id}/delegation.json` so the session
+     *    directory records that this was a delegated run even before the LLM takes its
+     *    first turn. This is a lightweight sidecar file; [HistoryItem] in `sessions.json`
+     *    continues to record the token/cost/model summary as normal.
+     * 3. Call [executeTask] with [request] as the initial user prompt and the generated
+     *    session ID, wiring an [onComplete] callback to capture the terminal [LoopResult].
+     * 4. Map the [LoopResult] to a [DelegationMessage.Result] and invoke [onResult].
+     *
+     * Threading: launched on [Dispatchers.IO]; [onResult] is called from the same context
+     * after the job completes.
+     *
+     * Spec: §6.1, §7, §9.1.
      */
     fun startDelegatedSession(
         request: String,
         delegationMetadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
         onResult: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit,
     ) {
-        log.warn("startDelegatedSession STUB invoked for request='${request.take(40)}' — Plan 1 Task 7 not yet implemented")
-        cs.launch(Dispatchers.IO) {
-            onResult(
-                com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
-                    status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.FAILED,
-                    reason = "startDelegatedSession not yet implemented (Plan 1 Task 7)",
-                )
+        val sid = UUID.randomUUID().toString()
+        val startTime = System.currentTimeMillis()
+        log.info(
+            "[Agent] startDelegatedSession: sessionId=$sid, delegator=${delegationMetadata.delegatorIde}, " +
+                "repo=${delegationMetadata.delegatorRepo}, request='${request.take(60)}'"
+        )
+
+        // Persist delegation sidecar before the loop starts so the directory always
+        // contains delegation.json when inspected during or after the session.
+        try {
+            val basePath = project.basePath ?: System.getProperty("user.home")
+            val sessionDir = java.io.File(
+                ProjectIdentifier.agentDir(basePath),
+                "sessions/$sid"
             )
+            sessionDir.mkdirs()
+            val delegationFile = java.io.File(sessionDir, "delegation.json")
+            val json = kotlinx.serialization.json.Json { prettyPrint = true }
+            AtomicFileWriter.write(delegationFile, json.encodeToString(delegationMetadata))
+            log.debug("[Agent] Delegated session $sid: wrote delegation.json for delegatorSessionId=${delegationMetadata.delegatorSessionId}")
+        } catch (e: Exception) {
+            // Non-fatal: the session still runs; delegation.json is informational only.
+            log.warn("[Agent] startDelegatedSession $sid: failed to write delegation.json — continuing", e)
+        }
+
+        // Run the agent loop. executeTask returns a Job immediately; we capture the
+        // LoopResult via the onComplete callback using a CompletableDeferred so we can
+        // map it to a DelegationMessage.Result and call onResult after the job finishes.
+        val loopResultDeferred = kotlinx.coroutines.CompletableDeferred<LoopResult>()
+
+        val title = "Delegated by ${delegationMetadata.delegatorIde} — ${delegationMetadata.delegatorRepo}"
+        val job = executeTask(
+            task = request,
+            sessionId = sid,
+            uiMessageOverride = com.workflow.orchestrator.agent.session.UiMessage(
+                ts = System.currentTimeMillis(),
+                type = com.workflow.orchestrator.agent.session.UiMessageType.SAY,
+                say = com.workflow.orchestrator.agent.session.UiSay.USER_MESSAGE,
+                text = "[$title]\n\n$request",
+            ),
+            onComplete = { result -> loopResultDeferred.complete(result) },
+        )
+
+        cs.launch(Dispatchers.IO) {
+            try {
+                job.join()
+                val loopResult = loopResultDeferred.await()
+                val durationSeconds = (System.currentTimeMillis() - startTime) / 1000
+
+                val delegationResult = when (loopResult) {
+                    is LoopResult.Completed -> com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                        status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.COMPLETED,
+                        summary = loopResult.summary,
+                        filesChanged = emptyList(), // TODO: derive from SessionCheckpointStore.aggregateDiff() in Task 12
+                        durationSeconds = durationSeconds,
+                    )
+                    is LoopResult.Cancelled -> com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                        status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.CANCELED,
+                        reason = "Session cancelled",
+                        durationSeconds = durationSeconds,
+                    )
+                    is LoopResult.SessionHandoff -> com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                        status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.COMPLETED,
+                        summary = loopResult.context.take(200),
+                        durationSeconds = durationSeconds,
+                    )
+                    is LoopResult.Failed -> com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                        status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.FAILED,
+                        reason = loopResult.error,
+                        durationSeconds = durationSeconds,
+                    )
+                }
+                log.info("[Agent] Delegated session $sid finished: status=${delegationResult.status}, duration=${durationSeconds}s")
+                onResult(delegationResult)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                val durationSeconds = (System.currentTimeMillis() - startTime) / 1000
+                onResult(
+                    com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                        status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.CANCELED,
+                        reason = e.message,
+                        durationSeconds = durationSeconds,
+                    )
+                )
+                throw e
+            } catch (e: Exception) {
+                log.error("[Agent] Delegated session $sid failed unexpectedly", e)
+                val durationSeconds = (System.currentTimeMillis() - startTime) / 1000
+                onResult(
+                    com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                        status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.FAILED,
+                        reason = e.message ?: e::class.qualifiedName,
+                        durationSeconds = durationSeconds,
+                    )
+                )
+            }
         }
     }
 
