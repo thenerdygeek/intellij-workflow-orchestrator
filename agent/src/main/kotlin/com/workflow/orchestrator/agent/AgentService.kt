@@ -2829,6 +2829,31 @@ class AgentService(
         )
     }
 
+    // ── Cross-IDE Delegation ────────────────────────────────────────────────
+
+    /**
+     * Starts a new AgentSession driven by an incoming cross-IDE delegation.
+     *
+     * Implementation: Plan 1 Task 7. This is a stub so DelegationInboundService
+     * compiles. Calling it currently logs a warning and immediately invokes
+     * onResult with a FAILED result.
+     */
+    fun startDelegatedSession(
+        request: String,
+        delegationMetadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
+        onResult: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit,
+    ) {
+        log.warn("startDelegatedSession STUB invoked for request='${request.take(40)}' — Plan 1 Task 7 not yet implemented")
+        cs.launch(Dispatchers.IO) {
+            onResult(
+                com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                    status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.FAILED,
+                    reason = "startDelegatedSession not yet implemented (Plan 1 Task 7)",
+                )
+            )
+        }
+    }
+
     // ── Cancel ─────────────────────────────────────────────────────────────
 
     /**

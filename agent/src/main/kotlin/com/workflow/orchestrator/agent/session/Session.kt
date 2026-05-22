@@ -3,6 +3,21 @@ package com.workflow.orchestrator.agent.session
 import kotlinx.serialization.Serializable
 
 /**
+ * Metadata attached to a session that was initiated by an incoming cross-IDE delegation.
+ *
+ * Spec: docs/superpowers/specs/2026-05-22-cross-ide-agent-delegation-design.md §9.1.
+ */
+@Serializable
+data class DelegationMetadata(
+    val delegatorIde: String,
+    val delegatorRepo: String,
+    val delegatorSessionId: String,
+    val startedAt: Long,
+    val closedAt: Long? = null,
+    val closeReason: String? = null,
+)
+
+/**
  * Session metadata — in-memory representation used during task execution.
  *
  * Ported from Cline's HistoryItem + TaskState persistence:
@@ -45,7 +60,14 @@ data class Session(
     val planModeEnabled: Boolean = false,
     val lastToolCallId: String? = null,
     /** Per-session execution metrics. Null for pre-v2 sessions (backward compatible). */
-    val metrics: com.workflow.orchestrator.agent.observability.SessionMetrics.MetricsSnapshot? = null
+    val metrics: com.workflow.orchestrator.agent.observability.SessionMetrics.MetricsSnapshot? = null,
+    /**
+     * Non-null when this session was started by an incoming cross-IDE delegation.
+     * Nullable default preserves backward compatibility with existing on-disk sessions.
+     *
+     * Spec: docs/superpowers/specs/2026-05-22-cross-ide-agent-delegation-design.md §9.1.
+     */
+    val delegated: DelegationMetadata? = null,
 )
 
 @Serializable
