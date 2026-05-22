@@ -16,7 +16,7 @@ These are deferred — not "we won't ever do them," but "v1 ships without them":
 2. **Cross-user delegation.** Same OS user only.
 3. **Resume a delegated session across an IDE-B restart.** Once IDE-B dies, the handle is dead.
 4. **Multi-hop chains (A → B → C).** Agent-B cannot itself delegate while in a delegated session. The delegation tools are absent (or reject with a clear error) inside delegated sessions.
-5. **Per-delegation tool restrictions.** Agent-B runs with whatever per-tool auto-approve config IDE-B's human has set. Agent-A cannot impose "read-only" or "no run_command" scopes on Agent-B.
+5. **Per-delegation tool restrictions.** Agent-B runs with whatever per-tool auto-approve config IDE-B's human has set. Agent-A cannot impose "read-only" or "no run_command" scopes on Agent-B. Note: a one-time *Accept delegation?* prompt in IDE-B gates the session before Agent-B begins executing (§3.2, §6.1, §6.2) — this is the v1 trust gate. Per-tool restrictions are a future refinement.
 6. **Encryption / TLS on the IPC.** Local-only, filesystem-permissioned socket files (mode 0700 in the user's home dir).
 7. **Conversation-as-default delegation.** First-contact is one-shot; multi-turn requires explicit `continue_with`. We do not implicitly maintain long-lived channels.
 8. **Delegation to non-plugin IDEs.** Only IntelliJ instances with this plugin installed. No VSCode, no Cursor, no IntelliJ without the plugin.
@@ -42,9 +42,9 @@ If Agent-B asks a clarifying question that Agent-A cannot answer, the question s
 
 ### 3.2 The human's view in IDE-B
 
-When IDE-B receives a delegation, a **new session tab** appears in their chat panel labeled `Delegated by IDE-A — backend-api session`, with an "incoming" badge so it's distinguishable from sessions the user started themselves.
+When IDE-B receives a delegation, a **new session tab** appears in their chat panel labeled `Delegated by IDE-A — backend-api session`, with an "incoming" badge so it's distinguishable from sessions the user started themselves. The tab opens with an **Accept delegation?** prompt overlay showing the incoming briefing and the delegating IDE/repo. Agent-B does NOT start executing until the human clicks **Accept**. The human may also **Reject** — in which case the delegation is canceled, the Agent-B session is not created, and Agent-A is notified (state: `REJECTED`). For continuations on an existing accepted channel (`continue_with`), the prompt is skipped — the human already accepted this channel when it was first established.
 
-The human has the same controls as on their own sessions:
+Once accepted, the human has the same controls as on their own sessions:
 - Watch the stream live
 - Pause / cancel
 - Take over (switch the session into user-driven mode, ending the delegation)
@@ -64,6 +64,9 @@ Agent-A interacts via four tools, all under the `delegation_*` namespace:
 | `delegation_fetch_transcript` | Retrieve the full message history of a delegated session, live or closed. |
 
 Agent-A does NOT poll for results. Result delivery is push-driven via the existing nudge mechanism (see §6.5).
+
+Settings exposed to the user (in IDE-A):
+- **Auto-approve Agent-A's answers in delegations** (off by default) — when on, Agent-A's proposed answer to a question Agent-B raises is forwarded without an IDE-A confirmation prompt. See §6.3.
 
 ## 4. Tool surface (detailed)
 
@@ -89,7 +92,9 @@ The tool returns as soon as the message has been accepted by IDE-B (or, for firs
 | `handle` | Yes | The channel handle. |
 | `response` | Yes | Agent-A's answer to the most recently-raised question on this channel. |
 
-Used by Agent-A when it has formed an answer to a question Agent-B raised. Separate from `delegation_send` because the protocol semantics differ — `send` initiates work, `answer` unblocks a paused loop. If no question is pending, returns an error.
+Used by Agent-A when it has formed an answer to a question Agent-B raised. Separate from `delegation_send` because the protocol semantics differ — `send` initiates work, `answer` unblocks a paused loop. If no question is pending, returns `DelegationNoPendingQuestion`.
+
+**Race semantics with the IDE-B short-circuit answer (§6.3):** the IPC layer maintains a per-channel *pending question token* using compare-and-clear. Whichever answer (Agent-A's via `delegation_answer`, or the IDE-B human's via the session tab) arrives first wins; the other receives `DelegationNoPendingQuestion`. There is no double-answer path. Implementers MUST use atomic compare-and-clear; a non-atomic check-then-clear is a known race.
 
 ### 4.3 `delegation_close`
 
@@ -117,6 +122,8 @@ Not included in v1. Agent-A tracks its own handles via its own session state; th
 ### 5.1 Source of project listings
 
 The picker is populated from `RecentProjectsManager.getInstance()` — the same projects the user sees in `File → Recent Projects → Manage Recent Projects…`. We do **not** maintain a separate presence file or background registry.
+
+**Cross-installation supplement.** `RecentProjectsManager` is per-IntelliJ-installation; different JetBrains Toolbox slots maintain different recents lists, so a project open in IDE-B may be absent from IDE-A's recents. To cover this, the picker also globs `~/.workflow-orchestrator/ipc/*.sock` for live plugin instances. Entries discovered this way but not in `RecentProjectsManager` are shown under a *"Discovered (not in recents)"* section in the picker. The project path is resolved by asking the responding plugin via the IPC `PING` handshake (it includes the project path in the `PONG` reply).
 
 ### 5.2 Liveness detection
 
@@ -154,9 +161,13 @@ When the user picks a Closed row and clicks **Launch & Delegate**:
 1. Plugin spawns a new IntelliJ process at the project path:
    - Resolve launcher via `PathManager.getHomePath()` plus platform-specific suffix (`bin/idea.sh` on mac/linux, `bin/idea64.exe` on Windows)
    - `ProcessBuilder` with the project path as argv
-2. Plugin polls the deterministic socket every 500ms for up to 30 seconds.
+2. Plugin polls the deterministic socket every 500ms for up to **90 seconds**. The picker shows a progress indicator (*"Waiting for IDE-B to start… 45s / 90s"*) and a Cancel button so the user can abort early if the launch is clearly failing.
 3. **Success:** socket comes up green → picker auto-progresses → delegation is dispatched.
 4. **Failure** (timeout, launcher missing, spawn error, socket never comes up): fall through to the manual flow with a clear inline reason. The user opens the project manually (`File → Recent Projects` works, or double-click in their file manager), then clicks **Retry probe**. Once the probe goes green, the Delegate button enables.
+
+**Named risk — JetBrains Toolbox launcher resolution.** `PathManager.getHomePath()` returns the *current* IDE's install root. JetBrains Toolbox installs each IDE under a versioned, IDE-flavored path (e.g., `…/Toolbox/apps/IDEA-U/ch-0/<version>/`). If IDE-A is Ultimate 2025.1 and IDE-B's project was last opened with Community 2024.3, blindly reusing IDE-A's launcher will spawn the wrong IDE binary, which may fail to open the project or may silently use a different toolchain than the user expects.
+
+v1 mitigation: detect Toolbox layout (presence of `…/Toolbox/apps/…/ch-0/` in `PathManager.getHomePath()`). If detected, check the project's IntelliJ workspace metadata for the IDE flavor/version last used. If a mismatch is detected, show a confirm dialog: *"This project was last opened with `IDEA Community 2024.3`. Auto-launch will use `IDEA Ultimate 2025.1`. Continue anyway, or open manually?"* If unknown (no recorded last-used flavor), proceed with a softer banner inside the picker, and let the user cancel into the manual path. **Auto-launch must never silently spawn a mismatched IDE.**
 
 ### 5.5 Missing-repo handling
 
@@ -167,21 +178,27 @@ When the user picks a Closed row and clicks **Launch & Delegate**:
 ### 6.1 Lifecycle states
 
 ```
-PICKING → CONNECTING → RUNNING ⇄ AWAITING_ANSWER → COMPLETED
-                       │                            │
-                       └──── CANCELED / FAILED / TIMED_OUT ───┘
+PICKING → CONNECTING → AWAITING_ACCEPT → RUNNING ⇄ AWAITING_ANSWER → COMPLETED
+                            │
+                            └→ REJECTED
+                                       │                            │
+                                       └──── CANCELED / FAILED / TIMED_OUT ───┘
 ```
 
 | State | Meaning |
 |---|---|
 | `PICKING` | First-contact only. Picker dialog open in IDE-A. |
 | `CONNECTING` | Picker dismissed; IPC handshake in flight (or auto-launch waiting for IDE-B to boot). |
+| `AWAITING_ACCEPT` | Connection established; delegation session tab open in IDE-B with the *Accept delegation?* prompt. Agent-B is NOT yet executing. Waits for the IDE-B human to Accept or Reject. Skipped on `continue_with` reuse. |
 | `RUNNING` | Agent-B is iterating. Session tab live in IDE-B. |
-| `AWAITING_ANSWER` | Agent-B raised a question. Either Agent-A is forming an answer, or it's been escalated to the human in IDE-A. Agent-B's LLM loop is paused. |
-| `COMPLETED` | Agent-B finished (called `attempt_completion`). Summary delivered to Agent-A. |
-| `CANCELED` | Human canceled — IDE-A side (Agent-A's session canceled, cascades), IDE-B side (user clicked stop on the delegated tab), or Agent-A via `delegation_close`. |
-| `FAILED` | Unrecoverable error in IDE-B (tool errors Agent-B couldn't handle, crash, etc.). |
+| `AWAITING_ANSWER` | Agent-B raised a question. Either Agent-A is forming a proposed answer, or it's awaiting human confirmation in IDE-A (or the IDE-B human is answering directly). Agent-B's LLM loop is paused. |
+| `COMPLETED` | Agent-B finished naturally (called `attempt_completion`). Summary delivered to Agent-A. |
+| `REJECTED` | The IDE-B human declined the incoming delegation via the *Accept delegation?* prompt. Agent-A is notified. Terminal. |
+| `CANCELED` | Canceled mid-work — IDE-A side (Agent-A's session canceled, cascades), IDE-B side (human clicked stop on the running delegated tab), or Agent-A via `delegation_close` on a live session. |
+| `FAILED` | Unrecoverable error in IDE-B (tool errors Agent-B couldn't handle, crash, project window closed mid-session, IPC connection lost, etc.). |
 | `TIMED_OUT` | No message exchange for the configured idle window (~30 min default; configurable). |
+
+**Prerequisite for implementation — per-session plan mode.** This spec assumes plan-mode state is *per-session*. The current `:agent` implementation tracks `AgentService.planModeActive` as an `AtomicBoolean` at the service level (per CLAUDE.md, "Plan Mode" section), which would mean a delegated session inherits or clobbers IDE-B's existing plan-mode toggle. Before this spec can ship, plan-mode must be moved into per-session state. This is called out here so the implementation plan picks it up as a hard prerequisite, not a v2 cleanup.
 
 ### 6.2 The send flow
 
@@ -189,17 +206,22 @@ PICKING → CONNECTING → RUNNING ⇄ AWAITING_ANSWER → COMPLETED
 Agent-A calls delegation_send
   │
   ├── continue_with provided?
-  │     ├── yes → skip picker, route to existing handle
+  │     ├── yes → skip picker AND Accept prompt, route to existing handle
   │     └── no  → show picker in IDE-A (state: PICKING)
   │              │
   │              └── human picks target
   │
   ├── attempt IPC to target IDE (state: CONNECTING)
   │     ├── live with repo open → connect
-  │     ├── live without repo  → offer "open this project in that IDE?"
-  │     └── not live           → Launch & Delegate (auto-launch + 30s probe poll)
+  │     └── otherwise → Launch & Delegate
+  │       (auto-launch a new IDE process for that project;
+  │        see §5.4 for timing, progress UI, Toolbox caveats)
   │
-  ├── deliver message into Agent-B's session
+  ├── IDE-B opens session tab with Accept prompt (state: AWAITING_ACCEPT)
+  │     ├── human Accepts → proceed
+  │     └── human Rejects → state: REJECTED, Agent-A notified, terminal
+  │
+  ├── deliver message into Agent-B's session (state: RUNNING)
   │     ├── new session → first user turn
   │     └── existing session → next user turn (steering-queue style if Agent-B is mid-stream)
   │
@@ -208,7 +230,9 @@ Agent-A calls delegation_send
 
 ### 6.3 Question routing
 
-When Agent-B emits a clarifying question:
+When Agent-B emits a clarifying question, the question is **always surfaced to the human in IDE-A** by default, with Agent-A's proposed answer pre-filled for one-click confirmation. This avoids the LLM-hallucination failure mode where Agent-A would otherwise generate a plausible-sounding answer without realizing it's wrong, and that wrong answer would silently flow back to Agent-B.
+
+Flow:
 
 ```
 Agent-B emits question
@@ -218,19 +242,23 @@ Agent-B emits question
   ├── Agent-A's loop picks it up via addNudgeMessage:
   │   "Delegated session {handle} asks: <question>"
   │
-  ├── Agent-A's LLM next iteration chooses to:
-  │     ├── answer → delegation_answer(handle, response)
-  │     └── say "I don't know" → escalate
+  ├── Agent-A's LLM forms a proposed answer (or declares "I don't know")
   │
-  ├── On escalate: question surfaces in IDE-A's chat as a normal
-  │   clarifying prompt, tagged "[delegated · frontend-app]"
+  ├── Question + proposed answer surface in IDE-A's chat as a
+  │   clarifying prompt, tagged "[delegated · frontend-app]":
+  │     "frontend-app asks: <question>
+  │      Suggested answer: <Agent-A's proposed text>
+  │      [Confirm & send]   [Edit]   [Write my own]   [Cancel delegation]"
   │
-  ├── Human answers in IDE-A → routed back through Agent-A → Agent-B
+  ├── Human one-clicks Confirm (or edits, or writes their own) →
+  │   answer routed back through Agent-A → Agent-B
   │
   └── Agent-B's loop resumes (state: AWAITING_ANSWER → RUNNING)
 ```
 
-**Short-circuit:** the human in IDE-B can answer Agent-B's question directly via the session tab. If they do, the question is satisfied before Agent-A's nudge is even processed; the IPC channel emits a "question canceled — answered locally" event, Agent-A's pending nudge is rescinded, and Agent-B's loop resumes.
+**Opt-in auto-approve.** Users who explicitly trust Agent-A's answers can enable the per-session or global setting *Auto-approve Agent-A's answers in delegations* (§3.3). With this on, Agent-A's proposed answer is forwarded to Agent-B as soon as Agent-A's LLM forms it, without the human-confirmation step. Off by default. This is the only configuration in which the original "Agent-A as user-proxy" flow operates — and it is opt-in precisely because LLM-driven answers without human verification can introduce silent errors.
+
+**Short-circuit:** the human in IDE-B can answer Agent-B's question directly via the session tab. If they do, the question is satisfied before the IDE-A confirmation prompt is rendered (or before Agent-A's auto-approve answer arrives); the IPC channel emits a "question canceled — answered locally" event, the IDE-A prompt is dismissed automatically, and Agent-B's loop resumes. See §4.2 for the compare-and-clear race semantics that prevent double-answers.
 
 ### 6.4 Cancel propagation
 
@@ -238,15 +266,18 @@ Cancel sources and their effects:
 
 | Cancel source | Effect on the delegation |
 |---|---|
-| Agent-A calls `delegation_close` | Graceful close. Agent-B finalizes summary. State: `COMPLETED`. |
+| Agent-A calls `delegation_close` on a live session | State: `CANCELED` with `closeReason: "closed_by_delegator"`. Agent-B writes a partial-progress summary before exit. Idempotent on already-terminal sessions (no-op success). |
+| Agent-B reaches `attempt_completion` naturally | State: `COMPLETED`. Summary + files-changed delivered to Agent-A. |
+| Human in IDE-B Rejects the *Accept delegation?* prompt | State: `REJECTED`. Agent-A notified eagerly. Agent-B does not execute at all. |
 | Agent-A's session is canceled by the human in IDE-A | All open child channels receive a "parent canceled" signal. Each Agent-B session moves to `CANCELED` with cleanup. Session tab in IDE-B shows "Canceled: parent session ended." |
-| Human in IDE-B clicks stop on the delegated tab | Agent-B's loop cancels. State: `CANCELED`. Agent-A receives a `CANCELED` nudge with the reason. |
+| Human in IDE-B clicks stop on the running delegated tab | Agent-B's loop cancels. State: `CANCELED`. Agent-A receives a `CANCELED` nudge with the reason. |
+| Project window closed in IDE-B (project disposal) | All delegated sessions hosted in that project transition to `FAILED { reason: "project_closed" }`. The IPC listener for that project shuts down and its deterministic socket disappears. Agent-A receives the `FAILED` nudge eagerly. This is distinct from full IDE-B process death — the IDE may still be alive with other projects loaded. |
 | IDE-B's process dies / IPC connection lost | Channel transitions to `FAILED` from Agent-A's perspective. The Agent-B session may persist in IDE-B's on-disk session history (it was a real session) but is no longer recoverable as a live channel. |
 | Idle timeout (~30 min default) | State: `TIMED_OUT`. Agent-A is notified eagerly if running, lazily otherwise. |
 
 ### 6.5 Close-event delivery to Agent-A
 
-For every terminal state (`COMPLETED`, `CANCELED`, `FAILED`, `TIMED_OUT`):
+For every terminal state (`COMPLETED`, `CANCELED`, `REJECTED`, `FAILED`, `TIMED_OUT`):
 
 - **Eager delivery:** if Agent-A is actively iterating, a nudge is injected into its conversation via `addNudgeMessage`. For `COMPLETED`, the nudge includes the summary + files-changed + branch/commit ref inline so Agent-A can act on the result immediately.
 - **Lazy delivery:** if Agent-A is paused/checkpointed when the event fires, it's persisted on the channel and replayed when Agent-A resumes. Additionally, any subsequent `delegation_send(continue_with=deadHandle, …)` or `delegation_answer(deadHandle, …)` returns `DelegationExpired` with the recorded reason.
@@ -255,7 +286,7 @@ For every terminal state (`COMPLETED`, `CANCELED`, `FAILED`, `TIMED_OUT`):
 
 Agent-A may hold up to **5 open channels concurrently** — matching the existing parallel sub-agent ceiling in `:agent`. Each channel is independent; each has its own handle. The 6th `delegation_send` (without `continue_with`) returns a `DelegationLimitReached` error until one of the live channels closes.
 
-There is no concurrency limit on the IDE-B side beyond what already governs normal sessions — IDE-B can host an arbitrary number of concurrent sessions including delegated ones, just like it can today with user-driven sessions.
+There is no concurrency limit on the IDE-B side beyond what already governs normal sessions — IDE-B can host an arbitrary number of concurrent sessions including delegated ones, just like it can today with user-driven sessions. In aggregate, an IDE-B instance can receive up to `N × 5` concurrent delegated sessions, where N is the number of distinct IDE-A instances reaching it. If resource pressure is observed in practice, a per-IDE-B incoming cap can be added without a protocol change.
 
 ## 7. Response shape
 
@@ -277,7 +308,7 @@ When a delegated session reaches `COMPLETED`, the nudge to Agent-A contains:
 
 The full transcript is fetchable separately via `delegation_fetch_transcript` if Agent-A needs it (e.g., to debug a partial success or understand a surprising decision Agent-B made).
 
-For terminal non-success states, the response is similar but the `summary` may be a partial-progress description and `status` is one of `canceled` / `failed` / `timed_out` with a `reason`.
+For terminal non-success states, the response is similar but the `summary` may be a partial-progress description and `status` is one of `canceled` / `rejected` / `failed` / `timed_out` with a `reason`. For `rejected`, `summary` is empty and `files_changed` is `[]` (Agent-B never executed).
 
 ## 8. Trust scope
 
@@ -332,8 +363,18 @@ Agent-A's own session records the delegation handles it has held. On session che
 | Event | Handle behavior |
 |---|---|
 | Agent-A's session checkpoints and resumes | Handle survives in persisted state. Liveness re-probed on next use. |
-| IDE-A process restarts | Handle survives in Agent-A's persisted session state, but the live IPC channel is gone. First subsequent use re-probes IDE-B; if IDE-B is still running and the session is still around, a new live channel is established to the same on-disk session. If IDE-B has restarted or the session is gone, returns `DelegationExpired`. |
+| IDE-A process restarts | Handle survives in Agent-A's persisted session state, but the live IPC channel is gone. First subsequent use re-probes IDE-B; if IDE-B is still running and the session is still around, the explicit re-association protocol below establishes a new live channel to the same on-disk session. If IDE-B has restarted or the session is gone, returns `DelegationExpired`. |
 | IDE-B process restarts | Handle is dead. The Agent-B session is closed by IDE-B's natural shutdown flow (same as a user session being interrupted by IDE close). Agent-A receives `DelegationExpired` on next use. Resuming a delegated session across an IDE-B restart is explicitly a non-goal for v1 (§2). |
+
+**Re-association protocol (after IDE-A restart).** When Agent-A's first subsequent tool call (typically `delegation_send` with `continue_with` or `delegation_fetch_transcript`) targets a persisted handle:
+
+1. IDE-A computes the deterministic IPC socket path for the handle's target project and probes it (§5.2).
+2. On `PONG`, IDE-A sends `CHANNEL_RESUME { sessionId: <handle.sessionId>, lastSeenState: <handle.lastKnownState> }`.
+3. IDE-B looks up the session by `sessionId`:
+   - **Live** (state `AWAITING_ACCEPT` / `RUNNING` / `AWAITING_ANSWER`) → respond `CHANNEL_RESUMED { sessionId, currentState }`. IDE-A re-attaches. Agent-A receives a single coalesced nudge synthesizing any events (close, completion, question raised) that fired while detached.
+   - **Terminal** (`COMPLETED` / `CANCELED` / `REJECTED` / `FAILED` / `TIMED_OUT`) → respond `SESSION_CLOSED { sessionId, closeReason, summary? }`. IDE-A treats the handle as expired and emits `DelegationExpired` to Agent-A on next tool use, with the recorded reason and summary in the error payload (so Agent-A still gets the outcome even if it missed the live close event).
+   - **Unknown** (session was never seen, or has been pruned from history) → respond `SESSION_NOT_FOUND`. IDE-A treats the handle as expired.
+4. The protocol is idempotent: repeated `CHANNEL_RESUME` for the same `sessionId` is safe and returns the current state.
 
 ### 9.4 Logs
 
@@ -366,7 +407,7 @@ See §2 for the full list.
 
 ## 12. Open questions (none blocking)
 
-None at spec-write time. Implementation will surface implementation-level questions (e.g., exact socket framing, exact launcher resolution heuristics for JetBrains Toolbox edge cases) — those belong in the implementation plan, not here.
+None at spec-write time. Implementation will surface implementation-level questions (e.g., exact socket framing, exact deterministic-path hashing scheme, exact format of the workspace-state IDE-version marker for the Toolbox flavor check) — those belong in the implementation plan, not here. The JetBrains Toolbox launcher-resolution risk previously listed here has been promoted to a named risk in §5.4.
 
 ---
 
