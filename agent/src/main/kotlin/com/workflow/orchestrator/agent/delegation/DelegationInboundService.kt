@@ -224,6 +224,38 @@ class DelegationInboundService(
     fun hasPendingQuestion(sessionId: String): Boolean =
         sessionChannels[sessionId]?.pendingToken?.armedQuestionId != null
 
+    /**
+     * Called by the chat-input handler when the human in IDE-B types an answer
+     * into a delegated session's input while a question is pending. Wins the
+     * race via [PendingQuestionToken.tryResolve]; on success, sends an
+     * [DelegationMessage.AnswerCanceled] back to IDE-A so it can rescind any
+     * pending confirmation UI.
+     *
+     * Returns true if the local answer won the race (the deferred was resolved
+     * by this call), false if no question was pending or someone else already
+     * answered.
+     *
+     * Spec: §3.2 short-circuit + §4.2 race semantics.
+     */
+    suspend fun localAnswer(sessionId: String, answer: String): Boolean {
+        val sc = sessionChannels[sessionId] ?: return false
+        val questionId = sc.pendingToken.armedQuestionId ?: return false
+        val won = sc.pendingToken.tryResolve(questionId, answer)
+        if (won) {
+            try {
+                sc.replyWith(
+                    DelegationMessage.AnswerCanceled(
+                        questionId = questionId,
+                        reason = "answered_locally",
+                    )
+                )
+            } catch (e: Exception) {
+                LOG.warn("localAnswer: failed to send AnswerCanceled for $questionId on session $sessionId", e)
+            }
+        }
+        return won
+    }
+
     companion object {
         private val LOG = Logger.getInstance(DelegationInboundService::class.java)
     }
