@@ -151,6 +151,27 @@ class DelegationOutboundService(
         activeChannels.keys.toList().forEach(::close)
     }
 
+    /**
+     * Sends an Answer for a previously-received Question over the channel for [handleId].
+     * Returns false if the handle is unknown or the channel is closed.
+     */
+    suspend fun sendAnswer(handleId: String, questionId: String, answer: String): Boolean {
+        val channel = activeChannels[handleId] ?: return false
+        return try {
+            withContext(Dispatchers.IO) {
+                DelegationFraming.writeFramed(
+                    channel,
+                    DelegationMessage.Answer(questionId = questionId, text = answer),
+                    json,
+                )
+            }
+            true
+        } catch (e: Exception) {
+            LOG.warn("sendAnswer failed for $handleId / $questionId", e)
+            false
+        }
+    }
+
     private suspend fun handleIncomingQuestion(
         handle: DelegationHandle,
         question: DelegationMessage.Question,
