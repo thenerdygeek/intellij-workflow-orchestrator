@@ -89,6 +89,46 @@ sealed class DelegationMessage {
         val questionId: String,
         val reason: String = "answered_locally",
     ) : DelegationMessage()
+
+    /**
+     * IDE-B → IDE-A. Liveness signal. Emitted every 60 s by [HeartbeatScheduler] while the
+     * delegated session is in any non-terminal state. The outbound side resets its
+     * `lastSeenAt` on receipt and resets the idle timer.
+     *
+     * Plan 3 spec §4.1.
+     */
+    @Serializable
+    data class Heartbeat(val sessionId: String) : DelegationMessage()
+
+    /**
+     * IDE-A → IDE-B. Request the on-disk transcript for a delegated session.
+     * [requestId] is a UUID echoed back in [FetchTranscriptReply] so concurrent
+     * requests can be correlated.
+     *
+     * Plan 3 spec §4.1.
+     */
+    @Serializable
+    data class FetchTranscript(
+        val sessionId: String,
+        val requestId: String,
+    ) : DelegationMessage()
+
+    /**
+     * IDE-B → IDE-A. Response to a [FetchTranscript].
+     * - `status="ok"` — session exists, transcript serialized to disk, [transcriptPath] populated.
+     * - `status="not_found"` — sessionId is not in IDE-B's sessions index (pruned or never existed).
+     * - `status="expired"` — session exists but transcript export has been cleaned up (reserved
+     *   for future TTL behavior; v1 keeps exports for the life of the session).
+     *
+     * Plan 3 spec §4.1.
+     */
+    @Serializable
+    data class FetchTranscriptReply(
+        val requestId: String,
+        val status: String,
+        val transcriptPath: String? = null,
+        val error: String? = null,
+    ) : DelegationMessage()
 }
 
 /** Helpers for length-prefixed JSON framing over NIO channels. */
