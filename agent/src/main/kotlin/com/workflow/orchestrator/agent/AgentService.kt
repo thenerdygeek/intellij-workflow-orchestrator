@@ -2675,6 +2675,19 @@ class AgentService(
         handler.setClineMessages(savedUiMessages)
         handler.setApiConversationHistory(activeApiHistory)
 
+        // Plan 4: rehydrate persisted outbound handles so CHANNEL_RESUME can fire
+        // lazily on the first delegation_* tool call that references them.
+        try {
+            project.getService(
+                com.workflow.orchestrator.agent.delegation.DelegationOutboundService::class.java
+            ).loadPersistedHandles(
+                sessionDir = sessionDir.toPath(),
+                delegatorSessionId = sessionId,
+            )
+        } catch (e: Exception) {
+            log.warn("AgentService.resumeSession: loadPersistedHandles failed for $sessionId", e)
+        }
+
         // TASK_RESUME hook — dispatched within cs.launch (IO coroutine), NOT runBlocking (C5 fix).
         // The hook check and dispatch happen inside the launched coroutine to avoid blocking the calling thread.
         val job = cs.launch(Dispatchers.IO) {

@@ -85,6 +85,9 @@ class DelegationInboundService(
             onConnect = { connect, replyWith, readMessage, closeChannel ->
                 handleConnect(connect, replyWith, readMessage, closeChannel)
             },
+            onChannelResume = { resume, replyWith, closeChannel ->
+                handleChannelResume(resume, replyWith, closeChannel)
+            },
             scope = cs,
         )
         srv.start()
@@ -454,6 +457,56 @@ class DelegationInboundService(
                 )
             )
         }
+    }
+
+    /**
+     * Handle an incoming [DelegationMessage.ChannelResume] from IDE-A. Dispatches:
+     *  - Live session → [DelegationMessage.ChannelResumed] (channel stays open for ongoing exchange)
+     *  - Terminal session (known from sessions.json with `delegated` metadata) → [DelegationMessage.SessionClosed]
+     *  - Unknown sessionId → [DelegationMessage.SessionNotFound]
+     *
+     * Plan 4 spec §3.3.
+     */
+    suspend fun handleChannelResume(
+        msg: DelegationMessage.ChannelResume,
+        replyWith: suspend (DelegationMessage) -> Unit,
+        closeChannel: suspend () -> Unit,
+    ) {
+        val sessionId = msg.sessionId
+        val sc = sessionChannels[sessionId]
+        if (sc != null) {
+            // Session is live — re-attach. The current state is whatever the existing
+            // PendingQuestionToken plus session metadata reports.
+            val currentState = if (sc.pendingToken.armedQuestionId != null) "AWAITING_ANSWER" else "RUNNING"
+            // Replace the registered replyWith with the new channel's replyWith so future
+            // messages go to the resumed connection.
+            sessionChannels[sessionId] = sc.copy(replyWith = replyWith)
+            replyWith(DelegationMessage.ChannelResumed(sessionId, currentState))
+            return
+            // Note: do NOT close the channel — leave it open for ongoing exchange.
+        }
+
+        // Session not in live registry — check on-disk index for terminal record.
+        val basePath = project.basePath
+        val agentDir: java.io.File? = if (basePath != null)
+            com.workflow.orchestrator.core.util.ProjectIdentifier.agentDir(basePath)
+        else null
+        val item = agentDir?.let {
+            com.workflow.orchestrator.agent.session.MessageStateHandler.findHistoryItem(it, sessionId)
+        }
+        val delegated = item?.delegated
+        if (delegated == null) {
+            replyWith(DelegationMessage.SessionNotFound(sessionId))
+        } else {
+            replyWith(
+                DelegationMessage.SessionClosed(
+                    sessionId = sessionId,
+                    closeReason = delegated.closeReason ?: "closed",
+                    summary = null,  // v1 carries summary in Result, not in HistoryItem.delegated
+                )
+            )
+        }
+        closeChannel()
     }
 
     companion object {
