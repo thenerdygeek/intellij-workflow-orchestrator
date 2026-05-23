@@ -1,13 +1,15 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.util.JsEscape
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.*
-import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -33,7 +35,15 @@ import org.junit.jupiter.api.Test
 class AskQuestionsEnrichmentTest {
 
     private val project = mockk<com.intellij.openapi.project.Project>(relaxed = true)
+    private val agentService = mockk<AgentService>(relaxed = true).apply {
+        every { currentSessionState() } returns null
+    }
     private val lenientJson = Json { ignoreUnknownKeys = true }
+
+    @BeforeEach
+    fun stubAgentService() {
+        every { project.getService(AgentService::class.java) } returns agentService
+    }
 
     // cleanup is no longer needed — each test creates its own AskQuestionsTool instance
     // and fields are instance-level (not companion/static). Instances are GC'd after
