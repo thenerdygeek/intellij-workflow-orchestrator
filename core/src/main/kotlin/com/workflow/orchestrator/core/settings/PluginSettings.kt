@@ -362,6 +362,29 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
             "image/png", "image/jpeg", "image/webp", "image/gif"
         )
 
+        // ── Web tools (added 2026-05-23) ─────────────────────────────────────
+        var enableWebFetch by property(true)
+        var enableWebSearch by property(true)
+        var webPlanModeAllow by property(false)
+
+        // fetch — allowlist
+        var webAllowlistJson by string("[]")         // serialized List<DomainAllowlistEntry>
+        var webUnlistedPolicy by string("PROMPT")    // REJECT | PROMPT
+        var webApprovalTimeoutSec by property(60)
+
+        // fetch — content limits
+        var webMaxBytes by property(262_144)
+        var webMaxExtractedChars by property(32_768)
+        var webConnectTimeoutSec by property(10)
+        var webReadTimeoutSec by property(30)
+        var webRequireHttps by property(true)
+        var webAllowIpLiteral by property(false)
+        var webResolveShorteners by property(true)
+
+        // fetch — sanitizer
+        var webSanitizerBrainId by string("")        // blank = use cheapest available
+        var webSanitizerFailClosed by property(true)
+
         init {
             // Populate default whitelist on first instantiation. Persisted lists
             // round-trip independently — if the user clears the list it stays
@@ -460,4 +483,44 @@ fun PluginSettings.lookupPlanValidation(key: String): Boolean? {
  */
 fun PluginSettings.clearPlanValidationCache() {
     state.bambooPlanValidationCache.clear()
+}
+
+// ── Web tools accessors ──────────────────────────────────────────────────────
+
+/**
+ * Deserializes the stored JSON into a typed list of [DomainAllowlistEntry].
+ * Returns an empty list on parse error or blank/missing JSON.
+ */
+fun PluginSettings.getWebAllowlist(): List<com.workflow.orchestrator.core.model.web.DomainAllowlistEntry> {
+    val json = state.webAllowlistJson?.ifBlank { "[]" } ?: "[]"
+    return try {
+        WebAllowlistJson.adapter.fromJson(json) ?: emptyList()
+    } catch (_: Exception) { emptyList() }
+}
+
+/**
+ * Serializes [entries] and persists them as JSON in [PluginSettings.State.webAllowlistJson].
+ */
+fun PluginSettings.setWebAllowlist(entries: List<com.workflow.orchestrator.core.model.web.DomainAllowlistEntry>) {
+    state.webAllowlistJson = WebAllowlistJson.adapter.toJson(entries)
+}
+
+/**
+ * Returns the configured sanitizer brain ID, or null when the field is blank
+ * (meaning "use cheapest available").
+ */
+fun PluginSettings.resolveSanitizerBrainId(): String? =
+    state.webSanitizerBrainId?.takeIf { it.isNotBlank() }
+
+private object WebAllowlistJson {
+    val adapter = com.squareup.moshi.Moshi.Builder()
+        .add(com.workflow.orchestrator.core.util.InstantMoshiAdapter())
+        .add(com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory())
+        .build()
+        .adapter<List<com.workflow.orchestrator.core.model.web.DomainAllowlistEntry>>(
+            com.squareup.moshi.Types.newParameterizedType(
+                List::class.java,
+                com.workflow.orchestrator.core.model.web.DomainAllowlistEntry::class.java,
+            )
+        )
 }
