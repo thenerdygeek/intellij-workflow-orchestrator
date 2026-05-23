@@ -367,6 +367,14 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var enableWebSearch by property(true)
         var webPlanModeAllow by property(false)
 
+        // Search-specific
+        /** Which search provider to use. One of: NONE | SEARXNG | BRAVE | CUSTOM_HTTP */
+        var webSearchProviderType by string("NONE")
+        /** Maximum snippet length (chars) returned per search hit after sanitization. */
+        var webSearchSnippetMaxChars by property(500)
+        /** Maximum number of search results returned to the agent. */
+        var webSearchMaxResults by property(10)
+
         // fetch — allowlist
         var webAllowlistJson by string("[]")         // serialized List<DomainAllowlistEntry>
         var webUnlistedPolicy by string("PROMPT")    // REJECT | PROMPT
