@@ -61,6 +61,34 @@ sealed class DelegationMessage {
 
     @Serializable
     enum class ResultStatus { COMPLETED, CANCELED, REJECTED, FAILED }
+
+    /** IDE-B → IDE-A. Agent-B has raised a clarifying question; loop is paused. */
+    @Serializable
+    data class Question(
+        /** Unique ID for this question — used to correlate the eventual Answer. */
+        val questionId: String,
+        val text: String,
+        /** Free-form options the LLM may have suggested (UI hint; empty if not applicable). */
+        val options: List<String> = emptyList(),
+    ) : DelegationMessage()
+
+    /** IDE-A → IDE-B. Carries the answer text for a previously-sent Question. */
+    @Serializable
+    data class Answer(
+        val questionId: String,
+        val text: String,
+    ) : DelegationMessage()
+
+    /**
+     * IDE-B → IDE-A. The pending question was answered locally (the IDE-B human
+     * typed an answer in the session tab). IDE-A must rescind any pending
+     * confirmation UI for this questionId.
+     */
+    @Serializable
+    data class AnswerCanceled(
+        val questionId: String,
+        val reason: String = "answered_locally",
+    ) : DelegationMessage()
 }
 
 /** Helpers for length-prefixed JSON framing over NIO channels. */

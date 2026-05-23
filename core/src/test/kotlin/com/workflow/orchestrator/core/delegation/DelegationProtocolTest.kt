@@ -99,4 +99,36 @@ class DelegationProtocolTest {
         val decoded = json.decodeFromString<DelegationMessage>(withExtra)
         assertTrue(decoded is DelegationMessage.Ping)
     }
+
+    @Test
+    fun `Question round-trips`() {
+        val msg: DelegationMessage = DelegationMessage.Question(
+            questionId = "q-1",
+            text = "Which API version should I target?",
+            options = listOf("v1", "v2"),
+        )
+        val decoded = json.decodeFromString<DelegationMessage>(json.encodeToString(msg)) as DelegationMessage.Question
+        assertEquals("q-1", decoded.questionId)
+        assertEquals("Which API version should I target?", decoded.text)
+        assertEquals(listOf("v1", "v2"), decoded.options)
+    }
+
+    @Test
+    fun `Answer round-trips`() {
+        val msg: DelegationMessage = DelegationMessage.Answer(questionId = "q-1", text = "v2")
+        val decoded = json.decodeFromString<DelegationMessage>(json.encodeToString(msg)) as DelegationMessage.Answer
+        assertEquals("q-1", decoded.questionId)
+        assertEquals("v2", decoded.text)
+    }
+
+    @Test
+    fun `AnswerCanceled round-trips`() {
+        val msg: DelegationMessage = DelegationMessage.AnswerCanceled(
+            questionId = "q-1",
+            reason = "answered_locally",
+        )
+        val decoded = json.decodeFromString<DelegationMessage>(json.encodeToString(msg)) as DelegationMessage.AnswerCanceled
+        assertEquals("q-1", decoded.questionId)
+        assertEquals("answered_locally", decoded.reason)
+    }
 }
