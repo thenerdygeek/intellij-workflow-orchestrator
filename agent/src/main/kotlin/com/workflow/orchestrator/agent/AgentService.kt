@@ -521,6 +521,14 @@ class AgentService(
     }
 
     /**
+     * Returns the delegation metadata for an active delegated session, or null.
+     *
+     * Plan 4 spec §5.5.
+     */
+    fun findDelegationMetadata(sessionId: String): com.workflow.orchestrator.agent.session.DelegationMetadata? =
+        perSessionStates[sessionId]?.delegated
+
+    /**
      * Persist the completion for later resumption when no loop is active. Task 6
      * will read this store at session start and replay queued completions as
      * steering messages before the first LLM call.

@@ -387,6 +387,11 @@ interface ChatState {
   // Background processes (Phase 7, Task 7.3)
   backgroundProcesses: BackgroundProcessSnapshot[];
 
+  // Delegation question pending banner — shown above the InputBar when IDE-B has a
+  // delegated question in-flight. Cleared when the user sends an answer or the remote
+  // answer arrives. Plan 4 spec §5.5.
+  delegationQuestionPending: { active: boolean; delegatorRepo?: string };
+
   // Actions
   startSession(task: string, mentions?: Mention[], attachments?: ImageRef[]): void;
   completeSession(info: SessionInfo): void;
@@ -539,6 +544,9 @@ interface ChatState {
 
   // Background processes (Phase 7, Task 7.3)
   setBackgroundProcesses(snapshot: BackgroundProcessSnapshot[]): void;
+
+  // Delegation question pending banner (Plan 4 §5.5)
+  setDelegationQuestionPending(active: boolean, delegatorRepo?: string): void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -610,6 +618,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   tasks: [],
   backgroundProcesses: [],
   editorTabMode: false,
+  delegationQuestionPending: { active: false },
 
   // Actions
   startSession(task: string, mentions?: Mention[], attachments?: ImageRef[]) {
@@ -653,6 +662,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       viewMode: 'chat' as const,
       nextStepHint: null,
       activeSessionDelegated: null,
+      delegationQuestionPending: { active: false },
       session: {
         status: 'RUNNING',
         tokensUsed: 0,
@@ -1191,6 +1201,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       nextStepHint: null,
       aggregateDiff: null,
       activeSessionDelegated: null,
+      delegationQuestionPending: { active: false },
     });
   },
 
@@ -2315,6 +2326,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // ── Background Process Actions (Phase 7, Task 7.3) ──
   setBackgroundProcesses: (snapshot) => set({ backgroundProcesses: snapshot }),
+
+  // ── Delegation question pending banner (Plan 4 §5.5) ──
+  setDelegationQuestionPending: (active, delegatorRepo) =>
+    set({ delegationQuestionPending: { active, delegatorRepo } }),
 }));
 
 /**

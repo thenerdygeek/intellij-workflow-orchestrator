@@ -98,6 +98,11 @@ declare global {
     _streamingEditFinalize?: (callIdJson: string) => void;
     _streamingEditCancel?: (callIdJson: string) => void;
     /**
+     * Plan 4 §5.5 — pushed by Kotlin's AgentController when a delegated question
+     * arrives in IDE-B (active=true) or resolves (active=false).
+     */
+    _setDelegationQuestionPending?: (json: string) => void;
+    /**
      * Phase 7 — namespace for new bridges. Distinct from the legacy `window._xxx`
      * flat namespace; the picker / usage indicator / image-settings push live
      * here so future additions don't pollute the global object.

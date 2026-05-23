@@ -268,15 +268,10 @@ class DelegationInboundService(
             )
         }
 
-        // F7 fix: give the IDE-B human a visual signal that a question is pending and
-        // that typed input will short-circuit to answer it. MVP: inject an informational
-        // nudge message. Proper banner/placeholder UX is deferred.
-        val agentService = project.getService(AgentService::class.java)
-        agentService.enqueueNudgeForSession(
-            sessionId,
-            "A question was forwarded to the delegator's agent. " +
-                "Type an answer here to short-circuit and answer it yourself."
-        )
+        // Plan 4 §5.5: surface via input banner instead of inline-nudge.
+        val delegatorRepo = project.getService(AgentService::class.java)
+            .findDelegationMetadata(sessionId)?.delegatorRepo
+        notifyDelegationQuestionPending(sessionId, active = true, delegatorRepo = delegatorRepo)
 
         sc.replyWith(DelegationMessage.Question(questionId, question, options))
         return deferred.await()
@@ -289,7 +284,12 @@ class DelegationInboundService(
      */
     fun deliverAnswer(sessionId: String, questionId: String, answer: String): Boolean {
         val sc = sessionChannels[sessionId] ?: return false
-        return sc.pendingToken.tryResolve(questionId, answer)
+        val resolved = sc.pendingToken.tryResolve(questionId, answer)
+        if (resolved) {
+            // Plan 4 §5.5: clear the input banner once the question is answered.
+            notifyDelegationQuestionPending(sessionId, active = false, delegatorRepo = null)
+        }
+        return resolved
     }
 
     /**
@@ -348,6 +348,8 @@ class DelegationInboundService(
         // F2 fix: use tryResolveCurrent to atomically clear the slot and get the questionId
         // in a single CAS — eliminates the TOCTOU between armedQuestionId read and tryResolve.
         val resolvedQid = sc.pendingToken.tryResolveCurrent(answer) ?: return false
+        // Plan 4 §5.5: clear the input banner now that the question is answered locally.
+        notifyDelegationQuestionPending(sessionId, active = false, delegatorRepo = null)
         try {
             sc.replyWith(
                 DelegationMessage.AnswerCanceled(
@@ -507,6 +509,28 @@ class DelegationInboundService(
             )
         }
         closeChannel()
+    }
+
+    /** Visible-for-tests sink. Production uses the JCEF bridge through AgentController. */
+    internal var testWebviewPushSink: ((Boolean, String?) -> Unit)? = null
+
+    /**
+     * Push the delegation-question-pending state to IDE-B's webview. Called by
+     * [routeQuestion] when a question arrives and [deliverAnswer]/[localAnswer]
+     * when it resolves.
+     *
+     * Plan 4 spec §5.5.
+     */
+    fun notifyDelegationQuestionPending(sessionId: String, active: Boolean, delegatorRepo: String?) {
+        testWebviewPushSink?.invoke(active, delegatorRepo)
+        // Production: route through AgentControllerRegistry.
+        try {
+            val controller = com.workflow.orchestrator.agent.ui.AgentControllerRegistry
+                .getInstance(project).controller
+            controller?.pushDelegationQuestionPending(sessionId, active, delegatorRepo)
+        } catch (e: Exception) {
+            LOG.warn("notifyDelegationQuestionPending: controller push failed", e)
+        }
     }
 
     companion object {

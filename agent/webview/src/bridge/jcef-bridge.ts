@@ -1034,4 +1034,16 @@ export function initBridge(storeAccessors: StoreAccessors): void {
   // up the user's current limits even if it was constructed with the static
   // defaults from `IMAGE_DEFAULT_SETTINGS`.
   (window as any).workflowAgent.refreshImageSettings();
+
+  // ── Delegation question pending banner (Plan 4 §5.5) ──
+  // Pushed by Kotlin's AgentController.pushDelegationQuestionPending when an
+  // in-flight delegated question arrives in IDE-B or resolves.
+  window._setDelegationQuestionPending = (json: string) => {
+    try {
+      const payload = JSON.parse(json) as { active: boolean; delegatorRepo?: string };
+      stores?.getChatStore().setDelegationQuestionPending(payload.active, payload.delegatorRepo);
+    } catch (e) {
+      console.error('[bridge] _setDelegationQuestionPending: bad payload', e);
+    }
+  };
 }
