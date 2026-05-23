@@ -182,6 +182,28 @@ class DelegationOutboundService(
     }
 
     /**
+     * Cancel-cascade entry point. Closes every active channel whose
+     * outbound handle belongs to [delegatorSessionId]. Returns the list of
+     * closed handle IDs (mostly for logging / tests).
+     *
+     * Called from [com.workflow.orchestrator.agent.AgentService.cancelCurrentTask]
+     * when the human cancels Agent-A's session. Each IDE-B receiver will detect
+     * the socket close and surface a CANCELED state to its session UI.
+     *
+     * Plan 3 spec §5.3.
+     */
+    fun cancelAllForSession(delegatorSessionId: String, reason: String): List<String> {
+        val toClose = handleToSessionId.entries
+            .filter { it.value == delegatorSessionId }
+            .map { it.key }
+        for (h in toClose) {
+            LOG.info("cancelAllForSession: closing handle $h (session=$delegatorSessionId, reason=$reason)")
+            close(h)
+        }
+        return toClose
+    }
+
+    /**
      * Sends an Answer for a previously-received Question over the channel for [handleId].
      * Returns false if the handle is unknown or the channel is closed.
      */
