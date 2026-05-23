@@ -43,6 +43,26 @@ class DelegationServer(
         readMessage: suspend () -> DelegationMessage,
         closeChannel: suspend () -> Unit,
     ) -> Unit,
+    /**
+     * Handler invoked when an existing session is re-attached after IDE-A restart.
+     *
+     * Receives the [DelegationMessage.ChannelResume] first-message, a [replyWith]
+     * suspend closure for sending the outcome reply ([DelegationMessage.ChannelResumed],
+     * [DelegationMessage.SessionClosed], or [DelegationMessage.SessionNotFound]), and a
+     * [closeChannel] suspend closure to call when the reply has been sent (for non-resumed
+     * outcomes) or to leave open (for the resumed case, where the channel stays live for
+     * further exchange).
+     *
+     * Defaults to a no-op so existing callers that don't need CHANNEL_RESUME handling
+     * (e.g., non-inbound services, unit tests) don't need to pass the callback.
+     *
+     * Plan 4 spec §3.3, §4.1.
+     */
+    private val onChannelResume: suspend (
+        resume: DelegationMessage.ChannelResume,
+        replyWith: suspend (DelegationMessage) -> Unit,
+        closeChannel: suspend () -> Unit,
+    ) -> Unit = { _, _, _ -> },
     private val scope: CoroutineScope,
 ) {
     private val json = Json { ignoreUnknownKeys = true; classDiscriminator = "type" }
@@ -118,6 +138,18 @@ class DelegationServer(
                     // the handler may send multiple messages before the terminal one. The channel
                     // will also be closed (harmlessly/idempotently) by the catch block below on
                     // any exception path.
+                }
+                is DelegationMessage.ChannelResume -> {
+                    val replyWith: suspend (DelegationMessage) -> Unit = { reply ->
+                        withContext(Dispatchers.IO) { DelegationFraming.writeFramed(client, reply, json) }
+                    }
+                    val closeChannel: suspend () -> Unit = {
+                        try { client.close() } catch (_: Exception) {}
+                    }
+                    onChannelResume(msg, replyWith, closeChannel)
+                    // The onChannelResume handler is responsible for calling closeChannel()
+                    // for non-resumed outcomes (SessionClosed, SessionNotFound). For the
+                    // Resumed outcome the channel is left open for ongoing exchange.
                 }
                 else -> {
                     LOG.warn("Unexpected first message on inbound connection: $msg")

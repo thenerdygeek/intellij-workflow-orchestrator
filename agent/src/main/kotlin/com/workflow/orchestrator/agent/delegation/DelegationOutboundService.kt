@@ -10,6 +10,7 @@ import com.workflow.orchestrator.core.delegation.DelegationClient
 import com.workflow.orchestrator.core.delegation.DelegationFraming
 import com.workflow.orchestrator.core.delegation.DelegationMessage
 import com.workflow.orchestrator.core.delegation.DelegationPaths
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -134,6 +135,8 @@ class DelegationOutboundService(
         handleToBSessionId[handle.id] = bSessionId
         handleToLastSeenState[handle.id] = "RUNNING"
         handleToTargetPath[handle.id] = handle.targetProjectPath
+        // Plan 4: persist the new handle so it survives IDE-A restart.
+        persistHandlesForSession(delegatorSessionId)
 
         // Plan 3 idle timer — the timeout-millis provider re-reads PluginSettings on every
         // tick so changes take effect for already-open channels (spec §3.3). A return of
@@ -237,9 +240,15 @@ class DelegationOutboundService(
     /**
      * Closes the channel for [handleId]. Idempotent — no-op on unknown handle.
      * Returns true if a channel was found and closed.
+     *
+     * Plan 4: captures the owning sessionId before removal so the on-disk
+     * handle snapshot can be updated after cleanup (reflecting that this handle
+     * is no longer active). If there are no remaining handles for the session,
+     * [PersistentHandleStore.save] will write an empty list.
      */
     fun close(handleId: String): Boolean {
-        synchronized(this) {
+        val sessionId: String? = handleToSessionId[handleId]
+        val wasFound: Boolean = synchronized(this) {
             idleTimers.remove(handleId)?.stop()
             handleToSessionId.remove(handleId)
             handleToRepoName.remove(handleId)
@@ -250,10 +259,17 @@ class DelegationOutboundService(
             // F1 fix: also clear any pending question texts for this handle.
             pendingQuestionTexts.entries.removeIf { it.value.first == handleId }
             lastSeenAt.remove(handleId)
-            val ch = activeChannels.remove(handleId) ?: return false
-            try { ch.close() } catch (_: Exception) {}
-            return true
+            val ch = activeChannels.remove(handleId)
+            if (ch != null) {
+                try { ch.close() } catch (_: Exception) {}
+                true
+            } else {
+                false
+            }
         }
+        // Plan 4: persist updated (possibly empty) handle list after removal.
+        if (sessionId != null) persistHandlesForSession(sessionId)
+        return wasFound
     }
 
     /** Close every active channel. Called from project disposal. */
@@ -310,14 +326,15 @@ class DelegationOutboundService(
      * Continuation flow for `delegation_send(handle = X)`. Skips picker + Accept.
      * Sends a [DelegationMessage.UserTurn] over the existing channel for [handleId].
      *
-     * Task 3 will wire dead-handle resume via `attemptResume`. Until then, a dead
-     * handle returns [DelegationException.Expired] with reason
-     * `"channel_dead_needs_resume"`.
+     * Dead handles (persisted but not yet resumed after IDE-A restart) trigger
+     * [attemptResume] automatically. On successful resume the channel is re-attached
+     * and the UserTurn write proceeds. On failure (session closed, not found, or probe
+     * refused) a [DelegationException.Expired] is thrown with a descriptive reason.
      *
-     * Plan 4 spec §5.2.
+     * Plan 4 spec §5.2, §5.3.
      *
      * @throws DelegationException.Expired if the handle is unknown, the channel is
-     * dead, or ownership fails the delegator-session check.
+     * dead and resume failed, or ownership fails the delegator-session check.
      * @throws DelegationException.WriteFailed if the [DelegationMessage.UserTurn]
      * frame cannot be written to the channel.
      */
@@ -333,10 +350,18 @@ class DelegationOutboundService(
             throw DelegationException.Expired("handle_owned_by_other_session")
         }
 
-        // Task 2 baseline: a dead channel is an error. Task 3 will replace this
-        // with a call to attemptResume() that wakes the channel before proceeding.
-        val channel = activeChannels[handleId]
-            ?: throw DelegationException.Expired("channel_dead_needs_resume")
+        val channel = activeChannels[handleId] ?: run {
+            // Dead handle (persisted but not yet resumed). Attempt the resume protocol.
+            when (val outcome = attemptResume(handleId)) {
+                is ResumeOutcome.Resumed -> activeChannels[handleId]
+                    ?: throw DelegationException.Expired("resume_inconsistent")
+                is ResumeOutcome.Closed -> throw DelegationException.Expired(
+                    "session_closed: ${outcome.closeReason}${outcome.summary?.let { " — $it" } ?: ""}"
+                )
+                ResumeOutcome.NotFound -> throw DelegationException.Expired("session_not_found")
+                is ResumeOutcome.ProbeFailed -> throw DelegationException.Expired(outcome.reason)
+            }
+        }
 
         val bSessionId = handleToBSessionId[handleId]
             ?: throw DelegationException.Expired("missing_bSessionId")
@@ -362,6 +387,144 @@ class DelegationOutboundService(
             targetRepoName = repoName,
             lastSeenState = handleToLastSeenState[handleId] ?: "unknown",
         )
+    }
+
+    /**
+     * Test-injectable probe. Production code uses the live socket I/O path.
+     * Tests override this to drive deterministic reply outcomes.
+     *
+     * The lambda receives the socketPath and the ChannelResume message to send, and
+     * returns the reply DelegationMessage (or null to simulate no PONG / refused).
+     *
+     * Plan 4 spec §3.3.
+     */
+    internal var testResumeProbe: (suspend (java.nio.file.Path, DelegationMessage.ChannelResume) -> DelegationMessage?)? = null
+
+    /**
+     * Rehydrate persisted handles for [delegatorSessionId] into the dead-handle
+     * registries. No live SocketChannels are opened — that happens on first
+     * reference via [attemptResume].
+     *
+     * Called from [AgentService.resumeSession] when a session is resumed from disk.
+     *
+     * Plan 4 spec §3.3.
+     */
+    fun loadPersistedHandles(sessionDir: java.nio.file.Path, delegatorSessionId: String) {
+        val store = PersistentHandleStore(sessionDir = sessionDir)
+        for (entry in store.load()) {
+            handleToSessionId[entry.handleId] = delegatorSessionId
+            handleToBSessionId[entry.handleId] = entry.bSessionId
+            handleToLastSeenState[entry.handleId] = entry.lastSeenState
+            handleToRepoName[entry.handleId] = entry.targetRepoName
+            handleToTargetPath[entry.handleId] = entry.targetProjectPath
+            // No activeChannels entry — that's what marks the handle as DEAD.
+        }
+    }
+
+    /**
+     * Probe IDE-B, send `ChannelResume`, dispatch on the reply.
+     *
+     * When [testResumeProbe] is set (test mode), the lambda is invoked instead of
+     * opening a real socket. In production, PING is sent first to confirm IDE-B is
+     * up, then a fresh SocketChannel is opened to send [DelegationMessage.ChannelResume]
+     * and read one reply. On [DelegationMessage.ChannelResumed] the channel is retained
+     * in [activeChannels] so subsequent [sendContinuation] calls work.
+     *
+     * Plan 4 spec §3.3.
+     */
+    suspend fun attemptResume(handleId: String): ResumeOutcome {
+        val bSessionId = handleToBSessionId[handleId]
+            ?: return ResumeOutcome.NotFound
+        val lastSeenState = handleToLastSeenState[handleId] ?: "unknown"
+        val targetPath = handleToTargetPath[handleId]
+            ?: return ResumeOutcome.NotFound
+
+        val socketPath = DelegationPaths.socketFor(java.nio.file.Path.of(targetPath))
+
+        val probe = testResumeProbe
+        val reply: DelegationMessage? = if (probe != null) {
+            probe.invoke(socketPath, DelegationMessage.ChannelResume(bSessionId, lastSeenState))
+        } else {
+            // Production path: PING first to confirm IDE-B is up, then open a fresh
+            // channel and write ChannelResume + read one reply.
+            DelegationClient.ping(socketPath)
+                ?: return ResumeOutcome.ProbeFailed("ide_b_not_running")
+            try {
+                withContext(Dispatchers.IO) {
+                    val ch = SocketChannel.open(
+                        java.net.UnixDomainSocketAddress.of(socketPath)
+                    )
+                    try {
+                        DelegationFraming.writeFramed(
+                            ch,
+                            DelegationMessage.ChannelResume(bSessionId, lastSeenState),
+                            json,
+                        )
+                        val msg = DelegationFraming.readFramed(ch, json)
+                        // On Resumed, re-attach the channel and keep it open.
+                        if (msg is DelegationMessage.ChannelResumed) {
+                            activeChannels[handleId] = ch
+                            lastSeenAt[handleId] = System.currentTimeMillis()
+                            handleToLastSeenState[handleId] = msg.currentState
+                        } else {
+                            try { ch.close() } catch (_: Exception) {}
+                        }
+                        msg
+                    } catch (e: Exception) {
+                        try { ch.close() } catch (_: Exception) {}
+                        throw e
+                    }
+                }
+            } catch (e: Exception) {
+                LOG.warn("attemptResume: probe write/read failed for $handleId", e)
+                return ResumeOutcome.ProbeFailed("io_error: ${e.message}")
+            }
+        }
+
+        return when (reply) {
+            is DelegationMessage.ChannelResumed -> ResumeOutcome.Resumed(reply.currentState)
+            is DelegationMessage.SessionClosed -> ResumeOutcome.Closed(reply.closeReason, reply.summary)
+            is DelegationMessage.SessionNotFound -> ResumeOutcome.NotFound
+            else -> ResumeOutcome.ProbeFailed("unexpected_reply: ${reply?.let { it::class.simpleName } ?: "null"}")
+        }
+    }
+
+    /**
+     * Persist outbound handles belonging to [delegatorSessionId] to the session's
+     * `delegation-handles.json` file via [PersistentHandleStore].
+     *
+     * Called from [send] after a successful Accept, and from [close] after cleanup,
+     * so the on-disk snapshot reflects the current handle set for this session.
+     *
+     * Plan 4 spec §3.2.
+     */
+    private fun persistHandlesForSession(delegatorSessionId: String) {
+        try {
+            val basePath = project.basePath ?: return
+            val sessionDir = java.io.File(
+                ProjectIdentifier.agentDir(basePath),
+                "sessions/$delegatorSessionId"
+            ).toPath()
+            val store = PersistentHandleStore(sessionDir = sessionDir)
+            val entries = handleToSessionId.entries
+                .filter { it.value == delegatorSessionId }
+                .mapNotNull { (handleId, _) ->
+                    val bSessionId = handleToBSessionId[handleId] ?: return@mapNotNull null
+                    val repoName = handleToRepoName[handleId] ?: return@mapNotNull null
+                    val targetPath = handleToTargetPath[handleId] ?: return@mapNotNull null
+                    PersistentHandleEntry(
+                        handleId = handleId,
+                        targetProjectPath = targetPath,
+                        targetRepoName = repoName,
+                        bSessionId = bSessionId,
+                        lastSeenState = handleToLastSeenState[handleId] ?: "unknown",
+                        createdAt = System.currentTimeMillis(),
+                    )
+                }
+            store.save(entries)
+        } catch (e: Exception) {
+            LOG.warn("persistHandlesForSession failed for $delegatorSessionId", e)
+        }
     }
 
     /**
