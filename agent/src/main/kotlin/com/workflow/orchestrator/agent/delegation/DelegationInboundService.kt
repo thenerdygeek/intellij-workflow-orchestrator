@@ -61,6 +61,7 @@ class DelegationInboundService(
         )
     }
 
+    @Synchronized
     fun start() {
         if (server != null) return
         if (!settings.enableInboundCrossIdeDelegation) return
@@ -81,6 +82,7 @@ class DelegationInboundService(
         server = srv
     }
 
+    @Synchronized
     fun stop() {
         server?.stop()
         server = null
@@ -135,42 +137,54 @@ class DelegationInboundService(
 
         // Read incoming Answer / AnswerCanceled messages from IDE-A until the channel
         // closes or throws (EOF / socket error = session over).
+        // Plan 1 F8: outer try/finally guarantees closeChannel + unregisterSessionChannel
+        // run on every exit path — normal loop end, exception, or unexpected throw.
         try {
-            while (true) {
-                val msg = readMessage()
-                when (msg) {
-                    is DelegationMessage.Answer -> {
-                        val delivered = deliverAnswer(localSessionId, msg.questionId, msg.text)
-                        if (!delivered) {
-                            LOG.debug(
-                                "deliverAnswer: no pending question for qid=${msg.questionId} " +
-                                    "on session $localSessionId (race or stale message)"
+            try {
+                while (true) {
+                    val msg = readMessage()
+                    when (msg) {
+                        is DelegationMessage.Answer -> {
+                            val delivered = deliverAnswer(localSessionId, msg.questionId, msg.text)
+                            if (!delivered) {
+                                LOG.debug(
+                                    "deliverAnswer: no pending question for qid=${msg.questionId} " +
+                                        "on session $localSessionId (race or stale message)"
+                                )
+                            }
+                        }
+                        is DelegationMessage.FetchTranscript -> {
+                            handleFetchTranscript(
+                                sessionId = msg.sessionId,
+                                requestId = msg.requestId,
+                                replyWith = replyWith,
+                            )
+                        }
+                        else -> {
+                            LOG.warn(
+                                "Unexpected message on inbound channel post-Accept for session " +
+                                    "$localSessionId: ${msg::class.simpleName}"
                             )
                         }
                     }
-                    is DelegationMessage.FetchTranscript -> {
-                        handleFetchTranscript(
-                            sessionId = msg.sessionId,
-                            requestId = msg.requestId,
-                            replyWith = replyWith,
-                        )
-                    }
-                    else -> {
-                        LOG.warn(
-                            "Unexpected message on inbound channel post-Accept for session " +
-                                "$localSessionId: ${msg::class.simpleName}"
-                        )
-                    }
                 }
+            } catch (e: java.nio.channels.ClosedChannelException) {
+                // F3 fix: normal termination — closeChannel() interrupted readMessage().
+                LOG.debug("Inbound read-loop ended (channel closed) for session $localSessionId")
+            } catch (e: java.nio.channels.AsynchronousCloseException) {
+                // F3 fix: normal termination on Windows/async close path.
+                LOG.debug("Inbound read-loop ended (async close) for session $localSessionId")
+            } catch (e: Exception) {
+                LOG.warn("Inbound read-loop failed unexpectedly for session $localSessionId", e)
             }
-        } catch (e: java.nio.channels.ClosedChannelException) {
-            // F3 fix: normal termination — closeChannel() interrupted readMessage().
-            LOG.debug("Inbound read-loop ended (channel closed) for session $localSessionId")
-        } catch (e: java.nio.channels.AsynchronousCloseException) {
-            // F3 fix: normal termination on Windows/async close path.
-            LOG.debug("Inbound read-loop ended (async close) for session $localSessionId")
-        } catch (e: Exception) {
-            LOG.warn("Inbound read-loop failed unexpectedly for session $localSessionId", e)
+        } finally {
+            // Plan 1 F8: guarantee channel cleanup even on unexpected exit paths.
+            // Both calls are idempotent — closeChannel() is safe on already-closed
+            // sockets; unregisterSessionChannel returns silently for unknown ids.
+            try { closeChannel() } catch (e: Exception) {
+                LOG.warn("Inbound read-loop finally: closeChannel threw for session $localSessionId", e)
+            }
+            unregisterSessionChannel(localSessionId)
         }
     }
 

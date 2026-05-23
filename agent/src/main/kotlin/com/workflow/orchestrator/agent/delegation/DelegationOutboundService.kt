@@ -171,6 +171,7 @@ class DelegationOutboundService(
         // body so that result delivery is not gated on the next send call. The channel
         // insertion into activeChannels above has already happened under the lock.
         cs.launch(Dispatchers.IO) {
+            var unknownCount = 0
             try {
                 while (true) {
                     val msg = withContext(Dispatchers.IO) {
@@ -193,7 +194,15 @@ class DelegationOutboundService(
                             return@launch
                         }
                         else -> {
-                            LOG.warn("Unexpected message on outbound channel: ${msg::class.simpleName}")
+                            unknownCount++
+                            LOG.warn("Unexpected message on outbound channel: ${msg::class.simpleName} (count=$unknownCount)")
+                            if (unknownCount >= MAX_UNKNOWN_MESSAGES_BEFORE_DROP) {
+                                LOG.warn(
+                                    "Outbound reader for ${handle.id} dropping channel after " +
+                                        "$unknownCount unknown messages — likely protocol drift"
+                                )
+                                return@launch
+                            }
                         }
                     }
                 }
@@ -218,15 +227,17 @@ class DelegationOutboundService(
      * Returns true if a channel was found and closed.
      */
     fun close(handleId: String): Boolean {
-        idleTimers.remove(handleId)?.stop()
-        handleToSessionId.remove(handleId)
-        handleToRepoName.remove(handleId)
-        // F1 fix: also clear any pending question texts for this handle.
-        pendingQuestionTexts.entries.removeIf { it.value.first == handleId }
-        lastSeenAt.remove(handleId)
-        val ch = activeChannels.remove(handleId) ?: return false
-        try { ch.close() } catch (_: Exception) {}
-        return true
+        synchronized(this) {
+            idleTimers.remove(handleId)?.stop()
+            handleToSessionId.remove(handleId)
+            handleToRepoName.remove(handleId)
+            // F1 fix: also clear any pending question texts for this handle.
+            pendingQuestionTexts.entries.removeIf { it.value.first == handleId }
+            lastSeenAt.remove(handleId)
+            val ch = activeChannels.remove(handleId) ?: return false
+            try { ch.close() } catch (_: Exception) {}
+            return true
+        }
     }
 
     /** Close every active channel. Called from project disposal. */
@@ -364,6 +375,9 @@ class DelegationOutboundService(
     /** Read accessor used by [IdleTimer] to evaluate stalls. Null if the handle is unknown. */
     fun lastSeenMillis(handleId: String): Long? = lastSeenAt[handleId]
 
+    /** Returns true if a channel is currently open for [handleId]. */
+    fun hasOpenChannel(handleId: String): Boolean = activeChannels.containsKey(handleId)
+
     /**
      * Send a [DelegationMessage.FetchTranscript] over [handleId] and suspend until
      * the matching [DelegationMessage.FetchTranscriptReply] arrives or 30 s elapses.
@@ -411,6 +425,8 @@ class DelegationOutboundService(
         const val MAX_CHANNELS = 5
         /** Idle timer ticks at this cadence to keep CPU cost low while still being responsive. */
         const val IDLE_CHECK_INTERVAL_MILLIS = 30_000L
+        /** Plan 2 F8: drop the channel after this many consecutive unknown messages. */
+        const val MAX_UNKNOWN_MESSAGES_BEFORE_DROP = 16
     }
 }
 
