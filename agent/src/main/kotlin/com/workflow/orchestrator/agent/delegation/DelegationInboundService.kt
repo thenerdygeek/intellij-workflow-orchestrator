@@ -115,11 +115,8 @@ class DelegationInboundService(
             closeChannel()
             return
         }
-        replyWith(DelegationMessage.AcceptResult(accepted = true))
-
-        // Hand off to AgentService to actually start the delegated session.
-        // startDelegatedSession now returns the local session ID synchronously and
-        // registers the replyWith channel before launching the agent loop.
+        // Reserve the local session ID by starting the delegated session first (synchronous
+        // registration; the agent loop launches asynchronously inside startDelegatedSession).
         val agentService = project.getService(AgentService::class.java)
         val metadata = DelegationMetadata(
             delegatorIde = connect.delegatorIde,
@@ -143,6 +140,8 @@ class DelegationInboundService(
             },
         )
         sessionIdHolder.set(localSessionId)
+        // Plan 4: include bSessionId so IDE-A can persist the link for CHANNEL_RESUME.
+        replyWith(DelegationMessage.AcceptResult(accepted = true, bSessionId = localSessionId))
 
         // Read incoming Answer / AnswerCanceled messages from IDE-A until the channel
         // closes or throws (EOF / socket error = session over).
