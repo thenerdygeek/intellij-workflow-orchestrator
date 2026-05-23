@@ -27,6 +27,10 @@ import com.workflow.orchestrator.core.delegation.DelegationClient
 import com.workflow.orchestrator.core.delegation.DelegationPaths
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Dimension
@@ -137,22 +141,36 @@ class DelegationPicker(
 
     private var launchAndDelegateAction: Action? = null
 
+    /**
+     * Background scope used for async socket-glob discovery and recent-project
+     * status probing. Cancelled in [dispose] so no coroutine outlives the dialog.
+     */
+    private val discoveryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     init {
         title = "Delegate to Another IDE"
         setOKButtonText("Delegate")
+        // Phase 1 (sync): populate the list with recent projects immediately — no I/O,
+        // so the picker opens without blocking the EDT. Status shows as CLOSED until
+        // async probing upgrades it.
+        populateRecentsSync()
+        // Phase 2 (async): probe recent-project sockets and run socket-glob discovery
+        // off the EDT. Results are posted back via invokeLater.
+        triggerDiscoveryAsync()
         init()
-        // Probe at open time using runBlockingCancellable so ProgressIndicator
-        // cancellation propagates correctly. Each probe is timeout-bounded at
-        // ~200ms via DelegationClient.ping.
-        runBlockingCancellable { populate() }
         suggestedRepo?.let { hint ->
             val match = (0 until listModel.size())
                 .map { listModel.get(it) }
-                .firstOrNull { it.status == PickerEntry.Status.RUNNING && it.displayName.contains(hint, ignoreCase = true) }
+                .firstOrNull { it.displayName.contains(hint, ignoreCase = true) }
             if (match != null) list.setSelectedValue(match, true)
         }
         // Keep the Launch & Delegate button state in sync with the selection.
         list.addListSelectionListener { updateLaunchButtonState() }
+    }
+
+    override fun dispose() {
+        discoveryScope.cancel()
+        super.dispose()
     }
 
     override fun createCenterPanel(): JComponent {
@@ -341,66 +359,119 @@ class DelegationPicker(
         super.doOKAction()
     }
 
-    private suspend fun populate() {
+    /**
+     * Synchronous phase: read the recent-projects list from [RecentProjectListActionProvider]
+     * and populate the list model with CLOSED/MISSING entries. No I/O is performed here —
+     * status probing happens in [triggerDiscoveryAsync]. This runs on the EDT so the picker
+     * opens immediately without blocking.
+     */
+    private fun populateRecentsSync() {
         val actions = try {
             RecentProjectListActionProvider.getInstance().getActions(false)
         } catch (e: Exception) {
             LOG.warn("Failed to read recent projects", e)
-            emptyList()
+            return
         }
-        val recents = mutableListOf<PickerEntry>()
         for (action in actions) {
             val reopen = action as? ReopenProjectAction ?: continue
             val pathStr = reopen.projectPath ?: continue
             val path = Path.of(pathStr)
             val name = reopen.projectName ?: path.fileName?.toString() ?: pathStr
-            val status = when {
-                !Files.exists(path) -> PickerEntry.Status.MISSING
-                else -> {
-                    val socketPath = DelegationPaths.socketFor(path)
-                    val pong = DelegationClient.ping(socketPath, timeoutMillis = 200)
-                    if (pong != null) PickerEntry.Status.RUNNING else PickerEntry.Status.CLOSED
+            // Show MISSING for non-existent paths immediately; CLOSED for the rest until
+            // the async probe upgrades them to RUNNING.
+            val initialStatus = if (!Files.exists(path)) PickerEntry.Status.MISSING else PickerEntry.Status.CLOSED
+            listModel.addElement(PickerEntry(path, name, initialStatus))
+        }
+    }
+
+    /**
+     * Asynchronous phase: probe each recent-project socket and run socket-glob discovery,
+     * both off the EDT. When results arrive, post back to the EDT to update the model.
+     * Cancelled automatically when the dialog is disposed.
+     *
+     * Spec §5.5 + Plan 3.1 Fix 3: EDT must not block for N × ping-timeout on open.
+     */
+    private fun triggerDiscoveryAsync() {
+        discoveryScope.launch {
+            // Step A: probe recent-project sockets and upgrade CLOSED → RUNNING as pongs arrive.
+            val recentsSnapshot: List<PickerEntry> = withContext(Dispatchers.Main) {
+                // Safe to read listModel on EDT (Dispatchers.Main).
+                (0 until listModel.size()).map { listModel.getElementAt(it) }
+            }
+            for (entry in recentsSnapshot) {
+                if (entry.isHeader || entry.status == PickerEntry.Status.MISSING) continue
+                val socketPath = DelegationPaths.socketFor(entry.path)
+                val pong = try {
+                    DelegationClient.ping(socketPath, timeoutMillis = 200)
+                } catch (e: Exception) {
+                    null
+                }
+                if (pong != null) {
+                    withContext(Dispatchers.Main) {
+                        if (isDisposed) return@withContext
+                        val idx = listModel.indexOf(entry)
+                        if (idx >= 0) {
+                            listModel.set(idx, entry.copy(status = PickerEntry.Status.RUNNING))
+                            // Update auto-select hint if this newly-RUNNING row matches.
+                            suggestedRepo?.let { hint ->
+                                if (entry.displayName.contains(hint, ignoreCase = true)) {
+                                    list.setSelectedValue(listModel.getElementAt(idx), true)
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            recents.add(PickerEntry(path, name, status))
-        }
-        recents.forEach { listModel.addElement(it) }
 
-        // Plan 3 §5.5: socket-glob supplement. Discover IDE-B instances whose project
-        // isn't in this IDE's recents. PONG returns the project path; we resolve a
-        // display name from the path's last segment (best-effort). The picker dialog
-        // runs on EDT so we bridge into the suspend `discover()` via
-        // `runBlockingCancellable` (the pre-commit hook bans `runBlocking` in main/).
-        val recentPaths = recents.map { it.path.toAbsolutePath().normalize() }.toSet()
-        val discovered: List<PickerEntry> = try {
-            SocketGlobDiscovery(
-                pingFn = { socketPath ->
-                    DelegationClient.ping(socketPath)
-                },
-            ).discover()
-                .filter { Path.of(it.projectPath).toAbsolutePath().normalize() !in recentPaths }
-                .map { d ->
-                    PickerEntry(
-                        displayName = Path.of(d.projectPath).fileName?.toString() ?: d.projectPath,
-                        path = Path.of(d.projectPath),
-                        status = PickerEntry.Status.RUNNING,
-                    )
-                }
-        } catch (e: Exception) {
-            LOG.warn("Socket-glob discovery failed (non-fatal)", e)
-            emptyList()
+            // Step B: socket-glob discovery — find IDE-B instances not in recents.
+            val recentNormPaths: Set<Path> = recentsSnapshot
+                .filter { !it.isHeader }
+                .map { it.path.toAbsolutePath().normalize() }
+                .toSet()
+            val discovered: List<DiscoveredProject> = try {
+                SocketGlobDiscovery(
+                    pingFn = { socketPath -> DelegationClient.ping(socketPath) },
+                ).discover()
+            } catch (e: Exception) {
+                LOG.warn("Socket-glob discovery failed (non-fatal)", e)
+                emptyList()
+            }
+            withContext(Dispatchers.Main) {
+                if (isDisposed) return@withContext
+                appendDiscoveredEntries(discovered, recentNormPaths)
+            }
         }
-        if (discovered.isNotEmpty()) {
-            // Insert a non-selectable section header row before the discovered entries.
+    }
+
+    /**
+     * Appends discovered projects that are not already in the recents list.
+     * Must be called on the EDT. [recentNormPaths] is the normalized-path set of
+     * recents captured at discovery-start time (dedup against what was in the list
+     * when probing began; headers are excluded).
+     */
+    private fun appendDiscoveredEntries(discovered: List<DiscoveredProject>, recentNormPaths: Set<Path>) {
+        val novel = discovered.filter {
+            Path.of(it.projectPath).toAbsolutePath().normalize() !in recentNormPaths
+        }
+        if (novel.isEmpty()) return
+
+        // Insert a non-selectable section header row before the discovered entries.
+        listModel.addElement(
+            PickerEntry(
+                displayName = "— Discovered (not in recents) —",
+                path = Path.of("/"),
+                status = PickerEntry.Status.MISSING,
+                isHeader = true,
+            )
+        )
+        for (d in novel) {
             listModel.addElement(
                 PickerEntry(
-                    displayName = "— Discovered (not in recents) —",
-                    path = Path.of("/"),
-                    status = PickerEntry.Status.MISSING,
-                    isHeader = true,
+                    displayName = Path.of(d.projectPath).fileName?.toString() ?: d.projectPath,
+                    path = Path.of(d.projectPath),
+                    status = PickerEntry.Status.RUNNING,
                 )
             )
-            discovered.forEach { listModel.addElement(it) }
         }
     }
 
