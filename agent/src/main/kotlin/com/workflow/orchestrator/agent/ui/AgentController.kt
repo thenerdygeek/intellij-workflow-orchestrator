@@ -1782,6 +1782,26 @@ class AgentController(
             }
         }
 
+        // Plan 2 Task 7: IDE-B short-circuit. If this session is delegated and a
+        // delegation question is pending, route typed input as a local answer instead
+        // of going through the normal user-message / steering path. The CAS in
+        // PendingQuestionToken ensures safe competition with Agent-A's potential
+        // delegation_answer tool call.
+        val inboundService = project.getService(
+            com.workflow.orchestrator.agent.delegation.DelegationInboundService::class.java
+        )
+        val sid = currentSessionId
+        val isDelegated = sid != null && service.currentSessionState()?.delegated != null
+        if (sid != null && isDelegated && inboundService.hasPendingQuestion(sid)) {
+            LOG.info("AgentController: IDE-B short-circuit — routing typed input as delegation local answer for session $sid")
+            displayUserMessage(uiText, displayMentionsJson, attachments = attachments)
+            controllerScope.launch(Dispatchers.IO + CoroutineName("AgentController.localAnswer")) {
+                val won = inboundService.localAnswer(sid, task)
+                LOG.info("AgentController: localAnswer result for session $sid: won=$won")
+            }
+            return
+        }
+
         // If a simple question is pending (ask_followup_question), resolve it with user's answer
         val pending = askQuestionsTool.pendingQuestions
         if (pending != null && !pending.isCompleted && currentJob?.isActive == true) {
