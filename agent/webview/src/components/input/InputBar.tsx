@@ -1,6 +1,7 @@
 import { memo, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Plus, ArrowUp, Square, ChevronDown, Sparkles, Brain, ListChecks, File, Folder, Hash, SquareKanban, Zap, Image as ImageIcon } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
+import { DelegationQuestionBanner } from './DelegationQuestionBanner';
 import type { Mention, MentionSearchResult } from '@/bridge/types';
 import {
   PromptInputActions,
@@ -1097,8 +1098,13 @@ export const InputBar = memo(function InputBar() {
 
   const canSend = hasText && !inputState.locked && !outerCompacting && (!busy || steeringMode);
   const planActive = inputState.mode === 'plan';
+  const delegationQuestionPending = useChatStore(s => s.delegationQuestionPending);
 
   return (
+    <>
+    {delegationQuestionPending.active && (
+      <DelegationQuestionBanner delegatorRepo={delegationQuestionPending.delegatorRepo} />
+    )}
     <div className="px-3 pb-3 pt-2">
       <div
         className="relative rounded-xl border p-2 cursor-text"
@@ -1170,6 +1176,7 @@ export const InputBar = memo(function InputBar() {
         />
       )}
     </div>
+    </>
   );
 });
 

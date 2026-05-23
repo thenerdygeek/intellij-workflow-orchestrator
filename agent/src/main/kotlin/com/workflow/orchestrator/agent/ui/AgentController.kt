@@ -997,6 +997,33 @@ class AgentController(
     val streamingEditCallback: com.workflow.orchestrator.agent.loop.StreamingEditCallback
         get() = streamingEditCallbackImpl
 
+    /**
+     * Push the delegation-question-pending state to IDE-B's webview. Only pushes
+     * when the user is viewing the relevant session. Called by
+     * [com.workflow.orchestrator.agent.delegation.DelegationInboundService.notifyDelegationQuestionPending].
+     *
+     * Plan 4 spec §5.5.
+     */
+    fun pushDelegationQuestionPending(sessionId: String, active: Boolean, delegatorRepo: String?) {
+        // Only push if the user is viewing the relevant session.
+        if (viewedSessionId != sessionId) return
+        controllerScope.launch(Dispatchers.EDT) {
+            val payload = buildString {
+                append("{\"active\":")
+                append(active)
+                if (delegatorRepo != null) {
+                    append(",\"delegatorRepo\":")
+                    append(historyJson.encodeToString(delegatorRepo))
+                }
+                append("}")
+            }
+            dashboard.callJs(
+                "if (window._setDelegationQuestionPending) " +
+                "window._setDelegationQuestionPending(${historyJson.encodeToString(payload)})"
+            )
+        }
+    }
+
     fun pushImageSettingsToWebview() {
         dashboard.pushImageSettings()
         // Also re-evaluate the view_image registration so the master kill switch
