@@ -382,6 +382,19 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         // Default off — the safe default per spec §6.3.
         var autoApproveDelegationAnswers by property(false)
 
+        /**
+         * Idle timeout for cross-IDE delegation channels, in minutes. A delegated
+         * session is closed with [DelegationException.IdleTimedOut] when no IPC
+         * traffic has been observed (including the periodic Heartbeat from IDE-B)
+         * for longer than this many minutes. 0 disables idle detection entirely.
+         *
+         * Default: 30 minutes. Read at idle-check time so changes take effect
+         * for the next check on every existing channel.
+         *
+         * Plan 3 spec §3.3.
+         */
+        var delegationIdleTimeoutMinutes by property(30)
+
         init {
             // Populate default whitelist on first instantiation. Persisted lists
             // round-trip independently — if the user clears the list it stays

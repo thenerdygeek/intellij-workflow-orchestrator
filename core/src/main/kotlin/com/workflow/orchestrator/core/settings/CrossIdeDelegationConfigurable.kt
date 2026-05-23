@@ -2,6 +2,7 @@ package com.workflow.orchestrator.core.settings
 
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.project.Project
+import com.intellij.ui.JBIntSpinner
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.panel
 import javax.swing.JComponent
@@ -23,6 +24,7 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
     private var outboundEnabled = settings.enableOutboundCrossIdeDelegation
     private var inboundEnabled = settings.enableInboundCrossIdeDelegation
     private var autoApprove = settings.autoApproveDelegationAnswers
+    private var idleTimeoutMinutes = settings.delegationIdleTimeoutMinutes
 
     override fun getDisplayName(): String = "Cross-IDE Delegation"
 
@@ -53,9 +55,20 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
                             "Default off — leaves the human as the verification step."
                     )
             }
+            row("Idle timeout (minutes)") {
+                cell(JBIntSpinner(idleTimeoutMinutes, 0, 720, 5))
+                    .applyToComponent {
+                        addChangeListener { idleTimeoutMinutes = (value as Int) }
+                    }
+                    .comment(
+                        "Close a delegation channel after this many minutes of no IPC traffic. " +
+                            "0 disables idle detection (channels stay open until explicit close). " +
+                            "Default 30."
+                    )
+            }
             row {
                 comment(
-                    "Both default off. Feature is local-only (same machine, same user). " +
+                    "All gates default off. Feature is local-only (same machine, same user). " +
                         "See documentation for security and privacy implications."
                 )
             }
@@ -65,7 +78,8 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
     override fun isModified(): Boolean =
         outboundEnabled != settings.enableOutboundCrossIdeDelegation ||
             inboundEnabled != settings.enableInboundCrossIdeDelegation ||
-            autoApprove != settings.autoApproveDelegationAnswers
+            autoApprove != settings.autoApproveDelegationAnswers ||
+            idleTimeoutMinutes != settings.delegationIdleTimeoutMinutes
 
     override fun apply() {
         val prevOutbound = settings.enableOutboundCrossIdeDelegation
@@ -73,6 +87,7 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
         settings.enableOutboundCrossIdeDelegation = outboundEnabled
         settings.enableInboundCrossIdeDelegation = inboundEnabled
         settings.autoApproveDelegationAnswers = autoApprove
+        settings.delegationIdleTimeoutMinutes = idleTimeoutMinutes
         if (prevOutbound != outboundEnabled) {
             project.messageBus.syncPublisher(CrossIdeDelegationSettingsListener.TOPIC)
                 .outboundSettingChanged(outboundEnabled)
@@ -87,5 +102,6 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
         outboundEnabled = settings.enableOutboundCrossIdeDelegation
         inboundEnabled = settings.enableInboundCrossIdeDelegation
         autoApprove = settings.autoApproveDelegationAnswers
+        idleTimeoutMinutes = settings.delegationIdleTimeoutMinutes
     }
 }

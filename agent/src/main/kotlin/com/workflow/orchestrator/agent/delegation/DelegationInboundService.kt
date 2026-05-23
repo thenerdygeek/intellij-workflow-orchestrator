@@ -44,6 +44,7 @@ class DelegationInboundService(
         val sessionId: String,
         val replyWith: suspend (DelegationMessage) -> Unit,
         val pendingToken: PendingQuestionToken,
+        val heartbeat: HeartbeatScheduler?,
     )
 
     private val sessionChannels = ConcurrentHashMap<String, SessionChannel>()
@@ -116,15 +117,20 @@ class DelegationInboundService(
         )
         // F1: close the socket channel after writing the terminal Result so the FD is
         // released immediately rather than leaking until JVM exit.
+        // The sessionIdHolder indirection is needed because onResult is passed before
+        // startDelegatedSession returns the session ID (forward-reference workaround).
+        val sessionIdHolder = java.util.concurrent.atomic.AtomicReference<String>()
         val localSessionId = agentService.startDelegatedSession(
             request = connect.request,
             delegationMetadata = metadata,
             replyWith = replyWith,
             onResult = { result ->
+                stopHeartbeatForSession(sessionIdHolder.get() ?: "")
                 replyWith(result)
                 closeChannel()
             },
         )
+        sessionIdHolder.set(localSessionId)
 
         // Read incoming Answer / AnswerCanceled messages from IDE-A until the channel
         // closes or throws (EOF / socket error = session over).
@@ -172,7 +178,13 @@ class DelegationInboundService(
         replyWith: suspend (DelegationMessage) -> Unit,
     ): PendingQuestionToken {
         val token = PendingQuestionToken()
-        sessionChannels[sessionId] = SessionChannel(sessionId, replyWith, token)
+        val hb = HeartbeatScheduler(
+            sessionId = sessionId,
+            scope = cs,
+            sendMessage = replyWith,
+        )
+        sessionChannels[sessionId] = SessionChannel(sessionId, replyWith, token, hb)
+        hb.start()
         return token
     }
 
@@ -181,8 +193,9 @@ class DelegationInboundService(
      * [AgentService.startDelegatedSession] finally-block when the session ends.
      */
     fun unregisterSessionChannel(sessionId: String) {
-        sessionChannels.remove(sessionId)?.pendingToken?.let { token ->
-            token.armedQuestionId?.let { qid -> token.cancel(qid, "session_ended") }
+        sessionChannels.remove(sessionId)?.let { sc ->
+            sc.heartbeat?.stop()
+            sc.pendingToken.armedQuestionId?.let { qid -> sc.pendingToken.cancel(qid, "session_ended") }
         }
     }
 
@@ -258,6 +271,7 @@ class DelegationInboundService(
         val snapshot = sessionChannels.toMap()
         sessionChannels.clear()
         for ((sessionId, channel) in snapshot) {
+            channel.heartbeat?.stop()
             try {
                 channel.replyWith(
                     DelegationMessage.Result(
@@ -303,6 +317,18 @@ class DelegationInboundService(
             LOG.warn("localAnswer: failed to send AnswerCanceled for $resolvedQid on session $sessionId", e)
         }
         return true
+    }
+
+    /**
+     * Stop the heartbeat scheduler for [sessionId] WITHOUT removing the registry
+     * entry. Called by the `onResult` lambda in [handleConnect] immediately before
+     * writing the terminal `Result` frame, so no heartbeat tick races the terminal
+     * write on the same channel.
+     *
+     * Plan 3 spec §6.1 cancellation ordering.
+     */
+    fun stopHeartbeatForSession(sessionId: String) {
+        sessionChannels[sessionId]?.heartbeat?.stop()
     }
 
     companion object {
