@@ -1181,6 +1181,9 @@ class AgentService(
             safeRegisterDeferred("Delegation") {
                 com.workflow.orchestrator.agent.tools.delegation.DelegationAnswerTool()
             }
+            safeRegisterDeferred("Delegation") {
+                com.workflow.orchestrator.agent.tools.delegation.DelegationFetchTranscriptTool()
+            }
         }
 
         // File — binary/structured document reading (PDF, DOCX, XLSX, PPTX, RTF, ODT, CSV …)
@@ -1345,10 +1348,16 @@ class AgentService(
                     com.workflow.orchestrator.agent.tools.delegation.DelegationAnswerTool()
                 }
             }
+            if (registry.getTool("delegation_fetch_transcript") == null) {
+                safeRegisterDeferred("Delegation") {
+                    com.workflow.orchestrator.agent.tools.delegation.DelegationFetchTranscriptTool()
+                }
+            }
         } else {
             if (registry.getTool("delegation_send") != null) registry.unregisterDeferred("delegation_send")
             if (registry.getTool("delegation_close") != null) registry.unregisterDeferred("delegation_close")
             if (registry.getTool("delegation_answer") != null) registry.unregisterDeferred("delegation_answer")
+            if (registry.getTool("delegation_fetch_transcript") != null) registry.unregisterDeferred("delegation_fetch_transcript")
         }
     }
 
