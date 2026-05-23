@@ -116,6 +116,11 @@ class DelegationOutboundService(
             try { channel.close() } catch (_: Exception) {}
             throw DelegationException.Rejected(ack.reason)
         }
+        // Plan 4: capture the remote session ID so sendContinuation can target it.
+        val bSessionId = ack.bSessionId ?: run {
+            try { channel.close() } catch (_: Exception) {}
+            throw DelegationException.TargetNotReachable
+        }
         val handle = DelegationHandle(
             id = UUID.randomUUID().toString(),
             targetProjectPath = picked.path.toString(),
@@ -125,6 +130,10 @@ class DelegationOutboundService(
         lastSeenAt[handle.id] = System.currentTimeMillis()
         handleToSessionId[handle.id] = delegatorSessionId
         handleToRepoName[handle.id] = handle.targetRepoName
+        // Plan 4: persist handle metadata needed for sendContinuation.
+        handleToBSessionId[handle.id] = bSessionId
+        handleToLastSeenState[handle.id] = "RUNNING"
+        handleToTargetPath[handle.id] = handle.targetProjectPath
 
         // Plan 3 idle timer — the timeout-millis provider re-reads PluginSettings on every
         // tick so changes take effect for already-open channels (spec §3.3). A return of
@@ -234,6 +243,10 @@ class DelegationOutboundService(
             idleTimers.remove(handleId)?.stop()
             handleToSessionId.remove(handleId)
             handleToRepoName.remove(handleId)
+            // Plan 4: clear continuation metadata.
+            handleToBSessionId.remove(handleId)
+            handleToLastSeenState.remove(handleId)
+            handleToTargetPath.remove(handleId)
             // F1 fix: also clear any pending question texts for this handle.
             pendingQuestionTexts.entries.removeIf { it.value.first == handleId }
             lastSeenAt.remove(handleId)
@@ -294,6 +307,64 @@ class DelegationOutboundService(
     }
 
     /**
+     * Continuation flow for `delegation_send(handle = X)`. Skips picker + Accept.
+     * Sends a [DelegationMessage.UserTurn] over the existing channel for [handleId].
+     *
+     * Task 3 will wire dead-handle resume via `attemptResume`. Until then, a dead
+     * handle returns [DelegationException.Expired] with reason
+     * `"channel_dead_needs_resume"`.
+     *
+     * Plan 4 spec §5.2.
+     *
+     * @throws DelegationException.Expired if the handle is unknown, the channel is
+     * dead, or ownership fails the delegator-session check.
+     * @throws DelegationException.WriteFailed if the [DelegationMessage.UserTurn]
+     * frame cannot be written to the channel.
+     */
+    suspend fun sendContinuation(
+        handleId: String,
+        request: String,
+        delegatorSessionId: String,
+    ): DelegationHandle {
+        val sessionId = handleToSessionId[handleId]
+            ?: throw DelegationException.Expired("handle_not_found")
+        if (sessionId != delegatorSessionId) {
+            // Defensive: a session can only continue its own handles.
+            throw DelegationException.Expired("handle_owned_by_other_session")
+        }
+
+        // Task 2 baseline: a dead channel is an error. Task 3 will replace this
+        // with a call to attemptResume() that wakes the channel before proceeding.
+        val channel = activeChannels[handleId]
+            ?: throw DelegationException.Expired("channel_dead_needs_resume")
+
+        val bSessionId = handleToBSessionId[handleId]
+            ?: throw DelegationException.Expired("missing_bSessionId")
+        val repoName = handleToRepoName[handleId]
+            ?: throw DelegationException.Expired("missing_repo_name")
+
+        try {
+            withContext(Dispatchers.IO) {
+                DelegationFraming.writeFramed(
+                    channel,
+                    DelegationMessage.UserTurn(sessionId = bSessionId, text = request),
+                    json,
+                )
+            }
+        } catch (e: Exception) {
+            LOG.warn("sendContinuation: UserTurn write failed for $handleId", e)
+            throw DelegationException.WriteFailed("UserTurn write failed: ${e.message}")
+        }
+
+        return DelegationHandle(
+            id = handleId,
+            targetProjectPath = handleToTargetPath[handleId] ?: "",
+            targetRepoName = repoName,
+            lastSeenState = handleToLastSeenState[handleId] ?: "unknown",
+        )
+    }
+
+    /**
      * Returns the text of a pending question sent over the given handle, or null if
      * the question has already been answered or the questionId is unknown.
      * Used by [com.workflow.orchestrator.agent.tools.delegation.DelegationAnswerTool]
@@ -313,6 +384,34 @@ class DelegationOutboundService(
     }
 
     private val handleToRepoName = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /**
+     * Maps outbound delegation handle → the remote Agent-B session ID returned in
+     * [DelegationMessage.AcceptResult.bSessionId]. Populated in [send] after a
+     * successful Accept; used by [sendContinuation] to target the correct session
+     * when writing a [DelegationMessage.UserTurn].
+     *
+     * Plan 4 spec §5.1.
+     */
+    private val handleToBSessionId = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /**
+     * Most-recently-observed remote state for each open handle ("RUNNING",
+     * "AWAITING_ANSWER", etc.). Updated lazily; used only as a diagnostic hint
+     * in [DelegationHandle.lastSeenState] returned by [sendContinuation].
+     *
+     * Plan 4 spec §5.1.
+     */
+    private val handleToLastSeenState = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /**
+     * Maps outbound delegation handle → the target project path.  Needed by
+     * [sendContinuation] to rebuild a valid [DelegationHandle] without opening
+     * the picker again.
+     *
+     * Plan 4 spec §5.1.
+     */
+    private val handleToTargetPath = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     private suspend fun handleIncomingQuestion(
         handle: DelegationHandle,
