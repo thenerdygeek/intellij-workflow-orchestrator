@@ -3091,6 +3091,25 @@ class AgentService(
             task.loop.cancel()
             task.job.cancel()
 
+            // Plan 3 cascade-cancel: close every open child delegation channel for
+            // the session being canceled. Idempotent — outbound service tracks
+            // closed handles and ignores repeats.
+            val cancelingSessionId = currentSessionId
+            if (cancelingSessionId != null) {
+                try {
+                    val outbound = project.getService(
+                        com.workflow.orchestrator.agent.delegation.DelegationOutboundService::class.java
+                    )
+                    val closed = outbound.cancelAllForSession(cancelingSessionId, reason = "parent_canceled")
+                    if (closed.isNotEmpty()) {
+                        log.info("[AgentService] cascade-cancel closed ${closed.size} delegation handle(s) " +
+                            "for session $cancelingSessionId: ${closed.joinToString(",")}")
+                    }
+                } catch (e: Exception) {
+                    log.warn("[AgentService] cascade-cancel failed for session $cancelingSessionId", e)
+                }
+            }
+
             // TASK_CANCEL hook — observation only, fire-and-forget
             // Cline: TaskCancel is non-cancellable (observation only)
             if (hookManager.hasHooks(HookType.TASK_CANCEL)) {
