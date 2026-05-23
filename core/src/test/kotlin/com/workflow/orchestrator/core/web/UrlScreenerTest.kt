@@ -89,4 +89,65 @@ class UrlScreenerTest {
             }
         }
     }
+
+    data class QueryCase(
+        val name: String,
+        val query: String,
+        val expectRejectCode: String? = null,
+        val expectContains: String? = null,
+        val expectRedacted: Boolean? = null,
+    )
+
+    private val queryCases = listOf(
+        QueryCase("empty → Reject(MalformedUrl)",
+            query = "",
+            expectRejectCode = "MALFORMED_URL"),
+        QueryCase("whitespace-only → Reject(MalformedUrl)",
+            query = "   ",
+            expectRejectCode = "MALFORMED_URL"),
+        QueryCase("over 1000 chars → Reject(MalformedUrl)",
+            query = "a".repeat(1001),
+            expectRejectCode = "MALFORMED_URL"),
+        QueryCase("Bearer token redacted",
+            query = "Bearer abc123def456",
+            expectContains = "<redacted>",
+            expectRedacted = true),
+        QueryCase("JWT token redacted",
+            query = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+            expectContains = "<jwt-redacted>",
+            expectRedacted = true),
+        QueryCase("AWS key redacted",
+            query = "AKIAIOSFODNN7EXAMPLE",
+            expectContains = "<aws-key-redacted>",
+            expectRedacted = true),
+        QueryCase("normal query passes unchanged",
+            query = "normal docs query",
+            expectContains = "normal docs query",
+            expectRedacted = false),
+    )
+
+    @TestFactory
+    fun screenQuery() = queryCases.map { c ->
+        DynamicTest.dynamicTest(c.name) {
+            val result = UrlScreener.screenQuery(c.query)
+            if (c.expectRejectCode != null) {
+                assertTrue(result is QueryScreenResult.Reject,
+                    "Expected Reject for query '${c.query}', got $result")
+                assertEquals(c.expectRejectCode,
+                    (result as QueryScreenResult.Reject).error.code)
+            } else {
+                assertTrue(result is QueryScreenResult.Pass,
+                    "Expected Pass for query '${c.query}', got $result")
+                val pass = result as QueryScreenResult.Pass
+                if (c.expectContains != null) {
+                    assertTrue(pass.cleaned.contains(c.expectContains),
+                        "Expected cleaned to contain '${c.expectContains}', got '${pass.cleaned}'")
+                }
+                if (c.expectRedacted != null) {
+                    assertEquals(c.expectRedacted, pass.redacted,
+                        "Expected redacted=${c.expectRedacted} for query '${c.query}'")
+                }
+            }
+        }
+    }
 }

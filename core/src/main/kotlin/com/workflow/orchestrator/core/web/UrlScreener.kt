@@ -70,6 +70,18 @@ object UrlScreener {
 
     fun toPunycode(host: String): String = try { IDN.toASCII(host) } catch (_: Exception) { host }
 
+    fun screenQuery(query: String): QueryScreenResult {
+        if (query.isBlank()) return QueryScreenResult.Reject(WebError.MalformedUrl("(empty query)"))
+        if (query.length > 1000) return QueryScreenResult.Reject(WebError.MalformedUrl("query > 1000 chars"))
+        val redacted = query
+            .replace(Regex("""Bearer\s+[A-Za-z0-9_\-\.]+"""), "Bearer <redacted>")
+            .replace(Regex("""\b[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\b"""), "<jwt-redacted>")
+            .replace(Regex("""AKIA[A-Z0-9]{16}"""), "<aws-key-redacted>")
+            .trim()
+            .replace(Regex("""\s+"""), " ")
+        return QueryScreenResult.Pass(cleaned = redacted, redacted = redacted != query)
+    }
+
     private fun reject(error: WebError) = Result.Reject(error)
 
     /**
@@ -128,4 +140,9 @@ object UrlScreener {
         }
         return IdnKind.NON_ASCII
     }
+}
+
+sealed class QueryScreenResult {
+    data class Pass(val cleaned: String, val redacted: Boolean) : QueryScreenResult()
+    data class Reject(val error: WebError) : QueryScreenResult()
 }
