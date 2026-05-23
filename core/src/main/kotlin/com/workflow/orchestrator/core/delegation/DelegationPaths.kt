@@ -32,6 +32,9 @@ object DelegationPaths {
         return ipcDir.resolve("$hash.sock")
     }
 
+    /** Returns the per-user IPC directory (`~/.workflow-orchestrator/ipc/`). */
+    fun ipcDir(): Path = Path.of(System.getProperty("user.home"), IPC_DIR)
+
     /**
      * Ensures the IPC directory exists with restrictive permissions (0700 on POSIX).
      * Call before binding a socket.
