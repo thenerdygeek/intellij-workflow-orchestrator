@@ -323,6 +323,12 @@ class DelegationPicker(
      * button performs. Sets [selectedEntry] and closes the dialog.
      */
     private fun doDelegate(entry: PickerEntry) {
+        if (isDisposed) {
+            // The user clicked Cancel between the auto-launch poll succeeding and this
+            // callback firing on the EDT. The dialog is already disposed; calling
+            // super.doOKAction() would NPE inside DialogWrapper. Just return.
+            return
+        }
         selectedEntry = entry
         super.doOKAction()
     }

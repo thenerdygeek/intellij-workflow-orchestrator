@@ -47,4 +47,16 @@ class LauncherResolverTest {
         val launcher = r.resolveLauncher()
         assertTrue(launcher.toString().endsWith("bin\\idea64.exe") || launcher.toString().endsWith("bin/idea64.exe"))
     }
+
+    @Test
+    fun `detects Toolbox layout on Windows with backslash separators`() {
+        val r = LauncherResolver(
+            homePath = "C:\\Users\\me\\AppData\\Local\\JetBrains\\Toolbox\\apps\\IDEA-U\\ch-0\\251.1234.5",
+            osName = "Windows 11",
+        )
+        assertTrue(
+            r.isToolboxInstall(),
+            "Toolbox layout on Windows must be detected via backslash-normalization",
+        )
+    }
 }

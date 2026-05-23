@@ -23,8 +23,15 @@ class LauncherResolver(
      * When true, callers should consult [ToolboxFlavorReader] before auto-launching
      * a project that may have been opened with a different IDE flavor.
      */
-    fun isToolboxInstall(): Boolean =
-        homePath.contains("/Toolbox/apps/") && homePath.contains("/ch-0/")
+    fun isToolboxInstall(): Boolean {
+        // Normalize backslashes to forward slashes so Windows Toolbox installs are
+        // detected too. `PathManager.getHomePath()` on Windows returns backslash-
+        // separated paths, so a forward-slash-only check silently missed Windows
+        // Toolbox layouts. Spec §5.4: "auto-launch must never silently spawn a
+        // mismatched IDE."
+        val normalized = homePath.replace('\\', '/')
+        return normalized.contains("/Toolbox/apps/") && normalized.contains("/ch-0/")
+    }
 
     /**
      * Returns the absolute path to the launcher binary for this IDE. Mac and
