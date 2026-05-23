@@ -37,6 +37,15 @@ class DelegationOutboundService(
     /** Maps outbound delegation handle → the local Agent-A session that holds it. */
     private val handleToSessionId = java.util.concurrent.ConcurrentHashMap<String, String>()
 
+    /**
+     * F1 fix: per-question text cache so [DelegationAnswerTool] can look up the
+     * question text when the auto-approve setting is off (for the confirm dialog).
+     *
+     * Key: questionId → (handleId, questionText). Populated when a Question message
+     * arrives; cleared when the answer is sent or the channel closes.
+     */
+    private val pendingQuestionTexts = java.util.concurrent.ConcurrentHashMap<String, Pair<String, String>>()
+
     private val json = Json { ignoreUnknownKeys = true; classDiscriminator = "type" }
 
     /**
@@ -98,6 +107,7 @@ class DelegationOutboundService(
         )
         activeChannels[handle.id] = channel
         handleToSessionId[handle.id] = delegatorSessionId
+        handleToRepoName[handle.id] = handle.targetRepoName
         // Note: the result-reader coroutine is launched OUTSIDE the sendMutex.withLock
         // body so that result delivery is not gated on the next send call. The channel
         // insertion into activeChannels above has already happened under the lock.
@@ -141,6 +151,9 @@ class DelegationOutboundService(
      */
     fun close(handleId: String): Boolean {
         handleToSessionId.remove(handleId)
+        handleToRepoName.remove(handleId)
+        // F1 fix: also clear any pending question texts for this handle.
+        pendingQuestionTexts.entries.removeIf { it.value.first == handleId }
         val ch = activeChannels.remove(handleId) ?: return false
         try { ch.close() } catch (_: Exception) {}
         return true
@@ -165,6 +178,8 @@ class DelegationOutboundService(
                     json,
                 )
             }
+            // F1 fix: clear the pending question text now that the answer is sent.
+            pendingQuestionTexts.remove(questionId)
             true
         } catch (e: Exception) {
             LOG.warn("sendAnswer failed for $handleId / $questionId", e)
@@ -172,10 +187,34 @@ class DelegationOutboundService(
         }
     }
 
+    /**
+     * Returns the text of a pending question sent over the given handle, or null if
+     * the question has already been answered or the questionId is unknown.
+     * Used by [com.workflow.orchestrator.agent.tools.delegation.DelegationAnswerTool]
+     * to populate the confirm dialog when auto-approve is off.
+     */
+    fun lookupPendingQuestionText(handleId: String, questionId: String): String? =
+        pendingQuestionTexts[questionId]?.takeIf { it.first == handleId }?.second
+
+    /**
+     * Returns the target repo display name for the given handle, or null if unknown.
+     * Used by [com.workflow.orchestrator.agent.tools.delegation.DelegationAnswerTool]
+     * to populate the confirm dialog title.
+     */
+    fun targetRepoName(handleId: String): String? {
+        // handleToRepoName is populated in send() when the handle is created.
+        return handleToRepoName[handleId]
+    }
+
+    private val handleToRepoName = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     private suspend fun handleIncomingQuestion(
         handle: DelegationHandle,
         question: DelegationMessage.Question,
     ) {
+        // F1 fix: cache the question text so delegation_answer can show it in the confirm dialog.
+        pendingQuestionTexts[question.questionId] = handle.id to question.text
+
         val sessionId = handleToSessionId[handle.id] ?: run {
             LOG.warn("handleIncomingQuestion: no delegator session for ${handle.id}")
             return
@@ -183,6 +222,10 @@ class DelegationOutboundService(
         val agentService = project.getService(
             com.workflow.orchestrator.agent.AgentService::class.java
         )
+        // F6 fix: reorder guidance so "ask the user first if uncertain" is step 1
+        // (matches spec §6.3) and "call delegation_answer directly" is step 2.
+        // The previous text had them reversed, causing the LLM to default to
+        // delegation_answer immediately rather than checking with the user.
         val nudge = buildString {
             append("Delegated session ${handle.targetRepoName} (handle ${handle.id.take(8)}) ")
             append("raised a clarifying question:\n\n")
@@ -190,14 +233,20 @@ class DelegationOutboundService(
             if (question.options.isNotEmpty()) {
                 append("\n\nSuggested options: ${question.options.joinToString(", ")}")
             }
-            append("\n\nQuestion ID: ${question.questionId}\n")
-            append("Use the delegation_answer tool to reply. If you cannot answer ")
-            append("confidently from your own context, ask the user.")
+            append("\n\nQuestion ID: ${question.questionId}\n\n")
+            append("How to respond:\n")
+            append("1. If you cannot answer confidently from your own context, ask the user " +
+                "first (via ask_followup_question), then use delegation_answer with the answer.\n")
+            append("2. If you have enough context to answer correctly, call delegation_answer " +
+                "directly with handle=${handle.id}, question_id=${question.questionId}, " +
+                "and your answer text.")
         }
         agentService.enqueueNudgeForSession(sessionId, nudge)
     }
 
     private fun rescindLocalQuestion(handle: DelegationHandle, questionId: String, reason: String) {
+        // F1 fix: remove the cached question text since it was answered locally (IDE-B side).
+        pendingQuestionTexts.remove(questionId)
         val sessionId = handleToSessionId[handle.id] ?: return
         val agentService = project.getService(
             com.workflow.orchestrator.agent.AgentService::class.java

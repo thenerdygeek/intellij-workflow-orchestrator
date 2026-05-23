@@ -149,8 +149,14 @@ class DelegationInboundService(
                     }
                 }
             }
+        } catch (e: java.nio.channels.ClosedChannelException) {
+            // F3 fix: normal termination — closeChannel() interrupted readMessage().
+            LOG.debug("Inbound read-loop ended (channel closed) for session $localSessionId")
+        } catch (e: java.nio.channels.AsynchronousCloseException) {
+            // F3 fix: normal termination on Windows/async close path.
+            LOG.debug("Inbound read-loop ended (async close) for session $localSessionId")
         } catch (e: Exception) {
-            LOG.debug("Inbound read-loop ended for session $localSessionId", e)
+            LOG.warn("Inbound read-loop failed unexpectedly for session $localSessionId", e)
         }
     }
 
@@ -201,8 +207,24 @@ class DelegationInboundService(
         val questionId = UUID.randomUUID().toString()
         val deferred = CompletableDeferred<String>()
         if (!sc.pendingToken.armIfClear(questionId, deferred)) {
-            error("routeQuestion: a question is already pending on session $sessionId")
+            // F4 fix: include the pending questionId so the LLM can recognize which
+            // question to answer first before raising a new one.
+            error(
+                "routeQuestion: question ${sc.pendingToken.armedQuestionId} is already pending on " +
+                    "session $sessionId; answer it first before raising a new question"
+            )
         }
+
+        // F7 fix: give the IDE-B human a visual signal that a question is pending and
+        // that typed input will short-circuit to answer it. MVP: inject an informational
+        // nudge message. Proper banner/placeholder UX is deferred.
+        val agentService = project.getService(AgentService::class.java)
+        agentService.enqueueNudgeForSession(
+            sessionId,
+            "A question was forwarded to the delegator's agent. " +
+                "Type an answer here to short-circuit and answer it yourself."
+        )
+
         sc.replyWith(DelegationMessage.Question(questionId, question, options))
         return deferred.await()
     }
@@ -239,21 +261,20 @@ class DelegationInboundService(
      */
     suspend fun localAnswer(sessionId: String, answer: String): Boolean {
         val sc = sessionChannels[sessionId] ?: return false
-        val questionId = sc.pendingToken.armedQuestionId ?: return false
-        val won = sc.pendingToken.tryResolve(questionId, answer)
-        if (won) {
-            try {
-                sc.replyWith(
-                    DelegationMessage.AnswerCanceled(
-                        questionId = questionId,
-                        reason = "answered_locally",
-                    )
+        // F2 fix: use tryResolveCurrent to atomically clear the slot and get the questionId
+        // in a single CAS — eliminates the TOCTOU between armedQuestionId read and tryResolve.
+        val resolvedQid = sc.pendingToken.tryResolveCurrent(answer) ?: return false
+        try {
+            sc.replyWith(
+                DelegationMessage.AnswerCanceled(
+                    questionId = resolvedQid,
+                    reason = "answered_locally",
                 )
-            } catch (e: Exception) {
-                LOG.warn("localAnswer: failed to send AnswerCanceled for $questionId on session $sessionId", e)
-            }
+            )
+        } catch (e: Exception) {
+            LOG.warn("localAnswer: failed to send AnswerCanceled for $resolvedQid on session $sessionId", e)
         }
-        return won
+        return true
     }
 
     companion object {

@@ -48,6 +48,20 @@ class PendingQuestionToken {
         }
     }
 
+    /**
+     * Atomically clears the slot if any question is armed, and completes its deferred
+     * with [answer]. Returns the questionId that was cleared, or null if nothing was armed.
+     *
+     * This eliminates the TOCTOU between reading [armedQuestionId] and calling [tryResolve]:
+     * the stale-id window is gone because the clear+complete happen in a single CAS.
+     */
+    fun tryResolveCurrent(answer: String): String? {
+        val current = slot.get() ?: return null
+        if (!slot.compareAndSet(current, null)) return null
+        current.deferred.complete(answer)
+        return current.questionId
+    }
+
     /** Returns the questionId currently armed, or null if none. */
     val armedQuestionId: String? get() = slot.get()?.questionId
 }

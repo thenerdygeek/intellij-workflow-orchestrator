@@ -51,4 +51,30 @@ class PendingQuestionTokenTest {
         token.cancel("q-1", "canceled_for_test")
         assertTrue(token.armIfClear("q-2", CompletableDeferred<String>()))
     }
+
+    // ── tryResolveCurrent (F2 fix) ────────────────────────────────────────────
+
+    @Test
+    fun `tryResolveCurrent with armed question delivers answer and returns questionId`() = runBlocking {
+        val token = PendingQuestionToken()
+        val deferred = CompletableDeferred<String>()
+        token.armIfClear("q-1", deferred)
+        val resolved = token.tryResolveCurrent("my-answer")
+        assertEquals("q-1", resolved)
+        assertEquals("my-answer", deferred.await())
+    }
+
+    @Test
+    fun `tryResolveCurrent on empty slot returns null`() {
+        val token = PendingQuestionToken()
+        assertNull(token.tryResolveCurrent("should-not-deliver"))
+    }
+
+    @Test
+    fun `tryResolveCurrent clears the slot so a new arm succeeds`() = runBlocking {
+        val token = PendingQuestionToken()
+        token.armIfClear("q-1", CompletableDeferred<String>())
+        token.tryResolveCurrent("answer")
+        assertTrue(token.armIfClear("q-2", CompletableDeferred<String>()))
+    }
 }

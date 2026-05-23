@@ -1,14 +1,18 @@
 package com.workflow.orchestrator.agent.tools.delegation
 
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.delegation.DelegationOutboundService
+import com.workflow.orchestrator.agent.delegation.ui.DelegationAnswerConfirmDialog
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.core.settings.PluginSettings
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -94,7 +98,25 @@ class DelegationAnswerTool : AgentTool {
         val outboundService = project.getService(DelegationOutboundService::class.java)
             ?: return ToolResult.error("delegation_answer: DelegationOutboundService unavailable")
 
-        val sent = outboundService.sendAnswer(handleId, questionId, answerText)
+        // F1 fix: honour the autoApproveDelegationAnswers setting. When off, show a
+        // confirmation dialog so the human can review (and optionally edit) the answer
+        // before it is forwarded. When on, forward directly without interrupting the loop.
+        val settings = PluginSettings.getInstance(project).state
+        val finalAnswer = if (settings.autoApproveDelegationAnswers) {
+            answerText
+        } else {
+            val questionText = outboundService.lookupPendingQuestionText(handleId, questionId)
+                ?: "(question text unavailable — channel may have closed)"
+            val targetRepo = outboundService.targetRepoName(handleId) ?: "(unknown)"
+            withContext(Dispatchers.EDT) {
+                val dlg = DelegationAnswerConfirmDialog(project, questionText, answerText, targetRepo)
+                if (dlg.showAndGet()) dlg.editedAnswer else null
+            } ?: return ToolResult.error(
+                "delegation_answer: user declined to send the answer"
+            )
+        }
+
+        val sent = outboundService.sendAnswer(handleId, questionId, finalAnswer)
 
         val shortId = handleId.take(8)
         return if (sent) {

@@ -2996,18 +2996,27 @@ class AgentService(
         val loopResultDeferred = kotlinx.coroutines.CompletableDeferred<LoopResult>()
 
         val title = "Delegated by ${delegationMetadata.delegatorIde} — ${delegationMetadata.delegatorRepo}"
-        val job = executeTask(
-            task = request,
-            sessionId = sid,
-            delegationMetadata = delegationMetadata,
-            uiMessageOverride = com.workflow.orchestrator.agent.session.UiMessage(
-                ts = System.currentTimeMillis(),
-                type = com.workflow.orchestrator.agent.session.UiMessageType.SAY,
-                say = com.workflow.orchestrator.agent.session.UiSay.USER_MESSAGE,
-                text = "[$title]\n\n$request",
-            ),
-            onComplete = { result -> loopResultDeferred.complete(result) },
-        )
+        // F5 fix: if executeTask throws synchronously (before its own finally runs), undo
+        // the setup we did above so perSessionStates and sessionChannels don't leak.
+        val job = try {
+            executeTask(
+                task = request,
+                sessionId = sid,
+                delegationMetadata = delegationMetadata,
+                uiMessageOverride = com.workflow.orchestrator.agent.session.UiMessage(
+                    ts = System.currentTimeMillis(),
+                    type = com.workflow.orchestrator.agent.session.UiMessageType.SAY,
+                    say = com.workflow.orchestrator.agent.session.UiSay.USER_MESSAGE,
+                    text = "[$title]\n\n$request",
+                ),
+                onComplete = { result -> loopResultDeferred.complete(result) },
+            )
+        } catch (e: Throwable) {
+            // F5 fix: synchronous setup failed — roll back what we did above to avoid leaks.
+            releaseSessionState(sid)
+            inbound.unregisterSessionChannel(sid)
+            throw e
+        }
 
         cs.launch(Dispatchers.IO) {
             try {
