@@ -138,11 +138,9 @@ class SubagentSpawnerAdapter(private val project: Project) : SubagentSpawner {
      * of length [expectedCount]. Returns null on any parse failure so the caller can fall back.
      */
     private fun parseBatchResult(rawText: String, expectedCount: Int): List<SanitizerResult>? {
-        val start = rawText.indexOf('{')
-        val end = rawText.lastIndexOf('}')
-        if (start == -1 || end <= start) return null
+        val candidate = extractBraceBalanced(stripMarkdownFences(rawText)) ?: return null
         return try {
-            val root = lenientJson.parseToJsonElement(rawText.substring(start, end + 1)).jsonObject
+            val root = lenientJson.parseToJsonElement(candidate).jsonObject
             val resultsArray: JsonArray = root["results"]?.jsonArray ?: return null
             if (resultsArray.size != expectedCount) {
                 LOG.warn("SubagentSpawnerAdapter: batch result count ${resultsArray.size} != expected $expectedCount")
@@ -226,18 +224,59 @@ class SubagentSpawnerAdapter(private val project: Project) : SubagentSpawner {
     }
 
     /**
-     * Extract the first JSON object from [text], which may contain leading prose before
-     * the JSON block (the LLM sometimes prefixes the JSON with a sentence).
+     * Extract the first JSON object from [text], which may be:
+     *   - Bare JSON: `{...}`
+     *   - Markdown-fenced: ` ```json\n{...}\n``` ` or ` ```\n{...}\n``` `
+     *   - Prose + fenced or prose + bare: `"Here is the result:\n```json\n{...}\n```"`
+     *
+     * Strategy: strip markdown fences first, then scan for the outermost `{...}` using
+     * a brace-counting scanner (more correct than first-`{`/last-`}` when the JSON
+     * contains nested objects or trailing prose after the closing `}`).
      */
     private fun extractJsonObject(text: String): JsonObject? {
-        val start = text.indexOf('{')
-        val end = text.lastIndexOf('}')
-        if (start == -1 || end <= start) return null
+        val stripped = stripMarkdownFences(text)
+        val candidate = extractBraceBalanced(stripped) ?: return null
         return try {
-            lenientJson.parseToJsonElement(text.substring(start, end + 1)).jsonObject
+            lenientJson.parseToJsonElement(candidate).jsonObject
         } catch (e: Exception) {
             LOG.warn("SubagentSpawnerAdapter: could not parse sanitizer response as JSON: ${text.take(200)}", e)
             null
         }
+    }
+
+    /**
+     * Strip all ` ```[lang] ` / ` ``` ` fence markers from [text].
+     * Handles optional language tag (e.g. `json`) and optional whitespace around newlines.
+     */
+    private fun stripMarkdownFences(text: String): String =
+        text
+            .replace(Regex("```(?:json)?\\s*\\n?"), "")
+            .replace(Regex("\\n?```"), "")
+
+    /**
+     * Find the first top-level `{...}` block in [text] using a brace-counting scanner.
+     * Returns the substring including the opening and closing braces, or null if not found.
+     */
+    private fun extractBraceBalanced(text: String): String? {
+        val start = text.indexOf('{')
+        if (start == -1) return null
+        var depth = 0
+        var inString = false
+        var escape = false
+        for (i in start until text.length) {
+            val ch = text[i]
+            if (escape) { escape = false; continue }
+            if (ch == '\\' && inString) { escape = true; continue }
+            if (ch == '"') { inString = !inString; continue }
+            if (inString) continue
+            when (ch) {
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) return text.substring(start, i + 1)
+                }
+            }
+        }
+        return null
     }
 }

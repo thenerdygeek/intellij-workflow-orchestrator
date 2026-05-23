@@ -10,7 +10,6 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import java.lang.reflect.Method
 
@@ -86,13 +85,29 @@ class SubagentSpawnerAdapterTest {
     }
 
     @Test
-    @Disabled("Implementation uses first-{/last-} window which may not strip backtick fences — " +
-        "this case pins expected behavior; re-enable once the impl handles fenced JSON.")
-    fun `JSON fenced in backticks is still parsed`() {
+    fun `JSON fenced in backticks with json language tag is parsed`() {
         val raw = "```json\n{\"verdict\":\"SAFE\",\"cleaned_text\":\"page content\",\"notes\":null}\n```"
         val result = parseResult(raw)
         assertEquals(Verdict.SAFE, result.verdict)
         assertEquals("page content", result.cleanedText)
+    }
+
+    @Test
+    fun `JSON fenced in backticks without language tag is parsed`() {
+        val raw = "```\n{\"verdict\":\"STRIPPED\",\"cleaned_text\":\"stripped content\",\"notes\":\"removed ads\"}\n```"
+        val result = parseResult(raw)
+        assertEquals(Verdict.STRIPPED, result.verdict)
+        assertEquals("stripped content", result.cleanedText)
+    }
+
+    @Test
+    fun `JSON fenced with surrounding prose is parsed`() {
+        val raw = "Here is the sanitized result:\n" +
+            "```json\n{\"verdict\":\"SAFE\",\"cleaned_text\":\"article body\",\"notes\":null}\n```\n" +
+            "Let me know if you need more."
+        val result = parseResult(raw)
+        assertEquals(Verdict.SAFE, result.verdict)
+        assertEquals("article body", result.cleanedText)
     }
 
     @Test
