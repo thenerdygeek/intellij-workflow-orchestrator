@@ -14,12 +14,18 @@ import java.util.concurrent.atomic.AtomicReference
  * Started by [DelegationInboundService] when a session channel is registered;
  * stopped via [stop] when the session transitions to a terminal Result.
  *
- * Plan 3 spec §5.4.
+ * [isClosed] is checked immediately after [delay] returns, before sending the
+ * heartbeat. This closes the ordering race (spec §6.1): if the caller flips the
+ * closed flag before calling [stop], any tick that is between [delay] and
+ * [sendMessage] will bail without writing a spurious heartbeat to the wire.
+ *
+ * Plan 3 spec §5.4, §6.1.
  */
 class HeartbeatScheduler(
     private val sessionId: String,
     private val scope: CoroutineScope,
     private val intervalMillis: Long = DEFAULT_INTERVAL_MILLIS,
+    private val isClosed: () -> Boolean = { false },
     private val sendMessage: suspend (DelegationMessage) -> Unit,
 ) {
     private val jobRef = AtomicReference<Job?>(null)
@@ -29,6 +35,10 @@ class HeartbeatScheduler(
         val job = scope.launch {
             while (isActive) {
                 delay(intervalMillis)
+                // Spec §6.1 race-safe gate: if termination has been requested
+                // (isClosed flipped to true before stop() was called), bail here
+                // so no heartbeat fires after stop was requested.
+                if (isClosed()) break
                 try {
                     sendMessage(DelegationMessage.Heartbeat(sessionId = sessionId))
                 } catch (e: Exception) {
