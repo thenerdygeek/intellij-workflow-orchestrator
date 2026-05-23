@@ -46,6 +46,15 @@ class DelegationInboundService(
         val replyWith: suspend (DelegationMessage) -> Unit,
         val pendingToken: PendingQuestionToken,
         val heartbeat: HeartbeatScheduler?,
+        /**
+         * Spec §6.1 ordering gate. Flipped to `true` by [stopHeartbeatForSession],
+         * [unregisterSessionChannel], and [closeAllForProjectClose] BEFORE calling
+         * [HeartbeatScheduler.stop]. This ensures any tick currently between
+         * `delay()` and `sendMessage()` in the scheduler coroutine sees the gate
+         * and bails without writing a spurious heartbeat to the wire.
+         */
+        val closed: java.util.concurrent.atomic.AtomicBoolean =
+            java.util.concurrent.atomic.AtomicBoolean(false),
     )
 
     private val sessionChannels = ConcurrentHashMap<String, SessionChannel>()
@@ -200,12 +209,16 @@ class DelegationInboundService(
         replyWith: suspend (DelegationMessage) -> Unit,
     ): PendingQuestionToken {
         val token = PendingQuestionToken()
+        // Build the closed flag first so the HeartbeatScheduler can reference it via
+        // the isClosed lambda before the SessionChannel itself is in the map.
+        val closed = java.util.concurrent.atomic.AtomicBoolean(false)
         val hb = HeartbeatScheduler(
             sessionId = sessionId,
             scope = cs,
+            isClosed = { closed.get() },
             sendMessage = replyWith,
         )
-        sessionChannels[sessionId] = SessionChannel(sessionId, replyWith, token, hb)
+        sessionChannels[sessionId] = SessionChannel(sessionId, replyWith, token, hb, closed)
         hb.start()
         return token
     }
@@ -216,6 +229,9 @@ class DelegationInboundService(
      */
     fun unregisterSessionChannel(sessionId: String) {
         sessionChannels.remove(sessionId)?.let { sc ->
+            // Spec §6.1: gate BEFORE stop so an in-flight tick between delay() and
+            // sendMessage() sees the flag and bails without writing a spurious heartbeat.
+            sc.closed.set(true)
             sc.heartbeat?.stop()
             sc.pendingToken.armedQuestionId?.let { qid -> sc.pendingToken.cancel(qid, "session_ended") }
         }
@@ -293,6 +309,8 @@ class DelegationInboundService(
         val snapshot = sessionChannels.toMap()
         sessionChannels.clear()
         for ((sessionId, channel) in snapshot) {
+            // Spec §6.1: gate BEFORE stop so an in-flight tick sees the flag and bails.
+            channel.closed.set(true)
             channel.heartbeat?.stop()
             try {
                 channel.replyWith(
@@ -350,7 +368,12 @@ class DelegationInboundService(
      * Plan 3 spec §6.1 cancellation ordering.
      */
     fun stopHeartbeatForSession(sessionId: String) {
-        sessionChannels[sessionId]?.heartbeat?.stop()
+        sessionChannels[sessionId]?.let { sc ->
+            // Spec §6.1: gate the scheduler BEFORE cancelling, so any in-flight tick
+            // currently between delay() and sendMessage() sees the gate and bails.
+            sc.closed.set(true)
+            sc.heartbeat?.stop()
+        }
     }
 
     // ── FetchTranscript support (Plan 3 Task 7) ─────────────────────────────────
