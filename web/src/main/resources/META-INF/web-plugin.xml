@@ -9,11 +9,9 @@
     <extensions defaultExtensionNs="com.intellij">
         <projectService serviceInterface="com.workflow.orchestrator.core.web.WebFetchService"
                         serviceImplementation="com.workflow.orchestrator.web.service.WebFetchServiceImpl"/>
-        <!-- TODO Task 14: WebSettingsConfigurable
         <projectConfigurable parentId="com.workflow.orchestrator.agent.settings.AgentParentConfigurable"
                              instance="com.workflow.orchestrator.web.ui.WebSettingsConfigurable"
                              id="com.workflow.orchestrator.web.settings"
                              displayName="Web"/>
-        -->
     </extensions>
 </idea-plugin>
