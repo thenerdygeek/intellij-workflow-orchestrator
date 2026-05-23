@@ -13,5 +13,6 @@
                              instance="com.workflow.orchestrator.web.ui.WebSettingsConfigurable"
                              id="com.workflow.orchestrator.web.settings"
                              displayName="Web"/>
+        <postStartupActivity implementation="com.workflow.orchestrator.web.audit.WebAuditRotationStartup"/>
     </extensions>
 </idea-plugin>
