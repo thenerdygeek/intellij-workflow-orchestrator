@@ -54,6 +54,7 @@ class SearchProviderRegistryTest {
             webSearchCustomTitlePath = "$.title"
             webSearchCustomUrlPath = "$.url"
             webSearchCustomSnippetPath = "$.snippet"
+            webSearchTavilyUrl = "https://api.tavily.com"
         }
         val settings = mockk<PluginSettings>(relaxed = true)
         every { settings.state } returns pluginState
@@ -84,6 +85,11 @@ class SearchProviderRegistryTest {
                         titlePath = capturedConnState.webSearchCustomTitlePath,
                         urlPath = capturedConnState.webSearchCustomUrlPath,
                         snippetPath = capturedConnState.webSearchCustomSnippetPath,
+                        client = client,
+                    )
+                    "TAVILY" -> TavilyProvider(
+                        baseUrl = capturedConnState.webSearchTavilyUrl,
+                        apiKey = capturedApiKey,
                         client = client,
                     )
                     else -> null
@@ -118,6 +124,12 @@ class SearchProviderRegistryTest {
     fun `CUSTOM_HTTP returns CustomHttpProvider`() {
         val provider = registryFor("CUSTOM_HTTP", apiKey = "test-custom-key").resolve()
         assertInstanceOf(CustomHttpProvider::class.java, provider, "Expected CustomHttpProvider")
+    }
+
+    @Test
+    fun `TAVILY returns TavilyProvider`() {
+        val provider = registryFor("TAVILY", apiKey = "tvly-test-key").resolve()
+        assertInstanceOf(TavilyProvider::class.java, provider, "Expected TavilyProvider")
     }
 
     @Test

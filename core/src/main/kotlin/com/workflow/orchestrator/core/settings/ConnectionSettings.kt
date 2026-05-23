@@ -42,6 +42,8 @@ class ConnectionSettings : PersistentStateComponent<ConnectionSettings.State> {
         var webSearchCustomUrl: String = "",
         var webSearchCustomMethod: String = "GET",
         var webSearchCustomHeaderName: String = "",
+        // Tavily provider settings (LangChain-ecosystem default agent search)
+        var webSearchTavilyUrl: String = "https://api.tavily.com",
         // JSONPath expressions for custom provider response mapping
         var webSearchCustomResultsPath: String = "$.results",
         var webSearchCustomTitlePath: String = "$.title",

@@ -44,6 +44,11 @@ open class SearchProviderRegistry(private val project: Project, private val clie
                 snippetPath = conn.webSearchCustomSnippetPath,
                 client = client,
             )
+            "TAVILY" -> TavilyProvider(
+                baseUrl = conn.webSearchTavilyUrl,
+                apiKey = creds.getToken(ServiceType.WEB_SEARCH),
+                client = client,
+            )
             else -> null
         }
     }
