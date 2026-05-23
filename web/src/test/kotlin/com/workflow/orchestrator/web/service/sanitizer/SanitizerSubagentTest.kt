@@ -51,4 +51,27 @@ class SanitizerSubagentTest {
         assertTrue(prompt.contains("REFUSED"))
         assertTrue(prompt.contains("cleaned_text"))
     }
+
+    @Test
+    fun `sanitizeBatch returns one result per input`() = runTest {
+        val project = mockk<Project>()
+        val spawner = mockk<SubagentSpawner>()
+        coEvery { spawner.runSanitizerBatch(any(), any(), any(), any(), any(), 3) } returns listOf(
+            SubagentSpawner.SanitizerResult(SubagentSpawner.Verdict.SAFE, "a", null),
+            SubagentSpawner.SanitizerResult(SubagentSpawner.Verdict.STRIPPED, "b", "stripped"),
+            SubagentSpawner.SanitizerResult(SubagentSpawner.Verdict.SAFE, "c", null),
+        )
+        val out = SanitizerSubagent(spawner).sanitizeBatch(project, listOf("x", "y", "z"), null, 1000)
+        assertEquals(3, out.size)
+        assertEquals(SubagentSpawner.Verdict.STRIPPED, out[1].verdict)
+    }
+
+    @Test
+    fun `sanitizeBatch returns empty list for empty input`() = runTest {
+        val spawner = mockk<SubagentSpawner>()
+        val out = SanitizerSubagent(spawner).sanitizeBatch(mockk(), emptyList(), null, 1000)
+        assertEquals(0, out.size)
+        // spawner.runSanitizerBatch should never be called for empty input — verify via MockK coVerify
+        io.mockk.coVerify(exactly = 0) { spawner.runSanitizerBatch(any(), any(), any(), any(), any(), any()) }
+    }
 }

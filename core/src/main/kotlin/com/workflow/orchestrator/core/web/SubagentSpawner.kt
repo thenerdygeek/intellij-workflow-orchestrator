@@ -16,6 +16,23 @@ interface SubagentSpawner {
         timeoutMs: Long,
     ): SanitizerResult
 
+    /**
+     * Batch variant of [runSanitizer]. Sends all [expectedCount] texts in a single LLM call
+     * and parses the result as `{"results":[{"verdict","cleaned_text","notes"}, ...]}`.
+     *
+     * On parse failure the caller receives a list of length [expectedCount] where every entry
+     * has verdict=STRIPPED, cleanedText="" and notes="batch parse failed", so downstream
+     * code can always assume the list length equals [expectedCount].
+     */
+    suspend fun runSanitizerBatch(
+        project: Project,
+        brainId: String?,
+        systemPrompt: String,
+        userPrompt: String,
+        timeoutMs: Long,
+        expectedCount: Int,
+    ): List<SanitizerResult>
+
     data class SanitizerResult(
         val verdict: Verdict,
         val cleanedText: String,

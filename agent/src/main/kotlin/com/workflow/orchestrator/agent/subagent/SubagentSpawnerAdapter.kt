@@ -13,7 +13,9 @@ import com.workflow.orchestrator.core.web.SubagentSpawner.SanitizerResult
 import com.workflow.orchestrator.core.web.SubagentSpawner.Verdict
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -78,6 +80,108 @@ class SubagentSpawnerAdapter(private val project: Project) : SubagentSpawner {
 
         val rawText = result.result ?: result.error ?: ""
         return parseResult(rawText)
+    }
+
+    override suspend fun runSanitizerBatch(
+        project: Project,
+        brainId: String?,
+        systemPrompt: String,
+        userPrompt: String,
+        timeoutMs: Long,
+        expectedCount: Int,
+    ): List<SanitizerResult> {
+        val failAll = List(expectedCount) {
+            SanitizerResult(verdict = Verdict.STRIPPED, cleanedText = "", notes = "batch parse failed")
+        }
+
+        val brain = if (!brainId.isNullOrBlank()) {
+            LOG.info("SubagentSpawnerAdapter: brainId='$brainId' requested but per-ID lookup not yet supported; using sanitization model")
+            LlmBrainFactory.createForSanitization(project)
+        } else {
+            LlmBrainFactory.createForSanitization(project)
+        }
+
+        val runner = SubagentRunner(
+            brain = brain,
+            coreTools = emptyMap(),
+            systemPrompt = systemPrompt,
+            project = project,
+            maxIterations = 1,
+            planMode = false,
+            contextBudget = 32_000,
+            maxOutputTokens = 16_000,
+        )
+
+        val result = withTimeoutOrNull(timeoutMs) {
+            runner.run(
+                prompt = userPrompt,
+                agentId = "web-sanitizer-batch",
+                label = "Web content sanitizer (batch)",
+                onProgress = { _: SubagentProgressUpdate -> },
+            )
+        } ?: return List(expectedCount) {
+            SanitizerResult(
+                verdict = Verdict.TIMEOUT,
+                cleanedText = "",
+                notes = "Sanitizer batch subagent timed out after ${timeoutMs}ms",
+            )
+        }
+
+        val rawText = result.result ?: result.error ?: ""
+        return parseBatchResult(rawText, expectedCount) ?: failAll
+    }
+
+    /**
+     * Parse the batch sanitizer output.
+     *
+     * Expected shape: `{"results": [{"verdict": "...", "cleaned_text": "...", "notes": "..."}, ...]}`
+     * of length [expectedCount]. Returns null on any parse failure so the caller can fall back.
+     */
+    private fun parseBatchResult(rawText: String, expectedCount: Int): List<SanitizerResult>? {
+        val start = rawText.indexOf('{')
+        val end = rawText.lastIndexOf('}')
+        if (start == -1 || end <= start) return null
+        return try {
+            val root = lenientJson.parseToJsonElement(rawText.substring(start, end + 1)).jsonObject
+            val resultsArray: JsonArray = root["results"]?.jsonArray ?: return null
+            if (resultsArray.size != expectedCount) {
+                LOG.warn("SubagentSpawnerAdapter: batch result count ${resultsArray.size} != expected $expectedCount")
+                // Return what we have, padded/trimmed to expectedCount
+            }
+            val parsed = resultsArray.mapIndexed { idx, elem ->
+                try {
+                    val obj = elem.jsonObject
+                    val verdictStr = obj["verdict"]?.jsonPrimitive?.content?.uppercase()
+                    val cleanedText = obj["cleaned_text"]?.jsonPrimitive?.content ?: ""
+                    val notes = obj["notes"]?.jsonPrimitive?.content
+                    val verdict = when (verdictStr) {
+                        "SAFE" -> Verdict.SAFE
+                        "STRIPPED" -> Verdict.STRIPPED
+                        "REFUSED" -> Verdict.REFUSED
+                        "TIMEOUT" -> Verdict.TIMEOUT
+                        else -> {
+                            LOG.warn("SubagentSpawnerAdapter: batch[$idx] unrecognised verdict '$verdictStr', defaulting to SAFE")
+                            Verdict.SAFE
+                        }
+                    }
+                    SanitizerResult(verdict = verdict, cleanedText = cleanedText, notes = notes)
+                } catch (e: Exception) {
+                    LOG.warn("SubagentSpawnerAdapter: batch[$idx] field extraction failed: ${e.message}")
+                    SanitizerResult(verdict = Verdict.STRIPPED, cleanedText = "", notes = "batch item parse failed")
+                }
+            }
+            // Pad with STRIPPED entries if the LLM returned fewer results than expected
+            if (parsed.size < expectedCount) {
+                parsed + List(expectedCount - parsed.size) {
+                    SanitizerResult(verdict = Verdict.STRIPPED, cleanedText = "", notes = "batch parse failed")
+                }
+            } else {
+                parsed.take(expectedCount)
+            }
+        } catch (e: Exception) {
+            LOG.warn("SubagentSpawnerAdapter: batch parse failed: ${e.message}")
+            null
+        }
     }
 
     /**
