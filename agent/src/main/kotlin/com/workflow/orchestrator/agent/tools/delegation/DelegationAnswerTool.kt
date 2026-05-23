@@ -116,6 +116,15 @@ class DelegationAnswerTool : AgentTool {
             )
         }
 
+        // Plan 2 F10: distinguish "handle not in map" from "write failed" so the LLM
+        // can decide whether to retry the same handle or open a new delegation.
+        if (!outboundService.hasOpenChannel(handleId)) {
+            return ToolResult.error(
+                "DelegationHandleNotFound: $handleId — the handle is unknown or already closed. " +
+                    "The delegated session may have already terminated; use delegation_send to start a new one."
+            )
+        }
+
         val sent = outboundService.sendAnswer(handleId, questionId, finalAnswer)
 
         val shortId = handleId.take(8)
@@ -128,8 +137,8 @@ class DelegationAnswerTool : AgentTool {
             )
         } else {
             ToolResult.error(
-                "delegation_answer: handle $handleId is unknown or closed; cannot send answer. " +
-                    "The delegated session may have already terminated."
+                "DelegationWriteFailed: channel for $handleId rejected the write. " +
+                    "The channel may be shutting down; try again or use delegation_send to start a new session."
             )
         }
     }
