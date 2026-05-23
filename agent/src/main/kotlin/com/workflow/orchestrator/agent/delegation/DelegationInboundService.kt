@@ -247,6 +247,34 @@ class DelegationInboundService(
         sessionChannels[sessionId]?.pendingToken?.armedQuestionId != null
 
     /**
+     * Called by [DelegationInboundProjectCloseListener] when the project window
+     * closes. Writes a terminal [DelegationMessage.Result] with `reason="project_closed"`
+     * to every active inbound channel, then clears the registry. This is distinct
+     * from full IDE process death (which is handled by socket EOF on the IDE-A side).
+     *
+     * Plan 3 spec §5.2.
+     */
+    suspend fun closeAllForProjectClose() {
+        val snapshot = sessionChannels.toMap()
+        sessionChannels.clear()
+        for ((sessionId, channel) in snapshot) {
+            try {
+                channel.replyWith(
+                    DelegationMessage.Result(
+                        status = DelegationMessage.ResultStatus.FAILED,
+                        reason = "project_closed",
+                    )
+                )
+            } catch (e: Exception) {
+                LOG.warn("closeAllForProjectClose: failed to write FAILED for $sessionId", e)
+            }
+            channel.pendingToken.armedQuestionId?.let { qid ->
+                channel.pendingToken.cancel(qid, "project_closed")
+            }
+        }
+    }
+
+    /**
      * Called by the chat-input handler when the human in IDE-B types an answer
      * into a delegated session's input while a question is pending. Wins the
      * race via [PendingQuestionToken.tryResolve]; on success, sends an
