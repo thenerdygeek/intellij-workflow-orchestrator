@@ -50,6 +50,10 @@ class DelegationOutboundService(
 
     private val json = Json { ignoreUnknownKeys = true; classDiscriminator = "type" }
 
+    // Plan 3 fetch_transcript correlation.
+    private val pendingFetches =
+        java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.CompletableDeferred<DelegationMessage.FetchTranscriptReply>>()
+
     /**
      * F5: Serializes concurrent [send] calls so the 5-channel cap is atomic.
      *
@@ -179,6 +183,10 @@ class DelegationOutboundService(
                         is DelegationMessage.Heartbeat -> {
                             // Liveness signal — already accounted for by the lastSeenAt update above.
                             // No further action needed at this point in the loop.
+                        }
+                        is DelegationMessage.FetchTranscriptReply -> {
+                            pendingFetches.remove(msg.requestId)?.complete(msg)
+                                ?: LOG.warn("FetchTranscriptReply for unknown requestId ${msg.requestId}")
                         }
                         is DelegationMessage.Result -> {
                             onResult(handle, msg)
@@ -356,10 +364,62 @@ class DelegationOutboundService(
     /** Read accessor used by [IdleTimer] to evaluate stalls. Null if the handle is unknown. */
     fun lastSeenMillis(handleId: String): Long? = lastSeenAt[handleId]
 
+    /**
+     * Send a [DelegationMessage.FetchTranscript] over [handleId] and suspend until
+     * the matching [DelegationMessage.FetchTranscriptReply] arrives or 30 s elapses.
+     * Returns a [FetchTranscriptResult].
+     *
+     * Plan 3 spec §5.7.
+     */
+    suspend fun fetchTranscript(handleId: String): FetchTranscriptResult {
+        val channel = activeChannels[handleId]
+            ?: return FetchTranscriptResult.NotFound("handle_not_found")
+        val sessionId = handleToSessionId[handleId]
+            ?: return FetchTranscriptResult.NotFound("handle_not_in_session_map")
+        val requestId = java.util.UUID.randomUUID().toString()
+        val deferred = kotlinx.coroutines.CompletableDeferred<DelegationMessage.FetchTranscriptReply>()
+        pendingFetches[requestId] = deferred
+        try {
+            withContext(Dispatchers.IO) {
+                DelegationFraming.writeFramed(
+                    channel,
+                    DelegationMessage.FetchTranscript(sessionId = sessionId, requestId = requestId),
+                    json,
+                )
+            }
+        } catch (e: Exception) {
+            pendingFetches.remove(requestId)
+            return FetchTranscriptResult.NotFound("write_failed: ${e.message}")
+        }
+        val reply = try {
+            kotlinx.coroutines.withTimeoutOrNull(30_000L) { deferred.await() }
+        } catch (e: Exception) {
+            null
+        } finally {
+            pendingFetches.remove(requestId)
+        }
+        return when {
+            reply == null -> FetchTranscriptResult.NotFound("timeout")
+            reply.status == "ok" && reply.transcriptPath != null ->
+                FetchTranscriptResult.Ok(reply.transcriptPath!!)
+            else -> FetchTranscriptResult.NotFound(reply?.error ?: reply?.status ?: "unknown")
+        }
+    }
+
     companion object {
         private val LOG = Logger.getInstance(DelegationOutboundService::class.java)
         const val MAX_CHANNELS = 5
         /** Idle timer ticks at this cadence to keep CPU cost low while still being responsive. */
         const val IDLE_CHECK_INTERVAL_MILLIS = 30_000L
     }
+}
+
+/**
+ * Result type for [DelegationOutboundService.fetchTranscript].
+ *
+ * Plan 3 spec §5.7.
+ */
+sealed class FetchTranscriptResult {
+    data class Ok(val transcriptPath: String) : FetchTranscriptResult()
+    data class NotFound(val reason: String) : FetchTranscriptResult()
 }

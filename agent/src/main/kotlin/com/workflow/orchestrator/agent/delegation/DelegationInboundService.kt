@@ -16,6 +16,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -146,6 +147,13 @@ class DelegationInboundService(
                                     "on session $localSessionId (race or stale message)"
                             )
                         }
+                    }
+                    is DelegationMessage.FetchTranscript -> {
+                        handleFetchTranscript(
+                            sessionId = msg.sessionId,
+                            requestId = msg.requestId,
+                            replyWith = replyWith,
+                        )
                     }
                     else -> {
                         LOG.warn(
@@ -329,6 +337,87 @@ class DelegationInboundService(
      */
     fun stopHeartbeatForSession(sessionId: String) {
         sessionChannels[sessionId]?.heartbeat?.stop()
+    }
+
+    // ── FetchTranscript support (Plan 3 Task 7) ─────────────────────────────────
+
+    /**
+     * Visible-for-tests session-directory resolver. Production code reads from
+     * the real session store via [defaultSessionDir]; tests stub a lambda for
+     * deterministic file fixtures.
+     */
+    internal var testSessionDirResolver: ((String) -> Path?)? = null
+
+    private fun resolveSessionDir(sessionId: String): Path? =
+        testSessionDirResolver?.invoke(sessionId)
+            ?: defaultSessionDir(sessionId)
+
+    private fun defaultSessionDir(sessionId: String): Path? {
+        val basePath = project.basePath ?: return null
+        // {ProjectIdentifier.agentDir(basePath)}/sessions/{sessionId}/
+        // Verified at AgentService.kt:2751 which already follows this pattern.
+        val agentDir = com.workflow.orchestrator.core.util.ProjectIdentifier.agentDir(basePath)
+        return java.io.File(agentDir, "sessions/$sessionId").toPath()
+    }
+
+    /**
+     * Handle an inbound [DelegationMessage.FetchTranscript]. Writes the session's
+     * full conversation history to a sidecar `transcript-export.json` under the
+     * same session directory and replies on the channel that RECEIVED the request
+     * (not via [sessionChannels] lookup, since the request may target a closed
+     * session whose channel no longer exists).
+     *
+     * Plan 3 spec §5.7.
+     */
+    suspend fun handleFetchTranscript(
+        sessionId: String,
+        requestId: String,
+        replyWith: suspend (DelegationMessage) -> Unit,
+    ) {
+        val sessionDir = resolveSessionDir(sessionId)
+        if (sessionDir == null) {
+            replyWith(
+                DelegationMessage.FetchTranscriptReply(
+                    requestId = requestId,
+                    status = "not_found",
+                    error = "session $sessionId not in sessions index",
+                )
+            )
+            return
+        }
+        val historyFile = sessionDir.resolve("api_conversation_history.json")
+        if (!Files.exists(historyFile)) {
+            replyWith(
+                DelegationMessage.FetchTranscriptReply(
+                    requestId = requestId,
+                    status = "not_found",
+                    error = "no conversation history on disk for $sessionId",
+                )
+            )
+            return
+        }
+        val exportPath = sessionDir.resolve("transcript-export.json")
+        try {
+            withContext(Dispatchers.IO) {
+                Files.copy(historyFile, exportPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            }
+            replyWith(
+                DelegationMessage.FetchTranscriptReply(
+                    requestId = requestId,
+                    status = "ok",
+                    transcriptPath = exportPath.toAbsolutePath().toString(),
+                )
+            )
+        } catch (e: Exception) {
+            LOG.warn("handleFetchTranscript: copy failed for $sessionId", e)
+            replyWith(
+                DelegationMessage.FetchTranscriptReply(
+                    requestId = requestId,
+                    status = "not_found",
+                    error = "io_error: ${e.message ?: e.javaClass.simpleName}",
+                )
+            )
+        }
     }
 
     companion object {
