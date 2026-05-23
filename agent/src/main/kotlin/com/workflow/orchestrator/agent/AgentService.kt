@@ -897,6 +897,7 @@ class AgentService(
         safeRegisterCore { UseSkillTool() }
         safeRegisterCore { NewTaskTool() }
         safeRegisterCore { RenderArtifactTool() }
+        safeRegisterCore { com.workflow.orchestrator.agent.tools.builtin.WebFetchTool() }
 
         // Task system tools — four LLM-facing tools for typed task management.
         // Ported from Claude Code's task-system behavior. Hook-exempt (see AgentLoop.HOOK_EXEMPT).
