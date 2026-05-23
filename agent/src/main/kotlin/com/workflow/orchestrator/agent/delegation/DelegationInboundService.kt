@@ -427,7 +427,7 @@ class DelegationInboundService(
             replyWith(
                 DelegationMessage.FetchTranscriptReply(
                     requestId = requestId,
-                    status = "not_found",
+                    status = "error",
                     error = "io_error: ${e.message ?: e.javaClass.simpleName}",
                 )
             )

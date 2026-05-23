@@ -187,7 +187,10 @@ class DelegationOutboundService(
                         }
                         is DelegationMessage.FetchTranscriptReply -> {
                             pendingFetches.remove(msg.requestId)?.complete(msg)
-                                ?: LOG.warn("FetchTranscriptReply for unknown requestId ${msg.requestId}")
+                                ?: LOG.debug(
+                                    "FetchTranscriptReply for unknown requestId ${msg.requestId} " +
+                                        "(reply arrived after the 30s timeout — benign, deferred already cancelled)"
+                                )
                         }
                         is DelegationMessage.Result -> {
                             onResult(handle, msg)

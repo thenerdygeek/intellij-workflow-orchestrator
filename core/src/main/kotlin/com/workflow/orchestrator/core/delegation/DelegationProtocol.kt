@@ -119,6 +119,8 @@ sealed class DelegationMessage {
      * - `status="not_found"` — sessionId is not in IDE-B's sessions index (pruned or never existed).
      * - `status="expired"` — session exists but transcript export has been cleaned up (reserved
      *   for future TTL behavior; v1 keeps exports for the life of the session).
+     * - `status="error"` — IDE-B encountered an I/O or unexpected failure while serializing the
+     *   transcript. [error] contains the diagnostic message.
      *
      * Plan 3 spec §4.1.
      */
