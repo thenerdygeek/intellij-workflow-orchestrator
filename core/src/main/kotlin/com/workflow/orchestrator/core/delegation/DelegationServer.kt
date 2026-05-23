@@ -40,6 +40,7 @@ class DelegationServer(
     private val onConnect: suspend (
         connect: DelegationMessage.Connect,
         replyWith: suspend (DelegationMessage) -> Unit,
+        readMessage: suspend () -> DelegationMessage,
         closeChannel: suspend () -> Unit,
     ) -> Unit,
     private val scope: CoroutineScope,
@@ -105,10 +106,13 @@ class DelegationServer(
                     val replyWith: suspend (DelegationMessage) -> Unit = { reply ->
                         withContext(Dispatchers.IO) { DelegationFraming.writeFramed(client, reply, json) }
                     }
+                    val readMessage: suspend () -> DelegationMessage = {
+                        withContext(Dispatchers.IO) { DelegationFraming.readFramed(client, json) }
+                    }
                     val closeChannel: suspend () -> Unit = {
                         try { client.close() } catch (_: Exception) {}
                     }
-                    onConnect(msg, replyWith, closeChannel)
+                    onConnect(msg, replyWith, readMessage, closeChannel)
                     // F1: the onConnect handler is now responsible for calling closeChannel()
                     // after the terminal Result is sent. The server does NOT close here because
                     // the handler may send multiple messages before the terminal one. The channel

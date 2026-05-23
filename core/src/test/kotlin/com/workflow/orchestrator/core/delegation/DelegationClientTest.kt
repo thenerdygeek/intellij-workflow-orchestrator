@@ -15,7 +15,7 @@ class DelegationClientTest {
             val server = DelegationServer(
                 socketPath = socketPath,
                 projectPath = "/projects/X",
-                onConnect = { _, _, _ -> error("Connect should not arrive during Ping test") },
+                onConnect = { _, _, _, _ -> error("Connect should not arrive during Ping test") },
                 scope = this,
             )
             server.start()
@@ -44,7 +44,7 @@ class DelegationClientTest {
             val server = DelegationServer(
                 socketPath = socketPath,
                 projectPath = "/p",
-                onConnect = { _, replyWith, closeChannel ->
+                onConnect = { _, replyWith, _readMessage, closeChannel ->
                     replyWith(DelegationMessage.AcceptResult(accepted = true))
                     closeChannel()
                 },
@@ -75,7 +75,7 @@ class DelegationClientTest {
             val server = DelegationServer(
                 socketPath = socketPath,
                 projectPath = "/p",
-                onConnect = { _, replyWith, closeChannel ->
+                onConnect = { _, replyWith, _readMessage, closeChannel ->
                     replyWith(DelegationMessage.AcceptResult(accepted = false, reason = "user_rejected"))
                     closeChannel()
                 },

@@ -1,8 +1,11 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
+import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.delegation.DelegationInboundService
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -13,8 +16,8 @@ import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
 import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.agent.util.JsEscape
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -262,6 +265,55 @@ class AskQuestionsTool : AgentTool {
                 "Error: missing question", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
             )
         }
+
+        // ── Delegated-session branch (Plan 2 Task 4) ──────────────────────────
+        // When this session is running on behalf of a remote IDE-A (delegated == non-null),
+        // route the question over IPC instead of showing a local UI dialog.
+        val agentService = project.service<AgentService>()
+        val sessionState = agentService.currentSessionState()
+        if (sessionState?.delegated != null) {
+            val sid = sessionState.sessionId
+            val inbound = project.service<DelegationInboundService>()
+            // For delegated sessions we only support simple mode. Wizard mode questions are
+            // flattened to a single question string because the remote IDE-A renders its own
+            // question UI; the structured wizard payload would be opaque to it.
+            val questionText = simpleQuestion ?: run {
+                // Wizard mode fallback: extract the first question's text as a plain string.
+                // The remote side has no wizard renderer; send the question text + options.
+                try {
+                    val firstQuestion = json.decodeFromString<List<Question>>(questionsJson!!).firstOrNull()
+                    firstQuestion?.question ?: questionsJson
+                } catch (_: Exception) { questionsJson!! }
+            }
+            val optionsStr = params["options"]?.let { element ->
+                try { element.jsonPrimitive.content } catch (_: Exception) { element.toString() }
+            }
+            val options = if (optionsStr != null) {
+                try { json.decodeFromString<List<String>>(optionsStr) } catch (_: Exception) { emptyList() }
+            } else emptyList()
+
+            return try {
+                val answer = inbound.routeQuestion(sid, questionText, options)
+                val content = buildString {
+                    appendLine("<question>")
+                    appendLine(questionText)
+                    appendLine("</question>")
+                    appendLine("<answer>")
+                    appendLine(answer)
+                    appendLine("</answer>")
+                }
+                ToolResult(
+                    content = content,
+                    summary = "Answered via cross-IDE delegation: ${answer.take(200)}",
+                    tokenEstimate = TokenEstimator.estimate(content),
+                )
+            } catch (e: CancellationException) {
+                ToolResult.error("Delegated session ended while waiting for an answer from IDE-A")
+            } catch (e: Exception) {
+                ToolResult.error("Failed to route question over delegation IPC: ${e.message}")
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
 
         // ── Simple mode: single question, user types answer ──
         if (simpleQuestion != null) {
