@@ -39,4 +39,20 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    // Gradle 9: declare ordering so that when multiple modules are tested in one build
+    // invocation (e.g. ./gradlew :core:test :web:test :agent:test) the test task does
+    // not implicitly consume sandbox outputs from sibling modules before those tasks run.
+    // mustRunAfter (not dependsOn) so :web:test still works standalone without pulling
+    // in every other module's test infrastructure.
+    mustRunAfter(
+        ":core:prepareTestSandbox",
+        ":agent:prepareTestSandbox",
+        ":document:prepareTestSandbox",
+        ":jira:prepareTestSandbox",
+        ":bamboo:prepareTestSandbox",
+        ":sonar:prepareTestSandbox",
+        ":pullrequest:prepareTestSandbox",
+        ":automation:prepareTestSandbox",
+        ":handover:prepareTestSandbox",
+    )
 }

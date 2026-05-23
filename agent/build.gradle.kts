@@ -66,6 +66,19 @@ tasks.test {
     // :document's sandbox must be prepared before :agent tests run because :agent now
     // depends on :document and the IntelliJ Platform test runner shares the sandbox directory.
     dependsOn(":document:prepareTestSandbox")
+    // Gradle 9: declare ordering for all sibling modules whose prepareTestSandbox output
+    // the shared IntelliJ sandbox directory may consume when multiple modules are tested
+    // in one invocation. mustRunAfter (not dependsOn) keeps :agent:test self-contained.
+    mustRunAfter(
+        ":core:prepareTestSandbox",
+        ":web:prepareTestSandbox",
+        ":jira:prepareTestSandbox",
+        ":bamboo:prepareTestSandbox",
+        ":sonar:prepareTestSandbox",
+        ":pullrequest:prepareTestSandbox",
+        ":automation:prepareTestSandbox",
+        ":handover:prepareTestSandbox",
+    )
 }
 
 tasks.register<Exec>("npmInstallWebview") {
