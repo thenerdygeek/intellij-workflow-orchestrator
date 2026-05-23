@@ -33,6 +33,10 @@ class DelegationOutboundService(
     private val cs: CoroutineScope,
 ) {
     private val activeChannels = ConcurrentHashMap<String, SocketChannel>()
+
+    /** Maps outbound delegation handle → the local Agent-A session that holds it. */
+    private val handleToSessionId = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     private val json = Json { ignoreUnknownKeys = true; classDiscriminator = "type" }
 
     /**
@@ -93,17 +97,28 @@ class DelegationOutboundService(
             targetRepoName = picked.displayName,
         )
         activeChannels[handle.id] = channel
+        handleToSessionId[handle.id] = delegatorSessionId
         // Note: the result-reader coroutine is launched OUTSIDE the sendMutex.withLock
         // body so that result delivery is not gated on the next send call. The channel
         // insertion into activeChannels above has already happened under the lock.
         cs.launch(Dispatchers.IO) {
             try {
-                val result = DelegationFraming.readFramed(channel, json) as? DelegationMessage.Result
-                    ?: DelegationMessage.Result(
-                        status = DelegationMessage.ResultStatus.FAILED,
-                        reason = "unexpected non-Result message from peer",
-                    )
-                onResult(handle, result)
+                while (true) {
+                    val msg = withContext(Dispatchers.IO) {
+                        DelegationFraming.readFramed(channel, json)
+                    }
+                    when (msg) {
+                        is DelegationMessage.Question -> handleIncomingQuestion(handle, msg)
+                        is DelegationMessage.AnswerCanceled -> rescindLocalQuestion(handle, msg.questionId, msg.reason)
+                        is DelegationMessage.Result -> {
+                            onResult(handle, msg)
+                            return@launch
+                        }
+                        else -> {
+                            LOG.warn("Unexpected message on outbound channel: ${msg::class.simpleName}")
+                        }
+                    }
+                }
             } catch (e: Exception) {
                 LOG.warn("Result read failed for ${handle.id}", e)
                 onResult(
@@ -125,6 +140,7 @@ class DelegationOutboundService(
      * Returns true if a channel was found and closed.
      */
     fun close(handleId: String): Boolean {
+        handleToSessionId.remove(handleId)
         val ch = activeChannels.remove(handleId) ?: return false
         try { ch.close() } catch (_: Exception) {}
         return true
@@ -133,6 +149,43 @@ class DelegationOutboundService(
     /** Close every active channel. Called from project disposal. */
     fun closeAll() {
         activeChannels.keys.toList().forEach(::close)
+    }
+
+    private suspend fun handleIncomingQuestion(
+        handle: DelegationHandle,
+        question: DelegationMessage.Question,
+    ) {
+        val sessionId = handleToSessionId[handle.id] ?: run {
+            LOG.warn("handleIncomingQuestion: no delegator session for ${handle.id}")
+            return
+        }
+        val agentService = project.getService(
+            com.workflow.orchestrator.agent.AgentService::class.java
+        )
+        val nudge = buildString {
+            append("Delegated session ${handle.targetRepoName} (handle ${handle.id.take(8)}) ")
+            append("raised a clarifying question:\n\n")
+            append(question.text)
+            if (question.options.isNotEmpty()) {
+                append("\n\nSuggested options: ${question.options.joinToString(", ")}")
+            }
+            append("\n\nQuestion ID: ${question.questionId}\n")
+            append("Use the delegation_answer tool to reply. If you cannot answer ")
+            append("confidently from your own context, ask the user.")
+        }
+        agentService.enqueueNudgeForSession(sessionId, nudge)
+    }
+
+    private fun rescindLocalQuestion(handle: DelegationHandle, questionId: String, reason: String) {
+        val sessionId = handleToSessionId[handle.id] ?: return
+        val agentService = project.getService(
+            com.workflow.orchestrator.agent.AgentService::class.java
+        )
+        agentService.enqueueNudgeForSession(
+            sessionId,
+            "Delegated session question $questionId was answered locally by the " +
+                "human in the receiving IDE ($reason). No action needed.",
+        )
     }
 
     private suspend fun pickTarget(suggestedRepo: String?): PickerEntry? =
