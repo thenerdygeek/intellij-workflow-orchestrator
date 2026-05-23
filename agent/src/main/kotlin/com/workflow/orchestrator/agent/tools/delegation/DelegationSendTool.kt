@@ -20,13 +20,17 @@ import kotlinx.serialization.json.jsonPrimitive
  * `delegation_send` — request work from an agent in another running IntelliJ
  * instance that holds a different repo open.
  *
- * MVP: one-shot. No continue_with, no answer-pending semantics. The picker
- * opens, the user picks the target IDE, a Connect is sent, and the handle is
- * returned to the LLM. The actual work result arrives later as a system nudge
- * injected via [AgentService.enqueueNudgeForSession] when the remote agent
- * finishes.
+ * Supports two dispatch modes:
+ * - **Fresh send** (no `handle`): the picker opens, the user picks the target
+ *   IDE, a Connect handshake is sent, and the handle is returned to the LLM.
+ *   The actual work result arrives later as a system nudge injected via
+ *   [AgentService.enqueueNudgeForSession] when the remote agent finishes.
+ * - **Continuation** (`handle` set, Plan 4): skips picker + Accept; sends a
+ *   [com.workflow.orchestrator.core.delegation.DelegationMessage.UserTurn] over
+ *   the existing channel via [DelegationOutboundService.sendContinuation].
+ *   Returns immediately; results still arrive as a nudge.
  *
- * Spec: docs/superpowers/specs/2026-05-22-cross-ide-agent-delegation-design.md §4.1, §6.5.
+ * Spec: docs/superpowers/specs/2026-05-22-cross-ide-agent-delegation-design.md §4.1, §5.2, §6.5.
  */
 class DelegationSendTool : AgentTool {
 
@@ -54,6 +58,9 @@ class DelegationSendTool : AgentTool {
                          relevant context, expected deliverables.
           suggested_repo (optional) Name hint pre-selects an entry in the picker. Helpful
                          when you know which repo is needed (e.g. "frontend", "auth-service").
+          handle         (optional) Existing channel handle to reuse. When set, skips the
+                         picker and Accept dialog; sends the request as a new user turn to
+                         the existing Agent-B session. Use to follow up on a previous delegation.
 
         Returns on success:
           JSON with handle id, status "running", and the repo name the user picked.
@@ -71,6 +78,12 @@ class DelegationSendTool : AgentTool {
             "suggested_repo" to ParameterProperty(
                 type = "string",
                 description = "Optional repo name hint to pre-select in the picker (e.g. \"frontend\")."
+            ),
+            "handle" to ParameterProperty(
+                type = "string",
+                description = "Existing channel handle to reuse. When set, skips the picker and Accept dialog; " +
+                    "sends the request as a new user turn to the existing Agent-B session. " +
+                    "Use to follow up on a previous delegation. Plan 4 §5.2."
             ),
         ),
         required = listOf("request"),
@@ -109,6 +122,37 @@ class DelegationSendTool : AgentTool {
         val delegatorSessionId = agentService.currentSessionState()?.sessionId
             ?: return ToolResult.error("delegation_send: no active session — cannot determine delegator session ID")
 
+        // Plan 4: continue_with branch. Skip picker + Accept; send UserTurn over existing channel.
+        val handleId = params["handle"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+        if (handleId != null) {
+            return try {
+                val handle = outboundService.sendContinuation(
+                    handleId = handleId,
+                    request = request,
+                    delegatorSessionId = delegatorSessionId,
+                )
+                val shortId = handle.id.take(8)
+                val content = buildString {
+                    appendLine("""{"handle":"${handle.id}","status":"running","repo":"${handle.targetRepoName}"}""")
+                    appendLine()
+                    appendLine(
+                        "Continuation sent to ${handle.targetRepoName} (handle $shortId). " +
+                            "Agent-B will process the new user turn; results will arrive as a nudge."
+                    )
+                }.trimEnd()
+                ToolResult(
+                    content = content,
+                    summary = "Continuation sent to ${handle.targetRepoName} ($shortId) — awaiting result",
+                    tokenEstimate = 30,
+                )
+            } catch (e: DelegationException.Expired) {
+                ToolResult.error("DelegationExpired: ${e.expireReason ?: "no_reason"}")
+            } catch (e: DelegationException.WriteFailed) {
+                ToolResult.error("DelegationWriteFailed: ${e.ioReason}")
+            }
+        }
+
+        // Fresh-send branch (existing logic, unchanged).
         return try {
             val handle = outboundService.send(
                 request = request,
