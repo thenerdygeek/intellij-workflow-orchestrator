@@ -10,6 +10,7 @@ export function HistoryView() {
   const historyItems = useChatStore((s) => s.historyItems);
   const historySearch = useChatStore((s) => s.historySearch);
   const setHistorySearch = useChatStore((s) => s.setHistorySearch);
+  const setActiveSessionDelegated = useChatStore((s) => s.setActiveSessionDelegated);
 
   // Bulk selection state
   const [selectionMode, setSelectionMode] = useState(false);
@@ -32,6 +33,10 @@ export function HistoryView() {
   }, [historyItems, historySearch]);
 
   const handleResume = (id: string) => {
+    // Stash delegation metadata before handing off to Kotlin so the banner
+    // is ready by the time _loadSessionState switches the view to 'chat'.
+    const item = historyItems.find((h) => h.id === id);
+    setActiveSessionDelegated(item?.delegated ?? null);
     kotlinBridge.showSession(id);
   };
 

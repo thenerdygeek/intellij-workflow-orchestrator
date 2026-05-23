@@ -18,6 +18,7 @@ import type {
   UiMessage,
   SubAgentState,
   HistoryItem,
+  DelegationMetadata,
   CompletionData,
   CompletionKind,
   ImageRef,
@@ -370,6 +371,9 @@ interface ChatState {
   historyItems: HistoryItem[];
   historySearch: string;
 
+  // Delegation banner — non-null when the active session was delegated from another IDE
+  activeSessionDelegated: DelegationMetadata | null;
+
   // Editor-tab fullscreen mode — when true, chrome (TopBar/InputBar/etc.) is hidden
   // and the single block fills the pane. Toggled by AgentVisualizationEditor.
   editorTabMode: boolean;
@@ -525,6 +529,7 @@ interface ChatState {
   setViewMode(mode: 'history' | 'chat'): void;
   setHistoryItems(items: HistoryItem[]): void;
   setHistorySearch(query: string): void;
+  setActiveSessionDelegated(delegated: DelegationMetadata | null): void;
 
   // Editor-tab fullscreen mode
   setEditorTabMode(enabled: boolean): void;
@@ -600,6 +605,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   viewMode: 'chat' as const,
   historyItems: [],
   historySearch: '',
+  activeSessionDelegated: null,
   resumeSessionId: null,
   tasks: [],
   backgroundProcesses: [],
@@ -646,6 +652,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       sessionStats: null,
       viewMode: 'chat' as const,
       nextStepHint: null,
+      activeSessionDelegated: null,
       session: {
         status: 'RUNNING',
         tokensUsed: 0,
@@ -1183,6 +1190,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       resumeSessionId: null,
       nextStepHint: null,
       aggregateDiff: null,
+      activeSessionDelegated: null,
     });
   },
 
@@ -2255,6 +2263,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
   setHistorySearch(query: string) {
     set({ historySearch: query });
+  },
+  setActiveSessionDelegated(delegated: DelegationMetadata | null) {
+    set({ activeSessionDelegated: delegated });
   },
 
   setResumeSessionId(sessionId: string | null) {

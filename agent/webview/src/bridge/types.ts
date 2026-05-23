@@ -452,6 +452,16 @@ export interface UiMessage {
   attachments?: ImageRef[];
 }
 
+/** Mirrors Kotlin DelegationMetadata — populated when this session was delegated from another IDE instance. */
+export interface DelegationMetadata {
+  delegatorIde: string;
+  delegatorRepo: string;
+  delegatorSessionId: string;
+  startedAt: number;
+  closedAt?: number | null;
+  closeReason?: string | null;
+}
+
 /** Mirrors Kotlin HistoryItem from sessions.json */
 export interface HistoryItem {
   id: string;
@@ -464,4 +474,5 @@ export interface HistoryItem {
   totalCost: number;
   modelId?: string | null;
   isFavorited: boolean;
+  delegated?: DelegationMetadata | null;
 }
