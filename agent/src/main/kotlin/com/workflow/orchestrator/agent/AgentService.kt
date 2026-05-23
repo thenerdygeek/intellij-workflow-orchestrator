@@ -2946,17 +2946,40 @@ class AgentService(
      * F2: metadata written to HistoryItem.delegated (replaces delegation.json sidecar).
      * F6: metadata threaded into Session.delegated via executeTask's delegationMetadata param.
      */
+    /**
+     * Start a delegated agent session (Plan 2 Task 4).
+     *
+     * Returns the local session ID synchronously so the caller
+     * ([DelegationInboundService.handleConnect]) has the ID in hand before the
+     * agent loop launches — required to run the Answer-read loop with the correct
+     * session ID.
+     *
+     * The [replyWith] callback is registered with [DelegationInboundService] before
+     * the loop starts so [AskQuestionsTool] can call [DelegationInboundService.routeQuestion]
+     * on the first iteration without a race.
+     */
     fun startDelegatedSession(
         request: String,
         delegationMetadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
+        replyWith: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage) -> Unit,
         onResult: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit,
-    ) {
+    ): String {
         val sid = UUID.randomUUID().toString()
         val startTime = System.currentTimeMillis()
         log.info(
             "[Agent] startDelegatedSession: sessionId=$sid, delegator=${delegationMetadata.delegatorIde}, " +
                 "repo=${delegationMetadata.delegatorRepo}, request='${request.take(60)}'"
         )
+
+        // Stamp the per-session state with delegation metadata BEFORE the loop starts
+        // so AskQuestionsTool can detect the delegated context on the very first iteration.
+        sessionStateFor(sid).also { it.delegated = delegationMetadata }
+
+        // Register the reply channel so routeQuestion can find it when the tool fires.
+        val inbound = project.getService(
+            com.workflow.orchestrator.agent.delegation.DelegationInboundService::class.java
+        )
+        inbound.registerSessionChannel(sid, replyWith)
 
         // Run the agent loop. executeTask returns a Job immediately; we capture the
         // LoopResult via the onComplete callback using a CompletableDeferred so we can
@@ -3028,8 +3051,12 @@ class AgentService(
                         durationSeconds = durationSeconds,
                     )
                 )
+            } finally {
+                inbound.unregisterSessionChannel(sid)
             }
         }
+
+        return sid
     }
 
     // ── Cancel ─────────────────────────────────────────────────────────────

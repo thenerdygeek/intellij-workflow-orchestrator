@@ -2,6 +2,9 @@ package com.workflow.orchestrator.agent.session
 
 import java.util.concurrent.atomic.AtomicBoolean
 
+// DelegationMetadata import is intentionally from the agent session package —
+// the same DelegationMetadata that AgentService uses when starting a delegated session.
+
 /**
  * Per-session in-memory mutable state for the agent.
  *
@@ -26,4 +29,19 @@ class PerSessionAgentState(
      * requested initial value on the second call (F5 fix).
      */
     val planModeActive: AtomicBoolean = AtomicBoolean(false)
+
+    /**
+     * Delegation metadata for this session if it was started via cross-IDE delegation
+     * (i.e. an IDE-A sent a Connect message and IDE-B accepted it). Null for locally-
+     * initiated sessions.
+     *
+     * Set by [com.workflow.orchestrator.agent.AgentService.startDelegatedSession]
+     * before the agent loop is launched so that tools (e.g. [com.workflow.orchestrator
+     * .agent.tools.builtin.AskQuestionsTool]) can detect the delegated context and
+     * route accordingly.
+     *
+     * Plan 2 Task 4 — Spec §6.3.
+     */
+    @Volatile
+    var delegated: DelegationMetadata? = null
 }

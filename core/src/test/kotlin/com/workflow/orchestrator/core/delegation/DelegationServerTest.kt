@@ -23,7 +23,7 @@ class DelegationServerTest {
             val server = DelegationServer(
                 socketPath = socketPath,
                 projectPath = "/users/me/frontend",
-                onConnect = { _, _, _ -> error("Connect should not arrive during Ping test") },
+                onConnect = { _, _, _, _ -> error("Connect should not arrive during Ping test") },
                 scope = this,
             )
             server.start()
@@ -51,7 +51,7 @@ class DelegationServerTest {
             val server = DelegationServer(
                 socketPath = socketPath,
                 projectPath = "/users/me/frontend",
-                onConnect = { connect, replyWith, closeChannel ->
+                onConnect = { connect, replyWith, _readMessage, closeChannel ->
                     connectSeen.complete(connect)
                     replyWith(DelegationMessage.AcceptResult(accepted = true))
                     // F1: close after the terminal message (AcceptResult is terminal for this test)
@@ -97,7 +97,7 @@ class DelegationServerTest {
             val server = DelegationServer(
                 socketPath = socketPath,
                 projectPath = "/p",
-                onConnect = { _, _, _ -> },
+                onConnect = { _, _, _, _ -> },
                 scope = this,
             )
             server.start()
@@ -116,7 +116,7 @@ class DelegationServerTest {
             val server = DelegationServer(
                 socketPath = socketPath,
                 projectPath = "/p",
-                onConnect = { _, _, _ -> },
+                onConnect = { _, _, _, _ -> },
                 scope = this,
             )
             // Must not throw "Address already in use"

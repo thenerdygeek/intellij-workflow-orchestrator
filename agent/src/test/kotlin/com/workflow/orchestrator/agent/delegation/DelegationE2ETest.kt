@@ -22,7 +22,7 @@ class DelegationE2ETest {
             val server = DelegationServer(
                 socketPath = socketPath,
                 projectPath = "/projects/B",
-                onConnect = { connect, replyWith, closeChannel ->
+                onConnect = { connect, replyWith, _readMessage, closeChannel ->
                     assertEquals("backend-test", connect.delegatorRepo)
                     assertEquals("Add a createUser endpoint", connect.request)
                     replyWith(DelegationMessage.AcceptResult(accepted = true))
@@ -78,7 +78,7 @@ class DelegationE2ETest {
             val server = DelegationServer(
                 socketPath = socketPath,
                 projectPath = "/projects/B",
-                onConnect = { _, replyWith, closeChannel ->
+                onConnect = { _, replyWith, _readMessage, closeChannel ->
                     replyWith(DelegationMessage.AcceptResult(accepted = false, reason = "user_rejected"))
                     closeChannel()
                 },
@@ -113,7 +113,7 @@ class DelegationE2ETest {
             val server = DelegationServer(
                 socketPath = socketPath,
                 projectPath = "/p",
-                onConnect = { _, replyWith, closeChannel ->
+                onConnect = { _, replyWith, _readMessage, closeChannel ->
                     replyWith(DelegationMessage.AcceptResult(accepted = true))
                     replyWith(
                         DelegationMessage.Result(
@@ -160,7 +160,7 @@ class DelegationE2ETest {
             val serverA = DelegationServer(
                 socketPath = socketA,
                 projectPath = "/A",
-                onConnect = { c, replyWith, closeChannel ->
+                onConnect = { c, replyWith, _readMessage, closeChannel ->
                     replyWith(DelegationMessage.AcceptResult(accepted = true))
                     replyWith(
                         DelegationMessage.Result(
@@ -175,7 +175,7 @@ class DelegationE2ETest {
             val serverB = DelegationServer(
                 socketPath = socketB,
                 projectPath = "/B",
-                onConnect = { c, replyWith, closeChannel ->
+                onConnect = { c, replyWith, _readMessage, closeChannel ->
                     replyWith(DelegationMessage.AcceptResult(accepted = true))
                     replyWith(
                         DelegationMessage.Result(
