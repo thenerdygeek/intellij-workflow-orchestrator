@@ -6,14 +6,14 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-class ShortenerResolver(private val client: OkHttpClient) {
+open class ShortenerResolver(private val client: OkHttpClient) {
 
     sealed class Result {
         data class Resolved(val finalUrl: String) : Result()
         data class Failed(val error: WebError) : Result()
     }
 
-    suspend fun resolve(url: String): Result = withContext(Dispatchers.IO) {
+    open suspend fun resolve(url: String): Result = withContext(Dispatchers.IO) {
         // Single GET with followRedirects(false): check Location header first,
         // then fall back to reading up to 1024 bytes for a meta-refresh tag.
         val req = Request.Builder().url(url).get().build()

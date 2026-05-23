@@ -1,0 +1,333 @@
+package com.workflow.orchestrator.web.service
+
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.model.web.AllowlistDecision
+import com.workflow.orchestrator.core.model.web.SanitizerVerdict
+import com.workflow.orchestrator.core.security.UrlSafetyGuard
+import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.web.SubagentSpawner
+import com.workflow.orchestrator.core.web.WebFetchService
+import com.workflow.orchestrator.web.audit.WebAuditLog
+import com.workflow.orchestrator.web.service.sanitizer.JsoupReadability
+import com.workflow.orchestrator.web.service.sanitizer.SanitizerSubagent
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
+import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import java.net.InetAddress
+import java.nio.file.Files
+
+/**
+ * End-to-end pipeline tests for [WebFetchEngine] covering 8 fetch scenarios.
+ *
+ * Uses [MockWebServer] for HTTP; mocks [SubagentSpawner] and [ApprovalGate].
+ * Constructs [WebFetchEngine] directly (not the @Service facade) per R9.
+ *
+ * ## SSRF guard and MockWebServer
+ *
+ * [UrlSafetyGuard] runs a literal check on the host before DNS resolution. For hosts like
+ * `localhost` and `127.x.x.x` it rejects with IPV4_LOOPBACK. MockWebServer binds to a
+ * loopback address by default, so tests that need to reach it must use a resolver that
+ * maps MockWebServer's hostname to a non-blocked test address.
+ *
+ * [mockWebServerResolver] intercepts `localhost` (and any 127.x.x.x pattern encountered
+ * via URI.host) and returns `203.0.113.1` (TEST-NET-3, RFC 5737) — a publicly-routed-looking
+ * IP that is not in any blocked range. All other hosts are resolved normally. The OkHttp
+ * client must also be pointed at the server's real address (MockWebServer provides that via
+ * `server.url(...)` with the actual port), so the combination works end-to-end.
+ *
+ * The link-local literal check (169.254.x.x) happens in [UrlSafetyGuard.literalRejection]
+ * BEFORE any DNS lookup, so redirect-to-blocked-host tests still exercise the guard correctly.
+ */
+class WebFetchPipelineE2ETest {
+
+    private lateinit var server: MockWebServer
+    private lateinit var engine: WebFetchEngine
+    private lateinit var state: PluginSettings.State
+    private lateinit var settings: PluginSettings
+    private lateinit var spawner: SubagentSpawner
+    private lateinit var gate: FakeApprovalGate
+    private val project = mockk<Project>(relaxed = true)
+
+    /**
+     * DNS resolver for tests: maps `localhost` and any 127.x.x.x literal host to
+     * `203.0.113.1` (TEST-NET-3, RFC 5737) — not in any blocked range.
+     * For every other host it delegates to the real system resolver.
+     *
+     * UrlSafetyGuard.literalRejection runs BEFORE this resolver is called, so 169.254.x.x
+     * addresses are still blocked textually without reaching the DNS path.
+     */
+    private val mockWebServerResolver = UrlSafetyGuard.Resolver { host ->
+        if (host == "localhost" || host.matches(Regex("""^127\.\d+\.\d+\.\d+$"""))) {
+            // Return a TEST-NET-3 public IP so loopback + private-LAN checks don't fire
+            arrayOf(InetAddress.getByName("203.0.113.1"))
+        } else {
+            InetAddress.getAllByName(host)
+        }
+    }
+
+    private fun freshState(allowlistJson: String = "[]"): PluginSettings.State =
+        PluginSettings.State().apply {
+            webMaxBytes = 262_144
+            webMaxExtractedChars = 32_768
+            webRequireHttps = false         // MockWebServer is http://
+            webAllowIpLiteral = true        // allow 127.x.x.x through UrlScreener IP literal check
+            webUnlistedPolicy = "PROMPT"
+            webAllowlistJson = allowlistJson
+            webSanitizerFailClosed = true
+            webApprovalTimeoutSec = 60
+            webConnectTimeoutSec = 10
+            webReadTimeoutSec = 30
+            webResolveShorteners = true
+        }
+
+    private fun buildEngine(
+        resolverOverride: UrlSafetyGuard.Resolver = mockWebServerResolver,
+        shortenerResolverOverride: ShortenerResolver? = null,
+        allowLoopbackOverride: Boolean = true,
+    ): WebFetchEngine {
+        val fetchClient = OkHttpClient.Builder()
+            .followRedirects(false)
+            .addInterceptor(StripAuthHeadersInterceptor())
+            .build()
+        val shortenerClient = OkHttpClient.Builder().followRedirects(false).build()
+        return WebFetchEngine(
+            project = project,
+            settings = settings,
+            client = fetchClient,
+            sanitizer = JsoupReadability(),
+            sanitizerSubagent = SanitizerSubagent(spawner),
+            approvalGate = gate,
+            auditLog = WebAuditLog(Files.createTempDirectory("audit-e2e")),
+            resolver = resolverOverride,
+            shortenerResolver = shortenerResolverOverride
+                ?: ShortenerResolver(shortenerClient),
+            allowLoopback = allowLoopbackOverride,
+        )
+    }
+
+    @BeforeEach
+    fun setUp() {
+        server = MockWebServer().apply { start() }
+        state = freshState()
+        settings = mockk(relaxed = true)
+        every { settings.state } returns state
+
+        spawner = mockk()
+        coEvery { spawner.runSanitizer(any(), any(), any(), any(), any()) } returns
+            SubagentSpawner.SanitizerResult(SubagentSpawner.Verdict.SAFE, "cleaned text", null)
+
+        gate = FakeApprovalGate()
+        engine = buildEngine()
+    }
+
+    @AfterEach
+    fun tearDown() {
+        server.shutdown()
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test 1: allowlisted fast-path
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `allowlisted fast-path returns SAFE WebPage`() = runTest {
+        // MockWebServer binds on localhost; put both localhost and 127.0.0.1 on the allowlist
+        state.webAllowlistJson =
+            """[{"domain":"localhost","httpOk":true,"addedAt":"2026-05-23T00:00:00Z"},{"domain":"127.0.0.1","httpOk":true,"addedAt":"2026-05-23T00:00:00Z"}]"""
+
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .addHeader("Content-Type", "text/html")
+                .setBody("<html><body><article>hi there</article></body></html>")
+        )
+
+        val rr = engine.fetch(WebFetchService.WebFetchRequest(server.url("/").toString()))
+
+        assertFalse(rr.isError, "Expected success but got error: ${rr.summary}")
+        val page = rr.data!!
+        assertEquals(AllowlistDecision.APPROVED_AUTO, page.allowlistDecision)
+        assertEquals(SanitizerVerdict.SAFE, page.sanitizerVerdict)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test 2: unlisted domain — gate returns Denied
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `unlisted denied returns ApprovalDenied error`() = runTest {
+        gate.next = ApprovalGate.Decision.Denied
+        // Allowlist is empty — triggers the approval gate
+
+        val rr = engine.fetch(WebFetchService.WebFetchRequest(server.url("/").toString()))
+
+        assertTrue(rr.isError)
+        assertTrue(
+            rr.summary.startsWith("APPROVAL_DENIED"),
+            "Expected APPROVAL_DENIED prefix but got: ${rr.summary}"
+        )
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test 3: response too large
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `response too large aborts mid-stream`() = runTest {
+        state.webMaxBytes = 1024
+        gate.next = ApprovalGate.Decision.AllowOnce
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .addHeader("Content-Type", "text/html")
+                .setBody("x".repeat(5_000))
+        )
+
+        val rr = engine.fetch(WebFetchService.WebFetchRequest(server.url("/").toString()))
+
+        assertTrue(rr.isError)
+        assertTrue(rr.summary.contains("RESPONSE_TOO_LARGE"), "summary was: ${rr.summary}")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test 4: unsupported content type
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `unsupported content type rejected`() = runTest {
+        gate.next = ApprovalGate.Decision.AllowOnce
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .addHeader("Content-Type", "application/octet-stream")
+                .setBody("binary_blob")
+        )
+
+        val rr = engine.fetch(WebFetchService.WebFetchRequest(server.url("/").toString()))
+
+        assertTrue(rr.isError)
+        assertTrue(rr.summary.contains("UNSUPPORTED_CONTENT_TYPE"), "summary was: ${rr.summary}")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test 5: sanitizer REFUSED
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `sanitizer REFUSED bubbles to error`() = runTest {
+        gate.next = ApprovalGate.Decision.AllowOnce
+        coEvery { spawner.runSanitizer(any(), any(), any(), any(), any()) } returns
+            SubagentSpawner.SanitizerResult(SubagentSpawner.Verdict.REFUSED, "", "too dangerous")
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .addHeader("Content-Type", "text/html")
+                .setBody("<html><body><p>suspicious</p></body></html>")
+        )
+
+        val rr = engine.fetch(WebFetchService.WebFetchRequest(server.url("/").toString()))
+
+        assertTrue(rr.isError)
+        assertTrue(rr.summary.contains("SANITIZER_REFUSED"), "summary was: ${rr.summary}")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test 6 (R3): redirect to 169.254.169.254 blocked by SSRF literal check
+    //
+    // UrlSafetyGuard.literalRejection matches 169.254.x.x before DNS resolution,
+    // so this check fires even with our custom test resolver.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `redirect to 169_254 blocked by SSRF literal check`() = runTest {
+        gate.next = ApprovalGate.Decision.AllowOnce
+        // MockWebServer returns a 302 pointing at the AWS metadata endpoint.
+        // The redirect Location is re-screened by UrlPipeline; the literal
+        // 169.254.169.254 is caught by IPV4_LINK_LOCAL_REGEX in UrlSafetyGuard.
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(302)
+                .addHeader("Location", "http://169.254.169.254/latest/meta-data/")
+        )
+
+        val rr = engine.fetch(WebFetchService.WebFetchRequest(server.url("/").toString()))
+
+        assertTrue(rr.isError, "Expected error but got success: ${rr.summary}")
+        assertTrue(
+            rr.summary.contains("URL_BLOCKED") && rr.summary.contains("IPV4_LINK_LOCAL"),
+            "Expected URL_BLOCKED_IPV4_LINK_LOCAL in summary but got: ${rr.summary}"
+        )
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test 7 (R6): plan-mode blocked when request.planMode=true
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `plan mode blocked when request planMode is true`() = runTest {
+        // The engine checks request.planMode at Stage 0 and returns PlanModeBlocked immediately,
+        // before any URL screening or HTTP call.
+        val rr = engine.fetch(
+            WebFetchService.WebFetchRequest(
+                url = server.url("/").toString(),
+                planMode = true,
+            )
+        )
+
+        assertTrue(rr.isError, "Expected error but got success: ${rr.summary}")
+        assertTrue(rr.summary.contains("PLAN_MODE_BLOCKED"), "summary was: ${rr.summary}")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test 8: shortener resolved to blocked host
+    //
+    // Uses a mocked ShortenerResolver that always returns 169.254.x.x for any
+    // input. The UrlScreener flags https://bit.ly/abc123 as SHORTENER, so the
+    // pipeline calls resolve() on the mock, which returns a blocked address.
+    // The re-screen catches it via the IPV4_LINK_LOCAL literal check.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `shortener resolved to blocked host returns UrlBlocked error`() = runTest {
+        val mockShortener = object : ShortenerResolver(
+            OkHttpClient.Builder().followRedirects(false).build()
+        ) {
+            override suspend fun resolve(url: String): Result =
+                Result.Resolved("http://169.254.169.254/sensitive-endpoint")
+        }
+        val engineWithMockShortener = buildEngine(shortenerResolverOverride = mockShortener)
+
+        // https://bit.ly/abc123:
+        //  • UrlScreener: scheme=https OK, host=bit.ly → flags SHORTENER
+        //  • ShortenerResolver.resolve() → "http://169.254.169.254/sensitive-endpoint"
+        //  • re-screen: 169.254.169.254 caught by IPV4_LINK_LOCAL_REGEX before DNS
+        val rr = engineWithMockShortener.fetch(
+            WebFetchService.WebFetchRequest(url = "https://bit.ly/abc123")
+        )
+
+        assertTrue(rr.isError, "Expected error but got success: ${rr.summary}")
+        assertTrue(
+            rr.summary.contains("URL_BLOCKED") && rr.summary.contains("IPV4_LINK_LOCAL"),
+            "Expected URL_BLOCKED_IPV4_LINK_LOCAL but got: ${rr.summary}"
+        )
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Helper: fake approval gate
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private class FakeApprovalGate : ApprovalGate {
+        var next: ApprovalGate.Decision = ApprovalGate.Decision.AllowOnce
+        override suspend fun ask(prompt: ApprovalGate.ApprovalPrompt): ApprovalGate.Decision = next
+    }
+}

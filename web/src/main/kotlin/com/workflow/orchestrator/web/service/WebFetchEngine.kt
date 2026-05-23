@@ -1,0 +1,371 @@
+package com.workflow.orchestrator.web.service
+
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.model.web.AllowlistDecision
+import com.workflow.orchestrator.core.model.web.DomainAllowlistEntry
+import com.workflow.orchestrator.core.model.web.SanitizerVerdict
+import com.workflow.orchestrator.core.model.web.WebPage
+import com.workflow.orchestrator.core.security.UrlSafetyGuard
+import com.workflow.orchestrator.core.services.ToolResult
+import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.getWebAllowlist
+import com.workflow.orchestrator.core.settings.resolveSanitizerBrainId
+import com.workflow.orchestrator.core.settings.setWebAllowlist
+import com.workflow.orchestrator.core.web.SubagentSpawner
+import com.workflow.orchestrator.core.web.WebError
+import com.workflow.orchestrator.core.web.WebFetchService
+import com.workflow.orchestrator.web.audit.WebAuditLog
+import com.workflow.orchestrator.web.audit.WebAuditRecord
+import com.workflow.orchestrator.web.service.sanitizer.JsoupReadability
+import com.workflow.orchestrator.web.service.sanitizer.SanitizerSubagent
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import java.time.Instant
+import java.util.UUID
+
+/**
+ * Core 8-stage web fetch pipeline. Constructor-injected (no [Service] annotation) so
+ * that [WebFetchPipelineE2ETest] can instantiate it directly with mocked deps.
+ *
+ * Stages:
+ *  0. Plan-mode gate — short-circuit when request.planMode=true.
+ *  1. URL screening — UrlScreener (scheme, credentials, IP literal, IDN, shortener, TLD).
+ *  2. Shortener resolution — single-hop HEAD/GET + re-screen destination.
+ *  3. SSRF guard — UrlSafetyGuard (DNS-resolved literal + address check).
+ *  4. Allowlist check — fast-path when domain is already approved.
+ *  5. Approval gate — shows [ApprovalDialog] (or fake in tests) for unlisted domains.
+ *  6. HTTP GET with safe-redirect walking (re-screens every Location header) + size cap.
+ *  7. Structural sanitization — [JsoupReadability] strips scripts/styles/iframes/comments.
+ *  8. Semantic sanitization — [SanitizerSubagent] rewrites fetched content into neutral form.
+ *
+ * The [WebFetchServiceImpl] @Service thin facade owns production wiring; this class owns logic.
+ */
+class WebFetchEngine(
+    private val project: Project,
+    private val settings: PluginSettings,
+    private val client: OkHttpClient,
+    private val sanitizer: JsoupReadability,
+    private val sanitizerSubagent: SanitizerSubagent,
+    private val approvalGate: ApprovalGate,
+    private val auditLog: WebAuditLog,
+    private val resolver: UrlSafetyGuard.Resolver = UrlSafetyGuard.SystemResolver,
+    private val shortenerResolver: ShortenerResolver,
+    /**
+     * When true, the SSRF guard allows loopback addresses (localhost, 127.x.x.x) and
+     * private LAN ranges to pass. Default false (production posture — all internal addresses
+     * are rejected). Set to true in tests that use MockWebServer on loopback.
+     */
+    private val allowLoopback: Boolean = false,
+) {
+
+    companion object {
+        private const val USER_AGENT =
+            "WorkflowOrchestratorPlugin/1.0 (+https://github.com/workflow-orchestrator)"
+        private const val ACCEPT =
+            "text/html,text/plain,application/json,text/markdown;q=0.9,application/xml;q=0.8"
+        private val ALLOWED_CONTENT_TYPES = listOf(
+            "text/html",
+            "text/plain",
+            "application/json",
+            "text/markdown",
+            "application/xml",
+        )
+    }
+
+    private val pipeline: UrlPipeline by lazy { UrlPipeline(shortenerResolver, resolver) }
+
+    /** Internal exception types caught at the top of [fetchWithSafeRedirects]. */
+    private class RedirectBlockedException(val webError: WebError) : RuntimeException()
+    private class TooManyRedirectsException : RuntimeException()
+
+    suspend fun fetch(request: WebFetchService.WebFetchRequest): ToolResult<WebPage> {
+        val start = System.currentTimeMillis()
+        val correlationId = UUID.randomUUID().toString()
+        val state = settings.state
+
+        // Stage 0: plan-mode gate
+        if (request.planMode) {
+            return failure(WebError.PlanModeBlocked, start, request.url)
+        }
+
+        // Stages 1 + 2 + 3: URL screening, shortener resolution, SSRF guard
+        val piped = pipeline.run(
+            url = request.url,
+            httpsRequired = state.webRequireHttps,
+            allowIpLiteral = state.webAllowIpLiteral,
+            resolveShorteners = state.webResolveShorteners,
+            allowLoopback = allowLoopback,
+        )
+        if (piped is UrlPipeline.Result.Reject) {
+            return failure(piped.error, start, request.url)
+        }
+        val pass = piped as UrlPipeline.Result.Pass
+
+        // Stage 4: allowlist check
+        val allowlist = settings.getWebAllowlist()
+        val isAllowlisted = allowlist.any { matchesDomain(pass.host, it.domain) }
+
+        val decision: AllowlistDecision
+        if (isAllowlisted) {
+            decision = AllowlistDecision.APPROVED_AUTO
+        } else {
+            when (state.webUnlistedPolicy) {
+                "REJECT" -> return failure(WebError.UnlistedHardReject(pass.host), start, pass.finalUrl)
+                else -> {
+                    // Stage 5: show approval gate (PROMPT path)
+                    val outcome = withContext(Dispatchers.Default) {
+                        approvalGate.ask(
+                            ApprovalGate.ApprovalPrompt(
+                                finalUrl = pass.finalUrl,
+                                originalUrl = pass.originalUrl,
+                                screenerFlags = pass.flags,
+                                resolvedIp = null,
+                                contentLength = null,
+                                agentContext = "",
+                                timeoutMs = state.webApprovalTimeoutSec * 1000L,
+                            )
+                        )
+                    }
+                    decision = when (outcome) {
+                        ApprovalGate.Decision.AllowOnce -> AllowlistDecision.APPROVED_PROMPT
+                        is ApprovalGate.Decision.AddToAllowlist -> {
+                            persistAllowlistEntry(pass.host, outcome)
+                            AllowlistDecision.APPROVED_PROMPT
+                        }
+                        ApprovalGate.Decision.Denied ->
+                            return failure(WebError.ApprovalDenied(pass.host), start, pass.finalUrl)
+                        ApprovalGate.Decision.TimedOut ->
+                            return failure(WebError.ApprovalTimeout(pass.host), start, pass.finalUrl)
+                    }
+                }
+            }
+        }
+
+        // Stage 6: HTTP GET with manual redirect walking + streaming size cap
+        val maxBytes = (request.maxBytes ?: state.webMaxBytes).toLong()
+        val resp: Response = try {
+            fetchWithSafeRedirects(pass.finalUrl, correlationId, state)
+        } catch (e: RedirectBlockedException) {
+            return failure(e.webError, start, pass.finalUrl)
+        } catch (_: TooManyRedirectsException) {
+            return failure(
+                WebError.HttpTimeout("too_many_redirects"),
+                start,
+                pass.finalUrl,
+            )
+        } catch (_: Exception) {
+            return failure(WebError.HttpTimeout("connect"), start, pass.finalUrl)
+        }
+
+        resp.use {
+            if (!resp.isSuccessful) {
+                return failure(WebError.HttpStatus(resp.code, pass.finalUrl), start, pass.finalUrl)
+            }
+            val ct = resp.header("Content-Type") ?: "application/octet-stream"
+            if (!isAllowedContentType(ct)) {
+                return failure(WebError.UnsupportedContentType(ct), start, pass.finalUrl)
+            }
+            val source = resp.body?.source()
+                ?: return failure(WebError.HttpStatus(204, pass.finalUrl), start, pass.finalUrl)
+
+            // Streaming read with size cap
+            val buf = okio.Buffer()
+            var read = 0L
+            while (!source.exhausted()) {
+                val chunk = source.read(buf, 8 * 1024L)
+                if (chunk == -1L) break
+                read += chunk
+                if (read > maxBytes) {
+                    return failure(WebError.ResponseTooLarge(read, maxBytes), start, pass.finalUrl)
+                }
+            }
+            val rawBytes = buf.readByteArray()
+
+            // Stage 7: structural sanitization
+            val struct = sanitizer.sanitize(
+                rawBytes = rawBytes,
+                contentType = ct,
+                sourceUrl = pass.finalUrl,
+                maxExtractedChars = state.webMaxExtractedChars,
+            )
+
+            // Stage 8: semantic sanitization via subagent
+            val san = sanitizerSubagent.sanitize(
+                project = project,
+                extractedText = struct.extractedText,
+                brainId = settings.resolveSanitizerBrainId(),
+                timeoutMs = 60_000L,
+            )
+
+            val (verdict, finalText) = when (san.verdict) {
+                SubagentSpawner.Verdict.SAFE    -> SanitizerVerdict.SAFE     to san.cleanedText
+                SubagentSpawner.Verdict.STRIPPED -> SanitizerVerdict.STRIPPED to san.cleanedText
+                SubagentSpawner.Verdict.REFUSED  ->
+                    return failure(
+                        WebError.SanitizerRefused(san.notes ?: ""),
+                        start,
+                        pass.finalUrl,
+                    )
+                SubagentSpawner.Verdict.TIMEOUT ->
+                    if (state.webSanitizerFailClosed)
+                        return failure(WebError.SanitizerTimeout, start, pass.finalUrl)
+                    else
+                        SanitizerVerdict.STRUCTURAL_ONLY to struct.extractedText
+            }
+
+            val page = WebPage(
+                originalUrl = pass.originalUrl ?: request.url,
+                finalUrl = pass.finalUrl,
+                contentType = ct,
+                responseBytes = read,
+                extractedText = finalText,
+                extractedChars = finalText.length,
+                screenerFlags = pass.flags,
+                allowlistDecision = decision,
+                sanitizerVerdict = verdict,
+                sanitizerNotes = san.notes,
+                fetchedAt = Instant.now(),
+                elapsedMs = System.currentTimeMillis() - start,
+            )
+
+            auditSuccess(page, correlationId)
+            return ToolResult.success(
+                data = page,
+                summary = "Fetched ${page.finalUrl} (${page.extractedChars} chars, ${page.sanitizerVerdict})",
+            )
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // R3: Safe redirect walking — re-screens every Location header via pipeline
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private suspend fun fetchWithSafeRedirects(
+        initialUrl: String,
+        correlationId: String,
+        state: PluginSettings.State,
+    ): Response {
+        var url = initialUrl
+        repeat(3) { _ ->
+            val req = Request.Builder()
+                .url(url)
+                .header("User-Agent", USER_AGENT)
+                .header("Accept", ACCEPT)
+                .header("X-Web-Tool-CorrelationId", correlationId)
+                .build()
+            val resp = withContext(Dispatchers.IO) { client.newCall(req).execute() }
+            val loc = resp.header("Location")
+            if (resp.code !in 300..399 || loc == null) {
+                // Not a redirect — return this response to caller
+                return resp
+            }
+            resp.close()
+            // Re-screen redirect destination (no shortener resolution on hop)
+            // Note: allowLoopback is NOT propagated here — redirect destinations are
+            // always screened with the production-safe allowLoopback=false regardless
+            // of the test setting, because redirect injection attacks must always be blocked.
+            val rescreen = pipeline.run(
+                url = loc,
+                httpsRequired = state.webRequireHttps,
+                allowIpLiteral = state.webAllowIpLiteral,
+                resolveShorteners = false,
+                allowLoopback = false,
+            )
+            if (rescreen is UrlPipeline.Result.Reject) {
+                throw RedirectBlockedException(rescreen.error)
+            }
+            url = (rescreen as UrlPipeline.Result.Pass).finalUrl
+        }
+        throw TooManyRedirectsException()
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private fun matchesDomain(host: String, pattern: String): Boolean =
+        if (pattern.startsWith("*.")) {
+            host.endsWith(pattern.removePrefix("*."))
+        } else {
+            host == pattern
+        }
+
+    private fun isAllowedContentType(ct: String): Boolean {
+        val lower = ct.lowercase()
+        return ALLOWED_CONTENT_TYPES.any { lower.startsWith(it) }
+    }
+
+    private fun persistAllowlistEntry(host: String, outcome: ApprovalGate.Decision.AddToAllowlist) {
+        val current = settings.getWebAllowlist().toMutableList()
+        val domain = if (outcome.subdomainGlob) "*.${host.substringAfter('.')}" else host
+        current += DomainAllowlistEntry(
+            domain = domain,
+            httpOk = outcome.allowHttp,
+            addedAt = Instant.now(),
+        )
+        settings.setWebAllowlist(current)
+    }
+
+    private fun failure(err: WebError, startMs: Long, url: String): ToolResult<WebPage> {
+        auditError(err, url)
+        return ToolResult.error(
+            summary = "${err.code}: ${err.message}",
+            hint = if (err.recoverable) "RECOVERABLE" else "FATAL",
+        )
+    }
+
+    private fun auditSuccess(page: WebPage, correlationId: String) {
+        auditLog.append(
+            WebAuditRecord(
+                ts = Instant.now(),
+                op = "fetch",
+                agentSessionId = correlationId,
+                url = page.originalUrl,
+                finalUrl = page.finalUrl,
+                query = null,
+                provider = null,
+                allowlistDecision = page.allowlistDecision,
+                screenerFlags = page.screenerFlags.map { it.name },
+                ssrfPass = true,
+                httpStatus = null,
+                contentType = page.contentType,
+                responseBytes = page.responseBytes,
+                extractedChars = page.extractedChars,
+                resultCount = null,
+                sanitizerVerdict = page.sanitizerVerdict,
+                sanitizerNotes = page.sanitizerNotes,
+                elapsedMs = page.elapsedMs,
+                error = null,
+            )
+        )
+    }
+
+    private fun auditError(err: WebError, url: String) {
+        auditLog.append(
+            WebAuditRecord(
+                ts = Instant.now(),
+                op = "fetch",
+                agentSessionId = null,
+                url = url,
+                finalUrl = null,
+                query = null,
+                provider = null,
+                allowlistDecision = null,
+                screenerFlags = emptyList(),
+                ssrfPass = !err.code.startsWith("URL_BLOCKED_"),
+                httpStatus = null,
+                contentType = null,
+                responseBytes = null,
+                extractedChars = null,
+                resultCount = null,
+                sanitizerVerdict = null,
+                sanitizerNotes = null,
+                elapsedMs = 0,
+                error = err.code,
+            )
+        )
+    }
+}
