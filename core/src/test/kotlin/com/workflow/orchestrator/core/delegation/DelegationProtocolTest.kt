@@ -181,4 +181,88 @@ class DelegationProtocolTest {
         assertNull(decoded.transcriptPath)
         assertEquals("session sess-gone not in index", decoded.error)
     }
+
+    @Test
+    fun `ChannelResume round-trips with sessionId and lastSeenState`() {
+        val msg: DelegationMessage = DelegationMessage.ChannelResume(
+            sessionId = "sess-abc",
+            lastSeenState = "RUNNING",
+        )
+        val decoded = json.decodeFromString<DelegationMessage>(json.encodeToString(msg))
+            as DelegationMessage.ChannelResume
+        assertEquals("sess-abc", decoded.sessionId)
+        assertEquals("RUNNING", decoded.lastSeenState)
+    }
+
+    @Test
+    fun `ChannelResumed round-trips with currentState`() {
+        val msg: DelegationMessage = DelegationMessage.ChannelResumed(
+            sessionId = "sess-abc",
+            currentState = "AWAITING_ANSWER",
+        )
+        val decoded = json.decodeFromString<DelegationMessage>(json.encodeToString(msg))
+            as DelegationMessage.ChannelResumed
+        assertEquals("AWAITING_ANSWER", decoded.currentState)
+    }
+
+    @Test
+    fun `SessionClosed carries closeReason and optional summary`() {
+        val withSummary: DelegationMessage = DelegationMessage.SessionClosed(
+            sessionId = "sess-a",
+            closeReason = "completed",
+            summary = "All endpoints implemented.",
+        )
+        val noSummary: DelegationMessage = DelegationMessage.SessionClosed(
+            sessionId = "sess-b",
+            closeReason = "canceled",
+            summary = null,
+        )
+        val a = json.decodeFromString<DelegationMessage>(json.encodeToString(withSummary))
+            as DelegationMessage.SessionClosed
+        val b = json.decodeFromString<DelegationMessage>(json.encodeToString(noSummary))
+            as DelegationMessage.SessionClosed
+        assertEquals("All endpoints implemented.", a.summary)
+        assertNull(b.summary)
+        assertEquals("canceled", b.closeReason)
+    }
+
+    @Test
+    fun `SessionNotFound round-trips`() {
+        val msg: DelegationMessage = DelegationMessage.SessionNotFound(sessionId = "sess-gone")
+        val decoded = json.decodeFromString<DelegationMessage>(json.encodeToString(msg))
+            as DelegationMessage.SessionNotFound
+        assertEquals("sess-gone", decoded.sessionId)
+    }
+
+    @Test
+    fun `UserTurn carries sessionId and text`() {
+        val msg: DelegationMessage = DelegationMessage.UserTurn(
+            sessionId = "sess-x",
+            text = "Please also add a Dockerfile.",
+        )
+        val decoded = json.decodeFromString<DelegationMessage>(json.encodeToString(msg))
+            as DelegationMessage.UserTurn
+        assertEquals("sess-x", decoded.sessionId)
+        assertEquals("Please also add a Dockerfile.", decoded.text)
+    }
+
+    @Test
+    fun `AcceptResult carries optional bSessionId for resume`() {
+        val accepted: DelegationMessage = DelegationMessage.AcceptResult(
+            accepted = true,
+            bSessionId = "sess-b-uuid",
+        )
+        val rejected: DelegationMessage = DelegationMessage.AcceptResult(
+            accepted = false,
+            reason = "user_rejected",
+        )
+        val a = json.decodeFromString<DelegationMessage>(json.encodeToString(accepted))
+            as DelegationMessage.AcceptResult
+        val r = json.decodeFromString<DelegationMessage>(json.encodeToString(rejected))
+            as DelegationMessage.AcceptResult
+        assertEquals("sess-b-uuid", a.bSessionId)
+        assertEquals(true, a.accepted)
+        assertNull(r.bSessionId)
+        assertEquals("user_rejected", r.reason)
+    }
 }

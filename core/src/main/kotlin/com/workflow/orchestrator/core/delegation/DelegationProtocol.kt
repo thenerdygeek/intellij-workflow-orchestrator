@@ -40,9 +40,18 @@ sealed class DelegationMessage {
         val request: String,
     ) : DelegationMessage()
 
-    /** Receiver's verdict on an incoming [Connect]. */
+    /**
+     * Receiver's verdict on an incoming Connect. Plan 4 adds [bSessionId] — when
+     * accepted, IDE-B returns the local session ID so IDE-A can persist the link
+     * for later CHANNEL_RESUME after restart. Default null keeps backward-compat
+     * with pre-Plan-4 serialized payloads.
+     */
     @Serializable
-    data class AcceptResult(val accepted: Boolean, val reason: String? = null) : DelegationMessage()
+    data class AcceptResult(
+        val accepted: Boolean,
+        val reason: String? = null,
+        val bSessionId: String? = null,
+    ) : DelegationMessage()
 
     /**
      * Terminal result from Agent-B back to Agent-A.
@@ -130,6 +139,64 @@ sealed class DelegationMessage {
         val status: String,
         val transcriptPath: String? = null,
         val error: String? = null,
+    ) : DelegationMessage()
+
+    /**
+     * IDE-A → IDE-B. Re-attach request after IDE-A restart. [lastSeenState] is
+     * the most-recent state IDE-A persisted (`RUNNING` / `AWAITING_ANSWER` / etc.);
+     * IDE-B uses it only as a diagnostic — its own currentState is authoritative.
+     *
+     * Plan 4 spec §4.1.
+     */
+    @Serializable
+    data class ChannelResume(
+        val sessionId: String,
+        val lastSeenState: String,
+    ) : DelegationMessage()
+
+    /**
+     * IDE-B → IDE-A. Confirmation that the session is still alive. [currentState]
+     * is the authoritative state at the moment of resume.
+     *
+     * Plan 4 spec §4.1.
+     */
+    @Serializable
+    data class ChannelResumed(
+        val sessionId: String,
+        val currentState: String,
+    ) : DelegationMessage()
+
+    /**
+     * IDE-B → IDE-A. Session reached a terminal state while IDE-A was offline.
+     * [summary] populated for `closeReason == "completed"`; null for canceled / failed / etc.
+     *
+     * Plan 4 spec §4.1.
+     */
+    @Serializable
+    data class SessionClosed(
+        val sessionId: String,
+        val closeReason: String,
+        val summary: String? = null,
+    ) : DelegationMessage()
+
+    /**
+     * IDE-B → IDE-A. Session was never seen by IDE-B (pruned or never accepted).
+     *
+     * Plan 4 spec §4.1.
+     */
+    @Serializable
+    data class SessionNotFound(val sessionId: String) : DelegationMessage()
+
+    /**
+     * IDE-A → IDE-B. Append a new user turn to the existing Agent-B session.
+     * Used by `delegation_send(handle = X, request = "...")` continuation.
+     *
+     * Plan 4 spec §4.1, §5.2.
+     */
+    @Serializable
+    data class UserTurn(
+        val sessionId: String,
+        val text: String,
     ) : DelegationMessage()
 }
 

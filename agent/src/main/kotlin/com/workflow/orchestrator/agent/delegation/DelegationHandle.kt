@@ -15,4 +15,14 @@ data class DelegationHandle(
     val targetProjectPath: String,
     val targetRepoName: String,
     val createdAt: Long = System.currentTimeMillis(),
+    /**
+     * Most-recently-observed remote state (RUNNING / AWAITING_ANSWER / etc.).
+     * Updated on every received `Result` / `Question` / `Heartbeat`. Sent in
+     * `ChannelResume` requests as a diagnostic; never authoritative.
+     *
+     * Default "unknown" so existing serialized handles deserialize cleanly.
+     *
+     * Plan 4 spec §4.2.
+     */
+    val lastSeenState: String = "unknown",
 )
