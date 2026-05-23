@@ -377,6 +377,10 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         // Spec: docs/superpowers/specs/2026-05-22-cross-ide-agent-delegation-design.md §3.3.
         var enableOutboundCrossIdeDelegation by property(false)
         var enableInboundCrossIdeDelegation by property(false)
+        // When on, Agent-A's proposed answer to Agent-B's clarifying questions
+        // is forwarded without an IDE-A human confirmation prompt.
+        // Default off — the safe default per spec §6.3.
+        var autoApproveDelegationAnswers by property(false)
 
         init {
             // Populate default whitelist on first instantiation. Persisted lists
