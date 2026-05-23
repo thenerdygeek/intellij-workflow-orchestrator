@@ -62,6 +62,16 @@ class DelegationOutboundService(
      */
     private val sendMutex = Mutex()
 
+    /**
+     * Epoch millis of the most recent IPC message received on each open channel.
+     * Updated in the cs.launch reader loop on every framed message (any type,
+     * including [DelegationMessage.Heartbeat]). Read by [IdleTimer] to decide
+     * whether to fire [DelegationException.IdleTimedOut].
+     *
+     * Plan 3 spec §4.2.
+     */
+    private val lastSeenAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     val openChannelCount: Int get() = activeChannels.size
 
     /**
@@ -106,6 +116,7 @@ class DelegationOutboundService(
             targetRepoName = picked.displayName,
         )
         activeChannels[handle.id] = channel
+        lastSeenAt[handle.id] = System.currentTimeMillis()
         handleToSessionId[handle.id] = delegatorSessionId
         handleToRepoName[handle.id] = handle.targetRepoName
         // Note: the result-reader coroutine is launched OUTSIDE the sendMutex.withLock
@@ -117,9 +128,14 @@ class DelegationOutboundService(
                     val msg = withContext(Dispatchers.IO) {
                         DelegationFraming.readFramed(channel, json)
                     }
+                    lastSeenAt[handle.id] = System.currentTimeMillis()
                     when (msg) {
                         is DelegationMessage.Question -> handleIncomingQuestion(handle, msg)
                         is DelegationMessage.AnswerCanceled -> rescindLocalQuestion(handle, msg.questionId, msg.reason)
+                        is DelegationMessage.Heartbeat -> {
+                            // Liveness signal — already accounted for by the lastSeenAt update above.
+                            // No further action needed at this point in the loop.
+                        }
                         is DelegationMessage.Result -> {
                             onResult(handle, msg)
                             return@launch
@@ -154,6 +170,7 @@ class DelegationOutboundService(
         handleToRepoName.remove(handleId)
         // F1 fix: also clear any pending question texts for this handle.
         pendingQuestionTexts.entries.removeIf { it.value.first == handleId }
+        lastSeenAt.remove(handleId)
         val ch = activeChannels.remove(handleId) ?: return false
         try { ch.close() } catch (_: Exception) {}
         return true
@@ -268,6 +285,9 @@ class DelegationOutboundService(
         val pid = ProcessHandle.current().pid()
         return "ide-$pid"
     }
+
+    /** Read accessor used by [IdleTimer] to evaluate stalls. Null if the handle is unknown. */
+    fun lastSeenMillis(handleId: String): Long? = lastSeenAt[handleId]
 
     companion object {
         private val LOG = Logger.getInstance(DelegationOutboundService::class.java)

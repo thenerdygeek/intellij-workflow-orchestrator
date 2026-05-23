@@ -131,4 +131,54 @@ class DelegationProtocolTest {
         assertEquals("q-1", decoded.questionId)
         assertEquals("answered_locally", decoded.reason)
     }
+
+    @Test
+    fun `Heartbeat round-trips with sessionId`() {
+        val msg: DelegationMessage = DelegationMessage.Heartbeat(sessionId = "sess-xyz")
+        val encoded = json.encodeToString(msg)
+        assertTrue(encoded.contains("sess-xyz"))
+        val decoded = json.decodeFromString<DelegationMessage>(encoded) as DelegationMessage.Heartbeat
+        assertEquals("sess-xyz", decoded.sessionId)
+    }
+
+    @Test
+    fun `FetchTranscript carries sessionId and requestId`() {
+        val msg: DelegationMessage = DelegationMessage.FetchTranscript(
+            sessionId = "sess-abc",
+            requestId = "req-001",
+        )
+        val encoded = json.encodeToString(msg)
+        val decoded = json.decodeFromString<DelegationMessage>(encoded) as DelegationMessage.FetchTranscript
+        assertEquals("sess-abc", decoded.sessionId)
+        assertEquals("req-001", decoded.requestId)
+    }
+
+    @Test
+    fun `FetchTranscriptReply ok carries transcriptPath`() {
+        val msg: DelegationMessage = DelegationMessage.FetchTranscriptReply(
+            requestId = "req-001",
+            status = "ok",
+            transcriptPath = "/tmp/transcript-export.json",
+        )
+        val decoded = json.decodeFromString<DelegationMessage>(json.encodeToString(msg))
+            as DelegationMessage.FetchTranscriptReply
+        assertEquals("ok", decoded.status)
+        assertEquals("/tmp/transcript-export.json", decoded.transcriptPath)
+        assertNull(decoded.error)
+    }
+
+    @Test
+    fun `FetchTranscriptReply not_found carries error message`() {
+        val msg: DelegationMessage = DelegationMessage.FetchTranscriptReply(
+            requestId = "req-002",
+            status = "not_found",
+            transcriptPath = null,
+            error = "session sess-gone not in index",
+        )
+        val decoded = json.decodeFromString<DelegationMessage>(json.encodeToString(msg))
+            as DelegationMessage.FetchTranscriptReply
+        assertEquals("not_found", decoded.status)
+        assertNull(decoded.transcriptPath)
+        assertEquals("session sess-gone not in index", decoded.error)
+    }
 }
