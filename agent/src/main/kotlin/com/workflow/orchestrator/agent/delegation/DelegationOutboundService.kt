@@ -37,6 +37,8 @@ class DelegationOutboundService(
     /** Maps outbound delegation handle → the local Agent-A session that holds it. */
     private val handleToSessionId = java.util.concurrent.ConcurrentHashMap<String, String>()
 
+    private val idleTimers = java.util.concurrent.ConcurrentHashMap<String, IdleTimer>()
+
     /**
      * F1 fix: per-question text cache so [DelegationAnswerTool] can look up the
      * question text when the auto-approve setting is off (for the confirm dialog).
@@ -119,6 +121,48 @@ class DelegationOutboundService(
         lastSeenAt[handle.id] = System.currentTimeMillis()
         handleToSessionId[handle.id] = delegatorSessionId
         handleToRepoName[handle.id] = handle.targetRepoName
+
+        // Plan 3 idle timer — the timeout-millis provider re-reads PluginSettings on every
+        // tick so changes take effect for already-open channels (spec §3.3). A return of
+        // <= 0 disables the check for that tick. We always start the timer; it's an idle
+        // loop until the setting is non-zero.
+        run {
+            val settingsSvc = project.getService(
+                com.workflow.orchestrator.core.settings.PluginSettings::class.java
+            )
+            val timer = IdleTimer(
+                handleId = handle.id,
+                scope = cs,
+                checkIntervalMillis = IDLE_CHECK_INTERVAL_MILLIS,
+                timeoutMillisProvider = {
+                    settingsSvc.state.delegationIdleTimeoutMinutes.toLong() * 60_000L
+                },
+                clock = SystemClock,
+                lastSeenAtProvider = { lastSeenMillis(handle.id) },
+                onTimeout = {
+                    val timedOut = DelegationException.IdleTimedOut(
+                        handle = handle,
+                        lastSeenAt = lastSeenMillis(handle.id) ?: 0L,
+                    )
+                    LOG.info("IdleTimer fired: ${timedOut.message} — closing channel ${handle.id}")
+                    val sid = handleToSessionId[handle.id]
+                    if (sid != null) {
+                        project.getService(
+                            com.workflow.orchestrator.agent.AgentService::class.java
+                        ).enqueueNudgeForSession(
+                            sid,
+                            "Delegated session ${handle.targetRepoName} (handle ${handle.id.take(8)}) " +
+                                "timed out due to inactivity. The channel has been closed."
+                        )
+                    }
+                    close(handle.id)
+                },
+            )
+            idleTimers[handle.id] = timer
+            timer.start()
+        }
+        // end Plan 3 idle timer block
+
         // Note: the result-reader coroutine is launched OUTSIDE the sendMutex.withLock
         // body so that result delivery is not gated on the next send call. The channel
         // insertion into activeChannels above has already happened under the lock.
@@ -166,6 +210,7 @@ class DelegationOutboundService(
      * Returns true if a channel was found and closed.
      */
     fun close(handleId: String): Boolean {
+        idleTimers.remove(handleId)?.stop()
         handleToSessionId.remove(handleId)
         handleToRepoName.remove(handleId)
         // F1 fix: also clear any pending question texts for this handle.
@@ -314,5 +359,7 @@ class DelegationOutboundService(
     companion object {
         private val LOG = Logger.getInstance(DelegationOutboundService::class.java)
         const val MAX_CHANNELS = 5
+        /** Idle timer ticks at this cadence to keep CPU cost low while still being responsive. */
+        const val IDLE_CHECK_INTERVAL_MILLIS = 30_000L
     }
 }
