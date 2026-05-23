@@ -1,6 +1,9 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.tools.WorkerType
+import io.mockk.every
+import io.mockk.mockk
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.*
@@ -178,7 +181,11 @@ class AskQuestionsToolTest {
                 receivedOptions = opts
             }
 
-            val project = io.mockk.mockk<com.intellij.openapi.project.Project>(relaxed = true)
+            val project = mockk<com.intellij.openapi.project.Project>(relaxed = true)
+            val agentService = mockk<AgentService>(relaxed = true).apply {
+                every { currentSessionState() } returns null
+            }
+            every { project.getService(AgentService::class.java) } returns agentService
 
             // Launch tool execution in background — it will block on the deferred
             val job = launch {
@@ -215,7 +222,11 @@ class AskQuestionsToolTest {
                 receivedOptions = opts
             }
 
-            val project = io.mockk.mockk<com.intellij.openapi.project.Project>(relaxed = true)
+            val project = mockk<com.intellij.openapi.project.Project>(relaxed = true)
+            val agentService = mockk<AgentService>(relaxed = true).apply {
+                every { currentSessionState() } returns null
+            }
+            every { project.getService(AgentService::class.java) } returns agentService
 
             val job = launch {
                 tool.execute(buildJsonObject {
