@@ -22,6 +22,7 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
     private val settings get() = project.getService(PluginSettings::class.java).state
     private var outboundEnabled = settings.enableOutboundCrossIdeDelegation
     private var inboundEnabled = settings.enableInboundCrossIdeDelegation
+    private var autoApprove = settings.autoApproveDelegationAnswers
 
     override fun getDisplayName(): String = "Cross-IDE Delegation"
 
@@ -44,6 +45,15 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
                     )
             }
             row {
+                checkBox("Auto-approve Agent-A's answers to delegated-session questions")
+                    .bindSelected({ autoApprove }, { autoApprove = it })
+                    .comment(
+                        "When on, Agent-A's drafted answers to questions raised by remote " +
+                            "delegated sessions are sent without an IDE-A confirmation prompt. " +
+                            "Default off — leaves the human as the verification step."
+                    )
+            }
+            row {
                 comment(
                     "Both default off. Feature is local-only (same machine, same user). " +
                         "See documentation for security and privacy implications."
@@ -54,13 +64,15 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
 
     override fun isModified(): Boolean =
         outboundEnabled != settings.enableOutboundCrossIdeDelegation ||
-            inboundEnabled != settings.enableInboundCrossIdeDelegation
+            inboundEnabled != settings.enableInboundCrossIdeDelegation ||
+            autoApprove != settings.autoApproveDelegationAnswers
 
     override fun apply() {
         val prevOutbound = settings.enableOutboundCrossIdeDelegation
         val prevInbound = settings.enableInboundCrossIdeDelegation
         settings.enableOutboundCrossIdeDelegation = outboundEnabled
         settings.enableInboundCrossIdeDelegation = inboundEnabled
+        settings.autoApproveDelegationAnswers = autoApprove
         if (prevOutbound != outboundEnabled) {
             project.messageBus.syncPublisher(CrossIdeDelegationSettingsListener.TOPIC)
                 .outboundSettingChanged(outboundEnabled)
@@ -74,5 +86,6 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
     override fun reset() {
         outboundEnabled = settings.enableOutboundCrossIdeDelegation
         inboundEnabled = settings.enableInboundCrossIdeDelegation
+        autoApprove = settings.autoApproveDelegationAnswers
     }
 }
