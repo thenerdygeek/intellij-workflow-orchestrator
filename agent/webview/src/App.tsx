@@ -12,6 +12,7 @@ import { ErrorBoundary } from '@/components/chat/ErrorBoundary'
 import { SkillBanner } from '@/components/chat/SkillBanner'
 import { EditStatsBar } from '@/components/agent/EditStatsBar'
 import { HistoryView } from './components/history/HistoryView'
+import { DelegationBanner } from './components/history/DelegationBanner'
 import { ScreenReaderAnnouncer } from '@/components/common/ScreenReaderAnnouncer'
 import { useEscapeHandler } from '@/hooks/useEscapeHandler'
 
@@ -110,6 +111,7 @@ function App() {
         <>
           <TopBar />
           <SkillBanner />
+          <DelegationBanner />
           <ChatView />
           <DebugPanel />
           <EditStatsBar diff={aggregateDiff} />

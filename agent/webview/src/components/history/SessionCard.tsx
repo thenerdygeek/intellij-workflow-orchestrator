@@ -1,6 +1,7 @@
 import { Clock, Star, MessageSquare, Trash2, Check, X, CheckSquare2, Square } from 'lucide-react';
 import { useState } from 'react';
 import type { HistoryItem } from '../../bridge/types';
+import { DelegationBadge } from './DelegationBadge';
 
 function formatTimeAgo(ts: number): string {
   const seconds = Math.floor((Date.now() - ts) / 1000);
@@ -99,9 +100,16 @@ export function SessionCard({
             )}
           </button>
         )}
-        <p className="flex-1 text-[13px] font-semibold text-[var(--fg)] leading-tight line-clamp-2">
-          {item.task}
-        </p>
+        <div className="flex-1 min-w-0">
+          <p className="text-[13px] font-semibold text-[var(--fg)] leading-tight line-clamp-2">
+            {item.task}
+          </p>
+          {item.delegated && (
+            <div className="mt-1">
+              <DelegationBadge delegatorRepo={item.delegated.delegatorRepo} />
+            </div>
+          )}
+        </div>
         {!showCheckbox && (
           <button
             className="shrink-0 mt-0.5 p-0.5 hover:opacity-80 transition-opacity"
