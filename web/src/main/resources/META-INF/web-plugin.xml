@@ -9,6 +9,8 @@
     <extensions defaultExtensionNs="com.intellij">
         <projectService serviceInterface="com.workflow.orchestrator.core.web.WebFetchService"
                         serviceImplementation="com.workflow.orchestrator.web.service.WebFetchServiceImpl"/>
+        <projectService serviceInterface="com.workflow.orchestrator.core.web.WebSearchService"
+                        serviceImplementation="com.workflow.orchestrator.web.service.WebSearchServiceImpl"/>
         <projectConfigurable parentId="com.workflow.orchestrator.agent.settings.AgentParentConfigurable"
                              instance="com.workflow.orchestrator.web.ui.WebSettingsConfigurable"
                              id="com.workflow.orchestrator.web.settings"
