@@ -2,14 +2,12 @@
     <id>com.workflow.orchestrator.plugin</id>
     <name>Workflow Orchestrator</name>
     <vendor>Workflow Team</vendor>
-    <description><![CDATA[
-        Eliminates context-switching between Jira, Bamboo, SonarQube, Bitbucket, and AI agent
-        by consolidating the entire Spring Boot development lifecycle into a single IDE interface.
-    ]]></description>
+    <description><![CDATA[Eliminates context-switching between Jira, Bamboo, SonarQube, Bitbucket, and AI agent
+        by consolidating the entire Spring Boot development lifecycle into a single IDE interface.]]></description>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.java</depends>
-    <depends optional="false" config-file="web-plugin.xml">com.workflow.orchestrator.web</depends>
+    <depends config-file="web-plugin.xml">com.workflow.orchestrator.web</depends>
     <depends optional="true" config-file="plugin-withGit.xml">Git4Idea</depends>
 <depends optional="true" config-file="plugin-withMaven.xml">org.jetbrains.idea.maven</depends>
     <depends optional="true" config-file="plugin-withSpring.xml">com.intellij.spring</depends>

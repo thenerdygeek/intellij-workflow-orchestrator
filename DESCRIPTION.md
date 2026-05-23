@@ -1,0 +1,1 @@
+Eliminates context-switching between Jira, Bamboo, SonarQube, Bitbucket, and an AI agent by consolidating the entire Spring Boot development lifecycle into a single IDE interface. Includes sprint management, build dashboards, code quality markers, PR workflows, Docker automation, AI-assisted handover, and an embedded ReAct agent with web fetch and web search capabilities.
