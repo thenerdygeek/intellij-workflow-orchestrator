@@ -20,6 +20,7 @@ import com.workflow.orchestrator.agent.delegation.AutoLaunchOutcome
 import com.workflow.orchestrator.agent.delegation.AutoLaunchPoller
 import com.workflow.orchestrator.agent.delegation.DefaultProcessSpawner
 import com.workflow.orchestrator.agent.delegation.LauncherResolver
+import com.workflow.orchestrator.agent.delegation.ProcessSpawner
 import com.workflow.orchestrator.agent.delegation.SpawnResult
 import com.workflow.orchestrator.agent.delegation.ToolboxFlavorReader
 import com.workflow.orchestrator.core.delegation.DelegationClient
@@ -68,11 +69,19 @@ data class PickerEntry(
  * MVP behavior: only Running rows are selectable for delegation. Closed and
  * Missing rows are visible but disabled (Plan 3 will add Launch & Delegate).
  *
- * Spec: docs/superpowers/specs/2026-05-22-cross-ide-agent-delegation-design.md §5.1, §5.2, §5.3.
+ * The [launcherResolver], [toolboxFlavorReader], and [processSpawner] parameters
+ * are injectable (spec §5.6, §6.3) so the auto-launch path can be driven from
+ * tests without touching the real OS or IntelliJ install layout. Production
+ * callers omit these args and receive the default production implementations.
+ *
+ * Spec: docs/superpowers/specs/2026-05-22-cross-ide-agent-delegation-design.md §5.1, §5.2, §5.3, §5.6.
  */
 class DelegationPicker(
     private val project: Project,
     private val suggestedRepo: String?,
+    private val launcherResolver: LauncherResolver = LauncherResolver(),
+    private val toolboxFlavorReader: ToolboxFlavorReader = ToolboxFlavorReader(),
+    private val processSpawner: ProcessSpawner = DefaultProcessSpawner,
 ) : DialogWrapper(project) {
 
     var selectedEntry: PickerEntry? = null
@@ -264,9 +273,8 @@ class DelegationPicker(
      */
     private fun onLaunchAndDelegate(selected: PickerEntry) {
         hideLaunchFailure()
-        val launcher = LauncherResolver()
-        if (launcher.isToolboxInstall()) {
-            val flavor = ToolboxFlavorReader().readLastUsedFlavor(selected.path)
+        if (launcherResolver.isToolboxInstall()) {
+            val flavor = toolboxFlavorReader.readLastUsedFlavor(selected.path)
             val current = ApplicationInfo.getInstance()
             val currentCode = current.build.productCode
             val currentMajor = current.majorVersion
@@ -283,7 +291,7 @@ class DelegationPicker(
                 showToolboxUnknownBanner()
             }
         }
-        val spawn = DefaultProcessSpawner.spawn(launcher.resolveLauncher(), selected.path)
+        val spawn = processSpawner.spawn(launcherResolver.resolveLauncher(), selected.path)
         if (spawn is SpawnResult.Failed) {
             showInlineLaunchFailure("Could not spawn IDE process: ${spawn.message}")
             return
