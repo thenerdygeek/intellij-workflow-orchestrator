@@ -2543,6 +2543,378 @@ No gaps found that block execution. PR 2 tasks 17-22 deliberately abbreviated si
 
 ---
 
+---
+
+## Plan Revisions (post-Sonnet review, 2026-05-23)
+
+A Sonnet-model reviewer ran a pass against the spec + plan + actual codebase. Three blocking issues, six important ones, and four nits surfaced. The fixes below SUPERSEDE the corresponding inline code in earlier tasks — when executing a revised task, apply the revision in place of the original snippet.
+
+### Blocking — must apply before that task runs
+
+**R1 (Task 8) — `SubagentRunner` constructor + `.run()` signature were fabricated.**
+
+The actual `SubagentRunner` ctor takes 16+ params (verified in `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/subagent/SubagentRunner.kt:37`). Replace the adapter's `SubagentRunner(...)` and `.run(...)` calls with:
+
+```kotlin
+val brain = LlmBrainFactory.create(project)   // primary brain — only one currently exists
+val runner = SubagentRunner(
+    brain = brain,
+    coreTools = emptyMap(),                   // empty toolset = read-only sanitizer
+    deferredTools = emptyMap(),
+    systemPrompt = systemPrompt,              // composed by SanitizerSubagent
+    project = project,
+    maxIterations = 1,                        // one-shot
+    planMode = false,
+    contextBudget = 16_000,
+    maxOutputTokens = 8_000,
+)
+val result = runner.run(
+    prompt = userPrompt,
+    agentId = "sanitizer",
+    label = "Web sanitizer",
+    onProgress = { _ -> },                    // no UI surfacing
+)
+// Parse result.finalText as the {verdict, cleaned_text, notes} JSON (existing logic).
+```
+
+`LlmBrainFactory` only exposes `create(project)` and `createForTextGeneration(project)` today. The "cheapest brain" concept needs a new factory method `createForSanitization(project)` if you want Haiku — for now, ship with the primary brain (R1.b below).
+
+**R1.b (Task 8 follow-up) — add `LlmBrainFactory.createForSanitization()`.**
+
+Mirrors `createForTextGeneration` but picks the lowest-tier available model. Implementation:
+
+```kotlin
+suspend fun createForSanitization(project: Project): LlmBrain {
+    val connections = ConnectionSettings.getInstance()
+    val credentialStore = CredentialStore()
+    val sgUrl = connections.state.sourcegraphUrl.trimEnd('/')
+    val tokenProvider = { credentialStore.getToken(ServiceType.SOURCEGRAPH) }
+    val client = SourcegraphChatClient(baseUrl = sgUrl, tokenProvider = tokenProvider, model = "")
+    val models = ModelCache.getModels(client)
+    val haiku = models.minByOrNull { it.contextWindow ?: Int.MAX_VALUE }  // crude proxy for "cheap"
+        ?: return create(project)
+    return OpenAiCompatBrain(sourcegraphUrl = sgUrl, tokenProvider = tokenProvider, model = haiku.id)
+}
+```
+
+Verify the `ModelCache` accessor name; adjust if it differs.
+
+**R2 (Tasks 4, 12) — `ToolResult` package + factory shape.**
+
+The correct core type is `com.workflow.orchestrator.core.services.ToolResult<T>` (NOT `core.ToolResult`). It has companion factories:
+
+```kotlin
+ToolResult.success(data, summary, hint = null)
+ToolResult.error<WebPage>(summary, hint = null)
+```
+
+In `WebFetchService.kt` (Task 4) and `WebFetchServiceImpl.kt` (Task 12), swap all `import com.workflow.orchestrator.core.ToolResult` for `import com.workflow.orchestrator.core.services.ToolResult` and use the factories above instead of positional constructor calls.
+
+The **agent-tools** `ToolResult` (used by `WebFetchTool.execute` in Task 13) is a DIFFERENT data class at `agent/tools/AgentTool.kt:235`, with required `content: String, summary: String, tokenEstimate: Int, isError: Boolean`. There are no `success`/`error` companion factories — construct directly.
+
+**R3 (Task 12) — SSRF redirect bypass.**
+
+Plain `OkHttpClient()` follows redirects automatically with no per-hop re-screening. Build the client with `followRedirects(false)` and walk hops manually:
+
+```kotlin
+private val client: OkHttpClient = OkHttpClient.Builder()
+    .followRedirects(false)
+    .followSslRedirects(false)
+    .connectTimeout(Duration.ofSeconds(state.webConnectTimeoutSec.toLong()))
+    .readTimeout(Duration.ofSeconds(state.webReadTimeoutSec.toLong()))
+    .addInterceptor(StripAuthHeadersInterceptor())   // R5
+    .build()
+
+private suspend fun fetchWithSafeRedirects(initialUrl: String, correlationId: String): Response {
+    var url = initialUrl
+    repeat(3) { hop ->
+        val req = Request.Builder().url(url)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", ACCEPT)
+            .header("X-Web-Tool-CorrelationId", correlationId)
+            .build()
+        val resp = withContext(Dispatchers.IO) { client.newCall(req).execute() }
+        val loc = resp.header("Location")
+        if (resp.code !in 300..399 || loc == null) return resp
+        resp.close()
+        // Re-screen redirect target (Stages 1 + 3 only — allowlist already approved chain origin).
+        val rescreen = pipeline.run(loc, state.webRequireHttps, state.webAllowIpLiteral, resolveShorteners = false)
+        if (rescreen is UrlPipeline.Result.Reject) throw RedirectBlockedException(rescreen.error)
+        url = (rescreen as UrlPipeline.Result.Pass).finalUrl
+    }
+    throw TooManyRedirectsException()
+}
+```
+
+Add `RedirectBlockedException` and `TooManyRedirectsException` as internal exception types caught at the top of `fetch()` and converted into `WebError`.
+
+Add a test case in Task 12's E2E suite: enqueue a 302 with `Location: http://169.254.169.254/`; assert the result is `UrlBlocked(IPV4_LINK_LOCAL)`.
+
+### Important — apply at the corresponding task
+
+**R4 (Task 5) — `by string("")` not `by string(null)`.**
+
+`SimplePersistentStateComponent`'s `by string(default: String = "")` delegate does not accept null. Change:
+
+```kotlin
+var webSanitizerBrainId by string("")        // empty = use default cheapest
+```
+
+Add accessor:
+```kotlin
+fun PluginSettings.resolveSanitizerBrainId(): String? =
+    state.webSanitizerBrainId.takeIf { it.isNotBlank() }
+```
+
+**R5 (Task 12) — Strip Authorization/Cookie on every request.**
+
+OkHttp does NOT strip `Authorization` on cross-host redirects (it only strips on cross-scheme). To guarantee no credential leak:
+
+```kotlin
+class StripAuthHeadersInterceptor : Interceptor {
+    private val STRIPPED = setOf(
+        "authorization", "cookie", "x-auth-token", "x-api-key",
+        "x-subscription-token", "proxy-authorization",
+    )
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val req = chain.request().newBuilder()
+        STRIPPED.forEach { req.removeHeader(it) }
+        return chain.proceed(req.build())
+    }
+}
+```
+
+Add to BOTH the fetch and search OkHttp clients (Tasks 12 + 17). Search clients SET `X-Subscription-Token` AFTER going through this interceptor — easiest pattern is to NOT include the interceptor on the search-call client, and instead build a dedicated "no-auth" client for fetch only. Document explicitly which client is which.
+
+**R6 (Task 12 + Task 13) — Plan-mode E2E test gap.**
+
+The empty `plan mode blocked` test in Task 12 Step 2 never fires because the service trusts the tool layer to check plan mode. Two options:
+
+(a) Add a `planMode: Boolean = false` field to `WebFetchRequest`; `WebFetchTool` populates it; service short-circuits with `PlanModeBlocked` when true. Tests pass `planMode = true` directly.
+
+(b) Inject `AgentService` into the service via `project.service<AgentService>()` lazily; service checks `planModeActive` itself. Couples `:web` to `:agent` runtime semantics.
+
+Pick **(a)** — keeps `:web` decoupled and makes the test trivial.
+
+**R7 (Task 9) — YAML loading is fragile.**
+
+Replace `personas/sanitizer.yaml` parsing with a plain text file or a real YAML parser. Simpler path:
+
+1. Rename the resource to `personas/sanitizer-system-prompt.txt`. Drop the YAML, just write the prompt body.
+2. `loadSystemPrompt()` becomes:
+   ```kotlin
+   private fun loadSystemPrompt(): String =
+       javaClass.getResourceAsStream("/personas/sanitizer-system-prompt.txt")
+           ?.bufferedReader()?.readText()
+           ?: error("sanitizer-system-prompt.txt resource missing")
+   ```
+3. Add a unit test in `SanitizerSubagentTest`:
+   ```kotlin
+   @Test fun `loaded system prompt contains REFUSED keyword`() {
+       val sut = SanitizerSubagent(spawner = mockk())
+       val prompt = sut.javaClass.getDeclaredMethod("loadSystemPrompt").apply { isAccessible = true }
+           .invoke(sut) as String
+       assertTrue(prompt.contains("REFUSED"))
+       assertTrue(prompt.contains("cleaned_text"))
+   }
+   ```
+
+**R8 (Task 13) — `WebFetchTool` uses the wrong `ToolResult`.**
+
+The agent-tools `ToolResult` is a non-generic `data class` with required `content`, `summary`, `tokenEstimate`, `isError`. `AgentTool.execute(params: JsonObject, project: Project): ToolResult`. The tool has no constructor args. Rewrite Task 13 Step 2:
+
+```kotlin
+package com.workflow.orchestrator.agent.tools.builtin
+
+import com.intellij.openapi.components.service
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.AgentService
+import com.workflow.orchestrator.agent.api.dto.FunctionParameters
+import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.core.ai.TokenEstimator
+import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.web.WebFetchService
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonPrimitive
+
+class WebFetchTool : AgentTool {
+    override val name = "web_fetch"
+    override val description = "Fetch a URL and return sanitized text. Default-deny: unlisted domains require user approval. HTTPS-only by default. Read-only — no auth headers, cookies, or custom auth are forwarded."
+    override val parameters = FunctionParameters(
+        properties = mapOf(
+            "url" to ParameterProperty(type = "string", description = "The URL to fetch (https:// required by default)."),
+            "max_bytes" to ParameterProperty(type = "integer", description = "Optional cap on bytes read; capped at the configured global maximum."),
+        ),
+        required = listOf("url"),
+    )
+    override val allowedWorkers = setOf(WorkerType.ANALYZER, WorkerType.CODER, WorkerType.REVIEWER)
+
+    override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+        val url = params["url"]?.jsonPrimitive?.contentOrNull
+            ?: return errorResult("MALFORMED_URL: url parameter required")
+        val planMode = project.service<AgentService>().planModeActive.get()
+        val planAllow = project.service<PluginSettings>().state.webPlanModeAllow
+        val maxBytes = params["max_bytes"]?.jsonPrimitive?.int
+
+        val svc = project.service<WebFetchService>()
+        val rr = svc.fetch(WebFetchService.WebFetchRequest(
+            url = url,
+            maxBytes = maxBytes,
+            planMode = planMode && !planAllow,    // R6
+        ))
+        if (rr.isError) return errorResult(rr.summary)
+        val page = rr.data!!
+        val content = "<external_content url='${page.finalUrl}' source='web_fetch' " +
+                "verdict='${page.sanitizerVerdict}' size_chars='${page.extractedChars}'>\n" +
+                page.extractedText +
+                "\n</external_content>"
+        return ToolResult(
+            content = content,
+            summary = "Fetched ${page.finalUrl} (${page.extractedChars} chars, ${page.sanitizerVerdict})",
+            tokenEstimate = TokenEstimator.estimate(content),
+        )
+    }
+
+    private fun errorResult(msg: String): ToolResult = ToolResult(
+        content = msg,
+        summary = msg,
+        tokenEstimate = TokenEstimator.estimate(msg),
+        isError = true,
+    )
+}
+```
+
+**R9 (Task 12 / web-plugin.xml) — `@Service` constructor must take only injectable params.**
+
+IntelliJ's `@Service` instantiation only injects `Project` and `CoroutineScope`. Eight constructor args won't work in production. Pattern:
+
+```kotlin
+@Service(Service.Level.PROJECT)
+class WebFetchServiceImpl(
+    private val project: Project,
+    private val cs: CoroutineScope,
+) : WebFetchService {
+
+    private val settings get() = project.service<PluginSettings>()
+    private val sanitizer = JsoupReadability()
+    private val sanitizerSubagent: SanitizerSubagent by lazy {
+        SanitizerSubagent(project.service<SubagentSpawner>())
+    }
+    private val client: OkHttpClient by lazy { buildClient() }
+    private val shortenerResolver: ShortenerResolver by lazy {
+        ShortenerResolver(OkHttpClient.Builder().followRedirects(false).build())
+    }
+    private val approvalGate: ApprovalGate by lazy { ApprovalGateImpl(project) }
+    private val auditLog: WebAuditLog by lazy { WebAuditLog(project.auditLogDir()) }
+    private val pipeline by lazy { UrlPipeline(shortenerResolver) }
+    // ... rest of impl ...
+
+    // Test-only constructor for E2E test
+    internal constructor(
+        project: Project,
+        cs: CoroutineScope,
+        settings: PluginSettings,
+        client: OkHttpClient,
+        sanitizer: ContentSanitizer,
+        sanitizerSubagent: SanitizerSubagent,
+        approvalGate: ApprovalGate,
+        auditLog: WebAuditLog,
+        shortenerResolver: ShortenerResolver,
+    ) : this(project, cs) {
+        // ... override the by-lazy fields via a backing mechanism, or refactor to ctor-injection ...
+    }
+}
+```
+
+The cleanest pattern is to extract pipeline+IO into a non-`@Service` class (`WebFetchEngine`) that takes all 8 deps explicitly. The `@Service` impl is a thin wrapper that constructs the engine with default deps. Tests instantiate the engine directly.
+
+Adopt that pattern: split into `WebFetchEngine` (constructor-injected, no `@Service`) + `WebFetchServiceImpl` (`@Service`, thin facade). Update Task 12's E2E test to construct `WebFetchEngine` directly.
+
+### Nits — apply opportunistically
+
+**N1 — `WebAuditLog.rotateIfStale()` is never called.** Add a `StartupActivity`:
+
+```kotlin
+// web/src/main/kotlin/com/workflow/orchestrator/web/audit/WebAuditRotationStartup.kt
+class WebAuditRotationStartup : ProjectActivity {
+    override suspend fun execute(project: Project) {
+        WebAuditLog(project.auditLogDir()).rotateIfStale()
+    }
+}
+```
+
+Register in `web-plugin.xml`:
+```xml
+<postStartupActivity implementation="com.workflow.orchestrator.web.audit.WebAuditRotationStartup"/>
+```
+
+**N2 — `X-Web-Tool-CorrelationId` header.** Generated per fetch/search call (one UUID per top-level invocation), added to every outbound request, included in the audit-log record. Already shown in R3 above.
+
+**N3 (Task 16 — PR 2) — Add `UrlScreener.screenQuery()` function and test.**
+
+```kotlin
+// In UrlScreener.kt (add to PR 2 step)
+fun screenQuery(query: String): QueryScreenResult {
+    if (query.isBlank()) return QueryScreenResult.Reject(WebError.MalformedUrl("(empty query)"))
+    if (query.length > 1000) return QueryScreenResult.Reject(WebError.MalformedUrl("query > 1000 chars"))
+    val redacted = query
+        .replace(Regex("""Bearer\s+[A-Za-z0-9_\-\.]+"""), "Bearer <redacted>")
+        .replace(Regex("""\b[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\b"""), "<jwt-redacted>")
+        .replace(Regex("""AKIA[A-Z0-9]{16}"""), "<aws-key-redacted>")
+        .trim()
+        .replace(Regex("""\s+"""), " ")
+    return QueryScreenResult.Pass(cleaned = redacted, redacted = redacted != query)
+}
+
+sealed class QueryScreenResult {
+    data class Pass(val cleaned: String, val redacted: Boolean) : QueryScreenResult()
+    data class Reject(val error: WebError) : QueryScreenResult()
+}
+```
+
+Add 6 table-driven test cases (empty, too-long, Bearer-stripped, JWT-stripped, AWS-key-stripped, normal pass-through).
+
+**N4 (Task 21 — PR 2) — `SanitizerSubagent.sanitizeBatch()`.**
+
+```kotlin
+suspend fun sanitizeBatch(
+    project: Project,
+    texts: List<String>,
+    brainId: String?,
+    timeoutMs: Long,
+): List<SubagentSpawner.SanitizerResult> {
+    if (texts.isEmpty()) return emptyList()
+    val combined = buildString {
+        appendLine("Sanitize the following ${texts.size} snippets.")
+        appendLine("Return JSON: {\"results\":[{verdict, cleaned_text, notes}, ...]} in the same order.")
+        texts.forEachIndexed { i, t -> appendLine("<snippet i='$i'>$t</snippet>") }
+    }
+    val rr = spawner.runSanitizer(
+        project = project, brainId = brainId,
+        systemPrompt = loadSystemPrompt(),
+        userPrompt = combined,
+        timeoutMs = timeoutMs,
+    )
+    return parseBatchJson(rr.cleanedText, expectedCount = texts.size)
+        ?: texts.map { SubagentSpawner.SanitizerResult(SubagentSpawner.Verdict.STRIPPED, it, "batch parse failed") }
+}
+```
+
+**N5 (Task 14) — replace MissingFieldsPanel reference.** Run `grep -rn "JBTable()" jira/src/main bamboo/src/main pullrequest/src/main | head` and use whichever in-tree table-editor fits best. Likely candidates: any `Editor` panel in the existing settings UIs.
+
+### Self-review of revisions
+
+- Spec coverage: Confirmed each blocking finding maps to a specific revision that's now part of a task.
+- No new placeholders introduced. R7 / R8 / R9 contain complete code; R3 contains complete redirect-loop code.
+- Type consistency: `WebFetchRequest` now has `planMode: Boolean = false` field (R6); referenced consistently across Tasks 12 + 13. `ContentSanitizer` type used in R9. All exception types named.
+
+---
+
 ## Execution
 
-Plan complete. Per `feedback_always_subagent.md`, executing via subagent-driven-development.
+Plan complete; revised against Sonnet review. Per `feedback_always_subagent.md`, executing via subagent-driven-development with sequential single-implementer dispatch per task (no parallel work on same tree per `feedback_no_parallel_same_tree.md`).
