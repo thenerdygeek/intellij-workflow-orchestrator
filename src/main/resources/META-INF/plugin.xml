@@ -9,6 +9,7 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.java</depends>
+    <depends optional="false" config-file="web-plugin.xml">com.workflow.orchestrator.web</depends>
     <depends optional="true" config-file="plugin-withGit.xml">Git4Idea</depends>
 <depends optional="true" config-file="plugin-withMaven.xml">org.jetbrains.idea.maven</depends>
     <depends optional="true" config-file="plugin-withSpring.xml">com.intellij.spring</depends>
