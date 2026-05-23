@@ -44,7 +44,12 @@ dependencies {
     testImplementation(libs.okhttp.mockwebserver)
 }
 
+intellijPlatform {
+    // Each module gets its own sandbox dir so concurrent/sequential :test tasks
+    // across modules don't collide on the shared plugins-test/ directory.
+    sandboxContainer = layout.buildDirectory.dir("idea-sandbox")
+}
+
 tasks.test {
     useJUnitPlatform()
-    dependsOn(":core:prepareTestSandbox")
 }

@@ -57,22 +57,12 @@ dependencies {
     testImplementation(kotlin("test"))
 }
 
+intellijPlatform {
+    // Each module gets its own sandbox dir so concurrent/sequential :test tasks
+    // across modules don't collide on the shared plugins-test/ directory.
+    sandboxContainer = layout.buildDirectory.dir("idea-sandbox")
+}
+
 tasks.test {
     useJUnitPlatform()
-    // Gradle 9: declare ordering so that when multiple modules are tested in one build
-    // invocation (e.g. ./gradlew :core:test :web:test :agent:test) the test task does
-    // not implicitly consume sandbox outputs from sibling modules before those tasks run.
-    // mustRunAfter (not dependsOn) so :core:test still works standalone without pulling
-    // in every other module's test infrastructure.
-    mustRunAfter(
-        ":web:prepareTestSandbox",
-        ":agent:prepareTestSandbox",
-        ":document:prepareTestSandbox",
-        ":jira:prepareTestSandbox",
-        ":bamboo:prepareTestSandbox",
-        ":sonar:prepareTestSandbox",
-        ":pullrequest:prepareTestSandbox",
-        ":automation:prepareTestSandbox",
-        ":handover:prepareTestSandbox",
-    )
 }
