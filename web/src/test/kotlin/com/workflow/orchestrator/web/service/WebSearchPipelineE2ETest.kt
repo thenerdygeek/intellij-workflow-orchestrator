@@ -87,6 +87,41 @@ class WebSearchPipelineE2ETest {
         )
     }
 
+    /**
+     * Variant of [buildEngine] that accepts a controlled [egressFilter] and a [providerSearchHook]
+     * spy, enabling E2E tests to assert both the egress decision and whether the provider was
+     * actually called. The provider stub delegates its [SearchProvider.search] call to the hook
+     * so callers can capture the query or set an [AtomicBoolean] side-effect flag.
+     */
+    private fun buildEngineWithEgressFilter(
+        egressFilter: com.workflow.orchestrator.core.web.QueryEgressFilter,
+        providerSearchHook: suspend (String) -> Result<List<SearchProvider.RawHit>>,
+        baseUrl: String = "https://example.com",
+        ssrfResolver: UrlSafetyGuard.Resolver = allowAllResolver,
+    ): WebSearchEngine {
+        val hookProvider = object : SearchProvider {
+            override val id: SearchProvider.ProviderId = SearchProvider.ProviderId.SEARXNG
+            override suspend fun validate(): Result<Unit> = Result.success(Unit)
+            override suspend fun search(query: String, maxResults: Int): Result<List<SearchProvider.RawHit>> =
+                providerSearchHook(query)
+        }
+        val auditLog = WebAuditLog(Files.createTempDirectory("search-e2e-egress"))
+        val registry = object : SearchProviderRegistry(project, mockk<okhttp3.OkHttpClient>()) {
+            override fun resolve(pinnedDns: okhttp3.Dns): SearchProviderRegistry.ResolvedProvider =
+                SearchProviderRegistry.ResolvedProvider(hookProvider, baseUrl, false)
+        }
+        return WebSearchEngine(
+            project = project,
+            settings = settings,
+            sanitizerSubagent = SanitizerSubagent(spawner),
+            jsoupReadability = JsoupReadability(),
+            registry = registry,
+            auditLog = auditLog,
+            egressFilter = egressFilter,
+            ssrfResolver = ssrfResolver,
+        )
+    }
+
     private fun freshState() = PluginSettings.State().apply {
         webSearchProviderType = "SEARXNG"
         webSearchSnippetMaxChars = 500
@@ -288,6 +323,97 @@ class WebSearchPipelineE2ETest {
 
         val result = engine.search(WebSearchRequest(query = "local test"))
         assertFalse(result.isError, "Expected success with SearXNG localhost but got: ${result.summary}")
+    }
+
+    // ── B13: egress filter end-to-end ─────────────────────────────────────────
+
+    /**
+     * B13-a: A deny-list entry that matches the query causes the engine to return
+     * QUERY_BLOCKED_SENSITIVE and must NOT forward the query to the search provider.
+     * "provider was not called" is the load-bearing security property.
+     */
+    @Test
+    fun `E2E - deny-list blocks query before provider HTTP call`() = runTest {
+        val providerCalled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val engine = buildEngineWithEgressFilter(
+            egressFilter = com.workflow.orchestrator.web.service.egress.QueryEgressFilterImpl(
+                denyListSupplier = { setOf("acme.corp") },
+                llmScreenerEnabled = false,
+                llmScreener = { error("LLM should not run") },
+            ),
+            providerSearchHook = { providerCalled.set(true); Result.success(emptyList()) },
+        )
+        val result = engine.search(
+            com.workflow.orchestrator.core.web.WebSearchService.WebSearchRequest(
+                query = "Why did jenkins.acme.corp restart"
+            )
+        )
+        assertTrue(result.isError, "Expected error but got success: ${result.summary}")
+        assertTrue(result.summary.contains("QUERY_BLOCKED_SENSITIVE"), "summary: ${result.summary}")
+        assertFalse(providerCalled.get(), "provider must not be called when egress blocks")
+    }
+
+    /**
+     * B13-b: When the LLM screener rewrites the query, the rewritten form is what reaches
+     * the provider, and the summary surfaces the egress-filter note so the agent knows
+     * its query was modified.
+     */
+    @Test
+    fun `E2E - LLM rewrite swaps query before provider call and surfaces note in summary`() = runTest {
+        var sentToProvider: String? = null
+        val engine = buildEngineWithEgressFilter(
+            egressFilter = com.workflow.orchestrator.web.service.egress.QueryEgressFilterImpl(
+                denyListSupplier = { emptySet() },
+                llmScreenerEnabled = true,
+                llmScreener = { q ->
+                    com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Rewritten(
+                        query = "Why does Jenkins restart",
+                        original = q,
+                        note = "removed internal hostname",
+                    )
+                },
+            ),
+            providerSearchHook = { q -> sentToProvider = q; Result.success(emptyList()) },
+        )
+        val result = engine.search(
+            com.workflow.orchestrator.core.web.WebSearchService.WebSearchRequest(
+                query = "Why does jenkins.internal.example restart"
+            )
+        )
+        assertEquals("Why does Jenkins restart", sentToProvider,
+            "provider must receive the rewritten query, not the original")
+        assertFalse(result.isError, "Expected success but got: ${result.summary}")
+        assertTrue(result.summary.contains("egress filter rewrote"), "summary: ${result.summary}")
+    }
+
+    /**
+     * B13-c: When the LLM screener blocks the query, the engine returns
+     * QUERY_BLOCKED_SENSITIVE with the masked term and must NOT call the provider.
+     */
+    @Test
+    fun `E2E - LLM block returns QUERY_BLOCKED_SENSITIVE and never calls provider`() = runTest {
+        val providerCalled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val engine = buildEngineWithEgressFilter(
+            egressFilter = com.workflow.orchestrator.web.service.egress.QueryEgressFilterImpl(
+                denyListSupplier = { emptySet() },
+                llmScreenerEnabled = true,
+                llmScreener = { _ ->
+                    com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Blocked(
+                        "LLM_REFUSED", "Int***"
+                    )
+                },
+            ),
+            providerSearchHook = { providerCalled.set(true); Result.success(emptyList()) },
+        )
+        val result = engine.search(
+            com.workflow.orchestrator.core.web.WebSearchService.WebSearchRequest(
+                query = "InternalPaymentsService MyComp.class"
+            )
+        )
+        assertTrue(result.isError, "Expected error but got success: ${result.summary}")
+        assertTrue(result.summary.contains("QUERY_BLOCKED_SENSITIVE"), "summary: ${result.summary}")
+        assertTrue(result.summary.contains("Int***"), "masked term missing from summary: ${result.summary}")
+        assertFalse(providerCalled.get(), "provider must not be called when egress blocks")
     }
 
     // ── I5 regression: search passes resolved sanitizer brainId to subagent ───
