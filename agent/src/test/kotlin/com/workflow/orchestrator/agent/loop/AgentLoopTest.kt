@@ -9,12 +9,14 @@ import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.*
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import com.workflow.orchestrator.core.model.ModelPricingRegistry
 import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
@@ -29,6 +31,18 @@ class AgentLoopTest {
     fun setUp() {
         project = mockk(relaxed = true)
         contextManager = ContextManager(maxInputTokens = 100_000)
+    }
+
+    @AfterEach
+    fun tearDown() {
+        // AgentLoop / ContextManager touch ModelPricingRegistry, whose init {} starts a
+        // daemon FileSystemWatcher backed by a native macOS CFRunLoopThread. Without
+        // explicit teardown the watcher survives the test method and ThreadLeakTracker
+        // fails with `Thread leaked: Thread[FileSystemWatcher,...]` whenever this test
+        // class runs in isolation (full-suite runs pass because an earlier test in the
+        // ordering already leaked the watcher, so it lives in the tracker's startup
+        // baseline). Same pattern as AgentLoopUpstreamTimeoutTest / AgentLoopVisionFallbackTest.
+        runCatching { ModelPricingRegistry.resetForTests() }
     }
 
     // ---- Helpers ----
