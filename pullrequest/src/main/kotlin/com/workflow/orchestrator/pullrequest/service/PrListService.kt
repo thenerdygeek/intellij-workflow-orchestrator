@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.pullrequest.service
 
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -111,8 +112,12 @@ class PrListService(
                 val result = client.getCurrentUsername()
                 if (result is ApiResult.Success && result.data.isNotBlank()) {
                     cachedUsername = result.data
-                    // Save for future sessions
-                    connSettings.bitbucketUsername = result.data
+                    // D2: PersistentStateComponent state must mutate on EDT to avoid corrupt
+                    // XML persistence and missed StateChanged notifications. Previously this
+                    // ran on Dispatchers.IO (audit finding pullrequest:F-3).
+                    withContext(Dispatchers.EDT) {
+                        connSettings.bitbucketUsername = result.data
+                    }
                     log.info("[PR:List] Auto-detected Bitbucket username: ${result.data}")
                     result.data
                 } else {
