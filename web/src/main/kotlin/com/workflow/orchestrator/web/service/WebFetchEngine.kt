@@ -19,6 +19,8 @@ import com.workflow.orchestrator.web.audit.WebAuditRecord
 import com.workflow.orchestrator.web.service.sanitizer.JsoupReadability
 import com.workflow.orchestrator.web.service.sanitizer.SanitizerSubagent
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -163,6 +165,13 @@ class WebFetchEngine(
     }
 
     private val pipeline: UrlPipeline by lazy { UrlPipeline(shortenerResolver, resolver) }
+
+    /**
+     * I7 — Serializes read-modify-write on the allowlist. Two parallel fetches that both
+     * resolve "Add to allowlist" would otherwise lost-update each other. One mutex per
+     * engine instance is sufficient because there is only one engine per project.
+     */
+    private val allowlistMutex = Mutex()
 
     /** Internal exception types caught at the top of [fetchWithSafeRedirects]. */
     private class RedirectBlockedException(val webError: WebError) : RuntimeException()
@@ -460,15 +469,19 @@ class WebFetchEngine(
         }
     }
 
-    private fun persistAllowlistEntry(host: String, outcome: ApprovalGate.Decision.AddToAllowlist) {
-        val current = settings.getWebAllowlist().toMutableList()
-        val domain = computeAllowlistDomain(host, outcome.subdomainGlob)
-        current += DomainAllowlistEntry(
-            domain = domain,
-            httpOk = outcome.allowHttp,
-            addedAt = Instant.now(),
-        )
-        settings.setWebAllowlist(current)
+    private suspend fun persistAllowlistEntry(host: String, outcome: ApprovalGate.Decision.AddToAllowlist) {
+        // I7 — Serialize read-modify-write so two parallel fetches both Add-to-allowlisting
+        // can't lose-update each other. Mutex is per-engine (one engine per project).
+        allowlistMutex.withLock {
+            val current = settings.getWebAllowlist().toMutableList()
+            val domain = computeAllowlistDomain(host, outcome.subdomainGlob)
+            current += DomainAllowlistEntry(
+                domain = domain,
+                httpOk = outcome.allowHttp,
+                addedAt = Instant.now(),
+            )
+            settings.setWebAllowlist(current)
+        }
     }
 
     private fun failure(err: WebError, startMs: Long, url: String): ToolResult<WebPage> {

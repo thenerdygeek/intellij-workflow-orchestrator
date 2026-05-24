@@ -495,15 +495,26 @@ fun PluginSettings.clearPlanValidationCache() {
 
 // ── Web tools accessors ──────────────────────────────────────────────────────
 
+private val webAllowlistLog = com.intellij.openapi.diagnostic.Logger.getInstance("WebAllowlist")
+
 /**
  * Deserializes the stored JSON into a typed list of [DomainAllowlistEntry].
- * Returns an empty list on parse error or blank/missing JSON.
+ *
+ * Returns an empty list on parse error or blank/missing JSON. I7 fix: silent-empty
+ * return is intentional (throwing would break the agent loop on a stale config rewrite),
+ * but the parse failure is now logged at WARN so a corrupted allowlist is surfaced
+ * rather than disappearing without trace.
  */
 fun PluginSettings.getWebAllowlist(): List<com.workflow.orchestrator.core.model.web.DomainAllowlistEntry> {
     val json = state.webAllowlistJson?.ifBlank { "[]" } ?: "[]"
     return try {
         WebAllowlistJson.adapter.fromJson(json) ?: emptyList()
-    } catch (_: Exception) { emptyList() }
+    } catch (e: Exception) {
+        // I7: surface corruption rather than silently dropping entries. We still return
+        // empty (fail-soft) so the agent loop keeps running, but the user sees a log line.
+        webAllowlistLog.warn("Failed to parse webAllowlistJson; returning empty list. JSON length=${json.length}", e)
+        emptyList()
+    }
 }
 
 /**
