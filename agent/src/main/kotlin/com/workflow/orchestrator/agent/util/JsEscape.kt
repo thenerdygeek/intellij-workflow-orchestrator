@@ -24,6 +24,10 @@ object JsEscape {
      * Escape [s] and wrap it in single quotes so it can be embedded as a JS string
      * literal. Escapes the same set as the legacy `AgentCefPanel.jsonStr` helper:
      * backslash, single quote, double quote, newline, carriage return, tab.
+     * Also escapes U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH SEPARATOR) — both
+     * are valid JSON whitespace but JS parsers treat them as line terminators inside
+     * string literals, causing silent bridge frame corruption on any LLM output that
+     * happens to contain them (audit finding agent-ui:F-2).
      */
     fun toJsString(s: String): String = "'${escapeForJsString(s)}'"
 
@@ -39,6 +43,8 @@ object JsEscape {
             .replace("\n", "\\n")
             .replace("\r", "\\r")
             .replace("\t", "\\t")
+            .replace(" ", "\\u2028")
+            .replace(" ", "\\u2029")
 
     /**
      * Escape [s] and wrap it in double quotes so it forms a valid JSON string
@@ -47,6 +53,7 @@ object JsEscape {
      * are NOT escaped because `\'` is not a valid JSON escape — the resulting
      * JSON will contain literal apostrophes, which is fine because JSON parsers
      * accept them in string contents.
+     * Also escapes U+2028/U+2029 so the JSON is safe to embed inside a JS literal.
      */
     fun toJsonString(s: String): String = "\"${escapeForJsonString(s)}\""
 
@@ -58,8 +65,23 @@ object JsEscape {
         s.replace("\\", "\\\\")
             .replace("\"", "\\\"")
             .replace("\b", "\\b")
-            .replace("\u000C", "\\f")
+            .replace("", "\\f")
             .replace("\n", "\\n")
             .replace("\r", "\\r")
             .replace("\t", "\\t")
+            .replace(" ", "\\u2028")
+            .replace(" ", "\\u2029")
+
+    /**
+     * Post-process a [kotlinx.serialization.json.Json.encodeToString] result that will be
+     * injected as a JavaScript literal (e.g. via [callJs] string interpolation). Standard
+     * JSON serializers do not escape U+2028 / U+2029 because they are valid JSON whitespace,
+     * but JS parsers treat them as line terminators inside string literals, which breaks the
+     * bridge frame.
+     *
+     * Only call this when the JSON is embedded as a JS literal. If the JSON travels via a
+     * binary [JBCefJSQuery] message (no JS literal boundary), escaping is not needed.
+     */
+    fun escapeJsonForJsBridge(json: String): String =
+        json.replace(" ", "\\u2028").replace(" ", "\\u2029")
 }

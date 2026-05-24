@@ -929,25 +929,25 @@ class AgentController(
      * chunk handler.
      */
     fun pushStreamingEditOpen(callId: String, path: String, initialDiff: String) {
-        val cb = Json.encodeToString(callId)
-        val pa = Json.encodeToString(path)
-        val di = Json.encodeToString(initialDiff)
+        val cb = JsEscape.escapeJsonForJsBridge(Json.encodeToString(callId))
+        val pa = JsEscape.escapeJsonForJsBridge(Json.encodeToString(path))
+        val di = JsEscape.escapeJsonForJsBridge(Json.encodeToString(initialDiff))
         dashboard.callJs("if (window._streamingEditOpen) { window._streamingEditOpen($cb, $pa, $di); }")
     }
 
     fun pushStreamingEditUpdate(callId: String, diff: String) {
-        val cb = Json.encodeToString(callId)
-        val di = Json.encodeToString(diff)
+        val cb = JsEscape.escapeJsonForJsBridge(Json.encodeToString(callId))
+        val di = JsEscape.escapeJsonForJsBridge(Json.encodeToString(diff))
         dashboard.callJs("if (window._streamingEditUpdate) { window._streamingEditUpdate($cb, $di); }")
     }
 
     fun pushStreamingEditFinalize(callId: String) {
-        val cb = Json.encodeToString(callId)
+        val cb = JsEscape.escapeJsonForJsBridge(Json.encodeToString(callId))
         dashboard.callJs("if (window._streamingEditFinalize) { window._streamingEditFinalize($cb); }")
     }
 
     fun pushStreamingEditCancel(callId: String) {
-        val cb = Json.encodeToString(callId)
+        val cb = JsEscape.escapeJsonForJsBridge(Json.encodeToString(callId))
         dashboard.callJs("if (window._streamingEditCancel) { window._streamingEditCancel($cb); }")
     }
 

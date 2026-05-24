@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.util
 
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.DisplayName
@@ -120,6 +121,81 @@ class JsEscapeTest {
             // Must parse as valid JSON
             val parsed = Json.parseToJsonElement(jsonDoc).jsonObject
             assertEquals("She said \"hello\"", parsed["key"]?.jsonPrimitive?.content)
+        }
+    }
+
+    // ════════════════════════════════════════════
+    //  U+2028 / U+2029 escaping (audit finding agent-ui:F-2)
+    // ════════════════════════════════════════════
+
+    @Nested
+    @DisplayName("U+2028 and U+2029 line/paragraph separators")
+    inner class LineSeparators {
+
+        @Test
+        fun `escapeForJsString escapes U+2028`() {
+            val input = "a b"
+            val result = JsEscape.escapeForJsString(input)
+            assertEquals("a\\u2028b", result)
+        }
+
+        @Test
+        fun `escapeForJsString escapes U+2029`() {
+            val input = "a b"
+            val result = JsEscape.escapeForJsString(input)
+            assertEquals("a\\u2029b", result)
+        }
+
+        @Test
+        fun `toJsString wraps and escapes U+2028`() {
+            val result = JsEscape.toJsString("a b")
+            assertEquals("'a\\u2028b'", result)
+        }
+
+        @Test
+        fun `toJsString wraps and escapes U+2029`() {
+            val result = JsEscape.toJsString("a b")
+            assertEquals("'a\\u2029b'", result)
+        }
+
+        @Test
+        fun `escapeForJsonString escapes U+2028`() {
+            val result = JsEscape.escapeForJsonString("a b")
+            assertEquals("a\\u2028b", result)
+        }
+
+        @Test
+        fun `escapeForJsonString escapes U+2029`() {
+            val result = JsEscape.escapeForJsonString("a b")
+            assertEquals("a\\u2029b", result)
+        }
+
+        @Test
+        fun `escapeJsonForJsBridge escapes U+2028 in serialized JSON`() {
+            val json = "\"hello world\""
+            val result = JsEscape.escapeJsonForJsBridge(json)
+            assertEquals("\"hello\\u2028world\"", result)
+        }
+
+        @Test
+        fun `escapeJsonForJsBridge escapes U+2029 in serialized JSON`() {
+            val json = "\"hello world\""
+            val result = JsEscape.escapeJsonForJsBridge(json)
+            assertEquals("\"hello\\u2029world\"", result)
+        }
+
+        @Test
+        fun `AgentController bridge path - Json_encodeToString result is safe after escapeJsonForJsBridge`() {
+            // Simulate the exact path: LLM emits callId containing U+2028/U+2029,
+            // AgentController calls Json.encodeToString then escapeJsonForJsBridge.
+            val callId = "edit-1- -abc"
+            val serialized = Json.encodeToString(String.serializer(), callId)
+            val bridgeSafe = JsEscape.escapeJsonForJsBridge(serialized)
+            // Must NOT contain raw U+2028
+            assertFalse(bridgeSafe.contains(" "),
+                "Bridge-safe string must not contain raw U+2028")
+            assertTrue(bridgeSafe.contains("\\u2028"),
+                "Bridge-safe string must contain \\u2028 escape")
         }
     }
 
