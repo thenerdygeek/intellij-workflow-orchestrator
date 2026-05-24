@@ -83,6 +83,14 @@ class ProcessEnvironmentTest {
                 "Expected at least 35 sensitive vars, got ${ProcessEnvironment.SENSITIVE_ENV_VARS.size}"
             )
         }
+
+        @Test
+        fun `contains expanded AI API keys`() {
+            val expected = listOf("COHERE_API_KEY", "MISTRAL_API_KEY", "GEMINI_API_KEY")
+            expected.forEach { key ->
+                assertTrue(key in ProcessEnvironment.SENSITIVE_ENV_VARS, "Missing sensitive var: $key")
+            }
+        }
     }
 
     // ──────────────────────────────────────────────
@@ -148,10 +156,33 @@ class ProcessEnvironmentTest {
 
         @Test
         fun `has at least 25 entries`() {
+            // BLOCKED is now a superset of SENSITIVE, so the count is much higher
             assertTrue(
                 ProcessEnvironment.BLOCKED_ENV_VARS.size >= 25,
                 "Expected at least 25 blocked vars, got ${ProcessEnvironment.BLOCKED_ENV_VARS.size}"
             )
+        }
+
+        @Test
+        fun `contains expanded macOS and Linux injection vectors`() {
+            val expected = listOf(
+                "DYLD_FRAMEWORK_PATH", "DYLD_FORCE_FLAT_NAMESPACE",
+                "LD_AUDIT", "JDK_JAVA_OPTIONS",
+                "PERL5OPT", "RUBYOPT",
+            )
+            expected.forEach { key ->
+                assertTrue(key in ProcessEnvironment.BLOCKED_ENV_VARS, "Missing blocked var: $key")
+            }
+        }
+
+        @Test
+        fun `SENSITIVE vars are a subset of BLOCKED (superset invariant)`() {
+            val sensitiveNotBlocked = ProcessEnvironment.SENSITIVE_ENV_VARS.filter { key ->
+                key !in ProcessEnvironment.BLOCKED_ENV_VARS
+            }
+            assertTrue(sensitiveNotBlocked.isEmpty()) {
+                "SENSITIVE vars not in BLOCKED: $sensitiveNotBlocked"
+            }
         }
     }
 
@@ -425,12 +456,26 @@ class ProcessEnvironmentTest {
     }
 
     // ──────────────────────────────────────────────
-    // Set disjointness — sensitive and blocked don't overlap
+    // Set relationship — SENSITIVE ⊆ BLOCKED (superset invariant)
     // ──────────────────────────────────────────────
 
     @Test
-    fun `sensitive and blocked sets are disjoint`() {
-        val overlap = ProcessEnvironment.SENSITIVE_ENV_VARS.intersect(ProcessEnvironment.BLOCKED_ENV_VARS)
-        assertTrue(overlap.isEmpty(), "Sensitive and blocked sets should not overlap: $overlap")
+    fun `every SENSITIVE var is also in BLOCKED`() {
+        val notInBlocked = ProcessEnvironment.SENSITIVE_ENV_VARS.filter { key ->
+            key !in ProcessEnvironment.BLOCKED_ENV_VARS
+        }
+        assertTrue(notInBlocked.isEmpty()) {
+            "SENSITIVE vars not in BLOCKED (superset violated): $notInBlocked"
+        }
+    }
+
+    @Test
+    fun `BLOCKED is a strict superset of SENSITIVE`() {
+        assertTrue(ProcessEnvironment.BLOCKED_ENV_VARS.containsAll(ProcessEnvironment.SENSITIVE_ENV_VARS)) {
+            "BLOCKED must contain all SENSITIVE vars"
+        }
+        assertTrue(ProcessEnvironment.BLOCKED_ENV_VARS.size > ProcessEnvironment.SENSITIVE_ENV_VARS.size) {
+            "BLOCKED should be larger than SENSITIVE (it also covers injection vectors)"
+        }
     }
 }
