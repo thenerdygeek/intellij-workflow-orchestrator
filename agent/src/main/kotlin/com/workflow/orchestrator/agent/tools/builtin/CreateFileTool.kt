@@ -9,6 +9,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.encoding.EncodingProjectManager
 import com.workflow.orchestrator.agent.memory.MemoryIndex
+import com.workflow.orchestrator.agent.research.ResearchIndex
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import com.workflow.orchestrator.core.vfs.PostMutationRefresh
@@ -212,6 +213,7 @@ class CreateFileTool : AgentTool {
         if (autoIndexEnabled) {
             tryMemoryIndexHook(project, file)
         }
+        tryResearchIndexHook(project, file)
 
         // Drop JPS's in-memory incremental-build snapshot so the next
         // CompilerManager.make / ProjectTaskManager.build re-reads source
@@ -304,6 +306,17 @@ class CreateFileTool : AgentTool {
             MemoryIndex.onMemoryFileCreated(memoryDir.toPath(), createdFile.toPath())
         } catch (t: Throwable) {
             log.warn("MemoryIndex.onMemoryFileCreated failed for ${createdFile.name}", t)
+        }
+    }
+
+    private fun tryResearchIndexHook(project: Project, createdFile: java.io.File) {
+        try {
+            val basePath = project.basePath ?: return
+            val researchDir = com.workflow.orchestrator.core.util.ProjectIdentifier.researchDir(basePath)
+            if (!createdFile.canonicalPath.startsWith(researchDir.canonicalPath + java.io.File.separator)) return
+            ResearchIndex.onResearchFileCreated(researchDir.toPath(), createdFile.toPath())
+        } catch (t: Throwable) {
+            log.warn("ResearchIndex.onResearchFileCreated failed for ${createdFile.name}", t)
         }
     }
 }
