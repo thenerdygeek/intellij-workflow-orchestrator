@@ -1344,6 +1344,57 @@ class AgentService(
         }
     }
 
+    /**
+     * Computes the snapshot of cross-IDE delegation targets surfaced into the
+     * system prompt's Capabilities section. Returns empty when outbound delegation
+     * is off (defensive — caller already gates, but avoids accidental socket probes
+     * if a future caller forgets). Swallows provider failures so prompt build never
+     * fails on a misconfigured environment.
+     *
+     * Called once per `executeTask` / resume in the surrounding suspend context;
+     * the result is captured into the (sync) `systemPromptBuilder` lambda so we
+     * don't re-probe sockets on every tool-set change. Stale-within-a-task is
+     * acceptable: the prompt explicitly tells the LLM to call
+     * `delegation(action="list_targets")` for an authoritative live view.
+     *
+     * Plan 5.1 — pairs with [SystemPrompt.DelegationTarget].
+     */
+    private suspend fun computeDelegationTargetsForPrompt(
+        project: com.intellij.openapi.project.Project
+    ): List<com.workflow.orchestrator.agent.prompt.SystemPrompt.DelegationTarget> {
+        val outboundEnabled = com.workflow.orchestrator.core.settings.PluginSettings
+            .getInstance(project).state.enableOutboundCrossIdeDelegation
+        if (!outboundEnabled) return emptyList()
+
+        val recents = try {
+            com.workflow.orchestrator.agent.tools.delegation.DelegationTool
+                .defaultRecentsProvider(project)
+        } catch (e: Exception) {
+            log.warn("[AgentService] delegation recents probe failed for prompt: ${e.message}")
+            emptyList()
+        }
+        // Recents already cover paths in this IDE's recents list; discovered fills in
+        // socket-glob hits for paths NOT in recents (e.g. a sibling Toolbox flavor).
+        val recentPaths = recents.map { it.projectPath }.toSet()
+        val discovered = try {
+            com.workflow.orchestrator.agent.tools.delegation.DelegationTool
+                .defaultDiscoveredProvider(project)
+                .filter { it.projectPath !in recentPaths }
+        } catch (e: Exception) {
+            log.warn("[AgentService] delegation discovery failed for prompt: ${e.message}")
+            emptyList()
+        }
+        // Drop "missing" — a path that no longer exists on disk is noise to the LLM.
+        return (recents + discovered)
+            .filter { it.status != "missing" }
+            .map {
+                com.workflow.orchestrator.agent.prompt.SystemPrompt.DelegationTarget(
+                    repoName = it.repoName,
+                    status = it.status,
+                )
+            }
+    }
+
     private fun registerDebugTools() {
         try {
             val controller = AgentDebugController(project)
@@ -1899,6 +1950,15 @@ class AgentService(
                 // until then `consumeDialectDriftFlag()` returns false via the elvis.
                 var messageStateRef: MessageStateHandler? = null
 
+                // Snapshot of cross-IDE delegation targets, captured once per executeTask in
+                // the surrounding suspend context. Stays stable across the lambda's many
+                // rebuilds (tool-set changes) so we don't re-probe sockets every iteration.
+                // The list goes stale if a new IDE comes online mid-task — acceptable because
+                // the prompt explicitly tells the LLM to call `delegation(action="list_targets")`
+                // for an authoritative live view.
+                val delegationTargetsSnapshot: List<SystemPrompt.DelegationTarget> =
+                    computeDelegationTargetsForPrompt(project)
+
                 // Build system prompt — XML tool definitions added dynamically below.
                 // MEMORY.md is RE-READ on every rebuild (not captured at session start) so
                 // mid-session saves via `edit_file MEMORY.md` are visible to the LLM on its
@@ -1932,7 +1992,8 @@ class AgentService(
                         // `redactDialectXmlInHistory` rewrote one at resume / retry.
                         dialectDriftDetected = dialectDriftSnapshot,
                         delegationOutboundEnabled = com.workflow.orchestrator.core.settings.PluginSettings
-                            .getInstance(project).state.enableOutboundCrossIdeDelegation
+                            .getInstance(project).state.enableOutboundCrossIdeDelegation,
+                        delegationTargets = delegationTargetsSnapshot,
                     )
                 }
                 // Set initial system prompt (XML defs added on first toolDefinitionProvider call)
@@ -2740,7 +2801,8 @@ class AgentService(
                 // further drift caught at write-time during this session.)
                 dialectDriftDetected = dialectDriftDetectedOnResume,
                 delegationOutboundEnabled = com.workflow.orchestrator.core.settings.PluginSettings
-                    .getInstance(project).state.enableOutboundCrossIdeDelegation
+                    .getInstance(project).state.enableOutboundCrossIdeDelegation,
+                delegationTargets = computeDelegationTargetsForPrompt(project),
             )
             ctx.setSystemPrompt(systemPrompt)
 

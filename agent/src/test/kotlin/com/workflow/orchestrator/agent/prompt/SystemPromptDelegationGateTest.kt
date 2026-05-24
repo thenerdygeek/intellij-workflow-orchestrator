@@ -19,14 +19,16 @@ class SystemPromptDelegationGateTest {
 
     private fun buildWith(
         delegationOutboundEnabled: Boolean,
-        skills: List<SkillMetadata>? = null
+        skills: List<SkillMetadata>? = null,
+        delegationTargets: List<SystemPrompt.DelegationTarget> = emptyList(),
     ) = SystemPrompt.build(
         projectName = "GateTestProject",
         projectPath = "/gate/test/project",
         osName = "Linux",
         shell = "/bin/bash",
         availableSkills = skills,
-        delegationOutboundEnabled = delegationOutboundEnabled
+        delegationOutboundEnabled = delegationOutboundEnabled,
+        delegationTargets = delegationTargets,
     )
 
     private fun crossIdeDelegationSkill() = SkillMetadata(
@@ -133,6 +135,88 @@ class SystemPromptDelegationGateTest {
         val prompt = buildWith(delegationOutboundEnabled = false, skills = null)
         assertFalse(prompt.contains("cross-ide-delegation"))
         assertFalse(prompt.contains("delegation with action=\"send\""))
+    }
+
+    // ---- Plan 5.1: delegation target snapshot rendering ----
+
+    @Test
+    fun `delegation targets section absent when gate is off even with non-empty list`() {
+        // Defensive: AgentService always returns empty list when gate off, but the
+        // prompt builder itself must not render the section when the gate is off.
+        val targets = listOf(
+            SystemPrompt.DelegationTarget("frontend-app", "running"),
+            SystemPrompt.DelegationTarget("mobile-app", "closed"),
+        )
+        val prompt = buildWith(delegationOutboundEnabled = false, delegationTargets = targets)
+        assertFalse(
+            prompt.contains("Available cross-IDE delegation targets"),
+            "Targets section must not render when gate is off, even with a non-empty list"
+        )
+        assertFalse(prompt.contains("frontend-app"), "Repo names must not leak when gate is off")
+    }
+
+    @Test
+    fun `delegation targets section absent when gate is on but list is empty`() {
+        val prompt = buildWith(delegationOutboundEnabled = true, delegationTargets = emptyList())
+        assertFalse(
+            prompt.contains("Available cross-IDE delegation targets"),
+            "Targets section must be omitted when the list is empty (no IDE found)"
+        )
+        // But the gate-on hints / UX note must still appear.
+        assertTrue(prompt.contains("Cross-IDE delegation UX"))
+    }
+
+    @Test
+    fun `delegation targets section lists every repo with its status when gate on and list non-empty`() {
+        val targets = listOf(
+            SystemPrompt.DelegationTarget("frontend-app", "running"),
+            SystemPrompt.DelegationTarget("mobile-app", "closed"),
+            SystemPrompt.DelegationTarget("infra-terraform", "discovered"),
+        )
+        val prompt = buildWith(delegationOutboundEnabled = true, delegationTargets = targets)
+        assertTrue(
+            prompt.contains("Available cross-IDE delegation targets"),
+            "Targets section header must be present"
+        )
+        assertTrue(prompt.contains("- frontend-app (running)"))
+        assertTrue(prompt.contains("- mobile-app (closed)"))
+        assertTrue(prompt.contains("- infra-terraform (discovered)"))
+        assertTrue(
+            prompt.contains("Status meanings:"),
+            "Status legend must accompany the list so the LLM interprets the values correctly"
+        )
+    }
+
+    @Test
+    fun `delegation targets list is capped at MAX_DELEGATION_TARGETS_IN_PROMPT with overflow line`() {
+        // Heavy users may have 100+ recents — keep the prompt bounded.
+        val targets = (1..60).map { SystemPrompt.DelegationTarget("repo-$it", "running") }
+        val prompt = buildWith(delegationOutboundEnabled = true, delegationTargets = targets)
+        assertTrue(prompt.contains("- repo-1 (running)"))
+        assertTrue(prompt.contains("- repo-50 (running)"), "First 50 entries must render")
+        assertFalse(prompt.contains("- repo-51 (running)"), "Beyond cap must NOT render verbatim")
+        assertTrue(
+            prompt.contains("and 10 more"),
+            "Overflow line must point the LLM at list_targets for the remainder"
+        )
+    }
+
+    @Test
+    fun `sub-agent builder never renders targets even when caller would pass them`() {
+        // Mirrors the existing sub-agent invariant — sub-agents always get gate off,
+        // so any targets caller might forward are dropped at the gate.
+        val prompt = com.workflow.orchestrator.agent.tools.subagent.SubagentSystemPromptBuilder.build(
+            personaRole = "You are a test sub-agent.",
+            agentConfig = null,
+            ideContext = null,
+            projectName = "SubagentGateProject",
+            projectPath = "/subagent/gate",
+            completingYourTaskSection = "COMPLETING YOUR TASK\n\nCall task_report when done.",
+        )
+        assertFalse(
+            prompt.contains("Available cross-IDE delegation targets"),
+            "Sub-agent prompts must never contain the targets section"
+        )
     }
 
     // ---- Sub-agent invariant ----

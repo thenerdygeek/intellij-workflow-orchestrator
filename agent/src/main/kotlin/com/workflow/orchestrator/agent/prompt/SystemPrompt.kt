@@ -27,6 +27,19 @@ object SystemPrompt {
     // ---- Section separators (matches Cline's ==== separator between sections) ----
     private const val SECTION_SEP = "\n\n====\n\n"
 
+    /**
+     * Lightweight projection of a cross-IDE delegation target, surfaced into the
+     * Capabilities section so the LLM knows the actual repo names available and
+     * does not invent close-sounding ones. Snapshot at task / resume time; the
+     * LLM can call `delegation(action="list_targets")` for an authoritative
+     * live state. Decoupled from `DelegationTool.RecentEntry` so this module
+     * doesn't depend on the tools package.
+     */
+    data class DelegationTarget(val repoName: String, val status: String)
+
+    /** Cap the in-prompt target list — heavy users may have 100+ recents. */
+    private const val MAX_DELEGATION_TARGETS_IN_PROMPT: Int = 50
+
     fun build(
         projectName: String,
         projectPath: String,
@@ -112,7 +125,20 @@ object SystemPrompt {
          *
          * Sub-agents always receive false (v1 spec §2.4 — sub-agents cannot delegate).
          */
-        delegationOutboundEnabled: Boolean = false
+        delegationOutboundEnabled: Boolean = false,
+        /**
+         * Cross-IDE delegation targets to render in Section 5 (Capabilities) when
+         * [delegationOutboundEnabled] is true. A snapshot taken at task start /
+         * resume by [AgentService] from
+         * [com.workflow.orchestrator.agent.tools.delegation.DelegationTool.defaultRecentsProvider]
+         * + `defaultDiscoveredProvider`. Empty list (or gate off) → no targets
+         * section rendered. Capped at [MAX_DELEGATION_TARGETS_IN_PROMPT] entries.
+         *
+         * Purpose: prevent the LLM from inventing close-sounding repo names by
+         * surfacing the actual set up-front. The LLM can still call
+         * `delegation(action="list_targets")` for a fresh authoritative list.
+         */
+        delegationTargets: List<DelegationTarget> = emptyList()
     ): String = buildString {
 
         // 0. DIALECT-DRIFT CORRECTIVE REMINDER (primacy zone, one-shot)
@@ -167,7 +193,7 @@ object SystemPrompt {
         // 5. CAPABILITIES
         if (includeCapabilities) {
             append(SECTION_SEP)
-            append(capabilities(projectPath, ideContext, delegationOutboundEnabled))
+            append(capabilities(projectPath, ideContext, delegationOutboundEnabled, delegationTargets))
         }
 
         // 5b. MEMORY INDEX CONTENT (moved from post-Objective to land in the primacy zone)
@@ -368,7 +394,8 @@ In each user message, the environment_details will specify the current mode. The
     private fun capabilities(
         projectPath: String,
         ideContext: IdeContext?,
-        delegationOutboundEnabled: Boolean = false
+        delegationOutboundEnabled: Boolean = false,
+        delegationTargets: List<DelegationTarget> = emptyList()
     ): String = buildString {
         val ideName = ideContext?.productName ?: "IntelliJ IDEA"
         appendLine("CAPABILITIES")
@@ -555,6 +582,22 @@ In each user message, the environment_details will specify the current mode. The
             appendLine("| Inspect a delegated session's full message history | delegation with action=\"fetch_transcript\" | Reading the result summary only |")
             appendLine()
             appendLine("**Cross-IDE delegation UX:** `delegation(action=\"send\")` does not enumerate available IDEs for you. The picker dialog (modal in the requesting IDE) is the trust + discovery gate — the human selects the actual target IDE/repo. Specify your intent via `request`; pass `suggested_repo` as a hint for pre-selection. To pre-flight what's available without opening the picker, call `delegation(action=\"list_targets\")`.")
+
+            // Render the snapshot of available targets so the LLM doesn't invent close-sounding
+            // repo names. Truncated at MAX_DELEGATION_TARGETS_IN_PROMPT to bound token cost.
+            if (delegationTargets.isNotEmpty()) {
+                appendLine()
+                appendLine("**Available cross-IDE delegation targets** (snapshot at task start — call `delegation(action=\"list_targets\")` for live state):")
+                val capped = delegationTargets.take(MAX_DELEGATION_TARGETS_IN_PROMPT)
+                capped.forEach { t ->
+                    appendLine("- ${t.repoName} (${t.status})")
+                }
+                if (delegationTargets.size > capped.size) {
+                    appendLine("- … and ${delegationTargets.size - capped.size} more (use `delegation(action=\"list_targets\")` to enumerate)")
+                }
+                appendLine()
+                appendLine("Status meanings: `running` = IDE has the project open and is reachable; `closed` = in recents, IDE not running (the picker offers Launch & delegate); `discovered` = found via socket-glob, likely a different Toolbox slot; `missing` = path no longer exists. Pass the matching repoName as `suggested_repo` to pre-select it in the picker.")
+            }
         }
     }.trimEnd()
 
