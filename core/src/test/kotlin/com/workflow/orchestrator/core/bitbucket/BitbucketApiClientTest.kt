@@ -99,7 +99,13 @@ class BitbucketApiClientTest {
         assertEquals(42, prs[0].id)
 
         val recorded = server.takeRequest()
-        assertTrue(recorded.path!!.contains("state=OPEN"))
-        assertTrue(recorded.path!!.contains("at=refs/heads/feature/PROJ-123"))
+        val path = recorded.path!!
+        assertTrue(path.contains("state=OPEN"))
+        // After C5, branchName is percent-encoded via HttpUrl.addQueryParameter.
+        // OkHttp encodes slashes in query-param values as %2F.
+        assertTrue(
+            path.contains("at=refs%2Fheads%2Ffeature%2FPROJ-123") || path.contains("at=refs/heads/feature/PROJ-123"),
+            "Expected encoded 'at' param; got: $path"
+        )
     }
 }
