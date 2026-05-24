@@ -48,21 +48,28 @@ class DelegationServer(
      *
      * Receives the [DelegationMessage.ChannelResume] first-message, a [replyWith]
      * suspend closure for sending the outcome reply ([DelegationMessage.ChannelResumed],
-     * [DelegationMessage.SessionClosed], or [DelegationMessage.SessionNotFound]), and a
-     * [closeChannel] suspend closure to call when the reply has been sent (for non-resumed
-     * outcomes) or to leave open (for the resumed case, where the channel stays live for
-     * further exchange).
+     * [DelegationMessage.SessionClosed], or [DelegationMessage.SessionNotFound]), a
+     * [readMessage] suspend closure for reading subsequent frames (needed by H2 — the
+     * resumed-channel reader loop on the inbound side), and a [closeChannel] suspend
+     * closure to call when the channel is done (for non-resumed outcomes or when the
+     * reader loop exits normally).
+     *
+     * For the Resumed outcome, the handler runs the read-loop and eventually calls
+     * [closeChannel] when EOF or an exception terminates the loop. For SessionClosed /
+     * SessionNotFound the handler calls [closeChannel] after the single reply.
      *
      * Defaults to a no-op so existing callers that don't need CHANNEL_RESUME handling
      * (e.g., non-inbound services, unit tests) don't need to pass the callback.
      *
-     * Plan 4 spec §3.3, §4.1.
+     * Plan 4 spec §3.3, §4.1. H2 fix: added readMessage param so resumed channels
+     * get a reader loop (spec §3.3 "restart the reader loop" requirement).
      */
     private val onChannelResume: suspend (
         resume: DelegationMessage.ChannelResume,
         replyWith: suspend (DelegationMessage) -> Unit,
+        readMessage: suspend () -> DelegationMessage,
         closeChannel: suspend () -> Unit,
-    ) -> Unit = { _, _, _ -> },
+    ) -> Unit = { _, _, _, _ -> },
     private val scope: CoroutineScope,
 ) {
     private val json = Json { ignoreUnknownKeys = true; classDiscriminator = "type" }
@@ -143,13 +150,16 @@ class DelegationServer(
                     val replyWith: suspend (DelegationMessage) -> Unit = { reply ->
                         withContext(Dispatchers.IO) { DelegationFraming.writeFramed(client, reply, json) }
                     }
+                    val readMessage: suspend () -> DelegationMessage = {
+                        withContext(Dispatchers.IO) { DelegationFraming.readFramed(client, json) }
+                    }
                     val closeChannel: suspend () -> Unit = {
                         try { client.close() } catch (_: Exception) {}
                     }
-                    onChannelResume(msg, replyWith, closeChannel)
+                    onChannelResume(msg, replyWith, readMessage, closeChannel)
                     // The onChannelResume handler is responsible for calling closeChannel()
-                    // for non-resumed outcomes (SessionClosed, SessionNotFound). For the
-                    // Resumed outcome the channel is left open for ongoing exchange.
+                    // for all outcomes — either immediately for SessionClosed/SessionNotFound,
+                    // or after the resumed reader loop exits for the ChannelResumed case.
                 }
                 else -> {
                     LOG.warn("Unexpected first message on inbound connection: $msg")
