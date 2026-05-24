@@ -13,6 +13,7 @@ import com.workflow.orchestrator.web.service.sanitizer.SanitizerSubagent
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -590,6 +591,45 @@ class WebFetchPipelineE2ETest {
             rr.summary.contains("URL_BLOCKED") && rr.summary.contains("IPV4_LOOPBACK"),
             "Expected URL_BLOCKED_IPV4_LOOPBACK but got: ${rr.summary}"
         )
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // I13 — Cancellation contract. Every `catch (_: Exception)` in :web/main now
+    // re-throws CancellationException so the user's Cancel button isn't swallowed.
+    // Hard to crisply unit-test across providers, but we pin the WebFetchEngine
+    // path here: cancel a long-running fetch and assert CancellationException
+    // propagates out instead of being mapped to a `failure(HttpTimeout("connect"))`.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `cancellation during fetch propagates CancellationException`() {
+        // Use a regular blocking scope rather than runTest so cancellation propagates
+        // through the real coroutine machinery instead of the virtual-time test scheduler.
+        state.webAllowlistJson =
+            """[{"domain":"localhost","httpOk":true,"addedAt":"2026-05-23T00:00:00Z"}]"""
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .addHeader("Content-Type", "text/html")
+                .setBody("<html><body><p>x</p></body></html>")
+                .setBodyDelay(5, java.util.concurrent.TimeUnit.SECONDS)
+        )
+
+        var threw = false
+        kotlinx.coroutines.runBlocking {
+            val job = async(kotlinx.coroutines.Dispatchers.IO) {
+                engine.fetch(WebFetchService.WebFetchRequest(server.url("/").toString()))
+            }
+            // Give the suspend chain a beat to start the HTTP call.
+            kotlinx.coroutines.delay(100)
+            job.cancel(kotlinx.coroutines.CancellationException("test cancel"))
+            try {
+                job.await()
+            } catch (_: kotlinx.coroutines.CancellationException) {
+                threw = true
+            }
+        }
+        assertTrue(threw, "Cancellation must propagate CancellationException, not get swallowed into a fetch failure")
     }
 
     // ─────────────────────────────────────────────────────────────────────────

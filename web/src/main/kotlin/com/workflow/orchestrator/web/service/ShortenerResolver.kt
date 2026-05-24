@@ -71,6 +71,9 @@ open class ShortenerResolver(
 
                 Result.Failed(WebError.ShortenerUnresolved(url))
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // I13 — re-throw, never swallow. Per agent/CLAUDE.md contract.
+            throw e
         } catch (_: Exception) {
             Result.Failed(WebError.ShortenerUnresolved(url))
         }

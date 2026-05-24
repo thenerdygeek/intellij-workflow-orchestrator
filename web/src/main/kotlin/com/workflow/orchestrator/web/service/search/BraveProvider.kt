@@ -118,6 +118,9 @@ class BraveProvider(
                         }
                     Result.success(hits)
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // I13 — re-throw, never swallow. Per agent/CLAUDE.md contract.
+                throw e
             } catch (e: Exception) {
                 Result.failure(e)
             }

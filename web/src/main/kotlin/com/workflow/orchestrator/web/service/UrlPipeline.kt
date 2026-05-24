@@ -62,6 +62,9 @@ class UrlPipeline(
         val resolvedIp: String? = try {
             val host = URI(pass.finalUrl).host ?: pass.host
             resolver.resolve(host).firstOrNull()?.hostAddress
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // I13 — re-throw, never swallow. Per agent/CLAUDE.md contract.
+            throw e
         } catch (_: Exception) {
             null
         }
