@@ -138,4 +138,48 @@ class CustomHttpProviderTest {
             "Expected PROVIDER_AUTH_FAILED but got: ${result.exceptionOrNull()?.message}"
         )
     }
+
+    // ── I11: SSRF — {query} in the host segment is rejected at validate() time ─
+
+    @Test
+    fun `validate rejects urlTemplate with curly-query in host segment`() = runTest {
+        // The B3 SSRF screen runs against the SANDBOX url (with {query} replaced by a
+        // placeholder). If {query} is in the host, the placeholder host is screened but
+        // the runtime host (which the attacker controls via query) is different. Reject
+        // such templates at config validate() time.
+        val provider = CustomHttpProvider(
+            urlTemplate = "https://{query}.attacker.com/x",
+            method = "GET",
+            headerName = null,
+            headerValue = null,
+            resultsPath = "$.results",
+            titlePath = "$.title",
+            urlPath = "$.url",
+            snippetPath = "$.snippet",
+            client = OkHttpClient(),
+        )
+        val result = provider.validate()
+        assertTrue(result.isFailure, "Expected validate() to fail when {query} is in host segment")
+        assertTrue(
+            (result.exceptionOrNull()?.message ?: "").contains("host"),
+            "Error must mention 'host'; got: ${result.exceptionOrNull()?.message}"
+        )
+    }
+
+    @Test
+    fun `validate accepts urlTemplate with curly-query only in path or query-string`() = runTest {
+        // {query} in the path is fine — the host is fully determined by config.
+        val provider = CustomHttpProvider(
+            urlTemplate = "https://corp.example.com/api?q={query}",
+            method = "GET",
+            headerName = null,
+            headerValue = null,
+            resultsPath = "$.results",
+            titlePath = "$.title",
+            urlPath = "$.url",
+            snippetPath = "$.snippet",
+            client = OkHttpClient(),
+        )
+        assertTrue(provider.validate().isSuccess)
+    }
 }

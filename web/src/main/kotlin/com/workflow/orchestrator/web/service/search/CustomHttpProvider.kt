@@ -50,15 +50,35 @@ class CustomHttpProvider(
     override suspend fun validate(): Result<Unit> {
         val hasQuery = urlTemplate.contains("{query}")
         val headerPairConsistent = (headerName == null) == (headerValue == null)
-        return if (hasQuery && headerPairConsistent) {
-            Result.success(Unit)
-        } else {
-            Result.failure(
+        if (!hasQuery || !headerPairConsistent) {
+            return Result.failure(
                 IllegalStateException(
                     "CustomHttpProvider: urlTemplate must contain '{query}' and headerName/headerValue must be a consistent pair (both null or both non-null)"
                 )
             )
         }
+        // I11 — Reject {query} in the host segment. The B3 SSRF screen runs against the
+        // SANDBOX url (with {query} replaced by a placeholder); if {query} is in the host,
+        // the placeholder host is screened but the runtime host (which the attacker controls
+        // via the query) is different. Allow {query} in the path / query-string only.
+        val schemeEnd = urlTemplate.indexOf("://")
+        if (schemeEnd == -1) {
+            return Result.failure(
+                IllegalStateException("CustomHttpProvider: urlTemplate must be an absolute URL with scheme")
+            )
+        }
+        val pathStart = urlTemplate.indexOf('/', schemeEnd + 3).let {
+            if (it == -1) urlTemplate.length else it
+        }
+        val hostSegment = urlTemplate.substring(schemeEnd + 3, pathStart)
+        if (hostSegment.contains("{query}")) {
+            return Result.failure(
+                IllegalStateException(
+                    "CustomHttpProvider: {query} must not appear in the host segment of urlTemplate (SSRF risk — the screened host would differ from the runtime host)"
+                )
+            )
+        }
+        return Result.success(Unit)
     }
 
     override suspend fun search(query: String, maxResults: Int): Result<List<SearchProvider.RawHit>> =
