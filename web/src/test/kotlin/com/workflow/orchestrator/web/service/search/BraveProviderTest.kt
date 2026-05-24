@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.time.Duration
 
 class BraveProviderTest {
 
@@ -81,5 +82,35 @@ class BraveProviderTest {
             result.exceptionOrNull()?.message?.contains("PROVIDER_MALFORMED_RESPONSE") == true,
             "Expected PROVIDER_MALFORMED_RESPONSE but got: ${result.exceptionOrNull()?.message}"
         )
+    }
+
+    /**
+     * Regression for B1: WebSearchServiceImpl previously installed StripAuthHeadersInterceptor
+     * on the search OkHttpClient. That interceptor strips X-Subscription-Token, X-API-Key, and
+     * Authorization — the exact headers Brave, CustomHttp, and similar providers use for auth.
+     *
+     * This test verifies that a client built WITHOUT the interceptor (matching the production
+     * WebSearchServiceImpl after the R5 fix) forwards X-Subscription-Token to the server.
+     * Plan rev R5: search providers authenticate via headers; auth-stripping must NOT apply to
+     * the search client.
+     */
+    @Test
+    fun `provider client without auth-stripping interceptor preserves X-Subscription-Token`() = runTest {
+        // Use the same client construction as WebSearchServiceImpl (i.e. without auth-strip interceptor)
+        val client = OkHttpClient.Builder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .readTimeout(Duration.ofSeconds(30))
+            // NO addInterceptor — matches production WebSearchServiceImpl after R5 fix
+            .build()
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("""{"web":{"results":[{"title":"x","url":"https://x","description":"s"}]}}""")
+        )
+        val sut = BraveProvider(server.url("/").toString().trimEnd('/'), apiKey = "test-key", client = client)
+        val result = sut.search("q", 5)
+        assertTrue(result.isSuccess)
+        val recorded = server.takeRequest()
+        assertEquals("test-key", recorded.getHeader("X-Subscription-Token"))
     }
 }

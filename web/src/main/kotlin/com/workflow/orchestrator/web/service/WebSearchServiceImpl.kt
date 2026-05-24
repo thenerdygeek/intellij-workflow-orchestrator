@@ -50,11 +50,15 @@ class WebSearchServiceImpl(
         val settings = project.service<PluginSettings>()
         val state = settings.state
 
-        // Search client: basic GET client with auth header strip for safety.
+        // Search client: basic GET client. Auth-stripping is intentionally ABSENT here.
+        // Search providers (Brave, CustomHttp) authenticate via outgoing headers such as
+        // X-Subscription-Token, X-API-Key, and Authorization. Installing StripAuthHeadersInterceptor
+        // would silently strip those headers after the provider adds them, causing every
+        // authenticated call to 401. Plan rev R5: auth-stripping is fetch-only — the fetch client
+        // in WebFetchServiceImpl carries StripAuthHeadersInterceptor; this search client does not.
         val searchClient = OkHttpClient.Builder()
             .connectTimeout(Duration.ofSeconds(state.webConnectTimeoutSec.toLong()))
             .readTimeout(Duration.ofSeconds(state.webReadTimeoutSec.toLong()))
-            .addInterceptor(StripAuthHeadersInterceptor())
             .build()
 
         val sanitizerSubagent = SanitizerSubagent(

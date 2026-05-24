@@ -8,10 +8,10 @@ import okhttp3.Response
  * outbound request. Guarantees no credential leak even when code elsewhere
  * inadvertently adds auth headers, or if a future change introduces them.
  *
- * This interceptor is added to the fetch-only OkHttpClient in [WebFetchEngine].
- * The search-provider clients (BraveProvider, etc.) set X-Subscription-Token
- * AFTER routing through a separate client that does NOT use this interceptor —
- * see SearchProviderRegistry for the split.
+ * This interceptor is added to the fetch-only OkHttpClient in [WebFetchServiceImpl].
+ * The search-provider client in [WebSearchServiceImpl] does NOT carry this interceptor
+ * because providers like BraveProvider authenticate via X-Subscription-Token and similar
+ * headers that must reach the upstream API. Plan rev R5: auth-stripping is fetch-only.
  */
 class StripAuthHeadersInterceptor : Interceptor {
 
