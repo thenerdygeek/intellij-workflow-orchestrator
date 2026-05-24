@@ -223,11 +223,25 @@ class DelegationPicker(
             border = BorderFactory.createEmptyBorder(8, 0, 0, 0)
         }
         southPanel.add(launchFailurePanel, BorderLayout.NORTH)
-        val retryRow = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+        // Plan 5.4 — Sticky footer reminder. The picker shows everything-not-running
+        // as "closed" regardless of whether the IDE is actually off, on a different
+        // project, or just has inbound disabled. This footer tells the user up-front
+        // about the inbound requirement so they aren't surprised by a 90s timeout.
+        val centerRow = JPanel(BorderLayout()).apply { isOpaque = false }
+        centerRow.add(retryProbeButton, BorderLayout.WEST)
+        val inboundReminder = JBLabel(
+            "<html><i>Target IDEs need <b>Accept incoming delegations</b> on " +
+                "(their Settings → Tools → Workflow Orchestrator → Cross-IDE Delegation).</i></html>"
+        ).apply {
+            foreground = StatusColors.SECONDARY_TEXT
+            border = BorderFactory.createEmptyBorder(4, 8, 0, 0)
+        }
+        centerRow.add(inboundReminder, BorderLayout.CENTER)
+        val retryRow = JPanel(BorderLayout()).apply {
             isOpaque = false
             border = BorderFactory.createEmptyBorder(4, 0, 0, 0)
         }
-        retryRow.add(retryProbeButton)
+        retryRow.add(centerRow, BorderLayout.CENTER)
         southPanel.add(retryRow, BorderLayout.SOUTH)
         panel.add(southPanel, BorderLayout.SOUTH)
 
@@ -356,6 +370,26 @@ class DelegationPicker(
             showInlineLaunchFailure("Could not spawn IDE process: ${spawn.message}")
             return
         }
+        // Plan 5.4 — launcher-lifetime heuristic for inbound-off diagnosis.
+        // When an IntelliJ is already running on this host, `idea.sh /path` (or
+        // idea64.exe) signals it via single-instance IPC and exits within ~1s.
+        // When the IDE is NOT running, the launcher starts a fresh JVM and
+        // stays alive. So: process exits cleanly in <2s ⇒ handed off to a
+        // running IDE ⇒ if the socket then fails to bind, the most likely
+        // cause is the target's inbound setting being OFF (not a fresh-launch
+        // failure). Captured here on the EDT (the wait is bounded at 2s so we
+        // don't freeze the dialog); used by the poller's timeout branch below.
+        val handedOffToRunningIde: Boolean = try {
+            val proc = (spawn as? SpawnResult.Started)?.process
+            if (proc != null) {
+                val exited = proc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+                exited && proc.exitValue() == 0
+            } else {
+                false
+            }
+        } catch (_: Exception) {
+            false
+        }
         val socketPath = DelegationPaths.socketFor(selected.path)
         ProgressManager.getInstance().run(
             object : Task.Backgroundable(project, "Waiting for IDE…", true) {
@@ -374,10 +408,29 @@ class DelegationPicker(
                     ApplicationManager.getApplication().invokeLater {
                         if (outcome is AutoLaunchOutcome.Ready) {
                             doDelegate(selected)
+                        } else if (handedOffToRunningIde) {
+                            // Strong signal: the launcher handed off to an
+                            // already-running IDE that never bound an inbound
+                            // socket. Almost always = "Accept incoming
+                            // delegations from other IDEs" is OFF in that IDE.
+                            showInlineLaunchFailure(
+                                "<html>The target IDE appears to be running, but it didn't bind an " +
+                                    "inbound delegation socket within 90 s.<br><br>" +
+                                    "<b>Most likely cause:</b> the target IDE does not have " +
+                                    "<b>Accept incoming delegations from other IDEs</b> enabled.<br><br>" +
+                                    "In the target IDE: Settings → Tools → Workflow Orchestrator → " +
+                                    "Cross-IDE Delegation → enable the inbound checkbox, then restart " +
+                                    "that IDE. Then click <b>Retry probe</b>.</html>"
+                            )
                         } else {
                             showInlineLaunchFailure(
-                                "Timed out after 90 s waiting for IDE-B. Open the project manually, " +
-                                    "then click Retry probe."
+                                "<html>Timed out after 90 s waiting for the target IDE.<br><br>" +
+                                    "<b>Likely causes</b> (in order):<br>" +
+                                    "1. The target IDE doesn't have <b>Accept incoming delegations from other IDEs</b> " +
+                                    "enabled (Settings → Tools → Workflow Orchestrator → Cross-IDE Delegation).<br>" +
+                                    "2. The IDE failed to start or opened a different project.<br>" +
+                                    "3. A different IDE flavor (Toolbox) opened the project.<br><br>" +
+                                    "Verify the setting, restart the target IDE, then click <b>Retry probe</b>.</html>"
                             )
                         }
                     }
