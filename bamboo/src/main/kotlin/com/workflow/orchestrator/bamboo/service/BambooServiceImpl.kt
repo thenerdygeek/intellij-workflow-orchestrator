@@ -314,8 +314,12 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                 val resultKey = "${planKey}-${latestBuild.buildNumber}"
                 val varsResult = api.getBuildVariables(resultKey)
                 if (varsResult is ApiResult.Success) {
-                    val data = varsResult.data.entries.map { PlanVariableData(name = it.key, value = it.value) }
-                    log.info("[BambooService] Got ${data.size} variable(s) from last build $resultKey as fallback")
+                    // Strategy C variables come from a build-level endpoint that does not carry
+                    // isPassword metadata. Default to isPassword=true (fail-safe: over-mask rather
+                    // than leak secrets). Callers and UI will render these as password fields until
+                    // the variableContext path succeeds and provides explicit classification.
+                    val data = varsResult.data.entries.map { PlanVariableData(name = it.key, value = it.value, isPassword = true) }
+                    log.info("[BambooService] Got ${data.size} variable(s) from last build $resultKey as fallback (all marked isPassword=true)")
                     return ToolResult.success(
                         data = data,
                         summary = "Plan $planKey: ${data.size} variable(s) from last build #${latestBuild.buildNumber}"

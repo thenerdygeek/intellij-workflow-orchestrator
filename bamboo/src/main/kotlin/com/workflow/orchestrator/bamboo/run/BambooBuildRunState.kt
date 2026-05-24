@@ -78,7 +78,14 @@ class BambooBuildProcessHandler(
         if (branch.isNotBlank()) printOutput("Branch: $branch\n")
         if (effectiveVariables.isNotEmpty()) {
             printOutput("Variables:\n")
-            effectiveVariables.forEach { (k, v) -> printOutput("  $k = $v\n") }
+            // Branch-routing variable (bamboo.planRepository.1.branch) contains only a branch
+            // name and is safe to print; all other variables are masked because the run
+            // configuration's plain Map<String,String> carries no isPassword metadata —
+            // any of them could be a deploy token or database password.
+            effectiveVariables.forEach { (k, v) ->
+                val displayValue = if (k == "bamboo.planRepository.1.branch") v else "••••"
+                printOutput("  $k = $displayValue\n")
+            }
         }
         printOutput("\n")
 
