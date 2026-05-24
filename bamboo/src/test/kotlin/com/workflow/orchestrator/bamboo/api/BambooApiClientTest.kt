@@ -49,7 +49,11 @@ class BambooApiClientTest {
         assertEquals("My Project - Build", plans[0].name)
 
         val recorded = server.takeRequest()
-        assertEquals("/rest/api/latest/plan?expand=plans.plan&max-results=100", recorded.path)
+        val path = recorded.path ?: ""
+        assertTrue(path.startsWith("/rest/api/latest/plan"), "Expected plan path; got $path")
+        assertTrue(path.contains("expand=plans.plan"), "Expected expand param; got $path")
+        assertTrue(path.contains("max-results=100"), "Expected max-results=100; got $path")
+        assertTrue(path.contains("start-index=0"), "Expected start-index=0 (paginator always sends it); got $path")
         assertEquals("Bearer test-token", recorded.getHeader("Authorization"))
     }
 

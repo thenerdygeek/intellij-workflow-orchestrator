@@ -38,8 +38,18 @@ class BambooApiClient(
 
     suspend fun getPlans(): ApiResult<List<BambooPlanDto>> {
         log.debug("[Bamboo:API] Fetching all plans")
-        return get<BambooPlanListResponse>("/rest/api/latest/plan?expand=plans.plan&max-results=100")
-            .map { it.plans.plan }
+        return paginate(pageSize = 100, maxPages = 50, label = "plans") { start ->
+            get<BambooPlanListResponse>(
+                "/rest/api/latest/plan?expand=plans.plan&max-results=100&start-index=$start"
+            ).map { page ->
+                PaginatedPage(
+                    items = page.plans.plan,
+                    startIndex = page.plans.startIndex,
+                    size = page.plans.size,
+                    maxResult = page.plans.maxResult,
+                )
+            }
+        }
     }
 
     suspend fun getProjects(): ApiResult<List<BambooProjectDto>> {
@@ -78,8 +88,18 @@ class BambooApiClient(
     }
 
     suspend fun getBranches(planKey: String): ApiResult<List<BambooBranchDto>> =
-        get<BambooBranchListResponse>("/rest/api/latest/plan/$planKey/branch?max-results=100")
-            .map { it.branches.branch }
+        paginate(pageSize = 100, maxPages = 50, label = "branches/$planKey") { start ->
+            get<BambooBranchListResponse>(
+                "/rest/api/latest/plan/$planKey/branch?max-results=100&start-index=$start"
+            ).map { page ->
+                PaginatedPage(
+                    items = page.branches.branch,
+                    startIndex = page.branches.startIndex,
+                    size = page.branches.size,
+                    maxResult = page.branches.maxResult,
+                )
+            }
+        }
 
     suspend fun getLatestResult(planKey: String, branch: String? = null): ApiResult<BambooResultDto> {
         // If planKey already includes the branch number (e.g., PROJ-PLAN123), use it directly
@@ -448,9 +468,18 @@ class BambooApiClient(
      * Returns all Linked Repositories configured in Bamboo.
      */
     suspend fun getLinkedRepositories(): ApiResult<List<com.workflow.orchestrator.bamboo.api.dto.BambooLinkedRepository>> =
-        get<com.workflow.orchestrator.bamboo.api.dto.BambooLinkedRepositoryListResponse>(
-            "/rest/api/latest/repository?max-results=200"
-        ).map { it.searchResults.map { item -> item.searchEntity.copy(id = item.id) } }
+        paginate(pageSize = 200, maxPages = 50, label = "repositories") { start ->
+            get<com.workflow.orchestrator.bamboo.api.dto.BambooLinkedRepositoryListResponse>(
+                "/rest/api/latest/repository?max-results=200&start-index=$start"
+            ).map { page ->
+                PaginatedPage(
+                    items = page.searchResults.map { item -> item.searchEntity.copy(id = item.id) },
+                    startIndex = page.startIndex,
+                    size = page.size,
+                    maxResult = page.maxResult,
+                )
+            }
+        }
 
     /**
      * GET /rest/api/latest/repository/{id}/usedBy
@@ -462,17 +491,25 @@ class BambooApiClient(
         ).map { it.results }
 
     /**
-     * GET /rest/api/latest/plan/{masterPlanKey}/branch?max-results={maxResults}
-     * Returns all branch plans for the given master plan key.
-     * [getBranches] delegates here with maxResults=100 for backward compatibility.
+     * GET /rest/api/latest/plan/{masterPlanKey}/branch
+     * Returns all branch plans for the given master plan key. Paginates with 50-page cap.
      */
     suspend fun getPlanBranches(
         masterPlanKey: String,
         maxResults: Int = 200
     ): ApiResult<List<com.workflow.orchestrator.bamboo.api.dto.BambooPlanBranch>> =
-        get<com.workflow.orchestrator.bamboo.api.dto.BambooPlanBranchListResponse>(
-            "/rest/api/latest/plan/$masterPlanKey/branch?max-results=$maxResults"
-        ).map { it.branches.branch }
+        paginate(pageSize = maxResults, maxPages = 50, label = "planBranches/$masterPlanKey") { start ->
+            get<com.workflow.orchestrator.bamboo.api.dto.BambooPlanBranchListResponse>(
+                "/rest/api/latest/plan/$masterPlanKey/branch?max-results=$maxResults&start-index=$start"
+            ).map { page ->
+                PaginatedPage(
+                    items = page.branches.branch,
+                    startIndex = page.branches.startIndex,
+                    size = page.branches.size,
+                    maxResult = page.branches.maxResult,
+                )
+            }
+        }
 
     /**
      * GET /rest/api/latest/result/{resultKey}?expand=changes.change
@@ -553,6 +590,62 @@ class BambooApiClient(
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bamboo: ${e.message}", e)
             }
         }
+
+    /**
+     * Carries one Bamboo page of results together with the offset fields needed to
+     * determine whether a next page exists and what its start-index should be.
+     *
+     * Bamboo uses offset-based pagination: `size < maxResult` means the server returned
+     * fewer items than requested → this is the last page. The next page's start-index is
+     * `startIndex + size`. Both conditions are checked by [paginate].
+     */
+    private data class PaginatedPage<T>(
+        val items: List<T>,
+        val startIndex: Int,
+        val size: Int,
+        val maxResult: Int,
+    )
+
+    /**
+     * Generic Bamboo pagination loop (50-page cap, shared by [getPlans],
+     * [getBranches], [getPlanBranches], and [getLinkedRepositories]).
+     *
+     * Bamboo's sentinel: if `size < maxResult` there are no more pages.
+     * Otherwise the next page starts at `startIndex + size`.
+     *
+     * @param pageSize   Number of items requested per page (same value used in the URL).
+     * @param maxPages   Safety cap — stops after this many pages even if more exist.
+     * @param label      Human-readable description for the debug log.
+     * @param fetchPage  Suspending fetcher that accepts a start-index and returns a page.
+     */
+    private suspend fun <T> paginate(
+        pageSize: Int,
+        maxPages: Int,
+        label: String,
+        fetchPage: suspend (startIndex: Int) -> ApiResult<PaginatedPage<T>>,
+    ): ApiResult<List<T>> {
+        val aggregated = mutableListOf<T>()
+        var startIndex = 0
+        var pages = 0
+        while (pages < maxPages) {
+            when (val result = fetchPage(startIndex)) {
+                is ApiResult.Error -> return result
+                is ApiResult.Success -> {
+                    val page = result.data
+                    aggregated += page.items
+                    pages++
+                    if (page.size < page.maxResult || page.maxResult == 0 || page.items.isEmpty()) {
+                        // Last page: server returned fewer items than requested (or zero)
+                        log.debug("[Bamboo:API] paginate($label): $pages page(s), ${aggregated.size} total items")
+                        return ApiResult.Success(aggregated)
+                    }
+                    startIndex = page.startIndex + page.size
+                }
+            }
+        }
+        log.warn("[Bamboo:API] paginate($label): cap of $maxPages pages hit (${aggregated.size} items collected)")
+        return ApiResult.Success(aggregated)
+    }
 
     private suspend fun delete(path: String): ApiResult<Unit> =
         withContext(Dispatchers.IO) {
