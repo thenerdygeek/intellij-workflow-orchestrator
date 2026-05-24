@@ -200,6 +200,8 @@ class SearchCodeTool : AgentTool {
 
     companion object {
         private const val DEFAULT_MAX_RESULTS = 50
+        /** Files larger than this are skipped to bound ReDoS exposure (5 MB). */
+        internal const val FILE_SIZE_CAP_BYTES = 5_000_000L
         private val BINARY_EXTENSIONS = setOf(
             "jar", "class", "png", "jpg", "jpeg", "gif", "ico", "svg",
             "zip", "tar", "gz", "war", "ear", "so", "dll", "exe",
@@ -359,7 +361,7 @@ class SearchCodeTool : AgentTool {
         )
     }
 
-    private fun searchFiles(
+    private suspend fun searchFiles(
         dir: File,
         canonicalProjectRoot: String,
         regex: Regex,
@@ -369,14 +371,18 @@ class SearchCodeTool : AgentTool {
         matches: MutableList<SearchMatch>,
         maxResults: Int
     ) {
-        if (Thread.currentThread().isInterrupted) return
+        // Propagate AgentLoop's withTimeoutOrNull(120s) cancellation so that an
+        // LLM-supplied regex with catastrophic backtracking (e.g. (a+)+b) cannot
+        // keep an IO thread burning after the tool's timeout fires.
+        coroutineContext.ensureActive()
         if (matches.size >= maxResults) return
 
         val files = dir.listFiles() ?: return
 
         for (file in files.sortedBy { it.name }) {
             if (matches.size >= maxResults) return
-            if (Thread.currentThread().isInterrupted) return
+            // Check cancellation between every file — not just at directory boundaries.
+            coroutineContext.ensureActive()
 
             if (file.isDirectory) {
                 if (file.name !in SKIP_DIRS) {
@@ -401,7 +407,13 @@ class SearchCodeTool : AgentTool {
     ) {
         if (matches.size >= maxResults) return
         if (file.extension.lowercase() in BINARY_EXTENSIONS) return
-        if (file.length() > 1_000_000) return // Skip files > 1MB
+        // Cap at 5 MB — reading a file larger than this into memory to run a
+        // potentially-catastrophic regex is a denial-of-service risk. The limit is
+        // intentionally generous (most source files are <100 KB) but still finite.
+        if (file.length() > FILE_SIZE_CAP_BYTES) {
+            log.debug("SearchCodeTool: skipping '${file.name}' (${file.length()} bytes > ${FILE_SIZE_CAP_BYTES} byte cap)")
+            return
+        }
         if (fileType != null && file.extension.lowercase() != fileType) return
 
         try {

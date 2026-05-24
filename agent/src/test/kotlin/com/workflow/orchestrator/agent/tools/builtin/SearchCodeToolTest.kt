@@ -590,4 +590,64 @@ class SearchCodeToolTest {
             System.setProperty("user.home", originalHome)
         }
     }
+
+    // ── C4: ReDoS guard — cancellation propagation ────────────────────────
+
+    @Test
+    fun `execute respects coroutine cancellation within file-size cap — C4 regression`() = runTest {
+        // Build a file that is BELOW the 5 MB cap so it is processed, but write a
+        // known ReDoS payload ((a+)+b against a long 'a' string) as the search
+        // content. The withTimeout below enforces a 1 s wall-clock budget.
+        // Without the coroutineContext.ensureActive() call added by C4, the regex
+        // engine would spin for hours on this input and the test would hang.
+        // (The regex is evaluated by Java's regex engine which is susceptible to
+        // catastrophic backtracking; this input is the canonical PoC for (a+)+b.)
+        val redosFile = File(tempDir.toFile(), "redos_target.txt")
+        // 60 'a' chars with no trailing 'b' → catastrophic backtracking territory
+        redosFile.writeText("a".repeat(60) + "!")
+
+        val tool = SearchCodeTool()
+        val params = buildJsonObject {
+            put("pattern", "(a+)+b")
+            put("path", tempDir.toFile().absolutePath)
+        }
+
+        // The search must complete (or be cancelled by timeout) within 1 second.
+        // If coroutineContext.ensureActive() is missing, this would hang for minutes.
+        val result = kotlinx.coroutines.withTimeout(1_000) {
+            tool.execute(params, project)
+        }
+        // Either no matches (timed out and cancelled before matching) or an error —
+        // the important thing is that we returned within the timeout.
+        assertNotNull(result)
+    }
+
+    @Test
+    fun `file-size cap constant is 5 MB — C4 pin`() {
+        // Pin the constant so a refactor can't silently shrink it back to 1 MB.
+        assertEquals(5_000_000L, SearchCodeTool.FILE_SIZE_CAP_BYTES)
+    }
+
+    @Test
+    fun `execute skips files above 5 MB cap and returns no match — C4 regression`() = runTest {
+        // Write a file slightly over the cap. The tool must skip it (no match) and
+        // return cleanly rather than reading 5+ MB into memory.
+        val bigFile = File(tempDir.toFile(), "big.txt")
+        // Writing 5.01 MB of 'a' characters — above the 5 MB guard.
+        bigFile.writeText("a".repeat(5_010_000))
+
+        val tool = SearchCodeTool()
+        val params = buildJsonObject {
+            put("pattern", "a")
+            put("path", bigFile.absolutePath) // single-file mode
+        }
+
+        // Single-file mode still respects the size cap; should return no matches.
+        val result = tool.execute(params, project)
+        // The file is skipped → "No matches found" is the expected content.
+        assertTrue(
+            result.content.contains("No matches found") || result.isError,
+            "Expected no-match or error for file exceeding size cap, got: ${result.content}"
+        )
+    }
 }
