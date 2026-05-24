@@ -116,6 +116,8 @@ object SubagentSystemPromptBuilder {
             includePlanModeSection = false,
             planModeEnabled = false,
             includeSubagentDelegationInRules = false,
+            // Sub-agents cannot delegate per v1 spec §2.4 — always false.
+            delegationOutboundEnabled = false,
             // ---- per-persona prompt-sections flags ----
             includeCapabilities = sections.capabilities,
             includeRules = sections.rules,
