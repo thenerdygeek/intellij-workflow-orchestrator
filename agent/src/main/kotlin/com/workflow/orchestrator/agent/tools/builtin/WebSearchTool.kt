@@ -59,12 +59,18 @@ Common error responses: NO_PROVIDER_CONFIGURED means the user hasn't set up a se
         ))
         if (rr.isError) return errorResult(rr.summary)
         val hits = rr.data!!
+        // I10 — neutralize any literal </external_search> close tags injected by a
+        // jailbroken sanitizer into a snippet, title, or URL field. Replacing rather
+        // than refusing because search returns N independent hits — a single hostile
+        // snippet should not poison the entire result set.
+        fun escTag(s: String): String = s.replace("</external_search>", "&lt;/external_search&gt;", ignoreCase = true)
+        fun escUrl(s: String): String = s.replace("'", "&apos;")
         val content = buildString {
             appendLine("<external_search query='${query.replace("'", "&apos;")}' provider='${hits.firstOrNull()?.provider ?: "unknown"}' count='${hits.size}'>")
             hits.forEach { h ->
                 val flags = if (h.screenerFlags.isNotEmpty()) " [${h.screenerFlags.joinToString(",") { it.name }}]" else ""
-                appendLine("  [${h.rank + 1}] ${h.title} — ${h.url}$flags")
-                appendLine("      ${h.snippet}")
+                appendLine("  [${h.rank + 1}] ${escTag(h.title)} — ${escUrl(escTag(h.url))}$flags")
+                appendLine("      ${escTag(h.snippet)}")
             }
             appendLine("</external_search>")
         }

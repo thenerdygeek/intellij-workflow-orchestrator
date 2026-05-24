@@ -76,7 +76,17 @@ Common error responses: UNLISTED_DOMAIN means the host isn't on the user's allow
         ))
         if (rr.isError) return errorResult(rr.summary)
         val page = rr.data!!
-        val content = "<external_content url='${page.finalUrl}' source='web_fetch' " +
+        // I10 — defense-in-depth: a sanitizer that emits the literal close tag
+        // could forge the wrapper boundary the system prompt tells the LLM to trust.
+        // A properly-functioning sanitizer would never emit this — so refuse to render.
+        if (page.extractedText.contains("</external_content>", ignoreCase = true)) {
+            val msg = "SANITIZER_REFUSED: sanitizer output contained the literal </external_content> close tag (boundary attack defense)"
+            return errorResult(msg)
+        }
+        // I10 — escape single quotes in finalUrl so a malformed URL (which should
+        // never have passed the screener but defense-in-depth) cannot inject attributes.
+        val safeUrl = page.finalUrl.replace("'", "&apos;")
+        val content = "<external_content url='$safeUrl' source='web_fetch' " +
                 "verdict='${page.sanitizerVerdict}' size_chars='${page.extractedChars}'>\n" +
                 page.extractedText +
                 "\n</external_content>"
