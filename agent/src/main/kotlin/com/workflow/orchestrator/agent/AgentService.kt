@@ -2748,6 +2748,17 @@ class AgentService(
     // ── Dispose ────────────────────────────────────────────────────────────
 
     override fun dispose() {
+        // Close the file logger first — before cancelCurrentTask() so the final
+        // "session ended" log entries are flushed and the file descriptor is released.
+        // Wrapped in try/catch: a logger failure on dispose must never surface to the
+        // platform and cause a secondary error on project close.
+        // Note: fileLogger is by lazy — if it was never accessed, close() is a no-op
+        // because the lazy value was never initialized and the wrapper call is safe.
+        try {
+            fileLogger.close()
+        } catch (e: Exception) {
+            log.warn("[AgentService] Failed to close AgentFileLogger on dispose", e)
+        }
         cancelCurrentTask()
         ProcessRegistry.killAll()
         debugController?.dispose()
