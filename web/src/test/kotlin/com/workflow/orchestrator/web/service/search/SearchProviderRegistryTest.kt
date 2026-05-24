@@ -67,8 +67,8 @@ class SearchProviderRegistryTest {
         val capturedConnState = connState
         val capturedApiKey = apiKey
         return object : SearchProviderRegistry(project, client) {
-            override fun resolve(): SearchProvider? {
-                return when (providerType) {
+            override fun resolve(): ResolvedProvider? {
+                val provider = when (providerType) {
                     "SEARXNG" -> SearXNGProvider(capturedConnState.webSearchSearxngUrl, client)
                     "BRAVE" -> BraveProvider(
                         baseUrl = capturedConnState.webSearchBraveUrl,
@@ -94,6 +94,7 @@ class SearchProviderRegistryTest {
                     )
                     else -> null
                 }
+                return provider?.let { ResolvedProvider(it, "https://example.com", false) }
             }
         }
     }
@@ -104,37 +105,37 @@ class SearchProviderRegistryTest {
 
     @Test
     fun `NONE returns null`() {
-        val provider = registryFor("NONE").resolve()
-        assertNull(provider, "Expected null for NONE but got: $provider")
+        val resolved = registryFor("NONE").resolve()
+        assertNull(resolved, "Expected null for NONE but got: $resolved")
     }
 
     @Test
     fun `SEARXNG returns SearXNGProvider`() {
-        val provider = registryFor("SEARXNG").resolve()
-        assertInstanceOf(SearXNGProvider::class.java, provider, "Expected SearXNGProvider")
+        val resolved = registryFor("SEARXNG").resolve()
+        assertInstanceOf(SearXNGProvider::class.java, resolved?.provider, "Expected SearXNGProvider")
     }
 
     @Test
     fun `BRAVE returns BraveProvider`() {
-        val provider = registryFor("BRAVE", apiKey = "test-brave-key").resolve()
-        assertInstanceOf(BraveProvider::class.java, provider, "Expected BraveProvider")
+        val resolved = registryFor("BRAVE", apiKey = "test-brave-key").resolve()
+        assertInstanceOf(BraveProvider::class.java, resolved?.provider, "Expected BraveProvider")
     }
 
     @Test
     fun `CUSTOM_HTTP returns CustomHttpProvider`() {
-        val provider = registryFor("CUSTOM_HTTP", apiKey = "test-custom-key").resolve()
-        assertInstanceOf(CustomHttpProvider::class.java, provider, "Expected CustomHttpProvider")
+        val resolved = registryFor("CUSTOM_HTTP", apiKey = "test-custom-key").resolve()
+        assertInstanceOf(CustomHttpProvider::class.java, resolved?.provider, "Expected CustomHttpProvider")
     }
 
     @Test
     fun `TAVILY returns TavilyProvider`() {
-        val provider = registryFor("TAVILY", apiKey = "tvly-test-key").resolve()
-        assertInstanceOf(TavilyProvider::class.java, provider, "Expected TavilyProvider")
+        val resolved = registryFor("TAVILY", apiKey = "tvly-test-key").resolve()
+        assertInstanceOf(TavilyProvider::class.java, resolved?.provider, "Expected TavilyProvider")
     }
 
     @Test
     fun `unknown value returns null`() {
-        val provider = registryFor("FOOBAR").resolve()
-        assertNull(provider, "Expected null for unknown type but got: $provider")
+        val resolved = registryFor("FOOBAR").resolve()
+        assertNull(resolved, "Expected null for unknown type but got: $resolved")
     }
 }

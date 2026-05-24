@@ -2,6 +2,7 @@ package com.workflow.orchestrator.web.service
 
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.model.web.SearchHit
+import com.workflow.orchestrator.core.security.UrlSafetyGuard
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.web.SearchProvider
 import com.workflow.orchestrator.core.web.SubagentSpawner
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.net.InetAddress
 import java.nio.file.Files
 
 /**
@@ -49,10 +51,24 @@ class WebSearchPipelineE2ETest {
             else Result.success(hits.take(maxResults))
     }
 
-    private fun buildEngine(provider: SearchProvider?): WebSearchEngine {
+    /**
+     * A resolver that always says the given host resolves to a benign public IP (93.184.216.34 —
+     * the real example.com address). Prevents live DNS in tests.
+     */
+    private val allowAllResolver = UrlSafetyGuard.Resolver { _ ->
+        arrayOf(InetAddress.getByName("93.184.216.34"))
+    }
+
+    private fun buildEngine(
+        provider: SearchProvider?,
+        baseUrl: String = "https://example.com",
+        allowLoopback: Boolean = false,
+        ssrfResolver: UrlSafetyGuard.Resolver = allowAllResolver,
+    ): WebSearchEngine {
         val auditLog = WebAuditLog(Files.createTempDirectory("search-e2e"))
         val registry = object : SearchProviderRegistry(project, mockk()) {
-            override fun resolve(): SearchProvider? = provider
+            override fun resolve(): SearchProviderRegistry.ResolvedProvider? =
+                provider?.let { SearchProviderRegistry.ResolvedProvider(it, baseUrl, allowLoopback) }
         }
         return WebSearchEngine(
             project = project,
@@ -61,6 +77,7 @@ class WebSearchPipelineE2ETest {
             jsoupReadability = JsoupReadability(),
             registry = registry,
             auditLog = auditLog,
+            ssrfResolver = ssrfResolver,
         )
     }
 
@@ -187,5 +204,83 @@ class WebSearchPipelineE2ETest {
         assertEquals("safe-a", hits[0].snippet)
         assertEquals("safe-b", hits[1].snippet)
         assertEquals("safe-c", hits[2].snippet)
+    }
+
+    // ── B3 regression: provider URL screened through UrlSafetyGuard ───────────
+
+    /**
+     * B3: A SearXNG provider configured with an AWS metadata URL must be rejected
+     * by UrlSafetyGuard before any HTTP call to the provider is made.
+     *
+     * allowLoopback=true applies for SearXNG (local instances), but link-local
+     * (169.254.0.0/16) is always blocked regardless — so 169.254.169.254 is still rejected.
+     */
+    @Test
+    fun `SearXNG provider configured with link-local URL is rejected as PROVIDER_URL_UNSAFE`() = runTest {
+        // Resolver that says 169.254.169.254 resolves to itself (link-local — always blocked)
+        val linkLocalResolver = UrlSafetyGuard.Resolver { _ ->
+            arrayOf(InetAddress.getByName("169.254.169.254"))
+        }
+        engine = buildEngine(
+            provider = StubSearchProvider(),
+            baseUrl = "http://169.254.169.254/search",
+            allowLoopback = true,   // SearXNG — loopback is allowed, but link-local is not
+            ssrfResolver = linkLocalResolver,
+        )
+
+        val result = engine.search(WebSearchRequest(query = "test"))
+        assertTrue(result.isError, "Expected SSRF block but got success")
+        assertTrue(
+            result.summary.contains("PROVIDER_URL_UNSAFE"),
+            "Expected PROVIDER_URL_UNSAFE but got: ${result.summary}"
+        )
+    }
+
+    /**
+     * B3: A Brave provider configured with a private-LAN URL must be rejected.
+     * allowLoopback=false for Brave, so private LAN ranges are blocked.
+     */
+    @Test
+    fun `Brave provider configured with private-LAN URL is rejected as PROVIDER_URL_UNSAFE`() = runTest {
+        val privateLanResolver = UrlSafetyGuard.Resolver { _ ->
+            arrayOf(InetAddress.getByName("192.168.1.1"))
+        }
+        engine = buildEngine(
+            provider = StubSearchProvider(),
+            baseUrl = "http://192.168.1.1/api",
+            allowLoopback = false,  // Brave — remote provider, no loopback exception
+            ssrfResolver = privateLanResolver,
+        )
+
+        val result = engine.search(WebSearchRequest(query = "test"))
+        assertTrue(result.isError, "Expected SSRF block but got success")
+        assertTrue(
+            result.summary.contains("PROVIDER_URL_UNSAFE"),
+            "Expected PROVIDER_URL_UNSAFE but got: ${result.summary}"
+        )
+    }
+
+    /**
+     * B3 (sanity): SearXNG configured with http://localhost:8080 succeeds because
+     * allowLoopback=true is set for SearXNG and the provider returns results.
+     */
+    @Test
+    fun `SearXNG with localhost base URL succeeds when allowLoopback is true`() = runTest {
+        // Resolver that says localhost resolves to 127.0.0.1
+        val loopbackResolver = UrlSafetyGuard.Resolver { _ ->
+            arrayOf(InetAddress.getByName("127.0.0.1"))
+        }
+        val rawHits = listOf(
+            SearchProvider.RawHit(title = "Local result", url = "https://example.com", snippet = "local", rank = 0)
+        )
+        engine = buildEngine(
+            provider = StubSearchProvider(rawHits),
+            baseUrl = "http://localhost:8080",
+            allowLoopback = true,  // SearXNG loopback exception
+            ssrfResolver = loopbackResolver,
+        )
+
+        val result = engine.search(WebSearchRequest(query = "local test"))
+        assertFalse(result.isError, "Expected success with SearXNG localhost but got: ${result.summary}")
     }
 }

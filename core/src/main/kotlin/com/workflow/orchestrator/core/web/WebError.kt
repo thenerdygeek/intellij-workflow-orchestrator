@@ -41,6 +41,8 @@ sealed class WebError(
     object NoProviderConfigured : WebError("NO_PROVIDER_CONFIGURED", "No web_search provider configured in settings", true)
     class ProviderAuthFailed(provider: String) : WebError("PROVIDER_AUTH_FAILED", "Auth failed for provider: $provider", true)
     class ProviderMalformedResponse(provider: String) : WebError("PROVIDER_MALFORMED_RESPONSE", "Malformed response from provider: $provider", true)
+    /** The provider's configured base URL failed the UrlSafetyGuard / UrlPipeline screen. */
+    class ProviderUrlUnsafe(provider: String, reason: String) : WebError("PROVIDER_URL_UNSAFE", "Provider $provider base URL rejected by safety guard: $reason", false)
 
     // Plan mode -------------------------------------------------------------
     object PlanModeBlocked : WebError("PLAN_MODE_BLOCKED", "Web tools disabled in plan mode", false)

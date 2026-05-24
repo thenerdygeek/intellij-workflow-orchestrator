@@ -4,6 +4,7 @@ package com.workflow.orchestrator.web.service
 
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.model.web.SearchHit
+import com.workflow.orchestrator.core.security.UrlSafetyGuard
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.web.QueryScreenResult
@@ -27,7 +28,7 @@ import java.util.UUID
  * Stages:
  *  0. Plan-mode gate + provider-configured check.
  *  1. Query screening — [UrlScreener.screenQuery]; Bearer/JWT/AWS tokens are redacted.
- *  2. Provider resolution + optional validation.
+ *  2. Provider resolution + provider base-URL safety screening ([UrlSafetyGuard]) + validation.
  *  3. Provider search — maps result to List<RawHit>; maps failure to typed [WebError].
  *  4. Per-result normalization — URL screening for flags, structural snippet sanitization.
  *  5. Batch semantic sanitization — [SanitizerSubagent.sanitizeBatch]; snippets truncated at
@@ -41,6 +42,11 @@ class WebSearchEngine(
     private val jsoupReadability: JsoupReadability,
     private val registry: SearchProviderRegistry,
     private val auditLog: WebAuditLog,
+    /**
+     * DNS resolver used for provider-URL SSRF screening. Inject a deterministic stub in tests
+     * so the guard does not attempt real DNS. Production callers leave the default [SystemResolver].
+     */
+    private val ssrfResolver: UrlSafetyGuard.Resolver = UrlSafetyGuard.SystemResolver,
 ) {
 
     suspend fun search(request: WebSearchRequest): ToolResult<List<SearchHit>> {
@@ -54,11 +60,12 @@ class WebSearchEngine(
         }
 
         // Stage 0 (continued): provider configured check
-        val provider = registry.resolve()
+        val resolved = registry.resolve()
             ?: run {
                 auditError(WebError.NoProviderConfigured, request.query, null, start)
                 return failure(WebError.NoProviderConfigured)
             }
+        val provider = resolved.provider
 
         // Stage 1: query screening
         val screenResult = UrlScreener.screenQuery(request.query)
@@ -68,7 +75,25 @@ class WebSearchEngine(
         }
         val cleaned = (screenResult as QueryScreenResult.Pass).cleaned
 
-        // Stage 2: optional provider validation
+        // Stage 2a: provider base-URL SSRF screening (spec §4 Stage 2).
+        // Screens the configured endpoint against UrlSafetyGuard to block SSRF attacks via a
+        // misconfigured/attacker-controlled SearXNG/Brave/CustomHttp URL field.
+        // SearXNG gets allowLoopback=true because local instances are a first-class deployment;
+        // all other providers are remote APIs and get allowLoopback=false.
+        val ssrfCheck = UrlSafetyGuard.isUrlSafe(
+            url = resolved.baseUrl,
+            allowLoopback = resolved.allowLoopback,
+            resolver = ssrfResolver,
+        )
+        if (ssrfCheck.isFailure) {
+            val ex = ssrfCheck.exceptionOrNull() as? UrlSafetyGuard.UrlBlockedException
+            val reason = ex?.reason?.name ?: "UNKNOWN"
+            val err = WebError.ProviderUrlUnsafe(provider.id.name, reason)
+            auditError(err, cleaned, provider.id.name, start)
+            return failure(err)
+        }
+
+        // Stage 2b: optional provider credential validation
         val validationResult = provider.validate()
         if (validationResult.isFailure) {
             val err = WebError.ProviderAuthFailed(provider.id.name)
