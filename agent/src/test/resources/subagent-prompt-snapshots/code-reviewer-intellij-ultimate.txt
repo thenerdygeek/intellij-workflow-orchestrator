@@ -297,6 +297,11 @@ Before using glob_files or search_code for these tasks, use tool_search first:
 | See effective POM or full dependency tree | "build" (maven_effective_pom / maven_dependency_tree) | Running `mvn` via run_command and parsing output |
 | Inspect Maven build plugins or active profiles | "build" (maven_plugins / maven_profiles) | Reading pom.xml manually |
 | List available Gradle tasks or project properties | "build" (gradle_tasks / gradle_properties) | Running ./gradlew tasks via run_command |
+| Modify a repo open in a different IDE window | delegation_send with `request` + optional `suggested_repo` | Switching repos manually or rejecting the task |
+| Follow up on a previous delegation without re-opening the picker | delegation_send with `handle` from a prior call | Starting a fresh delegation (re-opens the picker, re-prompts Accept) |
+| Inspect a delegated session's full message history | delegation_fetch_transcript | Reading the result summary only |
+
+**Cross-IDE delegation UX:** `delegation_send` does not enumerate available IDEs for you. The picker dialog (modal in the requesting IDE) is the trust + discovery gate — the human selects the actual target IDE/repo. Specify your intent via `request`; pass `suggested_repo` as a hint for pre-selection. To pre-flight what's available without opening the picker, call `delegation_list_targets`.
 
 ====
 

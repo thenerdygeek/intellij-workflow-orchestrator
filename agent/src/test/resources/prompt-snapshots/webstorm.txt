@@ -200,6 +200,11 @@ Before using glob_files or search_code for these tasks, use tool_search first:
 | Kill a background process started by run_command(background=true) | background_process(action=kill, id=bg_xxx) | run_command('kill <pid>') after manually tracking the pid |
 | Relaunch a running configuration | runtime_exec(action=run_config, config_name=...) — idempotent: stops any existing instance of the same configuration first, then launches fresh | Manually stop then relaunch |
 | Smoke-test an HTTP endpoint after launch | Chain runtime_exec(run_config, ...) then run_command('curl <url>:<port>') using the returned port | Hardcoding ports or guessing |
+| Modify a repo open in a different IDE window | delegation_send with `request` + optional `suggested_repo` | Switching repos manually or rejecting the task |
+| Follow up on a previous delegation without re-opening the picker | delegation_send with `handle` from a prior call | Starting a fresh delegation (re-opens the picker, re-prompts Accept) |
+| Inspect a delegated session's full message history | delegation_fetch_transcript | Reading the result summary only |
+
+**Cross-IDE delegation UX:** `delegation_send` does not enumerate available IDEs for you. The picker dialog (modal in the requesting IDE) is the trust + discovery gate — the human selects the actual target IDE/repo. Specify your intent via `request`; pass `suggested_repo` as a hint for pre-selection. To pre-flight what's available without opening the picker, call `delegation_list_targets`.
 
 ====
 
