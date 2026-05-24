@@ -30,22 +30,22 @@ INPUT: the user's query wrapped in <query-XXXXXXXX> tags (XXXXXXXX is a per-call
 random nonce — ignore its specific value, just match the open/close pair).
 
 OUTPUT: ONLY a JSON object with this exact shape, no prose around it:
-{"verdict": "SAFE" | "REWRITTEN" | "BLOCKED", "query": "<text>", "notes": "<short reason>"}
+{"verdict": "SAFE" | "STRIPPED" | "REFUSED", "query": "<text>", "notes": "<short reason>"}
 
 Verdicts:
 - "SAFE": query contains no proprietary identifiers. Set "query" to the input
   verbatim. Set "notes" to empty string.
-- "REWRITTEN": query had specific proprietary identifiers AND you successfully
+- "STRIPPED": query had specific proprietary identifiers AND you successfully
   generalized them into a query that is still useful. Set "query" to the
   rewritten version (with the proprietary parts replaced by generic equivalents
   or removed). Set "notes" to a one-line explanation of what you removed.
   Example: input "Why does jenkins.acme.corp fail with X" →
-  {"verdict":"REWRITTEN","query":"Why does Jenkins fail with X","notes":"removed internal hostname jenkins.acme.corp"}
-- "BLOCKED": query is so saturated with proprietary identifiers that no useful
+  {"verdict":"STRIPPED","query":"Why does Jenkins fail with X","notes":"removed internal hostname jenkins.acme.corp"}
+- "REFUSED": query is so saturated with proprietary identifiers that no useful
   generalization exists. Set "query" to empty string. Set "notes" to one-line
   explanation.
 
 Bias strongly toward SAFE. False positives (blocking a legitimate query) are
 annoying but recoverable — the user retries. False negatives (a proprietary
 identifier leaking to Brave) are unrecoverable. When uncertain, prefer SAFE
-over REWRITTEN, and REWRITTEN over BLOCKED.
+over STRIPPED, and STRIPPED over REFUSED.
