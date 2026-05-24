@@ -84,6 +84,8 @@ import com.workflow.orchestrator.document.service.TikaDocumentExtractor
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -108,6 +110,21 @@ class AgentService(
     /** Atomic reference tracking both the loop and job together to avoid race conditions. */
     private data class ActiveTask(val sessionId: String, val loop: AgentLoop, val job: Job)
     private val activeTask = AtomicReference<ActiveTask?>(null)
+
+    /**
+     * Guards [activeTask] and [activeMessageStateHandler] mutations across concurrent
+     * [executeTask] calls. Without this lock, two coroutines launched simultaneously
+     * could both read a null [activeTask] and both proceed to overwrite each other's
+     * references — producing mismatched loop/job/handler state and breaking cancellation.
+     *
+     * Protocol:
+     *   1. Acquire lock at the START of the launched coroutine body.
+     *   2. Cancel + clear any pre-existing task.
+     *   3. Set [activeTask] and [activeMessageStateHandler] under the lock.
+     *   4. Release lock before the long-running loop starts (lock is not held during I/O).
+     *   5. Re-acquire lock in `finally` to clear both fields on task exit.
+     */
+    private val activeTaskMutex = Mutex()
 
     /**
      * Test-only capture hooks keyed by sessionId — when set, background completion
@@ -2099,8 +2116,20 @@ class AgentService(
                     streamingEditCallback = streamingEditCallback,
                 )
 
-                // I4: Set activeTask atomically after both loop and job are available
-                activeTask.set(ActiveTask(sessionId = sid, loop = loop, job = coroutineContext.job))
+                // D1: Set activeTask + activeMessageStateHandler atomically under Mutex.
+                // Previously activeTask.set ran inside the launched coroutine AFTER the Job
+                // returned to the caller, allowing a second concurrent executeTask call to
+                // race and overwrite both fields before the first one could write them.
+                // Now: acquire the mutex, cancel any pre-existing task, write both fields,
+                // then release immediately — the long-running loop executes outside the lock.
+                activeTaskMutex.withLock {
+                    activeTask.get()?.let { prev ->
+                        log.info("[AgentService] D1: cancelling previous task ${prev.sessionId} for new task $sid")
+                        prev.loop.cancel()
+                        prev.job.cancel()
+                    }
+                    activeTask.set(ActiveTask(sessionId = sid, loop = loop, job = coroutineContext.job))
+                }
 
                 val result = loop.run(task, attachments)
 
@@ -2205,8 +2234,12 @@ class AgentService(
                 fileLogger.logSessionEnd(sid, 0, 0, System.currentTimeMillis() - sessionStartTime, error = e.message)
                 onComplete(LoopResult.Failed(error = e.message ?: "Unknown error", reason = FailureReason.EXCEPTION))
             } finally {
-                activeTask.set(null)
-                activeMessageStateHandler = null
+                // D1: clear both fields under the same mutex so a concurrent executeTask
+                // that is waiting to register never sees a partially-cleared state.
+                activeTaskMutex.withLock {
+                    activeTask.set(null)
+                    activeMessageStateHandler = null
+                }
                 taskStore = null
                 // Clear API debug dir so the brain doesn't dump after task ends.
                 // BrainRouter wraps OpenAiCompatBrain — unwrap first so the underlying
