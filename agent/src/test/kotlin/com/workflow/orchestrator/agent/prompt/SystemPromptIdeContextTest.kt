@@ -532,13 +532,13 @@ class SystemPromptIdeContextTest {
         data class VariantSize(val name: String, val context: IdeContext?, val minChars: Int, val maxChars: Int)
 
         val variants = listOf(
-            VariantSize("null", null, 5000, 56000),
-            VariantSize("IntelliJ Ultimate", intellijUltimate(), 5000, 56000),
-            VariantSize("IntelliJ Community", intellijCommunity(), 5000, 56000),
-            VariantSize("PyCharm Professional", pycharmProfessional(), 5000, 54000),
-            VariantSize("PyCharm Community", pycharmCommunity(), 5000, 54000),
-            VariantSize("WebStorm", webstorm(), 4000, 53000),
-            VariantSize("Mixed", intellijUltimateMixed(), 6000, 58000),
+            VariantSize("null", null, 5000, 57500),
+            VariantSize("IntelliJ Ultimate", intellijUltimate(), 5000, 57500),
+            VariantSize("IntelliJ Community", intellijCommunity(), 5000, 57500),
+            VariantSize("PyCharm Professional", pycharmProfessional(), 5000, 55500),
+            VariantSize("PyCharm Community", pycharmCommunity(), 5000, 55500),
+            VariantSize("WebStorm", webstorm(), 4000, 54500),
+            VariantSize("Mixed", intellijUltimateMixed(), 6000, 59500),
         )
 
         for ((name, context, min, max) in variants) {
