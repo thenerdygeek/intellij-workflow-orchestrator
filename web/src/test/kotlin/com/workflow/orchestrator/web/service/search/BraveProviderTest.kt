@@ -85,6 +85,30 @@ class BraveProviderTest {
     }
 
     /**
+     * I8 regression — search providers must size-cap the response body so a malicious or
+     * misconfigured provider can't OOM the IDE with a 100 MB JSON blob.
+     */
+    @Test
+    fun `provider response larger than 1MB is rejected with PROVIDER_RESPONSE_TOO_LARGE`() = runTest {
+        // 2 MiB body — well over the 1 MiB cap baked into readBodyCapped.
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .addHeader("Content-Type", "application/json")
+                .setBody("x".repeat(2 * 1024 * 1024))
+        )
+
+        val result = sut.search("query", 5)
+
+        assertTrue(result.isFailure, "Oversized body must fail, got: ${result.getOrNull()}")
+        val msg = result.exceptionOrNull()?.message ?: ""
+        assertTrue(
+            msg.contains("PROVIDER_RESPONSE_TOO_LARGE"),
+            "Expected PROVIDER_RESPONSE_TOO_LARGE but got: $msg"
+        )
+    }
+
+    /**
      * Regression for B1: WebSearchServiceImpl previously installed StripAuthHeadersInterceptor
      * on the search OkHttpClient. That interceptor strips X-Subscription-Token, X-API-Key, and
      * Authorization — the exact headers Brave, CustomHttp, and similar providers use for auth.

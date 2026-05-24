@@ -94,7 +94,7 @@ class CustomHttpProvider(
                         )
                     }
 
-                    val body = response.body?.string() ?: ""
+                    val body = readBodyCapped(response) ?: ""
                     val root = try {
                         @Suppress("UNCHECKED_CAST")
                         moshi.adapter(Any::class.java).fromJson(body) as? Map<String, Any?>

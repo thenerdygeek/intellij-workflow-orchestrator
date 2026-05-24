@@ -82,7 +82,7 @@ class SearXNGProvider(
                         )
                     }
 
-                    val body = response.body?.string() ?: ""
+                    val body = readBodyCapped(response) ?: ""
                     val parsed = try {
                         responseAdapter.fromJson(body)
                     } catch (_: Exception) {

@@ -114,7 +114,7 @@ class TavilyProvider(
                         )
                     }
 
-                    val responseBodyStr = response.body?.string() ?: ""
+                    val responseBodyStr = readBodyCapped(response) ?: ""
                     val parsed = try {
                         responseAdapter.fromJson(responseBodyStr)
                     } catch (_: Exception) {
