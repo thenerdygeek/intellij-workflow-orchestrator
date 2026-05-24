@@ -9,6 +9,7 @@ import io.mockk.mockkObject
 import io.mockk.unmockkAll
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
@@ -30,16 +31,20 @@ class DelegationListTargetsToolTest {
 
     @AfterEach fun tearDown() { unmockkAll() }
 
+    private fun listTargetsParams(): JsonObject = buildJsonObject {
+        put("action", JsonPrimitive("list_targets"))
+    }
+
     @Test
     fun `returns empty targets array when no recents and no discovered`() = runBlocking {
         val project = mockk<Project>(relaxed = true)
         every { project.basePath } returns "/proj"
 
-        val tool = DelegationListTargetsTool(
+        val tool = DelegationTool(
             recentsProvider = { emptyList() },
             discoveredProvider = { emptyList() },
         )
-        val result = tool.execute(buildJsonObject {} as JsonObject, project)
+        val result = tool.execute(listTargetsParams(), project)
         assertFalse(result.isError, "expected success: ${result.summary}")
         assertTrue(
             result.summary.contains("\"targets\":[]") || result.summary.contains("\"targets\": []"),
@@ -52,16 +57,16 @@ class DelegationListTargetsToolTest {
         val project = mockk<Project>(relaxed = true)
         every { project.basePath } returns "/proj"
 
-        val tool = DelegationListTargetsTool(
+        val tool = DelegationTool(
             recentsProvider = {
                 listOf(
-                    DelegationListTargetsTool.RecentEntry(
+                    DelegationTool.RecentEntry(
                         projectPath = "/repo/running",
                         repoName = "running-app",
                         status = "running",
                         lastOpened = 1_700_000_000_000L,
                     ),
-                    DelegationListTargetsTool.RecentEntry(
+                    DelegationTool.RecentEntry(
                         projectPath = "/repo/closed",
                         repoName = "closed-app",
                         status = "closed",
@@ -71,7 +76,7 @@ class DelegationListTargetsToolTest {
             },
             discoveredProvider = {
                 listOf(
-                    DelegationListTargetsTool.RecentEntry(
+                    DelegationTool.RecentEntry(
                         projectPath = "/repo/discovered",
                         repoName = "discovered-app",
                         status = "discovered",
@@ -80,7 +85,7 @@ class DelegationListTargetsToolTest {
                 )
             },
         )
-        val result = tool.execute(buildJsonObject {} as JsonObject, project)
+        val result = tool.execute(listTargetsParams(), project)
         assertFalse(result.isError)
         assertTrue(result.summary.contains("\"repoName\":\"running-app\""))
         assertTrue(result.summary.contains("\"status\":\"running\""))
@@ -99,11 +104,11 @@ class DelegationListTargetsToolTest {
         val project = mockk<Project>(relaxed = true)
         every { project.basePath } returns "/proj"
 
-        val tool = DelegationListTargetsTool(
+        val tool = DelegationTool(
             recentsProvider = { emptyList() },
             discoveredProvider = { emptyList() },
         )
-        val result = tool.execute(buildJsonObject {} as JsonObject, project)
+        val result = tool.execute(listTargetsParams(), project)
         assertTrue(result.isError)
         assertTrue(result.summary.contains("DelegationOutboundDisabled"))
     }
@@ -114,10 +119,10 @@ class DelegationListTargetsToolTest {
         every { project.basePath } returns "/proj"
 
         val sharedPath = "/repo/overlap"
-        val tool = DelegationListTargetsTool(
+        val tool = DelegationTool(
             recentsProvider = {
                 listOf(
-                    DelegationListTargetsTool.RecentEntry(
+                    DelegationTool.RecentEntry(
                         projectPath = sharedPath,
                         repoName = "overlap-app",
                         status = "running",
@@ -127,7 +132,7 @@ class DelegationListTargetsToolTest {
             },
             discoveredProvider = {
                 listOf(
-                    DelegationListTargetsTool.RecentEntry(
+                    DelegationTool.RecentEntry(
                         projectPath = sharedPath,
                         repoName = "overlap-app",
                         status = "discovered",
@@ -136,7 +141,7 @@ class DelegationListTargetsToolTest {
                 )
             },
         )
-        val result = tool.execute(buildJsonObject {} as JsonObject, project)
+        val result = tool.execute(listTargetsParams(), project)
         assertFalse(result.isError)
         // Should appear once (from recents), not twice
         val countRunning = result.summary.split("\"status\":\"running\"").size - 1
@@ -150,10 +155,10 @@ class DelegationListTargetsToolTest {
         val project = mockk<Project>(relaxed = true)
         every { project.basePath } returns "/proj"
 
-        val tool = DelegationListTargetsTool(
+        val tool = DelegationTool(
             recentsProvider = {
                 listOf(
-                    DelegationListTargetsTool.RecentEntry(
+                    DelegationTool.RecentEntry(
                         projectPath = "/repo/a",
                         repoName = "app-a",
                         status = "closed",
@@ -163,7 +168,7 @@ class DelegationListTargetsToolTest {
             },
             discoveredProvider = { emptyList() },
         )
-        val result = tool.execute(buildJsonObject {} as JsonObject, project)
+        val result = tool.execute(listTargetsParams(), project)
         assertFalse(result.isError)
         assertTrue(
             result.summary.contains("\"lastOpened\":null"),

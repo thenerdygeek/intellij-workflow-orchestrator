@@ -6,7 +6,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * Source-text pin tests for [DelegationAnswerTool].
+ * Source-text pin tests for the `answer` action of the consolidated [DelegationTool].
  *
  * These tests do not instantiate an IntelliJ Project — they verify the
  * structural invariants of the tool by reading its source text. Richer
@@ -15,12 +15,13 @@ import java.nio.file.Path
 class DelegationAnswerToolTest {
 
     private val source: String = Files.readString(
-        Path.of("src/main/kotlin/com/workflow/orchestrator/agent/tools/delegation/DelegationAnswerTool.kt")
+        Path.of("src/main/kotlin/com/workflow/orchestrator/agent/tools/delegation/DelegationTool.kt")
     )
 
     @Test
-    fun `tool name is delegation_answer`() {
-        assertTrue(source.contains("\"delegation_answer\""), "Tool name must be exactly 'delegation_answer'")
+    fun `tool exposes answer action`() {
+        assertTrue(source.contains("\"answer\""), "Tool must expose 'answer' as an action enum value")
+        assertTrue(source.contains("handleAnswer"), "answer handler must be defined")
     }
 
     @Test

@@ -6,7 +6,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * Source-text pin tests for [DelegationCloseTool].
+ * Source-text pin tests for the `close` action of the consolidated [DelegationTool].
  *
  * These tests do not instantiate an IntelliJ Project — they verify the
  * structural invariants of the tool by reading its source text. Richer
@@ -15,12 +15,13 @@ import java.nio.file.Path
 class DelegationCloseToolTest {
 
     private val source: String = Files.readString(
-        Path.of("src/main/kotlin/com/workflow/orchestrator/agent/tools/delegation/DelegationCloseTool.kt")
+        Path.of("src/main/kotlin/com/workflow/orchestrator/agent/tools/delegation/DelegationTool.kt")
     )
 
     @Test
-    fun `tool name is delegation_close`() {
-        assertTrue(source.contains("\"delegation_close\""), "Tool name must be exactly 'delegation_close'")
+    fun `tool exposes close action`() {
+        assertTrue(source.contains("\"close\""), "Tool must expose 'close' as an action enum value")
+        assertTrue(source.contains("handleClose"), "close handler must be defined")
     }
 
     @Test

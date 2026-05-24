@@ -6,7 +6,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * Source-text pin tests for [DelegationSendTool].
+ * Source-text pin tests for the `send` action of the consolidated [DelegationTool].
  *
  * These tests do not instantiate an IntelliJ Project — they verify the
  * structural invariants of the tool by reading its source text.  Richer
@@ -15,17 +15,21 @@ import java.nio.file.Path
 class DelegationSendToolTest {
 
     private val source: String = Files.readString(
-        Path.of("src/main/kotlin/com/workflow/orchestrator/agent/tools/delegation/DelegationSendTool.kt")
+        Path.of("src/main/kotlin/com/workflow/orchestrator/agent/tools/delegation/DelegationTool.kt")
     )
 
     @Test
-    fun `tool name is delegation_send`() {
-        assertTrue(source.contains("\"delegation_send\""), "Tool name must be exactly 'delegation_send'")
+    fun `tool exposes send action`() {
+        assertTrue(source.contains("\"send\""), "Tool must expose 'send' as an action enum value")
+        assertTrue(source.contains("handleSend"), "send handler must be defined")
     }
 
     @Test
-    fun `request is in the required parameters list`() {
-        assertTrue(source.contains("required = listOf(\"request\")"), "'request' must be the only required parameter")
+    fun `request is validated for the send action`() {
+        assertTrue(
+            source.contains("'request' is required"),
+            "'request' must be validated as required by the send handler"
+        )
     }
 
     @Test

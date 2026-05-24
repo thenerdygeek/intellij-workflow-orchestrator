@@ -51,16 +51,16 @@ class SystemPromptDelegationGateTest {
     fun `delegation hints absent when outbound disabled (default)`() {
         val prompt = buildWith(delegationOutboundEnabled = false)
         assertFalse(
-            prompt.contains("delegation_send"),
-            "Section-5 delegation_send hint must be absent when outbound off"
+            prompt.contains("delegation with action=\"send\""),
+            "Section-5 delegation send hint must be absent when outbound off"
         )
         assertFalse(
             prompt.contains("Cross-IDE delegation UX") || prompt.contains("cross-IDE delegation UX"),
             "Picker UX note must be absent when outbound off"
         )
         assertFalse(
-            prompt.contains("delegation_fetch_transcript"),
-            "delegation_fetch_transcript hint must be absent when outbound off"
+            prompt.contains("delegation with action=\"fetch_transcript\""),
+            "delegation fetch_transcript hint must be absent when outbound off"
         )
     }
 
@@ -74,8 +74,8 @@ class SystemPromptDelegationGateTest {
             shell = "/bin/bash",
         )
         assertFalse(
-            prompt.contains("delegation_send"),
-            "delegation_send must be absent by default (safe default posture)"
+            prompt.contains("delegation with action=\"send\""),
+            "delegation send hint must be absent by default (safe default posture)"
         )
     }
 
@@ -83,16 +83,16 @@ class SystemPromptDelegationGateTest {
     fun `delegation hints present when outbound enabled`() {
         val prompt = buildWith(delegationOutboundEnabled = true)
         assertTrue(
-            prompt.contains("delegation_send"),
-            "Section-5 delegation_send hint must be present when outbound on"
+            prompt.contains("delegation with action=\"send\""),
+            "Section-5 delegation send hint must be present when outbound on"
         )
         assertTrue(
             prompt.contains("Cross-IDE delegation UX"),
             "Picker UX note must be present when outbound on"
         )
         assertTrue(
-            prompt.contains("delegation_fetch_transcript"),
-            "delegation_fetch_transcript hint must be present when outbound on"
+            prompt.contains("delegation with action=\"fetch_transcript\""),
+            "delegation fetch_transcript hint must be present when outbound on"
         )
     }
 
@@ -132,7 +132,7 @@ class SystemPromptDelegationGateTest {
         // not throw or leak anything.
         val prompt = buildWith(delegationOutboundEnabled = false, skills = null)
         assertFalse(prompt.contains("cross-ide-delegation"))
-        assertFalse(prompt.contains("delegation_send"))
+        assertFalse(prompt.contains("delegation with action=\"send\""))
     }
 
     // ---- Sub-agent invariant ----
@@ -150,8 +150,8 @@ class SystemPromptDelegationGateTest {
             completingYourTaskSection = "COMPLETING YOUR TASK\n\nCall task_report when done.",
         )
         assertFalse(
-            prompt.contains("delegation_send"),
-            "Sub-agent prompt must never contain delegation_send hints"
+            prompt.contains("delegation with action=\"send\""),
+            "Sub-agent prompt must never contain delegation send hints"
         )
         assertFalse(
             prompt.contains("Cross-IDE delegation UX"),

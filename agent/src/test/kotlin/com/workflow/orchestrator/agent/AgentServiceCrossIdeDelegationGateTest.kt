@@ -9,9 +9,9 @@ import java.nio.file.Path
  * Source-text pins for Plan 1 Task 11 — outbound-delegation gate.
  *
  * These tests verify that:
- * 1. The delegation tool registrations are placed AFTER the
+ * 1. The single `delegation` meta-tool registration is placed AFTER the
  *    `enableOutboundCrossIdeDelegation` gate check, so the LLM does not
- *    see the tools when the setting is off (§3.3).
+ *    see the tool when the setting is off (§3.3).
  * 2. The `reregisterCrossIdeDelegationTools` helper exists for runtime
  *    toggle support (added/removed without an IDE restart).
  */
@@ -22,24 +22,19 @@ class AgentServiceCrossIdeDelegationGateTest {
     )
 
     @Test
-    fun `delegation tools are gated on enableOutboundCrossIdeDelegation`() {
+    fun `delegation tool is gated on enableOutboundCrossIdeDelegation`() {
         assertTrue(source.contains("enableOutboundCrossIdeDelegation"),
             "AgentService must reference enableOutboundCrossIdeDelegation")
 
-        // Find the gate check inside registerAllTools (first occurrence of the flag).
+        // Find the gate check inside reregisterCrossIdeDelegationTools.
         val gateIdx = source.indexOf("enableOutboundCrossIdeDelegation")
         assertTrue(gateIdx >= 0, "gate check not found in AgentService")
 
-        // Both tool class names must appear AFTER the gate check (i.e. inside the if-block
-        // or in reregisterCrossIdeDelegationTools). We look for the first occurrence of each
-        // that comes after gateIdx.
-        val sendIdxAfterGate = source.indexOf("DelegationSendTool", gateIdx)
-        val closeIdxAfterGate = source.indexOf("DelegationCloseTool", gateIdx)
-
-        assertTrue(sendIdxAfterGate > gateIdx,
-            "DelegationSendTool registration must be after the enableOutboundCrossIdeDelegation gate check")
-        assertTrue(closeIdxAfterGate > gateIdx,
-            "DelegationCloseTool registration must be after the enableOutboundCrossIdeDelegation gate check")
+        // The DelegationTool class name must appear AFTER the gate check (i.e. inside
+        // the if-block in reregisterCrossIdeDelegationTools).
+        val toolIdxAfterGate = source.indexOf("DelegationTool", gateIdx)
+        assertTrue(toolIdxAfterGate > gateIdx,
+            "DelegationTool registration must be after the enableOutboundCrossIdeDelegation gate check")
     }
 
     @Test
