@@ -1,12 +1,33 @@
 package com.workflow.orchestrator.web.service
 
+import com.workflow.orchestrator.core.security.UrlSafetyGuard
 import com.workflow.orchestrator.core.web.WebError
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-open class ShortenerResolver(private val client: OkHttpClient) {
+/**
+ * Resolves shortened URLs by following one HEAD/GET hop.
+ *
+ * I12 — defense in depth:
+ *  - The OkHttp client is constructed in [WebFetchServiceImpl] with
+ *    [StripAuthHeadersInterceptor] attached so a stray Authorization / Cookie header
+ *    on the shortener call cannot leak credentials to a third-party redirector.
+ *  - Every resolve call screens the input URL via [UrlSafetyGuard] BEFORE the HTTP call,
+ *    so a shortener-flagged-host that turns out to resolve to loopback / link-local /
+ *    private-LAN is rejected before any outbound request.
+ */
+open class ShortenerResolver(
+    private val client: OkHttpClient,
+    private val ssrfResolver: UrlSafetyGuard.Resolver = UrlSafetyGuard.SystemResolver,
+    /**
+     * Production default false — loopback / private-LAN destinations are rejected.
+     * Tests that point ShortenerResolver at MockWebServer (which always binds loopback)
+     * set true so the SSRF screen lets the test traffic through.
+     */
+    private val allowLoopback: Boolean = false,
+) {
 
     sealed class Result {
         data class Resolved(val finalUrl: String) : Result()
@@ -14,6 +35,18 @@ open class ShortenerResolver(private val client: OkHttpClient) {
     }
 
     open suspend fun resolve(url: String): Result = withContext(Dispatchers.IO) {
+        // I12 — SSRF screen the shortener URL itself before issuing any HTTP call.
+        // The shortener-flag gate is currently the only entry point but this is
+        // defense-in-depth — future reuses must not bypass the safety guard.
+        val ssrf = UrlSafetyGuard.isUrlSafe(url, allowLoopback = allowLoopback, resolver = ssrfResolver)
+        if (ssrf.isFailure) {
+            val ex = ssrf.exceptionOrNull() as? UrlSafetyGuard.UrlBlockedException
+            return@withContext Result.Failed(
+                if (ex != null) WebError.UrlBlocked(ex.reason, ex.host)
+                else WebError.ShortenerUnresolved(url)
+            )
+        }
+
         // Single GET with followRedirects(false): check Location header first,
         // then fall back to reading up to 1024 bytes for a meta-refresh tag.
         val req = Request.Builder().url(url).get().build()

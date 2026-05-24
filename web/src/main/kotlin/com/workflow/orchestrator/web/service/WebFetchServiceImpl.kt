@@ -62,10 +62,14 @@ class WebFetchServiceImpl(
             .build()
 
         // Shortener resolver uses its own no-auth client (HEAD/GET to shortener services).
+        // I12 — defense-in-depth: install StripAuthHeadersInterceptor so a stray
+        // Authorization / Cookie header on a shortener call cannot leak credentials
+        // to a third-party redirector.
         val shortenerClient = OkHttpClient.Builder()
             .followRedirects(false)
             .connectTimeout(Duration.ofSeconds(state.webConnectTimeoutSec.toLong()))
             .readTimeout(Duration.ofSeconds(5))
+            .addInterceptor(StripAuthHeadersInterceptor())
             .build()
 
         val sanitizerSubagent = SanitizerSubagent(
