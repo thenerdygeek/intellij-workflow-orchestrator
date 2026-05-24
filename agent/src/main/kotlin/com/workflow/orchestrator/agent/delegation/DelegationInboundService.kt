@@ -85,8 +85,8 @@ class DelegationInboundService(
             onConnect = { connect, replyWith, readMessage, closeChannel ->
                 handleConnect(connect, replyWith, readMessage, closeChannel)
             },
-            onChannelResume = { resume, replyWith, closeChannel ->
-                handleChannelResume(resume, replyWith, closeChannel)
+            onChannelResume = { resume, replyWith, readMessage, closeChannel ->
+                handleChannelResume(resume, replyWith, readMessage, closeChannel)
             },
             scope = cs,
         )
@@ -146,48 +146,14 @@ class DelegationInboundService(
         // Plan 4: include bSessionId so IDE-A can persist the link for CHANNEL_RESUME.
         replyWith(DelegationMessage.AcceptResult(accepted = true, bSessionId = localSessionId))
 
-        // Read incoming Answer / AnswerCanceled messages from IDE-A until the channel
-        // closes or throws (EOF / socket error = session over).
+        // Read incoming Answer / FetchTranscript / UserTurn messages from IDE-A until the
+        // channel closes or throws (EOF / socket error = session over).
         // Plan 1 F8: outer try/finally guarantees closeChannel + unregisterSessionChannel
         // run on every exit path — normal loop end, exception, or unexpected throw.
+        // H2: factor the read-loop body into runInboundReadLoop so handleChannelResume can
+        // reuse it without duplication.
         try {
-            try {
-                while (true) {
-                    val msg = readMessage()
-                    when (msg) {
-                        is DelegationMessage.Answer -> {
-                            val delivered = deliverAnswer(localSessionId, msg.questionId, msg.text)
-                            if (!delivered) {
-                                LOG.debug(
-                                    "deliverAnswer: no pending question for qid=${msg.questionId} " +
-                                        "on session $localSessionId (race or stale message)"
-                                )
-                            }
-                        }
-                        is DelegationMessage.FetchTranscript -> {
-                            handleFetchTranscript(
-                                sessionId = msg.sessionId,
-                                requestId = msg.requestId,
-                                replyWith = replyWith,
-                            )
-                        }
-                        else -> {
-                            LOG.warn(
-                                "Unexpected message on inbound channel post-Accept for session " +
-                                    "$localSessionId: ${msg::class.simpleName}"
-                            )
-                        }
-                    }
-                }
-            } catch (e: java.nio.channels.ClosedChannelException) {
-                // F3 fix: normal termination — closeChannel() interrupted readMessage().
-                LOG.debug("Inbound read-loop ended (channel closed) for session $localSessionId")
-            } catch (e: java.nio.channels.AsynchronousCloseException) {
-                // F3 fix: normal termination on Windows/async close path.
-                LOG.debug("Inbound read-loop ended (async close) for session $localSessionId")
-            } catch (e: Exception) {
-                LOG.warn("Inbound read-loop failed unexpectedly for session $localSessionId", e)
-            }
+            runInboundReadLoop(localSessionId, readMessage, replyWith)
         } finally {
             // Plan 1 F8: guarantee channel cleanup even on unexpected exit paths.
             // Both calls are idempotent — closeChannel() is safe on already-closed
@@ -196,6 +162,81 @@ class DelegationInboundService(
                 LOG.warn("Inbound read-loop finally: closeChannel threw for session $localSessionId", e)
             }
             unregisterSessionChannel(localSessionId)
+        }
+    }
+
+    /**
+     * Shared inbound read-loop body for [handleConnect] and [handleChannelResume].
+     *
+     * Reads frames from [readMessage] until the channel is closed or throws. Dispatches:
+     * - [DelegationMessage.Answer] → [deliverAnswer]
+     * - [DelegationMessage.FetchTranscript] → [handleFetchTranscript]
+     * - [DelegationMessage.UserTurn] → injects the text as a real user turn into the
+     *   session's agent loop via [AgentService.enqueueNudgeForSession]. This is
+     *   semantically equivalent to the human in IDE-B typing a follow-up message.
+     *   (H3 fix: was silently dropped by the else→WARN branch.)
+     * - else → WARN log
+     *
+     * Exceptions are caught per the F3 pattern (ClosedChannelException /
+     * AsynchronousCloseException are normal termination; all other exceptions are WARN).
+     *
+     * Plan 4 review fix H2/H3.
+     */
+    /** Visible-for-tests: made internal so unit tests can call the loop directly. */
+    internal suspend fun runInboundReadLoop(
+        localSessionId: String,
+        readMessage: suspend () -> DelegationMessage,
+        replyWith: suspend (DelegationMessage) -> Unit,
+    ) {
+        try {
+            while (true) {
+                val msg = readMessage()
+                when (msg) {
+                    is DelegationMessage.Answer -> {
+                        val delivered = deliverAnswer(localSessionId, msg.questionId, msg.text)
+                        if (!delivered) {
+                            LOG.debug(
+                                "deliverAnswer: no pending question for qid=${msg.questionId} " +
+                                    "on session $localSessionId (race or stale message)"
+                            )
+                        }
+                    }
+                    is DelegationMessage.FetchTranscript -> {
+                        handleFetchTranscript(
+                            sessionId = msg.sessionId,
+                            requestId = msg.requestId,
+                            replyWith = replyWith,
+                        )
+                    }
+                    is DelegationMessage.UserTurn -> {
+                        // H3 fix: deliver the continuation text from IDE-A as a real user
+                        // turn in this session's agent loop. Semantically equivalent to the
+                        // human in IDE-B typing the next message in the chat input.
+                        // enqueueNudgeForSession routes through the steering queue which
+                        // calls contextManager.addUserMessage at the next iteration boundary.
+                        LOG.debug(
+                            "UserTurn received on inbound channel for session $localSessionId " +
+                                "(${msg.text.take(60)}…)"
+                        )
+                        val agentService = project.getService(AgentService::class.java)
+                        agentService.enqueueNudgeForSession(localSessionId, msg.text)
+                    }
+                    else -> {
+                        LOG.warn(
+                            "Unexpected message on inbound channel post-Accept for session " +
+                                "$localSessionId: ${msg::class.simpleName}"
+                        )
+                    }
+                }
+            }
+        } catch (e: java.nio.channels.ClosedChannelException) {
+            // F3 fix: normal termination — closeChannel() interrupted readMessage().
+            LOG.debug("Inbound read-loop ended (channel closed) for session $localSessionId")
+        } catch (e: java.nio.channels.AsynchronousCloseException) {
+            // F3 fix: normal termination on Windows/async close path.
+            LOG.debug("Inbound read-loop ended (async close) for session $localSessionId")
+        } catch (e: Exception) {
+            LOG.warn("Inbound read-loop failed unexpectedly for session $localSessionId", e)
         }
     }
 
@@ -467,11 +508,24 @@ class DelegationInboundService(
      *  - Terminal session (known from sessions.json with `delegated` metadata) → [DelegationMessage.SessionClosed]
      *  - Unknown sessionId → [DelegationMessage.SessionNotFound]
      *
+     * H2 fix (Plan 4 review): after replying ChannelResumed to a live session, the original
+     * implementation returned immediately without reading further frames from the resumed
+     * channel. This meant follow-up Answer / FetchTranscript / UserTurn messages sent by
+     * IDE-A on the new channel would never be dispatched. The fix runs [runInboundReadLoop]
+     * on the resumed channel, wrapped in the same Plan-1-F8 try/finally that handleConnect uses.
+     *
+     * Old-channel note: The old [replyWith] closure stored in [sessionChannels] is replaced
+     * by the new one from this resume call. The underlying old socket is assumed dead by virtue
+     * of IDE-A's restart (the OS reclaims it); the read-loop on the original handleConnect
+     * will have already hit EOF and exited. If future versions need explicit old-socket close,
+     * store the old channel reference per-session and close it here.
+     *
      * Plan 4 spec §3.3.
      */
     suspend fun handleChannelResume(
         msg: DelegationMessage.ChannelResume,
         replyWith: suspend (DelegationMessage) -> Unit,
+        readMessage: suspend () -> DelegationMessage,
         closeChannel: suspend () -> Unit,
     ) {
         val sessionId = msg.sessionId
@@ -484,8 +538,18 @@ class DelegationInboundService(
             // messages go to the resumed connection.
             sessionChannels[sessionId] = sc.copy(replyWith = replyWith)
             replyWith(DelegationMessage.ChannelResumed(sessionId, currentState))
+            // H2 fix: run the same read-loop body that handleConnect uses so subsequent
+            // Answer / FetchTranscript / UserTurn frames on the resumed channel are dispatched.
+            // Wrap in try/finally (Plan 1 F8) to guarantee closeChannel runs on every exit path.
+            // Note: do NOT close the channel before the read-loop — leave it open for ongoing exchange.
+            try {
+                runInboundReadLoop(sessionId, readMessage, replyWith)
+            } finally {
+                try { closeChannel() } catch (e: Exception) {
+                    LOG.warn("handleChannelResume finally: closeChannel threw for session $sessionId", e)
+                }
+            }
             return
-            // Note: do NOT close the channel — leave it open for ongoing exchange.
         }
 
         // Session not in live registry — check on-disk index for terminal record.

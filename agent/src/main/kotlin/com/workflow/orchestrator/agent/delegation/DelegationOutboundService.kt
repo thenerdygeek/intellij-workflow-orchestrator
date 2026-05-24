@@ -183,58 +183,87 @@ class DelegationOutboundService(
         // body so that result delivery is not gated on the next send call. The channel
         // insertion into activeChannels above has already happened under the lock.
         cs.launch(Dispatchers.IO) {
-            var unknownCount = 0
-            try {
-                while (true) {
-                    val msg = withContext(Dispatchers.IO) {
-                        DelegationFraming.readFramed(channel, json)
+            runOutboundReaderLoop(handle, channel, onResult)
+        }
+        handle
+    }
+
+    /**
+     * Shared outbound reader-loop body for both [send] and [attemptResume].
+     *
+     * Reads frames from [channel] until:
+     * - A [DelegationMessage.Result] arrives — calls [onResult] and returns.
+     * - The channel throws (EOF / socket error) — synthesises a FAILED Result and returns.
+     *
+     * Dispatches:
+     * - [DelegationMessage.Question] → [handleIncomingQuestion]
+     * - [DelegationMessage.AnswerCanceled] → [rescindLocalQuestion]
+     * - [DelegationMessage.Heartbeat] → no-op (lastSeenAt already updated before when-switch)
+     * - [DelegationMessage.FetchTranscriptReply] → completes the matching [pendingFetches] deferred
+     * - [DelegationMessage.Result] → calls [onResult] + returns
+     * - else → [unknownCount]++ / threshold drop per Plan 3 F8
+     *
+     * H1 fix: previously only [send] had a reader loop; [attemptResume] stored the channel in
+     * [activeChannels] but never spawned a reader, so follow-up Heartbeat / Question / Result
+     * frames on resumed channels were never processed. Both paths now call this method.
+     *
+     * Plan 4 review fix H1.
+     */
+    private suspend fun runOutboundReaderLoop(
+        handle: DelegationHandle,
+        channel: java.nio.channels.SocketChannel,
+        onResult: suspend (DelegationHandle, DelegationMessage.Result) -> Unit,
+    ) {
+        var unknownCount = 0
+        try {
+            while (true) {
+                val msg = withContext(Dispatchers.IO) {
+                    DelegationFraming.readFramed(channel, json)
+                }
+                lastSeenAt[handle.id] = System.currentTimeMillis()
+                when (msg) {
+                    is DelegationMessage.Question -> handleIncomingQuestion(handle, msg)
+                    is DelegationMessage.AnswerCanceled -> rescindLocalQuestion(handle, msg.questionId, msg.reason)
+                    is DelegationMessage.Heartbeat -> {
+                        // Liveness signal — already accounted for by the lastSeenAt update above.
+                        // No further action needed at this point in the loop.
                     }
-                    lastSeenAt[handle.id] = System.currentTimeMillis()
-                    when (msg) {
-                        is DelegationMessage.Question -> handleIncomingQuestion(handle, msg)
-                        is DelegationMessage.AnswerCanceled -> rescindLocalQuestion(handle, msg.questionId, msg.reason)
-                        is DelegationMessage.Heartbeat -> {
-                            // Liveness signal — already accounted for by the lastSeenAt update above.
-                            // No further action needed at this point in the loop.
-                        }
-                        is DelegationMessage.FetchTranscriptReply -> {
-                            pendingFetches.remove(msg.requestId)?.complete(msg)
-                                ?: LOG.debug(
-                                    "FetchTranscriptReply for unknown requestId ${msg.requestId} " +
-                                        "(reply arrived after the 30s timeout — benign, deferred already cancelled)"
-                                )
-                        }
-                        is DelegationMessage.Result -> {
-                            onResult(handle, msg)
-                            return@launch
-                        }
-                        else -> {
-                            unknownCount++
-                            LOG.warn("Unexpected message on outbound channel: ${msg::class.simpleName} (count=$unknownCount)")
-                            if (unknownCount >= MAX_UNKNOWN_MESSAGES_BEFORE_DROP) {
-                                LOG.warn(
-                                    "Outbound reader for ${handle.id} dropping channel after " +
-                                        "$unknownCount unknown messages — likely protocol drift"
-                                )
-                                return@launch
-                            }
+                    is DelegationMessage.FetchTranscriptReply -> {
+                        pendingFetches.remove(msg.requestId)?.complete(msg)
+                            ?: LOG.debug(
+                                "FetchTranscriptReply for unknown requestId ${msg.requestId} " +
+                                    "(reply arrived after the 30s timeout — benign, deferred already cancelled)"
+                            )
+                    }
+                    is DelegationMessage.Result -> {
+                        onResult(handle, msg)
+                        return
+                    }
+                    else -> {
+                        unknownCount++
+                        LOG.warn("Unexpected message on outbound channel: ${msg::class.simpleName} (count=$unknownCount)")
+                        if (unknownCount >= MAX_UNKNOWN_MESSAGES_BEFORE_DROP) {
+                            LOG.warn(
+                                "Outbound reader for ${handle.id} dropping channel after " +
+                                    "$unknownCount unknown messages — likely protocol drift"
+                            )
+                            return
                         }
                     }
                 }
-            } catch (e: Exception) {
-                LOG.warn("Result read failed for ${handle.id}", e)
-                onResult(
-                    handle,
-                    DelegationMessage.Result(
-                        status = DelegationMessage.ResultStatus.FAILED,
-                        reason = "ipc_read_failed: ${e.message}",
-                    )
-                )
-            } finally {
-                close(handle.id)
             }
+        } catch (e: Exception) {
+            LOG.warn("Result read failed for ${handle.id}", e)
+            onResult(
+                handle,
+                DelegationMessage.Result(
+                    status = DelegationMessage.ResultStatus.FAILED,
+                    reason = "ipc_read_failed: ${e.message}",
+                )
+            )
+        } finally {
+            close(handle.id)
         }
-        handle
     }
 
     /**
@@ -327,9 +356,15 @@ class DelegationOutboundService(
      * Sends a [DelegationMessage.UserTurn] over the existing channel for [handleId].
      *
      * Dead handles (persisted but not yet resumed after IDE-A restart) trigger
-     * [attemptResume] automatically. On successful resume the channel is re-attached
-     * and the UserTurn write proceeds. On failure (session closed, not found, or probe
-     * refused) a [DelegationException.Expired] is thrown with a descriptive reason.
+     * [attemptResume] automatically. On successful resume:
+     * - H1 fix: a new reader loop is spawned on the resumed channel so subsequent
+     *   Question / Heartbeat / Result frames are processed (spec §3.3).
+     * - H4 fix: a coalesced nudge is enqueued to Agent-A before the UserTurn frame is
+     *   sent, per spec §3.3: "Channel for {bRepoName} re-attached. Last-known state
+     *   {lastSeenState}; current state {currentState}. Resuming."
+     *
+     * On failure (session closed, not found, or probe refused) a
+     * [DelegationException.Expired] is thrown with a descriptive reason.
      *
      * Plan 4 spec §5.2, §5.3.
      *
@@ -350,11 +385,53 @@ class DelegationOutboundService(
             throw DelegationException.Expired("handle_owned_by_other_session")
         }
 
+        // Capture lastSeenState BEFORE attemptResume updates it (H4: needed for the nudge text).
+        val lastSeenStateBeforeResume = handleToLastSeenState[handleId] ?: "unknown"
+
         val channel = activeChannels[handleId] ?: run {
             // Dead handle (persisted but not yet resumed). Attempt the resume protocol.
-            when (val outcome = attemptResume(handleId)) {
-                is ResumeOutcome.Resumed -> activeChannels[handleId]
-                    ?: throw DelegationException.Expired("resume_inconsistent")
+            val outcome = attemptResume(handleId)
+            when (outcome) {
+                is ResumeOutcome.Resumed -> {
+                    val repoName = handleToRepoName[handleId] ?: handleId.take(8)
+
+                    // H4 fix: enqueue the spec-mandated re-attach nudge to Agent-A BEFORE
+                    // writing the UserTurn frame and before the null-check that might throw.
+                    // Spec §3.3: "Emit a single coalesced nudge to Agent-A: 'Channel for
+                    // {bRepoName} re-attached. Last-known state {lastSeenState}; current
+                    // state {currentState}. Resuming.'"
+                    val reattachNudge =
+                        "Channel for $repoName re-attached. " +
+                        "Last-known state $lastSeenStateBeforeResume; " +
+                        "current state ${outcome.currentState}. Resuming."
+                    project.getService(
+                        com.workflow.orchestrator.agent.AgentService::class.java
+                    ).enqueueNudgeForSession(delegatorSessionId, reattachNudge)
+
+                    val resumedChannel = activeChannels[handleId]
+                        ?: throw DelegationException.Expired("resume_inconsistent")
+
+                    // H1 fix: spawn a reader loop on the resumed channel so subsequent
+                    // Question / Heartbeat / FetchTranscriptReply / Result frames are
+                    // dispatched. Without this, the resumed channel stored in activeChannels
+                    // had no reader and all frames were silently dropped. Spec §3.3.
+                    val handle = DelegationHandle(
+                        id = handleId,
+                        targetProjectPath = handleToTargetPath[handleId] ?: "",
+                        targetRepoName = repoName,
+                    )
+                    cs.launch(Dispatchers.IO) {
+                        runOutboundReaderLoop(handle, resumedChannel) { h, result ->
+                            // Route the terminal result back to Agent-A as a nudge.
+                            val nudge = buildResumedResultNudge(h.targetRepoName, h.id, result)
+                            project.getService(
+                                com.workflow.orchestrator.agent.AgentService::class.java
+                            ).enqueueNudgeForSession(delegatorSessionId, nudge)
+                        }
+                    }
+
+                    resumedChannel
+                }
                 is ResumeOutcome.Closed -> throw DelegationException.Expired(
                     "session_closed: ${outcome.closeReason}${outcome.summary?.let { " — $it" } ?: ""}"
                 )
@@ -388,6 +465,27 @@ class DelegationOutboundService(
             lastSeenState = handleToLastSeenState[handleId] ?: "unknown",
         )
     }
+
+    /**
+     * Builds the nudge text for Agent-A when a resumed delegated session sends its
+     * terminal Result. Mirrors [DelegationSendTool.buildNudgeText] but is called from
+     * the reader loop spawned by [sendContinuation] on a resumed channel.
+     */
+    private fun buildResumedResultNudge(
+        repoName: String,
+        handleId: String,
+        result: DelegationMessage.Result,
+    ): String = buildString {
+        val shortId = handleId.take(8)
+        appendLine("[DELEGATION RESULT (resumed) — $repoName ($shortId)]")
+        appendLine("Status: ${result.status}")
+        if (result.summary.isNotBlank()) appendLine("Summary: ${result.summary}")
+        if (result.filesChanged.isNotEmpty()) {
+            appendLine("Files changed (${result.filesChanged.size}): ${result.filesChanged.joinToString(", ")}")
+        }
+        if (result.reason != null) appendLine("Reason: ${result.reason}")
+        appendLine("Duration: ${result.durationSeconds}s")
+    }.trimEnd()
 
     /**
      * Test-injectable probe. Production code uses the live socket I/O path.

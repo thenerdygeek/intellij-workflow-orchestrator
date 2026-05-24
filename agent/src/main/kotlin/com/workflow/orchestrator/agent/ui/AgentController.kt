@@ -3138,6 +3138,27 @@ class AgentController(
         if (!isCompleted) {
             dashboard.showResumeBar(sessionId)
         }
+
+        // M2 fix: re-push delegation-question-pending banner state when the user navigates
+        // to a delegated session. The banner state is normally pushed in
+        // DelegationInboundService.routeQuestion / deliverAnswer, but if the question was
+        // raised while the user was viewing a different session the push was silently skipped
+        // (pushDelegationQuestionPending gates on viewedSessionId == sessionId, which was
+        // not true at question-raise time). We re-check here after viewedSessionId is set.
+        try {
+            val inboundService = project.getService(
+                com.workflow.orchestrator.agent.delegation.DelegationInboundService::class.java
+            )
+            if (inboundService.hasPendingQuestion(sessionId)) {
+                val delegatorRepo = service.findDelegationMetadata(sessionId)?.delegatorRepo
+                pushDelegationQuestionPending(sessionId, active = true, delegatorRepo = delegatorRepo)
+            } else {
+                // Clear any stale banner state from a prior session that happened to be viewed.
+                pushDelegationQuestionPending(sessionId, active = false, delegatorRepo = null)
+            }
+        } catch (e: Exception) {
+            LOG.warn("showSession: delegation banner refresh failed for $sessionId", e)
+        }
     }
 
     /**
