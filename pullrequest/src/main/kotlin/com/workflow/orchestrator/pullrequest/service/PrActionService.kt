@@ -183,26 +183,82 @@ class PrActionService(private val project: Project) {
     }
 
     /**
-     * Decline a pull request.
+     * Decline a pull request, retrying once on 409 Conflict (stale version).
+     *
+     * The caller supplies a [cachedVersion] from their last-known state (e.g.
+     * `currentPr?.version`). `decline` always refetches a fresh version before
+     * posting the decline request, so [cachedVersion] is intentionally unused
+     * in the primary attempt — passing it is optional and retained only for API
+     * compatibility. On a 409 the cache is force-evicted and a second attempt
+     * is made with the freshly-fetched version (mirrors the [modifyPullRequest]
+     * retry pattern used by [updateTitle]).
      */
-    suspend fun decline(prId: Int, version: Int): ApiResult<Unit> {
+    suspend fun decline(prId: Int, cachedVersion: Int = 0): ApiResult<Unit> {
         val client = getClient()
             ?: return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket not configured")
         if (!isConfigured())
             return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket project/repo not configured")
 
-        log.info("[PR:Action] Declining PR #$prId (version=$version)")
-        return when (val result = client.declinePullRequest(projectKey(), repoSlug(), prId, version)) {
+        val proj = projectKey()
+        val repo = repoSlug()
+
+        // Attempt 1: fetch a fresh version, then POST decline.
+        val first = fetchAndDecline(client, proj, repo, prId)
+        if (first is ApiResult.Success) {
+            log.info("[PR:Action] PR #$prId declined")
+            val eventBus = project.getService(EventBus::class.java)
+            eventBus.emit(WorkflowEvent.PullRequestDeclined(prId = prId))
+            return ApiResult.Success(Unit)
+        }
+
+        val firstError = first as ApiResult.Error
+        val is409 = firstError.type == ErrorType.VALIDATION_ERROR &&
+            firstError.message.contains("version conflict", ignoreCase = true)
+
+        if (!is409) {
+            log.warn("[PR:Action] Failed to decline PR #$prId: ${firstError.message}")
+            return ApiResult.Error(firstError.type, firstError.message)
+        }
+
+        // 409: the version was stale. Force-evict the cached GET so the retry
+        // fetches from the network instead of replaying the same stale entry.
+        log.info("[PR:Action] PR #$prId decline hit 409 — retrying once with refetched version")
+        com.workflow.orchestrator.core.http.HttpResponseCache.invalidateByPrefix(
+            "/rest/api/1.0/projects/$proj/repos/$repo/pull-requests/$prId"
+        )
+
+        // Attempt 2: refetch and decline again.
+        return when (val second = fetchAndDecline(client, proj, repo, prId)) {
             is ApiResult.Success -> {
-                log.info("[PR:Action] PR #$prId declined")
+                log.info("[PR:Action] PR #$prId declined (retry)")
                 val eventBus = project.getService(EventBus::class.java)
                 eventBus.emit(WorkflowEvent.PullRequestDeclined(prId = prId))
                 ApiResult.Success(Unit)
             }
             is ApiResult.Error -> {
-                log.warn("[PR:Action] Failed to decline PR #$prId: ${result.message}")
-                ApiResult.Error(result.type, result.message)
+                log.warn("[PR:Action] Failed to decline PR #$prId after retry: ${second.message}")
+                ApiResult.Error(second.type, second.message)
             }
+        }
+    }
+
+    /**
+     * GET the current version of [prId], then POST to the decline endpoint.
+     * Returns a version-conflict error unchanged so the caller can decide to retry.
+     */
+    private suspend fun fetchAndDecline(
+        client: BitbucketBranchClient,
+        projectKey: String,
+        repoSlug: String,
+        prId: Int,
+    ): ApiResult<Unit> {
+        val current = when (val r = client.getPullRequestDetail(projectKey, repoSlug, prId)) {
+            is ApiResult.Success -> r.data
+            is ApiResult.Error -> return r
+        }
+        return when (val r = client.declinePullRequest(projectKey, repoSlug, prId, current.version)) {
+            is ApiResult.Success -> ApiResult.Success(Unit)
+            is ApiResult.Error -> r
         }
     }
 

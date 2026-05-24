@@ -1224,7 +1224,6 @@ class PrDetailPanel(
 
         declineButton.addActionListener {
             val prId = currentPrId ?: return@addActionListener
-            val version = currentPr?.version ?: 0
             val confirm = com.intellij.openapi.ui.Messages.showYesNoDialog(
                 this,
                 "Decline PR #$prId?",
@@ -1233,21 +1232,21 @@ class PrDetailPanel(
             )
             if (confirm != com.intellij.openapi.ui.Messages.YES) return@addActionListener
             scope.launch {
-                try {
-                    PrActionService.getInstance(project).decline(prId, version)
-                    invokeLater {
+                val result = PrActionService.getInstance(project).decline(prId)
+                invokeLater {
+                    if (result.isError) {
+                        val errMsg = (result as? com.workflow.orchestrator.core.model.ApiResult.Error)
+                            ?.message ?: "Could not decline PR #$prId — try refreshing."
+                        WorkflowNotificationService.getInstance(project).notifyError(
+                            WorkflowNotificationService.GROUP_BUILD,
+                            "Decline Failed",
+                            errMsg
+                        )
+                    } else {
                         mergeButton.isEnabled = false
                         approveButton.isEnabled = false
                         needsWorkButton.isEnabled = false
                         declineButton.isEnabled = false
-                    }
-                } catch (e: Exception) {
-                    invokeLater {
-                        WorkflowNotificationService.getInstance(project).notifyError(
-                            WorkflowNotificationService.GROUP_BUILD,
-                            "PR Action Failed",
-                            "PR action failed: ${e.message}"
-                        )
                     }
                 }
             }
