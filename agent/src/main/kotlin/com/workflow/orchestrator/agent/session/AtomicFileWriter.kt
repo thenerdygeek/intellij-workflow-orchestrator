@@ -5,6 +5,9 @@ import java.nio.file.AccessDeniedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.PosixFileAttributeView
+import java.nio.file.attribute.PosixFilePermissions
 
 object AtomicFileWriter {
 
@@ -19,16 +22,42 @@ object AtomicFileWriter {
 
     private const val MAX_RETRIES = 5
 
+    /**
+     * POSIX permission set: owner read+write only (rw-------).
+     * Applied to all tmp files. Windows skips this silently (no POSIX view).
+     */
+    private val OWNER_ONLY_PERMS = PosixFilePermissions.fromString("rw-------")
+
     fun write(target: File, content: String) {
         target.parentFile?.mkdirs()
-        val tmp = File(target.parent, "${target.name}.tmp.${System.currentTimeMillis()}.${(Math.random() * 100000).toInt()}")
+        val tmp = File(
+            target.parent,
+            "${target.name}.tmp.${System.currentTimeMillis()}.${(Math.random() * 100000).toInt()}"
+        ).toPath()
         try {
-            tmp.writeText(content, Charsets.UTF_8)
-            moveWithRetry(tmp.toPath(), target.toPath())
+            // E1: Open with CREATE_NEW so a pre-existing symlink at the tmp path is rejected
+            // immediately rather than followed. An attacker who races a symlink here would
+            // otherwise redirect the write to an arbitrary file reachable by the IDE process.
+            // E2: Set POSIX rw------- (owner-only) before writing content so the file is
+            // never readable by other users on shared hosts, even between create and chmod.
+            Files.newOutputStream(tmp, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW).use { out ->
+                applyOwnerOnlyPerms(tmp)
+                out.write(content.toByteArray(Charsets.UTF_8))
+            }
+            moveWithRetry(tmp, target.toPath())
         } catch (e: Exception) {
-            tmp.delete()
+            runCatching { Files.deleteIfExists(tmp) }
             throw e
         }
+    }
+
+    /**
+     * Apply POSIX rw------- (owner-only) to [path].
+     * No-op on Windows (no PosixFileAttributeView available).
+     */
+    internal fun applyOwnerOnlyPerms(path: Path) {
+        Files.getFileAttributeView(path, PosixFileAttributeView::class.java)
+            ?.setPermissions(OWNER_ONLY_PERMS)
     }
 
     private fun moveWithRetry(src: Path, dst: Path) {

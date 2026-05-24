@@ -1,7 +1,9 @@
 package com.workflow.orchestrator.agent.memory
 
+import com.workflow.orchestrator.agent.session.AtomicFileWriter
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption
 
 /**
  * Loads the always-injected memory index (`MEMORY.md`) for a session.
@@ -64,7 +66,11 @@ object MemoryIndex {
         val file = memoryDir.resolve(FILENAME)
         if (Files.exists(file)) return
         try {
-            Files.writeString(file, SEED_CONTENT)
+            // E2: owner-only perms — memory files contain session context and user instructions.
+            Files.newOutputStream(file, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW).use { out ->
+                AtomicFileWriter.applyOwnerOnlyPerms(file)
+                out.write(SEED_CONTENT.toByteArray(Charsets.UTF_8))
+            }
         } catch (_: Exception) {
             // Non-fatal: memory just stays unavailable for the session.
         }
@@ -219,7 +225,11 @@ object MemoryIndex {
     private fun atomicWrite(target: Path, content: String) {
         val tmp = target.resolveSibling(target.fileName.toString() + ".tmp")
         try {
-            Files.writeString(tmp, content)
+            // E1/E2: CREATE_NEW rejects a pre-existing symlink; owner-only perms before content write.
+            Files.newOutputStream(tmp, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW).use { out ->
+                AtomicFileWriter.applyOwnerOnlyPerms(tmp)
+                out.write(content.toByteArray(Charsets.UTF_8))
+            }
             Files.move(tmp, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
         } catch (_: Exception) {
             try { Files.deleteIfExists(tmp) } catch (_: Exception) {}

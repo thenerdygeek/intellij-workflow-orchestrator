@@ -1,12 +1,15 @@
 package com.workflow.orchestrator.agent.observability
 
 import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.agent.session.AtomicFileWriter
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.FileWriter
 import java.io.PrintWriter
+import java.nio.file.Files
+import java.nio.file.StandardOpenOption
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
@@ -241,7 +244,16 @@ class AgentFileLogger(private val logDir: File) {
             if (today != currentDate) {
                 writer?.close()
                 val logFile = File(logDir, "agent-${today.format(DateTimeFormatter.ISO_LOCAL_DATE)}.jsonl")
-                writer = PrintWriter(FileWriter(logFile, true), true)
+                // E2: On first creation, open with CREATE + owner-only POSIX perms so the log
+                // is not world-readable. Subsequent opens use APPEND so existing content is preserved.
+                // We gate the perms call on !exists() to avoid the redundant view lookup on every rotation.
+                val logPath = logFile.toPath()
+                val isNew = !Files.exists(logPath)
+                val fileWriter = FileWriter(logFile, true)  // append=true is safe; initial perms set below
+                if (isNew) {
+                    AtomicFileWriter.applyOwnerOnlyPerms(logPath)
+                }
+                writer = PrintWriter(fileWriter, true)
                 currentDate = today
             }
             writer?.println(jsonEncoder.encodeToString(entry))

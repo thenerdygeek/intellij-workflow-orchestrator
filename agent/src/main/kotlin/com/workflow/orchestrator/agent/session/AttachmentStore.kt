@@ -5,6 +5,7 @@ import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
 
 /**
@@ -72,12 +73,17 @@ class AttachmentStore(val sessionDir: Path) {
         val finalPath = pathFor(sha, ext)
         if (!Files.exists(finalPath)) {
             // Same atomic-move pattern as AtomicFileWriter:
-            //   write to .tmp, then atomic-move to final.
+            //   write to .tmp (with CREATE_NEW + owner-only perms), then atomic-move to final.
+            // E1/E2: CREATE_NEW rejects a pre-existing symlink at the tmp path; owner-only
+            // perms prevent other users on shared hosts from reading attachment bytes.
             val tmpPath = attachmentsDir.resolve(
                 "$sha.$ext.tmp.${System.currentTimeMillis()}.${System.nanoTime()}"
             )
             try {
-                Files.write(tmpPath, bytes)
+                Files.newOutputStream(tmpPath, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW).use { out ->
+                    AtomicFileWriter.applyOwnerOnlyPerms(tmpPath)
+                    out.write(bytes)
+                }
                 Files.move(
                     tmpPath,
                     finalPath,
