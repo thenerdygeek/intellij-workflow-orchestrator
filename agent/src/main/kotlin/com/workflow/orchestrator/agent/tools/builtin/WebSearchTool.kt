@@ -40,7 +40,10 @@ Common error responses: NO_PROVIDER_CONFIGURED means the user hasn't set up a se
             ?: return errorResult("MALFORMED_QUERY: query parameter required")
         val maxResults = params["max_results"]?.jsonPrimitive?.intOrNull ?: 5
         val settings = project.service<PluginSettings>().state
-        // Short-circuit if web_search has been disabled in Settings
+        // Belt-and-suspenders: when both enableWebFetch=false and enableWebSearch=false the tool
+        // is not registered in ToolRegistry and therefore never callable via the normal ReAct loop.
+        // This early-return is a defensive safety net for the narrow race where settings change
+        // mid-iteration (between reregisterConditionalTools firing and the next prompt rebuild).
         if (!settings.enableWebSearch) {
             val msg = "WEB_SEARCH_DISABLED: web_search is disabled in Workflow Orchestrator settings"
             return errorResult(msg)

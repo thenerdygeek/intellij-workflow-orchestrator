@@ -17,6 +17,7 @@ import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.getWebAllowlist
 import com.workflow.orchestrator.core.settings.setWebAllowlist
+import com.workflow.orchestrator.core.web.AgentToolRegistrationRefresher
 import com.workflow.orchestrator.web.service.search.BraveProvider
 import com.workflow.orchestrator.web.service.search.CustomHttpProvider
 import com.workflow.orchestrator.web.service.search.SearXNGProvider
@@ -669,6 +670,16 @@ class WebSettingsConfigurable(private val project: Project) : Configurable {
                 credentialStore.storeToken(ServiceType.WEB_SEARCH, key)
             }
             pendingWebSearchApiKey = null
+        }
+        // Re-evaluate conditional tool registration so the agent picks up toggle changes
+        // (enableWebFetch / enableWebSearch) without an IDE restart.
+        // Uses the AgentToolRegistrationRefresher interface registered in plugin.xml to avoid
+        // a :web → :agent module dependency (:web → :core → :agent is the canonical direction).
+        try {
+            project.getService(AgentToolRegistrationRefresher::class.java)?.refresh()
+        } catch (e: Exception) {
+            // Non-critical: the toggle takes full effect on the next agent session start
+            // even if the live re-registration fails (e.g. agent not yet initialised).
         }
     }
 

@@ -84,7 +84,11 @@ class WebSearchToolTest {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `disabled via settings returns WEB_SEARCH_DISABLED error`() = runTest {
+    fun `disabled via settings returns error if invoked directly (defense in depth)`() = runTest {
+        // NOTE: When enableWebSearch=false, the tool is NOT registered in ToolRegistry and is
+        // therefore unreachable via the normal ReAct loop. This test exercises the belt-and-suspenders
+        // guard inside execute() — the safety net for the narrow race where settings change
+        // mid-iteration before reregisterConditionalTools fires.
         stubState.enableWebSearch = false
         val params = buildJsonObject { put("query", "kotlin coroutines") }
         val result = tool.execute(params, project)

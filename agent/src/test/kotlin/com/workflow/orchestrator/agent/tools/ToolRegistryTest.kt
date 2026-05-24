@@ -512,6 +512,99 @@ class ToolRegistryTest {
     }
 
     @Nested
+    inner class ConditionalRegistrationTests {
+
+        @Test
+        fun `has returns true for registered core tool`() {
+            registry.registerCore(FakeAgentTool("web_fetch"))
+            assertTrue(registry.has("web_fetch"))
+        }
+
+        @Test
+        fun `has returns true for registered deferred tool`() {
+            registry.registerDeferred(FakeAgentTool("web_search"))
+            assertTrue(registry.has("web_search"))
+        }
+
+        @Test
+        fun `has returns true for active-deferred tool`() {
+            registry.registerDeferred(FakeAgentTool("jira"))
+            registry.activateDeferred("jira")
+            assertTrue(registry.has("jira"))
+        }
+
+        @Test
+        fun `has returns false for unregistered tool`() {
+            assertFalse(registry.has("web_fetch"))
+            assertFalse(registry.has("web_search"))
+        }
+
+        @Test
+        fun `unregisterCore removes a core tool`() {
+            registry.registerCore(FakeAgentTool("web_fetch"))
+            assertNotNull(registry.getTool("web_fetch"))
+
+            val removed = registry.unregisterCore("web_fetch")
+            assertNotNull(removed, "Expected removed tool to be returned")
+            assertNull(registry.getTool("web_fetch"), "Tool should be gone after unregisterCore")
+            assertFalse(registry.has("web_fetch"))
+        }
+
+        @Test
+        fun `unregisterCore returns null for non-existent tool`() {
+            val removed = registry.unregisterCore("no_such_tool")
+            assertNull(removed)
+        }
+
+        @Test
+        fun `unregisterCore invalidates cache so getActiveTools excludes removed tool`() {
+            registry.registerCore(FakeAgentTool("web_fetch"))
+            assertTrue(registry.getActiveTools().containsKey("web_fetch"))
+
+            registry.unregisterCore("web_fetch")
+            assertFalse(registry.getActiveTools().containsKey("web_fetch"))
+        }
+
+        @Test
+        fun `enableWebFetch false then true cycle re-registers web_fetch`() {
+            // Simulate: initially off
+            assertFalse(registry.has("web_fetch"))
+
+            // ON: register
+            registry.registerCore(FakeAgentTool("web_fetch"))
+            assertTrue(registry.has("web_fetch"))
+            assertTrue(registry.getActiveTools().containsKey("web_fetch"))
+
+            // OFF: unregister
+            registry.unregisterCore("web_fetch")
+            assertFalse(registry.has("web_fetch"))
+            assertFalse(registry.getActiveTools().containsKey("web_fetch"))
+
+            // ON again: re-register
+            registry.registerCore(FakeAgentTool("web_fetch"))
+            assertTrue(registry.has("web_fetch"))
+            assertTrue(registry.getActiveTools().containsKey("web_fetch"))
+        }
+
+        @Test
+        fun `both web tools off - neither in active tools`() {
+            // When both toggles are off: no web tools in registry
+            assertFalse(registry.has("web_fetch"))
+            assertFalse(registry.has("web_search"))
+            assertFalse(registry.getActiveTools().containsKey("web_fetch"))
+            assertFalse(registry.getActiveTools().containsKey("web_search"))
+        }
+
+        @Test
+        fun `both web tools on - both in active tools`() {
+            registry.registerCore(FakeAgentTool("web_fetch"))
+            registry.registerCore(FakeAgentTool("web_search"))
+            assertTrue(registry.getActiveTools().containsKey("web_fetch"))
+            assertTrue(registry.getActiveTools().containsKey("web_search"))
+        }
+    }
+
+    @Nested
     inner class ConcurrencyTests {
 
         @Test

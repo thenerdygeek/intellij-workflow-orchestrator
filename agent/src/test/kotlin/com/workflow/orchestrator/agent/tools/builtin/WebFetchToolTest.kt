@@ -137,7 +137,11 @@ class WebFetchToolTest {
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `disabled via settings returns WEB_FETCH_DISABLED error`() = runTest {
+    fun `disabled via settings returns error if invoked directly (defense in depth)`() = runTest {
+        // NOTE: When enableWebFetch=false, the tool is NOT registered in ToolRegistry and is
+        // therefore unreachable via the normal ReAct loop. This test exercises the belt-and-suspenders
+        // guard inside execute() — the safety net for the narrow race where settings change
+        // mid-iteration before reregisterConditionalTools fires.
         stubState.enableWebFetch = false
         val params = buildJsonObject { put("url", "https://example.com") }
         val result = tool.execute(params, project)

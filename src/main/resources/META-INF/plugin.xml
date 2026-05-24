@@ -375,6 +375,9 @@
         <projectService
             serviceInterface="com.workflow.orchestrator.core.web.SubagentSpawner"
             serviceImplementation="com.workflow.orchestrator.agent.subagent.SubagentSpawnerAdapter"/>
+        <projectService
+            serviceInterface="com.workflow.orchestrator.core.web.AgentToolRegistrationRefresher"
+            serviceImplementation="com.workflow.orchestrator.agent.AgentToolRegistrationRefresherAdapter"/>
         <projectConfigurable
             parentId="workflow.orchestrator"
             instance="com.workflow.orchestrator.agent.settings.AgentParentConfigurable"

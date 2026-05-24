@@ -38,7 +38,10 @@ Common error responses: UNLISTED_DOMAIN means the host isn't on the user's allow
         val url = params["url"]?.jsonPrimitive?.contentOrNull
             ?: return errorResult("MALFORMED_URL: url parameter required")
         val settings = project.service<PluginSettings>().state
-        // Short-circuit if web_fetch has been disabled in Settings
+        // Belt-and-suspenders: when both enableWebFetch=false and enableWebSearch=false the tool
+        // is not registered in ToolRegistry and therefore never callable via the normal ReAct loop.
+        // This early-return is a defensive safety net for the narrow race where settings change
+        // mid-iteration (between reregisterConditionalTools firing and the next prompt rebuild).
         if (!settings.enableWebFetch) {
             val msg = "WEB_FETCH_DISABLED: web_fetch is disabled in Workflow Orchestrator settings"
             return errorResult(msg)

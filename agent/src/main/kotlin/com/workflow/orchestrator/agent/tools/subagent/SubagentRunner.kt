@@ -535,6 +535,9 @@ class SubagentRunner(
             toolDefinitionsMarkdown = toolDefinitionsMarkdown,
             deferredToolCatalog = deferredToolCatalog,
             toolNames = registry.allToolNames(),
+            // Sub-agents inherit the orchestrator's registry; if web tools are unregistered
+            // there, they are also absent from the sub-agent's tool set.
+            hasWebTools = registry.has("web_fetch") || registry.has("web_search"),
             completingYourTaskSection = COMPLETING_YOUR_TASK_SECTION,
         )
     }
