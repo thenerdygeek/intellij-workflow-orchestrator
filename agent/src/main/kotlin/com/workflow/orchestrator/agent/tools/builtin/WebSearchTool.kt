@@ -25,7 +25,9 @@ Workflow: typical pattern is web_search (find URLs) → pick the most relevant r
 
 When NOT to use: searching project code (use search_code); searching code on the web (use the specific repo's site search via web_fetch); finding things you already know about. The query is screened for accidental token leakage (Bearer/JWT/AWS keys auto-redacted).
 
-Common error responses: NO_PROVIDER_CONFIGURED means the user hasn't set up a search provider in Settings > Workflow Orchestrator > Web (ask the user to configure one); PROVIDER_AUTH_FAILED means the API key is wrong/expired; PLAN_MODE_BLOCKED means web tools are off in plan mode; WEB_SEARCH_DISABLED means the user has the tool turned off in Settings."""
+Common error responses: NO_PROVIDER_CONFIGURED means the user hasn't set up a search provider in Settings > Workflow Orchestrator > Web (ask the user to configure one); PROVIDER_AUTH_FAILED means the API key is wrong/expired; PLAN_MODE_BLOCKED means web tools are off in plan mode; WEB_SEARCH_DISABLED means the user has the tool turned off in Settings.
+
+PROPRIETARY IDENTIFIERS: do NOT include internal hostnames (e.g. jenkins.acme.corp), internal class names or package paths (e.g. com.acme.payments.PaymentsService, MyComp.class), internal customer/project names, or internal file paths in your query — the query is sent to a third-party search engine and would reveal organizational structure. Use generic terms instead (e.g. "Jenkins" not "jenkins.acme.corp", "our payments service" not "InternalPaymentsService"). Queries containing these identifiers will be blocked by the egress filter and return QUERY_BLOCKED_SENSITIVE — rewrite without the proprietary terms and retry."""
     override val parameters = FunctionParameters(
         properties = mapOf(
             "query" to ParameterProperty(type = "string", description = "Search query (1-1000 chars). Tokens like Bearer/JWT/AWS keys are auto-redacted before sending."),
