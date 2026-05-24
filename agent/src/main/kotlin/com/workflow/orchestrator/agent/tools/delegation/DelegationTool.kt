@@ -246,7 +246,20 @@ class DelegationTool(
         } catch (e: DelegationException.UserCanceledPicker) {
             ToolResult.error("DelegationUserCanceledPicker: user dismissed the picker — delegation not sent")
         } catch (e: DelegationException.TargetNotReachable) {
-            ToolResult.error("DelegationTargetNotReachable: could not connect to the target IDE — is it running and has a session open?")
+            // Plan 5.4 — enumerate causes with inbound-off first; that's the
+            // most common failure mode and the one users can't diagnose
+            // without explicit hinting (looks identical to "IDE not running"
+            // at the socket layer).
+            ToolResult.error(
+                "DelegationTargetNotReachable: could not connect to the target IDE. " +
+                    "Likely causes (in order): " +
+                    "(1) the target IDE does not have 'Accept incoming delegations from other IDEs' " +
+                    "enabled in Settings → Tools → Workflow Orchestrator → Cross-IDE Delegation; " +
+                    "(2) the target IDE is not running, or has a different project open; " +
+                    "(3) the project at the picked path was just closed. " +
+                    "Ask the user to verify the inbound setting on the target IDE first — that's " +
+                    "the most common cause and looks identical to 'not running' from this side."
+            )
         } catch (e: DelegationException.LimitReached) {
             ToolResult.error("DelegationLimitReached: max ${DelegationOutboundService.MAX_CHANNELS} concurrent delegations already open — close one before sending another")
         } catch (e: DelegationException.Rejected) {
