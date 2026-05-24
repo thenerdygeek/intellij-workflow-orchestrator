@@ -1,12 +1,12 @@
 # Web Feature (web_fetch + web_search) — Handoff to "Production-Secure" Push
 
-**Status:** Pre-production. Local branch is review-clean (20 findings fixed across 2 Opus reviews); GitHub release `v0.85.37-web-beta` is stale (lacks the 11 most recent security fixes). Production-secure gates listed in §6 are NOT yet addressed.
+**Status:** Release-candidate. `v0.86.0-web-rc1` shipped 2026-05-24 with all 20 audit fixes + JCEF/UI Opus review fix + CVE-clean dep attestation. Belt-and-suspenders §5 items (5.6-5.9) and Windows smoke (5.10) still pending — see [§13](#13-status-update-after-aggressive-minimum-push-2026-05-24).
 
-**Date:** 2026-05-24
-**Branch:** `worktree-web-fetch-search` @ `b35fe2d0e` — **65 commits ahead of `bugfix`**, pushed to `origin/worktree-web-fetch-search`
+**Date:** 2026-05-24 (updated after aggressive-minimum push)
+**Branch:** `worktree-web-fetch-search` @ `6b68037cc` — **67 commits ahead of `bugfix`**, pushed to `origin/worktree-web-fetch-search`
 **Worktree path:** `/Users/subhankarhalder/Desktop/Programs/scripts/IntelijPlugin/.claude/worktrees/web-fetch-search/`
-**Tests:** 1075 (`:core`) + 113 (`:web`) + 3871 (`:agent`) = **5059 passing** (run modules individually with `--dependency-verification lenient`)
-**Latest release:** [v0.85.37-web-beta](https://github.com/thenerdygeek/intellij-workflow-orchestrator/releases/tag/v0.85.37-web-beta) — **STALE** (missing 11 security fixes; do not install for production-style testing)
+**Tests:** 1075 (`:core`) + ~118 (`:web`, +5 new safeLabel cases) + 3871 (`:agent`) ≈ **5064 passing** (run modules individually with `--dependency-verification lenient`)
+**Latest release:** [v0.86.0-web-rc1](https://github.com/thenerdygeek/intellij-workflow-orchestrator/releases/tag/v0.86.0-web-rc1) — release candidate. Supersedes `v0.85.38-web-beta` (interim) and `v0.85.37-web-beta` (STALE — do not install).
 
 ---
 
@@ -232,3 +232,25 @@ Most relevant:
 4. **Browse the actual code** — start from `WebFetchEngine.kt` and `WebSearchEngine.kt`; the rest is wiring.
 
 If a fresh agent is picking this up: load `agent/CLAUDE.md` and `core/CLAUDE.md` first for module conventions, then this handoff.
+
+---
+
+## 13. Status update after aggressive-minimum push (2026-05-24)
+
+Following the `Doc's aggressive minimum` scope (5.1 + 5.2 + 5.5 + 5.11), this session shipped:
+
+- **5.1 SHIPPED** — [`v0.85.38-web-beta`](https://github.com/thenerdygeek/intellij-workflow-orchestrator/releases/tag/v0.85.38-web-beta) — interim release with the 11 audit fixes (commits `dccf1c0de`…`b35fe2d0e`) superseding the stale `v0.85.37-web-beta`.
+- **5.2 SHIPPED** — Focused JCEF/UI Opus review (sub-agent transcript in completed-tasks logs). Result: **0 blockers + 0 important in React/JCEF/bridge path**; the `<external_content>`/`<external_search>` wrapper escaping (invariant #9) verified; `JBCefJSQuery` all uses `JSON.parse` (no `eval`); `dangerouslySetInnerHTML` in `ToolCallChain.tsx:253` only fires when Shiki maps a language for the tool, which `WebFetch`/`WebSearch` do not. **1 IMPORTANT in Swing `ApprovalDialog`** → fixed in commit `de7d2cab6` (added `ApprovalDialog.safeLabel(value, max=200)` helper that collapses whitespace + truncates + HTML-escapes; pinned by 5 new `ApprovalDialogHelpersTest.safeLabel_*` cases). Two NITs (originalUrl control-char normalisation, JsEscape pinning comment) — first one folded into `safeLabel`, second deferred (no fix needed, `JCEF executeJavaScript` path is exclusive).
+- **5.5 SHIPPED** — OWASP dep-CVE scan via OSV.dev against the actually-shipped JARs (not just `libs.versions.toml` declarations). **All 5 production deps CVE-clean**: `okhttp:4.12.0`, `okio-jvm:3.7.0` (transitive — moshi forces 3.7.0 over okhttp's 3.6.0), `jsoup:1.21.2` (Gradle resolves higher than declared 1.17.2 — trap caught by scanning the JAR not the catalog), `moshi:1.15.1`, `moshi-kotlin:1.15.1`.
+- **5.11 SHIPPED** — [`v0.86.0-web-rc1`](https://github.com/thenerdygeek/intellij-workflow-orchestrator/releases/tag/v0.86.0-web-rc1) — release-candidate framing with ApprovalDialog hardening + posture statements (dep-CVE clean + JCEF/UI review attestation).
+
+**Still pending from §5:**
+
+- **5.6** File-permission posture audit on `~/.workflow-orchestrator/<proj>/agent/logs/web-audit.log` + session dirs.
+- **5.7** `SubagentRunner` empty-tool-map enforcement regression test.
+- **5.8** Settings-TOCTOU audit + tests (which settings are read at fetch START vs at each iteration).
+- **5.9** Error-message verbosity threat-model decision (info-leak in multi-tenant — generalise or document the choice).
+- **5.10** Manual Windows smoke — **only the user can do this**.
+- **5.12** Merge strategy — `worktree-web-fetch-search` → `bugfix` or directly to `main`? PR for human review? Long-running branch?
+
+The previously-noted `buildSearchableOptions` warning (`Workflow Orchestrator requires plugin 'com.workflow.orchestrator.web' to be installed`) is a benign headless-mode false positive: the ZIP at `build/distributions/` correctly bundles `intellij-workflow-orchestrator.web.jar` (250 KB) alongside the other module JARs. Verified by `unzip -l` on the produced artifact.
