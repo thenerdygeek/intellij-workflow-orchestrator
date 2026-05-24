@@ -1,9 +1,11 @@
 package com.workflow.orchestrator.bamboo.listeners
 
 import com.intellij.openapi.components.service
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
+import com.intellij.openapi.util.Disposer
 import com.workflow.orchestrator.bamboo.api.BambooApiClient
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
@@ -18,6 +20,7 @@ import com.workflow.orchestrator.core.settings.RepoConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.launch
 
@@ -50,6 +53,9 @@ class BuildFailureBridgeStartupActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
         val eventBus = project.service<EventBus>()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        // Cancel the coroutine scope when the project is disposed so background
+        // collection of BuildFinished events does not outlive the project lifetime.
+        Disposer.register(project, Disposable { scope.cancel() })
 
         scope.launch {
             eventBus.events

@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.jira.ui
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -31,7 +32,7 @@ import javax.swing.JPanel
  * Shows total time logged and a table of the last 5 worklog entries
  * with User, Duration, and Date columns.
  */
-class WorklogSection(private val project: Project) : JPanel(BorderLayout()) {
+class WorklogSection(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     private val log = Logger.getInstance(WorklogSection::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -212,7 +213,7 @@ class WorklogSection(private val project: Project) : JPanel(BorderLayout()) {
         }
     }
 
-    fun dispose() {
+    override fun dispose() {
         scope.cancel()
     }
 

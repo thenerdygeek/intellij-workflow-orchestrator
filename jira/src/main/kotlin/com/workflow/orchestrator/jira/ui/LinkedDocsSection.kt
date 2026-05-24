@@ -2,6 +2,7 @@ package com.workflow.orchestrator.jira.ui
 
 import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -34,7 +35,7 @@ import javax.swing.JPanel
  * an issue. The whole section hides itself when there are no links — empty
  * state is suppressed by design (R-ADD-4 spec).
  */
-class LinkedDocsSection(private val project: Project) : JPanel(BorderLayout()) {
+class LinkedDocsSection(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     private val log = Logger.getInstance(LinkedDocsSection::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -140,7 +141,7 @@ class LinkedDocsSection(private val project: Project) : JPanel(BorderLayout()) {
         }
     }
 
-    fun dispose() {
+    override fun dispose() {
         scope.cancel()
     }
 

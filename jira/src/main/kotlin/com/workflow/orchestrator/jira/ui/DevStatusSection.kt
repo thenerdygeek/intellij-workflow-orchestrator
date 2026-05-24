@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.jira.ui
 
 import com.intellij.ide.BrowserUtil
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -35,7 +36,7 @@ import javax.swing.JPanel
  * Full Jira Development Panel — shows branches, PRs, commits, builds, deployments, and reviews
  * with a chip strip summary and per-type collapsible sub-sections.
  */
-class DevStatusSection(private val project: Project) : JPanel(BorderLayout()) {
+class DevStatusSection(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     private val log = Logger.getInstance(DevStatusSection::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -341,7 +342,7 @@ class DevStatusSection(private val project: Project) : JPanel(BorderLayout()) {
         }
     }
 
-    fun dispose() {
+    override fun dispose() {
         scope.cancel()
     }
 

@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.jira.ui
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
@@ -34,7 +35,7 @@ import javax.swing.JPanel
  * Mirrors [WorklogSection]: own background scope, flips between
  * loading / data / empty / error states on the EDT.
  */
-class ChangelogSection(private val project: Project) : JPanel(BorderLayout()) {
+class ChangelogSection(private val project: Project) : JPanel(BorderLayout()), Disposable {
 
     private val log = Logger.getInstance(ChangelogSection::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -135,7 +136,7 @@ class ChangelogSection(private val project: Project) : JPanel(BorderLayout()) {
         }
     }
 
-    fun dispose() {
+    override fun dispose() {
         scope.cancel()
     }
 
