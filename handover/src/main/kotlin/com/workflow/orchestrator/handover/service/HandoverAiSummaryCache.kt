@@ -143,6 +143,17 @@ class HandoverAiSummaryCache {
      *
      * [promptBuilder] is only evaluated on a cache miss. [ConcurrentHashMap.computeIfAbsent]
      * is atomic — concurrent misses for the same key produce exactly one [Deferred].
+     *
+     * D5 (audit finding handover:F-3) — cancelled entry cleanup:
+     * The `async { }` lambda is parented to a transient `coroutineScope { }` that exits
+     * as soon as `computeIfAbsent` returns. If the calling coroutine is cancelled before
+     * or during `await()`, the Deferred is left in a cancelled state but remains in the
+     * ConcurrentHashMap permanently — poisoning the cache key for future callers, who
+     * would immediately get a CancellationException on their own `.await()` instead of
+     * triggering a fresh compute.
+     *
+     * Fix: wrap `await()` in try/catch. On [CancellationException] OR any other failure,
+     * remove the entry from the map before rethrowing, so the next caller gets a clean miss.
      */
     private suspend fun getOrCompute(
         key: CacheKey,
@@ -169,7 +180,15 @@ class HandoverAiSummaryCache {
                 }
             }
         }
-        return deferred.await()
+        return try {
+            deferred.await()
+        } catch (e: Exception) {
+            // D5: remove poisoned entry so the next caller gets a fresh compute.
+            // This covers CancellationException (coroutine was cancelled mid-await)
+            // and any exception thrown by the async block itself.
+            cache.remove(key, deferred)
+            throw e
+        }
     }
 
     // -------------------------------------------------------------------------

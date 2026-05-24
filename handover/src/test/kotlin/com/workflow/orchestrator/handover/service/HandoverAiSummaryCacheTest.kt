@@ -330,4 +330,33 @@ class HandoverAiSummaryCacheTest {
 
         assertTrue(capturedPrompt.contains("Implement login"), "Prompt must include ticket summary")
     }
+
+    // -------------------------------------------------------------------------
+    // D5: Cancelled entry cleanup (audit finding handover:F-3)
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `D5 source-text pin - await is wrapped in try-catch with cache remove on failure`() {
+        // Verify the cleanup contract is expressed in source code.
+        // The functional test for cancellation is hard to write in a deterministic unit test
+        // because it requires the async {} coroutine to be cancelled mid-flight, which
+        // depends on coroutineScope propagation timing. The source-text pin locks in the
+        // structure that makes cleanup safe.
+        val src = java.io.File(
+            "src/main/kotlin/com/workflow/orchestrator/handover/service/HandoverAiSummaryCache.kt"
+        ).readText()
+        assertTrue(src.contains("cache.remove(key, deferred)"),
+            "getOrCompute must call cache.remove(key, deferred) in the catch block")
+        // The catch block must immediately follow deferred.await()
+        val awaitIdx = src.indexOf("deferred.await()")
+        assertTrue(awaitIdx >= 0, "deferred.await() must be present")
+        // Search for the catch within 100 chars of the await call
+        val windowEnd = awaitIdx + 100
+        val catchIdx = src.indexOf("catch (e: Exception)", awaitIdx)
+        assertTrue(catchIdx in awaitIdx..windowEnd,
+            "catch (e: Exception) must appear within 100 chars after deferred.await()")
+        val removeIdx = src.indexOf("cache.remove(key, deferred)", catchIdx)
+        assertTrue(removeIdx > catchIdx && removeIdx < catchIdx + 300,
+            "cache.remove(key, deferred) must appear inside the catch block")
+    }
 }
