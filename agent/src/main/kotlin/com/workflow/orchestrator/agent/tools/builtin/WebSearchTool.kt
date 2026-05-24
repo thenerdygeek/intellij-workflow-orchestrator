@@ -33,8 +33,14 @@ class WebSearchTool : AgentTool {
         val query = params["query"]?.jsonPrimitive?.contentOrNull
             ?: return errorResult("MALFORMED_QUERY: query parameter required")
         val maxResults = params["max_results"]?.jsonPrimitive?.intOrNull ?: 5
+        val settings = project.service<PluginSettings>().state
+        // Short-circuit if web_search has been disabled in Settings
+        if (!settings.enableWebSearch) {
+            val msg = "WEB_SEARCH_DISABLED: web_search is disabled in Workflow Orchestrator settings"
+            return errorResult(msg)
+        }
         val planMode = AgentService.planModeActive.get()
-        val planAllow = project.service<PluginSettings>().state.webPlanModeAllow
+        val planAllow = settings.webPlanModeAllow
 
         val svc = ServiceLookup.webSearch(project) ?: return ServiceLookup.notConfigured("Web Search")
         val rr = svc.search(WebSearchService.WebSearchRequest(

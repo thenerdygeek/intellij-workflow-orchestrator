@@ -76,6 +76,9 @@ class WebFetchToolTest {
         elapsedMs = 42L,
     )
 
+    private lateinit var stubSettings: PluginSettings
+    private lateinit var stubState: PluginSettings.State
+
     @BeforeEach
     fun setUp() {
         fetchService = mockk()
@@ -83,8 +86,11 @@ class WebFetchToolTest {
         // Wire getService so the Kotlin extension `project.service<...>()` resolves for
         // both the WebFetchService and the PluginSettings that WebFetchTool.execute() reads.
         every { project.getService(WebFetchService::class.java) } returns fetchService
-        val stubSettings = mockk<PluginSettings>(relaxed = true)
-        val stubState = PluginSettings.State().apply { webPlanModeAllow = false }
+        stubSettings = mockk(relaxed = true)
+        stubState = PluginSettings.State().apply {
+            webPlanModeAllow = false
+            enableWebFetch = true
+        }
         every { stubSettings.state } returns stubState
         every { project.getService(PluginSettings::class.java) } returns stubSettings
     }
@@ -125,6 +131,22 @@ class WebFetchToolTest {
     // ─────────────────────────────────────────────────────────────────────────
     // Tool execute() tests via getService stubbing
     // ─────────────────────────────────────────────────────────────────────────
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // I2: disabled via settings
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `disabled via settings returns WEB_FETCH_DISABLED error`() = runTest {
+        stubState.enableWebFetch = false
+        val params = buildJsonObject { put("url", "https://example.com") }
+        val result = tool.execute(params, project)
+        assertTrue(result.isError, "Expected isError=true when web_fetch is disabled")
+        assertTrue(
+            result.content.contains("WEB_FETCH_DISABLED"),
+            "Expected WEB_FETCH_DISABLED in content: ${result.content}"
+        )
+    }
 
     @Test
     fun `missing url param returns MALFORMED_URL error`() = runTest {

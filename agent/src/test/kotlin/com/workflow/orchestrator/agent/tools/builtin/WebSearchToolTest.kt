@@ -55,6 +55,9 @@ class WebSearchToolTest {
         screenerFlags = flags,
     )
 
+    private lateinit var stubSettings: PluginSettings
+    private lateinit var stubState: PluginSettings.State
+
     @BeforeEach
     fun setUp() {
         searchService = mockk()
@@ -62,8 +65,11 @@ class WebSearchToolTest {
         // Wire getService so `project.service<WebSearchService>()` and
         // `project.service<PluginSettings>()` both resolve (WebSearchTool reads both).
         every { project.getService(WebSearchService::class.java) } returns searchService
-        val stubSettings = mockk<PluginSettings>(relaxed = true)
-        val stubState = PluginSettings.State().apply { webPlanModeAllow = false }
+        stubSettings = mockk(relaxed = true)
+        stubState = PluginSettings.State().apply {
+            webPlanModeAllow = false
+            enableWebSearch = true
+        }
         every { stubSettings.state } returns stubState
         every { project.getService(PluginSettings::class.java) } returns stubSettings
     }
@@ -71,6 +77,22 @@ class WebSearchToolTest {
     @AfterEach
     fun tearDown() {
         io.mockk.unmockkAll()
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // I2: disabled via settings
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `disabled via settings returns WEB_SEARCH_DISABLED error`() = runTest {
+        stubState.enableWebSearch = false
+        val params = buildJsonObject { put("query", "kotlin coroutines") }
+        val result = tool.execute(params, project)
+        assertTrue(result.isError, "Expected isError=true when web_search is disabled")
+        assertTrue(
+            result.content.contains("WEB_SEARCH_DISABLED"),
+            "Expected WEB_SEARCH_DISABLED in content: ${result.content}"
+        )
     }
 
     // ─────────────────────────────────────────────────────────────────────────

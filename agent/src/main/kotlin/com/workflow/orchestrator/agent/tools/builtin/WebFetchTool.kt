@@ -31,15 +31,21 @@ class WebFetchTool : AgentTool {
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val url = params["url"]?.jsonPrimitive?.contentOrNull
             ?: return errorResult("MALFORMED_URL: url parameter required")
+        val settings = project.service<PluginSettings>().state
+        // Short-circuit if web_fetch has been disabled in Settings
+        if (!settings.enableWebFetch) {
+            val msg = "WEB_FETCH_DISABLED: web_fetch is disabled in Workflow Orchestrator settings"
+            return errorResult(msg)
+        }
         val planMode = AgentService.planModeActive.get()
-        val planAllow = project.service<PluginSettings>().state.webPlanModeAllow
+        val planAllow = settings.webPlanModeAllow
         val maxBytes = params["max_bytes"]?.jsonPrimitive?.int
 
         val svc = project.service<WebFetchService>()
         val rr = svc.fetch(WebFetchService.WebFetchRequest(
             url = url,
             maxBytes = maxBytes,
-            planMode = planMode && !planAllow,    // R6
+            planMode = planMode && !planAllow,
         ))
         if (rr.isError) return errorResult(rr.summary)
         val page = rr.data!!

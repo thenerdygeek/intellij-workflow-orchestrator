@@ -44,6 +44,10 @@ sealed class WebError(
     /** The provider's configured base URL failed the UrlSafetyGuard / UrlPipeline screen. */
     class ProviderUrlUnsafe(provider: String, reason: String) : WebError("PROVIDER_URL_UNSAFE", "Provider $provider base URL rejected by safety guard: $reason", false)
 
+    // Disabled via settings -------------------------------------------------
+    class WebFetchDisabled : WebError("WEB_FETCH_DISABLED", "web_fetch is disabled in Workflow Orchestrator settings", false)
+    class WebSearchDisabled : WebError("WEB_SEARCH_DISABLED", "web_search is disabled in Workflow Orchestrator settings", false)
+
     // Plan mode -------------------------------------------------------------
     object PlanModeBlocked : WebError("PLAN_MODE_BLOCKED", "Web tools disabled in plan mode", false)
 }
