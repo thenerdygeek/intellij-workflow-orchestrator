@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.checkpoint
 
+import com.workflow.orchestrator.agent.security.CredentialRedactor
 import com.workflow.orchestrator.agent.session.AtomicFileWriter
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -13,9 +14,12 @@ class SessionCheckpointStore(private val sessionDir: File) {
 
     fun beginUserMessage(messageTs: Long, userText: String) {
         val dir = msgDir(messageTs).apply { mkdirs() }
+        // Redact credentials from the user-typed text before persisting to disk.
+        // Users sometimes accidentally paste Bearer tokens or .env contents into the chat input;
+        // those must not survive to the on-disk checkpoint (audit finding agent-runtime:F-6).
         val meta = CheckpointMeta(
             messageTs = messageTs,
-            userText = userText,
+            userText = CredentialRedactor.redact(userText),
             createdAt = System.currentTimeMillis(),
         )
         AtomicFileWriter.write(File(dir, "meta.json"), json.encodeToString(meta))

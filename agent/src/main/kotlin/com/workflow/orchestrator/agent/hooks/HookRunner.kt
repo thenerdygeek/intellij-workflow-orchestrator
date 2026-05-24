@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.hooks
 
 import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.agent.security.CredentialRedactor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -209,11 +210,16 @@ open class HookRunner(
                 contextMod = contextMod.take(MAX_CONTEXT_MODIFICATION_SIZE) +
                     "\n\n[... context truncated due to size limit ...]"
             }
+            // Redact credentials from hook-provided context modification before it enters
+            // the conversation history (audit finding agent-runtime:F-6).
+            contextMod = contextMod?.let { CredentialRedactor.redact(it) }
 
-            val errorMessage = parsedOutput["errorMessage"]
+            val rawErrorMessage = parsedOutput["errorMessage"]
                 ?.jsonPrimitive?.contentOrNull
                 ?.trim()
                 ?.takeIf { it.isNotEmpty() }
+            // Redact credentials from hook-provided error messages.
+            val errorMessage = rawErrorMessage?.let { CredentialRedactor.redact(it) }
 
             if (cancel && event.cancellable) {
                 return HookResult.Cancel(
@@ -228,8 +234,12 @@ open class HookRunner(
         // No valid JSON — fall back to exit code interpretation
         // Cline: non-zero exit without JSON = execution error, still fail-open
         if (result.exitCode != 0 && event.cancellable) {
-            val reason = result.stderr.trim().takeIf { it.isNotEmpty() }
+            // Redact credentials from stderr before it enters conversation history or UI.
+            // Hook scripts may emit curl -v output, env dumps, or error messages that contain
+            // Bearer tokens or other secrets (audit finding agent-runtime:F-6).
+            val rawReason = result.stderr.trim().takeIf { it.isNotEmpty() }
                 ?: "Hook exited with code ${result.exitCode}"
+            val reason = CredentialRedactor.redact(rawReason)
             return HookResult.Cancel(reason = reason)
         }
 
