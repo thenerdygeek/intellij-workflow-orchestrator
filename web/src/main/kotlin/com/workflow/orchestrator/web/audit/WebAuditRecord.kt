@@ -11,6 +11,19 @@ data class WebAuditRecord(
     val url: String,
     val finalUrl: String?,
     val query: String?,
+    /**
+     * The user-typed (or LLM-generated) query BEFORE the egress filter ran. Null for fetch
+     * operations and for search audit entries written before the egress filter shipped.
+     * Useful for post-hoc "what did we almost send?" investigations — pair with
+     * [egressDecision] to see what the filter caught.
+     */
+    val queryBeforeFilter: String? = null,
+    /**
+     * The egress-filter outcome string. One of: "SAFE" / "DENYLIST_BLOCKED" /
+     * "LLM_REWRITTEN" / "LLM_BLOCKED" / "LLM_TIMEOUT". Null when the egress filter did
+     * not run (fetch operations, search before egress filter shipped).
+     */
+    val egressDecision: String? = null,
     val provider: String?,
     val allowlistDecision: AllowlistDecision?,
     val screenerFlags: List<String>,
