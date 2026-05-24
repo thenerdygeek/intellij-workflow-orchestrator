@@ -48,4 +48,10 @@ data class RevertResult(
     val restoredFiles: List<String>,
     val deletedFiles: List<String>,
     val truncatedAtTs: Long,
+    /**
+     * Paths that were skipped during revert because they failed the E3 path-safety check
+     * (out-of-project-root, symlink, or un-canonicalizable). These should be surfaced to
+     * the operator rather than silently swallowed.
+     */
+    val skippedPaths: List<String> = emptyList(),
 )

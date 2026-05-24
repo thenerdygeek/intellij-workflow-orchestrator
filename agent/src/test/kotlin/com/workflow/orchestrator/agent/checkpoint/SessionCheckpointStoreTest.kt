@@ -179,7 +179,7 @@ class SessionCheckpointStoreTest {
 
         val restored = store.revertFileToBaseline(foo.absolutePath)
 
-        assertEquals(true, restored)
+        assertEquals(true, restored.reverted)
         assertEquals("baseline-foo", foo.readText())
         assertEquals("changed-bar", bar.readText(), "bar should NOT be touched")
     }
@@ -194,7 +194,7 @@ class SessionCheckpointStoreTest {
 
         val restored = store.revertFileToBaseline(newFile)
 
-        assertEquals(true, restored)
+        assertEquals(true, restored.reverted)
         assertFalse(File(newFile).exists())
     }
 
@@ -202,7 +202,7 @@ class SessionCheckpointStoreTest {
     fun `revertFileToBaseline returns false for unknown path`(@TempDir tmp: java.nio.file.Path) {
         val store = SessionCheckpointStore(sessionDir = tmp.toFile())
         val restored = store.revertFileToBaseline("/some/unknown/path.kt")
-        assertEquals(false, restored)
+        assertEquals(false, restored.reverted)
     }
 
     @Test

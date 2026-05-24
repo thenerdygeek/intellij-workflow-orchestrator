@@ -2656,7 +2656,12 @@ class AgentService(
         val droppedApiCount = (existingApi.size - keepApiCount).coerceAtLeast(0)
 
         // 2. Restore files via the checkpoint store.
-        val store = com.workflow.orchestrator.agent.checkpoint.SessionCheckpointStore(sessionDir = sessionDir)
+        // E3: supply project root so revert validates every restored path stays within the project.
+        val projectRootFile = project.basePath?.let { java.io.File(it) }
+        val store = com.workflow.orchestrator.agent.checkpoint.SessionCheckpointStore(
+            sessionDir = sessionDir,
+            projectRoot = projectRootFile,
+        )
         val result = store.revertToMessage(messageTs)
 
         // 3. Truncate persisted UI + api history.
@@ -2665,7 +2670,10 @@ class AgentService(
         if (existingApi.isNotEmpty()) handler.setApiConversationHistory(existingApi)
         handler.truncateMessagesAtTs(messageTs, droppedApiCount)   // direct suspend call, no runBlockingCancellable
 
-        log.info("AgentService.revertToUserMessage: session=$sessionId ts=$messageTs restored=${result.restoredFiles.size} deleted=${result.deletedFiles.size}")
+        if (result.skippedPaths.isNotEmpty()) {
+            log.warn("AgentService.revertToUserMessage: ${result.skippedPaths.size} path(s) skipped (out-of-root / symlink): ${result.skippedPaths}")
+        }
+        log.info("AgentService.revertToUserMessage: session=$sessionId ts=$messageTs restored=${result.restoredFiles.size} deleted=${result.deletedFiles.size} skipped=${result.skippedPaths.size}")
         return result
     }
 
@@ -2673,8 +2681,13 @@ class AgentService(
     fun revertFileToBaseline(sessionId: String, absolutePath: String): Boolean {
         val basePath = project.basePath ?: System.getProperty("user.home")
         val sessionDir = java.io.File(ProjectIdentifier.agentDir(basePath), "sessions/$sessionId")
-        val store = com.workflow.orchestrator.agent.checkpoint.SessionCheckpointStore(sessionDir = sessionDir)
-        return store.revertFileToBaseline(absolutePath)
+        // E3: supply project root so single-file revert validates the path is in-project.
+        val projectRootFile = project.basePath?.let { java.io.File(it) }
+        val store = com.workflow.orchestrator.agent.checkpoint.SessionCheckpointStore(
+            sessionDir = sessionDir,
+            projectRoot = projectRootFile,
+        )
+        return store.revertFileToBaseline(absolutePath).reverted
     }
 
     /** Returns the session's current baseline-to-current diff. Cheap to call after every write tool. */

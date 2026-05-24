@@ -1,12 +1,24 @@
 package com.workflow.orchestrator.agent.checkpoint
 
+import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.agent.security.CredentialRedactor
 import com.workflow.orchestrator.agent.session.AtomicFileWriter
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.nio.file.Files
 
-class SessionCheckpointStore(private val sessionDir: File) {
+class SessionCheckpointStore(
+    private val sessionDir: File,
+    /**
+     * Canonical project root used to validate revert paths (E3).
+     * Every path restored during revert must live under this root.
+     * Null disables the check (legacy callers / tests that don't supply a project root).
+     */
+    private val projectRoot: File? = null,
+) {
+
+    private val log = Logger.getInstance(SessionCheckpointStore::class.java)
 
     private val checkpointsDir: File = File(sessionDir, "checkpoints").apply { mkdirs() }
 
@@ -146,15 +158,25 @@ class SessionCheckpointStore(private val sessionDir: File) {
 
         val restored = mutableListOf<String>()
         val deleted = mutableListOf<String>()
+        val skipped = mutableListOf<String>()
 
-        // Delete created files
+        // Delete created files — E3: validate path before deleting
         for (path in createdInRange) {
+            if (!isSafeRevertPath(path)) {
+                skipped.add(path)
+                continue
+            }
             if (File(path).exists() && File(path).delete()) deleted.add(path)
         }
 
         // Restore touched files (skip if also in createdInRange — already deleted)
+        // E3: validate path before restoring
         for ((path, cp) in earliestTouchedByPath) {
             if (path in createdInRange) continue
+            if (!isSafeRevertPath(path)) {
+                skipped.add(path)
+                continue
+            }
             val snapFile = File(File(checkpointsDir, "msg-${cp.messageTs}/files"), snapshotRelative(path))
             if (!snapFile.exists()) continue
             val dst = File(path)
@@ -173,6 +195,7 @@ class SessionCheckpointStore(private val sessionDir: File) {
             restoredFiles = restored.sorted(),
             deletedFiles = deleted.sorted(),
             truncatedAtTs = targetMessageTs,
+            skippedPaths = skipped.sorted(),
         )
     }
 
@@ -184,13 +207,44 @@ class SessionCheckpointStore(private val sessionDir: File) {
      *
      * @return true if the file was restored or deleted, false if the path is unknown to the store.
      */
-    fun revertFileToBaseline(absolutePath: String): Boolean {
+    /**
+     * Result of reverting a single file to its session baseline.
+     *
+     * [reverted] true → file was restored or deleted successfully.
+     * [skipped] true → path was known but failed the E3 safety check (out-of-root / symlink).
+     * Both false → path is unknown to the checkpoint store.
+     */
+    data class SingleFileRevertResult(
+        val reverted: Boolean,
+        val skipped: Boolean = false,
+    )
+
+    /**
+     * Restore a single file to its session baseline (the earliest snapshot, or delete if created).
+     *
+     * E3: Validates the path before writing. Out-of-root or symlink paths are skipped and
+     * surfaced via [SingleFileRevertResult.skipped] rather than silently swallowed.
+     *
+     * Does NOT modify the conversation history. Caller is responsible for pushing the
+     * updated aggregate diff to the UI.
+     *
+     * @return [SingleFileRevertResult] — [reverted] = file was restored or deleted; [skipped] =
+     *         known but blocked by E3 safety check; both false = path unknown to this store.
+     */
+    fun revertFileToBaseline(absolutePath: String): SingleFileRevertResult {
+        // E3: validate before touching the filesystem
+        if (!isSafeRevertPath(absolutePath)) {
+            val all = listMessageCheckpoints()
+            val isKnown = all.any { absolutePath in it.createdPaths || absolutePath in it.touchedPaths }
+            return SingleFileRevertResult(reverted = false, skipped = isKnown)
+        }
+
         val all = listMessageCheckpoints()
         for (cp in all) {
             if (absolutePath in cp.createdPaths) {
                 // Created at this checkpoint — delete the file and remove tracking
                 if (File(absolutePath).exists()) File(absolutePath).delete()
-                return true
+                return SingleFileRevertResult(reverted = true)
             }
             if (absolutePath in cp.touchedPaths) {
                 val snap = File(File(checkpointsDir, "msg-${cp.messageTs}/files"), snapshotRelative(absolutePath))
@@ -198,11 +252,72 @@ class SessionCheckpointStore(private val sessionDir: File) {
                     val dst = File(absolutePath)
                     dst.parentFile?.mkdirs()
                     snap.copyTo(dst, overwrite = true)
-                    return true
+                    return SingleFileRevertResult(reverted = true)
                 }
             }
         }
-        return false
+        return SingleFileRevertResult(reverted = false)
+    }
+
+    /**
+     * Legacy Boolean-returning facade for callers that don't need the skipped-path distinction.
+     * Returns `true` only when the file was actually restored/deleted (not when skipped).
+     */
+    fun revertFileToBaselineBool(absolutePath: String): Boolean =
+        revertFileToBaseline(absolutePath).reverted
+
+    // ── E3: path validation ────────────────────────────────────────────────────
+
+    /**
+     * Validates that [path] is safe to write to during a revert operation.
+     *
+     * Returns `true` if the path is safe; logs a warning and returns `false` if:
+     * - The path is a symbolic link (E1 symmetry: don't write through symlinks during restore).
+     * - The canonical path escapes [projectRoot] (when a project root was supplied).
+     * - The path contains `..` after canonicalization (belt-and-suspenders; canonicalPath
+     *   already resolves traversal, but an explicit check is clearer for auditors).
+     *
+     * No-op (returns `true`) when [projectRoot] is null — preserves backward compatibility
+     * with callers that haven't opted into project-root validation.
+     */
+    private fun isSafeRevertPath(path: String): Boolean {
+        val file = File(path)
+
+        // Reject symlinks at the leaf (File.toPath().toRealPath() catches deeper links too,
+        // but we also check the leaf explicitly for clarity).
+        if (Files.isSymbolicLink(file.toPath())) {
+            log.warn("CheckpointStore: skipping revert of symlink path: $path")
+            return false
+        }
+
+        val canonical = try {
+            file.canonicalPath
+        } catch (e: Exception) {
+            log.warn("CheckpointStore: cannot canonicalize revert path '$path': ${e.message}")
+            return false
+        }
+
+        // Belt-and-suspenders: reject any path that still contains ".." after canonicalization.
+        if (canonical.contains("..")) {
+            log.warn("CheckpointStore: skipping revert of path with '..' after canonicalization: $path")
+            return false
+        }
+
+        if (projectRoot != null) {
+            val rootCanonical = try {
+                projectRoot.canonicalPath
+            } catch (e: Exception) {
+                log.warn("CheckpointStore: cannot canonicalize project root: ${e.message}")
+                return false
+            }
+            val underRoot = canonical.startsWith(rootCanonical + File.separator) || canonical == rootCanonical
+            if (!underRoot) {
+                log.warn("CheckpointStore: skipping revert of out-of-root path '$path' (root=$rootCanonical)")
+                return false
+            }
+        }
+
+        return true
     }
 
     private fun msgDir(messageTs: Long): File = File(checkpointsDir, "msg-$messageTs")
