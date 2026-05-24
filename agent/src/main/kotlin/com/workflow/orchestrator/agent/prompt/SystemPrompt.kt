@@ -59,6 +59,18 @@ object SystemPrompt {
          * `Contents of <path>:` header line. Ignored when `memoryIndex` is null.
          */
         memoryIndexPath: String? = null,
+        /**
+         * When non-null and non-blank, the contents of the per-project `RESEARCH.md` index
+         * (already truncated to 200 lines by `ResearchIndex.load`). Injected immediately after
+         * the memory index block (Section 5b) as a `<research_index>` XML block. When null or
+         * blank, no block is emitted and existing call sites are unaffected.
+         */
+        researchIndex: String? = null,
+        /**
+         * When non-null, the absolute path of the `RESEARCH.md` file. Only used for the
+         * prose description line. Ignored when `researchIndex` is null/blank.
+         */
+        researchIndexPath: String? = null,
         // ---- Per-section opt-in flags (all default true = current behavior preserved) ----
         /** When false, skips section 2 (Task Management). */
         includeTaskManagement: Boolean = true,
@@ -182,7 +194,24 @@ object SystemPrompt {
             append("Contents of ")
             append(memoryIndexPath ?: "MEMORY.md")
             append(" (persists across sessions):\n\n")
+            append("<memory_index>\n")
             append(memoryIndex)
+            if (!memoryIndex.endsWith("\n")) append("\n")
+            append("</memory_index>")
+        }
+
+        // 5c. RESEARCH INDEX CONTENT (immediately after memory index; same primacy-zone rationale)
+        // Empty/null index → block is suppressed entirely; no change to existing call sites.
+        if (includeMemorySection && !researchIndex.isNullOrBlank()) {
+            append(SECTION_SEP)
+            append("YOUR RESEARCH INDEX\n\n")
+            append("Per-project research dump index (path: ")
+            append(researchIndexPath ?: "RESEARCH.md")
+            append("). Each entry references a markdown file under the research dir that you can read via `read_file <path>`. The files are self-contained reports with a Sources table and Findings section.\n")
+            append("<research_index>\n")
+            append(researchIndex)
+            if (!researchIndex.endsWith("\n")) append("\n")
+            append("</research_index>")
         }
 
         // 6. SKILLS (optional)
