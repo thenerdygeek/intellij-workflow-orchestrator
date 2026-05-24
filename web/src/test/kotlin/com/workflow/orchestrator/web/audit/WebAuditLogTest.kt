@@ -101,4 +101,35 @@ class WebAuditLogTest {
         // Must not throw.
         assertDoesNotThrow { sut.rotateIfStale() }
     }
+
+    // ── I14: FileLock + ReentrantLock combination ──────────────────────────────
+    //
+    // The FileLock + ReentrantLock combination ensures BOTH intra-JVM safety (the
+    // ReentrantLock handles two coroutines inside the same process) AND inter-JVM
+    // safety (the FileLock handles two IDE windows hitting the same audit log file).
+    //
+    // The inter-JVM race is hard to crisply test without spinning up two JVMs, but
+    // we can pin that: (a) intra-JVM concurrent appends still produce N lines for
+    // N append calls, and (b) the lock file is created as expected.
+
+    @Test fun `concurrent in-JVM appends do not lose records`() {
+        val rec = WebAuditRecord(
+            ts = Instant.parse("2026-05-23T14:32:01Z"),
+            op = "fetch",
+            agentSessionId = "ses_abc",
+            url = "https://x",
+            finalUrl = null, query = null, provider = null,
+            allowlistDecision = null, screenerFlags = emptyList(),
+            ssrfPass = true, httpStatus = null, contentType = null,
+            responseBytes = null, extractedChars = null, resultCount = null,
+            sanitizerVerdict = null, sanitizerNotes = null,
+            elapsedMs = 1, error = null,
+        )
+        val threads = (1..8).map {
+            Thread { repeat(25) { sut.append(rec) } }.apply { start() }
+        }
+        threads.forEach { it.join() }
+        val lines = dir.resolve(WebAuditLog.ACTIVE_LOG).readLines()
+        assertEquals(200, lines.size, "All ${threads.size} threads' appends must be persisted")
+    }
 }
