@@ -16,7 +16,9 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.getWebAllowlist
+import com.workflow.orchestrator.core.settings.getWebEgressDenyList
 import com.workflow.orchestrator.core.settings.setWebAllowlist
+import com.workflow.orchestrator.core.settings.setWebEgressDenyList
 import com.workflow.orchestrator.core.web.AgentToolRegistrationRefresher
 import com.workflow.orchestrator.web.service.search.BraveProvider
 import com.workflow.orchestrator.web.service.search.CustomHttpProvider
@@ -267,6 +269,53 @@ class WebSettingsConfigurable(private val project: Project) : Configurable {
                     intTextField(50..4_000)
                         .bindIntText(settings.state::webSearchSnippetMaxChars)
                         .comment("Maximum characters kept per result snippet after sanitization. Default: 500.")
+                }
+            }
+
+            // ── Group 6: Search — Egress Filter ─────────────────────────────────
+            group("Search — Egress Filter (outbound query screening)") {
+                row {
+                    checkBox("Include auto-derived terms (service hostnames + module names)")
+                        .bindSelected(
+                            { settings.state.webEgressIncludeAutoDerivedTerms },
+                            { settings.state.webEgressIncludeAutoDerivedTerms = it },
+                        )
+                        .comment(
+                            "When on, hosts from configured Jira/Bamboo/Bitbucket/Sonar URLs " +
+                                "plus IntelliJ module names are added to the deny-list automatically. " +
+                                "Terms shorter than 6 chars and well-known public hosts (brave.com, " +
+                                "tavily.com) are filtered out."
+                        )
+                }
+                row {
+                    checkBox("Enable LLM egress screener (~\$0.0005 per search, ~700ms latency)")
+                        .bindSelected(
+                            { settings.state.webEgressLlmScreenerEnabled },
+                            { settings.state.webEgressLlmScreenerEnabled = it },
+                        )
+                        .comment(
+                            "Catches paraphrase/synonym leaks the deny-list misses. " +
+                                "Fail-closed on timeout (errs on the side of blocking)."
+                        )
+                }
+                row("Deny-list entries (one per line; prefix with 're:' for regex):") {}
+                row {
+                    textArea()
+                        .rows(8)
+                        .columns(60)
+                        .bindText(
+                            { settings.getWebEgressDenyList().joinToString("\n") },
+                            { text ->
+                                val entries = text.split('\n').map { it.trim() }.filter { it.isNotBlank() }
+                                settings.setWebEgressDenyList(entries)
+                            },
+                        )
+                        .comment(
+                            "Examples: <code>acme.corp</code> (substring), " +
+                                "<code>re:Internal[A-Z]\\w+Service</code> (regex). " +
+                                "All matching is case-insensitive. Malformed regexes are skipped silently " +
+                                "(check idea.log for warnings)."
+                        )
                 }
             }
         }
