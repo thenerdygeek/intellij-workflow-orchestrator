@@ -2,6 +2,11 @@ package com.workflow.orchestrator.automation.service
 
 import com.workflow.orchestrator.automation.model.QueueEntry
 import com.workflow.orchestrator.automation.model.QueueEntryStatus
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -28,7 +33,7 @@ class TagHistoryServiceTest {
     }
 
     @Test
-    fun `saveQueueEntry and getActiveQueueEntries round-trip with non-null stages`() {
+    fun `saveQueueEntry and getActiveQueueEntries round-trip with non-null stages`() = runTest {
         val entry = QueueEntry(
             id = "q-1", suitePlanKey = "PROJ-AUTO",
             dockerTagsPayload = """{"auth":"2.4.0"}""",
@@ -47,7 +52,7 @@ class TagHistoryServiceTest {
     }
 
     @Test
-    fun `saveQueueEntry with null stages round-trips as null`() {
+    fun `saveQueueEntry with null stages round-trips as null`() = runTest {
         val entry = QueueEntry(
             id = "q-null", suitePlanKey = "PROJ-AUTO",
             dockerTagsPayload = """{}""",
@@ -64,7 +69,7 @@ class TagHistoryServiceTest {
     }
 
     @Test
-    fun `legacy empty stages_json column rehydrates as null for backward compatibility`() {
+    fun `legacy empty stages_json column rehydrates as null for backward compatibility`() = runTest {
         // Simulate an old persisted row where stages_json was stored as `[]` (old List<String>
         // serialization of "all stages") by directly writing to the database via the raw JDBC path.
         // IMPORTANT: force the lazy connection init (schema creation) BEFORE opening a raw JDBC
@@ -103,7 +108,7 @@ class TagHistoryServiceTest {
     }
 
     @Test
-    fun `updateQueueEntryStatus changes status and result key`() {
+    fun `updateQueueEntryStatus changes status and result key`() = runTest {
         val entry = QueueEntry(
             id = "q-1", suitePlanKey = "PROJ-AUTO",
             dockerTagsPayload = "{}", variables = emptyMap(),
@@ -121,7 +126,7 @@ class TagHistoryServiceTest {
     }
 
     @Test
-    fun `getActiveQueueEntries excludes terminal statuses`() {
+    fun `getActiveQueueEntries excludes terminal statuses`() = runTest {
         service.saveQueueEntry(
             QueueEntry("q-1", "P", "{}", emptyMap(), null, Instant.now(), QueueEntryStatus.WAITING_LOCAL, null),
             sequenceOrder = 1
@@ -141,7 +146,7 @@ class TagHistoryServiceTest {
     }
 
     @Test
-    fun `getActiveQueueEntries excludes every terminal status from QueueEntryStatus_TERMINAL`() {
+    fun `getActiveQueueEntries excludes every terminal status from QueueEntryStatus_TERMINAL`() = runTest {
         // Regression for the persistence ↔ memory contract drift: the SQL
         // exclusion list MUST be aligned with QueueEntryStatus.TERMINAL.  Pre-fix
         // the WHERE clause only excluded COMPLETED + CANCELLED, so FAILED /
@@ -180,7 +185,7 @@ class TagHistoryServiceTest {
     }
 
     @Test
-    fun `deleteQueueEntry removes entry`() {
+    fun `deleteQueueEntry removes entry`() = runTest {
         service.saveQueueEntry(
             QueueEntry("q-1", "P", "{}", emptyMap(), null, Instant.now(), QueueEntryStatus.WAITING_LOCAL, null),
             sequenceOrder = 1
@@ -192,12 +197,12 @@ class TagHistoryServiceTest {
     }
 
     @Test
-    fun `database integrity check passes on fresh DB`() {
+    fun `database integrity check passes on fresh DB`() = runTest {
         assertTrue(service.integrityCheck())
     }
 
     @Test
-    fun `dispose closes underlying connection (A-P1-5)`() {
+    fun `dispose closes underlying connection (A-P1-5)`() = runTest {
         // Force lazy connection initialization.
         service.saveQueueEntry(
             QueueEntry("q-1", "P", "{}", emptyMap(), null, Instant.now(), QueueEntryStatus.WAITING_LOCAL, null),
@@ -212,7 +217,87 @@ class TagHistoryServiceTest {
         // catching it is the only safe assertion since prepareStatement on a closed
         // connection is itself the leak we wanted to prove was fixed.
         assertThrows(java.sql.SQLException::class.java) {
-            service.integrityCheck()
+            kotlinx.coroutines.runBlocking { service.integrityCheck() }
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // D4 new tests: concurrent inserts + corrupt row per-row recovery
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `D4 concurrent inserts from 10 coroutines all persist correctly`() = runTest {
+        val coroutineCount = 10
+        val insertsPerCoroutine = 100
+        coroutineScope {
+            (0 until coroutineCount).map { cIdx ->
+                async(Dispatchers.IO) {
+                    repeat(insertsPerCoroutine) { rIdx ->
+                        val id = "c$cIdx-r$rIdx"
+                        service.saveQueueEntry(
+                            QueueEntry(
+                                id = id, suitePlanKey = "PROJ-CONCURRENT",
+                                dockerTagsPayload = "{}", variables = emptyMap(),
+                                stages = null, enqueuedAt = Instant.now(),
+                                status = QueueEntryStatus.WAITING_LOCAL, bambooResultKey = null
+                            ),
+                            sequenceOrder = cIdx * insertsPerCoroutine + rIdx
+                        )
+                    }
+                }
+            }.awaitAll()
+        }
+        val active = service.getActiveQueueEntries()
+        assertEquals(coroutineCount * insertsPerCoroutine, active.size,
+            "All ${coroutineCount * insertsPerCoroutine} entries must survive concurrent inserts")
+    }
+
+    @Test
+    fun `D4 corrupt row is skipped and valid rows are returned`() = runTest {
+        // Insert valid row #1
+        service.saveQueueEntry(
+            QueueEntry("valid-1", "PROJ", "{}", mapOf("k" to "v"), null,
+                Instant.now(), QueueEntryStatus.WAITING_LOCAL, null),
+            sequenceOrder = 1
+        )
+        // Force a corrupt row directly via raw JDBC (variables_json is not valid JSON)
+        service.getActiveQueueEntries() // force lazy init
+        val dbPath = tempDir.resolve("automation.db").toString()
+        Class.forName("org.sqlite.JDBC")
+        val conn = java.sql.DriverManager.getConnection("jdbc:sqlite:$dbPath")
+        conn.prepareStatement("""
+            INSERT OR REPLACE INTO queue_entries
+            (id, suite_plan_key, docker_tags_json, variables_json, stages_json,
+             status, bamboo_result_key, enqueued_at, sequence_order, updated_at, error_message)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """).use { stmt ->
+            stmt.setString(1, "corrupt-1")
+            stmt.setString(2, "PROJ")
+            stmt.setString(3, "{}")
+            stmt.setString(4, "{not valid json")  // D4: corrupt variables_json
+            stmt.setString(5, "null")
+            stmt.setString(6, "WAITING_LOCAL")
+            stmt.setNull(7, java.sql.Types.VARCHAR)
+            stmt.setLong(8, Instant.now().epochSecond)
+            stmt.setInt(9, 2)
+            stmt.setLong(10, Instant.now().epochSecond)
+            stmt.setNull(11, java.sql.Types.VARCHAR)
+            stmt.executeUpdate()
+        }
+        conn.close()
+        // Insert valid row #3
+        service.saveQueueEntry(
+            QueueEntry("valid-3", "PROJ", "{}", mapOf("k" to "v"), null,
+                Instant.now(), QueueEntryStatus.WAITING_LOCAL, null),
+            sequenceOrder = 3
+        )
+
+        // Should return 2 valid rows; corrupt row is skipped, not an exception.
+        val active = service.getActiveQueueEntries()
+        assertEquals(2, active.size,
+            "Corrupt row must be skipped; only valid rows should be returned. Got: ${active.map { it.id }}")
+        assertTrue(active.any { it.id == "valid-1" }, "valid-1 must be returned")
+        assertTrue(active.any { it.id == "valid-3" }, "valid-3 must be returned")
+        assertFalse(active.any { it.id == "corrupt-1" }, "corrupt-1 must be skipped")
     }
 }
