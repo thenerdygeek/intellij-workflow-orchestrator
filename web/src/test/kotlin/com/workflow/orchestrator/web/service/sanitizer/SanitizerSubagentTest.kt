@@ -53,6 +53,42 @@ class SanitizerSubagentTest {
     }
 
     @Test
+    fun `persona forbids paraphrase, summary, and rewrite explicitly`() {
+        val sut = SanitizerSubagent(spawner = mockk<SubagentSpawner>())
+        val method = sut.javaClass.getDeclaredMethod("loadSystemPrompt").apply { isAccessible = true }
+        val prompt = method.invoke(sut) as String
+        // The persona MUST contain explicit prohibitions against paraphrase/summary/rewrite,
+        // otherwise a future "let me clean this up" edit could silently revert the contract
+        // and the Haiku will start flattening "AWS Lambda" to "a cloud function service" again.
+        assertTrue(prompt.contains("DO NOT summarize", ignoreCase = false),
+            "persona must forbid summarization explicitly")
+        assertTrue(prompt.contains("DO NOT paraphrase", ignoreCase = false),
+            "persona must forbid paraphrase explicitly")
+        assertTrue(prompt.contains("DO NOT rewrite", ignoreCase = false),
+            "persona must forbid rewriting explicitly")
+        assertTrue(prompt.contains("character-for-character", ignoreCase = false),
+            "persona must require verbatim preservation")
+    }
+
+    @Test
+    fun `persona enumerates the preservation list (vendor names, versions, URLs, identifiers)`() {
+        val sut = SanitizerSubagent(spawner = mockk<SubagentSpawner>())
+        val method = sut.javaClass.getDeclaredMethod("loadSystemPrompt").apply { isAccessible = true }
+        val prompt = method.invoke(sut) as String
+        // The preservation list is the load-bearing part of the contract. If a future edit
+        // removes any of these categories, the sanitizer becomes free to mangle that category
+        // (e.g. dropping "version numbers" would let it normalize "v3.4.1" to "the current version").
+        listOf("product names", "version numbers", "URLs", "code identifiers", "factual claims")
+            .forEach { category ->
+                assertTrue(prompt.contains(category, ignoreCase = true),
+                    "persona must preserve '$category' explicitly")
+            }
+        // The example pair (AWS, GCP / vendor names) is the canonical regression case.
+        assertTrue(prompt.contains("Amazon AWS") || prompt.contains("AWS"),
+            "persona must reference AWS as a preservation example")
+    }
+
+    @Test
     fun `sanitizeBatch returns one result per input`() = runTest {
         val project = mockk<Project>()
         val spawner = mockk<SubagentSpawner>()
