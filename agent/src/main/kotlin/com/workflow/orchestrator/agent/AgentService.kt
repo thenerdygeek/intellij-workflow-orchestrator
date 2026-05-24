@@ -503,8 +503,8 @@ class AgentService(
     /**
      * Inject a synthetic nudge message into the loop that owns [sessionId].
      *
-     * Called by [com.workflow.orchestrator.agent.tools.delegation.DelegationSendTool]'s
-     * `onResult` closure when an async delegation result arrives — the loop is still
+     * Called by [com.workflow.orchestrator.agent.tools.delegation.DelegationTool]'s
+     * `send` action `onResult` closure when an async delegation result arrives — the loop is still
      * running, and the nudge surfaces at the next iteration boundary via the steering
      * queue.  Safe to call from any thread.
      *
@@ -1175,25 +1175,15 @@ class AgentService(
         safeRegisterDeferred("Utilities") { CurrentTimeTool() }
         safeRegisterDeferred("Utilities") { AskUserInputTool() }
 
-        // Cross-IDE delegation tools — registered only when outbound is enabled.
-        // §3.3 of the spec: when off, the LLM does not see the tools at all.
+        // Cross-IDE delegation meta-tool — registered only when outbound is enabled.
+        // §3.3 of the spec: when off, the LLM does not see the tool at all.
+        // Plan 5: 5 per-action tools consolidated into a single `delegation` meta-tool
+        // with an `action` enum, mirroring runtime_exec / jira / sonar / debug_step.
         if (com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
                 .state.enableOutboundCrossIdeDelegation
         ) {
             safeRegisterDeferred("Delegation") {
-                com.workflow.orchestrator.agent.tools.delegation.DelegationSendTool()
-            }
-            safeRegisterDeferred("Delegation") {
-                com.workflow.orchestrator.agent.tools.delegation.DelegationCloseTool()
-            }
-            safeRegisterDeferred("Delegation") {
-                com.workflow.orchestrator.agent.tools.delegation.DelegationAnswerTool()
-            }
-            safeRegisterDeferred("Delegation") {
-                com.workflow.orchestrator.agent.tools.delegation.DelegationFetchTranscriptTool()
-            }
-            safeRegisterDeferred("Delegation") {
-                com.workflow.orchestrator.agent.tools.delegation.DelegationListTargetsTool()
+                com.workflow.orchestrator.agent.tools.delegation.DelegationTool()
             }
         }
 
@@ -1344,37 +1334,13 @@ class AgentService(
         val enabled = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
             .state.enableOutboundCrossIdeDelegation
         if (enabled) {
-            if (registry.getTool("delegation_send") == null) {
+            if (registry.getTool("delegation") == null) {
                 safeRegisterDeferred("Delegation") {
-                    com.workflow.orchestrator.agent.tools.delegation.DelegationSendTool()
-                }
-            }
-            if (registry.getTool("delegation_close") == null) {
-                safeRegisterDeferred("Delegation") {
-                    com.workflow.orchestrator.agent.tools.delegation.DelegationCloseTool()
-                }
-            }
-            if (registry.getTool("delegation_answer") == null) {
-                safeRegisterDeferred("Delegation") {
-                    com.workflow.orchestrator.agent.tools.delegation.DelegationAnswerTool()
-                }
-            }
-            if (registry.getTool("delegation_fetch_transcript") == null) {
-                safeRegisterDeferred("Delegation") {
-                    com.workflow.orchestrator.agent.tools.delegation.DelegationFetchTranscriptTool()
-                }
-            }
-            if (registry.getTool("delegation_list_targets") == null) {
-                safeRegisterDeferred("Delegation") {
-                    com.workflow.orchestrator.agent.tools.delegation.DelegationListTargetsTool()
+                    com.workflow.orchestrator.agent.tools.delegation.DelegationTool()
                 }
             }
         } else {
-            if (registry.getTool("delegation_send") != null) registry.unregisterDeferred("delegation_send")
-            if (registry.getTool("delegation_close") != null) registry.unregisterDeferred("delegation_close")
-            if (registry.getTool("delegation_answer") != null) registry.unregisterDeferred("delegation_answer")
-            if (registry.getTool("delegation_fetch_transcript") != null) registry.unregisterDeferred("delegation_fetch_transcript")
-            if (registry.getTool("delegation_list_targets") != null) registry.unregisterDeferred("delegation_list_targets")
+            if (registry.getTool("delegation") != null) registry.unregisterDeferred("delegation")
         }
     }
 

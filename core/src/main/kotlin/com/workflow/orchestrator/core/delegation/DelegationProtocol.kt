@@ -189,7 +189,7 @@ sealed class DelegationMessage {
 
     /**
      * IDE-A → IDE-B. Append a new user turn to the existing Agent-B session.
-     * Used by `delegation_send(handle = X, request = "...")` continuation.
+     * Used by `delegation(action="send", handle="X", request="...")` continuation.
      *
      * Plan 4 spec §4.1, §5.2.
      */

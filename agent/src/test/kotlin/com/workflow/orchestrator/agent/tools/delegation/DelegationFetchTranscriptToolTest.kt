@@ -36,8 +36,8 @@ class DelegationFetchTranscriptToolTest {
         val project = mockk<Project>(relaxed = true)
         every { project.getService(DelegationOutboundService::class.java) } returns outbound
 
-        val tool = DelegationFetchTranscriptTool()
-        val result = tool.executeRaw(project = project, handleId = "h-xyz")
+        val tool = DelegationTool()
+        val result = tool.executeFetchTranscriptRaw(project = project, handleId = "h-xyz")
 
         assertFalse(result.isError, "expected success: ${result.summary}")
         assertTrue(result.summary.contains(transcript.toString()))
@@ -54,8 +54,8 @@ class DelegationFetchTranscriptToolTest {
         val project = mockk<Project>(relaxed = true)
         every { project.getService(DelegationOutboundService::class.java) } returns outbound
 
-        val tool = DelegationFetchTranscriptTool()
-        val result = tool.executeRaw(project = project, handleId = "h-gone")
+        val tool = DelegationTool()
+        val result = tool.executeFetchTranscriptRaw(project = project, handleId = "h-gone")
 
         assertTrue(result.isError)
         assertTrue(result.summary.contains("expired") || result.summary.contains("not_found") ||

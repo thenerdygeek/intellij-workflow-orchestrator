@@ -45,7 +45,8 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
                     checkBox("Allow this IDE to delegate to other IDEs (outbound)")
                         .bindSelected({ outboundEnabled }, { outboundEnabled = it })
                         .comment(
-                            "When on, this IDE's agent gains delegation_send / delegation_close tools. " +
+                            "When on, this IDE's agent gains the `delegation` tool " +
+                                "(send / close / answer / fetch_transcript / list_targets actions). " +
                                 "Default off."
                         )
                 }

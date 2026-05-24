@@ -41,7 +41,7 @@ class DelegationOutboundService(
     private val idleTimers = java.util.concurrent.ConcurrentHashMap<String, IdleTimer>()
 
     /**
-     * F1 fix: per-question text cache so [DelegationAnswerTool] can look up the
+     * F1 fix: per-question text cache so [DelegationTool]'s `answer` action can look up the
      * question text when the auto-approve setting is off (for the confirm dialog).
      *
      * Key: questionId → (handleId, questionText). Populated when a Question message
@@ -468,7 +468,7 @@ class DelegationOutboundService(
 
     /**
      * Builds the nudge text for Agent-A when a resumed delegated session sends its
-     * terminal Result. Mirrors [DelegationSendTool.buildNudgeText] but is called from
+     * terminal Result. Mirrors [DelegationTool]'s `buildNudgeText` (send action) but is called from
      * the reader loop spawned by [sendContinuation] on a resumed channel.
      */
     private fun buildResumedResultNudge(
@@ -628,7 +628,7 @@ class DelegationOutboundService(
     /**
      * Returns the text of a pending question sent over the given handle, or null if
      * the question has already been answered or the questionId is unknown.
-     * Used by [com.workflow.orchestrator.agent.tools.delegation.DelegationAnswerTool]
+     * Used by [com.workflow.orchestrator.agent.tools.delegation.DelegationTool]'s `answer` action
      * to populate the confirm dialog when auto-approve is off.
      */
     fun lookupPendingQuestionText(handleId: String, questionId: String): String? =
@@ -636,7 +636,7 @@ class DelegationOutboundService(
 
     /**
      * Returns the target repo display name for the given handle, or null if unknown.
-     * Used by [com.workflow.orchestrator.agent.tools.delegation.DelegationAnswerTool]
+     * Used by [com.workflow.orchestrator.agent.tools.delegation.DelegationTool]'s `answer` action
      * to populate the confirm dialog title.
      */
     fun targetRepoName(handleId: String): String? {
@@ -678,7 +678,7 @@ class DelegationOutboundService(
         handle: DelegationHandle,
         question: DelegationMessage.Question,
     ) {
-        // F1 fix: cache the question text so delegation_answer can show it in the confirm dialog.
+        // F1 fix: cache the question text so the delegation answer action can show it in the confirm dialog.
         pendingQuestionTexts[question.questionId] = handle.id to question.text
 
         val sessionId = handleToSessionId[handle.id] ?: run {
@@ -689,9 +689,9 @@ class DelegationOutboundService(
             com.workflow.orchestrator.agent.AgentService::class.java
         )
         // F6 fix: reorder guidance so "ask the user first if uncertain" is step 1
-        // (matches spec §6.3) and "call delegation_answer directly" is step 2.
+        // (matches spec §6.3) and "call delegation(action=answer) directly" is step 2.
         // The previous text had them reversed, causing the LLM to default to
-        // delegation_answer immediately rather than checking with the user.
+        // delegation answer immediately rather than checking with the user.
         val nudge = buildString {
             append("Delegated session ${handle.targetRepoName} (handle ${handle.id.take(8)}) ")
             append("raised a clarifying question:\n\n")
@@ -702,8 +702,8 @@ class DelegationOutboundService(
             append("\n\nQuestion ID: ${question.questionId}\n\n")
             append("How to respond:\n")
             append("1. If you cannot answer confidently from your own context, ask the user " +
-                "first (via ask_followup_question), then use delegation_answer with the answer.\n")
-            append("2. If you have enough context to answer correctly, call delegation_answer " +
+                "first (via ask_followup_question), then use delegation(action=\"answer\") with the answer.\n")
+            append("2. If you have enough context to answer correctly, call delegation(action=\"answer\") " +
                 "directly with handle=${handle.id}, question_id=${question.questionId}, " +
                 "and your answer text.")
         }

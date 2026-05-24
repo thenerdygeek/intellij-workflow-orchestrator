@@ -550,11 +550,11 @@ In each user message, the environment_details will specify the current mode. The
         // When the tools are not registered (setting off), omitting the hints prevents
         // the LLM from calling tools it cannot access ("Unknown tool" errors).
         if (delegationOutboundEnabled) {
-            appendLine("| Modify a repo open in a different IDE window | delegation_send with `request` + optional `suggested_repo` | Switching repos manually or rejecting the task |")
-            appendLine("| Follow up on a previous delegation without re-opening the picker | delegation_send with `handle` from a prior call | Starting a fresh delegation (re-opens the picker, re-prompts Accept) |")
-            appendLine("| Inspect a delegated session's full message history | delegation_fetch_transcript | Reading the result summary only |")
+            appendLine("| Modify a repo open in a different IDE window | delegation with action=\"send\", `request` + optional `suggested_repo` | Switching repos manually or rejecting the task |")
+            appendLine("| Follow up on a previous delegation without re-opening the picker | delegation with action=\"send\", `handle` from a prior call | Starting a fresh delegation (re-opens the picker, re-prompts Accept) |")
+            appendLine("| Inspect a delegated session's full message history | delegation with action=\"fetch_transcript\" | Reading the result summary only |")
             appendLine()
-            appendLine("**Cross-IDE delegation UX:** `delegation_send` does not enumerate available IDEs for you. The picker dialog (modal in the requesting IDE) is the trust + discovery gate — the human selects the actual target IDE/repo. Specify your intent via `request`; pass `suggested_repo` as a hint for pre-selection. To pre-flight what's available without opening the picker, call `delegation_list_targets`.")
+            appendLine("**Cross-IDE delegation UX:** `delegation(action=\"send\")` does not enumerate available IDEs for you. The picker dialog (modal in the requesting IDE) is the trust + discovery gate — the human selects the actual target IDE/repo. Specify your intent via `request`; pass `suggested_repo` as a hint for pre-selection. To pre-flight what's available without opening the picker, call `delegation(action=\"list_targets\")`.")
         }
     }.trimEnd()
 

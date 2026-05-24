@@ -55,7 +55,7 @@ class DelegationSendToolContinueWithTest {
     }
 
     @Test
-    fun `delegation_send with handle routes through sendContinuation`() = runBlocking {
+    fun `delegation send with handle routes through sendContinuation`() = runBlocking {
         val outbound = mockk<DelegationOutboundService>(relaxed = true)
         coEvery {
             outbound.sendContinuation(handleId = "h-x", request = "follow up", delegatorSessionId = any())
@@ -67,8 +67,9 @@ class DelegationSendToolContinueWithTest {
         )
 
         val project = makeProject(outbound)
-        val tool = DelegationSendTool()
+        val tool = DelegationTool()
         val params: JsonObject = buildJsonObject {
+            put("action", JsonPrimitive("send"))
             put("handle", JsonPrimitive("h-x"))
             put("request", JsonPrimitive("follow up"))
         }
@@ -82,15 +83,16 @@ class DelegationSendToolContinueWithTest {
     }
 
     @Test
-    fun `delegation_send with handle on dead handle returns DelegationExpired`() = runBlocking {
+    fun `delegation send with handle on dead handle returns DelegationExpired`() = runBlocking {
         val outbound = mockk<DelegationOutboundService>(relaxed = true)
         coEvery {
             outbound.sendContinuation(any(), any(), any())
         } throws DelegationException.Expired("handle_not_found")
 
         val project = makeProject(outbound)
-        val tool = DelegationSendTool()
+        val tool = DelegationTool()
         val params: JsonObject = buildJsonObject {
+            put("action", JsonPrimitive("send"))
             put("handle", JsonPrimitive("h-gone"))
             put("request", JsonPrimitive("anything"))
         }

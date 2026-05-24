@@ -13,7 +13,8 @@ import java.nio.file.Path
  * Tests for Plan 1 code-review followup fixes (F1–F6).
  *
  * F2: HistoryItem.delegated round-trips through sessions.json serialization.
- * F3: DelegationSendTool / DelegationCloseTool self-gate on the outbound setting.
+ * F3: DelegationTool self-gates on the outbound setting (covers the former
+ *     delegation_send / delegation_close per-tool gates after Plan 5 consolidation).
  * (F1/F4/F5/F6 are structural/threading fixes covered by source-text pins and the
  * updated E2E + server tests.)
  */
@@ -73,36 +74,36 @@ class DelegationReviewFollowupsTest {
         assertEquals("ide-B", decoded[1].delegated!!.delegatorIde)
     }
 
-    // ── F3: DelegationSendTool self-gate source-text pin ──────────────────────
+    // ── F3: DelegationTool self-gate source-text pin ──────────────────────────
+    // Plan 5: 5 per-action tools consolidated into DelegationTool with a single
+    // settings gate at the top of execute(). Two pins on the consolidated source.
 
     @Test
-    fun `F3 - DelegationSendTool checks enableOutboundCrossIdeDelegation at execute time`() {
+    fun `F3 - DelegationTool checks enableOutboundCrossIdeDelegation at execute time`() {
         val source = Files.readString(
-            Path.of("src/main/kotlin/com/workflow/orchestrator/agent/tools/delegation/DelegationSendTool.kt")
+            Path.of("src/main/kotlin/com/workflow/orchestrator/agent/tools/delegation/DelegationTool.kt")
         )
         assertTrue(
             source.contains("enableOutboundCrossIdeDelegation"),
-            "DelegationSendTool.execute must check enableOutboundCrossIdeDelegation at runtime"
+            "DelegationTool.execute must check enableOutboundCrossIdeDelegation at runtime"
         )
         assertTrue(
             source.contains("DelegationOutboundDisabled"),
-            "DelegationSendTool must return DelegationOutboundDisabled error when setting is off"
+            "DelegationTool must return DelegationOutboundDisabled error when setting is off"
         )
     }
 
     @Test
-    fun `F3 - DelegationCloseTool checks enableOutboundCrossIdeDelegation at execute time`() {
+    fun `F3 - DelegationTool gate covers every action (single check at top of execute)`() {
         val source = Files.readString(
-            Path.of("src/main/kotlin/com/workflow/orchestrator/agent/tools/delegation/DelegationCloseTool.kt")
+            Path.of("src/main/kotlin/com/workflow/orchestrator/agent/tools/delegation/DelegationTool.kt")
         )
-        assertTrue(
-            source.contains("enableOutboundCrossIdeDelegation"),
-            "DelegationCloseTool.execute must check enableOutboundCrossIdeDelegation at runtime"
-        )
-        assertTrue(
-            source.contains("DelegationOutboundDisabled"),
-            "DelegationCloseTool must return DelegationOutboundDisabled error when setting is off"
-        )
+        // The gate must come BEFORE the action dispatch so close/answer/fetch_transcript/
+        // list_targets all inherit it without each handler repeating the check.
+        val gateIdx = source.indexOf("DelegationOutboundDisabled")
+        val dispatchIdx = source.indexOf("when (action)")
+        assertTrue(gateIdx in 0 until dispatchIdx,
+            "settings gate must appear before the action when-block so every action is gated")
     }
 
     // ── F5: DelegationOutboundService.send mutex source-text pin ─────────────

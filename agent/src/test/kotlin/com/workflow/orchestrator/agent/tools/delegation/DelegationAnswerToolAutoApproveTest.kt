@@ -6,7 +6,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * Source-text pin tests for the auto-approve gate added to [DelegationAnswerTool] (F1 fix).
+ * Source-text pin tests for the auto-approve gate on the `answer` action of the
+ * consolidated [DelegationTool] (F1 fix).
  *
  * These tests verify structural invariants without needing a live IntelliJ Project.
  * They pin the presence of the approval-gate code paths so the dead-code regression
@@ -15,7 +16,7 @@ import java.nio.file.Path
 class DelegationAnswerToolAutoApproveTest {
 
     private val source: String = Files.readString(
-        Path.of("src/main/kotlin/com/workflow/orchestrator/agent/tools/delegation/DelegationAnswerTool.kt")
+        Path.of("src/main/kotlin/com/workflow/orchestrator/agent/tools/delegation/DelegationTool.kt")
     )
 
     private val dialogSource: String = Files.readString(
@@ -26,7 +27,7 @@ class DelegationAnswerToolAutoApproveTest {
     fun `tool reads autoApproveDelegationAnswers setting`() {
         assertTrue(
             source.contains("autoApproveDelegationAnswers"),
-            "DelegationAnswerTool must read the autoApproveDelegationAnswers setting"
+            "DelegationTool must read the autoApproveDelegationAnswers setting"
         )
     }
 
@@ -34,7 +35,7 @@ class DelegationAnswerToolAutoApproveTest {
     fun `tool shows DelegationAnswerConfirmDialog when auto-approve is off`() {
         assertTrue(
             source.contains("DelegationAnswerConfirmDialog"),
-            "DelegationAnswerTool must reference DelegationAnswerConfirmDialog for the manual confirm path"
+            "DelegationTool must reference DelegationAnswerConfirmDialog for the manual confirm path"
         )
     }
 
@@ -42,7 +43,7 @@ class DelegationAnswerToolAutoApproveTest {
     fun `tool returns error when user declines the confirm dialog`() {
         assertTrue(
             source.contains("user declined to send the answer"),
-            "DelegationAnswerTool must return a distinct error when the user cancels the dialog"
+            "DelegationTool must return a distinct error when the user cancels the dialog"
         )
     }
 

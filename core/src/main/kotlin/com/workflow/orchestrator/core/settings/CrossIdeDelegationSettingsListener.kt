@@ -11,8 +11,8 @@ import com.intellij.util.messages.Topic
  *
  * - [outboundSettingChanged]: fired when the "allow outbound" toggle changes.
  *   [com.workflow.orchestrator.agent.AgentService] adds / removes the
- *   `delegation_send` and `delegation_close` tools in response so the LLM
- *   has no knowledge of delegation when the feature is off (§3.3).
+ *   `delegation` meta-tool in response so the LLM has no knowledge of
+ *   delegation when the feature is off (§3.3).
  */
 interface CrossIdeDelegationSettingsListener {
     fun inboundSettingChanged(enabled: Boolean)
