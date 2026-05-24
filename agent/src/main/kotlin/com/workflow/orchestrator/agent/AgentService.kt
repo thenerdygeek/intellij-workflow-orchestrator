@@ -1783,8 +1783,10 @@ class AgentService(
                 // mid-session saves via `edit_file MEMORY.md` are visible to the LLM on its
                 // very next iteration. The lambda runs whenever the tool set changes; the
                 // file read is small (≤200 lines) and unconditional misses are tolerated.
+                val researchDirPath = com.workflow.orchestrator.core.util.ProjectIdentifier.researchDir(projectPath).toPath()
                 val systemPromptBuilder = { toolDefsMarkdown: String? ->
                     val freshMemoryIndex = com.workflow.orchestrator.agent.memory.MemoryIndex.load(memoryDirPath)
+                    val freshResearchIndex = com.workflow.orchestrator.agent.research.ResearchIndex.load(researchDirPath)
                     // hasWebTools is re-evaluated on every prompt rebuild so a settings toggle
                     // mid-session (via reregisterConditionalTools) is reflected immediately.
                     val hasWebTools = registry.has("web_fetch") || registry.has("web_search")
@@ -1800,6 +1802,8 @@ class AgentService(
                         toolDefinitionsMarkdown = toolDefsMarkdown,
                         memoryIndex = freshMemoryIndex,
                         memoryIndexPath = memoryIndexPath,
+                        researchIndex = freshResearchIndex,
+                        researchIndexPath = researchDirPath.toString(),
                         ideContext = ideContext,
                         availableShells = allowedShells,
                         availableModels = formatModelsForPrompt(ModelCache.getCached()),
@@ -2525,6 +2529,8 @@ class AgentService(
                 modelCatalogService = sharedCatalogHolder.peek(),
                 currentModelRef = { currentBrainModelId },
             )
+            val resumeResearchDirPath = com.workflow.orchestrator.core.util.ProjectIdentifier.researchDir(basePath).toPath()
+            val resumeResearchIndex = com.workflow.orchestrator.agent.research.ResearchIndex.load(resumeResearchDirPath)
             val systemPrompt = SystemPrompt.build(
                 projectName = project.name,
                 projectPath = project.basePath ?: "",
@@ -2533,6 +2539,8 @@ class AgentService(
                 availableShells = allowedShells,
                 availableModels = formatModelsForPrompt(ModelCache.getCached()),
                 hasWebTools = registry.has("web_fetch") || registry.has("web_search"),
+                researchIndex = resumeResearchIndex,
+                researchIndexPath = resumeResearchDirPath.toString(),
                 // One-shot — fires only if the resume-path cleanup above redacted turns.
                 // (executeTask's own systemPromptBuilder will consume the flag for any
                 // further drift caught at write-time during this session.)
