@@ -244,6 +244,12 @@ class WebFetchEngine(
                         return failure(WebError.SanitizerTimeout, start, pass.finalUrl)
                     else
                         SanitizerVerdict.STRUCTURAL_ONLY to struct.extractedText
+                SubagentSpawner.Verdict.UNRECOGNISED ->
+                    return failure(
+                        WebError.SanitizerRefused("sanitizer returned unrecognised verdict"),
+                        start,
+                        pass.finalUrl,
+                    )
             }
 
             val page = WebPage(

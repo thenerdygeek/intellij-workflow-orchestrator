@@ -31,7 +31,7 @@ import java.lang.reflect.Method
  *   2. JSON with prose prefix → still parsed (first-`{` last-`}` window)
  *   3. JSON fenced in backticks → same expectation as prose prefix
  *   4. Malformed JSON (missing closing brace) → TIMEOUT result
- *   5. Unknown verdict value → defaults to SAFE
+ *   5. Unknown verdict value → returns UNRECOGNISED (fail-closed)
  *
  * - `parseBatchResult`:
  *   6. Happy-path batch (exact count) → all fields correct
@@ -120,10 +120,10 @@ class SubagentSpawnerAdapterTest {
     }
 
     @Test
-    fun `unknown verdict value defaults to SAFE`() {
+    fun `unknown verdict value returns UNRECOGNISED`() {
         val json = """{"verdict":"BANANA","cleaned_text":"some text","notes":null}"""
         val result = parseResult(json)
-        assertEquals(Verdict.SAFE, result.verdict, "Unknown verdict should default to SAFE")
+        assertEquals(Verdict.UNRECOGNISED, result.verdict, "Unknown verdict must return UNRECOGNISED (fail-closed, not SAFE)")
         assertEquals("some text", result.cleanedText)
     }
 

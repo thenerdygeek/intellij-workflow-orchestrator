@@ -39,5 +39,16 @@ interface SubagentSpawner {
         val notes: String?,
     )
 
-    enum class Verdict { SAFE, STRIPPED, REFUSED, TIMEOUT }
+    enum class Verdict {
+        SAFE,
+        STRIPPED,
+        REFUSED,
+        TIMEOUT,
+        /**
+         * The sanitizer subagent returned a verdict string that is not one of the recognised
+         * values (SAFE / STRIPPED / REFUSED / TIMEOUT). Treat as fail-closed: do not pass
+         * the sanitizer's cleaned_text to the main agent.
+         */
+        UNRECOGNISED,
+    }
 }

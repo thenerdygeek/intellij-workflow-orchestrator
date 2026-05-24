@@ -158,8 +158,8 @@ class SubagentSpawnerAdapter(private val project: Project) : SubagentSpawner {
                         "REFUSED" -> Verdict.REFUSED
                         "TIMEOUT" -> Verdict.TIMEOUT
                         else -> {
-                            LOG.warn("SubagentSpawnerAdapter: batch[$idx] unrecognised verdict '$verdictStr', defaulting to SAFE")
-                            Verdict.SAFE
+                            LOG.warn("SubagentSpawnerAdapter: batch[$idx] unrecognised verdict '$verdictStr', treating as UNRECOGNISED (fail-closed)")
+                            Verdict.UNRECOGNISED
                         }
                     }
                     SanitizerResult(verdict = verdict, cleanedText = cleanedText, notes = notes)
@@ -208,8 +208,8 @@ class SubagentSpawnerAdapter(private val project: Project) : SubagentSpawner {
                 "REFUSED" -> Verdict.REFUSED
                 "TIMEOUT" -> Verdict.TIMEOUT
                 else -> {
-                    LOG.warn("SubagentSpawnerAdapter: unrecognised verdict '$verdictStr', defaulting to SAFE")
-                    Verdict.SAFE
+                    LOG.warn("SubagentSpawnerAdapter: unrecognised verdict '$verdictStr', treating as UNRECOGNISED (fail-closed)")
+                    Verdict.UNRECOGNISED
                 }
             }
             SanitizerResult(verdict = verdict, cleanedText = cleanedText, notes = notes)

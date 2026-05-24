@@ -150,8 +150,13 @@ class WebSearchEngine(
 
         val hits = normalizedHits.mapIndexed { i, norm ->
             val sanResult = sanitized.getOrNull(i)
-            val finalSnippet = (sanResult?.cleanedText?.ifBlank { null } ?: norm.snippet)
-                .take(state.webSearchSnippetMaxChars)
+            // UNRECOGNISED verdict: treat as REFUSED — discard the sanitizer's cleaned_text
+            // so a jailbroken sanitizer cannot forward its output to the main agent.
+            val finalSnippet = when (sanResult?.verdict) {
+                com.workflow.orchestrator.core.web.SubagentSpawner.Verdict.UNRECOGNISED,
+                com.workflow.orchestrator.core.web.SubagentSpawner.Verdict.REFUSED -> ""
+                else -> (sanResult?.cleanedText?.ifBlank { null } ?: norm.snippet)
+            }.take(state.webSearchSnippetMaxChars)
             SearchHit(
                 title = norm.title,
                 url = norm.url,

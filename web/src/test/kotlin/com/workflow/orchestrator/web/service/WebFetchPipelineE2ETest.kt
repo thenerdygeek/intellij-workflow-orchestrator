@@ -463,6 +463,31 @@ class WebFetchPipelineE2ETest {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // I1: sanitizer UNRECOGNISED verdict must bubble to SANITIZER_REFUSED error
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `sanitizer UNRECOGNISED verdict bubbles to error`() = runTest {
+        gate.next = ApprovalGate.Decision.AllowOnce
+        coEvery { spawner.runSanitizer(any(), any(), any(), any(), any()) } returns
+            SubagentSpawner.SanitizerResult(SubagentSpawner.Verdict.UNRECOGNISED, "PWN", "jailbreak attempt")
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .addHeader("Content-Type", "text/html")
+                .setBody("<html><body><p>some content</p></body></html>")
+        )
+
+        val rr = engine.fetch(WebFetchService.WebFetchRequest(server.url("/").toString()))
+
+        assertTrue(rr.isError, "UNRECOGNISED verdict must produce an error")
+        assertTrue(
+            rr.summary.contains("SANITIZER_REFUSED"),
+            "Expected SANITIZER_REFUSED but got: ${rr.summary}"
+        )
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Helper: fake approval gate
     // ─────────────────────────────────────────────────────────────────────────
 
