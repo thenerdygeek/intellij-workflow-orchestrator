@@ -11,6 +11,7 @@ import com.intellij.openapi.progress.Task
 import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.openapi.ui.DialogWrapper.IdeModalityType
 import com.intellij.openapi.ui.Messages
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -86,7 +87,22 @@ class DelegationPicker(
     private val launcherResolver: LauncherResolver = LauncherResolver(),
     private val toolboxFlavorReader: ToolboxFlavorReader = ToolboxFlavorReader(),
     private val processSpawner: ProcessSpawner = DefaultProcessSpawner,
-) : DialogWrapper(project) {
+    // MODELESS is required for Launch & Delegate. The default DialogWrapper(project)
+    // construction is project-modal (Swing APPLICATION_MODAL), which suspends the
+    // outer AWT event loop. JetBrains' single-instance IPC — invoked by the
+    // spawned `idea.sh /path/repo` launcher when an IDE is already running from
+    // the same install — dispatches "open project" requests via
+    // ApplicationManager.invokeLater(NON_MODAL). NON_MODAL runnables do NOT fire
+    // while a modal dialog is up, so under the previous (default) modality the
+    // spawned launcher's open-project request queued behind the picker and the
+    // new window only appeared after the picker was dismissed (often firing
+    // multiple times if the user clicked Launch & Delegate repeatedly).
+    //
+    // MODELESS keeps the dialog's blocking semantics for the calling coroutine
+    // (showAndGet still suspends until OK / Cancel) but lets the EDT continue
+    // draining invokeLater(NON_MODAL), so the new IDE window can actually open
+    // while the picker waits for its socket via AutoLaunchPoller.
+) : DialogWrapper(project, true, IdeModalityType.MODELESS) {
 
     var selectedEntry: PickerEntry? = null
         private set
