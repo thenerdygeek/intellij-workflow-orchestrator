@@ -1,7 +1,9 @@
 package com.workflow.orchestrator.bamboo.service
 
 import com.intellij.openapi.diagnostic.Logger
+import org.yaml.snakeyaml.LoaderOptions
 import org.yaml.snakeyaml.Yaml
+import org.yaml.snakeyaml.constructor.SafeConstructor
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -37,7 +39,7 @@ object BambooSpecsLocalParser {
 
     internal fun extractKey(file: Path): String? = try {
         Files.newBufferedReader(file).use { reader ->
-            val data = Yaml().load<Any?>(reader) ?: return null
+            val data = Yaml(SafeConstructor(LoaderOptions())).load<Any?>(reader) ?: return null
             val plan = (data as? Map<*, *>)?.get("plan") as? Map<*, *> ?: return null
             val projectKey = (plan["project-key"] as? String)?.takeIf { it.isNotBlank() } ?: return null
             val key = (plan["key"] as? String)?.takeIf { it.isNotBlank() } ?: return null

@@ -357,7 +357,7 @@ class PlanDetectionService(
 
         internal fun extractRepoUrls(specsYaml: String): List<String> {
             return try {
-                val yaml = org.yaml.snakeyaml.Yaml()
+                val yaml = org.yaml.snakeyaml.Yaml(org.yaml.snakeyaml.constructor.SafeConstructor(org.yaml.snakeyaml.LoaderOptions()))
                 val data = yaml.load<Any>(specsYaml)
                 extractUrlsFromYamlTree(data)
             } catch (_: Exception) {
