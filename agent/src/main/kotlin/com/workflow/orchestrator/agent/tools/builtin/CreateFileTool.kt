@@ -1,8 +1,7 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.invokeAndWaitIfNeeded
-import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.application.writeAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -246,19 +245,21 @@ class CreateFileTool : AgentTool {
         )
     }
 
-    private fun writeViaVfs(resolvedPath: String, project: Project, rawPath: String, content: String): Boolean {
+    private suspend fun writeViaVfs(resolvedPath: String, project: Project, rawPath: String, content: String): Boolean {
         return try {
             if (ApplicationManager.getApplication() == null) return false
             val parentPath = java.io.File(resolvedPath).parent ?: return false
 
-            invokeAndWaitIfNeeded {
-                WriteCommandAction.runWriteCommandAction(project, "Agent: create $rawPath", null, Runnable {
-                    val parentVFile = VfsUtil.createDirectoryIfMissing(parentPath) ?: return@Runnable
-                    val fileName = java.io.File(resolvedPath).name
-                    val existingChild = parentVFile.findChild(fileName)
-                    val vFile = existingChild ?: parentVFile.createChildData(this, fileName)
-                    vFile.setBinaryContent(content.toByteArray(vFile.charset))
-                })
+            // writeAction (com.intellij.openapi.application) is the coroutine-friendly replacement
+            // for invokeAndWaitIfNeeded { WriteCommandAction.runWriteCommandAction { } }: it suspends
+            // the caller coroutine, switches to EDT, acquires the write lock, runs the block, and
+            // returns — without blocking the IO thread (audit finding agent-tools:F-1).
+            writeAction {
+                val parentVFile = VfsUtil.createDirectoryIfMissing(parentPath) ?: return@writeAction
+                val fileName = java.io.File(resolvedPath).name
+                val existingChild = parentVFile.findChild(fileName)
+                val vFile = existingChild ?: parentVFile.createChildData(this@CreateFileTool, fileName)
+                vFile.setBinaryContent(content.toByteArray(vFile.charset))
             }
             true
         } catch (_: Exception) {

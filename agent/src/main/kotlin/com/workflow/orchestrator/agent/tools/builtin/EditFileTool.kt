@@ -1,9 +1,8 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.invokeAndWaitIfNeeded
 import com.intellij.openapi.application.readAction
-import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.application.writeAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -462,10 +461,15 @@ class EditFileTool : AgentTool {
     }
 
     /**
-     * Write via Document API + WriteCommandAction. Provides undo support and immediate editor sync.
+     * Write via Document API inside a suspend writeAction. Provides undo support and immediate
+     * editor sync. writeAction (com.intellij.openapi.application) is the coroutine-friendly
+     * replacement for invokeAndWaitIfNeeded { WriteCommandAction.runWriteCommandAction { } }:
+     * it suspends the caller, switches to EDT, acquires the write lock, runs the block, and
+     * returns the result — all without blocking the IO thread.
+     *
      * Returns true if write succeeded via Document.
      */
-    private fun writeViaDocument(
+    private suspend fun writeViaDocument(
         vFile: VirtualFile?,
         project: Project,
         rawPath: String,
@@ -475,45 +479,40 @@ class EditFileTool : AgentTool {
     ): Boolean {
         if (vFile == null) return false
         return try {
-            var success = false
-            invokeAndWaitIfNeeded {
-                WriteCommandAction.runWriteCommandAction(project, "Agent: edit $rawPath", null, Runnable {
-                    val document = FileDocumentManager.getInstance().getDocument(vFile) ?: return@Runnable
-                    if (replaceAll) {
-                        // Replace all occurrences from end to preserve offsets
-                        var text = document.text
-                        var offset = text.lastIndexOf(oldString)
-                        while (offset >= 0) {
-                            document.replaceString(offset, offset + oldString.length, newString)
-                            text = document.text
-                            offset = if (offset > 0) text.lastIndexOf(oldString, offset - 1) else -1
-                        }
-                    } else {
-                        val offset = document.text.indexOf(oldString)
-                        if (offset >= 0) {
-                            document.replaceString(offset, offset + oldString.length, newString)
-                        }
+            writeAction {
+                val document = FileDocumentManager.getInstance().getDocument(vFile) ?: return@writeAction false
+                if (replaceAll) {
+                    // Replace all occurrences from end to preserve offsets
+                    var text = document.text
+                    var offset = text.lastIndexOf(oldString)
+                    while (offset >= 0) {
+                        document.replaceString(offset, offset + oldString.length, newString)
+                        text = document.text
+                        offset = if (offset > 0) text.lastIndexOf(oldString, offset - 1) else -1
                     }
-                    success = true
-                })
+                } else {
+                    val offset = document.text.indexOf(oldString)
+                    if (offset >= 0) {
+                        document.replaceString(offset, offset + oldString.length, newString)
+                    }
+                }
+                true
             }
-            success
         } catch (_: Exception) {
             false
         }
     }
 
     /**
-     * Write via VFS setBinaryContent inside WriteCommandAction.
+     * Write via VFS setBinaryContent inside a suspend writeAction.
      * Used when Document is null (file not open in editor).
+     * writeAction replaces the blocking invokeAndWaitIfNeeded { WriteCommandAction { } } bridge.
      */
-    private fun writeViaVfs(vFile: VirtualFile?, project: Project, newContent: String): Boolean {
+    private suspend fun writeViaVfs(vFile: VirtualFile?, project: Project, newContent: String): Boolean {
         if (vFile == null) return false
         return try {
-            invokeAndWaitIfNeeded {
-                WriteCommandAction.runWriteCommandAction(project) {
-                    vFile.setBinaryContent(newContent.toByteArray(vFile.charset))
-                }
+            writeAction {
+                vFile.setBinaryContent(newContent.toByteArray(vFile.charset))
             }
             // Force VFS refresh so IDE diagnostics see changes immediately
             // (avoids 1-2s VFS watcher delay before diagnostics update)

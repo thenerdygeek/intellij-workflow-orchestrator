@@ -1,8 +1,7 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.application.invokeAndWaitIfNeeded
-import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.application.writeAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -107,19 +106,19 @@ class DeleteFileTool : AgentTool {
         )
     }
 
-    private fun deleteViaVfs(resolvedPath: String, project: Project, rawPath: String): Boolean {
+    private suspend fun deleteViaVfs(resolvedPath: String, project: Project, rawPath: String): Boolean {
         return try {
             if (ApplicationManager.getApplication() == null) return false
-            var ok = false
-            invokeAndWaitIfNeeded {
-                WriteCommandAction.runWriteCommandAction(project, "Agent: delete $rawPath", null, Runnable {
-                    val vFile = LocalFileSystem.getInstance().findFileByIoFile(File(resolvedPath))
-                        ?: return@Runnable
-                    vFile.delete(this)
-                    ok = true
-                })
+            // writeAction (com.intellij.openapi.application) is the coroutine-friendly replacement
+            // for invokeAndWaitIfNeeded { WriteCommandAction.runWriteCommandAction { } }: it suspends
+            // the caller coroutine, switches to EDT, acquires the write lock, runs the block, and
+            // returns — without blocking the IO thread (audit finding agent-tools:F-1).
+            writeAction {
+                val vFile = LocalFileSystem.getInstance().findFileByIoFile(File(resolvedPath))
+                    ?: return@writeAction false
+                vFile.delete(this@DeleteFileTool)
+                true
             }
-            ok
         } catch (_: Exception) {
             false
         }
