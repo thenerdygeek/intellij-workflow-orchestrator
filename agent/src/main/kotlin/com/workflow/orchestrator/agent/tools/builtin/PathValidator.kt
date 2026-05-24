@@ -4,6 +4,7 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.Paths
 
 /**
  * Validates that file paths from LLM tool calls stay within allowed directories.
@@ -91,16 +92,22 @@ object PathValidator {
         }
 
         val projectCanonical = File(projectBasePath).canonicalPath
+
+        // E4: Check symlinks BEFORE canonicalization — canonicalize derefs symlinks.
+        checkSymlinksInPath(rawPath, resolved, projectCanonical)?.let { return null to it }
+
         if (canonical.startsWith(projectCanonical + File.separator) || canonical == projectCanonical) {
             return canonical to null
         }
 
         if (memoryDir != null) {
             val memCanonical = try { File(memoryDir).canonicalPath } catch (_: Exception) { null }
-            if (memCanonical != null &&
-                (canonical.startsWith(memCanonical + File.separator) || canonical == memCanonical)
-            ) {
-                return canonical to null
+            if (memCanonical != null) {
+                // E4: Also check symlinks for memory dir writes
+                checkSymlinksInPath(rawPath, resolved, memCanonical)?.let { return null to it }
+                if (canonical.startsWith(memCanonical + File.separator) || canonical == memCanonical) {
+                    return canonical to null
+                }
             }
         }
 
@@ -150,6 +157,100 @@ object PathValidator {
         return real
     }
 
+    /**
+     * E4: Walk each component of [normalizedPath] (outward from [rootCanonical]) and check
+     * whether any segment is itself a symbolic link. Returns the first symlink path found, or null.
+     *
+     * **Important**: this function must be called on the NORMALIZED (not canonicalized) path —
+     * `File.canonicalPath` / `Path.toRealPath` dereferences symlinks, so the symlink is gone
+     * before we can detect it. Instead, we use `Path.normalize()` (resolves `.` and `..`
+     * without following symlinks) and then walk components via `Files.isSymbolicLink`.
+     *
+     * Only components that start at [rootCanonical] and extend outward are checked — the root
+     * itself and its parents are trusted OS/project-level paths.
+     *
+     * @return The string representation of the first symlink component found, or null if clean.
+     */
+    internal fun findSymlinkInPath(normalizedPath: String, rootCanonical: String): String? {
+        val rootPath = Paths.get(rootCanonical).normalize()
+        var current = Paths.get(normalizedPath).normalize()
+        // Walk upward from the leaf toward (but not including) the root
+        while (current != rootPath && current.startsWith(rootPath)) {
+            if (Files.isSymbolicLink(current)) return current.toString()
+            current = current.parent ?: break
+        }
+        return null
+    }
+
+    /**
+     * Checks whether any path component from [rootCanonical] to the resolved path of [resolved]
+     * is a symbolic link, WITHOUT dereferencing symlinks (uses normalize, not toRealPath).
+     *
+     * On macOS, `/var` is itself a symlink to `/private/var`. We must resolve the root's
+     * real path so that `findSymlinkInPath` can walk from the real root correctly. We resolve
+     * the root's prefix on the normalized path using `toRealPath()` so the prefix matches
+     * without following symlinks in the LLM-provided suffix.
+     *
+     * @return error ToolResult if a symlink is found in any component; null if clean.
+     */
+    private fun checkSymlinksInPath(rawPath: String, resolved: String, rootCanonical: String): ToolResult? {
+        // Normalize resolves .. and . without following symlinks — preserves symlink visibility
+        val normalizedPath = Paths.get(resolved).toAbsolutePath().normalize()
+
+        // rootCanonical was computed via File.canonicalPath (toRealPath). On macOS, the OS temp dir
+        // `/var/folders/...` canonicalizes to `/private/var/folders/...`. The normalizedPath of the
+        // LLM-provided path starts with `/var/...` (not dereffed), so we must also try the real
+        // (toRealPath) prefix of the path's own root segment to align the comparison base.
+        val effectiveRoot = try {
+            // Only resolve the root portion up to the same depth as rootCanonical segments
+            // by taking toRealPath of the root path itself (it is a trusted system path).
+            Paths.get(rootCanonical)
+        } catch (_: Exception) {
+            return null  // can't resolve root; skip symlink check (canonical check covers traversal)
+        }
+
+        // Align the path's prefix to match effectiveRoot. If normalizedPath doesn't start with
+        // effectiveRoot, the subsequent canonical check will catch the out-of-root case. If it does
+        // start with effectiveRoot, we walk from effectiveRoot outward to detect symlink components.
+        // Also handle the case where the OS root is a symlink (e.g. macOS /var -> /private/var):
+        // try to resolve the portion of normalizedPath up to effectiveRoot's depth.
+        val normalizedForWalk: String = run {
+            // Attempt: reconstruct the path using effectiveRoot prefix + remainder of normalizedPath
+            val rootStr = effectiveRoot.toString()
+            val normalStr = normalizedPath.toString()
+            // If normalStr already starts with rootStr, use it directly
+            if (normalStr.startsWith(rootStr)) return@run normalStr
+            // If rootStr ends with something that normalStr partially contains, try toRealPath on
+            // the existing directories up to the first agent-controlled component
+            // (i.e., the first segment beyond the root that may be a symlink)
+            try {
+                // Walk from the root outward in normalizedPath to find the first existing component
+                // that can be resolved via toRealPath, then reconstruct
+                var cur = normalizedPath
+                while (cur.parent != null && !Files.exists(cur)) {
+                    cur = cur.parent
+                }
+                // cur is now the deepest existing ancestor; resolve its real path
+                val realCur = if (Files.exists(cur)) cur.toRealPath() else null
+                if (realCur != null) {
+                    val suffix = normalizedPath.toString().removePrefix(cur.toString())
+                    realCur.toString() + suffix
+                } else normalStr
+            } catch (_: Exception) {
+                normalStr
+            }
+        }
+
+        val symlinkSegment = findSymlinkInPath(normalizedForWalk, effectiveRoot.toString())
+        return if (symlinkSegment != null) {
+            ToolResult.error(
+                "Error: path '$rawPath' contains a symbolic link at '$symlinkSegment'. " +
+                "Symlinks in path components are not allowed to prevent TOCTOU escapes.",
+                "Error: symlink in path"
+            )
+        } else null
+    }
+
     private fun resolveAndValidate(
         rawPath: String,
         projectBasePath: String?,
@@ -162,13 +263,16 @@ object PathValidator {
         val expanded = expandUserHome(rawPath)
         val resolved = if (File(expanded).isAbsolute) expanded else File(projectBasePath, expanded).path
 
+        // E4: Check symlinks BEFORE canonicalization — canonicalize derefs symlinks.
+        // We normalize (dot-removal only) and check each component.
+        val projectCanonical = File(projectBasePath).canonicalPath
+        checkSymlinksInPath(rawPath, resolved, projectCanonical)?.let { return null to it }
+
         val canonical = try {
             File(resolved).canonicalPath
         } catch (e: Exception) {
             return null to ToolResult.error("Error: invalid path '$rawPath': ${e.message}", "Error: invalid path")
         }
-
-        val projectCanonical = File(projectBasePath).canonicalPath
 
         // Always allow paths within the project directory
         if (canonical.startsWith(projectCanonical + File.separator) || canonical == projectCanonical) {
@@ -178,6 +282,8 @@ object PathValidator {
         // For read operations, also allow paths within ~/.workflow-orchestrator/
         if (allowAgentDataDir) {
             val agentDataCanonical = File(System.getProperty("user.home"), AGENT_DATA_DIR).canonicalPath
+            // E4: Also check symlinks for agent-data-dir reads
+            checkSymlinksInPath(rawPath, resolved, agentDataCanonical)?.let { return null to it }
             if (canonical.startsWith(agentDataCanonical + File.separator) || canonical == agentDataCanonical) {
                 return canonical to null
             }
