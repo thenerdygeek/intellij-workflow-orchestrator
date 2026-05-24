@@ -96,9 +96,24 @@ class CopyrightFixService {
     fun prepareHeader(template: String, currentYear: Int): String =
         template.replace("{year}", currentYear.toString())
 
+    /**
+     * Returns true when the file's opening region contains a copyright statement.
+     *
+     * Scans the first 30 lines (raised from 15 — long EUPL/Apache headers can easily
+     * exceed 15 lines before the "Copyright" keyword appears). Two strategies are used
+     * so that both keyword-based and year-only headers are detected:
+     *   1. Case-insensitive "copyright" keyword anywhere in the first 30 lines.
+     *   2. Year-regex fallback: a four-digit year in the range 1900-2099 appearing
+     *      on a comment line (// or * prefix) in the first 30 lines, which covers
+     *      short SPDX-style headers that omit the word "copyright" entirely.
+     */
     fun hasCopyrightHeader(content: String): Boolean {
-        val headerRegion = content.lines().take(15).joinToString("\n").lowercase()
-        return headerRegion.contains("copyright")
+        val headerLines = content.lines().take(30)
+        val headerRegion = headerLines.joinToString("\n").lowercase()
+        if (headerRegion.contains("copyright")) return true
+        // Fallback: a year on a comment line (covers SPDX-only headers)
+        val yearOnCommentLine = Regex("""^\s*(?://|/?\*)\s*.*\b(?:19|20)\d{2}\b""")
+        return headerLines.any { yearOnCommentLine.containsMatchIn(it) }
     }
 
     fun isSourceFile(file: VirtualFile): Boolean = !getCachedFileType(file).isBinary
@@ -123,7 +138,7 @@ class CopyrightFixService {
             )
         }
 
-        val headerRegion = content.lines().take(15).joinToString("\n")
+        val headerRegion = content.lines().take(30).joinToString("\n")
         val updated = updateYearInHeader(headerRegion, currentYear)
 
         return if (updated == headerRegion) {

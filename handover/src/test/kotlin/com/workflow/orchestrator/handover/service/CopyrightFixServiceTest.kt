@@ -81,4 +81,40 @@ class CopyrightFixServiceTest {
         assertFalse(service.hasCopyrightHeader(content))
     }
 
+    // --- B3 regression: scan cap raised from 15 to 30 lines (audit finding handover:F-3) ---
+
+    @Test
+    fun `hasCopyrightHeader detects copyright keyword beyond line 15`() {
+        // 16 blank/comment lines before the "copyright" keyword — was invisible at cap=15
+        val preamble = (1..16).joinToString("\n") { "// line $it" }
+        val content = "$preamble\n// Copyright (c) 2025 MyCompany\npackage com.example;"
+        assertTrue(
+            service.hasCopyrightHeader(content),
+            "copyright keyword on line 17 must be detected within the 30-line scan window"
+        )
+    }
+
+    @Test
+    fun `hasCopyrightHeader SPDX-only header detected via year-regex fallback`() {
+        // SPDX-style header has no "copyright" keyword; only "2025" on a comment line
+        val content = "// SPDX-License-Identifier: Apache-2.0\n// SPDX-FileCopyrightText: 2025 MyCompany\npackage com.example;"
+        assertTrue(
+            service.hasCopyrightHeader(content),
+            "SPDX header with year on comment line must be detected by year-regex fallback"
+        )
+    }
+
+    @Test
+    fun `analyzeFile scans 30 lines for year update`() {
+        // Year is on line 20 — was missed when analyzeFile took only 15 lines
+        val preamble = (1..19).joinToString("\n") { "// comment line $it" }
+        val content = "$preamble\n// Copyright (c) 2023 MyCompany\npackage com.example;"
+        val entry = service.analyzeFile("Foo.kt", content, currentYear = 2026)
+        assertEquals(
+            com.workflow.orchestrator.handover.model.CopyrightStatus.YEAR_OUTDATED,
+            entry.status,
+            "year on line 20 must be detected and flagged as YEAR_OUTDATED within the 30-line window"
+        )
+    }
+
 }
