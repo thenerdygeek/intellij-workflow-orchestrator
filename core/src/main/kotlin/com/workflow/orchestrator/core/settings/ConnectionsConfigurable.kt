@@ -13,6 +13,7 @@ import com.workflow.orchestrator.core.auth.AuthTestService
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ServiceType
+import com.workflow.orchestrator.core.security.BaseUrlValidator
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPasswordField
@@ -120,6 +121,47 @@ class ConnectionsConfigurable(
 
     override fun apply() {
         dialogPanel?.apply()
+
+        // Validate service base URLs before persisting — blocks SSRF via crafted workspace settings.
+        val urlsToValidate = listOf(
+            "Jira" to connSettings.state.jiraUrl,
+            "Bamboo" to connSettings.state.bambooUrl,
+            "Bitbucket" to connSettings.state.bitbucketUrl,
+            "SonarQube" to connSettings.state.sonarUrl,
+        )
+        for ((name, url) in urlsToValidate) {
+            if (url.isBlank()) continue  // blank = not configured, skip validation
+            when (val result = BaseUrlValidator.validate(url)) {
+                is BaseUrlValidator.ValidationResult.Invalid -> {
+                    // Roll back the dialog-applied value and surface an error to the user.
+                    // ConfigurationException would prevent the settings dialog from closing;
+                    // a notification is less disruptive and more visible.
+                    log.warn("[Settings:Connections] $name URL rejected by SSRF guard: ${result.reason}")
+                    com.intellij.notification.NotificationGroupManager.getInstance()
+                        .getNotificationGroup("Workflow Orchestrator")
+                        ?.createNotification(
+                            "$name URL rejected",
+                            result.reason,
+                            com.intellij.notification.NotificationType.ERROR
+                        )
+                        ?.notify(project)
+                    return  // abort apply — do not persist any settings this cycle
+                }
+                is BaseUrlValidator.ValidationResult.SoftWarning -> {
+                    log.warn("[Settings:Connections] $name URL soft-warning: ${result.warning}")
+                    com.intellij.notification.NotificationGroupManager.getInstance()
+                        .getNotificationGroup("Workflow Orchestrator")
+                        ?.createNotification(
+                            "$name URL warning",
+                            result.warning,
+                            com.intellij.notification.NotificationType.WARNING
+                        )
+                        ?.notify(project)
+                    // Non-blocking — allow save to continue
+                }
+                BaseUrlValidator.ValidationResult.Valid -> { /* all good */ }
+            }
+        }
 
         // Save credentials only on explicit Apply — not on every keystroke
         for ((serviceType, token) in pendingTokens) {
