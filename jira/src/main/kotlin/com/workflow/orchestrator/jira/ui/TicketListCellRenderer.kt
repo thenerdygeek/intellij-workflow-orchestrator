@@ -4,6 +4,7 @@ import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ui.StatusColors
+import com.workflow.orchestrator.core.util.HtmlEscape
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import java.awt.*
 import java.awt.geom.Ellipse2D
@@ -44,7 +45,7 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
         this.isHovered = !isSelected && index == listHoveredIndex
 
         preferredSize = Dimension(list.width, JBUI.scale(ROW_HEIGHT))
-        toolTipText = "${value.key}: ${value.fields.summary}"
+        toolTipText = HtmlEscape.escapeHtml("${value.key}: ${value.fields.summary}")
         return this
     }
 

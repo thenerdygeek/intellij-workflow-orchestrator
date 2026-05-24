@@ -51,6 +51,7 @@ import com.workflow.orchestrator.core.workflow.ui.ReadOnlyBanner
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.wm.ToolWindowManager
 import com.workflow.orchestrator.core.ai.AgentChatRedirect
+import com.workflow.orchestrator.core.util.HtmlEscape
 import com.workflow.orchestrator.pullrequest.service.MarkdownToHtml
 import com.workflow.orchestrator.pullrequest.service.PrActionService
 import com.workflow.orchestrator.pullrequest.service.PrDetailService
@@ -1358,7 +1359,7 @@ class PrDetailPanel(
             mergeButton.isEnabled = false
             val vetoReasons = mergeStatus.vetoes.joinToString("\n") { it.summaryMessage }
             mergeButton.toolTipText = if (vetoReasons.isNotBlank()) {
-                "Cannot merge:\n$vetoReasons"
+                HtmlEscape.escapeHtml("Cannot merge:\n$vetoReasons")
             } else {
                 "Cannot merge — preconditions not met"
             }
@@ -2795,8 +2796,9 @@ private class MergeOptionsDialog(
                 maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(60))
             }
             val warningIcon = JBLabel(AllIcons.General.Warning)
+            // Escape summaryMessage before inserting into HTML to prevent Swing HTML injection
             val vetoText = mergeStatus.vetoes.joinToString("\n") { it.summaryMessage }
-            val warningLabel = JBLabel("<html><b>Warnings:</b><br>${vetoText.replace("\n", "<br>")}</html>").apply {
+            val warningLabel = JBLabel("<html><b>Warnings:</b><br>${HtmlEscape.escapeHtml(vetoText).replace("\n", "<br>")}</html>").apply {
                 foreground = StatusColors.WARNING
             }
             warningPanel.add(warningIcon, BorderLayout.WEST)

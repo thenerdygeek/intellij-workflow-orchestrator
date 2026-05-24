@@ -476,10 +476,10 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                 foreground = StatusColors.LINK
                 cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
             })
-            leftPanel.add(JBLabel(StringUtils.truncate(subtask.fields.summary, 50)).apply {
+            leftPanel.add(JBLabel("<html>${HtmlEscape.escapeHtml(StringUtils.truncate(subtask.fields.summary, 50))}</html>").apply {
                 font = font.deriveFont(JBUI.scale(11).toFloat())
                 foreground = StatusColors.SECONDARY_TEXT
-                if (subtask.fields.summary.length > 50) toolTipText = subtask.fields.summary
+                if (subtask.fields.summary.length > 50) toolTipText = HtmlEscape.escapeHtml(subtask.fields.summary)
             })
 
             row.add(leftPanel, BorderLayout.CENTER)
@@ -904,8 +904,8 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
 
         headerPanel.add(keyRow)
 
-        // Title (large, below key)
-        headerPanel.add(JBLabel(issue.fields.summary).apply {
+        // Title (large, below key) — escape summary to prevent Swing HTML injection
+        headerPanel.add(JBLabel("<html>${HtmlEscape.escapeHtml(issue.fields.summary)}</html>").apply {
             font = font.deriveFont(Font.BOLD, JBUI.scale(16).toFloat())
             foreground = JBColor.foreground()
             border = JBUI.Borders.empty(4, 0, 0, 0)
@@ -1086,10 +1086,10 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
                 font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
                 foreground = JBColor.foreground()
             })
-            leftPanel.add(JBLabel(StringUtils.truncate(linkedIssue.fields.summary, 50)).apply {
+            leftPanel.add(JBLabel("<html>${HtmlEscape.escapeHtml(StringUtils.truncate(linkedIssue.fields.summary, 50))}</html>").apply {
                 font = font.deriveFont(JBUI.scale(11).toFloat())
                 foreground = StatusColors.SECONDARY_TEXT
-                if (linkedIssue.fields.summary.length > 50) toolTipText = linkedIssue.fields.summary
+                if (linkedIssue.fields.summary.length > 50) toolTipText = HtmlEscape.escapeHtml(linkedIssue.fields.summary)
             })
 
             add(leftPanel, BorderLayout.CENTER)

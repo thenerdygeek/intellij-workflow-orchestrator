@@ -12,6 +12,7 @@ import com.workflow.orchestrator.core.model.sonar.SonarRuleData
 import com.workflow.orchestrator.core.services.SonarService
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.ui.TimeFormatter
+import com.workflow.orchestrator.core.util.HtmlEscape
 import com.workflow.orchestrator.sonar.model.IssueSeverity
 import com.workflow.orchestrator.sonar.model.LineCoverageStatus
 import com.workflow.orchestrator.sonar.service.SonarDataService
@@ -189,8 +190,8 @@ class IssueDetailPanel(
         val htmlColor = StatusColors.htmlColor(severityColor as JBColor)
         val typeStr = issue.type.name.replace("_", " ")
 
-        titleLabel.text = "<html><font color='$htmlColor'><b>[${issue.severity}]</b></font> " +
-            "$typeStr \u2014 ${issue.message}</html>"
+        titleLabel.text = "<html><font color='$htmlColor'><b>[${HtmlEscape.escapeHtml(issue.severity.toString())}]</b></font> " +
+            "${HtmlEscape.escapeHtml(typeStr)} \u2014 ${HtmlEscape.escapeHtml(issue.message)}</html>"
 
         // Metadata: file path, line, effort, age, rule key
         val metaParts = mutableListOf<String>()
@@ -256,8 +257,8 @@ class IssueDetailPanel(
         }
         val htmlColor = StatusColors.htmlColor(probabilityColor as JBColor)
 
-        titleLabel.text = "<html><font color='$htmlColor'><b>[${hotspot.probability}]</b></font> " +
-            "SECURITY HOTSPOT \u2014 ${hotspot.message}</html>"
+        titleLabel.text = "<html><font color='$htmlColor'><b>[${HtmlEscape.escapeHtml(hotspot.probability)}]</b></font> " +
+            "SECURITY HOTSPOT \u2014 ${HtmlEscape.escapeHtml(hotspot.message)}</html>"
 
         // Metadata: file path, line, review status, security category
         // hotspot.component is "projectKey:relativePath" — split into both halves so
@@ -387,10 +388,10 @@ class IssueDetailPanel(
         val desc = rule.description.take(300).let {
             if (rule.description.length > 300) "$it..." else it
         }
-        // Strip HTML tags from description for clean display
-        val cleanDesc = desc.replace(Regex("<[^>]*>"), "")
-        val remediation = rule.remediation?.let { " \u2022 Remediation: $it" } ?: ""
-        ruleInfoLabel.text = "<html><b>${rule.name}</b>$remediation<br/><i>${cleanDesc}</i></html>"
+        // Strip HTML tags from description for clean display, then escape remaining content
+        val cleanDesc = HtmlEscape.escapeHtml(desc.replace(Regex("<[^>]*>"), ""))
+        val remediation = rule.remediation?.let { " \u2022 Remediation: ${HtmlEscape.escapeHtml(it)}" } ?: ""
+        ruleInfoLabel.text = "<html><b>${HtmlEscape.escapeHtml(rule.name)}</b>$remediation<br/><i>${cleanDesc}</i></html>"
     }
 
     // --- Navigation ---
