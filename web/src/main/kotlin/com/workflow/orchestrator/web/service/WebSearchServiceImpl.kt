@@ -7,7 +7,10 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.model.web.SearchHit
 import com.workflow.orchestrator.core.services.ToolResult
+import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.getWebEgressDenyList
+import com.workflow.orchestrator.core.settings.resolveSanitizerBrainId
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import com.workflow.orchestrator.core.web.SubagentSpawner
 import com.workflow.orchestrator.core.web.WebSearchService
@@ -71,14 +74,40 @@ class WebSearchServiceImpl(
             logsDir.toPath().resolve("web")
         }
 
-        // TODO B10: replace this pass-through with project.service<QueryEgressFilterImpl>()
-        //  once QueryEgressFilterImpl is registered as a @Service in plugin.xml.
-        val noOpEgressFilter = object : com.workflow.orchestrator.core.web.QueryEgressFilter {
-            override suspend fun screen(
-                project: com.intellij.openapi.project.Project,
-                query: String,
-            ) = com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Safe(query)
-        }
+        val egressFilter = com.workflow.orchestrator.web.service.egress.QueryEgressFilterImpl(
+            denyListSupplier = {
+                val user = settings.getWebEgressDenyList().toSet()
+                val auto = if (state.webEgressIncludeAutoDerivedTerms) {
+                    val connState = ConnectionSettings.getInstance().state
+                    val urls = listOfNotNull(
+                        connState.jiraUrl,
+                        connState.bambooUrl,
+                        connState.bitbucketUrl,
+                        connState.sonarUrl,
+                        connState.sourcegraphUrl,
+                        connState.webSearchSearxngUrl,
+                        connState.webSearchCustomUrl,
+                    ).filter { it.isNotBlank() }
+                    com.workflow.orchestrator.web.service.egress.AutoDenyListSource.extractHostsFromUrls(urls) +
+                        com.workflow.orchestrator.web.service.egress.AutoDenyListSource.extractModuleNames(project)
+                } else emptySet<String>()
+                user + auto
+            },
+            llmScreenerEnabled = state.webEgressLlmScreenerEnabled,
+            llmScreener = if (state.webEgressLlmScreenerEnabled) {
+                val llm = com.workflow.orchestrator.web.service.egress.QueryEgressLlmScreener(
+                    spawner = project.service<com.workflow.orchestrator.core.web.SubagentSpawner>(),
+                    brainId = settings.resolveSanitizerBrainId(),
+                    timeoutMs = state.webEgressTimeoutMs.toLong(),
+                )
+                ;{ q -> llm.screen(project, q) }
+            } else {
+                { _ -> com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Safe("") }
+                // Guard: the impl only calls this lambda when llmScreenerEnabled=true.
+                // Returning Safe("") here is unreachable in practice — see B5's
+                // 'LLM screener is NOT invoked when deny-list already blocked' test.
+            },
+        )
 
         return WebSearchEngine(
             project = project,
@@ -87,7 +116,7 @@ class WebSearchServiceImpl(
             jsoupReadability = JsoupReadability(),
             registry = SearchProviderRegistry(project, searchClient),
             auditLog = WebAuditLog(auditLogDir),
-            egressFilter = noOpEgressFilter,
+            egressFilter = egressFilter,
         )
     }
 }
