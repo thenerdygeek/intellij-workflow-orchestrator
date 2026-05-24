@@ -63,19 +63,22 @@ object PathValidator {
     }
 
     /**
-     * Resolve a raw path and validate it stays within the project OR the supplied
-     * memory directory (typically `{agentDir}/memory/`).
+     * Resolve a raw path and validate it stays within the project OR any of the supplied
+     * extra allow-listed roots (typically `{agentDir}/memory/` and `{agentDir}/research/`).
      *
-     * Write tools (edit_file, create_file) call this so the agent can manage its own
-     * file-based memory using general file tools — without granting write access to
-     * the whole `~/.workflow-orchestrator/` tree.
+     * Write tools (edit_file, create_file, delete_file, revert_file) call this so the agent
+     * can manage its own file-based memory + per-session research dumps using general file
+     * tools — without granting write access to the whole `~/.workflow-orchestrator/` tree.
+     *
+     * The first allow-list match wins; traversal-via-`..` is defeated because we canonicalise
+     * the target path before comparing prefixes.
      *
      * @return canonical path if valid, or ToolResult error if traversal detected
      */
     fun resolveAndValidateForWrite(
         rawPath: String,
         projectBasePath: String?,
-        memoryDir: String?
+        allowedExtraRoots: List<String> = emptyList(),
     ): Pair<String?, ToolResult?> {
         if (projectBasePath == null) {
             return null to ToolResult.error("Error: project base path not available", "Error: no project")
@@ -95,18 +98,18 @@ object PathValidator {
             return canonical to null
         }
 
-        if (memoryDir != null) {
-            val memCanonical = try { File(memoryDir).canonicalPath } catch (_: Exception) { null }
-            if (memCanonical != null &&
-                (canonical.startsWith(memCanonical + File.separator) || canonical == memCanonical)
+        for (extraRoot in allowedExtraRoots) {
+            val extraCanonical = try { File(extraRoot).canonicalPath } catch (_: Exception) { null }
+            if (extraCanonical != null &&
+                (canonical.startsWith(extraCanonical + File.separator) || canonical == extraCanonical)
             ) {
                 return canonical to null
             }
         }
 
         return null to ToolResult.error(
-            "Error: path '$rawPath' resolves outside the project directory and the memory directory. " +
-            "Write operations are restricted to the project directory and `{agentDir}/memory/`.",
+            "Error: path '$rawPath' resolves outside the project directory and the agent's allow-listed roots. " +
+            "Write operations are restricted to the project directory and `{agentDir}/memory/` + `{agentDir}/research/`.",
             "Error: path outside project"
         )
     }

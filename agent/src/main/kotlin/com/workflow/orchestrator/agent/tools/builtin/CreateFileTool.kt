@@ -142,8 +142,13 @@ class CreateFileTool : AgentTool {
             ?: return ToolResult("Error: 'content' parameter required", "Error: missing content", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val overwrite = params["overwrite"]?.jsonPrimitive?.booleanOrNull ?: false
 
-        val memoryDir = project.basePath?.let { File(ProjectIdentifier.agentDir(it), "memory").absolutePath }
-        val (path, pathError) = PathValidator.resolveAndValidateForWrite(rawPath, project.basePath, memoryDir)
+        val extraRoots = project.basePath?.let {
+            listOf(
+                File(ProjectIdentifier.agentDir(it), "memory").absolutePath,
+                ProjectIdentifier.researchDir(it).absolutePath,
+            )
+        } ?: emptyList()
+        val (path, pathError) = PathValidator.resolveAndValidateForWrite(rawPath, project.basePath, extraRoots)
         if (pathError != null) return pathError
         val resolvedPath = path!!
 

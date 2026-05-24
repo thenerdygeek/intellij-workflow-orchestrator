@@ -52,8 +52,13 @@ class DeleteFileTool : AgentTool {
         val rawPath = params["path"]?.jsonPrimitive?.content
             ?: return ToolResult("Error: 'path' parameter required", "Error: missing path", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
-        val memoryDirPath = project.basePath?.let { File(ProjectIdentifier.agentDir(it), "memory").absolutePath }
-        val (path, pathError) = PathValidator.resolveAndValidateForWrite(rawPath, project.basePath, memoryDirPath)
+        val extraRoots = project.basePath?.let {
+            listOf(
+                File(ProjectIdentifier.agentDir(it), "memory").absolutePath,
+                ProjectIdentifier.researchDir(it).absolutePath,
+            )
+        } ?: emptyList()
+        val (path, pathError) = PathValidator.resolveAndValidateForWrite(rawPath, project.basePath, extraRoots)
         if (pathError != null) return pathError
         val resolvedPath = path!!
 

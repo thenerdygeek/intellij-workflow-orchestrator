@@ -630,7 +630,7 @@ The plugin writes to four distinct roots. Anything the agent's read tools must r
 | Tier | Root | What lives here | Reachable by agent reads? |
 |---|---|---|---|
 | 1. Project | `{project.basePath}` | User code; project-scoped agent assets (`.workflow/skills/`, `.workflow/agents/`, `.agent-hooks.json`). Agent **writes** allowed here. | Yes |
-| 2. Per-session agent data | `~/.workflow-orchestrator/{slug}-{sha6}/agent/sessions/{id}/` | `api_conversation_history.json`, `ui_messages.json`, `tasks.json`, `plan.json`, `checkpoints/msg-{ts}/files/<path-tree>/ + meta.json` (per-user-message copy-on-write snapshots; v2 system — see Checkpoint System v2 section above), `attachments/` (image uploads), `tool-output/` (spilled tool output), **`downloads/`** (artifact downloads from feature modules). Agent **writes** allowed only into `{agentDir}/memory/` — see `PathValidator.resolveAndValidateForWrite`. | Yes — via `PathValidator.resolveAndValidateForRead` |
+| 2. Per-session agent data | `~/.workflow-orchestrator/{slug}-{sha6}/agent/sessions/{id}/` | `api_conversation_history.json`, `ui_messages.json`, `tasks.json`, `plan.json`, `checkpoints/msg-{ts}/files/<path-tree>/ + meta.json` (per-user-message copy-on-write snapshots; v2 system — see Checkpoint System v2 section above), `attachments/` (image uploads), `tool-output/` (spilled tool output), **`downloads/`** (artifact downloads from feature modules). Agent **writes** allowed into `{agentDir}/memory/` AND `{agentDir}/research/` — see `PathValidator.resolveAndValidateForWrite`. | Yes — via `PathValidator.resolveAndValidateForRead` |
 | 3. Cross-session agent data | `~/.workflow-orchestrator/{slug}-{sha6}/agent/` (parent of `sessions/`) and `~/.workflow-orchestrator/{slug}-{sha6}/logs/` | `sessions.json` global index, `pr-review-sessions.json`, `pr-review-findings/`, `agent-YYYY-MM-DD.jsonl` logs (7-day rotation). | Yes — same allowlisted root |
 | 4. User-global agent data | `~/.workflow-orchestrator/` | `agents/` (user personas), `skills/` (user skills), `pricing.json`, `trace-fallback/`, `diagnostics/`. | Yes — same allowlisted root |
 | OUT | `java.io.tmpdir`, `PathManager.systemPath/`, IntelliJ config | OkHttp HTTP cache, `PersistentStateComponent` XML, anything under system temp. | **No.** Anything written here is unreachable to agent read tools. |
@@ -653,6 +653,8 @@ Per-project, file-backed auto-memory patterned after Claude Code. No specialized
 - **PathValidator:** `resolveAndValidateForWrite()` accepts `{agentDir}/memory/` as an additional allowed root for `edit_file` / `create_file`.
 
 No keyword search, no tag search, no cross-session conversation recall, no automatic extraction. The LLM decides relevance by scanning the always-injected `MEMORY.md` index and fetching individual memories as needed.
+
+**Research dir parallel.** The research sub-agent (see "Bundled specialist agents" → `research`) writes per-session dumps to `{agentDir}/research/` via the same `PathValidator` allow-list mechanism — `resolveAndValidateForWrite` accepts both `{agentDir}/memory/` and `{agentDir}/research/`. The research dir also holds an auto-managed `RESEARCH.md` index (auto-injected into the orchestrator's system prompt like `MEMORY.md`) — see `ResearchIndex.kt`.
 
 ## Interactive Debugging
 
