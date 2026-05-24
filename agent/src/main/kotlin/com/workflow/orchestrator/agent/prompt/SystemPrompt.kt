@@ -533,6 +533,12 @@ In each user message, the environment_details will specify the current mode. The
             appendLine("| Discover or run pytest tests | \"build\" (pytest_discover, pytest_run, pytest_fixtures) | Manually running pytest via run_command |")
             appendLine("| Check installed, outdated, or declared Python packages | \"build\" (pip_list/pip_dependencies/pip_outdated, poetry_list/poetry_outdated, uv_list/uv_outdated) | Running pip list / poetry show via run_command |")
         }
+        // Cross-IDE delegation hints — always shown when the tool is registered.
+        appendLine("| Modify a repo open in a different IDE window | delegation_send with `request` + optional `suggested_repo` | Switching repos manually or rejecting the task |")
+        appendLine("| Follow up on a previous delegation without re-opening the picker | delegation_send with `handle` from a prior call | Starting a fresh delegation (re-opens the picker, re-prompts Accept) |")
+        appendLine("| Inspect a delegated session's full message history | delegation_fetch_transcript | Reading the result summary only |")
+        appendLine()
+        appendLine("**Cross-IDE delegation UX:** `delegation_send` does not enumerate available IDEs for you. The picker dialog (modal in the requesting IDE) is the trust + discovery gate — the human selects the actual target IDE/repo. Specify your intent via `request`; pass `suggested_repo` as a hint for pre-selection. To pre-flight what's available without opening the picker, call `delegation_list_targets`.")
     }.trimEnd()
 
     /**
