@@ -14,6 +14,7 @@ import com.workflow.orchestrator.web.service.search.SearchProviderRegistry
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -282,5 +283,32 @@ class WebSearchPipelineE2ETest {
 
         val result = engine.search(WebSearchRequest(query = "local test"))
         assertFalse(result.isError, "Expected success with SearXNG localhost but got: ${result.summary}")
+    }
+
+    // ── I5 regression: search passes resolved sanitizer brainId to subagent ───
+
+    @Test
+    fun `search passes resolved sanitizer brainId to subagent`() = runTest {
+        // Configure a non-blank webSanitizerBrainId and verify it reaches runSanitizerBatch.
+        state.webSanitizerBrainId = "haiku-4-5"
+        val capturedBrainId = slot<String?>()
+        coEvery {
+            spawner.runSanitizerBatch(any(), capture(capturedBrainId), any(), any(), any(), any())
+        } answers {
+            val count = arg<Int>(5)
+            List(count) { SubagentSpawner.SanitizerResult(SubagentSpawner.Verdict.SAFE, "ok", null) }
+        }
+
+        val rawHits = listOf(
+            SearchProvider.RawHit(title = "T", url = "https://example.com", snippet = "s", rank = 0)
+        )
+        engine = buildEngine(StubSearchProvider(rawHits))
+        // resolveSanitizerBrainId() reads settings.state; wire it on the mock.
+        every { settings.state } returns state
+
+        val result = engine.search(WebSearchRequest(query = "brain id test"))
+        assertFalse(result.isError, "Expected success but got: ${result.summary}")
+        assertEquals("haiku-4-5", capturedBrainId.captured,
+            "runSanitizerBatch must receive the configured brainId")
     }
 }

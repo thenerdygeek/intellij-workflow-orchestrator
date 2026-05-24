@@ -7,6 +7,7 @@ import com.workflow.orchestrator.core.model.web.SearchHit
 import com.workflow.orchestrator.core.security.UrlSafetyGuard
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.resolveSanitizerBrainId
 import com.workflow.orchestrator.core.web.QueryScreenResult
 import com.workflow.orchestrator.core.web.SearchProvider
 import com.workflow.orchestrator.core.web.UrlScreener
@@ -144,7 +145,7 @@ class WebSearchEngine(
         val sanitized = sanitizerSubagent.sanitizeBatch(
             project = project,
             texts = snippets,
-            brainId = null,
+            brainId = settings.resolveSanitizerBrainId(),
             timeoutMs = 60_000L,
         )
 
