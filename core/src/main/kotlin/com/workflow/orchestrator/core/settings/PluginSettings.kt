@@ -362,6 +362,15 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
             "image/png", "image/jpeg", "image/webp", "image/gif"
         )
 
+        // ── Sub-agent personas ────────────────────────────────────────────────
+        /**
+         * Enables the bundled `research` sub-agent persona. When disabled, both the
+         * `/research` slash command and direct `agent(agent_type="research", ...)` calls
+         * return `RESEARCH_SUBAGENT_DISABLED` from `SpawnAgentTool` (no silent failure).
+         * Project-level; default ON matches the house style for web_fetch / web_search.
+         */
+        var enableResearchSubagent by property(true)
+
         // ── Web tools (added 2026-05-23) ─────────────────────────────────────
         var enableWebFetch by property(true)
         var enableWebSearch by property(true)
