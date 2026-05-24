@@ -393,6 +393,16 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var webSanitizerBrainId by string("")        // blank = use cheapest available
         var webSanitizerFailClosed by property(true)
 
+        // fetch/search — egress filter (added 2026-05-24)
+        /** JSON-encoded `List<String>` of user-supplied deny-list entries. */
+        var webEgressDenyListJson by string("[]")
+        /** When true, an LLM screener runs after the deny-list (Stage 1 of egress filter). */
+        var webEgressLlmScreenerEnabled by property(false)
+        /** When true, auto-derived terms (service hostnames, module names) augment the deny-list. */
+        var webEgressIncludeAutoDerivedTerms by property(true)
+        /** Per-call timeout for the LLM screener; only consulted when [webEgressLlmScreenerEnabled]. */
+        var webEgressTimeoutMs by property(15_000)
+
         init {
             // Populate default whitelist on first instantiation. Persisted lists
             // round-trip independently — if the user clears the list it stays
@@ -522,6 +532,35 @@ fun PluginSettings.getWebAllowlist(): List<com.workflow.orchestrator.core.model.
  */
 fun PluginSettings.setWebAllowlist(entries: List<com.workflow.orchestrator.core.model.web.DomainAllowlistEntry>) {
     state.webAllowlistJson = WebAllowlistJson.adapter.toJson(entries)
+}
+
+// ── Web egress deny-list accessors (added 2026-05-24) ────────────────────────
+
+private val webEgressLog = com.intellij.openapi.diagnostic.Logger.getInstance("WebEgressDenyList")
+
+private val egressDenyListAdapter by lazy {
+    com.squareup.moshi.Moshi.Builder().build().adapter<List<String>>(
+        com.squareup.moshi.Types.newParameterizedType(List::class.java, String::class.java)
+    )
+}
+
+/**
+ * Returns the user-supplied egress deny-list. Empty list when JSON is blank or malformed
+ * (fail-soft, matches `getWebAllowlist` behavior — corruption is logged at WARN so a
+ * silently-empty list does not look like deliberate user clearing).
+ */
+fun PluginSettings.getWebEgressDenyList(): List<String> {
+    val json = state.webEgressDenyListJson?.ifBlank { "[]" } ?: "[]"
+    return try {
+        egressDenyListAdapter.fromJson(json) ?: emptyList()
+    } catch (e: Exception) {
+        webEgressLog.warn("Failed to parse webEgressDenyListJson; returning empty list. JSON length=${json.length}", e)
+        emptyList()
+    }
+}
+
+fun PluginSettings.setWebEgressDenyList(entries: List<String>) {
+    state.webEgressDenyListJson = egressDenyListAdapter.toJson(entries)
 }
 
 /**
