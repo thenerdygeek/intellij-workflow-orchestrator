@@ -432,34 +432,68 @@ class WebFetchPipelineE2ETest {
         )
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // I3: prefix-byte sniff defeats lying Content-Type headers
+    // ─────────────────────────────────────────────────────────────────────────
+
     @Test
-    fun `server lies about Content-Type declaring text-html but body is binary`() = runTest {
-        // Content-Type: text/html is allowlisted — the pipeline must not crash when the body
-        // contains non-UTF-8 bytes. The structural sanitizer receives the garbled text.
-        // This test pins current behavior as a regression guard.
+    fun `server lies about Content-Type declaring text-html but body is PNG binary`() = runTest {
+        // I3: server sends Content-Type: text/html but body starts with PNG magic (89 50 4E 47).
+        // The prefix-byte sniff must detect this and return UNSUPPORTED_CONTENT_TYPE.
         gate.next = ApprovalGate.Decision.AllowOnce
-        val binaryBody = byteArrayOf(0x00, 0x01, 0x02, 0xFF.toByte())
-            .toString(Charsets.ISO_8859_1)
+        val pngMagic = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
         server.enqueue(
             MockResponse()
                 .setResponseCode(200)
                 .addHeader("Content-Type", "text/html")
-                .setBody(binaryBody)
+                .setBody(okio.Buffer().write(pngMagic))
         )
 
-        // The pipeline accepts text/html regardless of actual byte content.
-        // Outcome depends on how JsoupReadability handles the bytes: it may return empty
-        // extractedText or partial text. Either way, the sanitizer subagent runs and the
-        // pipeline completes without crashing.
         val rr = engine.fetch(WebFetchService.WebFetchRequest(server.url("/").toString()))
-        // Accept either: success (sanitizer produces safe result) or a sanitizer-specific error.
-        // What we're NOT accepting: a crash or an unexpected UNSUPPORTED_CONTENT_TYPE error.
-        val errorIsExpected = !rr.isError ||
-            !rr.summary.contains("UNSUPPORTED_CONTENT_TYPE")
+        assertTrue(rr.isError, "PNG body declared as text/html must be rejected")
         assertTrue(
-            errorIsExpected,
-            "Content declared as text/html must not fail with UNSUPPORTED_CONTENT_TYPE: ${rr.summary}"
+            rr.summary.contains("UNSUPPORTED_CONTENT_TYPE") &&
+                rr.summary.contains("binary content detected by prefix sniff"),
+            "Expected UNSUPPORTED_CONTENT_TYPE with prefix-sniff message, got: ${rr.summary}"
         )
+    }
+
+    @Test
+    fun `text response with embedded NUL byte rejected as binary`() = runTest {
+        // NUL bytes in the first 512 bytes trigger binary detection even without magic numbers.
+        gate.next = ApprovalGate.Decision.AllowOnce
+        val bodyWithNul = byteArrayOf(0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x00, 0x77, 0x6F, 0x72, 0x6C, 0x64) // Hello + NUL + world
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .addHeader("Content-Type", "text/html")
+                .setBody(okio.Buffer().write(bodyWithNul))
+        )
+
+        val rr = engine.fetch(WebFetchService.WebFetchRequest(server.url("/").toString()))
+        assertTrue(rr.isError, "Body containing NUL must be rejected as binary")
+        assertTrue(
+            rr.summary.contains("UNSUPPORTED_CONTENT_TYPE"),
+            "Expected UNSUPPORTED_CONTENT_TYPE, got: ${rr.summary}"
+        )
+    }
+
+    @Test
+    fun `text response without NUL byte passes prefix sniff`() = runTest {
+        // A clean ASCII body must NOT trigger the binary sniff.
+        gate.next = ApprovalGate.Decision.AllowOnce
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .addHeader("Content-Type", "text/html")
+                .setBody("<html><body><p>clean text</p></body></html>")
+        )
+
+        val rr = engine.fetch(WebFetchService.WebFetchRequest(server.url("/").toString()))
+        // Should succeed (go through sanitizer) — not an UNSUPPORTED_CONTENT_TYPE error
+        val notRejectedBySniff = !rr.isError ||
+            !rr.summary.contains("UNSUPPORTED_CONTENT_TYPE")
+        assertTrue(notRejectedBySniff, "Clean text must not be rejected by binary sniff: ${rr.summary}")
     }
 
     // ─────────────────────────────────────────────────────────────────────────

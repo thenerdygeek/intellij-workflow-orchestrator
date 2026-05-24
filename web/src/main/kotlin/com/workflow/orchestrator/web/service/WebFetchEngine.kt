@@ -214,6 +214,17 @@ class WebFetchEngine(
             }
             val rawBytes = buf.readByteArray()
 
+            // Stage 6 (prefix-sniff): defeat lying Content-Type headers — spec §3 Stage 6.
+            // A server that sends Content-Type: text/html but a PNG body will be caught here.
+            val prefix = rawBytes.take(512).toByteArray()
+            if (sniffIsBinary(prefix)) {
+                return failure(
+                    WebError.UnsupportedContentType("$ct (binary content detected by prefix sniff)"),
+                    start,
+                    pass.finalUrl,
+                )
+            }
+
             // Stage 7: structural sanitization
             val struct = sanitizer.sanitize(
                 rawBytes = rawBytes,
@@ -332,6 +343,60 @@ class WebFetchEngine(
     private fun isAllowedContentType(ct: String): Boolean {
         val lower = ct.lowercase()
         return ALLOWED_CONTENT_TYPES.any { lower.startsWith(it) }
+    }
+
+    /**
+     * Returns true if [prefixBytes] look like binary (non-text) content.
+     *
+     * Two heuristics:
+     *  1. NUL byte in the first 512 bytes — text files virtually never contain 0x00.
+     *  2. Known binary magic numbers at offset 0:
+     *       0x89 50 4E 47 — PNG
+     *       FF D8 FF      — JPEG
+     *       47 49 46 38   — GIF
+     *       25 50 44 46   — PDF (%PDF)
+     *       50 4B 03 04   — ZIP / JAR / DOCX
+     *       7F 45 4C 46   — ELF
+     *       4D 5A         — Windows PE (MZ)
+     *       CA FE BA BE   — Mach-O fat binary
+     *       FE ED FA CE   — Mach-O 32-bit
+     *       FE ED FA CF   — Mach-O 64-bit
+     */
+    internal fun sniffIsBinary(prefixBytes: ByteArray): Boolean {
+        val limit = minOf(512, prefixBytes.size)
+        // Heuristic 1: NUL byte
+        for (i in 0 until limit) {
+            if (prefixBytes[i] == 0x00.toByte()) return true
+        }
+        // Heuristic 2: magic bytes
+        if (prefixBytes.size < 2) return false
+        val b0 = prefixBytes[0].toInt() and 0xFF
+        val b1 = prefixBytes[1].toInt() and 0xFF
+        val b2 = if (prefixBytes.size > 2) prefixBytes[2].toInt() and 0xFF else -1
+        val b3 = if (prefixBytes.size > 3) prefixBytes[3].toInt() and 0xFF else -1
+        return when {
+            // PNG: 89 50 4E 47
+            b0 == 0x89 && b1 == 0x50 && b2 == 0x4E && b3 == 0x47 -> true
+            // JPEG: FF D8 FF
+            b0 == 0xFF && b1 == 0xD8 && b2 == 0xFF -> true
+            // GIF: 47 49 46 38
+            b0 == 0x47 && b1 == 0x49 && b2 == 0x46 && b3 == 0x38 -> true
+            // PDF: 25 50 44 46
+            b0 == 0x25 && b1 == 0x50 && b2 == 0x44 && b3 == 0x46 -> true
+            // ZIP/JAR/DOCX: 50 4B 03 04
+            b0 == 0x50 && b1 == 0x4B && b2 == 0x03 && b3 == 0x04 -> true
+            // ELF: 7F 45 4C 46
+            b0 == 0x7F && b1 == 0x45 && b2 == 0x4C && b3 == 0x46 -> true
+            // Windows PE (MZ): 4D 5A
+            b0 == 0x4D && b1 == 0x5A -> true
+            // Mach-O fat: CA FE BA BE
+            b0 == 0xCA && b1 == 0xFE && b2 == 0xBA && b3 == 0xBE -> true
+            // Mach-O 32-bit: FE ED FA CE
+            b0 == 0xFE && b1 == 0xED && b2 == 0xFA && b3 == 0xCE -> true
+            // Mach-O 64-bit: FE ED FA CF
+            b0 == 0xFE && b1 == 0xED && b2 == 0xFA && b3 == 0xCF -> true
+            else -> false
+        }
     }
 
     private fun persistAllowlistEntry(host: String, outcome: ApprovalGate.Decision.AddToAllowlist) {
