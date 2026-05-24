@@ -988,19 +988,38 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
             data = emptyList(), summary = "Bitbucket not configured. Cannot fetch PR #$prId comments.",
             isError = true, hint = "Set up Bitbucket connection in Settings > Tools > Workflow Orchestrator > General."
         )
-        return when (val result = api.listPrComments(projectKey, repoSlug, prId)) {
-            is ApiResult.Error -> {
-                log.warn("[BitbucketService] Failed to list PR #$prId comments: ${result.message}")
-                ToolResult(data = emptyList(), summary = "listPrComments failed: ${result.message}", isError = true,
-                    hint = "Verify the PR exists and Bitbucket connection is configured.")
-            }
-            is ApiResult.Success -> {
-                var mapped = result.data.values.map { it.toPrComment() }
-                if (onlyOpen) mapped = mapped.filter { it.state == PrCommentState.OPEN }
-                if (onlyInline) mapped = mapped.filter { it.anchor != null }
-                ToolResult.success(mapped, "${mapped.size} PR comment(s) on PR #$prId")
+
+        // Paginate via isLastPage / nextPageStart to handle PRs with large activity timelines.
+        // BitbucketBranchClient.listPrComments delegates to getPullRequestActivities (20-page cap
+        // per call). When that cap is hit, isLastPage=false and nextPageStart is set. We loop
+        // up to 50 pages at the service level to collect all comments.
+        val maxPages = 50
+        val allComments = mutableListOf<BitbucketPrCommentResponse>()
+        var cursor = 0
+        var pages = 0
+        while (pages < maxPages) {
+            when (val result = api.listPrComments(projectKey, repoSlug, prId, start = cursor)) {
+                is ApiResult.Error -> {
+                    log.warn("[BitbucketService] Failed to list PR #$prId comments (page $pages): ${result.message}")
+                    return ToolResult(data = emptyList(), summary = "listPrComments failed: ${result.message}", isError = true,
+                        hint = "Verify the PR exists and Bitbucket connection is configured.")
+                }
+                is ApiResult.Success -> {
+                    allComments += result.data.values
+                    if (result.data.isLastPage || result.data.nextPageStart == null) break
+                    cursor = result.data.nextPageStart!!
+                    pages++
+                }
             }
         }
+        if (pages >= maxPages) {
+            log.warn("[BitbucketService] PR #$prId comments truncated at $maxPages pages (${allComments.size} collected)")
+        }
+
+        var mapped = allComments.map { it.toPrComment() }
+        if (onlyOpen) mapped = mapped.filter { it.state == PrCommentState.OPEN }
+        if (onlyInline) mapped = mapped.filter { it.anchor != null }
+        return ToolResult.success(mapped, "${mapped.size} PR comment(s) on PR #$prId")
     }
 
     override suspend fun getPrComment(
