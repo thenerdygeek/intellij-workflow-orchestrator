@@ -1,5 +1,11 @@
 package com.workflow.orchestrator.agent.hooks
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -218,6 +224,63 @@ class HookManagerTest {
     fun `hasAnyHooks returns true when at least one hook registered`() {
         manager.register(HookConfig(type = HookType.TASK_CANCEL, command = "cleanup"))
         assertTrue(manager.hasAnyHooks())
+    }
+
+    // ── C7 regression: concurrent register/unregister + dispatch must not throw ─
+
+    @Test
+    fun `concurrent register and dispatch do not throw ConcurrentModificationException — C7 regression`() = runTest {
+        // Before C7, hooks was a mutableMapOf + mutableListOf. Concurrent mutation
+        // while dispatch iterated threw ConcurrentModificationException.
+        // After C7, ConcurrentHashMap + CopyOnWriteArrayList makes iteration safe.
+
+        val exceptions = mutableListOf<Throwable>()
+        val event = HookEvent(HookType.TASK_START, emptyMap(), cancellable = false)
+
+        // All mutators and dispatchers run in a single coroutineScope so they are
+        // genuinely concurrent (not sequential coroutineScope blocks).
+        coroutineScope {
+            // 100 mutator coroutines: register then unregister on IO dispatcher.
+            val mutators = (1..100).map { i ->
+                async(Dispatchers.IO) {
+                    repeat(50) {
+                        try {
+                            val cmd = "cmd-$i-$it"
+                            manager.register(HookConfig(type = HookType.TASK_START, command = cmd))
+                            delay(1)
+                            manager.unregister(HookType.TASK_START, cmd)
+                        } catch (e: Throwable) {
+                            synchronized(exceptions) { exceptions.add(e) }
+                        }
+                    }
+                }
+            }
+
+            // 100 dispatch coroutines concurrently on IO dispatcher.
+            val dispatchers = (1..100).map {
+                async(Dispatchers.IO) {
+                    repeat(50) {
+                        try {
+                            manager.dispatch(event)
+                            delay(1)
+                        } catch (e: Throwable) {
+                            synchronized(exceptions) { exceptions.add(e) }
+                        }
+                    }
+                }
+            }
+
+            (mutators + dispatchers).awaitAll()
+        }
+
+        assertTrue(
+            exceptions.none { it is java.util.ConcurrentModificationException },
+            "ConcurrentModificationException thrown: ${exceptions.firstOrNull { it is java.util.ConcurrentModificationException }}"
+        )
+        assertTrue(
+            exceptions.isEmpty(),
+            "Unexpected exceptions during concurrent access: $exceptions"
+        )
     }
 }
 

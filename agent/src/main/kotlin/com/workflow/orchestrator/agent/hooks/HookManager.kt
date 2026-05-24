@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.agent.hooks
 
 import com.intellij.openapi.diagnostic.Logger
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Manages hook registration and dispatch for all lifecycle events.
@@ -25,7 +27,10 @@ import com.intellij.openapi.diagnostic.Logger
 class HookManager(
     private val runner: HookRunner
 ) {
-    private val hooks = mutableMapOf<HookType, MutableList<HookConfig>>()
+    // ConcurrentHashMap + CopyOnWriteArrayList: register/unregister from one coroutine
+    // while dispatch iterates from another coroutine can no longer throw
+    // ConcurrentModificationException (the list iterator over a COWAL snapshot is safe).
+    private val hooks = ConcurrentHashMap<HookType, CopyOnWriteArrayList<HookConfig>>()
 
     companion object {
         private val LOG = Logger.getInstance(HookManager::class.java)
@@ -37,7 +42,7 @@ class HookManager(
      * global + workspace hooks for the same event).
      */
     fun register(config: HookConfig) {
-        hooks.getOrPut(config.type) { mutableListOf() }.add(config)
+        hooks.computeIfAbsent(config.type) { CopyOnWriteArrayList() }.add(config)
         LOG.info("[HookManager] Registered ${config.type.hookName} hook: ${config.command.take(50)}")
     }
 
@@ -45,7 +50,10 @@ class HookManager(
      * Unregister a hook by type and command.
      */
     fun unregister(type: HookType, command: String) {
-        hooks[type]?.removeAll { it.command == command }
+        // CopyOnWriteArrayList.removeIf is the thread-safe atomic remove path.
+        // Kotlin's removeAll { predicate } extension uses the iterator-remove path
+        // which COWAL's snapshot iterator does not support (UnsupportedOperationException).
+        hooks[type]?.removeIf { it.command == command }
         if (hooks[type]?.isEmpty() == true) {
             hooks.remove(type)
         }
