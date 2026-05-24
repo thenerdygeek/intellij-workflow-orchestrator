@@ -496,5 +496,12 @@
             class="com.workflow.orchestrator.core.insights.GenerateReportAction">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
+        <action
+            id="Workflow.OpenResearchFolder"
+            text="Open Research Folder"
+            description="Browse research dumps written by the research sub-agent"
+            class="com.workflow.orchestrator.agent.ui.OpenResearchFolderAction">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
     </actions>
 </idea-plugin>
