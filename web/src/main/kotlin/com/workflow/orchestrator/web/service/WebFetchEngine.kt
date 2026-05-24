@@ -46,7 +46,7 @@ import java.util.UUID
 class WebFetchEngine(
     private val project: Project,
     private val settings: PluginSettings,
-    private val client: OkHttpClient,
+    private val clientFactory: (okhttp3.Dns) -> OkHttpClient,
     private val sanitizer: JsoupReadability,
     private val sanitizerSubagent: SanitizerSubagent,
     private val approvalGate: ApprovalGate,
@@ -60,6 +60,37 @@ class WebFetchEngine(
      */
     private val allowLoopback: Boolean = false,
 ) {
+
+    /**
+     * Legacy constructor used by tests that pass a pre-built [OkHttpClient] without a
+     * DNS pinning hook. The DNS pinning is still applied per-call via [PinnedDns] —
+     * the supplied client is rebuilt via `newBuilder().dns(pinnedDns)` at fetch time so
+     * connection pool / interceptors / timeouts are preserved while DNS resolution is
+     * routed through the per-call [PinnedDns].
+     */
+    constructor(
+        project: Project,
+        settings: PluginSettings,
+        client: OkHttpClient,
+        sanitizer: JsoupReadability,
+        sanitizerSubagent: SanitizerSubagent,
+        approvalGate: ApprovalGate,
+        auditLog: WebAuditLog,
+        resolver: UrlSafetyGuard.Resolver = UrlSafetyGuard.SystemResolver,
+        shortenerResolver: ShortenerResolver,
+        allowLoopback: Boolean = false,
+    ) : this(
+        project = project,
+        settings = settings,
+        clientFactory = { pinnedDns -> client.newBuilder().dns(pinnedDns).build() },
+        sanitizer = sanitizer,
+        sanitizerSubagent = sanitizerSubagent,
+        approvalGate = approvalGate,
+        auditLog = auditLog,
+        resolver = resolver,
+        shortenerResolver = shortenerResolver,
+        allowLoopback = allowLoopback,
+    )
 
     companion object {
         private const val USER_AGENT =
@@ -115,6 +146,13 @@ class WebFetchEngine(
         val start = System.currentTimeMillis()
         val correlationId = UUID.randomUUID().toString()
         val state = settings.state
+
+        // S1 — Per-call DNS pinning. The SSRF safety check above runs against a fresh
+        // PinnedDns that caches lookups for the lifetime of this fetch. We build an
+        // OkHttpClient that resolves via the SAME PinnedDns so OkHttp cannot pick a
+        // different (potentially malicious) address than the one the guard cleared.
+        val pinnedDns = PinnedDns(resolver)
+        val callClient: OkHttpClient = clientFactory(pinnedDns)
 
         // Stage 0: plan-mode gate
         if (request.planMode) {
@@ -177,7 +215,7 @@ class WebFetchEngine(
         // Stage 6: HTTP GET with manual redirect walking + streaming size cap
         val maxBytes = (request.maxBytes ?: state.webMaxBytes).toLong()
         val resp: Response = try {
-            fetchWithSafeRedirects(pass.finalUrl, correlationId, state)
+            fetchWithSafeRedirects(pass.finalUrl, correlationId, state, callClient)
         } catch (e: RedirectBlockedException) {
             return failure(e.webError, start, pass.finalUrl)
         } catch (_: TooManyRedirectsException) {
@@ -294,6 +332,7 @@ class WebFetchEngine(
         initialUrl: String,
         correlationId: String,
         state: PluginSettings.State,
+        callClient: OkHttpClient,
     ): Response {
         var url = initialUrl
         repeat(3) { _ ->
@@ -303,7 +342,7 @@ class WebFetchEngine(
                 .header("Accept", ACCEPT)
                 .header("X-Web-Tool-CorrelationId", correlationId)
                 .build()
-            val resp = withContext(Dispatchers.IO) { client.newCall(req).execute() }
+            val resp = withContext(Dispatchers.IO) { callClient.newCall(req).execute() }
             val loc = resp.header("Location")
             if (resp.code !in 300..399 || loc == null) {
                 // Not a redirect — return this response to caller

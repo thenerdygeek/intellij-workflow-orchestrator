@@ -66,8 +66,8 @@ class WebSearchPipelineE2ETest {
         ssrfResolver: UrlSafetyGuard.Resolver = allowAllResolver,
     ): WebSearchEngine {
         val auditLog = WebAuditLog(Files.createTempDirectory("search-e2e"))
-        val registry = object : SearchProviderRegistry(project, mockk()) {
-            override fun resolve(): SearchProviderRegistry.ResolvedProvider? =
+        val registry = object : SearchProviderRegistry(project, mockk<okhttp3.OkHttpClient>()) {
+            override fun resolve(pinnedDns: okhttp3.Dns): SearchProviderRegistry.ResolvedProvider? =
                 provider?.let { SearchProviderRegistry.ResolvedProvider(it, baseUrl, allowLoopback) }
         }
         return WebSearchEngine(

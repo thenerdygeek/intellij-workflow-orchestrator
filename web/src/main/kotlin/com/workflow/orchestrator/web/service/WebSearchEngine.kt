@@ -60,8 +60,13 @@ class WebSearchEngine(
             return failure(WebError.PlanModeBlocked)
         }
 
-        // Stage 0 (continued): provider configured check
-        val resolved = registry.resolve()
+        // Stage 0 (continued): provider configured check.
+        // S1 — Per-call DNS pinning. The provider's OkHttpClient is built with a fresh
+        // PinnedDns that caches lookups for the lifetime of this search call, defeating
+        // the DNS-rebinding TOCTOU between the SSRF screen below and the provider's
+        // outbound HTTP call.
+        val pinnedDns = PinnedDns(ssrfResolver)
+        val resolved = registry.resolve(pinnedDns)
             ?: run {
                 auditError(WebError.NoProviderConfigured, request.query, null, start)
                 return failure(WebError.NoProviderConfigured)

@@ -59,17 +59,21 @@ class WebFetchPipelineE2ETest {
     private val project = mockk<Project>(relaxed = true)
 
     /**
-     * DNS resolver for tests: maps `localhost` and any 127.x.x.x literal host to
-     * `203.0.113.1` (TEST-NET-3, RFC 5737) — not in any blocked range.
-     * For every other host it delegates to the real system resolver.
+     * DNS resolver for tests: returns the actual loopback address for localhost / 127.x.x.x
+     * so PinnedDns + OkHttp can actually connect to MockWebServer. Tests construct the
+     * engine with [allowLoopbackOverride] = true so the SSRF guard tolerates loopback.
      *
-     * UrlSafetyGuard.literalRejection runs BEFORE this resolver is called, so 169.254.x.x
-     * addresses are still blocked textually without reaching the DNS path.
+     * Pre-S1 this returned 203.0.113.1 (TEST-NET-3) to dodge the SSRF guard while the
+     * OkHttp client used the system DNS to actually connect to localhost. Post-S1 OkHttp's
+     * DNS is pinned to this resolver — so we must return the real loopback address.
+     *
+     * UrlSafetyGuard.literalRejection runs BEFORE this resolver is called for explicit
+     * literal hosts like "localhost", but `allowLoopback=true` in tests short-circuits
+     * the literal-rejection path for loopback so the address-check path is exercised.
      */
     private val mockWebServerResolver = UrlSafetyGuard.Resolver { host ->
         if (host == "localhost" || host.matches(Regex("""^127\.\d+\.\d+\.\d+$"""))) {
-            // Return a TEST-NET-3 public IP so loopback + private-LAN checks don't fire
-            arrayOf(InetAddress.getByName("203.0.113.1"))
+            arrayOf(InetAddress.getByName("127.0.0.1"))
         } else {
             InetAddress.getAllByName(host)
         }
@@ -550,6 +554,41 @@ class WebFetchPipelineE2ETest {
         assertTrue(
             rr.summary.contains("SANITIZER_REFUSED"),
             "Expected SANITIZER_REFUSED but got: ${rr.summary}"
+        )
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // S1: DNS rebinding TOCTOU — every resolved address must be screened, and the
+    // address must be pinned for the lifetime of the call so OkHttp's own resolution
+    // cannot pick a different (malicious) address after the SSRF check passed.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `SSRF guard rejects when any returned address is unsafe (multi-address resolver)`() = runTest {
+        // Allowlist the MockWebServer host so we get past Stage 4 — but the SSRF
+        // guard at Stage 3 must reject because the resolver returns BOTH a safe and
+        // an unsafe address, and ALL addresses must pass.
+        state.webAllowlistJson =
+            """[{"domain":"localhost","httpOk":true,"addedAt":"2026-05-23T00:00:00Z"}]"""
+        val multiAddrResolver = UrlSafetyGuard.Resolver { _ ->
+            // First a safe public IP, then loopback. The guard MUST iterate all
+            // returned addresses and reject if any one of them is unsafe.
+            arrayOf(
+                InetAddress.getByName("203.0.113.1"),
+                InetAddress.getByName("127.0.0.1"),
+            )
+        }
+        val engineWithMultiResolver = buildEngine(
+            resolverOverride = multiAddrResolver,
+            allowLoopbackOverride = false,
+        )
+
+        val rr = engineWithMultiResolver.fetch(WebFetchService.WebFetchRequest(server.url("/").toString()))
+
+        assertTrue(rr.isError, "Expected error: a multi-address resolver with one loopback addr must be rejected")
+        assertTrue(
+            rr.summary.contains("URL_BLOCKED") && rr.summary.contains("IPV4_LOOPBACK"),
+            "Expected URL_BLOCKED_IPV4_LOOPBACK but got: ${rr.summary}"
         )
     }
 

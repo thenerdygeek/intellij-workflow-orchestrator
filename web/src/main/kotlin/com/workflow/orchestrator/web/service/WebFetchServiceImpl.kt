@@ -48,9 +48,12 @@ class WebFetchServiceImpl(
         val settings = project.service<PluginSettings>()
         val state = settings.state
 
-        // Fetch client: followRedirects=false (we walk redirects manually to re-screen each hop),
-        // plus StripAuthHeadersInterceptor to guarantee no credential leak on any request.
-        val fetchClient = OkHttpClient.Builder()
+        // Fetch client template: followRedirects=false (we walk redirects manually to re-screen
+        // each hop), plus StripAuthHeadersInterceptor to guarantee no credential leak on any
+        // request. The shared template owns the ConnectionPool, dispatcher, timeouts, and
+        // interceptors; per-call clients are derived via `newBuilder().dns(pinnedDns).build()`
+        // so DNS pinning is per-call (S1 DNS-rebinding fix) while connection reuse is preserved.
+        val fetchClientTemplate = OkHttpClient.Builder()
             .followRedirects(false)
             .followSslRedirects(false)
             .connectTimeout(Duration.ofSeconds(state.webConnectTimeoutSec.toLong()))
@@ -78,7 +81,9 @@ class WebFetchServiceImpl(
         return WebFetchEngine(
             project = project,
             settings = settings,
-            client = fetchClient,
+            clientFactory = { pinnedDns ->
+                fetchClientTemplate.newBuilder().dns(pinnedDns).build()
+            },
             sanitizer = JsoupReadability(),
             sanitizerSubagent = sanitizerSubagent,
             approvalGate = ApprovalGateImpl(project),
