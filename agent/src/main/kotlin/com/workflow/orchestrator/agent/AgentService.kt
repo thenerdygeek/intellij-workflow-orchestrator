@@ -1964,7 +1964,9 @@ class AgentService(
                         // One-shot — fires once per drift detection, then resets.
                         // True when the write-time guard rejected an assistant turn OR
                         // `redactDialectXmlInHistory` rewrote one at resume / retry.
-                        dialectDriftDetected = dialectDriftSnapshot
+                        dialectDriftDetected = dialectDriftSnapshot,
+                        delegationOutboundEnabled = com.workflow.orchestrator.core.settings.PluginSettings
+                            .getInstance(project).state.enableOutboundCrossIdeDelegation
                     )
                 }
                 // Set initial system prompt (XML defs added on first toolDefinitionProvider call)
@@ -2773,7 +2775,9 @@ class AgentService(
                 // One-shot — fires only if the resume-path cleanup above redacted turns.
                 // (executeTask's own systemPromptBuilder will consume the flag for any
                 // further drift caught at write-time during this session.)
-                dialectDriftDetected = dialectDriftDetectedOnResume
+                dialectDriftDetected = dialectDriftDetectedOnResume,
+                delegationOutboundEnabled = com.workflow.orchestrator.core.settings.PluginSettings
+                    .getInstance(project).state.enableOutboundCrossIdeDelegation
             )
             ctx.setSystemPrompt(systemPrompt)
 

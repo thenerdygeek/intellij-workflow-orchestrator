@@ -100,7 +100,19 @@ object SystemPrompt {
          * ("structure beats instructions") and Claude Code's `<system-reminder>`
          * pattern.
          */
-        dialectDriftDetected: Boolean = false
+        dialectDriftDetected: Boolean = false,
+        /**
+         * When true, includes cross-IDE delegation hints in Section 5 (Capabilities) and
+         * lists the `cross-ide-delegation` skill in Section 6 (Skills).
+         *
+         * Default false mirrors the opt-in posture of the feature: tool *registration* is
+         * already gated by [PluginSettings.enableOutboundCrossIdeDelegation]; this flag
+         * ensures the prompt matches the tool registry — when the tools are absent, the
+         * hints and skill listing are also absent, preventing "Unknown tool" failures.
+         *
+         * Sub-agents always receive false (v1 spec §2.4 — sub-agents cannot delegate).
+         */
+        delegationOutboundEnabled: Boolean = false
     ): String = buildString {
 
         // 0. DIALECT-DRIFT CORRECTIVE REMINDER (primacy zone, one-shot)
@@ -155,7 +167,7 @@ object SystemPrompt {
         // 5. CAPABILITIES
         if (includeCapabilities) {
             append(SECTION_SEP)
-            append(capabilities(projectPath, ideContext))
+            append(capabilities(projectPath, ideContext, delegationOutboundEnabled))
         }
 
         // 5b. MEMORY INDEX CONTENT (moved from post-Objective to land in the primacy zone)
@@ -175,7 +187,7 @@ object SystemPrompt {
         }
 
         // 6. SKILLS (optional)
-        skills(availableSkills, activeSkillContent)?.let {
+        skills(availableSkills, activeSkillContent, delegationOutboundEnabled)?.let {
             append(SECTION_SEP)
             append(it)
         }
@@ -355,7 +367,8 @@ In each user message, the environment_details will specify the current mode. The
      */
     private fun capabilities(
         projectPath: String,
-        ideContext: IdeContext?
+        ideContext: IdeContext?,
+        delegationOutboundEnabled: Boolean = false
     ): String = buildString {
         val ideName = ideContext?.productName ?: "IntelliJ IDEA"
         appendLine("CAPABILITIES")
@@ -533,12 +546,16 @@ In each user message, the environment_details will specify the current mode. The
             appendLine("| Discover or run pytest tests | \"build\" (pytest_discover, pytest_run, pytest_fixtures) | Manually running pytest via run_command |")
             appendLine("| Check installed, outdated, or declared Python packages | \"build\" (pip_list/pip_dependencies/pip_outdated, poetry_list/poetry_outdated, uv_list/uv_outdated) | Running pip list / poetry show via run_command |")
         }
-        // Cross-IDE delegation hints — always shown when the tool is registered.
-        appendLine("| Modify a repo open in a different IDE window | delegation_send with `request` + optional `suggested_repo` | Switching repos manually or rejecting the task |")
-        appendLine("| Follow up on a previous delegation without re-opening the picker | delegation_send with `handle` from a prior call | Starting a fresh delegation (re-opens the picker, re-prompts Accept) |")
-        appendLine("| Inspect a delegated session's full message history | delegation_fetch_transcript | Reading the result summary only |")
-        appendLine()
-        appendLine("**Cross-IDE delegation UX:** `delegation_send` does not enumerate available IDEs for you. The picker dialog (modal in the requesting IDE) is the trust + discovery gate — the human selects the actual target IDE/repo. Specify your intent via `request`; pass `suggested_repo` as a hint for pre-selection. To pre-flight what's available without opening the picker, call `delegation_list_targets`.")
+        // Cross-IDE delegation hints — only shown when outbound delegation is enabled.
+        // When the tools are not registered (setting off), omitting the hints prevents
+        // the LLM from calling tools it cannot access ("Unknown tool" errors).
+        if (delegationOutboundEnabled) {
+            appendLine("| Modify a repo open in a different IDE window | delegation_send with `request` + optional `suggested_repo` | Switching repos manually or rejecting the task |")
+            appendLine("| Follow up on a previous delegation without re-opening the picker | delegation_send with `handle` from a prior call | Starting a fresh delegation (re-opens the picker, re-prompts Accept) |")
+            appendLine("| Inspect a delegated session's full message history | delegation_fetch_transcript | Reading the result summary only |")
+            appendLine()
+            appendLine("**Cross-IDE delegation UX:** `delegation_send` does not enumerate available IDEs for you. The picker dialog (modal in the requesting IDE) is the trust + discovery gate — the human selects the actual target IDE/repo. Specify your intent via `request`; pass `suggested_repo` as a hint for pre-selection. To pre-flight what's available without opening the picker, call `delegation_list_targets`.")
+        }
     }.trimEnd()
 
     /**
@@ -560,7 +577,8 @@ In each user message, the environment_details will specify the current mode. The
      */
     private fun skills(
         availableSkills: List<SkillMetadata>?,
-        activeSkillContent: String?
+        activeSkillContent: String?,
+        delegationOutboundEnabled: Boolean = false
     ): String? {
         if (availableSkills.isNullOrEmpty() && activeSkillContent.isNullOrBlank()) return null
 
@@ -584,6 +602,10 @@ In each user message, the environment_details will specify the current mode. The
                 for (skill in availableSkills) {
                     // Skip the meta-skill from the listing — it's already injected above
                     if (skill.name == InstructionLoader.META_SKILL_NAME) continue
+                    // Gate cross-ide-delegation skill on outbound setting — when tools are
+                    // not registered, the skill description must also be hidden so the LLM
+                    // cannot call use_skill("cross-ide-delegation") to activate it.
+                    if (!delegationOutboundEnabled && skill.name == "cross-ide-delegation") continue
                     appendLine("- \"${skill.name}\": ${skill.description}")
                 }
             }
