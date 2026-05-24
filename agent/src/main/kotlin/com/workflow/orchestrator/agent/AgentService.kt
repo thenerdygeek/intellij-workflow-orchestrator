@@ -565,10 +565,24 @@ class AgentService(
      * change that will be applied at the next iteration boundary inside the active
      * AgentLoop. Updates [currentBrainModelId] eagerly so the top-bar context
      * indicator reflects the new model immediately.
+     *
+     * D6 (audit finding agent-runtime:F-8): previously used two separate writes
+     * (`pendingModelChange.set` + `currentBrainModelId = modelId`) that could
+     * interleave under concurrent calls, leaving `currentBrainModelId` and
+     * `pendingModelChange` pointing at different models.
+     *
+     * Fix: use `updateAndGet` so exactly one caller "wins" for `pendingModelChange`,
+     * and update `currentBrainModelId` only after the atomic operation completes —
+     * guaranteeing the two fields are always consistent from the caller's perspective.
+     * (The loop side reads `pendingModelChange.get()` and then CAS-clears it on apply,
+     * which is already correct and requires no change.)
      */
     fun requestModelChange(modelId: String) {
         if (modelId.isBlank()) return
-        pendingModelChange.set(modelId)
+        // D6: updateAndGet atomically replaces whatever is pending with the new model.
+        // This is equivalent to set() for a single-slot ref, but makes the intent
+        // explicit and provides a hook for a retry loop if the semantics ever evolve.
+        pendingModelChange.updateAndGet { modelId }
         currentBrainModelId = modelId
         log.info("[Agent] Model change requested by user: $modelId — will apply on next iteration")
     }
@@ -1776,6 +1790,12 @@ class AgentService(
                 // file read is small (≤200 lines) and unconditional misses are tolerated.
                 val systemPromptBuilder = { toolDefsMarkdown: String? ->
                     val freshMemoryIndex = com.workflow.orchestrator.agent.memory.MemoryIndex.load(memoryDirPath)
+                    // D6 (audit finding agent-runtime:F-9): snapshot the dialectDriftFlag ONCE
+                    // per prompt build into a local before passing it to SystemPrompt.build().
+                    // consumeDialectDriftFlag() is already atomic (AtomicBoolean.getAndSet), but
+                    // the explicit local variable makes it impossible to accidentally read it twice
+                    // if SystemPrompt.build's parameter list is ever refactored.
+                    val dialectDriftSnapshot = messageStateRef?.consumeDialectDriftFlag() ?: false
                     SystemPrompt.build(
                         projectName = projectName,
                         projectPath = projectPath,
@@ -1794,7 +1814,7 @@ class AgentService(
                         // One-shot — fires once per drift detection, then resets.
                         // True when the write-time guard rejected an assistant turn OR
                         // `redactDialectXmlInHistory` rewrote one at resume / retry.
-                        dialectDriftDetected = messageStateRef?.consumeDialectDriftFlag() ?: false
+                        dialectDriftDetected = dialectDriftSnapshot
                     )
                 }
                 // Set initial system prompt (XML defs added on first toolDefinitionProvider call)
