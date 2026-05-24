@@ -12,11 +12,10 @@ import java.nio.file.Path
  * go through `create_file` / `edit_file`.
  *
  * Truncated past line 200 to bound the always-in-prompt footprint. The truncation
- * keeps the **last** N lines (assumed to be the most recently written, since the
- * prompt instructs the LLM to insert new entries at the top of their section under
- * the corresponding `## Project` / `## User` / `## Feedback` / `## Reference` heading
- * — so "most recently written" naturally lands near the top of each section, and the
- * tail of the file is the oldest. Older entries are dropped first as the file grows.
+ * keeps the **first** N lines (the most recently written, since the system prompt
+ * instructs the LLM to insert new entries immediately after their `## Section` heading
+ * — newest-first convention — so the top of the file is always the most relevant).
+ * Older entries accumulate at the bottom and are dropped first as the file grows.
  */
 object MemoryIndex {
 
@@ -43,8 +42,8 @@ object MemoryIndex {
             raw
         } else {
             buildString {
-                append("<!-- MEMORY.md truncated at $MAX_LINES lines (file has ${lines.size}) — older entries above this line were omitted; insert new entries near the top of their section to keep them in-prompt. -->\n")
-                lines.takeLast(MAX_LINES).joinTo(this, "\n")
+                lines.take(MAX_LINES).joinTo(this, "\n")
+                append("\n<!-- MEMORY.md truncated at $MAX_LINES lines (file has ${lines.size} lines) — older entries beyond this point were omitted; insert new entries near the top of their section to keep them in-prompt. -->")
             }
         }
     }

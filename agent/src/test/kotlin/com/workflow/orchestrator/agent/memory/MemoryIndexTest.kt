@@ -30,19 +30,42 @@ class MemoryIndexTest {
         assertEquals("# Index\n- [A](a.md) — hook", result)
     }
 
+    /**
+     * Regression test for audit finding agent:B6 — MemoryIndex newest-first convention.
+     *
+     * MEMORY.md uses newest-first ordering (system prompt instructs the LLM to insert
+     * new entries immediately after the section heading). The truncation must keep the
+     * first N lines (newest entries) and drop entries at the bottom (oldest).
+     *
+     * Before the fix, `takeLast(200)` was used, which kept entries 101..300 (the oldest)
+     * and discarded entries 1..100 (the newest). The fix uses `take(200)`.
+     */
     @Test
-    fun `load truncates content past line 200 keeping the LAST 200 lines with marker at top`(@TempDir tmp: Path) {
+    fun `load truncates content past line 200 keeping the FIRST 200 lines with marker at bottom`(@TempDir tmp: Path) {
         val lines = (1..300).map { "- [Entry $it](e$it.md) — hook" }
         Files.writeString(tmp.resolve("MEMORY.md"), lines.joinToString("\n"))
 
         val result = MemoryIndex.load(tmp)!!
         val resultLines = result.lines()
 
-        // 1 marker at top + last 200 lines (entries 101..300)
-        assertEquals(201, resultLines.size)
-        assertTrue(resultLines[0].startsWith("<!-- MEMORY.md truncated"))
-        assertEquals("- [Entry 101](e101.md) — hook", resultLines[1])
-        assertEquals("- [Entry 300](e300.md) — hook", resultLines[200])
+        // First 200 lines (entries 1..200) + truncation marker at the bottom
+        // The marker is appended after the last included line.
+        val contentLines = resultLines.filter { !it.startsWith("<!--") }
+        assertEquals(200, contentLines.size,
+            "Must keep exactly 200 content lines; got ${contentLines.size}")
+        assertEquals("- [Entry 1](e1.md) — hook", contentLines.first(),
+            "First line must be entry 1 (newest-first convention)")
+        assertEquals("- [Entry 200](e200.md) — hook", contentLines.last(),
+            "Last content line must be entry 200; older entries must be dropped")
+        assertTrue(
+            resultLines.any { it.startsWith("<!-- MEMORY.md truncated") },
+            "Truncation marker must be present"
+        )
+        // The marker must appear AFTER the content (at the bottom — not at the top).
+        val markerIdx = resultLines.indexOfFirst { it.startsWith("<!-- MEMORY.md truncated") }
+        val lastContentIdx = resultLines.indexOfLast { !it.startsWith("<!--") }
+        assertTrue(markerIdx > lastContentIdx,
+            "Truncation marker must appear below the content lines (entries=newest-first convention)")
     }
 
     @Test
