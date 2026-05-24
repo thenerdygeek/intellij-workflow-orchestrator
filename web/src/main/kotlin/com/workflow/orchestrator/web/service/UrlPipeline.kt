@@ -3,6 +3,7 @@ package com.workflow.orchestrator.web.service
 import com.workflow.orchestrator.core.security.UrlSafetyGuard
 import com.workflow.orchestrator.core.web.UrlScreener
 import com.workflow.orchestrator.core.web.WebError
+import java.net.URI
 
 /**
  * Composes [UrlScreener] (Stage 1), [ShortenerResolver] (Stage 2), and [UrlSafetyGuard]
@@ -54,11 +55,23 @@ class UrlPipeline(
             return Result.Reject(WebError.UrlBlocked(ex.reason, ex.host))
         }
 
+        // Capture the first resolved IP for the approval prompt (spec §3 Stage 5 + §5).
+        // The SSRF guard already resolved the host above; we re-use the resolver here to
+        // surface the first returned address without a second DNS round-trip.
+        // If resolution throws (shouldn't, since UrlSafetyGuard just succeeded), leave null.
+        val resolvedIp: String? = try {
+            val host = URI(pass.finalUrl).host ?: pass.host
+            resolver.resolve(host).firstOrNull()?.hostAddress
+        } catch (_: Exception) {
+            null
+        }
+
         return Result.Pass(
             originalUrl = originalUrl,
             finalUrl = pass.finalUrl,
             host = pass.host,
             flags = pass.flags,
+            resolvedIp = resolvedIp,
         )
     }
 
@@ -68,6 +81,12 @@ class UrlPipeline(
             val finalUrl: String,
             val host: String,
             val flags: Set<UrlScreener.Flag>,
+            /**
+             * First IP address the host resolved to during SSRF screening.
+             * Null when resolution could not be determined (non-fatal).
+             * Populated so the approval dialog can show "Resolves to: X.X.X.X".
+             */
+            val resolvedIp: String? = null,
         ) : Result()
 
         data class Reject(val error: WebError) : Result()

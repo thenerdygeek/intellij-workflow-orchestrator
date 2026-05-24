@@ -152,9 +152,9 @@ class WebFetchEngine(
                                 finalUrl = pass.finalUrl,
                                 originalUrl = pass.originalUrl,
                                 screenerFlags = pass.flags,
-                                resolvedIp = null,
-                                contentLength = null,
-                                agentContext = "",
+                                resolvedIp = pass.resolvedIp,
+                                contentLength = null,   // No HEAD probe by design; dialog shows "unknown"
+                                agentContext = request.agentContext?.take(200) ?: "",
                                 timeoutMs = state.webApprovalTimeoutSec * 1000L,
                             )
                         )

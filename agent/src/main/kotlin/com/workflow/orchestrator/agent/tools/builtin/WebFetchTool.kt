@@ -5,6 +5,8 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
+import com.workflow.orchestrator.agent.session.ApiRole
+import com.workflow.orchestrator.agent.session.ContentBlock
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
@@ -41,11 +43,29 @@ class WebFetchTool : AgentTool {
         val planAllow = settings.webPlanModeAllow
         val maxBytes = params["max_bytes"]?.jsonPrimitive?.int
 
+        // Populate agentContext from the last assistant message for the approval dialog.
+        // Informational only — truncated to 200 chars. If the session has no messages, pass null.
+        // TODO: expose a clean lastAssistantSnippet() on AgentService; grep AgentService.activeMessageStateHandler
+        val agentContext: String? = try {
+            val history = project.service<AgentService>()
+                .activeMessageStateHandler
+                ?.getApiConversationHistory()
+            history?.lastOrNull { it.role == ApiRole.ASSISTANT }
+                ?.content
+                ?.filterIsInstance<ContentBlock.Text>()
+                ?.lastOrNull()
+                ?.text
+                ?.take(200)
+        } catch (_: Exception) {
+            null
+        }
+
         val svc = project.service<WebFetchService>()
         val rr = svc.fetch(WebFetchService.WebFetchRequest(
             url = url,
             maxBytes = maxBytes,
             planMode = planMode && !planAllow,
+            agentContext = agentContext,
         ))
         if (rr.isError) return errorResult(rr.summary)
         val page = rr.data!!

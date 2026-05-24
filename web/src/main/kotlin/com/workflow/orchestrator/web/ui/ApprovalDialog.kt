@@ -40,7 +40,12 @@ class ApprovalDialog(
             panel.add(JBLabel("Original: $originalUrl"))
         }
         if (resolvedIp != null) panel.add(JBLabel("Resolves to: $resolvedIp"))
-        if (contentLength != null) panel.add(JBLabel("Content-Length: $contentLength bytes"))
+        // Always show the Content-Length field; when null make the absence explicit.
+        val contentLengthText = if (contentLength != null)
+            "Content-Length: $contentLength bytes"
+        else
+            "Content-Length: unknown (no pre-probe)"
+        panel.add(JBLabel(contentLengthText))
         if (screenerFlags.isNotEmpty()) {
             panel.add(JBLabel("Flags: ${screenerFlags.joinToString(", ")}"))
         }

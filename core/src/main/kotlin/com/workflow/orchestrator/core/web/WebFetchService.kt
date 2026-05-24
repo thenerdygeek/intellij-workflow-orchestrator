@@ -11,5 +11,11 @@ interface WebFetchService {
         val maxBytes: Int? = null,        // null = use settings default
         val preferText: Boolean = true,
         val planMode: Boolean = false,    // R6: tool layer pushes plan-mode in
+        /**
+         * Optional snippet of the most-recent assistant message preceding this fetch,
+         * truncated to 200 chars. Shown in the approval dialog so the user can judge
+         * "why does the agent want to fetch this?" — informational, never required.
+         */
+        val agentContext: String? = null,
     )
 }

@@ -13,6 +13,7 @@ import com.workflow.orchestrator.web.service.sanitizer.SanitizerSubagent
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -94,6 +95,7 @@ class WebFetchPipelineE2ETest {
         resolverOverride: UrlSafetyGuard.Resolver = mockWebServerResolver,
         shortenerResolverOverride: ShortenerResolver? = null,
         allowLoopbackOverride: Boolean = true,
+        capturingGate: ApprovalGate? = null,
     ): WebFetchEngine {
         val fetchClient = OkHttpClient.Builder()
             .followRedirects(false)
@@ -106,7 +108,7 @@ class WebFetchPipelineE2ETest {
             client = fetchClient,
             sanitizer = JsoupReadability(),
             sanitizerSubagent = SanitizerSubagent(spawner),
-            approvalGate = gate,
+            approvalGate = capturingGate ?: gate,
             auditLog = WebAuditLog(Files.createTempDirectory("audit-e2e")),
             resolver = resolverOverride,
             shortenerResolver = shortenerResolverOverride
@@ -494,6 +496,37 @@ class WebFetchPipelineE2ETest {
         val notRejectedBySniff = !rr.isError ||
             !rr.summary.contains("UNSUPPORTED_CONTENT_TYPE")
         assertTrue(notRejectedBySniff, "Clean text must not be rejected by binary sniff: ${rr.summary}")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // I6: approval prompt receives resolved IP from UrlPipeline
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `approval prompt receives resolved IP from UrlPipeline`() = runTest {
+        // Configure unlisted-policy=PROMPT (default) so the approval gate is called.
+        // Use a capturing FakeApprovalGate to inspect the prompt.
+        state.webUnlistedPolicy = "PROMPT"
+        val capturedPrompt = slot<ApprovalGate.ApprovalPrompt>()
+        val capturingGate = object : ApprovalGate {
+            override suspend fun ask(prompt: ApprovalGate.ApprovalPrompt): ApprovalGate.Decision {
+                capturedPrompt.captured = prompt
+                return ApprovalGate.Decision.Denied   // deny so the test doesn't need an HTTP response
+            }
+        }
+        val engineWithCapture = buildEngine(capturingGate = capturingGate)
+
+        engine = engineWithCapture
+        // A request to the MockWebServer — its hostname resolves to the mockWebServerResolver
+        // which returns 203.0.113.1. The UrlPipeline will capture this as resolvedIp.
+        val rr = engine.fetch(WebFetchService.WebFetchRequest(server.url("/").toString()))
+
+        // Must have reached the gate with a non-null resolvedIp
+        assertTrue(capturedPrompt.isCaptured, "Approval gate was never called")
+        assertTrue(
+            capturedPrompt.captured.resolvedIp != null,
+            "resolvedIp must be non-null in approval prompt; got null"
+        )
     }
 
     // ─────────────────────────────────────────────────────────────────────────
