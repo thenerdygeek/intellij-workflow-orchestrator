@@ -655,7 +655,7 @@ Per-project, file-backed auto-memory patterned after Claude Code. No specialized
 
 No keyword search, no tag search, no cross-session conversation recall, no automatic extraction. The LLM decides relevance by scanning the always-injected `MEMORY.md` index and fetching individual memories as needed.
 
-**Research dir parallel.** The research sub-agent (see "Bundled specialist agents" → `research`) writes per-session dumps to `{agentDir}/research/` via the same `PathValidator` allow-list mechanism — `resolveAndValidateForWrite` accepts both `{agentDir}/memory/` and `{agentDir}/research/`. The research dir also holds an auto-managed `RESEARCH.md` index (auto-injected into the orchestrator's system prompt like `MEMORY.md`) — see `ResearchIndex.kt`.
+**Research dir parallel.** The research sub-agent (see "Bundled specialist agents" → `research`) writes per-session dumps to `{agentDir}/research/` via the same `PathValidator` allow-list mechanism — `resolveAndValidateForWrite` accepts both `{agentDir}/memory/` and `{agentDir}/research/`. Dump filenames follow `YYYY-MM-DD-{topic-slug}-{sessionIdSuffix}.md` (suffix appended by `ResearchIndex.onResearchFileCreated`). The research dir also holds an auto-managed `RESEARCH.md` index (auto-injected into the orchestrator's system prompt like `MEMORY.md`) — see `ResearchIndex.kt`.
 
 ## Interactive Debugging
 
@@ -727,7 +727,7 @@ The `agent` tool spawns subagents:
 **No LLM-callable resume/kill/send.** The UI Kill button in the chat panel cancels a running agent via `AgentController.cancelAgent(agentId)` — there is no equivalent LLM tool path. There is no `run_in_background`, `resume`, `kill`, or `send` parameter on the `agent` tool; those were aspirational and were never built.
 
 **Built-in types:** general-purpose, explorer (PSI-powered, read-only, thoroughness: quick/medium/very thorough), coder, reviewer, tooler
-**Bundled specialist agents** (from `agent/src/main/resources/agents/`): code-reviewer, architect-reviewer, test-automator, spring-boot-engineer, refactoring-specialist, devops-engineer, security-auditor, performance-engineer — overridable by user/project agents
+**Bundled specialist agents** (from `agent/src/main/resources/agents/`): code-reviewer, architect-reviewer, test-automator, spring-boot-engineer, refactoring-specialist, devops-engineer, security-auditor, performance-engineer, research — overridable by user/project agents. The `research` persona is web-only (`web_fetch` + `web_search`) and produces a single markdown dump per session under `{agentDir}/research/`; the parent agent receives a file path, not the findings inline.
 **Custom types:** Any agent defined in `.workflow/agents/{name}.md` or `~/.workflow-orchestrator/agents/{name}.md`
 
 ## Subagent Coordination
