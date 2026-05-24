@@ -234,6 +234,66 @@ class JiraApiClientTest {
         assertEquals(0, server.requestCount)
     }
 
+    // ── C3: JQL injection guard — anchored key validation ────────────────
+
+    @Test
+    fun `validateTicketKeys accepts valid Jira key formats`() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"expand":"","startAt":0,"maxResults":3,"total":3,"issues":[
+                  {"id":"1","key":"ABC-1","fields":{"summary":"A","status":{"name":"Open"}}},
+                  {"id":"2","key":"WORK-1234","fields":{"summary":"B","status":{"name":"Open"}}},
+                  {"id":"3","key":"MY_PROJECT-99","fields":{"summary":"C","status":{"name":"Open"}}}
+                ]}"""
+            )
+        )
+        val result = client.validateTicketKeys(listOf("ABC-1", "WORK-1234", "MY_PROJECT-99"))
+        assertTrue(result.isSuccess)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `validateTicketKeys rejects lowercase key prefix`() = runTest {
+        val ex = assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking { client.validateTicketKeys(listOf("abc-1")) }
+        }
+        assertTrue(ex.message!!.contains("abc-1"), "Expected key in message, got: ${ex.message}")
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun `validateTicketKeys rejects key without hyphen separator`() = runTest {
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking { client.validateTicketKeys(listOf("ABC1")) }
+        }
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun `validateTicketKeys rejects key with trailing hyphen and no digits`() = runTest {
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking { client.validateTicketKeys(listOf("ABC-")) }
+        }
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun `validateTicketKeys rejects JQL injection in key`() = runTest {
+        // "ABC-1, summary~\"x\"" would inject extra JQL if not validated
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking { client.validateTicketKeys(listOf("ABC-1, summary~\"x\"")) }
+        }
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun `validateTicketKeys rejects empty string`() = runTest {
+        assertThrows(IllegalArgumentException::class.java) {
+            kotlinx.coroutines.runBlocking { client.validateTicketKeys(listOf("")) }
+        }
+        assertEquals(0, server.requestCount)
+    }
+
     // ── New endpoint coverage ─────────────────────────────────────────────
 
     @Test

@@ -495,6 +495,15 @@ class JiraApiClient(
     suspend fun validateTicketKeys(keys: List<String>): ApiResult<Map<String, TicketKeyInfo>> {
         if (keys.isEmpty()) return ApiResult.Success(emptyMap())
 
+        // Validate every key against the anchored Jira key pattern before interpolating
+        // into JQL. An unvalidated key like `ABC-1, summary~"x"` would inject extra JQL
+        // clauses via the joinToString — fail-fast on the whole batch.
+        val jiraKeyPattern = Regex("^[A-Z][A-Z0-9_]+-\\d+$")
+        keys.forEach { k ->
+            if (!jiraKeyPattern.matches(k)) {
+                throw IllegalArgumentException("Invalid Jira key: $k")
+            }
+        }
         val jql = "key in (${keys.joinToString(",")})"
         val body = buildJsonObject {
             put("jql", jql)
