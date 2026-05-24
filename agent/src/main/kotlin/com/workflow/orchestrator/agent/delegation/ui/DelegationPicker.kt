@@ -13,7 +13,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.DialogWrapper.IdeModalityType
 import com.intellij.openapi.ui.Messages
-import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -26,6 +25,7 @@ import com.workflow.orchestrator.agent.delegation.SpawnResult
 import com.workflow.orchestrator.agent.delegation.ToolboxFlavorReader
 import com.workflow.orchestrator.core.delegation.DelegationClient
 import com.workflow.orchestrator.core.delegation.DelegationPaths
+import com.workflow.orchestrator.core.ui.StatusColors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,17 +33,14 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
-import java.awt.Component
 import java.awt.Dimension
-import java.awt.Font
+import java.awt.FlowLayout
 import java.nio.file.Files
 import java.nio.file.Path
 import javax.swing.Action
-import javax.swing.DefaultListCellRenderer
+import javax.swing.BorderFactory
 import javax.swing.DefaultListModel
 import javax.swing.JComponent
-import javax.swing.JLabel
-import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.ListSelectionModel
 
@@ -110,41 +107,50 @@ class DelegationPicker(
     private val listModel = DefaultListModel<PickerEntry>()
     private val list = JBList(listModel).apply {
         selectionMode = ListSelectionModel.SINGLE_SELECTION
-        // Render section headers in bold/italic; prevent them from being selected.
-        cellRenderer = object : DefaultListCellRenderer() {
-            override fun getListCellRendererComponent(
-                list: JList<*>?,
-                value: Any?,
-                index: Int,
-                isSelected: Boolean,
-                cellHasFocus: Boolean,
-            ): Component {
-                val entry = value as? PickerEntry
-                val selected = isSelected && entry?.isHeader != true
-                val component = super.getListCellRendererComponent(list, value, index, selected, cellHasFocus && !selected)
-                if (entry?.isHeader == true && component is JLabel) {
-                    component.font = component.font.deriveFont(Font.BOLD or Font.ITALIC)
-                    component.isEnabled = false
-                }
-                return component
-            }
-        }
+        // Custom two-line renderer (status dot + bold name + ellipsized path + status pill).
+        // Per Plan 5.3 design spec §4.1, §4.2. JB components + StatusColors only.
+        cellRenderer = DelegationPickerCellRenderer()
     }
 
     // ---- Auto-launch UI affordances ----------------------------------------
 
     /** Yellow informational banner shown when Toolbox is detected but flavor is unknown. */
     private val toolboxUnknownBanner = JBLabel(
-        "Toolbox detected: IDE flavor unknown — launching with current IDE flavor."
+        "<html>⚠  Toolbox detected: IDE flavor unknown — launching with current IDE flavor.</html>"
     ).apply {
-        foreground = JBColor(java.awt.Color(0x8A6000), java.awt.Color(0xFFD600))
+        foreground = StatusColors.WARNING
         isVisible = false
+    }
+
+    /** Warning-background wrapper panel for [toolboxUnknownBanner]. Visibility toggles
+     *  with the inner label so the colored rectangle disappears too. */
+    private val toolboxUnknownBannerPanel = JPanel(BorderLayout()).apply {
+        background = StatusColors.WARNING_BG
+        border = BorderFactory.createEmptyBorder(8, 12, 8, 12)
+        isOpaque = true
+        isVisible = false
+        add(toolboxUnknownBanner, BorderLayout.CENTER)
     }
 
     /** Red inline failure label shown after spawn failure or 90s timeout. */
     private val launchFailureLabel = JBLabel("").apply {
-        foreground = JBColor.RED
+        foreground = StatusColors.ERROR
         isVisible = false
+    }
+
+    /** Error-background wrapper panel for [launchFailureLabel]. `StatusColors.ERROR_BG`
+     *  doesn't exist (only `WARNING_BG` / `SUCCESS_BG` / `INFO_BG`), so use an inline
+     *  JBColor pair tuned to read as a soft error tint in both themes (per spec §4.4
+     *  fallback path: "otherwise use JBColor with light + dark hex variants"). */
+    private val launchFailurePanel = JPanel(BorderLayout()).apply {
+        background = com.intellij.ui.JBColor(
+            java.awt.Color(0xFD, 0xEC, 0xEA),
+            java.awt.Color(0x4E, 0x2A, 0x2A),
+        )
+        border = BorderFactory.createEmptyBorder(8, 12, 8, 12)
+        isOpaque = true
+        isVisible = false
+        add(launchFailureLabel, BorderLayout.CENTER)
     }
 
     /** Retry probe button — hidden by default; revealed after a launch failure. */
@@ -177,7 +183,7 @@ class DelegationPicker(
         suggestedRepo?.let { hint ->
             val match = (0 until listModel.size())
                 .map { listModel.get(it) }
-                .firstOrNull { it.displayName.contains(hint, ignoreCase = true) }
+                .firstOrNull { !it.isHeader && it.displayName.contains(hint, ignoreCase = true) }
             if (match != null) list.setSelectedValue(match, true)
         }
         // Keep the Launch & Delegate button state in sync with the selection.
@@ -192,21 +198,37 @@ class DelegationPicker(
     override fun createCenterPanel(): JComponent {
         val panel = JPanel(BorderLayout())
 
-        // Top: hint label + toolbox-unknown banner
-        val northPanel = JPanel(java.awt.GridLayout(0, 1))
-        northPanel.add(JLabel("Pick a target IDE for delegation (must be Running):"))
-        northPanel.add(toolboxUnknownBanner)
+        // Top: friendlier hint copy + toolbox-unknown banner (rounded background panel).
+        // Per Plan 5.3 §4.3 / §4.4. Hint uses `<html>` so the two-line copy wraps cleanly.
+        val northPanel = JPanel(java.awt.GridLayout(0, 1, 0, 6))
+        val hintLabel = JBLabel(
+            "<html>Choose where to send this task. Running targets receive it immediately; " +
+                "closed ones can be launched first.</html>"
+        ).apply {
+            foreground = StatusColors.SECONDARY_TEXT
+            border = BorderFactory.createEmptyBorder(12, 0, 8, 0)
+        }
+        northPanel.add(hintLabel)
+        northPanel.add(toolboxUnknownBannerPanel)
         panel.add(northPanel, BorderLayout.NORTH)
 
         val scrollPane = JBScrollPane(list).apply {
-            preferredSize = Dimension(640, 320)
+            preferredSize = Dimension(720, 320)
         }
         panel.add(scrollPane, BorderLayout.CENTER)
 
-        // South: inline failure label + retry button
-        val southPanel = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT))
-        southPanel.add(launchFailureLabel)
-        southPanel.add(retryProbeButton)
+        // South: failure panel (rounded background) + retry button. Order is failure on top,
+        // retry below, both left-aligned in a vertical stack.
+        val southPanel = JPanel(BorderLayout()).apply {
+            border = BorderFactory.createEmptyBorder(8, 0, 0, 0)
+        }
+        southPanel.add(launchFailurePanel, BorderLayout.NORTH)
+        val retryRow = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+            isOpaque = false
+            border = BorderFactory.createEmptyBorder(4, 0, 0, 0)
+        }
+        retryRow.add(retryProbeButton)
+        southPanel.add(retryRow, BorderLayout.SOUTH)
         panel.add(southPanel, BorderLayout.SOUTH)
 
         return panel
@@ -250,8 +272,9 @@ class DelegationPicker(
 
     /** Shows a non-modal red inline label below the row list. Also reveals Retry button. */
     private fun showInlineLaunchFailure(reason: String) {
-        launchFailureLabel.text = "<html>$reason</html>"
+        launchFailureLabel.text = "<html>✕  $reason</html>"
         launchFailureLabel.isVisible = true
+        launchFailurePanel.isVisible = true
         retryProbeButton.isVisible = true
         pack()
     }
@@ -259,14 +282,17 @@ class DelegationPicker(
     /** Shows a non-modal yellow informational banner above the action area. */
     private fun showToolboxUnknownBanner() {
         toolboxUnknownBanner.isVisible = true
+        toolboxUnknownBannerPanel.isVisible = true
         pack()
     }
 
     /** Hides any previously-shown failure UI. */
     private fun hideLaunchFailure() {
         launchFailureLabel.isVisible = false
+        launchFailurePanel.isVisible = false
         retryProbeButton.isVisible = false
         toolboxUnknownBanner.isVisible = false
+        toolboxUnknownBannerPanel.isVisible = false
     }
 
     /**
@@ -397,6 +423,18 @@ class DelegationPicker(
             LOG.warn("Failed to read recent project paths", e)
             return
         }
+        if (recentPaths.isNotEmpty()) {
+            // Section header — the renderer uppercases the displayName and trails a separator.
+            // Per Plan 5.3 §4.2.
+            listModel.addElement(
+                PickerEntry(
+                    displayName = "Recent",
+                    path = Path.of("/"),
+                    status = PickerEntry.Status.MISSING,
+                    isHeader = true,
+                )
+            )
+        }
         for (pathStr in recentPaths) {
             val path = Path.of(pathStr)
             val name = mgr.getDisplayName(pathStr) ?: path.fileName?.toString() ?: pathStr
@@ -479,9 +517,10 @@ class DelegationPicker(
         if (novel.isEmpty()) return
 
         // Insert a non-selectable section header row before the discovered entries.
+        // The renderer uppercases the displayName and trails a separator.
         listModel.addElement(
             PickerEntry(
-                displayName = "— Discovered (not in recents) —",
+                displayName = "Other JetBrains instances",
                 path = Path.of("/"),
                 status = PickerEntry.Status.MISSING,
                 isHeader = true,
