@@ -37,6 +37,11 @@ class HttpClientFactory(
         sharedPool.newBuilder()
             .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS)
             .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
+            // Disable redirect-following so the Authorization header is never forwarded
+            // to a redirect target that may be on a different host/domain.
+            // Callers that need redirect support must open a new request themselves.
+            .followRedirects(false)
+            .followSslRedirects(false)
             .addInterceptor(RetryInterceptor())
             .addNetworkInterceptor(SensitiveEndpointNoCacheInterceptor())
             .build()
