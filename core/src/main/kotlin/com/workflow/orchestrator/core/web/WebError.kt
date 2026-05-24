@@ -44,6 +44,20 @@ sealed class WebError(
     /** The provider's configured base URL failed the UrlSafetyGuard / UrlPipeline screen. */
     class ProviderUrlUnsafe(provider: String, reason: String) : WebError("PROVIDER_URL_UNSAFE", "Provider $provider base URL rejected by safety guard: $reason", false)
 
+    /**
+     * Query contained a proprietary identifier (matched the egress deny-list or was BLOCKED
+     * by the egress LLM screener). [maskedTerm] preserves the first 3 chars of the offending
+     * identifier when length >= 6 (else fully `***`), so the LLM sees what kind of thing
+     * triggered the block without the sensitive term being relayed back unredacted.
+     */
+    class QueryBlockedSensitive(reason: String, maskedTerm: String) : WebError(
+        "QUERY_BLOCKED_SENSITIVE",
+        "Search query blocked by egress filter ($reason): contains \"$maskedTerm\". " +
+        "Rewrite the query without internal identifiers (hostnames, class names, project " +
+        "names, file paths) and try again.",
+        recoverable = true,
+    )
+
     // Disabled via settings -------------------------------------------------
     class WebFetchDisabled : WebError("WEB_FETCH_DISABLED", "web_fetch is disabled in Workflow Orchestrator settings", false)
     class WebSearchDisabled : WebError("WEB_SEARCH_DISABLED", "web_search is disabled in Workflow Orchestrator settings", false)
