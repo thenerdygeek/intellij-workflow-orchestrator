@@ -40,10 +40,25 @@ interface SubagentSpawner {
     )
 
     enum class Verdict {
+        /** Sanitizer output is character-for-character identical to input (no redactions). */
         SAFE,
+
+        /**
+         * Sanitizer output is verbatim from input EXCEPT for one or more
+         * `[REDACTED: <reason>]` markers replacing specific spans of prompt-injection
+         * content. Surrounding text (vendor names, version numbers, identifiers, URLs,
+         * factual claims) is preserved character-for-character — the sanitizer does
+         * NOT paraphrase or summarize. Renamed semantics 2026-05-24; the verdict
+         * string itself is unchanged for backward compatibility with the parser.
+         */
         STRIPPED,
+
+        /** Input was so saturated with injection that no faithful redaction was possible. */
         REFUSED,
+
+        /** Sanitizer subagent exceeded its per-call timeout budget. */
         TIMEOUT,
+
         /**
          * The sanitizer subagent returned a verdict string that is not one of the recognised
          * values (SAFE / STRIPPED / REFUSED / TIMEOUT). Treat as fail-closed: do not pass
