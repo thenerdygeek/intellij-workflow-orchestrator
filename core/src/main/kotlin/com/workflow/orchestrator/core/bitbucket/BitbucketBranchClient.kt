@@ -10,6 +10,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -942,13 +943,21 @@ class BitbucketBranchClient(
         withContext(Dispatchers.IO) {
             log.info("[Core:Bitbucket] Fetching branches for $projectKey/$repoSlug")
             try {
-                val filterParam = if (filterText.isNotBlank()) "&filterText=$filterText" else ""
                 // `details=true` (R-SWAP-3) inlines `metadata` (aheadBehind, latestCommit,
                 // build, jira-link) per branch — eliminates the per-branch follow-up calls
                 // the plugin used to make for that information.
                 // Source: docs/research/2026-05-07-bitbucket-recommendations.md §3 R-SWAP-3.
+                //
+                // filterText is added via addQueryParameter (C5 fix: prevents parameter
+                // injection when the caller supplies a value containing '&', '=', or '#').
+                val urlBuilder = "$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/branches"
+                    .toHttpUrl().newBuilder()
+                    .addQueryParameter("limit", "100")
+                    .addQueryParameter("orderBy", "MODIFICATION")
+                    .addQueryParameter("details", "true")
+                if (filterText.isNotBlank()) urlBuilder.addQueryParameter("filterText", filterText)
                 val request = Request.Builder()
-                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/branches?limit=100&orderBy=MODIFICATION&details=true$filterParam")
+                    .url(urlBuilder.build())
                     .get()
                     .header("Accept", "application/json")
                     .build()
@@ -1165,9 +1174,17 @@ class BitbucketBranchClient(
         withContext(Dispatchers.IO) {
             log.info("[Core:Bitbucket] Fetching PRs for branch $branchName in $projectKey/$repoSlug")
             try {
+                // branchName is added via addQueryParameter (C5 fix: prevents injection
+                // when the caller supplies a branch name containing '&', '=', or spaces).
                 val branchRef = "refs/heads/$branchName"
+                val prUrl = "$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests"
+                    .toHttpUrl().newBuilder()
+                    .addQueryParameter("direction", "OUTGOING")
+                    .addQueryParameter("at", branchRef)
+                    .addQueryParameter("state", "OPEN")
+                    .build()
                 val request = Request.Builder()
-                    .url("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests?direction=OUTGOING&at=$branchRef&state=OPEN")
+                    .url(prUrl)
                     .get()
                     .header("Accept", "application/json")
                     .build()
