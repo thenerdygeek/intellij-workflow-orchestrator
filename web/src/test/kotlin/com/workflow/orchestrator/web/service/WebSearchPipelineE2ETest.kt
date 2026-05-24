@@ -14,7 +14,6 @@ import com.workflow.orchestrator.web.service.search.SearchProviderRegistry
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.slot
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -291,10 +290,12 @@ class WebSearchPipelineE2ETest {
     fun `search passes resolved sanitizer brainId to subagent`() = runTest {
         // Configure a non-blank webSanitizerBrainId and verify it reaches runSanitizerBatch.
         state.webSanitizerBrainId = "haiku-4-5"
-        val capturedBrainId = slot<String?>()
+        // Capture brainId via a mutable reference (nullable String can't use slot<String?> with capture())
+        val capturedBrainIds = mutableListOf<String?>()
         coEvery {
-            spawner.runSanitizerBatch(any(), capture(capturedBrainId), any(), any(), any(), any())
+            spawner.runSanitizerBatch(any(), any(), any(), any(), any(), any())
         } answers {
+            capturedBrainIds.add(arg<String?>(1))
             val count = arg<Int>(5)
             List(count) { SubagentSpawner.SanitizerResult(SubagentSpawner.Verdict.SAFE, "ok", null) }
         }
@@ -308,7 +309,8 @@ class WebSearchPipelineE2ETest {
 
         val result = engine.search(WebSearchRequest(query = "brain id test"))
         assertFalse(result.isError, "Expected success but got: ${result.summary}")
-        assertEquals("haiku-4-5", capturedBrainId.captured,
+        assertTrue(capturedBrainIds.isNotEmpty(), "runSanitizerBatch was never called")
+        assertEquals("haiku-4-5", capturedBrainIds.first(),
             "runSanitizerBatch must receive the configured brainId")
     }
 }
