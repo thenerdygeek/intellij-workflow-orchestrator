@@ -4,6 +4,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
+import com.workflow.orchestrator.core.util.HtmlEscape
 import com.workflow.orchestrator.core.web.UrlScreener
 import java.net.URI
 import javax.swing.BoxLayout
@@ -53,11 +54,11 @@ class ApprovalDialog(
 
     override fun createCenterPanel(): JComponent {
         val panel = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
-        panel.add(JBLabel("URL: $finalUrl"))
+        panel.add(JBLabel("URL: ${safeLabel(finalUrl)}"))
         if (originalUrl != null && originalUrl != finalUrl) {
-            panel.add(JBLabel("Original: $originalUrl"))
+            panel.add(JBLabel("Original: ${safeLabel(originalUrl)}"))
         }
-        if (resolvedIp != null) panel.add(JBLabel("Resolves to: $resolvedIp"))
+        if (resolvedIp != null) panel.add(JBLabel("Resolves to: ${safeLabel(resolvedIp)}"))
         // Always show the Content-Length field; when null make the absence explicit.
         val contentLengthText = if (contentLength != null)
             "Content-Length: $contentLength bytes"
@@ -65,9 +66,9 @@ class ApprovalDialog(
             "Content-Length: unknown (no pre-probe)"
         panel.add(JBLabel(contentLengthText))
         if (screenerFlags.isNotEmpty()) {
-            panel.add(JBLabel("Flags: ${screenerFlags.joinToString(", ")}"))
+            panel.add(JBLabel("Flags: ${safeLabel(screenerFlags.joinToString(", "))}"))
         }
-        panel.add(JBLabel("Agent context: $agentContext"))
+        panel.add(JBLabel("Agent context: ${safeLabel(agentContext)}"))
         // S3 — Options for "Add to allowlist". Always enabled — they're only read when
         // the user clicks the Add-to-allowlist button, ignored for Allow-once / Deny.
         panel.add(JBLabel(" "))
@@ -106,6 +107,21 @@ class ApprovalDialog(
             if (labels.size <= 2) host else labels.takeLast(2).joinToString(".")
         } catch (_: Exception) {
             ""
+        }
+
+        /**
+         * Normalise + escape a value for display in a [JBLabel]. Collapses runs of whitespace
+         * (so `\n` / `\r` in `originalUrl` or `agentContext` can't break dialog layout),
+         * truncates to 200 chars, then HTML-escapes. The HTML-escape is defence-in-depth:
+         * `BasicLabelUI.isHTMLString` is a position-0 check, so today's `"URL: $finalUrl"`
+         * pattern wouldn't trigger HTML rendering even with a `<html>...` value, but a future
+         * refactor that drops the prefix would silently re-expose the vector (BasicHTML
+         * follows `<img src=...>` URLs from the EDT, info-leak).
+         */
+        internal fun safeLabel(value: String?, max: Int = 200): String {
+            if (value.isNullOrEmpty()) return ""
+            val collapsed = value.replace(Regex("\\s+"), " ").take(max)
+            return HtmlEscape.escapeHtml(collapsed)
         }
     }
 }
