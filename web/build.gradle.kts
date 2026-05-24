@@ -46,4 +46,10 @@ intellijPlatform {
 
 tasks.test {
     useJUnitPlatform()
+    // Forward live-smoke system properties to the test JVM. Tests gated by
+    // @EnabledIfSystemProperty (e.g. SearXNGLiveSmokeTest) only run when the matching
+    // -Dsearxng.live.url=... -Dbrave.live.key=... -Dtavily.live.key=... is set.
+    System.getProperties()
+        .filterKeys { (it as String).startsWith("searxng.") || (it as String).startsWith("brave.") || (it as String).startsWith("tavily.") }
+        .forEach { (key, value) -> systemProperty(key as String, value as String) }
 }
