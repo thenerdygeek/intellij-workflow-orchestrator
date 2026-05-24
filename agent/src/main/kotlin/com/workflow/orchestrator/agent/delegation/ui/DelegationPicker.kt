@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.agent.delegation.ui
 
-import com.intellij.ide.ReopenProjectAction
-import com.intellij.ide.RecentProjectListActionProvider
+import com.intellij.ide.RecentProjectsManager
+import com.intellij.ide.RecentProjectsManagerBase
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
@@ -360,23 +360,30 @@ class DelegationPicker(
     }
 
     /**
-     * Synchronous phase: read the recent-projects list from [RecentProjectListActionProvider]
+     * Synchronous phase: read the recent-projects list from [RecentProjectsManagerBase]
      * and populate the list model with CLOSED/MISSING entries. No I/O is performed here —
      * status probing happens in [triggerDiscoveryAsync]. This runs on the EDT so the picker
      * opens immediately without blocking.
      */
     private fun populateRecentsSync() {
-        val actions = try {
-            RecentProjectListActionProvider.getInstance().getActions(false)
+        val mgr = try {
+            RecentProjectsManager.getInstance() as? RecentProjectsManagerBase
         } catch (e: Exception) {
-            LOG.warn("Failed to read recent projects", e)
+            LOG.warn("Failed to access RecentProjectsManager", e)
+            return
+        } ?: run {
+            LOG.warn("RecentProjectsManager is not a RecentProjectsManagerBase instance")
             return
         }
-        for (action in actions) {
-            val reopen = action as? ReopenProjectAction ?: continue
-            val pathStr = reopen.projectPath ?: continue
+        val recentPaths: List<String> = try {
+            mgr.getRecentPaths()
+        } catch (e: Exception) {
+            LOG.warn("Failed to read recent project paths", e)
+            return
+        }
+        for (pathStr in recentPaths) {
             val path = Path.of(pathStr)
-            val name = reopen.projectName ?: path.fileName?.toString() ?: pathStr
+            val name = mgr.getDisplayName(pathStr) ?: path.fileName?.toString() ?: pathStr
             // Show MISSING for non-existent paths immediately; CLOSED for the rest until
             // the async probe upgrades them to RUNNING.
             val initialStatus = if (!Files.exists(path)) PickerEntry.Status.MISSING else PickerEntry.Status.CLOSED
