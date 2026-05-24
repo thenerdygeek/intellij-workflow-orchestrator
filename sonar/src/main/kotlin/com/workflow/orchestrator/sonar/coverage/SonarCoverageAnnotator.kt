@@ -7,6 +7,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiDirectory
 import com.intellij.psi.PsiFile
 import com.workflow.orchestrator.sonar.service.SonarDataService
+import com.workflow.orchestrator.sonar.util.SonarPathResolver
 
 /**
  * Annotator that provides coverage summary strings for the Coverage
@@ -37,7 +38,14 @@ class SonarCoverageAnnotator(project: Project) : BaseCoverageAnnotator(project) 
             return null
         }
 
-        val fileCoverage = sonarService.stateFlow.value.fileCoverage[vFile.path]
+        // SonarDataService keys fileCoverage by Sonar's repo-relative path (via CoverageMapper),
+        // not by the absolute VirtualFile path. Convert before lookup to prevent a permanent miss.
+        val relativePath = SonarPathResolver.computeRelativePath(
+            filePath = vFile.path,
+            vcsRootPath = project.basePath,
+            projectBasePath = project.basePath,
+        )
+        val fileCoverage = sonarService.stateFlow.value.fileCoverage[relativePath]
             ?: return null
 
         val linePct = "%.1f".format(fileCoverage.lineCoverage)
