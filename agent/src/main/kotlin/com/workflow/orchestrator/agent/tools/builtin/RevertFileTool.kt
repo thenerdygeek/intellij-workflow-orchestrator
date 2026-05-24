@@ -14,10 +14,17 @@ import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
 import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
 import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
+import com.workflow.orchestrator.agent.tools.process.ProcessEnvironment
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.core.util.ProjectIdentifier
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.util.concurrent.TimeUnit
 
 /**
  * Reverts a single file to its pre-edit state using git checkout.
@@ -128,45 +135,87 @@ class RevertFileTool : AgentTool {
             ?: project.basePath
             ?: "."
 
-        // Use git checkout to revert
+        // Use git checkout to revert — hardened against the five failure modes identified
+        // in audit finding agent-tools:F-2:
+        //   1. No timeout           → withTimeout(30s)
+        //   2. Unbounded buffering  → 1 MB cap with truncation marker
+        //   3. No cancellation      → withContext(Dispatchers.IO) + ensureActive() in read loop
+        //   4. No env sanitization  → ProcessEnvironment.applyToEnvironment strips 35+ sensitive vars
+        //   5. Orphaned on cancel   → destroy/destroyForcibly in CancellationException handler
+        val isWindows = System.getProperty("os.name", "").lowercase().contains("windows")
+        var process: Process? = null
         return try {
-            val process = ProcessBuilder("git", "checkout", "--", resolvedPath)
-                .directory(java.io.File(gitRoot))
-                .redirectErrorStream(true)
-                .start()
-            val output = process.inputStream.bufferedReader().readText()
-            val exitCode = process.waitFor()
+            withContext(Dispatchers.IO) {
+                withTimeout(30_000L) {
+                    val pb = ProcessBuilder("git", "checkout", "--", resolvedPath)
+                        .directory(java.io.File(gitRoot))
+                        .redirectErrorStream(true)
+                    // Env sanitization: strip credentials + apply anti-interactive overrides
+                    ProcessEnvironment.applyToEnvironment(pb.environment(), isWindows)
+                    val proc = pb.start()
+                    process = proc
 
-            if (exitCode == 0) {
-                // Refresh VFS and invalidate Document cache so open editor tabs and
-                // subsequent read_file calls see the reverted on-disk content.
-                try {
-                    val vf = LocalFileSystem.getInstance().refreshAndFindFileByPath(resolvedPath)
-                    if (vf != null) {
-                        vf.refresh(false, false)
-                        val doc = FileDocumentManager.getInstance().getCachedDocument(vf)
-                        if (doc != null) {
-                            FileDocumentManager.getInstance().reloadFromDisk(doc)
+                    val output = StringBuilder()
+                    proc.inputStream.bufferedReader().use { reader ->
+                        val maxBytes = 1_024 * 1_024  // 1 MB cap
+                        val buf = CharArray(8192)
+                        var totalRead = 0
+                        while (true) {
+                            ensureActive()  // propagate coroutine cancellation
+                            val read = reader.read(buf)
+                            if (read <= 0) break
+                            if (totalRead + read > maxBytes) {
+                                output.append(buf, 0, maxBytes - totalRead)
+                                output.append("\n[truncated — output exceeded 1 MB]")
+                                break
+                            }
+                            output.append(buf, 0, read)
+                            totalRead += read
                         }
                     }
-                } catch (_: Exception) {
-                    // VFS refresh is best-effort — a failure here must not block the success result
-                }
 
-                ToolResult(
-                    content = "Successfully reverted $filePath. Reason: $description\n\n" +
-                        "The file has been restored to its pre-edit state. Other file changes are preserved.",
-                    summary = "Reverted file $filePath: $description",
-                    tokenEstimate = 20
-                )
-            } else {
-                ToolResult(
-                    content = "Error: Failed to revert '$filePath': $output",
-                    summary = "Revert failed: exit code $exitCode",
-                    tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                    isError = true
-                )
+                    val exitCode = proc.waitFor()
+                    process = null  // normal exit — not orphaned
+
+                    if (exitCode == 0) {
+                        // Refresh VFS and invalidate Document cache so open editor tabs and
+                        // subsequent read_file calls see the reverted on-disk content.
+                        try {
+                            val vf = LocalFileSystem.getInstance().refreshAndFindFileByPath(resolvedPath)
+                            if (vf != null) {
+                                vf.refresh(false, false)
+                                val doc = FileDocumentManager.getInstance().getCachedDocument(vf)
+                                if (doc != null) {
+                                    FileDocumentManager.getInstance().reloadFromDisk(doc)
+                                }
+                            }
+                        } catch (_: Exception) {
+                            // VFS refresh is best-effort — a failure here must not block the success result
+                        }
+
+                        ToolResult(
+                            content = "Successfully reverted $filePath. Reason: $description\n\n" +
+                                "The file has been restored to its pre-edit state. Other file changes are preserved.",
+                            summary = "Reverted file $filePath: $description",
+                            tokenEstimate = 20
+                        )
+                    } else {
+                        ToolResult(
+                            content = "Error: Failed to revert '$filePath': $output",
+                            summary = "Revert failed: exit code $exitCode",
+                            tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                            isError = true
+                        )
+                    }
+                }
             }
+        } catch (e: CancellationException) {
+            // Failure mode 5: destroy the process so it doesn't become a zombie
+            process?.let { proc ->
+                proc.destroy()
+                if (!proc.waitFor(5, TimeUnit.SECONDS)) proc.destroyForcibly()
+            }
+            throw e  // CancellationException must always be re-thrown
         } catch (e: Exception) {
             ToolResult(
                 content = "Error: Failed to revert '$filePath': ${e.message}",
