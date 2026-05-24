@@ -73,6 +73,36 @@ class WebFetchEngine(
             "text/markdown",
             "application/xml",
         )
+
+        /**
+         * Converts a bare [host] into the allowlist entry domain, applying subdomain-glob expansion
+         * when [subdomainGlob] is true.
+         *
+         * Rules:
+         * - glob=false → [host] unchanged.
+         * - glob=true, 2-label host (e.g. `example.com`) → `*.example.com` (covers its own subdomains).
+         * - glob=true, 3+ label host (e.g. `docs.example.com`) → drop leftmost label → `*.example.com`.
+         * - Defense: if the resulting tail after `*.` has no dot (i.e. it would be a bare TLD like
+         *   `*.com`), fall back to [host] unchanged rather than write a wildcard that matches the
+         *   entire TLD. B2 bug root cause: `host.substringAfter('.')` on `example.com` returned
+         *   `"com"` → entry was `*.com` → every `.com` host was matched.
+         *
+         * Exposed as `internal` so [AllowlistGlobTest] can invoke it directly.
+         */
+        internal fun computeAllowlistDomain(host: String, subdomainGlob: Boolean): String {
+            if (!subdomainGlob) return host
+            val labels = host.split(".")
+            if (labels.size < 2) return host  // single-label host — can't glob safely
+
+            // For a 2-label host (example.com), the glob covers subdomains of the host itself.
+            // For 3+ label hosts (docs.example.com), drop the leftmost label only.
+            val globTail = if (labels.size == 2) host else labels.drop(1).joinToString(".")
+
+            // Defense: never produce a glob whose tail is a bare TLD (no dot → *.com, *.org).
+            if (!globTail.contains('.')) return host
+
+            return "*.$globTail"
+        }
     }
 
     private val pipeline: UrlPipeline by lazy { UrlPipeline(shortenerResolver, resolver) }
@@ -300,7 +330,7 @@ class WebFetchEngine(
 
     private fun persistAllowlistEntry(host: String, outcome: ApprovalGate.Decision.AddToAllowlist) {
         val current = settings.getWebAllowlist().toMutableList()
-        val domain = if (outcome.subdomainGlob) "*.${host.substringAfter('.')}" else host
+        val domain = computeAllowlistDomain(host, outcome.subdomainGlob)
         current += DomainAllowlistEntry(
             domain = domain,
             httpOk = outcome.allowHttp,
