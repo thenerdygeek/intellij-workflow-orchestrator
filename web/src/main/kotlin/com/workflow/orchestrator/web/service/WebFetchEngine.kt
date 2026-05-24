@@ -134,6 +134,32 @@ class WebFetchEngine(
 
             return "*.$globTail"
         }
+
+        /**
+         * Tests whether [host] matches an allowlist [pattern]. S2 fix: a glob pattern
+         * `*.example.com` matches the bare suffix `example.com` AND any host that ends
+         * with `.example.com`. Crucially it does NOT match `attacker-example.com` (the
+         * old `endsWith(suffix)` bug). Case-insensitive on both sides.
+         *
+         * @see com.workflow.orchestrator.web.service.AllowlistMatchTest
+         */
+        internal fun matchesDomainImpl(host: String, pattern: String): Boolean {
+            val h = host.lowercase()
+            return if (pattern.startsWith("*.")) {
+                val suffix = pattern.removePrefix("*.").lowercase()
+                // Bare-suffix exact match (e.g. example.com matches *.example.com)
+                // OR proper subdomain (e.g. docs.example.com matches *.example.com).
+                // Crucially NOT "attacker-example.com" — the bug was a bare endsWith
+                // with no leading-dot requirement.
+                h == suffix || h.endsWith(".$suffix")
+            } else {
+                h == pattern.lowercase()
+            }
+        }
+
+        /** Test-only accessor — see [com.workflow.orchestrator.web.service.AllowlistMatchTest]. */
+        internal fun matchesDomainForTesting(host: String, pattern: String): Boolean =
+            matchesDomainImpl(host, pattern)
     }
 
     private val pipeline: UrlPipeline by lazy { UrlPipeline(shortenerResolver, resolver) }
@@ -373,11 +399,7 @@ class WebFetchEngine(
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun matchesDomain(host: String, pattern: String): Boolean =
-        if (pattern.startsWith("*.")) {
-            host.endsWith(pattern.removePrefix("*."))
-        } else {
-            host == pattern
-        }
+        matchesDomainImpl(host, pattern)
 
     private fun isAllowedContentType(ct: String): Boolean {
         val lower = ct.lowercase()
