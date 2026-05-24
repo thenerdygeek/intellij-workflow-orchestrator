@@ -288,18 +288,41 @@ class ContextManager(
         if (messages.size < 2) return false
         val tail = messages.last()
         if (tail.role != "tool") return false
-        val toolCallId = tail.toolCallId ?: return false
 
         val penult = messages[messages.size - 2]
         if (penult.role != "assistant") return false
+
+        // Legacy path (pre-2026-05-13): structured ToolCall blocks with a matching id.
+        val toolCallId = tail.toolCallId
         val penultToolCalls = penult.toolCalls
-        if (penultToolCalls.isNullOrEmpty()) return false
-        val matchingCall = penultToolCalls.firstOrNull {
-            it.id == toolCallId && it.function.name in COMPLETION_TOOL_NAMES
-        } ?: return false
+        val matchingCallName: String? = if (!penultToolCalls.isNullOrEmpty() && toolCallId != null) {
+            penultToolCalls.firstOrNull {
+                it.id == toolCallId && it.function.name in COMPLETION_TOOL_NAMES
+            }?.function?.name
+        } else null
+
+        // New-shape path (post-2026-05-13 XML-in-content migration): tool calls are
+        // embedded as XML inside the assistant's text content; the toolCalls field is
+        // always null/empty. Check the content string for the XML tag instead.
+        val matchingXmlName: String? = if (matchingCallName == null) {
+            val assistantContent = penult.content ?: ""
+            COMPLETION_TOOL_NAMES.firstOrNull { name ->
+                assistantContent.contains("<$name>") || assistantContent.contains("<$name ")
+            }
+        } else null
+
+        val resolvedName = matchingCallName ?: matchingXmlName ?: return false
 
         val resultText = (tail.content ?: "").removePrefix("[ERROR] ")
-        val streamingText = penult.content?.takeIf { it.isNotBlank() }
+        val rawStreamingText = penult.content?.trim() ?: ""
+        // For the XML-in-content path, strip the tool call XML so the collapsed
+        // message only carries prose (the XML is ephemeral scaffolding).
+        val streamingText = if (matchingXmlName != null && rawStreamingText.isNotBlank()) {
+            stripXmlToolCall(rawStreamingText, matchingXmlName)
+        } else {
+            rawStreamingText.takeIf { it.isNotBlank() }
+        }
+
         val combined = when {
             streamingText != null && resultText.isNotBlank() -> "$streamingText\n\n$resultText"
             streamingText != null -> streamingText
@@ -309,8 +332,29 @@ class ContextManager(
         messages.removeAt(messages.size - 1)
         messages.removeAt(messages.size - 1)
         messages.add(ChatMessage(role = "assistant", content = combined))
-        LOG.info("[Context] Collapsed completion tool pair (toolCallId=$toolCallId, name=${matchingCall.function.name})")
+        LOG.info("[Context] Collapsed completion tool pair (resolvedName=$resolvedName)")
         return true
+    }
+
+    /**
+     * Strip a single XML tool call invocation block from [text].
+     * Removes `<toolName>…</toolName>` (and everything between) from the text.
+     * Mirrors [com.workflow.orchestrator.agent.session.MessageStateHandler.stripXmlToolCall].
+     */
+    private fun stripXmlToolCall(text: String, toolName: String): String? {
+        val open = "<$toolName>"
+        val openAttr = "<$toolName "
+        val close = "</$toolName>"
+        val startIdx = text.indexOf(open).takeIf { it >= 0 }
+            ?: text.indexOf(openAttr).takeIf { it >= 0 }
+            ?: return text.takeIf { it.isNotBlank() }
+        val endIdx = text.indexOf(close, startIdx)
+        val prose = if (endIdx >= 0) {
+            text.removeRange(startIdx, endIdx + close.length)
+        } else {
+            text.substring(0, startIdx)
+        }.trim()
+        return prose.takeIf { it.isNotBlank() }
     }
 
     // ── Token tracking ───────────────────────────────────────────────────────

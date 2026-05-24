@@ -565,6 +565,70 @@ class ContextManagerApiSurfaceTest {
             assertFalse(cm.collapseLastCompletionToolPair())
         }
 
+        /**
+         * Regression test for audit finding agent:B5 — ContextManager XML-in-content collapse.
+         *
+         * After the 2026-05-13 XML-in-content migration, attempt_completion tool calls are
+         * embedded as XML in the assistant's text content (toolCalls is always null/empty).
+         * collapseLastCompletionToolPair must detect the XML tag in penult.content instead
+         * of checking the now-always-empty toolCalls list.
+         */
+        @Test
+        fun `collapseLastCompletionToolPair XML-in-content attempt_completion is collapsed`() {
+            // Post-migration: assistant message has XML in content, toolCalls is null.
+            cm.addAssistantMessage(
+                ChatMessage(
+                    role = "assistant",
+                    content = "I finished the task.\n\n<attempt_completion><result>All done</result></attempt_completion>",
+                    toolCalls = null
+                )
+            )
+            cm.addToolResult(toolCallId = "xml-call-1", content = "Task completed.", isError = false)
+
+            val collapsed = cm.collapseLastCompletionToolPair()
+            assertTrue(collapsed, "XML-in-content attempt_completion pair must be collapsed")
+            assertEquals(1, cm.messageCount())
+            val remaining = cm.getMessages()[0]
+            assertEquals("assistant", remaining.role)
+            // Prose must be preserved; XML tool call stripped
+            assertTrue(
+                remaining.content?.contains("I finished the task") == true,
+                "Prose before the XML tag must be preserved; got: ${remaining.content}"
+            )
+            assertFalse(
+                remaining.content?.contains("<attempt_completion>") == true,
+                "XML tag must be stripped from collapsed message; got: ${remaining.content}"
+            )
+        }
+
+        @Test
+        fun `collapseLastCompletionToolPair XML-in-content task_report is collapsed`() {
+            cm.addAssistantMessage(
+                ChatMessage(
+                    role = "assistant",
+                    content = "<task_report><summary>Analysis done</summary></task_report>",
+                    toolCalls = null
+                )
+            )
+            cm.addToolResult(toolCallId = "xml-task-1", content = "report received", isError = false)
+
+            assertTrue(cm.collapseLastCompletionToolPair(), "task_report XML-in-content must be collapsed")
+            val msg = cm.getMessages()[0]
+            assertEquals("assistant", msg.role)
+            assertFalse(
+                msg.content?.contains("<task_report>") == true,
+                "XML tag must be stripped; got: ${msg.content}"
+            )
+        }
+
+        @Test
+        fun `collapseLastCompletionToolPair returns false when assistant has no completion XML and no toolCalls`() {
+            // Ordinary text-only assistant, no completion tool
+            cm.addAssistantMessage(ChatMessage(role = "assistant", content = "Just a plain message"))
+            cm.addToolResult(toolCallId = "irrelevant", content = "some result", isError = false)
+            assertFalse(cm.collapseLastCompletionToolPair())
+        }
+
         @Test
         fun `slidingWindow keeps only the most recent fraction of messages`() {
             cm.setSystemPrompt("sys")
