@@ -37,6 +37,11 @@ class WebSearchPipelineE2ETest {
     private lateinit var spawner: SubagentSpawner
     private val project = mockk<Project>(relaxed = true)
 
+    private val passthroughEgressFilter = object : com.workflow.orchestrator.core.web.QueryEgressFilter {
+        override suspend fun screen(project: com.intellij.openapi.project.Project, query: String) =
+            com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Safe(query)
+    }
+
     // ── Stub provider ──────────────────────────────────────────────────────────
 
     /** Stub search provider: configure [hits] before each test. */
@@ -77,6 +82,7 @@ class WebSearchPipelineE2ETest {
             jsoupReadability = JsoupReadability(),
             registry = registry,
             auditLog = auditLog,
+            egressFilter = passthroughEgressFilter,
             ssrfResolver = ssrfResolver,
         )
     }

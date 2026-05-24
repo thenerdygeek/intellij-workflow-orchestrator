@@ -71,6 +71,15 @@ class WebSearchServiceImpl(
             logsDir.toPath().resolve("web")
         }
 
+        // TODO B10: replace this pass-through with project.service<QueryEgressFilterImpl>()
+        //  once QueryEgressFilterImpl is registered as a @Service in plugin.xml.
+        val noOpEgressFilter = object : com.workflow.orchestrator.core.web.QueryEgressFilter {
+            override suspend fun screen(
+                project: com.intellij.openapi.project.Project,
+                query: String,
+            ) = com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Safe(query)
+        }
+
         return WebSearchEngine(
             project = project,
             settings = settings,
@@ -78,6 +87,7 @@ class WebSearchServiceImpl(
             jsoupReadability = JsoupReadability(),
             registry = SearchProviderRegistry(project, searchClient),
             auditLog = WebAuditLog(auditLogDir),
+            egressFilter = noOpEgressFilter,
         )
     }
 }

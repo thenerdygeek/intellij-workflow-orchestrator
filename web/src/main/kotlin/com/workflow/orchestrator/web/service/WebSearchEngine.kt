@@ -43,6 +43,7 @@ class WebSearchEngine(
     private val jsoupReadability: JsoupReadability,
     private val registry: SearchProviderRegistry,
     private val auditLog: WebAuditLog,
+    private val egressFilter: com.workflow.orchestrator.core.web.QueryEgressFilter,
     /**
      * DNS resolver used for provider-URL SSRF screening. Inject a deterministic stub in tests
      * so the guard does not attempt real DNS. Production callers leave the default [SystemResolver].
@@ -81,6 +82,32 @@ class WebSearchEngine(
         }
         val cleaned = (screenResult as QueryScreenResult.Pass).cleaned
 
+        // Stage 1.5: outbound egress filter — block proprietary identifiers from leaving
+        // the user's machine. Deterministic deny-list (always on) + optional LLM screener.
+        // Runs AFTER UrlScreener.screenQuery (which already redacted tokens) and BEFORE
+        // provider.search dispatches the HTTP call. spec: 2026-05-24-web-sanitization-rebalance.
+        val egressDecision = egressFilter.screen(project, cleaned)
+        val queryAfterEgress: String
+        val egressNote: String?
+        when (egressDecision) {
+            is com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Safe -> {
+                queryAfterEgress = egressDecision.query
+                egressNote = null
+            }
+            is com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Rewritten -> {
+                queryAfterEgress = egressDecision.query
+                egressNote = "Egress filter rewrote your query: ${egressDecision.note}"
+            }
+            is com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Blocked -> {
+                val err = com.workflow.orchestrator.core.web.WebError.QueryBlockedSensitive(
+                    reason = egressDecision.reason,
+                    maskedTerm = egressDecision.maskedTerm,
+                )
+                auditEgressBlocked(cleaned, egressDecision, start)
+                return failure(err)
+            }
+        }
+
         // Stage 2a: provider base-URL SSRF screening (spec §4 Stage 2).
         // Screens the configured endpoint against UrlSafetyGuard to block SSRF attacks via a
         // misconfigured/attacker-controlled SearXNG/Brave/CustomHttp URL field.
@@ -109,7 +136,7 @@ class WebSearchEngine(
 
         // Stage 3: provider search
         val maxResults = request.maxResults.coerceAtMost(state.webSearchMaxResults)
-        val searchResult = provider.search(cleaned, maxResults)
+        val searchResult = provider.search(queryAfterEgress, maxResults)
         if (searchResult.isFailure) {
             val msg = searchResult.exceptionOrNull()?.message ?: ""
             val err: WebError = when {
@@ -117,7 +144,7 @@ class WebSearchEngine(
                 msg.contains("PROVIDER_MALFORMED_RESPONSE") -> WebError.ProviderMalformedResponse(provider.id.name)
                 else -> WebError.ProviderMalformedResponse(provider.id.name)
             }
-            auditError(err, cleaned, provider.id.name, start)
+            auditError(err, queryAfterEgress, provider.id.name, start)
             return failure(err)
         }
         val rawHits = searchResult.getOrThrow()
@@ -174,11 +201,25 @@ class WebSearchEngine(
         }.take(state.webSearchMaxResults)
 
         val elapsed = System.currentTimeMillis() - start
-        auditSuccess(cleaned, provider.id.name, hits.size, elapsed)
-        return ToolResult.success(
-            data = hits,
-            summary = "Found ${hits.size} results for: $cleaned",
+        auditSuccess(
+            query = queryAfterEgress,
+            queryBeforeFilter = if (egressDecision is com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Rewritten) cleaned else null,
+            egressDecision = when (egressDecision) {
+                is com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Safe -> "SAFE"
+                is com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Rewritten -> "LLM_REWRITTEN"
+                else -> error("Blocked already returned above")
+            },
+            provider = provider.id.name,
+            resultCount = hits.size,
+            elapsedMs = elapsed,
         )
+        val summary = if (egressNote != null) {
+            "Found ${hits.size} results for: $queryAfterEgress " +
+            "(egress filter rewrote query: ${(egressDecision as com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Rewritten).note})"
+        } else {
+            "Found ${hits.size} results for: $queryAfterEgress"
+        }
+        return ToolResult.success(data = hits, summary = summary)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -200,7 +241,14 @@ class WebSearchEngine(
             hint = if (err.recoverable) "RECOVERABLE" else "FATAL",
         )
 
-    private fun auditSuccess(query: String, provider: String, resultCount: Int, elapsedMs: Long) {
+    private fun auditSuccess(
+        query: String,
+        queryBeforeFilter: String?,
+        egressDecision: String,
+        provider: String,
+        resultCount: Int,
+        elapsedMs: Long,
+    ) {
         auditLog.append(
             WebAuditRecord(
                 ts = Instant.now(),
@@ -209,6 +257,8 @@ class WebSearchEngine(
                 url = query,
                 finalUrl = null,
                 query = query,
+                queryBeforeFilter = queryBeforeFilter,
+                egressDecision = egressDecision,
                 provider = provider,
                 allowlistDecision = null,
                 screenerFlags = emptyList(),
@@ -248,6 +298,43 @@ class WebSearchEngine(
                 sanitizerNotes = null,
                 elapsedMs = System.currentTimeMillis() - start,
                 error = err.code,
+            )
+        )
+    }
+
+    private fun auditEgressBlocked(
+        queryBeforeFilter: String,
+        decision: com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Blocked,
+        start: Long,
+    ) {
+        auditLog.append(
+            WebAuditRecord(
+                ts = Instant.now(),
+                op = "search",
+                agentSessionId = null,
+                url = queryBeforeFilter,
+                finalUrl = null,
+                query = null,                  // nothing was sent to a provider
+                queryBeforeFilter = queryBeforeFilter,
+                egressDecision = when (decision.reason) {
+                    "DENYLIST" -> "DENYLIST_BLOCKED"
+                    "LLM_REFUSED" -> "LLM_BLOCKED"
+                    "LLM_TIMEOUT" -> "LLM_TIMEOUT"
+                    else -> "BLOCKED_${decision.reason}"
+                },
+                provider = null,
+                allowlistDecision = null,
+                screenerFlags = emptyList(),
+                ssrfPass = true,
+                httpStatus = null,
+                contentType = null,
+                responseBytes = null,
+                extractedChars = null,
+                resultCount = null,
+                sanitizerVerdict = null,
+                sanitizerNotes = "egress blocked: maskedTerm=${decision.maskedTerm}",
+                elapsedMs = System.currentTimeMillis() - start,
+                error = "QUERY_BLOCKED_SENSITIVE",
             )
         )
     }
