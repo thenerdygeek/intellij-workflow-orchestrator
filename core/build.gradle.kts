@@ -39,6 +39,9 @@ dependencies {
     implementation(libs.okhttp)
     // Caffeine — in-memory cache store for Phase 3 HTTP response caching (Prong A).
     implementation(libs.caffeine)
+    // Moshi — JSON for DomainAllowlistEntry persistence in PluginSettings
+    implementation(libs.moshi)
+    implementation(libs.moshi.kotlin)
 
     // Test
     testImplementation(libs.junit5.api)
@@ -52,6 +55,12 @@ dependencies {
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.turbine)
     testImplementation(kotlin("test"))
+}
+
+intellijPlatform {
+    // Each module gets its own sandbox dir so concurrent/sequential :test tasks
+    // across modules don't collide on the shared plugins-test/ directory.
+    sandboxContainer = layout.buildDirectory.dir("idea-sandbox")
 }
 
 tasks.test {

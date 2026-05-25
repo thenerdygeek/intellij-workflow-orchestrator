@@ -80,8 +80,13 @@ class EditFileTool : AgentTool {
                     ?: return EditPreview.ValidationFailed
                 val replaceAll = params["replace_all"]?.jsonPrimitive?.boolean ?: false
 
-                val memoryDir = project.basePath?.let { File(ProjectIdentifier.agentDir(it), "memory").absolutePath }
-                val (path, pathError) = PathValidator.resolveAndValidateForWrite(rawPath, project.basePath, memoryDir)
+                val extraRoots = project.basePath?.let {
+                    listOf(
+                        File(ProjectIdentifier.agentDir(it), "memory").absolutePath,
+                        ProjectIdentifier.researchDir(it).absolutePath,
+                    )
+                } ?: emptyList()
+                val (path, pathError) = PathValidator.resolveAndValidateForWrite(rawPath, project.basePath, extraRoots)
                 if (pathError != null) return EditPreview.ValidationFailed
                 val resolvedPath = path ?: return EditPreview.ValidationFailed
 
@@ -286,8 +291,13 @@ class EditFileTool : AgentTool {
             ?: return ToolResult("Error: 'new_string' parameter required", "Error: missing new_string", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         val replaceAll = params["replace_all"]?.jsonPrimitive?.boolean ?: false
 
-        val memoryDir = project.basePath?.let { File(ProjectIdentifier.agentDir(it), "memory").absolutePath }
-        val (path, pathError) = PathValidator.resolveAndValidateForWrite(rawPath, project.basePath, memoryDir)
+        val extraRoots = project.basePath?.let {
+            listOf(
+                File(ProjectIdentifier.agentDir(it), "memory").absolutePath,
+                ProjectIdentifier.researchDir(it).absolutePath,
+            )
+        } ?: emptyList()
+        val (path, pathError) = PathValidator.resolveAndValidateForWrite(rawPath, project.basePath, extraRoots)
         if (pathError != null) return pathError
         val resolvedPath = path!!
 

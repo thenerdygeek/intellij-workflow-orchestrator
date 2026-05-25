@@ -86,6 +86,40 @@ object LlmBrainFactory {
         return create(project)
     }
 
+    /**
+     * Create an LlmBrain using the cheapest available model (Haiku if available, then
+     * non-thinking Sonnet) for single-shot web content sanitization tasks. Using a cheaper
+     * model reduces cost for the high-frequency sanitizer sub-agent. Falls back to the
+     * user's configured model if no Haiku/Sonnet is available.
+     */
+    suspend fun createForSanitization(project: Project): LlmBrain {
+        val connections = ConnectionSettings.getInstance()
+        val credentialStore = CredentialStore()
+        val sgUrl = connections.state.sourcegraphUrl.trimEnd('/')
+        val tokenProvider = { credentialStore.getToken(ServiceType.SOURCEGRAPH) }
+
+        val client = SourcegraphChatClient(
+            baseUrl = sgUrl,
+            tokenProvider = tokenProvider,
+            model = ""
+        )
+        val models = ModelCache.getModels(client)
+
+        val pick = ModelCache.pickHaiku(models)
+            ?: ModelCache.pickSonnetNonThinking(models)
+        if (pick != null) {
+            LOG.info("LlmBrainFactory: using ${pick.id} for web content sanitization")
+            return OpenAiCompatBrain(
+                sourcegraphUrl = sgUrl,
+                tokenProvider = tokenProvider,
+                model = pick.id
+            )
+        }
+        // Fall back to the user's configured model
+        LOG.info("LlmBrainFactory: Haiku/Sonnet not available, falling back to configured model for sanitization")
+        return create(project)
+    }
+
     fun isAvailable(): Boolean {
         val url = ConnectionSettings.getInstance().state.sourcegraphUrl
         return !url.isNullOrBlank() && CredentialStore().hasToken(ServiceType.SOURCEGRAPH)

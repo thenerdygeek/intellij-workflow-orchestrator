@@ -315,5 +315,6 @@ class AuthTestService {
         ServiceType.SONARQUBE -> "/api/authentication/validate"
         ServiceType.BITBUCKET -> "/rest/api/1.0/users"
         ServiceType.SOURCEGRAPH -> "/.api/client-config"
+        ServiceType.WEB_SEARCH -> "/"
     }
 }

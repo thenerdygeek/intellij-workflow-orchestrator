@@ -13,7 +13,8 @@ import java.io.File
  * Golden snapshot tests for [SubagentSystemPromptBuilder].
  *
  * Mirrors the main-agent [SystemPromptIdeContextTest] snapshot pattern.
- * Five variants cover the (persona × IdeContext) matrix described in Task 6 of Track C.
+ * Seven variants cover the (persona × IdeContext) matrix described in Task 6 of Track C
+ * plus the research persona (Tasks T12/T13).
  *
  * Regenerate all snapshots with:
  *   ./gradlew :agent:test --tests "*SubagentSystemPromptSnapshotTest*generate all golden*"
@@ -134,7 +135,7 @@ class SubagentSystemPromptSnapshotTest {
     // ==================== Regeneration Test ====================
 
     /**
-     * Generates (or regenerates) all 5 golden snapshot files.
+     * Generates (or regenerates) all 7 golden snapshot files.
      *
      * Run explicitly:
      *   ./gradlew :agent:test --tests "*SubagentSystemPromptSnapshotTest*generate all golden*"
@@ -149,6 +150,7 @@ class SubagentSystemPromptSnapshotTest {
         val pythonEngineer = loadPersona("python-engineer")
         val testAutomator = loadPersona("test-automator")
         val architectReviewer = loadPersona("architect-reviewer")
+        val research = loadPersona("research")
 
         saveSnapshot("code-reviewer-intellij-ultimate",
             buildPrompt(codeReviewer, intellijUltimate()))
@@ -160,12 +162,16 @@ class SubagentSystemPromptSnapshotTest {
             buildPrompt(testAutomator, null))
         saveSnapshot("architect-reviewer-intellij-community",
             buildPrompt(architectReviewer, intellijCommunity()))
+        saveSnapshot("research-null-context",
+            buildPrompt(research, null))
+        saveSnapshot("research-intellij-ultimate",
+            buildPrompt(research, intellijUltimate()))
 
-        // Verify all 5 files were created and are non-empty
+        // Verify all 7 files were created and are non-empty
         val dir = File(SNAPSHOT_DIR)
         assertTrue(dir.exists(), "Snapshot directory must exist")
         val snapshots = dir.listFiles { f -> f.extension == "txt" } ?: emptyArray()
-        assertEquals(5, snapshots.size, "Should have created exactly 5 snapshot files")
+        assertEquals(7, snapshots.size, "Should have created exactly 7 snapshot files")
         for (f in snapshots) {
             assertTrue(f.length() > 0, "Snapshot '${f.name}' must be non-empty")
         }
@@ -235,6 +241,32 @@ class SubagentSystemPromptSnapshotTest {
             "run 'generate all golden snapshots' first")
         assertEquals(snapshot, prompt,
             "Prompt for architect-reviewer × IntelliJ Community has changed. " +
+            "If intentional, re-run 'generate all golden snapshots' to update.")
+    }
+
+    @Test
+    fun `SNAPSHOT research null context matches golden file`() {
+        val persona = loadPersona("research")
+        val prompt = buildPrompt(persona, null)
+        val snapshot = loadSnapshot("research-null-context")
+        assertNotNull(snapshot,
+            "Golden snapshot 'research-null-context.txt' not found — " +
+            "run 'generate all golden snapshots' first")
+        assertEquals(snapshot, prompt,
+            "Prompt for research × null IdeContext has changed. " +
+            "If intentional, re-run 'generate all golden snapshots' to update.")
+    }
+
+    @Test
+    fun `SNAPSHOT research IntelliJ Ultimate matches golden file`() {
+        val persona = loadPersona("research")
+        val prompt = buildPrompt(persona, intellijUltimate())
+        val snapshot = loadSnapshot("research-intellij-ultimate")
+        assertNotNull(snapshot,
+            "Golden snapshot 'research-intellij-ultimate.txt' not found — " +
+            "run 'generate all golden snapshots' first")
+        assertEquals(snapshot, prompt,
+            "Prompt for research × IntelliJ Ultimate has changed. " +
             "If intentional, re-run 'generate all golden snapshots' to update.")
     }
 }

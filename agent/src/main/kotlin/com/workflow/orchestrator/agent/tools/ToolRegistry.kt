@@ -169,6 +169,24 @@ class ToolRegistry {
     fun getDeferredCategory(toolName: String): String =
         deferredCategories[toolName] ?: "Other"
 
+    /**
+     * Remove a core tool by name. Returns the removed tool or null.
+     * Used when a conditionally-registered core tool (e.g. web_fetch, web_search) is
+     * toggled off at runtime via [AgentService.reregisterConditionalTools].
+     */
+    fun unregisterCore(toolName: String): AgentTool? {
+        val removed = coreTools.remove(toolName)
+        if (removed != null) invalidateCache()
+        return removed
+    }
+
+    /**
+     * Returns true if [toolName] is registered in any tier (core, deferred, or active-deferred).
+     * Used by [AgentService.reregisterConditionalTools] to avoid double-registration.
+     */
+    fun has(toolName: String): Boolean =
+        coreTools.containsKey(toolName) || activeDeferred.containsKey(toolName) || deferredTools.containsKey(toolName)
+
     /** Remove a deferred or active-deferred tool by name. Returns the removed tool or null. */
     @Synchronized
     fun unregisterDeferred(toolName: String): AgentTool? {
