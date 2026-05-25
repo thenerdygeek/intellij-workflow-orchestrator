@@ -553,6 +553,7 @@ class AgentConfigLoader private constructor() : Disposable {
             "devops-engineer.md",
             "security-auditor.md",
             "performance-engineer.md",
+            "research.md",
         )
 
         @JvmStatic

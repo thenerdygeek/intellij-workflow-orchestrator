@@ -6,6 +6,8 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.core.services.*
 import com.workflow.orchestrator.core.services.jira.JiraSearchService
 import com.workflow.orchestrator.core.services.jira.TicketTransitionService
+import com.workflow.orchestrator.core.web.WebFetchService
+import com.workflow.orchestrator.core.web.WebSearchService
 
 /**
  * Centralized service lookup for agent integration tools.
@@ -35,6 +37,14 @@ object ServiceLookup {
 
     fun jiraSearch(project: Project): JiraSearchService? = try {
         project.getService(JiraSearchService::class.java)
+    } catch (_: Exception) { null }
+
+    fun webFetch(project: Project): WebFetchService? = try {
+        project.getService(WebFetchService::class.java)
+    } catch (_: Exception) { null }
+
+    fun webSearch(project: Project): WebSearchService? = try {
+        project.getService(WebSearchService::class.java)
     } catch (_: Exception) { null }
 
     fun notConfigured(serviceName: String): ToolResult = ToolResult(

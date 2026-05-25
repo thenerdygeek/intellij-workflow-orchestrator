@@ -39,6 +39,9 @@ dependencies {
     implementation(libs.okhttp)
     // Caffeine — in-memory cache store for Phase 3 HTTP response caching (Prong A).
     implementation(libs.caffeine)
+    // Moshi — JSON for DomainAllowlistEntry persistence in PluginSettings
+    implementation(libs.moshi)
+    implementation(libs.moshi.kotlin)
 
     // Test
     testImplementation(libs.junit5.api)

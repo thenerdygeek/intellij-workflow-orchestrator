@@ -118,6 +118,7 @@ dependencies {
     implementation(project(":automation"))
     implementation(project(":handover"))
     implementation(project(":agent"))
+    implementation(project(":web"))
 
     // -- External libraries --
     compileOnly(libs.kotlinx.coroutines.core)

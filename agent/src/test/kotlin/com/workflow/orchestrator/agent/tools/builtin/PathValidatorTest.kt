@@ -118,7 +118,7 @@ class PathValidatorTest {
     @Test
     fun `write validator allows paths inside project`(@TempDir project: Path, @TempDir memory: Path) {
         val inside = project.resolve("src/Foo.kt").toFile().absolutePath
-        val (canon, err) = PathValidator.resolveAndValidateForWrite(inside, project.toString(), memory.toString())
+        val (canon, err) = PathValidator.resolveAndValidateForWrite(inside, project.toString(), listOf(memory.toString()))
         assertNotNull(canon)
         assertNull(err)
     }
@@ -126,7 +126,7 @@ class PathValidatorTest {
     @Test
     fun `write validator allows paths inside memory dir`(@TempDir project: Path, @TempDir memory: Path) {
         val inside = memory.resolve("feedback_x.md").toFile().absolutePath
-        val (canon, err) = PathValidator.resolveAndValidateForWrite(inside, project.toString(), memory.toString())
+        val (canon, err) = PathValidator.resolveAndValidateForWrite(inside, project.toString(), listOf(memory.toString()))
         assertNotNull(canon)
         assertNull(err)
     }
@@ -134,7 +134,7 @@ class PathValidatorTest {
     @Test
     fun `write validator rejects paths outside both roots`(@TempDir project: Path, @TempDir memory: Path) {
         val outside = File(System.getProperty("java.io.tmpdir"), "elsewhere/foo.txt").absolutePath
-        val (canon, err) = PathValidator.resolveAndValidateForWrite(outside, project.toString(), memory.toString())
+        val (canon, err) = PathValidator.resolveAndValidateForWrite(outside, project.toString(), listOf(memory.toString()))
         assertNull(canon)
         assertNotNull(err)
     }
@@ -142,7 +142,7 @@ class PathValidatorTest {
     @Test
     fun `write validator rejects traversal attempt`(@TempDir project: Path, @TempDir memory: Path) {
         val escaped = project.resolve("../../etc/passwd").toString()
-        val (canon, err) = PathValidator.resolveAndValidateForWrite(escaped, project.toString(), memory.toString())
+        val (canon, err) = PathValidator.resolveAndValidateForWrite(escaped, project.toString(), listOf(memory.toString()))
         assertNull(canon)
         assertNotNull(err)
     }
@@ -207,7 +207,7 @@ class PathValidatorTest {
         val home = System.getProperty("user.home")
         val memoryDir = File(home, ".workflow-orchestrator/proj/agent/memory").absolutePath
         val tildePath = "~/.workflow-orchestrator/proj/agent/memory/note.md"
-        val (canonical, _) = PathValidator.resolveAndValidateForWrite(tildePath, project.toString(), memoryDir)
+        val (canonical, _) = PathValidator.resolveAndValidateForWrite(tildePath, project.toString(), listOf(memoryDir))
         assertNotNull(canonical)
         assertTrue(canonical!!.startsWith(File(home).canonicalPath))
     }

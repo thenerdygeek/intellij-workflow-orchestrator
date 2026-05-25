@@ -54,6 +54,10 @@ object SubagentSystemPromptBuilder {
      *                        Used when [PromptSectionsConfig.editingFiles] = "auto" to
      *                        determine whether edit_file / create_file are available.
      *                        When null, "auto" defaults to including the editing section.
+     * @param hasWebTools     When false, suppresses the web-tool capability-hint table rows
+     *                        and the "External Content Trust and Recovery" rules section.
+     *                        Sub-agents inherit this from the orchestrator registry state.
+     *                        Defaults to true for backward compatibility.
      * @param completingYourTaskSection The "COMPLETING YOUR TASK" footer injected verbatim
      *                        after the main prompt. Passed in so this builder stays
      *                        stateless and the constant lives only in SubagentRunner.
@@ -76,6 +80,7 @@ object SubagentSystemPromptBuilder {
         deferredToolCatalog: Map<String, List<Pair<String, String>>>? = null,
         availableShells: List<String>? = null,
         toolNames: Set<String>? = null,
+        hasWebTools: Boolean = true,
         completingYourTaskSection: String,
         dialectDriftDetected: Boolean = false,
     ): String {
@@ -132,6 +137,8 @@ object SubagentSystemPromptBuilder {
             includeSystemInfo = sections.systemInfo,
             includeUserInstructions = sections.userInstructions,
             includeMemorySection = includeMemory,
+            // ---- web tools availability (inherited from orchestrator registry) ----
+            hasWebTools = hasWebTools,
         )
 
         return base + SECTION_SEP + completingYourTaskSection

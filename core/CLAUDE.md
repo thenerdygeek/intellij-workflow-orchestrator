@@ -59,6 +59,10 @@ Activity-aware polling: `baseIntervalMs` (default 30s), `maxIntervalMs` (default
 - `ConnectionSettings` — application-level (shared across projects): service URLs (Jira, Bamboo, Bitbucket, SonarQube, Sourcegraph), Bitbucket username
 - `PluginSettings` — project-level: plan keys, polling intervals, feature toggles, docker tag key, sonar project key
 
+### Sub-agent settings
+
+- `enableResearchSubagent: Boolean = true` (project-level) — gates the bundled `research` sub-agent persona; when false, `SpawnAgentTool` returns `RESEARCH_SUBAGENT_DISABLED` for both LLM-driven and slash-command invocations.
+
 ### PR creation settings
 
 - `enableAiTitleGeneration: Boolean = true` (project-level) — controls the AI-sparkle icon inside the PR title field

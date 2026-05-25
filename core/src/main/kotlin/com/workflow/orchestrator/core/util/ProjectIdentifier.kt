@@ -30,6 +30,15 @@ object ProjectIdentifier {
         return File(rootDir(projectBasePath), "agent")
     }
 
+    /**
+     * Per-project research dir: `{agentDir}/research/`. Mirrors [memoryDir] semantics —
+     * sibling of the per-session storage. Holds the research sub-agent's dump files
+     * plus the auto-managed `RESEARCH.md` index. Not auto-created by this function;
+     * callers create on first write via `Files.createDirectories`.
+     */
+    fun researchDir(projectBasePath: String): File =
+        File(agentDir(projectBasePath), "research")
+
     fun sessionsDir(projectBasePath: String): File {
         return File(agentDir(projectBasePath), "sessions")
     }

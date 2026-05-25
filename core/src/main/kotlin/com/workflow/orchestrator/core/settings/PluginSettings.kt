@@ -440,6 +440,64 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
          */
         var artifactRenderTimeoutSeconds by property(60)
 
+        // ── Sub-agent personas ────────────────────────────────────────────────
+        /**
+         * Enables the bundled `research` sub-agent persona. When disabled, both the
+         * `/research` slash command and direct `agent(agent_type="research", ...)` calls
+         * return `RESEARCH_SUBAGENT_DISABLED` from `SpawnAgentTool` (no silent failure).
+         * Project-level; default ON matches the house style for web_fetch / web_search.
+         */
+        var enableResearchSubagent by property(true)
+
+        // ── Web tools (added 2026-05-23) ─────────────────────────────────────
+        var enableWebFetch by property(true)
+        var enableWebSearch by property(true)
+        var webPlanModeAllow by property(false)
+
+        // Search-specific
+        /** Which search provider to use. One of: NONE | SEARXNG | BRAVE | CUSTOM_HTTP */
+        var webSearchProviderType by string("NONE")
+        /** Maximum snippet length (chars) returned per search hit after sanitization. */
+        var webSearchSnippetMaxChars by property(500)
+        /** Maximum number of search results returned to the agent. */
+        var webSearchMaxResults by property(10)
+
+        // fetch — allowlist
+        var webAllowlistJson by string("[]")         // serialized List<DomainAllowlistEntry>
+        var webUnlistedPolicy by string("PROMPT")    // REJECT | PROMPT
+        var webApprovalTimeoutSec by property(60)
+
+        // fetch — content limits
+        var webMaxBytes by property(262_144)
+        var webMaxExtractedChars by property(32_768)
+        var webConnectTimeoutSec by property(10)
+        var webReadTimeoutSec by property(30)
+        var webRequireHttps by property(true)
+        var webAllowIpLiteral by property(false)
+        var webResolveShorteners by property(true)
+
+        // fetch — sanitizer
+        var webSanitizerBrainId by string("")        // blank = use cheapest available
+        var webSanitizerFailClosed by property(true)
+
+        // fetch/search — egress filter (added 2026-05-24)
+        /** JSON-encoded `List<String>` of user-supplied deny-list entries. */
+        var webEgressDenyListJson by string("[]")
+        /** When true, an LLM screener runs after the deny-list (Stage 1 of egress filter). */
+        var webEgressLlmScreenerEnabled by property(false)
+        /** When true, auto-derived terms (service hostnames, module names) augment the deny-list. */
+        var webEgressIncludeAutoDerivedTerms by property(true)
+        /** Per-call timeout for the LLM screener; only consulted when [webEgressLlmScreenerEnabled]. */
+        var webEgressTimeoutMs by property(15_000)
+
+        // fetch — response cache (added 2026-05-24)
+        /** When true, an in-memory LRU+TTL cache short-circuits repeat fetches of the same URL. */
+        var webFetchCacheEnabled by property(true)
+        /** Cache entry lifetime in minutes. Matches Claude Code's default. */
+        var webFetchCacheTtlMinutes by property(15)
+        /** Maximum number of cached entries (LRU eviction beyond this). */
+        var webFetchCacheMaxEntries by property(100)
+
         init {
             // Populate default whitelist on first instantiation. Persisted lists
             // round-trip independently — if the user clears the list it stays
@@ -560,3 +618,82 @@ fun PluginSettings.State.effectiveAcceptWindowMs(): Long {
     return clamped * 1_000L
 }
 
+// ── Web tools accessors ──────────────────────────────────────────────────────
+
+private val webAllowlistLog = com.intellij.openapi.diagnostic.Logger.getInstance("WebAllowlist")
+
+/**
+ * Deserializes the stored JSON into a typed list of [DomainAllowlistEntry].
+ *
+ * Returns an empty list on parse error or blank/missing JSON. I7 fix: silent-empty
+ * return is intentional (throwing would break the agent loop on a stale config rewrite),
+ * but the parse failure is now logged at WARN so a corrupted allowlist is surfaced
+ * rather than disappearing without trace.
+ */
+fun PluginSettings.getWebAllowlist(): List<com.workflow.orchestrator.core.model.web.DomainAllowlistEntry> {
+    val json = state.webAllowlistJson?.ifBlank { "[]" } ?: "[]"
+    return try {
+        WebAllowlistJson.adapter.fromJson(json) ?: emptyList()
+    } catch (e: Exception) {
+        // I7: surface corruption rather than silently dropping entries. We still return
+        // empty (fail-soft) so the agent loop keeps running, but the user sees a log line.
+        webAllowlistLog.warn("Failed to parse webAllowlistJson; returning empty list. JSON length=${json.length}", e)
+        emptyList()
+    }
+}
+
+/**
+ * Serializes [entries] and persists them as JSON in [PluginSettings.State.webAllowlistJson].
+ */
+fun PluginSettings.setWebAllowlist(entries: List<com.workflow.orchestrator.core.model.web.DomainAllowlistEntry>) {
+    state.webAllowlistJson = WebAllowlistJson.adapter.toJson(entries)
+}
+
+// ── Web egress deny-list accessors (added 2026-05-24) ────────────────────────
+
+private val webEgressLog = com.intellij.openapi.diagnostic.Logger.getInstance("WebEgressDenyList")
+
+private val egressDenyListAdapter by lazy {
+    com.squareup.moshi.Moshi.Builder().build().adapter<List<String>>(
+        com.squareup.moshi.Types.newParameterizedType(List::class.java, String::class.java)
+    )
+}
+
+/**
+ * Returns the user-supplied egress deny-list. Empty list when JSON is blank or malformed
+ * (fail-soft, matches `getWebAllowlist` behavior — corruption is logged at WARN so a
+ * silently-empty list does not look like deliberate user clearing).
+ */
+fun PluginSettings.getWebEgressDenyList(): List<String> {
+    val json = state.webEgressDenyListJson?.ifBlank { "[]" } ?: "[]"
+    return try {
+        egressDenyListAdapter.fromJson(json) ?: emptyList()
+    } catch (e: Exception) {
+        webEgressLog.warn("Failed to parse webEgressDenyListJson; returning empty list. JSON length=${json.length}", e)
+        emptyList()
+    }
+}
+
+fun PluginSettings.setWebEgressDenyList(entries: List<String>) {
+    state.webEgressDenyListJson = egressDenyListAdapter.toJson(entries)
+}
+
+/**
+ * Returns the configured sanitizer brain ID, or null when the field is blank
+ * (meaning "use cheapest available").
+ */
+fun PluginSettings.resolveSanitizerBrainId(): String? =
+    state.webSanitizerBrainId?.takeIf { it.isNotBlank() }
+
+private object WebAllowlistJson {
+    val adapter = com.squareup.moshi.Moshi.Builder()
+        .add(com.workflow.orchestrator.core.util.InstantMoshiAdapter())
+        .add(com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory())
+        .build()
+        .adapter<List<com.workflow.orchestrator.core.model.web.DomainAllowlistEntry>>(
+            com.squareup.moshi.Types.newParameterizedType(
+                List::class.java,
+                com.workflow.orchestrator.core.model.web.DomainAllowlistEntry::class.java,
+            )
+        )
+}

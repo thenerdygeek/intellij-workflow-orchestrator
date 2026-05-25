@@ -673,6 +673,18 @@ Tips:
         val config = configLoader?.getCachedConfig(agentType)
             ?: return errorResult(buildUnknownAgentTypeError(agentType))
 
+        // Settings gate: bundled `research` persona is gated on enableResearchSubagent.
+        // Honors both the LLM-driven path (orchestrator calls agent(agent_type="research"))
+        // and the slash-command path (/research instructs the LLM to call agent(...)).
+        if (config.name == "research") {
+            val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state
+            if (!settings.enableResearchSubagent) {
+                return errorResult(
+                    "RESEARCH_SUBAGENT_DISABLED: enable it in Tools → Workflow Orchestrator → AI Agent → Sub-agents."
+                )
+            }
+        }
+
         val (coreTools, deferredToolsForConfig) = resolveConfigToolsTiered(config)
         if (coreTools.isEmpty()) {
             return errorResult("Agent type '${config.name}' has no resolvable core tools. Config lists: ${config.tools}")

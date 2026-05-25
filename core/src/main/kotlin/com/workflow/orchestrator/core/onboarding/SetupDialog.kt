@@ -189,6 +189,9 @@ class SetupDialog(private val project: Project) : DialogWrapper(project) {
                     settings.connections.sourcegraphUrl = result.url
                     credentialStore.storeToken(result.serviceType, result.token)
                 }
+                ServiceType.WEB_SEARCH -> {
+                    // WEB_SEARCH has no URL or credential in onboarding (configured via Settings)
+                }
             }
         }
         super.doOKAction()

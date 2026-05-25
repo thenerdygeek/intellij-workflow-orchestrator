@@ -16,5 +16,6 @@ include(
     ":automation",
     ":handover",
     ":agent",
+    ":web",
     ":mock-server",
 )

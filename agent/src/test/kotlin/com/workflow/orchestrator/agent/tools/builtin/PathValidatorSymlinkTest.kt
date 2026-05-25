@@ -141,7 +141,7 @@ class PathValidatorSymlinkTest {
         val (path, error) = PathValidator.resolveAndValidateForWrite(
             symlinkDir.resolve("file.txt").toAbsolutePath().toString(),
             projectRoot.toFile().absolutePath,
-            memoryDir.toFile().absolutePath,
+            listOf(memoryDir.toFile().absolutePath),
         )
 
         // Security invariant: write through a symlink-escape must be REJECTED
@@ -166,7 +166,7 @@ class PathValidatorSymlinkTest {
         val (path, error) = PathValidator.resolveAndValidateForWrite(
             file,
             projectRoot.toFile().absolutePath,
-            memoryDir.toFile().absolutePath,
+            listOf(memoryDir.toFile().absolutePath),
         )
 
         assertNotNull(path)
@@ -193,7 +193,7 @@ class PathValidatorSymlinkTest {
         val (path, error) = PathValidator.resolveAndValidateForWrite(
             symlinkInMemory.resolve("note.md").toAbsolutePath().toString(),
             projectDir.toFile().absolutePath,
-            memoryRoot.toFile().absolutePath,
+            listOf(memoryRoot.toFile().absolutePath),
         )
 
         // Security invariant: write through a symlink in the memory dir must be REJECTED

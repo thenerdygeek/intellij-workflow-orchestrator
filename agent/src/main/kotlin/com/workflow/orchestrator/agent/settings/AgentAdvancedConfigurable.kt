@@ -185,6 +185,20 @@ class AgentAdvancedConfigurable(
                 }
             }
 
+            group("Sub-agents") {
+                row {
+                    checkBox("Enable research sub-agent")
+                        .bindSelected(
+                            { pluginSettings.state.enableResearchSubagent },
+                            { pluginSettings.state.enableResearchSubagent = it }
+                        )
+                        .comment(
+                            "When checked, the LLM can spawn the research sub-agent for thorough " +
+                            "external research. Dumps land in ~/.workflow-orchestrator/{proj}/agent/research/."
+                        )
+                }
+            }
+
             group("Background processes") {
                 row("Concurrent processes per session:") {
                     intTextField(1..20)
