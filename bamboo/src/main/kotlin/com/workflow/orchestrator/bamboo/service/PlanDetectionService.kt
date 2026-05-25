@@ -12,6 +12,7 @@ import com.workflow.orchestrator.core.settings.recordPlanValidation
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 
 class PlanDetectionService(
     private val apiClient: BambooApiClient,
@@ -385,6 +386,9 @@ class PlanDetectionService(
     }
 }
 
+/** Timeout (seconds) for `git rev-list` — exposed as a constant so tests can assert on it. */
+internal const val REV_LIST_TIMEOUT_SECONDS = 10L
+
 /**
  * Default git rev-list runner: executes `git rev-list -n 10 HEAD` in [repoRoot].
  *
@@ -392,6 +396,12 @@ class PlanDetectionService(
  * deadlock where stderr fills the OS pipe buffer (~64K) and blocks the child
  * process from flushing stdout — observed on unborn-branch and shallow-clone
  * setups.
+ *
+ * A [REV_LIST_TIMEOUT_SECONDS]-second wall-clock timeout guards against indefinite
+ * blocking when the git repository is on a slow network drive, has a corrupted HEAD,
+ * or is under heavy index load. On timeout the process is destroyed forcibly and an
+ * empty list is returned — identical to the already-handled `catch` paths in the
+ * callers. Closes audit finding bamboo:F-11.
  */
 internal fun defaultRevList(repoRoot: Path): List<String> {
     val process = ProcessBuilder("git", "rev-list", "-n", "10", "HEAD")
@@ -399,6 +409,9 @@ internal fun defaultRevList(repoRoot: Path): List<String> {
         .redirectError(ProcessBuilder.Redirect.DISCARD)
         .start()
     val output = process.inputStream.bufferedReader().readText()
-    process.waitFor()
+    if (!process.waitFor(REV_LIST_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+        process.destroyForcibly()
+        return emptyList()
+    }
     return output.lines().map { it.trim() }.filter { it.isNotBlank() }
 }
