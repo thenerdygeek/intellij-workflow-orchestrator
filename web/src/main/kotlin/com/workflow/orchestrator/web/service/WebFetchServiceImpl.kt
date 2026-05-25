@@ -82,6 +82,13 @@ class WebFetchServiceImpl(
             logsDir.toPath().resolve("web")
         }
 
+        val fetchCache = if (state.webFetchCacheEnabled) {
+            com.workflow.orchestrator.web.service.cache.WebFetchCache(
+                maxEntries = state.webFetchCacheMaxEntries,
+                ttl = Duration.ofMinutes(state.webFetchCacheTtlMinutes.toLong()),
+            )
+        } else null
+
         return WebFetchEngine(
             project = project,
             settings = settings,
@@ -93,6 +100,7 @@ class WebFetchServiceImpl(
             approvalGate = ApprovalGateImpl(project),
             auditLog = WebAuditLog(auditLogDir),
             shortenerResolver = ShortenerResolver(shortenerClient),
+            fetchCache = fetchCache,
         )
     }
 }
