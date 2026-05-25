@@ -101,22 +101,21 @@ object PromptBodyRedactor {
     /**
      * Redact credential values from [body].
      *
-     * Original JSON / header patterns use the legacy `***REDACTED***` marker so that
-     * existing callers (debug dumpers, tests) are not broken.  Diff-specific patterns
-     * (AWS keys, PEM headers, assignment-style secrets) use `[REDACTED]` which is
-     * friendlier to display in the AI-review prompt.
+     * All patterns use the single `***REDACTED***` marker — the canonical marker shared with
+     * the rest of the HTTP-redaction code (`RawApiTraceInterceptor`, `SourcegraphChatClient`).
+     * (Previously the diff-specific patterns emitted `[REDACTED]`; normalized to one marker.)
      *
-     * @return A copy of [body] with credential values replaced by the appropriate
-     *         redaction marker. Never throws; returns [body] unchanged on error.
+     * @return A copy of [body] with credential values replaced by the redaction marker.
+     *         Never throws; returns [body] unchanged on error.
      */
     fun redact(body: String): String = try {
         body
             .replace(JSON_CREDENTIAL_FIELD) { m -> "${m.groupValues[1]}***REDACTED***" }
             .replace(JSON_CREDENTIAL_FIELD_ESCAPED) { m -> "${m.groupValues[1]}***REDACTED***" }
             .replace(AUTH_HEADER_VALUE) { m -> "${m.groupValues[1]}***REDACTED***" }
-            .replace(AWS_ACCESS_KEY) { "[REDACTED]" }
-            .replace(PEM_PRIVATE_KEY_HEADER) { "[REDACTED PRIVATE KEY HEADER]" }
-            .replace(ASSIGNMENT_SECRET) { m -> "${m.groupValues[1]}[REDACTED]" }
+            .replace(AWS_ACCESS_KEY) { "***REDACTED***" }
+            .replace(PEM_PRIVATE_KEY_HEADER) { "***REDACTED***" }
+            .replace(ASSIGNMENT_SECRET) { m -> "${m.groupValues[1]}***REDACTED***" }
     } catch (_: Exception) {
         body
     }

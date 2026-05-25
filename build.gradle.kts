@@ -167,9 +167,15 @@ intellijPlatform {
         // Standard compatibility gate (the plugin's default set) PLUS @OverrideOnly.
         // COMPATIBILITY_PROBLEMS and NON_EXTENDABLE_API_USAGES are the load-bearing checks
         // ("will this crash on the user's IDE") and must stay in the failure set.
-        // EXPERIMENTAL_API_USAGES is intentionally excluded: runBlockingCancellable (30+ sites)
-        // and writeAction (4 sites) are intentional, accepted platform APIs. Enabling it cleanly
-        // needs an ignoredProblemsFile for the 34 accepted entries — deferred (queued-during-phase5).
+        //
+        // EXPERIMENTAL_API_USAGES is intentionally excluded BY DESIGN (decision 2026-05-25, not a
+        // TODO). runBlockingCancellable and writeAction are intentional, accepted platform APIs.
+        // Gating on EXPERIMENTAL was evaluated and rejected: (1) the surface is self-resolving —
+        // IU-251 reports 34 usages but IU-252/253 only 4 (runBlockingCancellable already graduated
+        // out of @Experimental upstream); (2) the required ignoredProblems entries embed
+        // auto-generated lambda names + the plugin version, so an exact-match ignore file would go
+        // stale on any refactor/version bump and start failing the build on already-accepted code.
+        // These usages still surface as warnings in build/reports/pluginVerifier — review there.
         failureLevel = listOf(
             org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.COMPATIBILITY_PROBLEMS,
             org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.NON_EXTENDABLE_API_USAGES,

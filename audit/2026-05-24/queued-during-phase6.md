@@ -71,3 +71,11 @@ avoid breaking existing tests, but a future cleanup commit could normalize to on
 - **sonar IssueListPanel.fixWithAgent** — FIXED. Now routes through a `resolveSonarRepoRoot` wrapper over `IssueDetailPanel.resolveRepoRoot` instead of `project.basePath` (multi-repo correctness).
 - **pullrequest CommentsViewModel `_comments`** — ALREADY DONE. Class already uses `commentsMutex` + snapshot `comments` (KDoc cites the F-10 fix).
 - **PromptBodyRedactor marker inconsistency** — deferred (Tier D, cosmetic).
+
+## RESOLUTION (2026-05-25, Tier-D incidentals pass)
+
+- **PromptBodyRedactor marker inconsistency** — FIXED. The three diff-specific patterns (AWS key,
+  PEM header, assignment secret) now emit `***REDACTED***` — the canonical marker shared with
+  RawApiTraceInterceptor / SourcegraphChatClient — instead of `[REDACTED]`. Normalized the minority
+  to the dominant marker (lower churn; no test changes — the only `[REDACTED]`-mentioning test,
+  PrReviewTaskBuilderTest, is tolerant of both).

@@ -44,3 +44,17 @@ Key ones: `ExecutionEnvironment.setCallback` (5 sites), `TestStateInfo.Magnitude
 (4 sites), `XBreakpointManagerImpl` (4 sites), `OasSerializationUtilsKt.generateOasDraft`,
 `Module.getModuleFile`. These require design decisions (public API replacements or accepted
 internal usage with `@Suppress`) — deferred.
+
+## RESOLUTION (2026-05-25, Tier-D incidentals pass)
+
+- **verifyPlugin Q8 — EXPERIMENTAL_API_USAGES gate** — WONTFIX BY DESIGN (not deferred). Evaluated
+  and rejected: the experimental surface is self-resolving (IU-251 reports 34 usages, IU-252/253
+  only 4 — runBlockingCancellable already graduated upstream), and the required ignoredProblems
+  entries embed auto-generated lambda names + the plugin version, so an exact-match ignore file
+  would go stale on any refactor/version bump and start failing the build on already-accepted code
+  (net-negative). The exclusion is now documented as a decision in build.gradle.kts. These usages
+  still surface as warnings in build/reports/pluginVerifier.
+- **verifyPlugin @Internal violations (17)** — left as documented warnings (not in failureLevel);
+  each needs a per-site platform-API design decision, out of scope for an incidentals pass.
+- **jira:F-6 / jira:F-1 / bamboo:F-5** — left for their respective next-audit/threading sweeps as
+  noted (low-risk, no behavior defect).

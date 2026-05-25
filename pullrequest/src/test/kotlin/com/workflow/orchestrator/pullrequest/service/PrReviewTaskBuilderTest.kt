@@ -121,7 +121,7 @@ class PrReviewTaskBuilderTest {
             sessionId = "s1",
         )
         assertFalse(prompt.contains("AKIAIOSFODNN7EXAMPLE"), "AWS key ID must be redacted from prompt")
-        assertTrue(prompt.contains("[REDACTED]"), "Redaction marker must appear")
+        assertTrue(prompt.contains("***REDACTED***"), "Redaction marker must appear")
         // Normal code lines must still be present
         assertTrue(prompt.contains("some normal code"), "Non-secret lines must pass through unchanged")
     }
@@ -180,6 +180,6 @@ class PrReviewTaskBuilderTest {
             diff = diff, jiraTicket = null, sessionId = "s1",
         )
         assertTrue(prompt.contains("computeHash"), "Ordinary code lines must not be redacted")
-        assertFalse(prompt.contains("[REDACTED]"), "No spurious redaction on clean diff")
+        assertFalse(prompt.contains("REDACTED"), "No spurious redaction on clean diff")
     }
 }
