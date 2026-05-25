@@ -145,6 +145,7 @@ class ToolResultTest {
             ToolResultType.PlanResponse(needsMoreExploration = false),
             ToolResultType.SkillActivation("s", "c"),
             ToolResultType.SessionHandoff("ctx"),
+            ToolResultType.HandoffProposed("ctx"),
             ToolResultType.PlanModeToggle,
             ToolResultType.PlanDiscarded,
         )
@@ -156,6 +157,7 @@ class ToolResultTest {
                 is ToolResultType.PlanResponse -> "plan"
                 is ToolResultType.SkillActivation -> "skill"
                 is ToolResultType.SessionHandoff -> "handoff"
+                is ToolResultType.HandoffProposed -> "handoff_proposed"
                 is ToolResultType.PlanModeToggle -> "toggle"
                 is ToolResultType.PlanDiscarded -> "discarded"
             }
