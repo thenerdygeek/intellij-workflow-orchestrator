@@ -245,6 +245,7 @@ class CreateFileTool : AgentTool {
         )
     }
 
+    @Suppress("UnstableApiUsage")
     private suspend fun writeViaVfs(resolvedPath: String, project: Project, rawPath: String, content: String): Boolean {
         return try {
             if (ApplicationManager.getApplication() == null) return false

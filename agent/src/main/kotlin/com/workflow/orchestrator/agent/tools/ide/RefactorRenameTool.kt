@@ -9,6 +9,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiManager
 import com.intellij.psi.PsiNamedElement
 import com.intellij.refactoring.rename.RenameProcessor
+import com.intellij.refactoring.rename.RenameUtil
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.ide.LanguageProviderRegistry
@@ -371,9 +372,12 @@ class RefactorRenameTool(
                 val classifications: List<UsageClassification>,
             )
             val findResult = ReadAction.nonBlocking<FindResult> {
-                val processor = RenameProcessor(project, element, newName, false, false)
-                processor.setPreviewUsages(false)
-                val usages = processor.findUsages()
+                // RenameUtil.findUsages is the public alternative to RenameProcessor.findUsages()
+                // which is @OverrideOnly. The two boolean params (searchInStringsAndComments,
+                // searchForTextOccurrences) mirror the RenameProcessor constructor arguments
+                // previously used (both false). The allRenames map is the single-element map
+                // that RenameProcessor would build internally.
+                val usages = RenameUtil.findUsages(element, newName, false, false, mapOf(element to newName))
                 val classifications = usages.mapNotNull { classifyUsage(it, project) }
                 FindResult(usages, classifications)
             }.inSmartMode(project).executeSynchronously()

@@ -106,6 +106,7 @@ class DeleteFileTool : AgentTool {
         )
     }
 
+    @Suppress("UnstableApiUsage")
     private suspend fun deleteViaVfs(resolvedPath: String, project: Project, rawPath: String): Boolean {
         return try {
             if (ApplicationManager.getApplication() == null) return false

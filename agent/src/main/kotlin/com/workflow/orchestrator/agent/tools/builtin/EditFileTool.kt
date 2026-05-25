@@ -469,6 +469,7 @@ class EditFileTool : AgentTool {
      *
      * Returns true if write succeeded via Document.
      */
+    @Suppress("UnstableApiUsage")
     private suspend fun writeViaDocument(
         vFile: VirtualFile?,
         project: Project,
@@ -508,6 +509,7 @@ class EditFileTool : AgentTool {
      * Used when Document is null (file not open in editor).
      * writeAction replaces the blocking invokeAndWaitIfNeeded { WriteCommandAction { } } bridge.
      */
+    @Suppress("UnstableApiUsage")
     private suspend fun writeViaVfs(vFile: VirtualFile?, project: Project, newContent: String): Boolean {
         if (vFile == null) return false
         return try {
