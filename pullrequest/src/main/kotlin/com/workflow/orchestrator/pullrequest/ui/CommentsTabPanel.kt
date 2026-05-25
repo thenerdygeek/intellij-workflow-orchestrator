@@ -51,6 +51,9 @@ class CommentsTabPanel(
     )
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /** Held so [close] can call [removeComponentListener] and break the retain-cycle. */
+    private lateinit var componentListener: java.awt.event.ComponentListener
+
     /** Auto-refresh poller: 30s base, 1.5× backoff, 5m cap. Starts/stops on tab visibility. */
     private val poller = SmartPoller(
         name = "PR#$prId-comments",
@@ -140,7 +143,13 @@ class CommentsTabPanel(
         }
 
         // Start poller when this tab becomes visible; stop when hidden.
-        addComponentListener(object : ComponentAdapter() {
+        // The listener reference is stored so close() can remove it and break the
+        // retain-cycle: when PrDetailPanel.rebuildCommentsTab() replaces this panel,
+        // the old panel stays in the Swing hierarchy as a non-active card and receives
+        // spurious show/hide events, which could restart a cancelled poller. Keeping a
+        // named handle and calling removeComponentListener in close() prevents both the
+        // memory leak and the spurious restart. Closes audit finding pullrequest:F-8.
+        componentListener = object : ComponentAdapter() {
             override fun componentShown(e: ComponentEvent) {
                 poller.start()
                 poller.setVisible(true)
@@ -150,7 +159,8 @@ class CommentsTabPanel(
                 poller.setVisible(false)
                 poller.stop()
             }
-        })
+        }
+        addComponentListener(componentListener)
 
         triggerRefresh()
     }
@@ -219,6 +229,9 @@ class CommentsTabPanel(
     }
 
     override fun close() {
+        // Remove the ComponentListener before cancelling the scope so that no
+        // in-flight Swing visibility events can restart the already-cancelled poller.
+        removeComponentListener(componentListener)
         poller.stop()
         scope.cancel()
     }
