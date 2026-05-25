@@ -9,7 +9,7 @@ import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.execution.runners.ProgramRunner
 import com.intellij.execution.configurations.RunProfileState
 import com.intellij.openapi.diagnostic.Logger
-import com.workflow.orchestrator.bamboo.service.BambooServiceImpl
+import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.intellij.openapi.util.Disposer
 import kotlinx.coroutines.*
@@ -54,7 +54,7 @@ class BambooBuildProcessHandler(
 
     private suspend fun runBuild() {
         val project = environment.project
-        val bambooService = BambooServiceImpl.getInstance(project)
+        val bambooService = project.getService(BambooService::class.java)
 
         val planKey = configuration.getPlanKey()
         if (planKey.isBlank()) {
@@ -107,7 +107,7 @@ class BambooBuildProcessHandler(
         pollBuildStatus(bambooService, resultKey)
     }
 
-    private suspend fun pollBuildStatus(bambooService: BambooServiceImpl, resultKey: String) {
+    private suspend fun pollBuildStatus(bambooService: BambooService, resultKey: String) {
         // Use the configured poll interval (PluginSettings.buildPollIntervalSeconds, default 30s)
         // with a floor of 10s so the run configuration respects the same setting as
         // BuildMonitorService rather than using a hardcoded 15s.
