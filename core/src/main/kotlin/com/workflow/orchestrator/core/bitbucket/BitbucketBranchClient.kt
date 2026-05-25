@@ -1,7 +1,10 @@
 package com.workflow.orchestrator.core.bitbucket
 
 import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.core.http.AuthInterceptor
+import com.workflow.orchestrator.core.http.AuthScheme
 import com.workflow.orchestrator.core.http.HttpClientFactory
+import com.workflow.orchestrator.core.http.RetryInterceptor
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.core.model.ServiceType
@@ -858,9 +861,27 @@ class BitbucketBranchClient(
     private val log = Logger.getInstance(BitbucketBranchClient::class.java)
     private val json = Json { ignoreUnknownKeys = true }
 
-    private val httpClient: OkHttpClient by lazy {
-        HttpClientFactory(tokenProvider = { _ -> tokenProvider() })
-            .clientFor(ServiceType.BITBUCKET)
+    /**
+     * OkHttpClient built ONCE per [BitbucketBranchClient] instance, sharing the
+     * plugin-wide [okhttp3.ConnectionPool] via [HttpClientFactory.sharedPool].
+     *
+     * Previously this constructed a new [HttpClientFactory] per instance, which created
+     * an independent [okhttp3.ConnectionPool] per action. Each call to `fromConfiguredSettings()`
+     * or `forRepo()` produced a fresh client — leaking connection pools and threads.
+     *
+     * Now all instances share the same base client ([HttpClientFactory.sharedPool]) and only
+     * add an instance-scoped [AuthInterceptor] on top for BEARER auth. Auth scheme stays BEARER
+     * (same as Jira, Bamboo, SonarQube per core/CLAUDE.md). Token resolution is still dynamic:
+     * the [tokenProvider] lambda is captured per-instance and called at request time.
+     *
+     * Audit finding core:F-6.
+     */
+    internal val httpClient: OkHttpClient by lazy {
+        HttpClientFactory.sharedPool
+            .newBuilder()
+            .addInterceptor(RetryInterceptor())
+            .addInterceptor(AuthInterceptor({ tokenProvider() }, AuthScheme.BEARER))
+            .build()
     }
 
     /**
