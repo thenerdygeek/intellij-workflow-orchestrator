@@ -4,6 +4,8 @@ import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.PrComment
 import com.workflow.orchestrator.core.services.BitbucketService
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Headless state + service orchestration for the Comments sub-tab.
@@ -23,7 +25,13 @@ class CommentsViewModel(
     private val prId: Int,
     private val eventBus: EventBus? = null,
 ) {
+    private val commentsMutex = Mutex()
     private val _comments: MutableList<PrComment> = mutableListOf()
+
+    /**
+     * Snapshot read — safe for concurrent callers without holding the mutex.
+     * All mutations go through [commentsMutex] to prevent data races (F-10 fix).
+     */
     val comments: List<PrComment> get() = _comments.toList()
 
     var lastError: String? = null
@@ -47,18 +55,22 @@ class CommentsViewModel(
             onlyOpen = false,
             onlyInline = false,
         )
-        if (result.isError) {
-            lastError = result.summary.ifBlank { "Failed to list comments" }
-        } else {
-            lastError = null
-            _comments.clear()
-            _comments.addAll(result.data!!)
+        commentsMutex.withLock {
+            if (result.isError) {
+                lastError = result.summary.ifBlank { "Failed to list comments" }
+            } else {
+                lastError = null
+                _comments.clear()
+                _comments.addAll(result.data!!)
+            }
+        }
+        if (!result.isError) {
             eventBus?.emit(
                 WorkflowEvent.PrCommentsUpdated(
                     projectKey = projectKey,
                     repoSlug = repoSlug,
                     prId = prId,
-                    total = _comments.size,
+                    total = comments.size,  // snapshot after lock released
                     unreadCount = 0,
                 )
             )

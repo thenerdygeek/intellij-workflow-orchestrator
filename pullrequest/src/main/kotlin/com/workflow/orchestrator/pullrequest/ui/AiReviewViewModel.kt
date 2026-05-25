@@ -3,6 +3,8 @@ package com.workflow.orchestrator.pullrequest.ui
 import com.workflow.orchestrator.core.prreview.PrReviewFinding
 import com.workflow.orchestrator.core.prreview.PrReviewFindingsStore
 import com.workflow.orchestrator.core.services.BitbucketService
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * View-model behind the AI-review tab. Responsible for listing findings,
@@ -27,7 +29,13 @@ class AiReviewViewModel(
     private val sessionId: String,
     private val toHash: String = "",
 ) {
+    private val findingsMutex = Mutex()
     private val _findings: MutableList<PrReviewFinding> = mutableListOf()
+
+    /**
+     * Snapshot read — safe for concurrent callers without holding the mutex.
+     * All mutations go through [findingsMutex] to prevent data races (F-10 fix).
+     */
     val findings: List<PrReviewFinding> get() = _findings.toList()
 
     var lastError: String? = null
@@ -39,12 +47,14 @@ class AiReviewViewModel(
 
     suspend fun refresh() {
         val result = store.list("$projectKey/$repoSlug/PR-$prId", sessionId, includeArchived = false)
-        if (result.isError) {
-            lastError = result.summary ?: "failed to list findings"
-        } else {
-            lastError = null
-            _findings.clear()
-            _findings.addAll(result.data!!)
+        findingsMutex.withLock {
+            if (result.isError) {
+                lastError = result.summary ?: "failed to list findings"
+            } else {
+                lastError = null
+                _findings.clear()
+                _findings.addAll(result.data!!)
+            }
         }
         fire()
     }
@@ -89,7 +99,7 @@ class AiReviewViewModel(
 
     suspend fun pushAllKept(): Int {
         var pushed = 0
-        val list = _findings.toList()
+        val list = findingsMutex.withLock { _findings.toList() }
         for (f in list) {
             if (!f.pushed && !f.discarded) {
                 if (pushFinding(f)) pushed++

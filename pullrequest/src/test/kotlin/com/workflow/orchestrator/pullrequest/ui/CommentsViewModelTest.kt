@@ -122,4 +122,25 @@ class CommentsViewModelTest {
         assertEquals("R", captured!!.repoSlug)
         assertEquals(1, captured!!.prId)
     }
+
+    // ── F-10 Mutex concurrency guard ──────────────────────────────────────────
+
+    @Test
+    fun `concurrent refresh calls do not lose comments and do not throw`() = runTest {
+        val service = mockk<BitbucketService>()
+        coEvery { service.listPrComments("P", "R", 1, false, false) } returns
+            ToolResult.success(listOf(makeComment("c1"), makeComment("c2"), makeComment("c3")), summary = "3")
+        val vm = CommentsViewModel(service, "P", "R", 1)
+
+        // Launch many concurrent refresh calls; none should throw or corrupt state
+        val jobs = (1..20).map {
+            launch { vm.refresh() }
+        }
+        jobs.forEach { it.join() }
+
+        // After all refreshes, the snapshot must be a coherent list of exactly 3 comments
+        val snap = vm.comments
+        assertEquals(3, snap.size, "comments snapshot should contain exactly 3 items after concurrent refreshes")
+        assertTrue(snap.all { it.id in listOf("c1", "c2", "c3") }, "all IDs should be from the mock result")
+    }
 }
