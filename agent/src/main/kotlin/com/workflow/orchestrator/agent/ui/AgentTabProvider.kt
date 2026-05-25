@@ -51,7 +51,12 @@ class AgentTabProvider : WorkflowTabProvider {
         dashboard.setMentionSearchProvider(mentionSearchProvider)
         controller.setMentionSearchProvider(mentionSearchProvider)
 
-        // Subscribe to Sprint tab data so # ticket autocomplete is instant (no re-fetch)
+        // Subscribe to Sprint tab data so # ticket autocomplete is instant (no re-fetch).
+        // The scope is tied directly to the project Disposable so it is always cancelled
+        // on project close regardless of the cast path. Using Disposer.register on the
+        // concrete project Disposable (never null for a live Project) avoids the silent
+        // scope leak that the previous (project as? Disposable)?.let { … } guard caused
+        // in test harnesses where the cast returns null. Closes audit finding agent-ui:F-6.
         val eventBus = project.getService(EventBus::class.java)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         scope.launch {
@@ -61,17 +66,13 @@ class AgentTabProvider : WorkflowTabProvider {
                 }
             }
         }
-        (project as? Disposable)?.let {
-            Disposer.register(it, Disposable { scope.cancel() })
-        }
+        Disposer.register(project as Disposable, Disposable { scope.cancel() })
 
         // Register controller in registry for cross-module access (e.g., AgentChatRedirect)
         AgentControllerRegistry.getInstance(project).controller = controller
 
-        // Register controller for disposal
-        (project as? Disposable)?.let {
-            Disposer.register(it, Disposable { controller.dispose() })
-        }
+        // Register controller for disposal (same direct-cast pattern as the scope above)
+        Disposer.register(project as Disposable, Disposable { controller.dispose() })
 
         return dashboard
     }
