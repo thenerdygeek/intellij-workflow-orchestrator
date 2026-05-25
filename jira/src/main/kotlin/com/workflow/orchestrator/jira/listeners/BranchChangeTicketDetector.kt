@@ -7,7 +7,6 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vcs.BranchChangeListener
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
-import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
 import com.workflow.orchestrator.jira.service.ActiveTicketService
 import com.workflow.orchestrator.jira.service.DismissedBranchStore
@@ -65,10 +64,11 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
 
         log.info("[Jira:Branch] Detected ticket $ticketId from branch '$branchName'")
 
-        val settings = PluginSettings.getInstance(project)
-
-        // Skip if the detected ticket is already the active ticket
-        val currentActiveTicket = settings.state.activeTicketId
+        // Skip if the detected ticket is already the active ticket.
+        // Use ActiveTicketService (synchronous local cache) rather than PluginSettings.state
+        // to avoid the async lag between the in-memory service state and the persisted setting
+        // that causes spurious TicketDetectedInteractive events on rapid branch switches.
+        val currentActiveTicket = ActiveTicketService.getInstance(project).activeTicketId
         if (currentActiveTicket == ticketId) {
             log.debug("[Jira:Branch] Ticket $ticketId is already active, skipping detection")
             return
