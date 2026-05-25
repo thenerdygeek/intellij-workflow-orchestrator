@@ -105,4 +105,36 @@ class ResumeHelperTest {
         )
         assertEquals(UiAsk.RESUME_TASK, ResumeHelper.determineResumeAskType(withTool))
     }
+
+    // agent-runtime:F-14 — tool-result-only USER messages must also be popped
+    @Test
+    fun `pops trailing user message whose content is only a tool result block`() {
+        val toolResultContent = listOf(
+            ContentBlock.ToolResult(toolUseId = "call-abc", content = "file written")
+        )
+        val apiHistory = listOf(
+            ApiMessage(role = ApiRole.USER, content = listOf(ContentBlock.Text("start task"))),
+            ApiMessage(role = ApiRole.ASSISTANT, content = listOf(ContentBlock.Text("calling tool"))),
+            ApiMessage(role = ApiRole.USER, content = toolResultContent),
+        )
+        val result = ResumeHelper.popTrailingUserMessage(apiHistory)
+        assertEquals(2, result.trimmedHistory.size, "tool-result-only USER turn must be popped")
+        assertEquals(toolResultContent, result.poppedContent)
+    }
+
+    @Test
+    fun `pop of tool-result-only user message restores content for replay`() {
+        // The popped content must survive so the caller can decide whether to
+        // re-inject it or discard it — verify it is non-empty and is the ToolResult.
+        val toolResultContent = listOf<ContentBlock>(
+            ContentBlock.ToolResult(toolUseId = "call-xyz", content = "tool output here")
+        )
+        val apiHistory = listOf(
+            ApiMessage(role = ApiRole.ASSISTANT, content = listOf(ContentBlock.Text("using tool"))),
+            ApiMessage(role = ApiRole.USER, content = toolResultContent),
+        )
+        val result = ResumeHelper.popTrailingUserMessage(apiHistory)
+        assertFalse(result.poppedContent.isEmpty(), "popped content must not be empty")
+        assertTrue(result.poppedContent.all { it is ContentBlock.ToolResult })
+    }
 }

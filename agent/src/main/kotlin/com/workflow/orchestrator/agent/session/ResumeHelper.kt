@@ -50,17 +50,37 @@ object ResumeHelper {
         }
     }
 
+    /**
+     * Pop the trailing user message if the API history ends on a USER turn.
+     *
+     * After the XML-in-content migration, tool-result blocks are persisted as
+     * USER role with [ContentBlock.ToolResult] blocks (the "tool" role is an
+     * OpenAI-compat convention; our on-disk shape coerces it to USER).  If a
+     * session was interrupted after the tool result was already written, the
+     * trailing USER message contains only tool-result content — not a real user
+     * prompt.  Popping it is correct: the AgentLoop will re-execute the tool
+     * call on resume rather than replaying a stale result, and it prevents the
+     * LLM from seeing an orphaned tool-result block without a matching
+     * tool-use in the immediately preceding assistant turn.
+     *
+     * The broader resume-time cleanup (pruneTrailingEmptyAssistants,
+     * collapseLastCompletionToolPair in MessageStateHandler) handles
+     * complementary cases; this function is responsible only for the trailing
+     * USER turn.
+     */
     fun popTrailingUserMessage(apiHistory: List<ApiMessage>): PopResult {
         if (apiHistory.isEmpty()) return PopResult(apiHistory, emptyList())
         val last = apiHistory.last()
-        return if (last.role == ApiRole.USER) {
-            PopResult(
-                trimmedHistory = apiHistory.dropLast(1),
-                poppedContent = last.content
-            )
-        } else {
-            PopResult(trimmedHistory = apiHistory, poppedContent = emptyList())
+        if (last.role != ApiRole.USER) {
+            return PopResult(trimmedHistory = apiHistory, poppedContent = emptyList())
         }
+        // Always pop the trailing USER message, regardless of whether its content
+        // is a real user prompt or a tool-result-only block.  Both cases represent
+        // an incomplete turn that the loop must rebuild from scratch on resume.
+        return PopResult(
+            trimmedHistory = apiHistory.dropLast(1),
+            poppedContent = last.content
+        )
     }
 
     fun determineResumeAskType(trimmedUiMessages: List<UiMessage>): UiAsk {
