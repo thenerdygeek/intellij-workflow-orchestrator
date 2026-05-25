@@ -263,7 +263,10 @@ class DelegationTool(
         } catch (e: DelegationException.LimitReached) {
             ToolResult.error("DelegationLimitReached: max ${DelegationOutboundService.MAX_CHANNELS} concurrent delegations already open — close one before sending another")
         } catch (e: DelegationException.Rejected) {
-            ToolResult.error("DelegationRejected: the target IDE declined the request — reason: ${e.rejectReason ?: "none"}")
+            if (e.rejectReason == "inbound_consent_declined")
+                ToolResult.error("DelegationDeclined: the target IDE's user declined the request to enable inbound delegation. Ask them to enable 'Accept incoming delegations' if they want to receive the task.")
+            else
+                ToolResult.error("DelegationRejected: the target IDE declined the request — reason: ${e.rejectReason ?: "none"}")
         }
     }
 
