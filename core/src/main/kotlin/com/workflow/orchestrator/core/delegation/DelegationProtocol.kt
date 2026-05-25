@@ -38,6 +38,43 @@ sealed class DelegationMessage {
         val delegatorRepo: String,
         val delegatorSessionId: String,
         val request: String,
+        /**
+         * Plan 6 (doorbell consent): single-use pre-auth nonce that the delegator
+         * obtained via a prior [Knock]/consent on IDE-B's doorbell. When present and
+         * matching a recorded nonce, IDE-B skips the Accept dialog. Default null keeps
+         * backward-compat with pre-Plan-6 serialized payloads — MUST stay the last field.
+         */
+        val preauthNonce: String? = null,
+    ) : DelegationMessage()
+
+    /**
+     * IDE-A → IDE-B doorbell. Lightweight "ring" raised on the always-bound doorbell
+     * socket (distinct from the delegation socket) when inbound delegation is OFF on
+     * IDE-B. Carries only a preview of the request and the delegator identity so IDE-B
+     * can raise a consent prompt. [nonce] correlates the eventual [Connect.preauthNonce].
+     *
+     * Plan 6 spec §5.
+     */
+    @Serializable
+    data class Knock(
+        val delegatorIde: String,
+        val delegatorRepo: String,
+        val delegatorSessionId: String,
+        val requestPreview: String,
+        val nonce: String,
+    ) : DelegationMessage()
+
+    /**
+     * IDE-B → IDE-A. Immediate ack to a [Knock], sent BEFORE the consent dialog is
+     * shown so the delegator's [DelegationClient.knock] returns promptly. [outcome]
+     * reports whether the doorbell is now ringing or the knock was a duplicate.
+     *
+     * Plan 6 spec §5.
+     */
+    @Serializable
+    data class KnockAck(
+        val nonce: String,
+        val outcome: KnockOutcome,
     ) : DelegationMessage()
 
     /**
@@ -199,6 +236,16 @@ sealed class DelegationMessage {
         val text: String,
     ) : DelegationMessage()
 }
+
+/**
+ * Outcome of a [DelegationMessage.Knock] on IDE-B's doorbell.
+ * - [RINGING] — a fresh consent prompt was raised (or will be).
+ * - [DUPLICATE] — a prompt for an equivalent request is already pending; no new prompt.
+ *
+ * Plan 6 spec §5.
+ */
+@Serializable
+enum class KnockOutcome { RINGING, DUPLICATE }
 
 /** Helpers for length-prefixed JSON framing over NIO channels. */
 object DelegationFraming {
