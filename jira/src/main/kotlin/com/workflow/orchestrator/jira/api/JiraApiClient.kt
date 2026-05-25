@@ -28,6 +28,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import com.intellij.openapi.diagnostic.Logger
 import java.io.IOException
+import java.net.URI
 import java.net.URLEncoder
 
 class JiraApiClient(
@@ -302,6 +303,23 @@ class JiraApiClient(
             try {
                 val url = if (path.startsWith("http://") || path.startsWith("https://")) path
                           else "$baseUrl$path"
+                // Same-origin guard: reject absolute URLs whose host or scheme differs from the
+                // configured Jira base URL to prevent token exfiltration via server-supplied
+                // autoCompleteUrl / other absolute-URL fields (audit finding jira:F-1).
+                if (path.startsWith("http://") || path.startsWith("https://")) {
+                    val targetUri = runCatching { URI(url) }.getOrNull()
+                    val baseUri = runCatching { URI(baseUrl) }.getOrNull()
+                    if (targetUri == null || baseUri == null ||
+                        !targetUri.host.equals(baseUri.host, ignoreCase = true) ||
+                        targetUri.scheme != baseUri.scheme
+                    ) {
+                        log.warn("[Jira:API] getRawString rejected cross-origin URL: $url (base: $baseUrl)")
+                        return@withContext ApiResult.Error(
+                            ErrorType.FORBIDDEN,
+                            "getRawString rejected: target host '${targetUri?.host}' does not match Jira base host"
+                        )
+                    }
+                }
                 val request = Request.Builder().url(url).get().build()
                 val response = httpClient.newCall(request).execute()
                 response.use {
