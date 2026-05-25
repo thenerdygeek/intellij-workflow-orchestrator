@@ -225,9 +225,9 @@ In `AgentLoop.kt`, in the `companion object` (search for `companion object` near
         const val HANDOFF_DECLINE_SENTINEL = "__HANDOFF_DECLINE__"
 ```
 
-- [ ] **Step 4: Add the callback field**
+- [ ] **Step 4: Add the callback constructor parameter**
 
-In the `AgentLoop` constructor parameter list, immediately after the `onPlanResponse` field (line 201), add:
+`AgentLoop` is a `class` whose ~30 collaborators are all constructor parameters (each declared `private val`). Add this as a new **constructor parameter** (NOT a class-body field), immediately after the `onPlanResponse` parameter (line 201), keeping the trailing comma:
 
 ```kotlin
     /**
@@ -456,6 +456,7 @@ Replace the signature + body (lines 2764-2781) with:
         onSessionStarted: ((sessionId: String) -> Unit)? = null,
         onContextManagerReady: ((ContextManager) -> Unit)? = null,
         onHandoffProposed: ((context: String) -> Unit)? = null,
+        userInputChannel: Channel<String>? = null,
     ): Job {
         val preamble = "Continue from the previous session. Here is the preserved context:\n\n$handoffContext"
         return executeTask(
@@ -468,9 +469,12 @@ Replace the signature + body (lines 2764-2781) with:
             onSessionStarted = onSessionStarted,
             onContextManagerReady = onContextManagerReady,
             onHandoffProposed = onHandoffProposed,
+            userInputChannel = userInputChannel,
         )
     }
 ```
+
+> Why `userInputChannel` (review blocking item #2): without it, the forked session's loop receives `userInputChannel = null`, so if *it* calls `new_task` again, the `HandoffProposed` branch (Task 3) falls through to the legacy auto-fork instead of presenting the card. Forwarding a fresh channel keeps chained handoffs on the confirm flow. `Channel` is already imported in `AgentService`.
 
 - [ ] **Step 4: Update `resumeSession`**
 
@@ -535,9 +539,11 @@ class AgentControllerSessionActiveSourceTest {
     }
 
     @Test
-    fun `newChat resets sessionActive`() {
-        val newChat = src.substringAfter("fun newChat(").substringBefore("\n    fun ")
-        assertTrue(newChat.contains("sessionActive = false"), "newChat must clear sessionActive")
+    fun `resetForNewChat resets sessionActive`() {
+        // newChat() is a 5-line delegate; the real reset (incl. currentSessionId = null)
+        // lives in resetForNewChat(). Anchor there. (Review item #7.)
+        val reset = src.substringAfter("fun resetForNewChat(").substringBefore("\n    fun ")
+        assertTrue(reset.contains("sessionActive = false"), "resetForNewChat must clear sessionActive")
     }
 }
 ```
@@ -555,8 +561,13 @@ In `AgentController.kt`, right after the `currentSessionId` declaration (line 25
     /**
      * True once any session-entry path has started/resumed/forked a session. Replaces the
      * old `contextManager == null` heuristic for deciding whether a user message starts a
-     * brand-new chat (which wiped the view). Reset only by [newChat].
+     * brand-new chat (which wiped the view). Reset only by [resetForNewChat].
+     *
+     * `@Volatile`: written from the IO coroutine (via `onSessionStarted` on the handoff path)
+     * and read on the EDT (in `handleUserMessage`). A plain `var` could let the EDT see a
+     * stale `false` and wrongly wipe the view. (Review blocking item #1.)
      */
+    @Volatile
     private var sessionActive = false
 ```
 
@@ -582,9 +593,9 @@ Inside the `if (isFirstMessage) { ... }` block (after the `dashboard.startSessio
 
 Note: `contextManager = service.newContextManager()` at line 1851 stays — a genuine first message still needs a fresh manager. The decoupling is only about the *view reset*.
 
-- [ ] **Step 5: Reset in `newChat`**
+- [ ] **Step 5: Reset in `resetForNewChat`**
 
-In `fun newChat()` (line ~2689-2749), next to the existing `currentSessionId = null` (line 2749), add:
+`newChat()` (line 2689) is a 5-line delegate that calls `resetForNewChat()`. The real reset lives in `resetForNewChat()` (starts line 2727). Next to the existing `currentSessionId = null` (line 2749), add:
 
 ```kotlin
         sessionActive = false
@@ -795,6 +806,11 @@ Replace lines 2552-2580 (`is LoopResult.SessionHandoff -> { ... }`) with:
                     contextManager = null
                     sessionApprovalStore.clear()
 
+                    // Fresh RENDEZVOUS channel so the forked session's own new_task (if any)
+                    // can suspend and present the card, and so startFreshSession/keepChatting
+                    // send into the live channel (review blocking item #2).
+                    userInputChannel = Channel(Channel.RENDEZVOUS)
+
                     currentJob = service.startHandoffSession(
                         handoffContext = result.context,
                         onStreamChunk = ::onStreamChunk,
@@ -805,7 +821,8 @@ Replace lines 2552-2580 (`is LoopResult.SessionHandoff -> { ... }`) with:
                             sessionActive = true
                         },
                         onContextManagerReady = { cm -> contextManager = cm },
-                        onHandoffProposed = ::onHandoffProposed
+                        onHandoffProposed = ::onHandoffProposed,
+                        userInputChannel = userInputChannel
                     )
                     handledHandoff = true
                 }
