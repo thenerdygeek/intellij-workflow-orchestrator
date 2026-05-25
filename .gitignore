@@ -73,5 +73,6 @@ scripts/api-probe-results/
 /run/
 .superpowers/
 .worktrees/
+.claire/
 hs_err_pid*.log
 *.hprof
