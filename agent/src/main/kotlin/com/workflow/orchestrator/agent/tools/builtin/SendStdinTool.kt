@@ -17,7 +17,9 @@ import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.agent.tools.process.OutputCollector
 import com.workflow.orchestrator.agent.tools.process.ShellResolver
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -280,6 +282,9 @@ class SendStdinTool : AgentTool {
         var lastCheckedSize = outputSizeBeforeStdin
 
         while (true) {
+            // Propagate coroutine cancellation so AgentLoop.cancel() can escape the loop
+            // without waiting for the full MAX_WAIT_AFTER_STDIN_MS timeout (F-11 fix).
+            currentCoroutineContext().ensureActive()
             delay(MONITOR_POLL_MS)
             val now = System.currentTimeMillis()
 

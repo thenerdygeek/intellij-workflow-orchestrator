@@ -188,4 +188,20 @@ class SendStdinToolTest {
 
         process.destroyForcibly()
     }
+
+    // ── F-11 ensureActive pin ─────────────────────────────────────────────────
+
+    @Test
+    fun `monitor loop source contains ensureActive for cancellation propagation`() {
+        // Source-text pin: the monitor loop must call ensureActive() so that
+        // AgentLoop.cancel() can escape the loop without waiting for the full
+        // MAX_WAIT_AFTER_STDIN_MS timeout. Verified by reading the compiled source.
+        val source = java.io.File("src/main/kotlin/com/workflow/orchestrator/agent/tools/builtin/SendStdinTool.kt")
+            .takeIf { it.exists() }
+            ?: java.io.File("agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/builtin/SendStdinTool.kt")
+        assertTrue(source.exists(), "SendStdinTool.kt not found for pin check")
+        val text = source.readText()
+        assertTrue(text.contains("ensureActive()"), "monitor loop must call ensureActive() (F-11 fix)")
+        assertTrue(text.contains("currentCoroutineContext"), "must use currentCoroutineContext().ensureActive()")
+    }
 }
