@@ -306,6 +306,8 @@
             serviceImplementation="com.workflow.orchestrator.core.settings.ConnectionSettings"/>
         <applicationService
             serviceImplementation="com.workflow.orchestrator.automation.service.AutomationSettingsService"/>
+        <applicationService
+            serviceImplementation="com.workflow.orchestrator.core.network.NetworkStateService"/>
 
         <!-- Status Bar -->
         <statusBarWidgetFactory id="WorkflowAutomationStatusBar"
