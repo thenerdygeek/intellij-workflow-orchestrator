@@ -18,7 +18,7 @@ class EventBus {
     )
     val events: SharedFlow<WorkflowEvent> = _events.asSharedFlow()
 
-    suspend fun emit(event: WorkflowEvent) {
+    fun emit(event: WorkflowEvent) {
         log.info("[Core:Events] Emitting event: ${event::class.simpleName}")
         if (!_events.tryEmit(event)) {
             log.warn("[Core:Events] Failed to emit event (buffer full): ${event::class.simpleName}")
