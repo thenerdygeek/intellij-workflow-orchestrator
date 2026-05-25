@@ -61,3 +61,13 @@ while the legacy JSON/auth patterns use `***REDACTED***`. This was a deliberate 
 avoid breaking existing tests, but a future cleanup commit could normalize to one marker
 (update SourcegraphDebugRedactionTest to match).
 **Queued — cosmetic, low priority.**
+
+---
+
+## RESOLUTION (2026-05-25, Tier-A incidentals pass)
+
+- **jira searchIssues JQL** — FIXED. `JiraApiClient.searchIssues` now caps free-text length (`MAX_SEARCH_TEXT_LENGTH=500`) and rejects control chars before building JQL (mirrors jira:F-12).
+- **agent-ui AgentPlanEditor + ToolDocsEditor F-7 leak** — FIXED. Both now hold the `CefLoadHandlerAdapter` in a named field and call `removeLoadHandler(loadHandler, cefBrowser)` in `dispose()` (same as AgentVisualizationTab).
+- **sonar IssueListPanel.fixWithAgent** — FIXED. Now routes through a `resolveSonarRepoRoot` wrapper over `IssueDetailPanel.resolveRepoRoot` instead of `project.basePath` (multi-repo correctness).
+- **pullrequest CommentsViewModel `_comments`** — ALREADY DONE. Class already uses `commentsMutex` + snapshot `comments` (KDoc cites the F-10 fix).
+- **PromptBodyRedactor marker inconsistency** — deferred (Tier D, cosmetic).

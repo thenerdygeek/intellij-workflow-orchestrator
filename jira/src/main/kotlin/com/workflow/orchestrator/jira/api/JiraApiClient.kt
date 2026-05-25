@@ -102,6 +102,15 @@ class JiraApiClient(
     }
 
     suspend fun searchIssues(text: String, maxResults: Int = 20, currentUserOnly: Boolean = true): ApiResult<List<JiraIssue>> {
+        // Defense-in-depth before building JQL into a GET query string (same shape as
+        // jira:F-12 on searchTickets): cap length to bound URL size and reject control
+        // characters. escapeJql already handles reserved JQL punctuation.
+        if (text.length > MAX_SEARCH_TEXT_LENGTH) {
+            return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Search text exceeds $MAX_SEARCH_TEXT_LENGTH characters")
+        }
+        if (text.any { it.code < 32 }) {
+            return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Search text contains control characters")
+        }
         val escaped = escapeJql(text)
         val looksLikeKey = text.matches(Regex("[A-Z][A-Z0-9]+-\\d+"))
         val assigneeClause = if (currentUserOnly) " AND assignee = currentUser()" else ""
@@ -951,6 +960,9 @@ class JiraApiClient(
         return get("/rest/api/2/issue/$key?fields=$fields&expand=renderedFields,changelog")
     }
 }
+
+/** Max length of free-text search input accepted by [JiraApiClient.searchIssues] (bounds GET URL size). */
+private const val MAX_SEARCH_TEXT_LENGTH = 500
 
 /** Escapes JQL reserved characters in user-supplied text. Shared by [JiraApiClient] and Tasks integration. */
 internal fun escapeJql(text: String): String {

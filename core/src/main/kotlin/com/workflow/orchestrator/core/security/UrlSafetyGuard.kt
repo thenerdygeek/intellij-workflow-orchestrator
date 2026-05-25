@@ -68,6 +68,8 @@ object UrlSafetyGuard {
         IPV6_LINK_LOCAL,
         /** RFC 1918: `10/8`, `192.168/16`, `172.16/12` (and IPv6 site-local `fec0::/10`). */
         PRIVATE_LAN,
+        /** Shared/special-use IPv4: carrier-grade NAT `100.64.0.0/10` and benchmarking `198.18.0.0/15`. */
+        SHARED_SPECIAL_USE,
     }
 
     /**
@@ -169,6 +171,10 @@ object UrlSafetyGuard {
             if (IPV4_PRIVATE_10_REGEX.matches(host)) return Reason.PRIVATE_LAN
             if (IPV4_PRIVATE_192_REGEX.matches(host)) return Reason.PRIVATE_LAN
             if (IPV4_PRIVATE_172_REGEX.matches(host)) return Reason.PRIVATE_LAN
+            // CGNAT 100.64.0.0/10 + benchmark 198.18.0.0/15 — not RFC 1918 (so not caught
+            // by isSiteLocalAddress) but still internal/special-use SSRF targets.
+            if (IPV4_CGNAT_REGEX.matches(host)) return Reason.SHARED_SPECIAL_USE
+            if (IPV4_BENCHMARK_REGEX.matches(host)) return Reason.SHARED_SPECIAL_USE
         }
         return null
     }
@@ -197,8 +203,25 @@ object UrlSafetyGuard {
             // Site-local covers RFC 1918 private LAN ranges (10/8, 192.168/16, 172.16/12) for
             // IPv4 and fec0::/10 for IPv6 (deprecated but still flagged).
             if (addr.isSiteLocalAddress) return Reason.PRIVATE_LAN
+            // CGNAT / benchmark ranges are not site-local — check the raw bytes.
+            if (isSharedSpecialUse(addr)) return Reason.SHARED_SPECIAL_USE
         }
         return null
+    }
+
+    /**
+     * True when [addr] is IPv4 in carrier-grade NAT `100.64.0.0/10` (second octet 64–127)
+     * or benchmarking `198.18.0.0/15` (second octet 18–19). These are not covered by
+     * [InetAddress.isSiteLocalAddress] so they need an explicit byte check.
+     */
+    private fun isSharedSpecialUse(addr: InetAddress): Boolean {
+        if (addr !is java.net.Inet4Address) return false
+        val bytes = addr.address
+        val o0 = bytes[0].toInt() and 0xFF
+        val o1 = bytes[1].toInt() and 0xFF
+        if (o0 == 100 && o1 in 64..127) return true   // 100.64.0.0/10 (CGNAT)
+        if (o0 == 198 && o1 in 18..19) return true     // 198.18.0.0/15 (benchmark)
+        return false
     }
 
     private fun reject(reason: Reason, host: String, message: String): Result<Unit> =
@@ -217,6 +240,8 @@ object UrlSafetyGuard {
                 "Host '$host' is in IPv4 link-local 169.254.0.0/16 (includes AWS metadata)$addrSuffix"
             Reason.IPV6_LINK_LOCAL -> "Host '$host' is in IPv6 link-local fe80::/10$addrSuffix"
             Reason.PRIVATE_LAN -> "Host '$host' is in a private LAN range (RFC 1918)$addrSuffix"
+            Reason.SHARED_SPECIAL_USE ->
+                "Host '$host' is in shared/special-use space (CGNAT 100.64/10 or benchmark 198.18/15)$addrSuffix"
         }
     }
 
@@ -227,4 +252,8 @@ object UrlSafetyGuard {
     private val IPV4_PRIVATE_10_REGEX = Regex("""^10\.\d+\.\d+\.\d+$""")
     private val IPV4_PRIVATE_192_REGEX = Regex("""^192\.168\.\d+\.\d+$""")
     private val IPV4_PRIVATE_172_REGEX = Regex("""^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$""")
+    // CGNAT 100.64.0.0/10 — second octet 64..127.
+    private val IPV4_CGNAT_REGEX = Regex("""^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+$""")
+    // Benchmark 198.18.0.0/15 — second octet 18..19.
+    private val IPV4_BENCHMARK_REGEX = Regex("""^198\.(1[89])\.\d+\.\d+$""")
 }

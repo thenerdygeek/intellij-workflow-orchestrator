@@ -42,6 +42,16 @@ class AgentPlanEditor(
     private val fileClickQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
     private val commentCountQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
 
+    // Named field so dispose() can remove it — addLoadHandler(handler, cefBrowser) is NOT
+    // cascade-removed by browser.dispose() (agent-ui:F-7, same fix as AgentVisualizationTab).
+    private val loadHandler = object : CefLoadHandlerAdapter() {
+        override fun onLoadEnd(b: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
+            if (frame?.isMain == true) {
+                injectPlanData(b)
+            }
+        }
+    }
+
     /** Callback to update comment count on the chat panel's plan summary card. */
     var onCommentCountChanged: ((Int) -> Unit)? = null
 
@@ -98,13 +108,7 @@ class AgentPlanEditor(
         com.workflow.orchestrator.agent.ui.WorkflowAgentSchemeRegistrar.ensureRegistered()
         browser.loadURL(CefResourceSchemeHandler.BASE_URL + "plan-editor.html")
 
-        browser.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
-            override fun onLoadEnd(b: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
-                if (frame?.isMain == true) {
-                    injectPlanData(b)
-                }
-            }
-        }, browser.cefBrowser)
+        browser.jbCefClient.addLoadHandler(loadHandler, browser.cefBrowser)
     }
 
     private fun injectPlanData(cefBrowser: CefBrowser?) {
@@ -174,6 +178,9 @@ class AgentPlanEditor(
     override fun getFile(): VirtualFile = planFile
 
     override fun dispose() {
+        // Explicit removal — browser.dispose() does not cascade-remove handlers added via
+        // addLoadHandler(handler, cefBrowser) (agent-ui:F-7).
+        browser.jbCefClient.removeLoadHandler(loadHandler, browser.cefBrowser)
         approveQuery.dispose()
         reviseQuery.dispose()
         fileClickQuery.dispose()

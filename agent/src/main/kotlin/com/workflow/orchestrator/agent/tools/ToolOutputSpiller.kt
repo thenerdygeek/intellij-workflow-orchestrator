@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.tools
 
 import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.agent.security.CredentialRedactor
 import java.nio.file.Path
 import java.time.Instant
 
@@ -27,9 +28,13 @@ class ToolOutputSpiller(private val spillDir: Path) {
      */
     fun spill(
         toolName: String,
-        content: String,
+        rawContent: String,
         threshold: Int = ToolOutputConfig.SPILL_THRESHOLD_CHARS,
     ): SpillResult {
+        // Redact credentials before anything touches disk or the preview — a tool that
+        // prints an Authorization header (e.g. `curl -v`) must not leak the raw value
+        // into {sessionDir}/tool-output/ (queued incidental agent-runtime:F-19).
+        val content = CredentialRedactor.redact(rawContent)
         if (content.length <= threshold) {
             return SpillResult(preview = content, spilledToFile = null)
         }

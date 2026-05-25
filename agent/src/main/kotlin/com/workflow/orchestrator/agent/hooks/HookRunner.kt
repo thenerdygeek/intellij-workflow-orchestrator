@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.hooks
 
 import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.agent.security.CredentialRedactor
+import com.workflow.orchestrator.agent.tools.process.ProcessEnvironment
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -146,6 +147,10 @@ open class HookRunner(
 
             // Set environment variables (Cline pattern)
             environment().apply {
+                // Strip sensitive inherited credentials so the hook subprocess never
+                // sees the IDE's tokens/keys (agent-runtime:F-18). Mirrors the Layer-1
+                // strip that run_command applies via ProcessEnvironment.applyToEnvironment.
+                for (key in ProcessEnvironment.SENSITIVE_ENV_VARS) remove(key)
                 put("HOOK_TYPE", event.type.hookName)
                 event.data["sessionId"]?.toString()?.let { put("SESSION_ID", it) }
                 event.data["toolName"]?.toString()?.let { put("TOOL_NAME", it) }

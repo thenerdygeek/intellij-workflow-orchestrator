@@ -15,6 +15,7 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ai.AgentChatRedirect
 import com.workflow.orchestrator.core.ai.LlmBrainFactory
 import com.workflow.orchestrator.core.model.sonar.SecurityHotspotData
+import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.core.util.PathLinkResolver
@@ -317,8 +318,27 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
         scope.cancel()
     }
 
+    /**
+     * Resolve the correct repo root for a Sonar issue in multi-repo projects (mirror of
+     * IssueDetailPanel.resolveSonarRepoRoot — same sonar:F-12/F-13 pattern). `project.basePath`
+     * alone is wrong when the issue's file lives in a submodule repo.
+     */
+    private fun resolveSonarRepoRoot(filePath: String, sonarProjectKey: String): String? {
+        val repos = PluginSettings.getInstance(project).getRepos()
+        return IssueDetailPanel.resolveRepoRoot(
+            filePath = filePath,
+            sonarProjectKey = sonarProjectKey,
+            repoPairs = repos.mapNotNull { r ->
+                r.sonarProjectKey?.takeIf { it.isNotBlank() }
+                    ?.let { key -> Pair(key, r.localVcsRootPath?.takeIf { it.isNotBlank() } ?: return@mapNotNull null) }
+            },
+            repoRoots = repos.mapNotNull { it.localVcsRootPath?.takeIf { it.isNotBlank() } },
+            projectBasePath = project.basePath,
+        )
+    }
+
     private fun fixWithAgent(issue: MappedIssue) {
-        val basePath = project.basePath ?: return
+        val basePath = resolveSonarRepoRoot(issue.filePath, issue.projectKey) ?: return
         val absolutePath = java.io.File(basePath, issue.filePath).absolutePath
         navigateToIssue(issue)
 

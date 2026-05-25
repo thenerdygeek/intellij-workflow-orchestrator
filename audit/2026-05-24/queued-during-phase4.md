@@ -66,3 +66,10 @@ violations are what actually fail verifyPlugin. When Q4/Q5 are fixed, check whet
 to the three helper functions or whether the API has stabilised on the platform version
 in use by then. Low risk: @Experimental APIs in IJ Platform rarely break between minor
 releases; the pattern is widely used in IJ plugins including JetBrains' own.
+
+---
+
+## RESOLUTION (2026-05-25, Tier-A incidentals pass)
+
+- **Q7** — FIXED. `ProcessEnvironment.antiInteractiveEnv` now sets `PYTHONSTARTUP=""` (neutralizes the inherited-env code-exec vector); `PYTHONSTARTUP` also added to `BLOCKED_ENV_VARS` so Layer-3 user overrides can't re-add it.
+- Q1/Q2/Q3/Q4/Q5/Q6/Q8 — deferred (Tier B/D: perms sweep, OverrideOnly/Experimental verifier work, CSA evasion parity).

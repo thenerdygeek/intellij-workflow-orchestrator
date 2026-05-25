@@ -231,3 +231,18 @@ and the output is large enough to spill to disk, the raw credential ends up in
 **File:** `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/ToolOutputSpiller.kt`
 **Fix approach:** Call `CredentialRedactor.redact(content)` before writing the spill file.
 Accept the performance trade-off for large files (profiling showed ~2ms/MB on Sonnet M3).
+
+---
+
+## RESOLUTION (2026-05-25, Tier-A incidentals pass)
+
+- **core:F-1** — NOT REAL. `AuthInterceptor` does not read `response.body` at all (only sets the header + `chain.proceed`). The described leak doesn't exist. No change.
+- **core:F-4** — PREMATURE. `nexusUrl` does not exist anywhere in main sources (Nexus never shipped). Finding was explicitly conditional on Nexus shipping. No change.
+- **core:F-5** — FIXED. Added CGNAT `100.64.0.0/10` + benchmark `198.18.0.0/15` to `UrlSafetyGuard` (new `SHARED_SPECIAL_USE` reason; literal regex + resolved-address byte check).
+- **core:F-10** — ALREADY DONE. `HtmlEscape.escapeHtml` already escapes `'` → `&#39;`; unescape handles `&#39;`/`&apos;`.
+- **agent-runtime:F-9** — FIXED. Added `ASIA[0-9A-Z]{16}` (AWS STS) to `CredentialRedactor`.
+- **agent-runtime:F-10** — FIXED. Added `Authorization: token <value>` (Sourcegraph scheme) to `CredentialRedactor`.
+- **agent-runtime:F-18** — FIXED. `HookRunner.buildProcess` now strips `ProcessEnvironment.SENSITIVE_ENV_VARS` from the hook subprocess env.
+- **agent-runtime:F-19** — FIXED. `ToolOutputSpiller.spill` redacts via `CredentialRedactor` before writing to disk / building the preview.
+- **jira:F-14** — FIXED. `TicketListCellRenderer` tooltip now truncates the raw string (200) BEFORE `escapeHtml`.
+- Test-only (core:F-3, agent-runtime:F-11, bamboo:F-17) and F-7/F-8/F-12/F-13 + jira/sonar/pullrequest body-escape items: see per-finding notes; F-15/F-16 covered in phase6 resolution.

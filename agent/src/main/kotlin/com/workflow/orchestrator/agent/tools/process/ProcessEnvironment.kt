@@ -170,6 +170,7 @@ object ProcessEnvironment {
         // ── Section 7: language path overrides ──
         addAll(setOf(
             "PYTHONPATH",
+            "PYTHONSTARTUP",   // executes an arbitrary file at interpreter start
             "NODE_PATH",
             "GOPATH",
             "CARGO_HOME",
@@ -240,6 +241,10 @@ object ProcessEnvironment {
         // Package manager / runtime
         "NPM_CONFIG_INTERACTIVE" to "false",
         "PYTHONIOENCODING" to "utf-8",
+        // Neutralize PYTHONSTARTUP — it executes an arbitrary file at interpreter
+        // start, an inherited-env code-execution vector (queued incidental P4 Q7).
+        // Empty value = no startup file is run.
+        "PYTHONSTARTUP" to "",
     )
 
     /**

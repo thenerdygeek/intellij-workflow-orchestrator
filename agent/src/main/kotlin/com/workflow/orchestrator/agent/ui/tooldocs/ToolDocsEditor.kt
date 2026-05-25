@@ -80,19 +80,23 @@ class ToolDocsEditor(
 
     private val browser = JBCefBrowser.createBuilder().build()
 
+    // Named field so dispose() can remove it — addLoadHandler(handler, cefBrowser) is NOT
+    // cascade-removed by browser.dispose() (agent-ui:F-7, same fix as AgentVisualizationTab).
+    private val loadHandler = object : CefLoadHandlerAdapter() {
+        override fun onLoadEnd(b: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
+            if (frame?.isMain == true) {
+                injectPayload(b)
+            }
+        }
+    }
+
     init {
         // Reuse the shared registrar so we don't stomp on AgentCefPanel's upload-aware
         // factory (same pattern as AgentVisualizationEditor / AgentPlanEditor).
         WorkflowAgentSchemeRegistrar.ensureRegistered()
         browser.loadURL(CefResourceSchemeHandler.BASE_URL + "tool-docs.html")
 
-        browser.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
-            override fun onLoadEnd(b: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
-                if (frame?.isMain == true) {
-                    injectPayload(b)
-                }
-            }
-        }, browser.cefBrowser)
+        browser.jbCefClient.addLoadHandler(loadHandler, browser.cefBrowser)
     }
 
     private fun injectPayload(cefBrowser: CefBrowser?) {
@@ -167,6 +171,9 @@ class ToolDocsEditor(
     override fun getFile(): VirtualFile = docsFile
 
     override fun dispose() {
+        // Explicit removal — browser.dispose() does not cascade-remove handlers added via
+        // addLoadHandler(handler, cefBrowser) (agent-ui:F-7).
+        browser.jbCefClient.removeLoadHandler(loadHandler, browser.cefBrowser)
         browser.dispose()
     }
 

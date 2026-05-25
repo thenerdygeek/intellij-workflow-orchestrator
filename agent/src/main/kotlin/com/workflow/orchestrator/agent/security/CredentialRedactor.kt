@@ -17,8 +17,12 @@ object CredentialRedactor {
         Regex("eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]+") to "[REDACTED_JWT]",
         // Bearer tokens in text
         Regex("Bearer\\s+[A-Za-z0-9_.-]{20,}") to "Bearer [REDACTED]",
+        // Sourcegraph-style auth header (`Authorization: token <value>`)
+        Regex("(?i)Authorization:\\s+token\\s+[A-Za-z0-9_.-]{20,}") to "Authorization: token [REDACTED]",
         // AWS access key IDs
         Regex("AKIA[0-9A-Z]{16}") to "[REDACTED: AWS key]",
+        // AWS STS / temporary session credentials
+        Regex("ASIA[0-9A-Z]{16}") to "[REDACTED: AWS STS token]",
         // Azure keys/secrets/tokens
         Regex("(?i)(azure|az)[_-]?(key|secret|token)\\s*[:=]\\s*['\"]?\\S{20,}") to "[REDACTED_AZURE]",
         // GitHub tokens
