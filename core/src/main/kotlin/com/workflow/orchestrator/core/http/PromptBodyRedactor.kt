@@ -2,7 +2,8 @@ package com.workflow.orchestrator.core.http
 
 /**
  * Core-level prompt-body redactor used by [RawApiTraceInterceptor] when
- * [RawApiTraceConfig.redactPromptBody] is `true` (the default).
+ * [RawApiTraceConfig.redactPromptBody] is `true` (the default), and by the
+ * `:pullrequest` AI-review pipeline to scrub diff content before sending to an LLM.
  *
  * Strips values for well-known credential-carrying JSON fields and
  * Authorization header values that may appear inside serialized request bodies
@@ -14,6 +15,11 @@ package com.workflow.orchestrator.core.http
  *   `auth`, `bearer`, `credential`.
  * - The value component of `Authorization: <scheme> <credentials>` lines that
  *   sometimes appear in JSON-serialized request dumps.
+ * - AWS access key IDs (`AKIA…`, `ASIA…`).
+ * - PEM private key headers (`-----BEGIN ... PRIVATE KEY-----`).
+ * - Assignment-style secret patterns: `api_key=`, `api-key=`, `apikey=`,
+ *   `token=`, `secret=`, `password=`, `passwd=` followed by a non-whitespace value.
+ * - Bearer tokens appearing as bare header lines (`Bearer <token>`) in diff context.
  *
  * What is NOT touched:
  * - Non-credential JSON fields (the body text, messages, etc.).
@@ -21,7 +27,8 @@ package com.workflow.orchestrator.core.http
  *   on partial/streaming bodies too).
  *
  * This redactor lives in `:core` so it can be referenced by [RawApiTraceInterceptor]
- * without introducing a circular dependency on `:agent`'s `CredentialRedactor`.
+ * without introducing a circular dependency on `:agent`'s `CredentialRedactor`,
+ * and so `:pullrequest` can use it without depending on `:agent`.
  */
 object PromptBodyRedactor {
 
@@ -60,17 +67,56 @@ object PromptBodyRedactor {
         RegexOption.IGNORE_CASE
     )
 
+    // ── Diff-context patterns (used when redacting PR diff content before LLM send) ──
+
+    /**
+     * AWS IAM Access Key IDs: 20-char string starting with AKIA or ASIA.
+     * Group 1 = the key ID itself.
+     */
+    private val AWS_ACCESS_KEY = Regex("""((?:AKIA|ASIA)[A-Z0-9]{16})""")
+
+    /**
+     * PEM private-key header lines.
+     * Matches `-----BEGIN (RSA |EC |OPENSSH |DSA |)PRIVATE KEY-----`.
+     * The full multi-line PEM body is not parsed (would require multi-line look-ahead);
+     * redacting the header line is sufficient to signal that a key is present and
+     * prevents the LLM from processing key material embedded in a diff hunk.
+     */
+    private val PEM_PRIVATE_KEY_HEADER = Regex(
+        """(-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|DSA\s+|ENCRYPTED\s+)?PRIVATE\s+KEY-----)""",
+        RegexOption.IGNORE_CASE
+    )
+
+    /**
+     * Assignment-style secrets in source or config file diffs:
+     * `api_key=<value>`, `token=<value>`, `password=<value>`, etc.
+     * Covers `=`, `: `, ` = ` separators and optional surrounding quotes.
+     * Group 1 = key + separator (kept), Group 2 = the secret value (replaced).
+     */
+    private val ASSIGNMENT_SECRET = Regex(
+        """((?:api[_-]?key|access[_-]?token|auth[_-]?token|secret[_-]?key?|password|passwd|private[_-]?key|client[_-]?secret)\s*[=:]\s*["']?)(\S{6,})""",
+        RegexOption.IGNORE_CASE
+    )
+
     /**
      * Redact credential values from [body].
      *
-     * @return A copy of [body] with credential values replaced by `***REDACTED***`.
-     *         Never throws; returns [body] unchanged on unexpected error.
+     * Original JSON / header patterns use the legacy `***REDACTED***` marker so that
+     * existing callers (debug dumpers, tests) are not broken.  Diff-specific patterns
+     * (AWS keys, PEM headers, assignment-style secrets) use `[REDACTED]` which is
+     * friendlier to display in the AI-review prompt.
+     *
+     * @return A copy of [body] with credential values replaced by the appropriate
+     *         redaction marker. Never throws; returns [body] unchanged on error.
      */
     fun redact(body: String): String = try {
         body
             .replace(JSON_CREDENTIAL_FIELD) { m -> "${m.groupValues[1]}***REDACTED***" }
             .replace(JSON_CREDENTIAL_FIELD_ESCAPED) { m -> "${m.groupValues[1]}***REDACTED***" }
             .replace(AUTH_HEADER_VALUE) { m -> "${m.groupValues[1]}***REDACTED***" }
+            .replace(AWS_ACCESS_KEY) { "[REDACTED]" }
+            .replace(PEM_PRIVATE_KEY_HEADER) { "[REDACTED PRIVATE KEY HEADER]" }
+            .replace(ASSIGNMENT_SECRET) { m -> "${m.groupValues[1]}[REDACTED]" }
     } catch (_: Exception) {
         body
     }

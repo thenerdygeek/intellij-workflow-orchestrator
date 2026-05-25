@@ -1,5 +1,7 @@
 package com.workflow.orchestrator.pullrequest.service
 
+import com.workflow.orchestrator.core.http.PromptBodyRedactor
+
 class PrReviewTaskBuilder {
 
     data class JiraTicket(
@@ -23,11 +25,18 @@ class PrReviewTaskBuilder {
         jiraTicket: JiraTicket?,
         sessionId: String,
     ): String {
-        val diffCapped = if (diff.length > MAX_DIFF_CHARS) {
-            diff.take(MAX_DIFF_CHARS) + "\n[... diff truncated at $MAX_DIFF_CHARS chars ...]"
-        } else {
-            diff
-        }
+        // Cap first, then scan for secrets. Redaction is lightweight (regex) and runs
+        // in O(n) on the capped string. Matches are replaced with [REDACTED] markers so
+        // the LLM still sees the surrounding context (file path, line numbers, etc.)
+        // without receiving the actual secret value.
+        // Closes audit finding pullrequest:F-11.
+        val diffCapped = PromptBodyRedactor.redact(
+            if (diff.length > MAX_DIFF_CHARS) {
+                diff.take(MAX_DIFF_CHARS) + "\n[... diff truncated at $MAX_DIFF_CHARS chars ...]"
+            } else {
+                diff
+            }
+        )
 
         val sb = StringBuilder()
         sb.appendLine(
