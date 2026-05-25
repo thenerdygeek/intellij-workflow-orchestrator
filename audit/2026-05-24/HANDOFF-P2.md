@@ -2,12 +2,44 @@
 
 **For:** the next session, to work the remaining **P2 (quality/cleanup)** findings.
 **Date written:** 2026-05-25
-**Branch:** `bugfix` (now **120 commits** ahead of `origin/bugfix` — **NOT pushed, no PR**)
-**Latest commit:** `536f47ab3`
+**Branch:** `bugfix` (now **129 commits** ahead of `origin/bugfix` — **NOT pushed, no PR**)
+**Latest commit:** `c6cd0753b`
 **Plugin version:** `0.85.47-alpha`
 **Build gate:** `./gradlew verifyPlugin` → **BUILD SUCCESSFUL** (full failure level, IU-251/252/253)
 
 > This supersedes `HANDOFF.md` for what-remains. Read `HANDOFF.md` too for the deep build/gotcha detail — everything there still applies. This file is the P2-specific resume doc.
+
+---
+
+## ✅ P2 CLEAN-WINS WAVE DONE (2026-05-25, `6b439ef55..c6cd0753b`, 8 commits)
+
+All 28 P2s were triaged (7 parallel verification agents) and the **12 low/trivial-risk "clean wins" are FIXED**, one commit per module:
+
+| Commit | Findings |
+|---|---|
+| `6b439ef55` | core:F-17 — drop misleading `suspend` on `EventBus.emit` (SAFE variant; NOT tryEmit→emit) |
+| `0cd5b4e3c` | agent:F-27 — 4 companion `Json` → 2 |
+| `cf53058a3` | jira:F-13 (dedup mapper via `full: Boolean`) + F-14 (`postCommitTransitionTriggerStatuses` setting + UI) |
+| `ba5ceb385` | bamboo:F-13 — `BambooService` interface in `BambooBuildRunState` |
+| `05d83c9e3` | sonar:F-17 (`SonarMetricKey` consts) + F-14 (injected `cs` scope) + F-15 (`getIssuesSinglePage` server-side paging) |
+| `210dfc129` | pullrequest:F-14 (`PrState` consts) + F-15 (tab panels → Disposable + `Disposer.dispose(old)`) |
+| `090f52bfa` | automation:F-13 — BaselineCache disk I/O out of data lock (snapshot + version-guard + `diskMutex`) |
+| `c6cd0753b` | handover:F-15 — drop debug comment-preview log |
+
+### Triage verdicts for the 16 NOT-fixed (do NOT redo verification — these are settled)
+- **ALREADY-FIXED (3):** agent:F-26, core:F-19, automation:F-12.
+- **NOT-REAL (1):** core:F-16 (body read once into `val`).
+- **⚠ NOT-REAL / HARMFUL — do NOT touch:** **automation:F-11** — the audit's "safe delete TRIGGERING enum" is WRONG; deleting it crashes startup via `QueueEntryStatus.valueOf()` on persisted rows (same as TAG_INVALID) and it has live render branches + 2 tests.
+- **WONTFIX:** jira:F-16 (runReadAction Phase-4 survivor, by-design until 2026.1 bump), sonar:F-18 (throw is a sound unreachable-guard; no-op fix harmful), core:F-18 (CredentialStore churn across 7 modules + loses test seam; "45+" is stale = actually 22), pullreq:F-13 (impact already neutralized by core:F-6 shared pool).
+
+### STILL-OPEN actionable P2 backlog (6) — for the next session
+- **jira:F-15** (medium) — add `validateGitBranchName` to the **agent tools** (`JiraTool` start_work, `BitbucketRepoTool` create_branch). NOTE: the named `BranchNameValidator.isValidBranchName` is **dead code** — fixing it changes nothing; fix the tools.
+- **sonar:F-16** (medium) — weighted coverage. Correct fix needs `linesToCover` (+`conditionsToCover`) added to `FileCoverageData` model + `CoverageMapper` (`lines_to_cover` is fetched but dropped today). Fallback-only path, so narrow value.
+- **agent:F-28** (medium) — replace the `RunCommandTool`/`BackgroundProcessTool` ThreadLocals with a `CoroutineContext.Element`; touches live streaming plumbing across `RunCommandTool`/`BackgroundProcessTool`/`RuntimeExecTool`/`SonarTool` + the `@Volatile` static `streamCallback`.
+- **bamboo:F-15** (defer) — naive "share the client" fix violates the core-interface layering; only a `:bamboo` shared cached-client provider is clean.
+- **automation:F-14** (defer) — `NO_SHA` cache key is pointless until the T8 diff-capture ships.
+- **automation:F-10** (defer) — substring suite-matching is a medium UI-model refactor (positional fixed rows), not a one-liner.
+- bamboo:F-14 — cosmetic; only the bytes-vs-chars unit nit is substantive (don't force a single value — behavioral).
 
 ---
 
