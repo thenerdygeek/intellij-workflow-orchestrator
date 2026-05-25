@@ -36,8 +36,11 @@ class SonarApiClient(
             "sqale_index,sqale_rating,duplicated_lines_density,cognitive_complexity," +
             "reliability_rating,security_rating,coverage,branch_coverage"
 
-        /** SonarQube enforces ps ≤ 500 on /api/measures/component_tree. */
+        /** SonarQube enforces ps ≤ 500 on /api/measures/component_tree and /api/issues/search. */
         const val MEASURES_PAGE_SIZE = 500
+
+        /** Page size for issues and hotspots pagination (SonarQube max is 500). */
+        const val ISSUES_PAGE_SIZE = 500
 
         /**
          * Cap on pagination loop in [getMeasures]. 10 pages × 500 ps = 5000
@@ -46,6 +49,13 @@ class SonarApiClient(
          * rather than make the IDE wait indefinitely.
          */
         const val MAX_MEASURES_PAGES = 10
+
+        /**
+         * Hard cap on issues/hotspots pagination: 20 pages × 500 = 10 000 items.
+         * Prevents runaway requests on misconfigured or very large projects while
+         * still covering the vast majority of real-world issue volumes.
+         */
+        const val MAX_ISSUES_PAGES = 20
     }
     private val log = Logger.getInstance(SonarApiClient::class.java)
     private val json = Json { ignoreUnknownKeys = true }
@@ -141,12 +151,19 @@ class SonarApiClient(
         inNewCodePeriod: Boolean = false
     ): ApiResult<List<SonarIssueDto>> {
         log.info("[Sonar:API] GET /api/issues/search for project '$projectKey' branch='${branch ?: "default"}' file='${filePath ?: "all"}' newCode=$inNewCodePeriod")
-        return get<SonarIssueSearchResult>(buildIssuesSearchPath(projectKey, branch, filePath, inNewCodePeriod))
-            .map { it.issues }
+        return getIssuesWithPaging(projectKey, branch, filePath, inNewCodePeriod).map { it.issues }
     }
 
     /**
-     * Fetches issues with paging metadata (total count) for truncation detection.
+     * Fetches ALL issues across multiple pages. SonarQube caps a single response at 500;
+     * this loop uses `p`/`ps` parameters and `paging.total` to collect every page up to
+     * [MAX_ISSUES_PAGES] × [ISSUES_PAGE_SIZE] = 10 000 items.
+     *
+     * The returned [SonarIssueSearchResult] has `paging.total` from the first page response
+     * (server-authoritative count) and `issues` containing every item fetched so far.
+     *
+     * F-7 fix: previously only the first 500 issues were returned; annotations and the agent
+     * silently missed anything beyond that position.
      */
     suspend fun getIssuesWithPaging(
         projectKey: String,
@@ -154,8 +171,17 @@ class SonarApiClient(
         filePath: String? = null,
         inNewCodePeriod: Boolean = false
     ): ApiResult<SonarIssueSearchResult> {
-        log.info("[Sonar:API] GET /api/issues/search (with paging) for project '$projectKey' branch='${branch ?: "default"}' newCode=$inNewCodePeriod")
-        return get<SonarIssueSearchResult>(buildIssuesSearchPath(projectKey, branch, filePath, inNewCodePeriod))
+        log.info("[Sonar:API] GET /api/issues/search (paginated) for project '$projectKey' branch='${branch ?: "default"}' newCode=$inNewCodePeriod")
+        return paginateSonarItems(
+            logTag = "Issues",
+            buildPagePath = { page -> buildIssuesSearchPath(projectKey, branch, filePath, inNewCodePeriod, page) },
+            fetchPage = { path -> get<SonarIssueSearchResult>(path) },
+            extractItems = { it.issues },
+            extractTotal = { it.paging.total },
+            combineResult = { firstResult, allItems ->
+                firstResult.copy(issues = allItems, paging = firstResult.paging.copy(total = firstResult.paging.total))
+            }
+        )
     }
 
     // Sonar's /api/issues/search filters by component via `componentKeys=<projectKey>:<path>`
@@ -166,13 +192,65 @@ class SonarApiClient(
         branch: String?,
         filePath: String?,
         inNewCodePeriod: Boolean,
+        page: Int = 1,
     ): String = buildString {
         append("/api/issues/search?componentKeys=")
         val componentKey = if (filePath != null) "$projectKey:$filePath" else projectKey
         append(URLEncoder.encode(componentKey, "UTF-8"))
-        append("&resolved=false&ps=500")
+        append("&resolved=false&ps=$ISSUES_PAGE_SIZE&p=$page")
         branch?.let { append("&branch=${URLEncoder.encode(it, "UTF-8")}") }
         if (inNewCodePeriod) append("&inNewCodePeriod=true")
+    }
+
+    /**
+     * Generic SonarQube pagination helper. Fetches pages 1‥[MAX_ISSUES_PAGES], stopping
+     * early when `items.size >= total` or the page comes back empty.
+     *
+     * Used by [getIssuesWithPaging] (F-7) and [getSecurityHotspots] (F-8) to avoid
+     * duplicating the identical loop structure.
+     *
+     * @param logTag        short label used in log messages (e.g. "Issues" or "Hotspots")
+     * @param buildPagePath builds the URL path for page N (N ≥ 1)
+     * @param fetchPage     performs the actual HTTP call for a given URL path
+     * @param extractItems  pulls the item list out of a page response
+     * @param extractTotal  reads `paging.total` from a page response
+     * @param combineResult assembles the final [ApiResult.Success] data from the first-page
+     *                      envelope + all accumulated items
+     */
+    private suspend fun <T, R> paginateSonarItems(
+        logTag: String,
+        buildPagePath: (Int) -> String,
+        fetchPage: suspend (String) -> ApiResult<T>,
+        extractItems: (T) -> List<R>,
+        extractTotal: (T) -> Int,
+        combineResult: (T, List<R>) -> T
+    ): ApiResult<T> {
+        val allItems = mutableListOf<R>()
+        var firstPageEnvelope: T? = null
+
+        for (page in 1..MAX_ISSUES_PAGES) {
+            when (val pageResult = fetchPage(buildPagePath(page))) {
+                is ApiResult.Success -> {
+                    if (firstPageEnvelope == null) firstPageEnvelope = pageResult.data
+                    val items = extractItems(pageResult.data)
+                    allItems += items
+                    val total = extractTotal(pageResult.data)
+                    if (allItems.size >= total || items.isEmpty()) {
+                        log.info("[Sonar:API] $logTag: fetched ${allItems.size}/$total in $page page(s)")
+                        return ApiResult.Success(combineResult(firstPageEnvelope!!, allItems))
+                    }
+                }
+                is ApiResult.Error -> {
+                    return if (page == 1) pageResult
+                    else {
+                        log.warn("[Sonar:API] $logTag: mid-pagination error on page $page — returning ${allItems.size} items collected so far")
+                        ApiResult.Success(combineResult(firstPageEnvelope!!, allItems))
+                    }
+                }
+            }
+        }
+        log.warn("[Sonar:API] $logTag: hit MAX_ISSUES_PAGES=$MAX_ISSUES_PAGES cap — returning ${allItems.size} items (project may have more)")
+        return ApiResult.Success(combineResult(firstPageEnvelope!!, allItems))
     }
 
     suspend fun getMeasures(
@@ -320,18 +398,37 @@ class SonarApiClient(
         return get<SonarQualityGateListResponse>("/api/qualitygates/list")
     }
 
+    /**
+     * Fetches ALL security hotspots across multiple pages. SonarQube caps a single
+     * response at 500; this delegates to [paginateSonarItems] with the same hard cap
+     * used by [getIssuesWithPaging] (20 pages × 500 = 10 000 items).
+     *
+     * F-8 fix: previously only the first 500 hotspots were returned; large projects
+     * silently dropped the remainder with no truncation warning.
+     */
     suspend fun getSecurityHotspots(
         projectKey: String,
         branch: String? = null
     ): ApiResult<SonarHotspotSearchResult> {
-        log.info("[Sonar:API] GET /api/hotspots/search for project '$projectKey' branch='${branch ?: "default"}'")
-        val params = buildString {
-            append("/api/hotspots/search?project=")
-            append(URLEncoder.encode(projectKey, "UTF-8"))
-            append("&ps=500")
-            branch?.let { append("&branch=${URLEncoder.encode(it, "UTF-8")}") }
+        log.info("[Sonar:API] GET /api/hotspots/search (paginated) for project '$projectKey' branch='${branch ?: "default"}'")
+        val buildPath: (Int) -> String = { page ->
+            buildString {
+                append("/api/hotspots/search?project=")
+                append(URLEncoder.encode(projectKey, "UTF-8"))
+                append("&ps=$ISSUES_PAGE_SIZE&p=$page")
+                branch?.let { append("&branch=${URLEncoder.encode(it, "UTF-8")}") }
+            }
         }
-        return get<SonarHotspotSearchResult>(params)
+        return paginateSonarItems(
+            logTag = "Hotspots",
+            buildPagePath = buildPath,
+            fetchPage = { path -> get<SonarHotspotSearchResult>(path) },
+            extractItems = { it.hotspots },
+            extractTotal = { it.paging.total },
+            combineResult = { firstResult, allItems ->
+                firstResult.copy(hotspots = allItems, paging = firstResult.paging.copy(total = firstResult.paging.total))
+            }
+        )
     }
 
     suspend fun getDuplications(

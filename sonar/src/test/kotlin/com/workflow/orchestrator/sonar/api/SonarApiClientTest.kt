@@ -362,4 +362,122 @@ class SonarApiClientTest {
         assertTrue(result.isError)
         assertEquals(ErrorType.NOT_FOUND, (result as ApiResult.Error).type)
     }
+
+    // ── F-7: Issues pagination ─────────────────────────────────────────────
+
+    @Test
+    fun `getIssuesWithPaging fetches all 3 pages and combines issues`() = runTest {
+        // 3 pages × 2 items each; total=6 declared on every page.
+        fun issuePage(pageIndex: Int, key1: String, key2: String) = """
+            {
+              "paging": {"pageIndex": $pageIndex, "pageSize": 2, "total": 6},
+              "issues": [
+                {"key": "$key1", "rule": "r1", "severity": "MAJOR", "message": "m",
+                 "component": "c", "type": "BUG", "status": "OPEN"},
+                {"key": "$key2", "rule": "r1", "severity": "MAJOR", "message": "m",
+                 "component": "c", "type": "BUG", "status": "OPEN"}
+              ]
+            }
+        """.trimIndent()
+        server.enqueue(MockResponse().setBody(issuePage(1, "i1", "i2")))
+        server.enqueue(MockResponse().setBody(issuePage(2, "i3", "i4")))
+        server.enqueue(MockResponse().setBody(issuePage(3, "i5", "i6")))
+
+        val result = client.getIssuesWithPaging("proj")
+
+        assertTrue(result.isSuccess)
+        val data = (result as ApiResult.Success).data
+        assertEquals(6, data.issues.size)
+        assertEquals(listOf("i1","i2","i3","i4","i5","i6"), data.issues.map { it.key })
+        assertEquals(3, server.requestCount)
+        // Verify p= parameter increments correctly
+        val paths = (1..3).map { server.takeRequest().path!! }
+        assertTrue(paths[0].contains("p=1"), "page 1 path: ${paths[0]}")
+        assertTrue(paths[1].contains("p=2"), "page 2 path: ${paths[1]}")
+        assertTrue(paths[2].contains("p=3"), "page 3 path: ${paths[2]}")
+    }
+
+    @Test
+    fun `getIssuesWithPaging stops when all items accumulated before max pages`() = runTest {
+        val single = """
+            {"paging": {"pageIndex": 1, "pageSize": 500, "total": 1},
+             "issues": [{"key": "only", "rule": "r", "severity": "MINOR", "message": "x",
+                         "component": "c", "type": "CODE_SMELL", "status": "OPEN"}]}
+        """.trimIndent()
+        server.enqueue(MockResponse().setBody(single))
+
+        val result = client.getIssuesWithPaging("proj")
+
+        assertTrue(result.isSuccess)
+        assertEquals(1, (result as ApiResult.Success).data.issues.size)
+        assertEquals(1, server.requestCount, "should stop after the first page when total is satisfied")
+    }
+
+    @Test
+    fun `getIssuesWithPaging returns partial data on mid-pagination error`() = runTest {
+        val page1 = """
+            {"paging": {"pageIndex": 1, "pageSize": 2, "total": 4},
+             "issues": [{"key": "i1", "rule": "r", "severity": "MINOR", "message": "x",
+                         "component": "c", "type": "BUG", "status": "OPEN"}]}
+        """.trimIndent()
+        server.enqueue(MockResponse().setBody(page1))
+        server.enqueue(MockResponse().setResponseCode(503))
+
+        val result = client.getIssuesWithPaging("proj")
+
+        // Mid-pagination 503 → returns partial success (items from page 1)
+        assertTrue(result.isSuccess)
+        assertEquals(1, (result as ApiResult.Success).data.issues.size)
+    }
+
+    // ── F-8: Hotspots pagination ───────────────────────────────────────────
+
+    @Test
+    fun `getSecurityHotspots fetches all 3 pages and combines hotspots`() = runTest {
+        fun hotspotPage(pageIndex: Int, key1: String, key2: String) = """
+            {
+              "paging": {"pageIndex": $pageIndex, "pageSize": 2, "total": 6},
+              "hotspots": [
+                {"key": "$key1", "message": "m", "component": "c:f",
+                 "securityCategory": "sql-injection", "vulnerabilityProbability": "HIGH",
+                 "status": "TO_REVIEW"},
+                {"key": "$key2", "message": "m", "component": "c:f",
+                 "securityCategory": "sql-injection", "vulnerabilityProbability": "HIGH",
+                 "status": "TO_REVIEW"}
+              ]
+            }
+        """.trimIndent()
+        server.enqueue(MockResponse().setBody(hotspotPage(1, "h1", "h2")))
+        server.enqueue(MockResponse().setBody(hotspotPage(2, "h3", "h4")))
+        server.enqueue(MockResponse().setBody(hotspotPage(3, "h5", "h6")))
+
+        val result = client.getSecurityHotspots("proj")
+
+        assertTrue(result.isSuccess)
+        val data = (result as ApiResult.Success).data
+        assertEquals(6, data.hotspots.size)
+        assertEquals(listOf("h1","h2","h3","h4","h5","h6"), data.hotspots.map { it.key })
+        assertEquals(3, server.requestCount)
+        val paths = (1..3).map { server.takeRequest().path!! }
+        assertTrue(paths[0].contains("p=1"), "page 1 path: ${paths[0]}")
+        assertTrue(paths[1].contains("p=2"), "page 2 path: ${paths[1]}")
+        assertTrue(paths[2].contains("p=3"), "page 3 path: ${paths[2]}")
+    }
+
+    @Test
+    fun `getSecurityHotspots stops when all items accumulated before max pages`() = runTest {
+        val single = """
+            {"paging": {"pageIndex": 1, "pageSize": 500, "total": 1},
+             "hotspots": [{"key": "only", "message": "x", "component": "c:f",
+                           "securityCategory": "xss", "vulnerabilityProbability": "MEDIUM",
+                           "status": "TO_REVIEW"}]}
+        """.trimIndent()
+        server.enqueue(MockResponse().setBody(single))
+
+        val result = client.getSecurityHotspots("proj")
+
+        assertTrue(result.isSuccess)
+        assertEquals(1, (result as ApiResult.Success).data.hotspots.size)
+        assertEquals(1, server.requestCount)
+    }
 }
