@@ -55,7 +55,9 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
                         .bindSelected({ inboundEnabled }, { inboundEnabled = it })
                         .comment(
                             "When on, this IDE binds a per-project socket and shows an Accept " +
-                                "dialog when another IDE delegates work here. Default off."
+                                "dialog when another IDE delegates work here. Default off. " +
+                                "Even when off, other IDEs can ask to delegate to this project " +
+                                "— you'll get a prompt to Allow once, Allow always, or Cancel."
                         )
                 }
                 row {
