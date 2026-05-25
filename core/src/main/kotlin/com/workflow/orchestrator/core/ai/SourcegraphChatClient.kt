@@ -236,7 +236,7 @@ class SourcegraphChatClient(
             val traceReqId = nextTraceReqId()
             val traceDirNow = agentLogsDir?.let { RawApiTraceConfig.traceDir(it) }
             if (RawApiTraceConfig.shouldTrace() && traceDirNow != null) {
-                PreSanitizeDumper.dump(messages, traceReqId, traceDirNow)
+                PreSanitizeDumper.dump(messages, traceReqId, traceDirNow, buildPreSanitizeRedactor())
             }
 
             val sanitized = sanitizeMessages(messages)
@@ -448,7 +448,7 @@ class SourcegraphChatClient(
             val traceReqId = nextTraceReqId()
             val traceDirNow = agentLogsDir?.let { RawApiTraceConfig.traceDir(it) }
             if (RawApiTraceConfig.shouldTrace() && traceDirNow != null) {
-                PreSanitizeDumper.dump(messages, traceReqId, traceDirNow)
+                PreSanitizeDumper.dump(messages, traceReqId, traceDirNow, buildPreSanitizeRedactor())
             }
 
             val sanitized = sanitizeMessages(messages)
@@ -751,13 +751,48 @@ class SourcegraphChatClient(
 
     /**
      * Scrub likely credentials from text before writing to debug files.
-     * Matches common patterns: password, token, secret, api_key, auth, bearer, credential.
+     *
+     * Three redaction passes (audit finding core:F-4):
+     * 1. [PromptBodyRedactor] — regex-based: credential JSON fields + Authorization header values.
+     * 2. Literal token match — replaces the exact configured token value when available (most
+     *    reliable, catches any occurrence of the token regardless of surrounding context).
+     * 3. Broader field-name regex (superset of [PromptBodyRedactor]) — additional patterns:
+     *    `access_token`, `Authorization` as a JSON key.
      */
     private fun sanitizeForDebug(text: String): String {
-        return text.replace(
-            Regex("""("(?:password|token|secret|api_key|apiKey|api-key|auth|bearer|credential|private_key|privateKey)["\s]*[:=]\s*")([^"]{4,})""", RegexOption.IGNORE_CASE)
-        ) { match ->
-            "${match.groupValues[1]}***REDACTED***"
+        // Pass 1: core regex redaction
+        var result = com.workflow.orchestrator.core.http.PromptBodyRedactor.redact(text)
+
+        // Pass 2: literal token replacement — if the token is known, redact every occurrence
+        val literalToken = tokenProvider()
+        if (!literalToken.isNullOrBlank()) {
+            result = result.replace(literalToken, "***REDACTED***")
+        }
+
+        // Pass 3: catch any remaining Authorization header values not caught by pass 1
+        result = result.replace(
+            Regex(
+                """("(?:password|token|access_token|secret|api_key|apiKey|api-key|Authorization|auth|bearer|credential|private_key|privateKey)"\s*:\s*")([^"]{4,})""",
+                RegexOption.IGNORE_CASE
+            )
+        ) { match -> "${match.groupValues[1]}***REDACTED***" }
+
+        return result
+    }
+
+    /**
+     * Build a text redactor for [PreSanitizeDumper] calls that includes literal-token
+     * matching on top of [PromptBodyRedactor]. Called once per dump to capture the
+     * current token value at dump time.
+     */
+    private fun buildPreSanitizeRedactor(): (String) -> String {
+        val literalToken = tokenProvider()
+        return { text ->
+            var result = com.workflow.orchestrator.core.http.PromptBodyRedactor.redact(text)
+            if (!literalToken.isNullOrBlank()) {
+                result = result.replace(literalToken, "***REDACTED***")
+            }
+            result
         }
     }
 
