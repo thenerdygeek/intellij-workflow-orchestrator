@@ -124,6 +124,28 @@ class TagBuilderServiceTest {
         assertTrue(payload.contains("\"2.3.1\""))
     }
 
+    // automation:F-4 — Docker tag payload debug-log removed (information disclosure).
+    // The debug line logged a 200-character payload preview to idea.log, exposing
+    // internal image registry paths on debug builds.  buildJsonPayload must still
+    // return the full payload — only the log call is removed.
+    @Test
+    fun `buildJsonPayload returns full payload after debug log removal (F-4)`() {
+        // Construct entries with a synthetic registry path to confirm the *return value*
+        // is not redacted — only the debug log line was removed.
+        val entries = listOf(
+            TagEntry("internal-registry.example.com/svc-auth", "v2.4.0-sha1234", null,
+                TagSource.BASELINE, RegistryStatus.VALID, false, false),
+        )
+        val payload = service.buildJsonPayload(entries)
+        // The returned payload is unchanged — full service name and tag are present.
+        assertTrue(payload.contains("internal-registry.example.com/svc-auth"),
+            "Payload must still contain full service name")
+        assertTrue(payload.contains("v2.4.0-sha1234"),
+            "Payload must still contain full tag value")
+        // The method must not throw even for entries with long service names.
+        assertTrue(payload.isNotBlank())
+    }
+
     @Test
     fun `loadBaseline handles empty results gracefully`() = runTest {
         coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(

@@ -296,8 +296,10 @@ class TagBuilderService {
     fun buildJsonPayload(entries: List<TagEntry>): String {
         val map = entries.associate { it.serviceName to JsonPrimitive(it.currentTag) }
         val payload = JsonObject(map).toString()
+        // Log metadata only — never log payload content (automation:F-4 information disclosure).
+        // Full service→tag mappings may include internal registry paths and version fingerprints
+        // that should not appear in idea.log on debug builds.
         log.info("[Automation:Tags] Built JSON payload with ${entries.size} services, length=${payload.length}")
-        log.debug("[Automation:Tags] JSON preview: ${payload.take(200)}${if (payload.length > 200) "..." else ""}")
         return payload
     }
 
