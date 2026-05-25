@@ -13,12 +13,15 @@ import com.workflow.orchestrator.core.delegation.DelegationPaths
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import java.nio.channels.SocketChannel
+import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -50,6 +53,40 @@ class DelegationOutboundService(
     private val pendingQuestionTexts = java.util.concurrent.ConcurrentHashMap<String, Pair<String, String>>()
 
     private val json = Json { ignoreUnknownKeys = true; classDiscriminator = "type" }
+
+    // ---- Plan 6 knock-and-wait seams (test-injectable) ---------------------
+    //
+    // The doorbell knock-and-wait flow ([send]) reaches the OS / sockets / picker
+    // through these overridable lambdas. Production defaults point at the real
+    // [DelegationClient] / spawner / picker; tests override them to drive
+    // deterministic ping/knock/connect/spawn outcomes without a live socket or
+    // EDT dialog. Mirrors the [DelegationPicker] injection style
+    // (recentsProvider / processSpawner). Plan 6 spec §8.1.
+
+    /** Liveness probe of the target's delegation (door) socket. Real: [DelegationClient.ping]. */
+    internal var pingFn: suspend (Path) -> DelegationMessage.Pong? =
+        { socketPath -> DelegationClient.ping(socketPath) }
+
+    /** Rings the target's doorbell. Real: [DelegationClient.knock]. */
+    internal var knockFn: suspend (Path, DelegationMessage.Knock) -> DelegationMessage.KnockAck? =
+        { doorbellPath, knock -> DelegationClient.knock(doorbellPath, knock) }
+
+    /** Opens the door + awaits Accept. Real: [DelegationClient.connectAndAwaitAccept]. */
+    internal var connectFn: suspend (Path, DelegationMessage.Connect) -> Pair<SocketChannel, DelegationMessage.AcceptResult>? =
+        { socketPath, connect -> DelegationClient.connectAndAwaitAccept(socketPath, connect) }
+
+    /**
+     * Spawns the IDE-B launcher when the doorbell didn't answer (target not running).
+     * Real: resolve the launcher binary and spawn via [DefaultProcessSpawner].
+     */
+    internal var launchFn: (Path) -> SpawnResult =
+        { targetPath -> DefaultProcessSpawner.spawn(LauncherResolver().resolveLauncher(), targetPath) }
+
+    /**
+     * Overridable target picker. Production opens the EDT [DelegationPicker]; tests
+     * supply a deterministic [PickerEntry] (or null to simulate user-cancel).
+     */
+    internal var pickTargetOverride: (suspend (String?) -> PickerEntry?)? = null
 
     // Plan 3 fetch_transcript correlation.
     private val pendingFetches =
@@ -102,15 +139,34 @@ class DelegationOutboundService(
         if (openChannelCount >= MAX_CHANNELS) {
             throw DelegationException.LimitReached
         }
-        val picked = pickTarget(suggestedRepo) ?: throw DelegationException.UserCanceledPicker
+        val picked = (pickTargetOverride?.invoke(suggestedRepo) ?: pickTarget(suggestedRepo))
+            ?: throw DelegationException.UserCanceledPicker
         val socketPath = DelegationPaths.socketFor(picked.path)
-        val connect = DelegationMessage.Connect(
+        val baseConnect = DelegationMessage.Connect(
             delegatorIde = ideIdentifier(),
             delegatorRepo = project.name,
             delegatorSessionId = delegatorSessionId,
             request = request,
         )
-        val pair = DelegationClient.connectAndAwaitAccept(socketPath, connect)
+
+        // R3 ping-first: probe the door before committing to a flow.
+        //   • PONG  → IDE-B's delegation socket is bound (inbound ON / already
+        //             accepting). Existing path: Connect with NO preauth nonce,
+        //             behavior is byte-for-byte the same as pre-Plan-6.
+        //   • null  → door unreachable (inbound OFF, or IDE-B not running). Run
+        //             the knock-and-wait flow: write a pending request, ring the
+        //             doorbell, launch IDE-B if it didn't answer, wait for the
+        //             socket to bind (after the user consents) OR bail on a
+        //             declined marker, then Connect carrying the preauth nonce so
+        //             IDE-B skips its Accept dialog.
+        // Plan 6 spec §8.1.
+        val connect: DelegationMessage.Connect = if (pingFn(socketPath) != null) {
+            baseConnect
+        } else {
+            knockAndWaitForBind(picked, baseConnect, delegatorSessionId)
+        }
+
+        val pair = connectFn(socketPath, connect)
             ?: throw DelegationException.TargetNotReachable
         val (channel, ack) = pair
         if (!ack.accepted) {
@@ -186,6 +242,106 @@ class DelegationOutboundService(
             runOutboundReaderLoop(handle, channel, onResult)
         }
         handle
+    }
+
+    /**
+     * Plan 6 knock-and-wait flow for an inbound-OFF (or not-yet-running) target.
+     *
+     * Entered from [send] when the door (delegation socket) is unreachable on the
+     * first ping. Steps (spec §8.1):
+     *   1. Mint a single-use [nonce].
+     *   2. Write a pending-request file into IDE-B's agent dir so a fresh-launch
+     *      can replay it after smart mode.
+     *   3. Ring IDE-B's doorbell. If the doorbell doesn't answer (KnockAck null),
+     *      IDE-B isn't running → spawn the launcher.
+     *   4. Wait for the delegation socket to bind (after the user consents) OR a
+     *      `.declined` marker to appear OR timeout. The poll checks
+     *      [PendingDelegationStore.isDeclined] between ticks so a decline aborts
+     *      promptly — **without** adding a `Declined` variant to
+     *      [AutoLaunchOutcome] (B3: that sealed class is matched exhaustively
+     *      elsewhere and stays untouched).
+     *   5. On bind → return a [DelegationMessage.Connect] copy carrying the
+     *      preauth nonce so IDE-B skips its Accept dialog.
+     *
+     * The pending file + any declined marker are cleared on every exit (success,
+     * declined, or timeout) via [PendingDelegationStore.clear].
+     *
+     * @throws DelegationException.Rejected("inbound_consent_declined") if the
+     * IDE-B user declined the consent prompt.
+     * @throws DelegationException.TargetNotReachable on timeout (socket never bound).
+     */
+    private suspend fun knockAndWaitForBind(
+        picked: PickerEntry,
+        baseConnect: DelegationMessage.Connect,
+        delegatorSessionId: String,
+    ): DelegationMessage.Connect {
+        val nonce = UUID.randomUUID().toString()
+        val targetAgentDir = ProjectIdentifier.agentDir(picked.path.toString()).toPath()
+        val store = PendingDelegationStore(targetAgentDir)
+        val preview = baseConnect.request.take(REQUEST_PREVIEW_CHARS)
+
+        try {
+            // Step 2: drop the pending request so a freshly-launched IDE-B can
+            // replay it after smart mode (the doorbell knock covers already-running).
+            store.write(
+                PendingDelegationRequest(
+                    delegatorIde = baseConnect.delegatorIde,
+                    delegatorRepo = baseConnect.delegatorRepo,
+                    delegatorSessionId = delegatorSessionId,
+                    requestPreview = preview,
+                    nonce = nonce,
+                    createdAt = System.currentTimeMillis(),
+                )
+            )
+
+            // Step 3: ring the doorbell. Null ack ⇒ doorbell not bound ⇒ IDE-B
+            // isn't running ⇒ spawn the launcher (which will replay the pending file).
+            val knock = DelegationMessage.Knock(
+                delegatorIde = baseConnect.delegatorIde,
+                delegatorRepo = baseConnect.delegatorRepo,
+                delegatorSessionId = delegatorSessionId,
+                requestPreview = preview,
+                nonce = nonce,
+            )
+            val doorbellPath = DelegationPaths.doorbellSocketFor(picked.path)
+            val ack = knockFn(doorbellPath, knock)
+            if (ack == null) {
+                LOG.info("Doorbell unreachable for ${picked.displayName} — spawning launcher")
+                when (val spawn = launchFn(picked.path)) {
+                    is SpawnResult.Failed ->
+                        LOG.warn("Launcher spawn failed for ${picked.displayName}: ${spawn.message}")
+                    is SpawnResult.Started ->
+                        LOG.info("Launcher spawned for ${picked.displayName}")
+                }
+            }
+
+            // Step 4: wait for the door to bind OR a decline OR timeout. We poll
+            // ping directly (rather than AutoLaunchPoller) so we can interleave
+            // the declined-marker check between ticks without touching
+            // AutoLaunchOutcome (B3).
+            val socketPath = DelegationPaths.socketFor(picked.path)
+            val bound = withTimeoutOrNull(CONSENT_WAIT_TIMEOUT_MILLIS) {
+                while (true) {
+                    if (store.isDeclined(nonce)) {
+                        throw DelegationException.Rejected("inbound_consent_declined")
+                    }
+                    if (pingFn(socketPath) != null) return@withTimeoutOrNull true
+                    delay(CONSENT_POLL_INTERVAL_MILLIS)
+                }
+                @Suppress("UNREACHABLE_CODE")
+                true
+            }
+            if (bound != true) {
+                throw DelegationException.TargetNotReachable
+            }
+
+            // Step 5: the door is bound — Connect with the preauth nonce so IDE-B
+            // skips its Accept dialog (consent already granted via the doorbell).
+            return baseConnect.copy(preauthNonce = nonce)
+        } finally {
+            // Step (cleanup): remove the pending file + declined marker on every exit.
+            store.clear(nonce)
+        }
     }
 
     /**
@@ -790,6 +946,13 @@ class DelegationOutboundService(
         const val IDLE_CHECK_INTERVAL_MILLIS = 30_000L
         /** Plan 2 F8: drop the channel after this many consecutive unknown messages. */
         const val MAX_UNKNOWN_MESSAGES_BEFORE_DROP = 16
+
+        /** Plan 6: how long to wait for IDE-B's door to bind after a doorbell knock. */
+        const val CONSENT_WAIT_TIMEOUT_MILLIS = 90_000L
+        /** Plan 6: poll cadence while waiting for consent / socket bind. */
+        const val CONSENT_POLL_INTERVAL_MILLIS = 500L
+        /** Plan 6: max chars of the request to surface in the knock/pending preview. */
+        const val REQUEST_PREVIEW_CHARS = 280
     }
 }
 
