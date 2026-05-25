@@ -4,13 +4,9 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
-import com.intellij.openapi.util.Disposer
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 
@@ -36,14 +32,20 @@ import kotlinx.coroutines.launch
  * 60s TTL configured in [CachePolicyRegistry] for the dev-status route —
  * this service does not help with those, by design.
  */
+/**
+ * Accepts the platform-injected [CoroutineScope] (2024.1+ DI pattern) so the
+ * service no longer needs to allocate its own scope or implement [Disposable].
+ * The platform owns the lifecycle and cancels the scope when the project closes,
+ * providing structured concurrency without manual teardown.
+ *
+ * Closes audit finding core:F-10.
+ */
 @Service(Service.Level.PROJECT)
-class DevStatusCacheInvalidator(private val project: Project) : com.intellij.openapi.Disposable {
-
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+class DevStatusCacheInvalidator(private val project: Project, private val cs: CoroutineScope) {
 
     fun start() {
         val eventBus = project.service<EventBus>()
-        scope.launch {
+        cs.launch {
             eventBus.events.collect { event ->
                 handle(event)
             }
@@ -54,10 +56,6 @@ class DevStatusCacheInvalidator(private val project: Project) : com.intellij.ope
         if (shouldEvictTest(event)) {
             HttpResponseCache.invalidateByPrefix(DEV_STATUS_PREFIX)
         }
-    }
-
-    override fun dispose() {
-        scope.cancel()
     }
 
     companion object {
