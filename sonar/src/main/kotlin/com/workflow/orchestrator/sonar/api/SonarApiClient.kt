@@ -58,6 +58,41 @@ class SonarApiClient(
         ).clientFor(ServiceType.SONARQUBE)
     }
 
+    /**
+     * Release OkHttp resources held by this client: shuts down the dispatcher
+     * thread pool and evicts all pooled connections. Must be called whenever this
+     * client is replaced by a new one (e.g. the Sonar URL changed) so the
+     * abandoned OkHttp pool does not leak threads or sockets.
+     *
+     * Safe to call even if [httpClient] was never initialized (lazy init means
+     * the field is only populated on first use).
+     */
+    fun close() {
+        if (!isHttpClientInitialized()) return
+        try {
+            httpClient.dispatcher.executorService.shutdown()
+            httpClient.connectionPool.evictAll()
+        } catch (e: Exception) {
+            log.warn("[Sonar:API] close() — error evicting OkHttp resources: ${e.message}", e)
+        }
+    }
+
+    /** Returns true only when the lazy [httpClient] has already been initialised. */
+    private fun isHttpClientInitialized(): Boolean =
+        try {
+            // Accessing the backing field via reflection would be fragile; instead
+            // we rely on the fact that `lazy` delegates implement `isInitialized()`
+            // through the `Lazy` interface exposed on the property delegate.
+            val delegate = SonarApiClient::class.java
+                .getDeclaredField("httpClient\$delegate")
+                .also { it.isAccessible = true }
+                .get(this) as? Lazy<*>
+            delegate?.isInitialized() == true
+        } catch (_: Exception) {
+            // Reflection unavailable (e.g. sealed JVM) — assume initialized and call close anyway.
+            true
+        }
+
     suspend fun validateConnection(): ApiResult<Boolean> {
         log.info("[Sonar:API] GET /api/authentication/validate — testing connection")
         return get<SonarValidationDto>("/api/authentication/validate").map { it.valid }
