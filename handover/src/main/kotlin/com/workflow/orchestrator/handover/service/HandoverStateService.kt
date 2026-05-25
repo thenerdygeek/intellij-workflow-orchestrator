@@ -275,23 +275,40 @@ class HandoverStateService {
 
             is WorkflowEvent.AutomationFinished -> {
                 val before = current.suiteResults.firstOrNull { it.buildResultKey == event.buildResultKey }
-                val updated = current.suiteResults.map { suite ->
-                    if (suite.buildResultKey == event.buildResultKey) {
-                        suite.copy(passed = event.passed, durationMs = event.durationMs)
-                    } else suite
-                }
                 if (before == null) {
-                    log.warn(
-                        "[Handover:State] AutomationFinished resultKey=${event.buildResultKey} not found in " +
-                            "${current.suiteResults.size} known suites — finished event arrived without a prior triggered event"
+                    // Out-of-order arrival: AutomationFinished arrived without a prior
+                    // AutomationTriggered (e.g. IDE restarted while a Bamboo build was
+                    // running — in-memory state was reset but the build finished).
+                    // Fix automation:F-7: upsert a synthetic SuiteResult so the
+                    // Handover checklist is updated rather than silently dropped.
+                    val bambooUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/')
+                    val bambooLink = buildSafeBambooLink(bambooUrl, event.buildResultKey)
+                    val synthetic = SuiteResult(
+                        suitePlanKey = event.suitePlanKey,
+                        buildResultKey = event.buildResultKey,
+                        dockerTagsJson = "",          // not available without Triggered event
+                        passed = event.passed,
+                        durationMs = event.durationMs,
+                        triggeredAt = Instant.now(),  // approximate — Triggered event was lost
+                        bambooLink = bambooLink,
                     )
+                    log.warn(
+                        "[Handover:State] AutomationFinished resultKey=${event.buildResultKey} arrived out-of-order " +
+                            "(no prior Triggered event) — inserting synthetic SuiteResult for ${event.suitePlanKey}"
+                    )
+                    current.copy(suiteResults = current.suiteResults + synthetic)
                 } else {
+                    val updated = current.suiteResults.map { suite ->
+                        if (suite.buildResultKey == event.buildResultKey) {
+                            suite.copy(passed = event.passed, durationMs = event.durationMs)
+                        } else suite
+                    }
                     log.info(
                         "[Handover:State] suiteResults: ${before.suitePlanKey} (resultKey=${event.buildResultKey}) " +
                             "passed=${before.passed} → ${event.passed}"
                     )
+                    current.copy(suiteResults = updated)
                 }
-                current.copy(suiteResults = updated)
             }
 
             is WorkflowEvent.PullRequestCreated -> {

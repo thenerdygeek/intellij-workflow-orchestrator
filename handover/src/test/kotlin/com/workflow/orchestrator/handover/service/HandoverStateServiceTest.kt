@@ -170,6 +170,75 @@ class HandoverStateServiceTest {
         }
     }
 
+    // automation:F-7 — out-of-order event handling (Finished before Triggered).
+    // When AutomationFinished arrives without a prior AutomationTriggered (e.g. IDE
+    // restarted while a Bamboo build was in progress), the service must upsert a
+    // synthetic SuiteResult rather than silently dropping the event.
+
+    @Test
+    fun `AutomationFinished without prior Triggered creates synthetic suite row (F-7)`() = runTest {
+        service.stateFlow.test {
+            skipItems(1) // initial state
+
+            // No Triggered event fired — simulate IDE restart / lost in-memory state.
+            eventBus.emit(WorkflowEvent.AutomationFinished(
+                suitePlanKey = "PROJ-REGR",
+                buildResultKey = "PROJ-REGR-42",
+                passed = true,
+                durationMs = 90_000
+            ))
+
+            val state = awaitItem()
+            assertEquals(1, state.suiteResults.size,
+                "A synthetic SuiteResult must be created when Finished arrives without Triggered")
+            val suite = state.suiteResults[0]
+            assertEquals("PROJ-REGR", suite.suitePlanKey)
+            assertEquals("PROJ-REGR-42", suite.buildResultKey)
+            assertTrue(suite.passed!!, "passed must be set from the Finished event")
+            assertEquals(90_000L, suite.durationMs)
+            // dockerTagsJson is empty for out-of-order rows (no Triggered payload available)
+            assertEquals("", suite.dockerTagsJson)
+            // bambooLink must be assembled from the configured bambooUrl
+            assertEquals("https://bamboo.example.com/browse/PROJ-REGR-42", suite.bambooLink)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `AutomationFinished out-of-order then Triggered replaces with canonical row (F-7)`() = runTest {
+        service.stateFlow.test {
+            skipItems(1) // initial state
+
+            // 1. Out-of-order Finished arrives first
+            eventBus.emit(WorkflowEvent.AutomationFinished(
+                suitePlanKey = "PROJ-REGR",
+                buildResultKey = "PROJ-REGR-99",
+                passed = false,
+                durationMs = 5_000
+            ))
+            awaitItem() // synthetic row inserted
+
+            // 2. Triggered arrives late (e.g. event replay / ordering correction)
+            //    The latest-run-wins deduplication in AutomationTriggered replaces the row.
+            eventBus.emit(WorkflowEvent.AutomationTriggered(
+                suitePlanKey = "PROJ-REGR",
+                buildResultKey = "PROJ-REGR-99",
+                dockerTagsJson = """{"svc":"1.0.0"}""",
+                triggeredBy = "user"
+            ))
+
+            val state = awaitItem()
+            // Still exactly one row — Triggered de-duplicates on suitePlanKey
+            assertEquals(1, state.suiteResults.size)
+            assertEquals("PROJ-REGR-99", state.suiteResults[0].buildResultKey)
+            // Triggered resets passed to null (in-progress state)
+            assertNull(state.suiteResults[0].passed)
+            // dockerTagsJson is now populated from the Triggered event
+            assertEquals("""{"svc":"1.0.0"}""", state.suiteResults[0].dockerTagsJson)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     @Test
     fun `PullRequestCreated updates PR state`() = runTest {
         service.stateFlow.test {
