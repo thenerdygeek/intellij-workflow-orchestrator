@@ -784,6 +784,13 @@ class ContextManager(
     /**
      * Keep only the most recent fraction of messages. Used as a hard-truncation
      * safety net at every compaction call site when compact() returns Failed.
+     *
+     * When the history has no `user`-role message (the degenerate case that
+     * triggers [compactDegenerate] and can also arise when compactDegenerate
+     * itself fails) [findSafeSplitPoint] returns `messages.size` and nothing
+     * would be removed.  In that case we fall back to a role-agnostic
+     * keep-last-N cut so an all-assistant history over 88% utilization still
+     * gets trimmed rather than soft-looping until max-iterations (F-22).
      */
     fun slidingWindow(keepFraction: Double = 0.3) {
         val keepCount = maxOf(1, (messages.size * keepFraction).toInt())
@@ -792,6 +799,11 @@ class ContextManager(
         val safeSplitPoint = findSafeSplitPoint(rawSplitPoint)
         if (safeSplitPoint > 0 && safeSplitPoint < messages.size) {
             messages.subList(0, safeSplitPoint).clear()
+        } else {
+            // Degenerate case: no user message found by findSafeSplitPoint.
+            // Role-agnostic tail-keep: unconditionally drop the oldest messages
+            // so the context-overflow loop makes progress on the next iteration.
+            messages.subList(0, rawSplitPoint).clear()
         }
     }
 

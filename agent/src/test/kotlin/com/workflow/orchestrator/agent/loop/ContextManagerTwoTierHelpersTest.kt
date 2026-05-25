@@ -150,4 +150,42 @@ class ContextManagerTwoTierHelpersTest {
         val snapped = cm.snapToToolBoundary(candidateIdx = 1, sliceStart = 1)
         assertEquals(1, snapped)
     }
+
+    // ── F-22: slidingWindow no-user-message fallback ──────────────────────
+
+    @Test
+    fun `slidingWindow trims all-assistant history when no user message exists (F-22)`() {
+        // 10 assistant messages with no user message — the degenerate history that
+        // compactDegenerate operates on when its LLM call fails.
+        val msgs = (1..10).map { a("assistant msg $it") }
+        seed(msgs)
+        // keepFraction = 0.3 → keep 3 messages, drop 7
+        cm.slidingWindow(keepFraction = 0.3)
+        val remaining = cm.getMessages()
+        assertTrue(remaining.size < 10, "some messages must be dropped (was ${remaining.size})")
+        assertTrue(remaining.size >= 1, "at least one message must be kept")
+        // The kept messages must be the most recent ones
+        assertEquals(msgs.takeLast(remaining.size), remaining)
+    }
+
+    @Test
+    fun `slidingWindow no-op when history already within keepFraction`() {
+        val msgs = listOf(a("only message"))
+        seed(msgs)
+        cm.slidingWindow(keepFraction = 0.3)
+        assertEquals(1, cm.getMessages().size)
+    }
+
+    @Test
+    fun `slidingWindow normal path still prefers user-role split when user messages exist`() {
+        // 5 messages: a a u a a — keepFraction=0.5 should cut at the user message
+        val msgs = listOf(a("a1"), a("a2"), u("user msg"), a("a3"), a("a4"))
+        seed(msgs)
+        cm.slidingWindow(keepFraction = 0.5)
+        val remaining = cm.getMessages()
+        // Split at the user-role boundary; user message must be the first remaining
+        assertTrue(remaining.isNotEmpty())
+        assertTrue(remaining.first().role == "user" || remaining.size == msgs.size,
+            "sliding window should prefer user boundary or leave everything intact if no cut needed")
+    }
 }
