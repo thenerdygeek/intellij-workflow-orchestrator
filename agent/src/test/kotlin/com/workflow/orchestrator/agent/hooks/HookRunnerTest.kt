@@ -257,4 +257,31 @@ class HookRunnerTest {
         val result = runner.execute(hook, event)
         assertTrue(result is HookResult.Proceed)
     }
+
+    // F-18 source-text pins — verify the graceful-destroy contract is in place.
+
+    @Test
+    fun `runProcess finally block uses isAlive guard before destroy (source-text pin)`() {
+        val src = java.io.File("src/main/kotlin/com/workflow/orchestrator/agent/hooks/HookRunner.kt")
+            .takeIf { it.exists() }
+            ?: java.io.File("agent/src/main/kotlin/com/workflow/orchestrator/agent/hooks/HookRunner.kt")
+        val text = src.readText()
+        assertTrue(
+            text.contains("if (process.isAlive)"),
+            "runProcess finally must guard destroyForcibly with isAlive check (F-18)"
+        )
+    }
+
+    @Test
+    fun `runProcess finally block calls destroy before destroyForcibly (source-text pin)`() {
+        val src = java.io.File("src/main/kotlin/com/workflow/orchestrator/agent/hooks/HookRunner.kt")
+            .takeIf { it.exists() }
+            ?: java.io.File("agent/src/main/kotlin/com/workflow/orchestrator/agent/hooks/HookRunner.kt")
+        val text = src.readText()
+        val destroyIdx = text.indexOf("process.destroy()")
+        val forciblyIdx = text.indexOf("process.destroyForcibly()")
+        assertTrue(destroyIdx >= 0, "graceful process.destroy() must be present (F-18)")
+        assertTrue(forciblyIdx >= 0, "force process.destroyForcibly() must still be present as fallback (F-18)")
+        assertTrue(destroyIdx < forciblyIdx, "graceful destroy() must precede destroyForcibly() (F-18)")
+    }
 }

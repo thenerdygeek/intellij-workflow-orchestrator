@@ -41,6 +41,13 @@ open class HookRunner(
         /** Maximum size for context modification to prevent prompt overflow. Matches Cline's limit. */
         private const val MAX_CONTEXT_MODIFICATION_SIZE = 50_000 // ~50KB
 
+        /**
+         * Grace period (ms) given to a hook process to exit cleanly after `destroy()` (SIGTERM)
+         * before `destroyForcibly()` (SIGKILL) is sent.  2 000 ms gives the hook enough time to
+         * flush its JSON response to stdout so we can still parse the output (F-18).
+         */
+        private const val HOOK_DESTROY_GRACE_MS = 2_000L
+
         private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }
     }
 
@@ -157,6 +164,14 @@ open class HookRunner(
      * 2. Write inputJson to stdin, close stdin
      * 3. Read stdout and stderr (with size limit)
      * 4. Wait for exit code
+     *
+     * The `finally` block uses a graceful two-phase shutdown (F-18):
+     * - If the process has already exited (normal completion) `destroyForcibly` is a no-op,
+     *   but we skip the call entirely to avoid the post-exit behaviour on Windows.
+     * - If the process is still alive (coroutine cancelled / timeout) we first send
+     *   `destroy()` (SIGTERM on Unix) and wait up to [HOOK_DESTROY_GRACE_MS] ms for a
+     *   clean exit before escalating to `destroyForcibly()` (SIGKILL).  This gives the
+     *   hook a chance to flush its JSON response to stdout before being killed.
      */
     private fun runProcess(processBuilder: ProcessBuilder, inputJson: String): ProcessResult {
         val process = processBuilder.start()
@@ -176,7 +191,17 @@ open class HookRunner(
 
             return ProcessResult(exitCode, stdout, stderr)
         } finally {
-            process.destroyForcibly()
+            // Graceful two-phase shutdown: skip entirely if process already exited.
+            if (process.isAlive) {
+                try {
+                    process.destroy()
+                    if (!process.waitFor(HOOK_DESTROY_GRACE_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                        process.destroyForcibly()
+                    }
+                } catch (_: Throwable) {
+                    try { process.destroyForcibly() } catch (_: Throwable) { /* best-effort */ }
+                }
+            }
         }
     }
 
