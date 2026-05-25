@@ -9,8 +9,8 @@ Tag validation flow removed — Trigger Now does not pre-validate tags against a
 - `TagBuilderService` — builds `dockerTagsAsJson` payload (service-to-tag mappings)
 - `QueueService` — smart queue with position tracking, wait time estimation, auto-trigger. Uses platform-injected `cs: CoroutineScope`; pollers explicitly `cs.launch(Dispatchers.IO)` (HTTP/SQLite I/O, see `:core` "Service & threading conventions").
 - `DriftDetectorService` — no-op after registry calls removed; `isRegistryConfigured()` always returns false
-- `TagHistoryService` — persists active queue entries for crash recovery (queue restart)
-- `AutomationSettingsService` — suite plan keys and configuration
+- `TagHistoryService` — persists active queue entries for crash recovery (queue restart). SQLite `queue_entries` table at `schema_version=2` (2026-05-25): v2 added the nullable `branch_key` column via an idempotent `migrateToV2IfNeeded` (PRAGMA `table_info` guard + `ALTER TABLE`, version bump only after the column is confirmed present), so the chosen plan branch survives an IDE restart.
+- `AutomationSettingsService` — suite plan keys and configuration. `SuiteConfig.selectedBranch` (nullable) persists the per-suite trigger branch; `get/setSuiteSelectedBranch` mirror the default-stages helper pattern. Blank is normalised to null.
 - `QueueRecoveryStartupActivity` — recovers queue state on IDE restart
 - `BaselineCacheService` — project-level cache of the last computed `BaselineLoadResult`
   per suite plan key. In-memory `Map<String, CachedSuiteEntry>` plus on-disk JSON at
@@ -24,7 +24,7 @@ Tag validation flow removed — Trigger Now does not pre-validate tags against a
 
 ## UI
 
-- `AutomationPanel` — main panel with tag staging + queue + monitor sub-panels
+- `AutomationPanel` — main panel with tag staging + queue + monitor sub-panels. Header has a **branch selector** (`branchCombo`, replaced the old passive PR-branch label 2026-05-25): on suite-select/tab-open it loads `BambooService.getPlanBranches(planKey)` (guarded by the `loadGeneration` stale-token), offers a `"default"` (= master, `branchKey=null`) entry plus each plan branch (`PlanBranchData.key`), and restores the persisted per-suite selection (falls back to default if the branch was deleted in Bamboo). The selected `branchKey` flows into `QueueEntry.branchKey`; `QueueService.doTrigger` triggers `branchKey ?: suitePlanKey`. **Branch selection does NOT rescan the baseline** — the docker-tag baseline stays anchored to the master plan regardless of selected branch (`BaselineCacheService` is untouched, still keyed by `planKey`).
 - `TagStagingPanel` — service table + tag selector + JSON preview
 - `QueueStatusPanel` — read-only status indicator. Mirrors the user's `MonitorPanel` selection (PR 8 #4) via `setSelection(entryId)`; falls back to the most-actionable live entry when nothing is selected. The Cancel button was removed in PR 8 — Cancel/Remove now live on the per-row detail panel where the target is unambiguous.
 - `MonitorPanel` — list+detail of every queue entry, including terminal ones. Filter chips (All / Queued / Running / Failed / Completed) with `CANCELLED` bucketed under Failed. Sorted latest-first by `enqueuedAt`. Detail header shows **Cancel** for live entries and **Remove** for terminal entries (calls `QueueService.dismiss`). Exposes `onSelectionChanged: (RunEntry?) -> Unit`.
