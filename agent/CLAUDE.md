@@ -111,7 +111,7 @@ Registered in `AgentService.registerAllTools()`:
 | `plan_mode_respond` | PlanModeRespondTool | Present plan in plan mode |
 | `enable_plan_mode` | EnablePlanModeTool | Switch to plan mode |
 | `use_skill` | UseSkillTool | Load and activate a skill |
-| `new_task` | NewTaskTool | Session handoff with structured context |
+| `new_task` | NewTaskTool | Propose a session handoff (user-confirmed): returns `HandoffProposed`, loop renders a preview card + suspends on `userInputChannel`; "Start fresh session" → `LoopResult.SessionHandoff`, "Keep chatting" → `LoopResult.Completed`. Orchestrator-only. |
 | `render_artifact` | RenderArtifactTool | Interactive React component in chat |
 | `find_definition` | FindDefinitionTool | PSI go-to-definition |
 | `find_references` | FindReferencesTool | PSI find usages |

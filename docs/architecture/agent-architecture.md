@@ -211,9 +211,9 @@ When in plan mode and the LLM calls `plan_mode_respond`:
 - If `needsMoreExploration = true`: loop continues (LLM will use more read/search tools)
 - If `needsMoreExploration = false`: loop returns `LoopResult.PlanPresented`, pausing for user review
 
-### Session Handoff: `new_task` -> SessionHandoff
+### Session Handoff: `new_task` -> HandoffProposed -> (user) -> SessionHandoff
 
-When context is exhausted beyond compaction's ability to recover, the LLM calls `new_task` with a structured summary. The loop returns `LoopResult.SessionHandoff`, and `AgentService` starts a fresh session with the handoff context.
+When the LLM judges the conversation should restart from a clean context, it calls `new_task` with a structured summary. The tool returns `ToolResultType.HandoffProposed`; the loop fires `onHandoffProposed` (which renders a preview card) and **suspends on `userInputChannel`** — it does NOT auto-fork (restored Cline contract). The user chooses: **"Start fresh session"** sends `HANDOFF_FORK_SENTINEL` → the loop returns `LoopResult.SessionHandoff` and `AgentService.startHandoffSession` starts a fresh session with the handoff context; **"Keep chatting here"** sends `HANDOFF_DECLINE_SENTINEL` → the loop returns `LoopResult.Completed` and the current session continues unchanged. See `docs/superpowers/specs/2026-05-25-new-task-cline-contract-design.md`.
 
 ### Loop Detection (from Cline)
 
@@ -685,11 +685,12 @@ Checkpoints are created after every write operation (`edit_file`, `create_file`,
 
 ### Session Handoff (`new_task`)
 
-Ported from Cline's `new_task` tool:
-1. Current session is marked `COMPLETED`
+Ported from Cline's `new_task` tool (user-confirmed; the loop proposes via `HandoffProposed` and waits for the card decision before forking):
+1. On **"Start fresh session"**: current session is marked `COMPLETED`
 2. A new session is created with a fresh `ContextManager`
 3. The handoff context (structured summary) becomes the first user message
-4. `AgentService.startHandoffSession()` auto-starts the new session
+4. `AgentService.startHandoffSession()` starts the new session
+5. On **"Keep chatting here"** instead: no fork — the loop returns `LoopResult.Completed` and the current session continues
 
 ### Session Lifecycle
 
