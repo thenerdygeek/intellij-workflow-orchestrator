@@ -339,6 +339,15 @@ class WebFetchEngine(
                     )
             }
 
+            // SHA-256 of the post-sanitize text. Surfaced to the LLM via the
+            // <external_content content_hash='...'> attribute (Task 1.2) so it can detect
+            // when a citation references the SAME version of a page across multiple turns.
+            // First 16 hex chars (~64 bits) is enough collision resistance for citation use.
+            val contentHash = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(finalText.toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+                .take(16)
+
             val page = WebPage(
                 originalUrl = pass.originalUrl ?: request.url,
                 finalUrl = pass.finalUrl,
@@ -350,6 +359,7 @@ class WebFetchEngine(
                 allowlistDecision = decision,
                 sanitizerVerdict = verdict,
                 sanitizerNotes = san.notes,
+                contentHash = contentHash,
                 fetchedAt = Instant.now(),
                 elapsedMs = System.currentTimeMillis() - start,
             )

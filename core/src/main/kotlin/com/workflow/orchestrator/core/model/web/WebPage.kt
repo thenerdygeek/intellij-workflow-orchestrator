@@ -14,6 +14,7 @@ data class WebPage(
     val allowlistDecision: AllowlistDecision,
     val sanitizerVerdict: SanitizerVerdict,
     val sanitizerNotes: String?,
+    val contentHash: String = "",
     val fetchedAt: Instant,
     val elapsedMs: Long,
 )
