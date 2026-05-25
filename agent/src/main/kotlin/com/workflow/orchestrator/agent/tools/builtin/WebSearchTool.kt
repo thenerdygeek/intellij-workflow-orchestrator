@@ -67,8 +67,9 @@ PROPRIETARY IDENTIFIERS: do NOT include internal hostnames (e.g. jenkins.acme.co
         // snippet should not poison the entire result set.
         fun escTag(s: String): String = s.replace("</external_search>", "&lt;/external_search&gt;", ignoreCase = true)
         fun escUrl(s: String): String = s.replace("'", "&apos;")
+        val retrievedAt = java.time.Instant.now()
         val content = buildString {
-            appendLine("<external_search query='${query.replace("'", "&apos;")}' provider='${hits.firstOrNull()?.provider ?: "unknown"}' count='${hits.size}'>")
+            appendLine("<external_search query='${query.replace("'", "&apos;")}' provider='${hits.firstOrNull()?.provider ?: "unknown"}' count='${hits.size}' retrieved_at='$retrievedAt'>")
             hits.forEach { h ->
                 val flags = if (h.screenerFlags.isNotEmpty()) " [${h.screenerFlags.joinToString(",") { it.name }}]" else ""
                 appendLine("  [${h.rank + 1}] ${escTag(h.title)} — ${escUrl(escTag(h.url))}$flags")

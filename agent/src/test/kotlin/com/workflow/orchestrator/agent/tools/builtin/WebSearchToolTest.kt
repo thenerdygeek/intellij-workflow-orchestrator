@@ -130,6 +130,7 @@ class WebSearchToolTest {
         assertTrue(result.content.contains("<external_search"), "Missing <external_search>: ${result.content}")
         assertTrue(result.content.contains("query='kotlin coroutines'"), "Missing query attr: ${result.content}")
         assertTrue(result.content.contains("provider='SearXNG'"), "Missing provider attr: ${result.content}")
+        assertTrue(result.content.contains("retrieved_at='"), "Missing retrieved_at attr: ${result.content}")
         assertTrue(result.content.contains("[1] Kotlin Docs — https://kotlinlang.org"), "Missing result line: ${result.content}")
     }
 
