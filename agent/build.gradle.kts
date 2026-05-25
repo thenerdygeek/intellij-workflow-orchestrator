@@ -61,10 +61,16 @@ dependencies {
     testImplementation(libs.turbine)
 }
 
+intellijPlatform {
+    // Each module gets its own sandbox dir so concurrent/sequential :test tasks
+    // across modules don't collide on the shared plugins-test/ directory.
+    sandboxContainer = layout.buildDirectory.dir("idea-sandbox")
+}
+
 tasks.test {
     useJUnitPlatform()
-    // :document's sandbox must be prepared before :agent tests run because :agent now
-    // depends on :document and the IntelliJ Platform test runner shares the sandbox directory.
+    // :document's sandbox must be prepared before :agent tests run because :agent
+    // depends on :document and its plugin descriptor must be on the test plugin.path.
     dependsOn(":document:prepareTestSandbox")
 }
 

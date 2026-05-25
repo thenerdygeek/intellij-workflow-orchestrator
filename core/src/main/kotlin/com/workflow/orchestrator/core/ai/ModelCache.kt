@@ -112,6 +112,13 @@ object ModelCache {
         return null
     }
 
+    /** Pick the latest Haiku model — cheapest tier, for lightweight single-shot tasks. */
+    fun pickHaiku(models: List<ModelInfo>): ModelInfo? {
+        val anthropic = models.filter { it.provider == "anthropic" }
+        return anthropic.filter { it.modelName.lowercase().contains("haiku") }
+            .maxByOrNull { it.created }
+    }
+
     /** Pick the cheapest available model (Haiku > Sonnet > anything) for lightweight tasks. */
     fun pickCheapest(models: List<ModelInfo>): ModelInfo? {
         if (models.isEmpty()) return null

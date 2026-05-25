@@ -121,8 +121,13 @@ class RevertFileTool : AgentTool {
                 isError = true
             )
 
-        val memoryDir = project.basePath?.let { java.io.File(ProjectIdentifier.agentDir(it), "memory").absolutePath }
-        val (resolvedPathOrNull, pathError) = PathValidator.resolveAndValidateForWrite(filePath, project.basePath, memoryDir)
+        val extraRoots = project.basePath?.let {
+            listOf(
+                java.io.File(ProjectIdentifier.agentDir(it), "memory").absolutePath,
+                ProjectIdentifier.researchDir(it).absolutePath,
+            )
+        } ?: emptyList()
+        val (resolvedPathOrNull, pathError) = PathValidator.resolveAndValidateForWrite(filePath, project.basePath, extraRoots)
         if (pathError != null) return pathError
         val resolvedPath = resolvedPathOrNull!!
 

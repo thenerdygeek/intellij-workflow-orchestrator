@@ -182,6 +182,12 @@ configurations.all {
     exclude(group = "org.bouncycastle", module = "bcmail-jdk15on")
 }
 
+intellijPlatform {
+    // Each module gets its own sandbox dir so concurrent/sequential :test tasks
+    // across modules don't collide on the shared plugins-test/ directory.
+    sandboxContainer = layout.buildDirectory.dir("idea-sandbox")
+}
+
 tasks.test {
     useJUnitPlatform()
 }

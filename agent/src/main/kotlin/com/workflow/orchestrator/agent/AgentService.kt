@@ -940,6 +940,17 @@ class AgentService(
         safeRegisterCore { UseSkillTool() }
         safeRegisterCore { NewTaskTool() }
         safeRegisterCore { RenderArtifactTool() }
+        // Web tools — conditionally registered based on user settings.
+        // The tool schema never reaches the LLM (and costs tokens) when the toggle is off.
+        // reregisterConditionalTools() re-evaluates these at runtime when the user changes
+        // the toggles in WebSettingsConfigurable without restarting the IDE.
+        val pluginState = project.service<com.workflow.orchestrator.core.settings.PluginSettings>().state
+        if (pluginState.enableWebFetch) {
+            safeRegisterCore { com.workflow.orchestrator.agent.tools.builtin.WebFetchTool() }
+        }
+        if (pluginState.enableWebSearch) {
+            safeRegisterCore { com.workflow.orchestrator.agent.tools.builtin.WebSearchTool() }
+        }
 
         // Task system tools — four LLM-facing tools for typed task management.
         // Ported from Claude Code's task-system behavior. Hook-exempt (see AgentLoop.HOOK_EXEMPT).
@@ -1259,10 +1270,25 @@ class AgentService(
         // the tool without an IDE restart. Without this, the init-time check at
         // registerAllTools() would freeze the registration state for the
         // session and OFF→ON would require a restart to expose view_image.
-        if (com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state.enableImageInput) {
+        val pluginSettings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
+        if (pluginSettings.state.enableImageInput) {
             if (registry.getTool("view_image") == null) safeRegisterDeferred("File") { ViewImageTool() }
         } else {
             if (registry.getTool("view_image") != null) registry.unregisterDeferred("view_image")
+        }
+
+        // Web tools (core, not deferred) — re-evaluated when the user toggles
+        // enableWebFetch / enableWebSearch in WebSettingsConfigurable without restarting.
+        // Uses unregisterCore because web tools are core-tier (always sent to LLM when on).
+        if (pluginSettings.state.enableWebFetch) {
+            if (!registry.has("web_fetch")) safeRegisterCore { com.workflow.orchestrator.agent.tools.builtin.WebFetchTool() }
+        } else {
+            if (registry.has("web_fetch")) registry.unregisterCore("web_fetch")
+        }
+        if (pluginSettings.state.enableWebSearch) {
+            if (!registry.has("web_search")) safeRegisterCore { com.workflow.orchestrator.agent.tools.builtin.WebSearchTool() }
+        } else {
+            if (registry.has("web_search")) registry.unregisterCore("web_search")
         }
     }
 
@@ -1804,13 +1830,20 @@ class AgentService(
                 // mid-session saves via `edit_file MEMORY.md` are visible to the LLM on its
                 // very next iteration. The lambda runs whenever the tool set changes; the
                 // file read is small (≤200 lines) and unconditional misses are tolerated.
+                val researchDirPath = com.workflow.orchestrator.core.util.ProjectIdentifier.researchDir(projectPath).toPath()
                 val systemPromptBuilder = { toolDefsMarkdown: String? ->
                     val freshMemoryIndex = com.workflow.orchestrator.agent.memory.MemoryIndex.load(memoryDirPath)
+                    val freshResearchIndex = com.workflow.orchestrator.agent.research.ResearchIndex.load(researchDirPath)
+                    // hasWebTools is re-evaluated on every prompt rebuild so a settings toggle
+                    // mid-session (via reregisterConditionalTools) is reflected immediately.
+                    val hasWebTools = registry.has("web_fetch") || registry.has("web_search")
                     // D6 (audit finding agent-runtime:F-9): snapshot the dialectDriftFlag ONCE
                     // per prompt build into a local before passing it to SystemPrompt.build().
                     // consumeDialectDriftFlag() is already atomic (AtomicBoolean.getAndSet), but
                     // the explicit local variable makes it impossible to accidentally read it twice
                     // if SystemPrompt.build's parameter list is ever refactored.
+                    // NOTE: must remain the LAST local before SystemPrompt.build() — pinned by
+                    // AgentServiceModelChangeCasTest (snapshot-within-300-chars invariant).
                     val dialectDriftSnapshot = messageStateRef?.consumeDialectDriftFlag() ?: false
                     SystemPrompt.build(
                         projectName = projectName,
@@ -1824,9 +1857,12 @@ class AgentService(
                         toolDefinitionsMarkdown = toolDefsMarkdown,
                         memoryIndex = freshMemoryIndex,
                         memoryIndexPath = memoryIndexPath,
+                        researchIndex = freshResearchIndex,
+                        researchIndexPath = researchDirPath.toString(),
                         ideContext = ideContext,
                         availableShells = allowedShells,
                         availableModels = formatModelsForPrompt(ModelCache.getCached()),
+                        hasWebTools = hasWebTools,
                         // One-shot — fires once per drift detection, then resets.
                         // True when the write-time guard rejected an assistant turn OR
                         // `redactDialectXmlInHistory` rewrote one at resume / retry.
@@ -2592,6 +2628,8 @@ class AgentService(
                 modelCatalogService = sharedCatalogHolder.peek(),
                 currentModelRef = { currentBrainModelId },
             )
+            val resumeResearchDirPath = com.workflow.orchestrator.core.util.ProjectIdentifier.researchDir(basePath).toPath()
+            val resumeResearchIndex = com.workflow.orchestrator.agent.research.ResearchIndex.load(resumeResearchDirPath)
             val systemPrompt = SystemPrompt.build(
                 projectName = project.name,
                 projectPath = project.basePath ?: "",
@@ -2599,6 +2637,9 @@ class AgentService(
                 ideContext = ideContext,
                 availableShells = allowedShells,
                 availableModels = formatModelsForPrompt(ModelCache.getCached()),
+                hasWebTools = registry.has("web_fetch") || registry.has("web_search"),
+                researchIndex = resumeResearchIndex,
+                researchIndexPath = resumeResearchDirPath.toString(),
                 // One-shot — fires only if the resume-path cleanup above redacted turns.
                 // (executeTask's own systemPromptBuilder will consume the flag for any
                 // further drift caught at write-time during this session.)

@@ -33,7 +33,22 @@ class ConnectionSettings : PersistentStateComponent<ConnectionSettings.State> {
         // project-local jiraBoardId is still the default 0.
         var lastJiraBoardId: Int = 0,
         var lastJiraBoardName: String = "",
-        var lastJiraBoardType: String = ""
+        var lastJiraBoardType: String = "",
+
+        // ── Web search provider connection settings ───────────────────────────
+        // API keys live in PasswordSafe under ServiceType.WEB_SEARCH.
+        var webSearchSearxngUrl: String = "",
+        var webSearchBraveUrl: String = "https://api.search.brave.com/res/v1/web/search",
+        var webSearchCustomUrl: String = "",
+        var webSearchCustomMethod: String = "GET",
+        var webSearchCustomHeaderName: String = "",
+        // Tavily provider settings (LangChain-ecosystem default agent search)
+        var webSearchTavilyUrl: String = "https://api.tavily.com",
+        // JSONPath expressions for custom provider response mapping
+        var webSearchCustomResultsPath: String = "$.results",
+        var webSearchCustomTitlePath: String = "$.title",
+        var webSearchCustomUrlPath: String = "$.url",
+        var webSearchCustomSnippetPath: String = "$.snippet",
     )
 
     private var myState = State()
