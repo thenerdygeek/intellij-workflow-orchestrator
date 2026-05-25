@@ -6,6 +6,10 @@ import com.workflow.orchestrator.automation.model.BaselineRun
 import com.workflow.orchestrator.automation.model.RegistryStatus
 import com.workflow.orchestrator.automation.model.TagEntry
 import com.workflow.orchestrator.automation.model.TagSource
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -112,4 +116,33 @@ class BaselineCacheServiceTest {
         val svc = BaselineCacheService.forTesting(tmp.toFile())
         assertNull(svc.get("PROJ-A"))
     }
+
+    @Test
+    fun `latest write wins on disk under concurrent puts`(@TempDir tmp: Path) = runDispatchedTest {
+        val svc = BaselineCacheService.forTesting(tmp.toFile())
+
+        // Fire many concurrent puts for the same key with increasing build numbers.
+        // Whatever order they reach the disk-write step in, the highest-versioned
+        // snapshot (the last to mutate the map) must be the one persisted.
+        val jobs = (1..50).map { n ->
+            launch { svc.put("PROJ-A", sampleResult("PROJ-A", n)) }
+        }
+        jobs.forEach { it.join() }
+
+        // In-memory state reflects some put; the last mutation under the lock wins.
+        val inMemory = svc.get("PROJ-A")!!.selectedBuild!!.buildNumber
+
+        // Reload from disk: the persisted state must match the latest in-memory
+        // state — i.e. no stale snapshot clobbered a newer one.
+        val reloaded = BaselineCacheService.forTesting(tmp.toFile())
+        val onDisk = reloaded.get("PROJ-A")!!.selectedBuild!!.buildNumber
+
+        assertEquals(inMemory, onDisk,
+            "Disk must hold the latest in-memory snapshot, not a stale one")
+    }
 }
+
+private fun runDispatchedTest(body: suspend CoroutineScope.() -> Unit) =
+    // Use a real multi-threaded dispatcher (not runTest's single virtual-time
+    // scheduler) so put()s genuinely interleave at the disk-write step.
+    runBlocking(Dispatchers.Default, body)

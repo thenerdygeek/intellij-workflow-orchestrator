@@ -43,11 +43,24 @@ class BaselineCacheService(private val cacheDir: File) {
         prettyPrint = false
         encodeDefaults = true
     }
+    // Guards the in-memory [entries] map and the [writeSeq] counter. Held only
+    // for fast in-memory mutation + serialization — never during disk I/O, so a
+    // concurrent get() is never blocked by a put()'s file write.
     private val mutex = Mutex()
+    // Serializes disk writes w.r.t. each other (so two puts can't interleave a
+    // tmp-write/atomic-move) without blocking reads under [mutex].
+    private val diskMutex = Mutex()
     private val cacheFile: File get() = File(cacheDir, "baseline-cache.json")
 
     // In-memory state — source of truth at runtime. Disk is the durability layer.
     private val entries: MutableMap<String, CachedSuiteEntry> = mutableMapOf()
+
+    // Monotonic write version, incremented under [mutex] each time a snapshot is
+    // produced. The disk writer records the highest version actually written and
+    // drops any snapshot whose version is older — so even if coroutines reach the
+    // file-write step out of order, the newest in-memory state always wins on disk.
+    private var writeSeq: Long = 0
+    private var lastPersistedSeq: Long = 0
 
     init {
         loadFromDisk()
@@ -63,15 +76,20 @@ class BaselineCacheService(private val cacheDir: File) {
         entries[planKey]?.toModel()
     }
 
-    suspend fun put(planKey: String, result: BaselineLoadResult) = mutex.withLock {
-        entries[planKey] = CachedSuiteEntry.fromModel(planKey, result)
-        persistToDisk()
+    suspend fun put(planKey: String, result: BaselineLoadResult) {
+        val snapshot = mutex.withLock {
+            entries[planKey] = CachedSuiteEntry.fromModel(planKey, result)
+            takeSnapshotLocked()
+        }
+        persistSnapshot(snapshot)
     }
 
-    suspend fun invalidate(planKey: String) = mutex.withLock {
-        if (entries.remove(planKey) != null) {
-            persistToDisk()
+    suspend fun invalidate(planKey: String) {
+        val snapshot = mutex.withLock {
+            if (entries.remove(planKey) == null) return
+            takeSnapshotLocked()
         }
+        persistSnapshot(snapshot)
     }
 
     /** Reads disk into the in-memory map. Called once at service construction. */
@@ -96,24 +114,50 @@ class BaselineCacheService(private val cacheDir: File) {
         }
     }
 
-    /** Atomic write — tmp + move with REPLACE_EXISTING + ATOMIC_MOVE. */
-    private fun persistToDisk() {
+    /**
+     * Captures the current in-memory state as an immutable [DiskSnapshot]: a
+     * fully-serialized JSON string plus a monotonic version. MUST be called while
+     * holding [mutex] so the serialized bytes and the assigned version are
+     * consistent with the same map state.
+     */
+    private fun takeSnapshotLocked(): DiskSnapshot {
+        val seq = ++writeSeq
+        val serialized = json.encodeToString(CacheFile(version = SCHEMA_VERSION, entries = entries.toMap()))
+        return DiskSnapshot(seq = seq, serialized = serialized)
+    }
+
+    /**
+     * Atomic write of a pre-serialized [DiskSnapshot] — tmp + move with
+     * REPLACE_EXISTING + ATOMIC_MOVE — performed under [diskMutex] so reads under
+     * [mutex] are never blocked by disk I/O. The [diskMutex] also serializes
+     * concurrent writers, and the version guard drops any snapshot that is older
+     * than what has already been persisted, so the latest state always wins even
+     * when coroutines reach this step out of order.
+     */
+    private suspend fun persistSnapshot(snapshot: DiskSnapshot) = diskMutex.withLock {
+        if (snapshot.seq <= lastPersistedSeq) {
+            // A newer snapshot already reached disk; this one is stale — skip it.
+            return@withLock
+        }
         cacheDir.mkdirs()
-        val serialized = json.encodeToString(CacheFile(version = SCHEMA_VERSION, entries = entries))
         val tmp = File(cacheDir, "baseline-cache.json.tmp.${System.currentTimeMillis()}.${(Math.random() * 100000).toInt()}")
         try {
-            tmp.writeText(serialized, Charsets.UTF_8)
+            tmp.writeText(snapshot.serialized, Charsets.UTF_8)
             Files.move(
                 tmp.toPath(),
                 cacheFile.toPath(),
                 StandardCopyOption.ATOMIC_MOVE,
                 StandardCopyOption.REPLACE_EXISTING
             )
+            lastPersistedSeq = snapshot.seq
         } catch (e: Exception) {
             tmp.delete()
             log.warn("[Automation:Cache] Failed to persist cache: ${e.message}")
         }
     }
+
+    /** Immutable, pre-serialized disk-write unit produced under [mutex]. */
+    private class DiskSnapshot(val seq: Long, val serialized: String)
 
     companion object {
         private const val SCHEMA_VERSION = 1
