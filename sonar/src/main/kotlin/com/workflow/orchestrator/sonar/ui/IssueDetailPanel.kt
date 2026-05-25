@@ -388,10 +388,22 @@ class IssueDetailPanel(
         val desc = rule.description.take(300).let {
             if (rule.description.length > 300) "$it..." else it
         }
-        // Strip HTML tags from description for clean display, then escape remaining content
-        val cleanDesc = HtmlEscape.escapeHtml(desc.replace(Regex("<[^>]*>"), ""))
+        // Strip ALL HTML tags from description (DOTALL handles multiline tags and attributes
+        // containing '>') then HTML-escape the remaining plain text so entities and stray
+        // angle-brackets are safe for the Swing HTML renderer.
+        // Closes audit finding sonar:F-11.
+        val cleanDesc = HtmlEscape.escapeHtml(desc.replace(HTML_TAG_REGEX, ""))
         val remediation = rule.remediation?.let { " \u2022 Remediation: ${HtmlEscape.escapeHtml(it)}" } ?: ""
         ruleInfoLabel.text = "<html><b>${HtmlEscape.escapeHtml(rule.name)}</b>$remediation<br/><i>${cleanDesc}</i></html>"
+    }
+
+    companion object {
+        /**
+         * Matches HTML tags including those whose attributes contain '>'.
+         * DOTALL ensures multi-line tags (with newlines inside) are also stripped.
+         * The non-greedy `.*?` prevents stripping content between two separate tags.
+         */
+        private val HTML_TAG_REGEX = Regex("<.*?>", RegexOption.DOT_MATCHES_ALL)
     }
 
     // --- Navigation ---
