@@ -62,10 +62,18 @@ import javax.swing.*
  * - Color-coded output (ERROR = red, WARNING = yellow)
  * - Built-in search, copy, scroll-to-end
  */
+/**
+ * Implements [Disposable] and registers itself with [parentDisposable] so that
+ * [scope] is always cancelled when the parent is disposed, even if disposal races
+ * with construction (Disposer.register no-ops when the parent is already disposed,
+ * which would silently leak the scope). By making the panel itself the Disposable,
+ * the scope lifetime is tied to the panel's own identity rather than a lambda
+ * closure. Closes audit finding bamboo:F-10.
+ */
 class StageDetailPanel(
     private val project: Project,
     private val parentDisposable: Disposable
-) : JPanel(BorderLayout()) {
+) : JPanel(BorderLayout()), Disposable {
 
     private val log = Logger.getInstance(StageDetailPanel::class.java)
 
@@ -203,7 +211,11 @@ class StageDetailPanel(
     }
 
     init {
-        Disposer.register(parentDisposable, Disposable { scope.cancel() })
+        // Register the panel itself as the Disposable child so dispose() is called when
+        // the parent is disposed. The previous lambda Disposable { scope.cancel() } was
+        // created after scope allocation; if parentDisposable was already disposed at
+        // that moment the lambda was never registered and the scope leaked permanently.
+        Disposer.register(parentDisposable, this)
 
         border = JBUI.Borders.empty()
         add(tabbedPane, BorderLayout.CENTER)
@@ -595,6 +607,10 @@ class StageDetailPanel(
     override fun removeNotify() {
         super.removeNotify()
         fullLogText = null
+    }
+
+    override fun dispose() {
+        scope.cancel()
     }
 
     fun showEmpty() {
