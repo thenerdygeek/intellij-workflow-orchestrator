@@ -2,6 +2,9 @@ package com.workflow.orchestrator.core.polling
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.wm.IdeFocusManager
+import com.workflow.orchestrator.core.network.NetworkProbe
+import com.workflow.orchestrator.core.network.NetworkState
+import com.workflow.orchestrator.core.network.NetworkStateService
 import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.random.Random
@@ -18,7 +21,8 @@ class SmartPoller(
     private val baseIntervalMs: Long = 30_000,
     private val maxIntervalMs: Long = 300_000,
     private val scope: CoroutineScope,
-    private val action: suspend () -> Boolean  // returns true if data changed
+    private val action: suspend () -> Boolean,  // returns true if data changed
+    private val networkProbe: NetworkProbe? = NetworkStateService.getInstanceOrNull(),
 ) {
     private val log = Logger.getInstance(SmartPoller::class.java)
     private var job: Job? = null
@@ -38,6 +42,14 @@ class SmartPoller(
         currentBackoff = 1.0
         job = scope.launch {
             while (isActive) {
+                // Connectivity gate: pause (don't fire requests) while offline; on reconnect
+                // reset backoff and add a per-poller jittered stagger to avoid a reconnect stampede.
+                val probe = networkProbe
+                if (probe != null && probe.state.value != NetworkState.ONLINE) {
+                    probe.awaitOnline(maxIntervalMs)
+                    currentBackoff = 1.0
+                    delay(Random.nextLong(baseIntervalMs + 1))
+                }
                 try {
                     val changed = action()
                     currentBackoff = if (changed) {
