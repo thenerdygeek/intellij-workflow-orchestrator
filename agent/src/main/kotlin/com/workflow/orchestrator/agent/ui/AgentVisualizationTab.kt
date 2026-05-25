@@ -55,6 +55,19 @@ class AgentVisualizationEditor(
     private val browser = JBCefBrowser.createBuilder()
         .build()
 
+    // Keep a reference to the load handler so dispose() can remove it.
+    // JBCefBrowser.dispose() does NOT cascade-remove handlers registered via
+    // addLoadHandler(handler, cefBrowser) — callers must remove them explicitly.
+    // Failing to do so leaks the handler and its closure until IDE shutdown.
+    // Closes audit finding agent-ui:F-7.
+    private val loadHandler = object : CefLoadHandlerAdapter() {
+        override fun onLoadEnd(b: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
+            if (frame?.isMain == true) {
+                injectVisualization(b)
+            }
+        }
+    }
+
     init {
         // Load the React app via scheme handler (same as main chat panel).
         // Use the shared registrar so we don't stomp on AgentCefPanel's
@@ -65,13 +78,7 @@ class AgentVisualizationEditor(
         WorkflowAgentSchemeRegistrar.ensureRegistered()
         browser.loadURL(CefResourceSchemeHandler.BASE_URL + "index.html")
 
-        browser.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
-            override fun onLoadEnd(b: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
-                if (frame?.isMain == true) {
-                    injectVisualization(b)
-                }
-            }
-        }, browser.cefBrowser)
+        browser.jbCefClient.addLoadHandler(loadHandler, browser.cefBrowser)
     }
 
     private fun injectVisualization(cefBrowser: CefBrowser?) {
@@ -139,6 +146,9 @@ class AgentVisualizationEditor(
     override fun getFile(): VirtualFile = vizFile
 
     override fun dispose() {
+        // Remove the load handler before disposing the browser — JBCefBrowser.dispose()
+        // does not cascade-remove handlers added via addLoadHandler(handler, cefBrowser).
+        browser.jbCefClient.removeLoadHandler(loadHandler, browser.cefBrowser)
         browser.dispose()
     }
 
