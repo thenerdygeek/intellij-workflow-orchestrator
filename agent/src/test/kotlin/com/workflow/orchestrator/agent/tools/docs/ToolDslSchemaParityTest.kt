@@ -26,6 +26,7 @@ import com.workflow.orchestrator.agent.tools.builtin.TaskUpdateTool
 import com.workflow.orchestrator.agent.tools.builtin.ToolSearchTool
 import com.workflow.orchestrator.agent.tools.builtin.UseSkillTool
 import com.workflow.orchestrator.agent.tools.database.DbExplainTool
+import com.workflow.orchestrator.agent.tools.delegation.DelegationTool
 import com.workflow.orchestrator.agent.tools.database.DbListDatabasesTool
 import com.workflow.orchestrator.agent.tools.database.DbQueryTool
 import com.workflow.orchestrator.agent.tools.database.DbSchemaTool
@@ -204,6 +205,8 @@ class ToolDslSchemaParityTest {
         // project / vcs
         "ProjectStructureTool" to { ProjectStructureTool() },
         "ChangelistShelveTool" to { ChangelistShelveTool() },
+        // delegation meta-tool
+        "DelegationTool" to { DelegationTool() },
     )
 
     private enum class Kind { DRIFT, ENUM_ORDER, ENUM_VALUES, TYPE_MISMATCH, DSL_ONLY, SCHEMA_ONLY, CROSS_ACTION_DSL_DRIFT, CONSTRUCT_FAILURE, DOC_FAILURE, NO_DOCS }
