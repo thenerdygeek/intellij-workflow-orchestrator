@@ -33,7 +33,7 @@ class RawApiTraceInterceptorTest {
     private var savedMode = RawApiTraceMode.OFF
     private var savedRetentionDays = 3
     private var savedMaxBodyBytes = 10L * 1024 * 1024
-    private var savedRedactPromptBody = false
+    private var savedRedactPromptBody = true
 
     @BeforeEach
     fun setUp() {
@@ -284,5 +284,132 @@ class RawApiTraceInterceptorTest {
         val content = requestFile!!.readText()
         assertFalse(content.contains("abc123"), "Cookie value must not appear in request file")
         assertTrue(content.contains("***REDACTED***"), "Cookie redaction marker must appear")
+    }
+
+    // ── F-3: redactPromptBody default + PromptBodyRedactor ───────────────────
+
+    @Test
+    fun `redactPromptBody defaults to true (new default)`() {
+        // The default must now be true — raw prompts with secrets must not reach disk by default.
+        assertEquals(true, RawApiTraceConfig.redactPromptBody,
+            "redactPromptBody must default to true (audit finding core:F-3)")
+    }
+
+    @Test
+    fun `body containing Authorization Bearer secret is redacted when redactPromptBody is true`() {
+        RawApiTraceConfig.mode = RawApiTraceMode.ALWAYS_ON
+        RawApiTraceConfig.redactPromptBody = true
+        server.enqueue(MockResponse().setBody("ok").setResponseCode(200))
+
+        val sensitiveBody = """{"Authorization": "Bearer sk-secret-1234", "model": "claude-3"}"""
+
+        val client = OkHttpClient.Builder()
+            .addInterceptor(RawApiTraceInterceptor(
+                config = RawApiTraceConfig,
+                traceDir = { traceDir },
+                bodyRedactor = PromptBodyRedactor::redact
+            ))
+            .build()
+        val request = Request.Builder()
+            .url(server.url("/test"))
+            .post(sensitiveBody.toRequestBody("application/json".toMediaType()))
+            .build()
+        client.newCall(request).execute().use { it.body?.string() }
+
+        val requestFile = traceDir.listFiles()?.firstOrNull { it.name.endsWith(".request.http") }
+        assertNotNull(requestFile, "request.http must exist")
+        val content = requestFile!!.readText()
+        assertFalse(content.contains("sk-secret-1234"), "Raw Bearer secret must not appear in trace file")
+        assertTrue(content.contains("***REDACTED***"), "Redaction marker must appear")
+    }
+
+    @Test
+    fun `body containing token JSON field is redacted when redactPromptBody is true`() {
+        RawApiTraceConfig.mode = RawApiTraceMode.ALWAYS_ON
+        RawApiTraceConfig.redactPromptBody = true
+        server.enqueue(MockResponse().setBody("ok").setResponseCode(200))
+
+        val sensitiveBody = """{"token": "sgp_super_secret_pat", "query": "hello"}"""
+
+        val client = OkHttpClient.Builder()
+            .addInterceptor(RawApiTraceInterceptor(
+                config = RawApiTraceConfig,
+                traceDir = { traceDir },
+                bodyRedactor = PromptBodyRedactor::redact
+            ))
+            .build()
+        val request = Request.Builder()
+            .url(server.url("/test"))
+            .post(sensitiveBody.toRequestBody("application/json".toMediaType()))
+            .build()
+        client.newCall(request).execute().use { it.body?.string() }
+
+        val requestFile = traceDir.listFiles()?.firstOrNull { it.name.endsWith(".request.http") }
+        assertNotNull(requestFile, "request.http must exist")
+        val content = requestFile!!.readText()
+        assertFalse(content.contains("sgp_super_secret_pat"), "Raw token value must not appear in trace file")
+        assertTrue(content.contains("***REDACTED***"), "Redaction marker must appear")
+    }
+
+    @Test
+    fun `body passes through raw when redactPromptBody is explicitly false (opt-out)`() {
+        RawApiTraceConfig.mode = RawApiTraceMode.ALWAYS_ON
+        RawApiTraceConfig.redactPromptBody = false
+        server.enqueue(MockResponse().setBody("ok").setResponseCode(200))
+
+        val body = """{"model": "claude-3", "prompt": "hello world"}"""
+
+        val client = OkHttpClient.Builder()
+            .addInterceptor(RawApiTraceInterceptor(
+                config = RawApiTraceConfig,
+                traceDir = { traceDir },
+                bodyRedactor = PromptBodyRedactor::redact
+            ))
+            .build()
+        val request = Request.Builder()
+            .url(server.url("/test"))
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
+        client.newCall(request).execute().use { it.body?.string() }
+
+        val requestFile = traceDir.listFiles()?.firstOrNull { it.name.endsWith(".request.http") }
+        assertNotNull(requestFile, "request.http must exist")
+        val content = requestFile!!.readText()
+        // When opt-out, non-credential fields pass through unchanged
+        assertTrue(content.contains("hello world"), "Non-credential body must pass through when redactPromptBody=false")
+    }
+
+    // ── PromptBodyRedactor unit tests ─────────────────────────────────────────
+
+    @Test
+    fun `PromptBodyRedactor redacts Authorization Bearer value`() {
+        val input = """{"Authorization": "Bearer sk-super-secret"}"""
+        val result = PromptBodyRedactor.redact(input)
+        assertFalse(result.contains("sk-super-secret"), "Bearer secret must be redacted")
+        assertTrue(result.contains("***REDACTED***"), "Redaction marker must be present")
+    }
+
+    @Test
+    fun `PromptBodyRedactor redacts token JSON field`() {
+        val input = """{"token": "sgp_my_personal_access_token"}"""
+        val result = PromptBodyRedactor.redact(input)
+        assertFalse(result.contains("sgp_my_personal_access_token"), "Token value must be redacted")
+        assertTrue(result.contains("***REDACTED***"), "Redaction marker must be present")
+    }
+
+    @Test
+    fun `PromptBodyRedactor redacts api_key JSON field`() {
+        val input = """{"api_key": "key-abc123-secret"}"""
+        val result = PromptBodyRedactor.redact(input)
+        assertFalse(result.contains("key-abc123-secret"), "api_key value must be redacted")
+        assertTrue(result.contains("***REDACTED***"), "Redaction marker must be present")
+    }
+
+    @Test
+    fun `PromptBodyRedactor leaves non-credential fields intact`() {
+        val input = """{"model": "claude-3", "prompt": "Explain this code"}"""
+        val result = PromptBodyRedactor.redact(input)
+        assertTrue(result.contains("claude-3"), "Non-credential model field must be preserved")
+        assertTrue(result.contains("Explain this code"), "Non-credential prompt must be preserved")
     }
 }

@@ -28,11 +28,14 @@ object RawApiTraceConfig {
     @Volatile var maxBodyBytes: Long = 10L * 1024 * 1024  // 10 MB
 
     /**
-     * When false (default), prompt bodies are written verbatim — they ARE the diagnostic data.
-     * When true, bodies are passed through [com.workflow.orchestrator.agent.security.CredentialRedactor]
-     * before writing.
+     * When true (default), prompt bodies are passed through [PromptBodyRedactor] before writing to
+     * disk — preventing source code, Jira content, and plaintext secrets from landing in trace files.
+     * Power users who need the raw prompt for diagnostics may set this to false explicitly (opt-out).
+     *
+     * Note: Authorization and Cookie *headers* are always redacted regardless of this flag
+     * (hardcoded in [RawApiTraceInterceptor]).
      */
-    @Volatile var redactPromptBody: Boolean = false
+    @Volatile var redactPromptBody: Boolean = true
 
     // ── Burst mode ──────────────────────────────────────────────────────────
 

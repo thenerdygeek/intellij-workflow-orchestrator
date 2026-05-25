@@ -31,22 +31,23 @@ import java.util.concurrent.atomic.AtomicInteger
  * continues to work exactly as before because every byte is mirrored, not buffered-then-replayed.
  *
  * `Authorization` and `Cookie` headers are always redacted before writing (hardcoded, not
- * configurable). If [RawApiTraceConfig.redactPromptBody] is true, the request body is passed
- * through [bodyRedactor] before writing (inject `CredentialRedactor::redact` from `:agent` to
- * enable; defaults to identity to avoid a circular compile dependency on `:core`).
+ * configurable). If [RawApiTraceConfig.redactPromptBody] is true (the default), the request body
+ * is passed through [bodyRedactor] before writing. The default redactor is [PromptBodyRedactor]
+ * which strips credential-bearing JSON fields and Authorization values at the core level.
+ * Callers may inject a stronger redactor (e.g. `CredentialRedactor::redact` from `:agent`).
  *
  * Retention: at the start of each `intercept()`, dated directories under the `raw-api/` parent
  * that are older than [RawApiTraceConfig.retentionDays] days are deleted.
  *
  * @param config        Trace configuration singleton.
  * @param traceDir      Factory that resolves the dated output directory per request.
- * @param bodyRedactor  Optional function to sanitize request bodies before writing.
- *                      Defaults to identity.
+ * @param bodyRedactor  Function to sanitize request bodies before writing when redaction is on.
+ *                      Defaults to [PromptBodyRedactor::redact].
  */
 class RawApiTraceInterceptor(
     private val config: RawApiTraceConfig = RawApiTraceConfig,
     private val traceDir: () -> File,
-    private val bodyRedactor: (String) -> String = { it }
+    private val bodyRedactor: (String) -> String = PromptBodyRedactor::redact
 ) : Interceptor {
 
     private val log = Logger.getInstance(RawApiTraceInterceptor::class.java)
