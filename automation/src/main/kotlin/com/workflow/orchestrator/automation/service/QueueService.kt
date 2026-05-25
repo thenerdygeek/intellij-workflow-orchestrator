@@ -458,13 +458,14 @@ class QueueService {
     }
 
     private suspend fun doTrigger(entry: QueueEntry): ToolResult<String> {
-        log.info("[Automation:Queue] Triggering build for entry ${entry.id}, suite='${entry.suitePlanKey}', stages=${entry.stages ?: "all"}")
+        val triggerKey = entry.branchKey ?: entry.suitePlanKey
+        log.info("[Automation:Queue] Triggering build for entry ${entry.id}, suite='${entry.suitePlanKey}', branch='${entry.branchKey ?: "<master>"}', stages=${entry.stages ?: "all"}")
 
         val variables = entry.variables.toMutableMap()
         variables[buildVariableName] = entry.dockerTagsPayload
         log.debug("[Automation:Queue] Using build variable '$buildVariableName' for trigger")
 
-        val result = bambooService.triggerBuild(entry.suitePlanKey, variables, entry.stages)
+        val result = bambooService.triggerBuild(triggerKey, variables, entry.stages)
         return if (!result.isError) {
             val buildKey = result.data!!.buildKey
             log.info("[Automation:Queue] Build triggered successfully, buildKey=$buildKey")

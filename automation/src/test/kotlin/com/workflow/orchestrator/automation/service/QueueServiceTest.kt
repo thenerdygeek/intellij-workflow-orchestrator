@@ -645,6 +645,46 @@ class QueueServiceTest {
         scopeForTest.cancel()
     }
 
+    // ── branchKey / triggerKey selection tests ──
+
+    @Test
+    fun `doTrigger uses branchKey as chainKey when entry has a non-null branchKey`() = runTest {
+        val capturedChainKeys = mutableListOf<String>()
+        coEvery { bambooService.triggerBuild(any(), any(), any()) } answers {
+            capturedChainKeys.add(firstArg())
+            ToolResult.success(
+                data = BuildTriggerData(buildKey = "PROJ-AUTOMATIONTEST336-3-1", buildNumber = 1, link = ""),
+                summary = "triggered"
+            )
+        }
+
+        val entry = makeEntry().copy(branchKey = "PROJ-AUTOMATIONTEST336-3")
+        service.triggerNow(entry)
+
+        assertEquals(1, capturedChainKeys.size)
+        assertEquals("PROJ-AUTOMATIONTEST336-3", capturedChainKeys[0],
+            "When entry.branchKey is set, triggerBuild must be called with the branch key as chainKey")
+    }
+
+    @Test
+    fun `doTrigger uses suitePlanKey as chainKey when entry branchKey is null`() = runTest {
+        val capturedChainKeys = mutableListOf<String>()
+        coEvery { bambooService.triggerBuild(any(), any(), any()) } answers {
+            capturedChainKeys.add(firstArg())
+            ToolResult.success(
+                data = BuildTriggerData(buildKey = "PROJ-AUTO-900", buildNumber = 900, link = ""),
+                summary = "triggered"
+            )
+        }
+
+        val entry = makeEntry(planKey = "PROJ-AUTO").copy(branchKey = null)
+        service.triggerNow(entry)
+
+        assertEquals(1, capturedChainKeys.size)
+        assertEquals("PROJ-AUTO", capturedChainKeys[0],
+            "When entry.branchKey is null, triggerBuild must be called with suitePlanKey as chainKey")
+    }
+
     @Test
     fun `fast-path fires immediately when queue empty and Bamboo idle`() = runTest {
         // Service with autoTriggerEnabled=true so fast-path is active

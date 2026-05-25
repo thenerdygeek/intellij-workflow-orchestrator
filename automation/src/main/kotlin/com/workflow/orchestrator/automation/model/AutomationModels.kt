@@ -44,7 +44,18 @@ data class QueueEntry(
     val enqueuedAt: Instant,
     val status: QueueEntryStatus,
     val bambooResultKey: String?,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    /**
+     * Optional Bamboo plan branch key to trigger instead of the suite master plan.
+     *
+     *  - null → trigger the suite master plan ([suitePlanKey]).
+     *  - non-null → trigger the specified branch plan key directly (e.g. `PROJ-AUTOMATIONTEST336-3`).
+     *    A Bamboo branch plan key is a valid `chainKey` and requires no additional resolution.
+     *
+     * The nullable default keeps all existing named-argument call sites and any pre-feature
+     * persisted rows (schema v1) working without modification.
+     */
+    val branchKey: String? = null
 )
 
 enum class QueueEntryStatus {

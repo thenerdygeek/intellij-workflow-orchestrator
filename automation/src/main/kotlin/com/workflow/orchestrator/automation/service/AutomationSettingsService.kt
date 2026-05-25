@@ -89,7 +89,18 @@ class AutomationSettingsService : PersistentStateComponent<AutomationSettingsSer
          * Never falls back silently to "all stages" or "first stage" — see H2 /
          * [com.workflow.orchestrator.automation.ui.AutomationPanel.onTriggerDefault].
          */
-        var defaultStages: MutableList<String>? = null
+        var defaultStages: MutableList<String>? = null,
+        /**
+         * Per-suite selected Bamboo plan branch key.
+         *
+         * When non-null (and non-blank), [QueueService] will trigger the specified
+         * branch plan key instead of [planKey] when building this suite.
+         * Null / blank means "use the suite master plan".
+         *
+         * Persisted as a plain XML scalar (round-trips automatically via IntelliJ's
+         * bean binding, same as [lastModified]).
+         */
+        var selectedBranch: String? = null
     )
 
     data class SettingsState(
@@ -185,6 +196,32 @@ class AutomationSettingsService : PersistentStateComponent<AutomationSettingsSer
         // Reset dedup so a future stale check re-fires the notification.
         staleStagedNotifiedSuites.remove(suitePlanKey)
         log.info("[Automation:Settings] setSuiteDefaultStages: planKey=$suitePlanKey, stages=$stages")
+    }
+
+    /**
+     * Returns the saved selected branch key for [suitePlanKey], or `null` when
+     * none is configured or the stored value is blank.
+     *
+     * A null return means the suite should be triggered against its master plan key.
+     */
+    fun getSuiteSelectedBranch(suitePlanKey: String): String? =
+        myState.suites[suitePlanKey]?.selectedBranch?.takeIf { it.isNotBlank() }
+
+    /**
+     * Persists the per-suite selected branch key for [suitePlanKey].
+     *
+     * @param branchKey the Bamboo plan branch key to save (e.g. `PROJ-AUTOMATIONTEST336-3`),
+     *   or `null` / blank to clear the selection (next trigger will use the suite master plan).
+     */
+    fun setSuiteSelectedBranch(suitePlanKey: String, branchKey: String?) {
+        val existing = myState.suites[suitePlanKey]
+        val updated = (existing ?: SuiteConfig(planKey = suitePlanKey, displayName = suitePlanKey))
+            .also {
+                it.selectedBranch = branchKey?.takeIf { b -> b.isNotBlank() }
+                it.lastModified = System.currentTimeMillis()
+            }
+        myState.suites[suitePlanKey] = updated
+        log.info("[Automation:Settings] setSuiteSelectedBranch: planKey=$suitePlanKey, branchKey=$branchKey")
     }
 
     /**

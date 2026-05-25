@@ -300,4 +300,124 @@ class TagHistoryServiceTest {
         assertTrue(active.any { it.id == "valid-3" }, "valid-3 must be returned")
         assertFalse(active.any { it.id == "corrupt-1" }, "corrupt-1 must be skipped")
     }
+
+    // -------------------------------------------------------------------------
+    // Branch plan key (branchKey) persistence tests
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `branchKey round-trips through saveQueueEntry and getActiveQueueEntries when non-null`() = runTest {
+        val entry = QueueEntry(
+            id = "bk-1", suitePlanKey = "PROJ-AUTO",
+            dockerTagsPayload = """{"auth":"3.0.0"}""",
+            variables = mapOf("env" to "staging"),
+            stages = null,
+            enqueuedAt = Instant.now(),
+            status = QueueEntryStatus.WAITING_LOCAL,
+            bambooResultKey = null,
+            branchKey = "PROJ-AUTOMATIONTEST336-3"
+        )
+        service.saveQueueEntry(entry, sequenceOrder = 1)
+
+        val active = service.getActiveQueueEntries()
+        assertEquals(1, active.size)
+        assertEquals("PROJ-AUTOMATIONTEST336-3", active[0].branchKey,
+            "Non-null branchKey must survive persistence round-trip")
+    }
+
+    @Test
+    fun `branchKey round-trips through saveQueueEntry and getActiveQueueEntries when null`() = runTest {
+        val entry = QueueEntry(
+            id = "bk-null", suitePlanKey = "PROJ-AUTO",
+            dockerTagsPayload = """{}""",
+            variables = emptyMap(),
+            stages = null,
+            enqueuedAt = Instant.now(),
+            status = QueueEntryStatus.WAITING_LOCAL,
+            bambooResultKey = null,
+            branchKey = null
+        )
+        service.saveQueueEntry(entry, sequenceOrder = 1)
+
+        val active = service.getActiveQueueEntries()
+        assertEquals(1, active.size)
+        assertNull(active[0].branchKey,
+            "null branchKey must survive persistence round-trip as null")
+    }
+
+    @Test
+    fun `migration from schema_version 1 to 2 adds branch_key column idempotently`() = runTest {
+        val dbPath = tempDir.resolve("v1-migration.db").toString()
+        Class.forName("org.sqlite.JDBC")
+
+        // ── Step 1: build a schema_version=1 database (no branch_key column) ──
+        val conn = java.sql.DriverManager.getConnection("jdbc:sqlite:$dbPath")
+        conn.createStatement().use { stmt ->
+            stmt.executeUpdate("""
+                CREATE TABLE schema_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            """)
+            stmt.executeUpdate("INSERT INTO schema_metadata VALUES ('schema_version', '1')")
+            stmt.executeUpdate("""
+                CREATE TABLE queue_entries (
+                    id TEXT PRIMARY KEY,
+                    suite_plan_key TEXT NOT NULL,
+                    docker_tags_json TEXT NOT NULL,
+                    variables_json TEXT NOT NULL,
+                    stages_json TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'WAITING_LOCAL',
+                    bamboo_result_key TEXT,
+                    enqueued_at INTEGER NOT NULL,
+                    sequence_order INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    error_message TEXT
+                )
+            """)
+            // Insert a pre-migration row (no branch_key column exists yet)
+            stmt.executeUpdate("""
+                INSERT INTO queue_entries
+                (id, suite_plan_key, docker_tags_json, variables_json, stages_json,
+                 status, bamboo_result_key, enqueued_at, sequence_order, updated_at, error_message)
+                VALUES ('pre-1', 'PROJ-OLD', '{}', '{}', 'null',
+                        'WAITING_LOCAL', NULL, ${Instant.now().epochSecond}, 1,
+                        ${Instant.now().epochSecond}, NULL)
+            """)
+        }
+        conn.close()
+
+        // ── Step 2: open via TagHistoryService (triggers initSchema / migration) ──
+        val migrated = TagHistoryService(dbPath)
+        try {
+            val active = migrated.getActiveQueueEntries()
+
+            // (a) pre-existing row still loads
+            assertEquals(1, active.size, "Pre-migration row must survive schema upgrade")
+            assertEquals("pre-1", active[0].id)
+
+            // (b) its branchKey reads back as null
+            assertNull(active[0].branchKey,
+                "Pre-migration row must have null branchKey after upgrade (new column defaults to NULL)")
+
+            // (c) schema_version is now 2
+            val conn2 = java.sql.DriverManager.getConnection("jdbc:sqlite:$dbPath")
+            val version = conn2.prepareStatement(
+                "SELECT value FROM schema_metadata WHERE key='schema_version'"
+            ).use { ps ->
+                ps.executeQuery().use { rs ->
+                    if (rs.next()) rs.getString(1) else null
+                }
+            }
+            conn2.close()
+            assertEquals("2", version, "schema_version must be '2' after migration")
+
+            // (d) running initSchema again (idempotent) does not throw
+            assertDoesNotThrow({
+                kotlinx.coroutines.runBlocking { migrated.getActiveQueueEntries() }
+            }, "initSchema must be safe to call twice (idempotent)")
+        } finally {
+            migrated.close()
+        }
+    }
 }

@@ -99,7 +99,8 @@ class TagHistoryService : Disposable {
                     enqueued_at INTEGER NOT NULL,
                     sequence_order INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL,
-                    error_message TEXT
+                    error_message TEXT,
+                    branch_key TEXT
                 )
             """)
             stmt.executeUpdate("""
@@ -109,6 +110,62 @@ class TagHistoryService : Disposable {
                 CREATE INDEX IF NOT EXISTS idx_queue_status ON queue_entries(status)
             """)
         }
+        // Idempotent migration: upgrade schema_version 1 → 2 by adding branch_key column.
+        // The CREATE TABLE IF NOT EXISTS above does not add the column to existing v1 databases,
+        // so we check the stored version and run ALTER TABLE when needed. The ALTER is safe to
+        // re-run because we skip it when the column already exists (checked via PRAGMA table_info).
+        migrateToV2IfNeeded(conn)
+    }
+
+    /**
+     * Adds the `branch_key TEXT` column to `queue_entries` for databases that were
+     * created at schema_version=1 (before this column existed).
+     *
+     * Safety guarantees:
+     *  - Checks the stored `schema_version` before attempting any DDL.
+     *  - Uses `PRAGMA table_info` to confirm the column is absent before running
+     *    `ALTER TABLE`, so repeated calls are a no-op.
+     *  - Updates `schema_version` to `'2'` only after the column is confirmed present.
+     *  - Existing rows are unaffected: SQLite sets the new column to NULL for all
+     *    pre-existing rows, which matches [QueueEntry.branchKey]'s nullable default.
+     */
+    private fun migrateToV2IfNeeded(conn: Connection) {
+        val currentVersion = conn.prepareStatement(
+            "SELECT value FROM schema_metadata WHERE key = 'schema_version'"
+        ).use { ps ->
+            ps.executeQuery().use { rs ->
+                if (rs.next()) rs.getString(1).toIntOrNull() ?: 1 else 1
+            }
+        }
+        if (currentVersion >= 2) return
+
+        // Check whether the column already exists (makes the migration idempotent
+        // in the rare case a prior run added the column but crashed before updating
+        // schema_version).
+        val branchKeyExists = conn.createStatement().use { stmt ->
+            stmt.executeQuery("PRAGMA table_info(queue_entries)").use { rs ->
+                var found = false
+                while (rs.next()) {
+                    if (rs.getString("name") == "branch_key") {
+                        found = true
+                        break
+                    }
+                }
+                found
+            }
+        }
+
+        if (!branchKeyExists) {
+            conn.createStatement().use { stmt ->
+                stmt.executeUpdate("ALTER TABLE queue_entries ADD COLUMN branch_key TEXT")
+            }
+            log.info("[TagHistoryService] Migration v1→v2: added branch_key column to queue_entries")
+        }
+
+        conn.prepareStatement(
+            "UPDATE schema_metadata SET value = '2' WHERE key = 'schema_version'"
+        ).use { it.executeUpdate() }
+        log.info("[TagHistoryService] schema_version updated to 2")
     }
 
     suspend fun saveQueueEntry(entry: QueueEntry, sequenceOrder: Int) {
@@ -117,8 +174,9 @@ class TagHistoryService : Disposable {
                 connection.prepareStatement("""
                     INSERT OR REPLACE INTO queue_entries
                     (id, suite_plan_key, docker_tags_json, variables_json, stages_json,
-                     status, bamboo_result_key, enqueued_at, sequence_order, updated_at, error_message)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     status, bamboo_result_key, enqueued_at, sequence_order, updated_at, error_message,
+                     branch_key)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """).use { stmt ->
                     stmt.setString(1, entry.id)
                     stmt.setString(2, entry.suitePlanKey)
@@ -131,6 +189,7 @@ class TagHistoryService : Disposable {
                     stmt.setInt(9, sequenceOrder)
                     stmt.setLong(10, Instant.now().epochSecond)
                     stmt.setString(11, entry.errorMessage)
+                    stmt.setString(12, entry.branchKey)
                     stmt.executeUpdate()
                 }
             }
@@ -207,7 +266,8 @@ class TagHistoryService : Disposable {
                                         enqueuedAt = Instant.ofEpochSecond(rs.getLong("enqueued_at")),
                                         status = QueueEntryStatus.valueOf(rs.getString("status")),
                                         bambooResultKey = rs.getString("bamboo_result_key"),
-                                        errorMessage = rs.getString("error_message")
+                                        errorMessage = rs.getString("error_message"),
+                                        branchKey = rs.getString("branch_key")
                                     )
                                 )
                             } catch (e: Exception) {
