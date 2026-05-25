@@ -102,15 +102,25 @@ class BambooApiClient(
         }
 
     suspend fun getLatestResult(planKey: String, branch: String? = null): ApiResult<BambooResultDto> {
-        // If planKey already includes the branch number (e.g., PROJ-PLAN123), use it directly
-        // Otherwise, use the branch path format
-        val path = if (branch != null && !planKey.last().isDigit()) {
+        // A branch plan key looks like PROJ-PLAN-7 (three dash-separated segments where
+        // the last segment is a digit string). PlanDetectionService.resolveBranchKey uses
+        // the same regex to skip resolution when the key is already a branch plan key.
+        //
+        // The previous heuristic (!planKey.last().isDigit()) was fragile: any master plan
+        // key ending in a digit (e.g. PROJ-BUILD2) would skip the branch path even when
+        // a branch was specified, always showing the master plan's build instead.
+        //
+        // Correct logic: if the key already matches the branch-plan-key pattern, use it
+        // directly (the caller has already resolved the branch key). Only use the
+        // /branch/{name}/latest URL form when the key is a master plan key.
+        val isBranchPlanKey = planKey.matches(BRANCH_PLAN_KEY_REGEX)
+        val path = if (branch != null && !isBranchPlanKey) {
             val encodedBranch = URLEncoder.encode(branch, "UTF-8")
             "/rest/api/latest/result/$planKey/branch/$encodedBranch/latest?expand=stages.stage.results.result"
         } else {
             "/rest/api/latest/result/$planKey/latest?expand=stages.stage.results.result"
         }
-        log.info("[Bamboo:API] getLatestResult: GET $path")
+        log.info("[Bamboo:API] getLatestResult: GET $path (isBranchPlanKey=$isBranchPlanKey)")
         return get(path)
     }
 
@@ -680,4 +690,17 @@ class BambooApiClient(
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach Bamboo: ${e.message}", e)
             }
         }
+
+    companion object {
+        /**
+         * Regex that matches a Bamboo branch plan key: three or more dash-separated segments
+         * where the final segment is a pure digit string (e.g. PROJ-PLAN-7, MYPROJ-BUILD-123).
+         *
+         * Master plan keys (e.g. PROJ-PLAN, PROJ-BUILD2) do NOT match this pattern.
+         *
+         * Mirrors [PlanDetectionService.resolveBranchKey] and
+         * [PlanDetectionService.resolveBranchKeyOrNull] so the two code paths stay in lockstep.
+         */
+        internal val BRANCH_PLAN_KEY_REGEX = Regex("^.+-.+-\\d+$")
+    }
 }
