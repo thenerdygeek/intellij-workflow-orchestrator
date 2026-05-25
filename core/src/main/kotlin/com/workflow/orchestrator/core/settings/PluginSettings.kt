@@ -412,6 +412,14 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         /** Per-call timeout for the LLM screener; only consulted when [webEgressLlmScreenerEnabled]. */
         var webEgressTimeoutMs by property(15_000)
 
+        // fetch — response cache (added 2026-05-24)
+        /** When true, an in-memory LRU+TTL cache short-circuits repeat fetches of the same URL. */
+        var webFetchCacheEnabled by property(true)
+        /** Cache entry lifetime in minutes. Matches Claude Code's default. */
+        var webFetchCacheTtlMinutes by property(15)
+        /** Maximum number of cached entries (LRU eviction beyond this). */
+        var webFetchCacheMaxEntries by property(100)
+
         init {
             // Populate default whitelist on first instantiation. Persisted lists
             // round-trip independently — if the user clears the list it stays
