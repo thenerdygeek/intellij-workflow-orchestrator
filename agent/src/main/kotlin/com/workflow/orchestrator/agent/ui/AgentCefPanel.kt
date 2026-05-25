@@ -132,6 +132,8 @@ class AgentCefPanel(
     private var imageSettingsQuery: JBCefJSQuery? = null
     private var resolveLinkQuery: JBCefJSQuery? = null
     private var openLinkQuery: JBCefJSQuery? = null
+    private var handoffForkQuery: JBCefJSQuery? = null
+    private var handoffKeepQuery: JBCefJSQuery? = null
     var mentionSearchProvider: MentionSearchProvider? = null
     var onSendMessageWithMentions: ((String, String, String?) -> Unit)? = null  // (text, mentionsJson, attachmentsJson?)
 
@@ -242,6 +244,11 @@ class AgentCefPanel(
 
     /** Callback when user clicks "Revise" on the chat plan card. Triggers revise on the plan editor tab. */
     var onRevisePlanFromEditor: (() -> Unit)? = null
+
+    /** Callback when user clicks "Start fresh session" on the new_task handoff preview card. */
+    var onHandoffStartFresh: (() -> Unit)? = null
+    /** Callback when user clicks "Keep chatting here" on the new_task handoff preview card. */
+    var onHandoffKeepChatting: (() -> Unit)? = null
 
     /** Callback when user clicks "View in Editor" in the top toolbar to open the chat in a full editor tab. */
     var onViewInEditor: (() -> Unit)? = null
@@ -569,6 +576,8 @@ class AgentCefPanel(
         focusPlanEditorQuery = registerQuery(b) { _ -> onFocusPlanEditor?.invoke(); JBCefJSQuery.Response("ok") }
         openApprovedPlanQuery = registerQuery(b) { _ -> onOpenApprovedPlan?.invoke(); JBCefJSQuery.Response("ok") }
         revisePlanFromEditorQuery = registerQuery(b) { _ -> onRevisePlanFromEditor?.invoke(); JBCefJSQuery.Response("ok") }
+        handoffForkQuery = registerQuery(b) { _ -> onHandoffStartFresh?.invoke(); JBCefJSQuery.Response("ok") }
+        handoffKeepQuery = registerQuery(b) { _ -> onHandoffKeepChatting?.invoke(); JBCefJSQuery.Response("ok") }
         viewInEditorQuery = registerQuery(b) { _ -> onViewInEditor?.invoke(); JBCefJSQuery.Response("ok") }
 
         // Tool call approval bridges
@@ -788,6 +797,8 @@ class AgentCefPanel(
                     injectBridge("_focusPlanEditor") { focusPlanEditorQuery?.let { q -> js("window._focusPlanEditor = function() { ${q.inject("''")} }") } }
                     injectBridge("_openApprovedPlan") { openApprovedPlanQuery?.let { q -> js("window._openApprovedPlan = function() { ${q.inject("''")} }") } }
                     injectBridge("_revisePlanFromEditor") { revisePlanFromEditorQuery?.let { q -> js("window._revisePlanFromEditor = function() { ${q.inject("''")} }") } }
+                    injectBridge("_handoffFork") { handoffForkQuery?.let { q -> js("window._handoffFork = function() { ${q.inject("''")} }") } }
+                    injectBridge("_handoffKeep") { handoffKeepQuery?.let { q -> js("window._handoffKeep = function() { ${q.inject("''")} }") } }
                     injectBridge("_viewInEditor") { viewInEditorQuery?.let { q -> js("window._viewInEditor = function() { ${q.inject("''")} }") } }
                     injectBridge("_approveToolCall") { approveToolCallQuery?.let { q -> js("window._approveToolCall = function() { ${q.inject("'approve'")} }") } }
                     injectBridge("_denyToolCall") { denyToolCallQuery?.let { q -> js("window._denyToolCall = function() { ${q.inject("'deny'")} }") } }
@@ -1118,6 +1129,16 @@ class AgentCefPanel(
 
     fun clearPlanInUi() {
         callJs("clearPlan()")
+    }
+
+    // ── Handoff card rendering (new_task confirm flow) ──
+
+    fun renderHandoff(handoffJson: String) {
+        callJs("renderHandoff(${JsEscape.toJsString(handoffJson)})")
+    }
+
+    fun clearHandoffInUi() {
+        callJs("clearHandoff()")
     }
 
     fun setPlanCommentCount(count: Int) {

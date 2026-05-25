@@ -295,6 +295,23 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.clearPlanInUi() }
     }
 
+    // ── Handoff card delegation (new_task confirm flow) ──
+
+    fun setCefHandoffCallbacks(onStartFresh: () -> Unit, onKeepChatting: () -> Unit) {
+        cefPanel?.onHandoffStartFresh = onStartFresh
+        cefPanel?.onHandoffKeepChatting = onKeepChatting
+    }
+
+    fun renderHandoff(handoffJson: String) {
+        cefPanel?.renderHandoff(handoffJson)
+        broadcast { it.renderHandoff(handoffJson) }
+    }
+
+    fun clearHandoffInUi() {
+        cefPanel?.clearHandoffInUi()
+        broadcast(replay = false) { it.clearHandoffInUi() }
+    }
+
     fun showToolsPanel(toolsJson: String) {
         cefPanel?.showToolsPanel(toolsJson)
         broadcast(replay = false) { it.showToolsPanel(toolsJson) }
