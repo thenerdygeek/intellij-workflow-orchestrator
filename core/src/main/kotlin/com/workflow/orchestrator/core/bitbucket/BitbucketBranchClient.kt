@@ -4,6 +4,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.core.http.AuthInterceptor
 import com.workflow.orchestrator.core.http.AuthScheme
 import com.workflow.orchestrator.core.http.HttpClientFactory
+import com.workflow.orchestrator.core.http.HttpTimeouts
 import com.workflow.orchestrator.core.http.RetryInterceptor
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
@@ -759,9 +760,17 @@ data class BitbucketRequiredBuildCondition(
  * Lives in :core so both :jira (Start Work) and :handover (PR creation)
  * can access it without cross-module dependencies.
  */
+/**
+ * @param timeouts connect/read timeout pair. Defaults to [HttpTimeouts.DEFAULT] (10s/30s)
+ *   so existing call sites that don't have a [Project] context are unaffected.
+ *   Pass [HttpClientFactory.timeoutsFromSettings] at construction to pick up the
+ *   user-configured values from Advanced Network settings.
+ *   Audit finding core:F-13.
+ */
 class BitbucketBranchClient(
     private val baseUrl: String,
-    private val tokenProvider: () -> String?
+    private val tokenProvider: () -> String?,
+    private val timeouts: HttpTimeouts = HttpTimeouts.DEFAULT
 ) {
     companion object {
         /**
@@ -879,6 +888,8 @@ class BitbucketBranchClient(
     internal val httpClient: OkHttpClient by lazy {
         HttpClientFactory.sharedPool
             .newBuilder()
+            .connectTimeout(timeouts.connectSeconds, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(timeouts.readSeconds, java.util.concurrent.TimeUnit.SECONDS)
             .addInterceptor(RetryInterceptor())
             .addInterceptor(AuthInterceptor({ tokenProvider() }, AuthScheme.BEARER))
             .build()

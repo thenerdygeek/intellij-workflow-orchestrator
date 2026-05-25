@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.core.bitbucket
 
 import com.workflow.orchestrator.core.http.HttpClientFactory
+import com.workflow.orchestrator.core.http.HttpTimeouts
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
@@ -77,5 +78,39 @@ class BitbucketBranchClientSharedPoolTest {
         val c2 = makeClient("t2")
         assertSame(c1.httpClient.connectionPool, c2.httpClient.connectionPool,
             "Clients from equivalent factory paths must share ConnectionPool")
+    }
+
+    // ── F-13: timeoutsFromSettings wired into BitbucketBranchClient ───────
+
+    @Test
+    fun `custom HttpTimeouts are applied to httpClient connect and read timeouts`() {
+        // core:F-13 — BitbucketBranchClient previously used hardcoded 10s/30s defaults
+        // from HttpClientFactory's no-arg constructor and ignored the user-configured timeouts.
+        // After the fix, the timeouts parameter is forwarded to the OkHttpClient builder.
+        val customTimeouts = HttpTimeouts(connectSeconds = 45L, readSeconds = 120L)
+        val client = BitbucketBranchClient(
+            baseUrl = "https://bitbucket.example.com",
+            tokenProvider = { "tok" },
+            timeouts = customTimeouts
+        )
+        val httpClient = client.httpClient
+
+        // OkHttpClient.connectTimeoutMillis is the canonical reflection point;
+        // a 45s connect timeout means 45_000 ms.
+        assertEquals(45_000, httpClient.connectTimeoutMillis,
+            "connectTimeout should be 45s (45_000 ms) as set in HttpTimeouts")
+        assertEquals(120_000, httpClient.readTimeoutMillis,
+            "readTimeout should be 120s (120_000 ms) as set in HttpTimeouts")
+    }
+
+    @Test
+    fun `default HttpTimeouts are 10s connect and 30s read when not specified`() {
+        // Existing call sites that don't pass a timeouts arg must continue to use the
+        // same defaults as before (10s/30s from HttpTimeouts.DEFAULT).
+        val client = makeClient()
+        assertEquals(10_000, client.httpClient.connectTimeoutMillis,
+            "default connectTimeout should be 10s")
+        assertEquals(30_000, client.httpClient.readTimeoutMillis,
+            "default readTimeout should be 30s")
     }
 }
