@@ -246,3 +246,10 @@ Accept the performance trade-off for large files (profiling showed ~2ms/MB on So
 - **agent-runtime:F-19** — FIXED. `ToolOutputSpiller.spill` redacts via `CredentialRedactor` before writing to disk / building the preview.
 - **jira:F-14** — FIXED. `TicketListCellRenderer` tooltip now truncates the raw string (200) BEFORE `escapeHtml`.
 - Test-only (core:F-3, agent-runtime:F-11, bamboo:F-17) and F-7/F-8/F-12/F-13 + jira/sonar/pullrequest body-escape items: see per-finding notes; F-15/F-16 covered in phase6 resolution.
+
+## RESOLUTION (2026-05-25, Tier-B incidentals pass)
+
+- **core:F-7** — FIXED. `HttpClientFactory.shutdownSharedResources()` (evict pool + shut dispatcher executor + close cache) wired via new `HttpResourceCleanupListener : DynamicPluginListener` (registered in plugin.xml applicationListeners). Fires on `beforePluginUnload` for this plugin — the hook that actually catches dev hot-reload (an Application-disposable would be useless since the JVM exits on real shutdown).
+- **core:F-9** — NOT REAL. `SmartPoller` is a sequential `while(isActive)` loop: `action()` (a `suspend` call) is awaited, THEN `delay(finalDelay)`, then loops. No overlap, delay already taken after body completion. No change.
+- **core:F-12** — SKIPPED. Emitting a SoftWarning for every URL lacking a trailing slash would false-alarm the common, correct case `https://host`; API clients join with leading-slash paths (`get("/rest/...")`) so the merge risk doesn't exist. A real fix would be normalization, not a noisy warning.
+- **core:F-13** — FIXED. SoftWarning balloon in `ConnectionsConfigurable.apply()` now carries an "Open Connection settings" `NotificationAction`.

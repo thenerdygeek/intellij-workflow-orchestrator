@@ -117,20 +117,41 @@ class HttpClientFactory(
         private val sharedConnectionPool = ConnectionPool(5, 3, TimeUnit.MINUTES)
 
         /** Shared HTTP response cache (10 MB) for ETag/304 support. */
-        private val sharedCache: Cache by lazy {
+        private val sharedCacheDelegate = lazy {
             val cacheDir = File(PathManager.getSystemPath(), "workflow-orchestrator/http-cache")
             Cache(cacheDir, 10L * 1024 * 1024)
         }
+        private val sharedCache: Cache by sharedCacheDelegate
 
         /**
          * Base client with shared connection pool and cache.
          * Use [OkHttpClient.newBuilder] to customize per-service.
          */
-        val sharedPool: OkHttpClient by lazy {
+        private val sharedPoolDelegate = lazy {
             OkHttpClient.Builder()
                 .connectionPool(sharedConnectionPool)
                 .cache(sharedCache)
                 .build()
+        }
+        val sharedPool: OkHttpClient by sharedPoolDelegate
+
+        /**
+         * Releases the shared HTTP resources: evicts idle pooled connections, shuts down
+         * the OkHttp dispatcher's executor (shared by every per-service client derived via
+         * `newBuilder()`), and closes the response cache. Called from
+         * [HttpResourceCleanupListener] on plugin unload so idle connections + dispatcher
+         * threads don't survive in the classloader across a dev hot-reload (audit core:F-7).
+         * Idempotent and only touches resources that were actually initialised.
+         */
+        fun shutdownSharedResources() {
+            runCatching { sharedConnectionPool.evictAll() }
+            if (sharedPoolDelegate.isInitialized()) {
+                runCatching { sharedPool.dispatcher.executorService.shutdown() }
+                runCatching { sharedPool.connectionPool.evictAll() }
+            }
+            if (sharedCacheDelegate.isInitialized()) {
+                runCatching { sharedCache.close() }
+            }
         }
     }
 }

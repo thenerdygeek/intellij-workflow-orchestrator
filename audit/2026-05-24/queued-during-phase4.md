@@ -73,3 +73,8 @@ releases; the pattern is widely used in IJ plugins including JetBrains' own.
 
 - **Q7** — FIXED. `ProcessEnvironment.antiInteractiveEnv` now sets `PYTHONSTARTUP=""` (neutralizes the inherited-env code-exec vector); `PYTHONSTARTUP` also added to `BLOCKED_ENV_VARS` so Layer-3 user overrides can't re-add it.
 - Q1/Q2/Q3/Q4/Q5/Q6/Q8 — deferred (Tier B/D: perms sweep, OverrideOnly/Experimental verifier work, CSA evasion parity).
+
+## RESOLUTION (2026-05-25, Tier-B incidentals pass)
+
+- **Q2** — FIXED. `BackgroundPersistence.writeAtomic` applies `AtomicFileWriter.applyOwnerOnlyPerms(tmp)` before the atomic move; `ToolOutputSpiller.spill` applies it to the spill file after write. Both now rw------- (E2 policy consistency).
+- **Q6** — DEFERRED. `DefaultCommandFilter` (the enforced hard-block) already depends on `CommandSafetyAnalyzer.tokenize`; making CSA call back into the filter would create bidirectional coupling, and CSA only sets the approval-dialog *label* (DefaultCommandFilter hard-blocks every evasion at execution regardless). A proper fix = extract a shared evasion-normalization module both consume (dedicated refactor, not an incidental). Auditor-marked "medium priority, phase 4c candidate".

@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.tools
 
 import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.agent.security.CredentialRedactor
+import com.workflow.orchestrator.agent.session.AtomicFileWriter
 import java.nio.file.Path
 import java.time.Instant
 
@@ -44,6 +45,9 @@ class ToolOutputSpiller(private val spillDir: Path) {
         try {
             spillDir.toFile().mkdirs()
             file.writeText(content)
+            // rw------- on the spill file (E2 policy consistency — P4 Q2). Tool output can
+            // carry redacted-but-still-sensitive context; keep it owner-readable only.
+            AtomicFileWriter.applyOwnerOnlyPerms(file.toPath())
         } catch (e: Exception) {
             log.warn("Failed to spill output to ${file.absolutePath}: ${e.message}")
             // Fallback: return truncated content without file reference

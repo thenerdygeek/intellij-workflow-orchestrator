@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.background
 
+import com.workflow.orchestrator.agent.session.AtomicFileWriter
 import kotlinx.serialization.json.Json
 import java.nio.file.Files
 import java.nio.file.Path
@@ -58,6 +59,9 @@ class BackgroundPersistence(private val sessionsBaseDir: Path) {
                 events
             )
         )
+        // Owner-only perms before the move so the persisted file is rw------- (E2 policy
+        // consistency — queued incidental P4 Q2). No-op on Windows.
+        AtomicFileWriter.applyOwnerOnlyPerms(tmp)
         Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
     }
 }

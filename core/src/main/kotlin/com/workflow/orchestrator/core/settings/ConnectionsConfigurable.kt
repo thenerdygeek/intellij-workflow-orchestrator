@@ -156,6 +156,12 @@ class ConnectionsConfigurable(
                             result.warning,
                             com.intellij.notification.NotificationType.WARNING
                         )
+                        // Actionable link back to this settings page so the user can fix the
+                        // URL without hunting for it (audit core:F-13).
+                        ?.addAction(com.intellij.notification.NotificationAction.createSimple("Open Connection settings") {
+                            com.intellij.openapi.options.ShowSettingsUtil.getInstance()
+                                .showSettingsDialog(project, ConnectionsConfigurable::class.java)
+                        })
                         ?.notify(project)
                     // Non-blocking — allow save to continue
                 }

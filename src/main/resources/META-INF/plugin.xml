@@ -464,6 +464,8 @@
     <applicationListeners>
         <listener class="com.workflow.orchestrator.core.autodetect.AutoDetectFileListener"
                   topic="com.intellij.openapi.vfs.newvfs.BulkFileListener"/>
+        <listener class="com.workflow.orchestrator.core.http.HttpResourceCleanupListener"
+                  topic="com.intellij.ide.plugins.DynamicPluginListener"/>
     </applicationListeners>
 
     <actions>
