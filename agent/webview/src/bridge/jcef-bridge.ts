@@ -257,6 +257,13 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   clearPlan() {
     stores?.getChatStore().clearPlan();
   },
+  renderHandoff(handoffJson: string) {
+    const handoff = JSON.parse(handoffJson);
+    stores?.getChatStore().setHandoff(handoff);
+  },
+  clearHandoff() {
+    stores?.getChatStore().clearHandoff();
+  },
   approvePlan() {
     stores?.getChatStore().approvePlan();
   },
@@ -671,6 +678,8 @@ export const kotlinBridge = {
   approvePlan(): void { callKotlin('_approvePlan'); },
   revisePlan(comments: string): void { callKotlin('_revisePlan', comments); },
   dismissPlan(): void { callKotlin('_dismissPlan'); },
+  startFreshSession(): void { callKotlin('_handoffFork'); },
+  keepChatting(): void { callKotlin('_handoffKeep'); },
   toggleTool(toolName: string, enabled: boolean): void { callKotlin('_toggleTool', `${toolName}:${enabled ? '1' : '0'}`); },
   questionAnswered(questionId: string, selectedOptionsJson: string): void { callKotlin('_questionAnswered', questionId, selectedOptionsJson); },
   questionSkipped(questionId: string): void { callKotlin('_questionSkipped', questionId); },

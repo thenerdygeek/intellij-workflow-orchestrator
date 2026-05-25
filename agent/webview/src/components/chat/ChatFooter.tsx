@@ -7,6 +7,7 @@ import { ToolCallChain } from '@/components/agent/ToolCallChain';
 import { ApprovalView } from '@/components/agent/ApprovalView';
 import { ProcessInputView } from '@/components/agent/ProcessInputView';
 import { PlanSummaryCard } from '@/components/agent/PlanSummaryCard';
+import { HandoffPreviewCard } from '@/components/agent/HandoffPreviewCard';
 import { PlanProgressWidget } from '@/components/agent/PlanProgressWidget';
 import { QuestionView } from '@/components/agent/QuestionView';
 import { ThinkingView } from '@/components/agent/ThinkingView';
@@ -38,6 +39,7 @@ export const ChatFooter = memo(function ChatFooter() {
   const activeToolCalls = useChatStore(s => s.activeToolCalls);
   const busy = useChatStore(s => s.busy);
   const plan = useChatStore(s => s.plan);
+  const handoff = useChatStore(s => s.handoff);
   const questions = useChatStore(s => s.questions);
   const activeQuestionIndex = useChatStore(s => s.activeQuestionIndex);
   const pendingApproval = useChatStore(s => s.pendingApproval);
@@ -136,6 +138,7 @@ export const ChatFooter = memo(function ChatFooter() {
       )}
 
       {plan && !plan.approved && <PlanSummaryCard plan={plan} />}
+      {handoff && <HandoffPreviewCard handoff={handoff} />}
       <PlanProgressWidget />
 
       {questions && questions.length > 0 && (
