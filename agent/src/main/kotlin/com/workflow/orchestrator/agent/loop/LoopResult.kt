@@ -8,7 +8,8 @@ enum class FailureReason {
     EMPTY_RESPONSES,
     API_ERROR,
     NO_TOOLS_USED,
-    EXCEPTION
+    EXCEPTION,
+    OFFLINE
 }
 
 sealed class LoopResult {

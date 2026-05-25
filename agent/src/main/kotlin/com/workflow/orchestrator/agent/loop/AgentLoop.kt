@@ -473,6 +473,8 @@ class AgentLoop(
      * at the wiring site so the feature is dark when the user turns it off.
      */
     private val streamingEditCallback: StreamingEditCallback? = null,
+    private val networkProbe: com.workflow.orchestrator.core.network.NetworkProbe? = null,
+    private val llmProbeUrl: String? = null,
 ) {
     private val cancelled = AtomicBoolean(false)
 
@@ -1095,6 +1097,22 @@ class AgentLoop(
                 }
 
                 val isTimeoutError = apiResult.type in TIMEOUT_ERRORS
+                // Fail-fast on confirmed offline: a live probe says the tunnel is down (VPN still
+                // reconnecting after unlock). Don't burn the retry budget into a dead socket — fail
+                // now so the UI can offer a one-click Retry. checkNow() also flips global state to
+                // OFFLINE, which pauses the pollers and arms the reconnection probe loop.
+                if (isTimeoutError && networkProbe != null) {
+                    val netState = networkProbe.checkNow(llmProbeUrl)
+                    if (netState != com.workflow.orchestrator.core.network.NetworkState.ONLINE) {
+                        LOG.warn("[Loop] Confirmed offline ($netState) on ${apiResult.type} — failing fast for manual retry")
+                        onDebugLog?.invoke("warn", "offline", "Network offline — failing turn for manual retry", mapOf("errorType" to apiResult.type.name))
+                        return makeFailed(
+                            error = "You appear to be offline (network unreachable). This often happens right after unlocking when the VPN is still reconnecting. Click Retry once you're back online.",
+                            iterations = iteration,
+                            reason = FailureReason.OFFLINE,
+                        )
+                    }
+                }
                 val maxRetries = if (isTimeoutError) MAX_TIMEOUT_RETRIES else MAX_API_RETRIES
                 if (apiResult.type in RETRYABLE_ERRORS && apiRetryCount < maxRetries) {
                     apiRetryCount++
