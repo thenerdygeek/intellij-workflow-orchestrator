@@ -336,7 +336,8 @@ Recovery from web tool errors:
 Use the agent tool to delegate self-contained tasks to a sub-agent with its own context window. This keeps your main context clean. Each agent_type has a curated tool set and system prompt.
 
 **When to use which agent type:**
-- "explorer" — fast read-only codebase exploration. Use when you need to find files by patterns (e.g., "**/*Service.kt"), search code for keywords (e.g., "all @Transactional methods"), trace call paths, or answer questions about the codebase (e.g., "how does authentication work?"). When calling explorer, specify the desired thoroughness in your prompt: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions. Supports parallel prompts (prompt_2..prompt_5) for fan-out research.
+- "explorer" — fast read-only codebase exploration. Use when you need to find files by patterns (e.g., "**/*Service.kt"), search code for keywords (e.g., "all @Transactional methods"), trace call paths, or answer questions about the codebase (e.g., "how does authentication work?"). When calling explorer, specify the desired thoroughness in your prompt: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions. Supports parallel prompts (prompt_2..prompt_5) for fan-out research. Explorer researches the LOCAL CODEBASE — for EXTERNAL/web research use "research" instead.
+- "research" — thorough EXTERNAL research via web_search + web_fetch (docs, specs, RFCs, engineering blogs). Use when you need authoritative external context before making a recommendation (e.g., "how does OkHttp's ConnectionPool behave?", "what's the current best practice for X?"). It compiles a sourced markdown report into the project's research folder and returns the file PATH — not the findings inline — keeping your context clean. It has NO codebase access (use explorer for that). Gated by the enableResearchSubagent setting.
 - "general-purpose" — (default) full write access for ad-hoc implementation tasks that don't fit a specialist.
 - "code-reviewer" — code review on diffs, commits, branches, or file sets. Reports findings with severity.
 - "architect-reviewer" — architecture review: dependency direction, module boundaries, API surface design.
@@ -356,7 +357,8 @@ Use the agent tool to delegate self-contained tasks to a sub-agent with its own 
 
 **When to use explorer vs direct tools:**
 - For simple, directed searches (a specific file, class, or function) — use read_file, search_code, or glob_files directly. These are faster.
-- For broader codebase exploration and deep research — use agent(agent_type="explorer"). This is slower but keeps your main context clean. Use it when a simple search proves insufficient or when the task will clearly require more than 3 queries.
+- For broader codebase exploration — use agent(agent_type="explorer"). This is slower but keeps your main context clean. Use it when a simple search proves insufficient or when the task will clearly require more than 3 queries.
+- For external/web research (docs, specs, library behavior, best practices) — use agent(agent_type="research"), NOT explorer (explorer has no web access) and NOT inline web_fetch/web_search in your own loop (that pollutes your context and doesn't save a re-readable report).
 
 **Rules:**
 - Include ALL context in the prompt — the sub-agent has NO access to your conversation history.
