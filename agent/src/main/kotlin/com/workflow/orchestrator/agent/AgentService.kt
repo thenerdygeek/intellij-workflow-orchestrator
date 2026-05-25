@@ -2300,6 +2300,14 @@ class AgentService(
                 val brainToClear = (brainRef as? com.workflow.orchestrator.agent.loop.BrainRouter)?.underlyingOpenAiCompat
                     ?: brainRef
                 (brainToClear as? OpenAiCompatBrain)?.setApiDebugDir(null)
+                // F-25: Clear the output spiller so a failed/cancelled task doesn't leave
+                // a stale ToolOutputSpiller pointing at the previous session's tool-output
+                // directory.  Without this, any tool that calls outputSpiller between
+                // task-end and the next resetForNewChat writes into the wrong session dir.
+                _outputSpiller = null
+                // Clear attachment store for the same reason — stale store would add
+                // image attachments to a directory that belongs to the dead session.
+                activeAttachmentStore = null
                 // Clear per-task sub-agent callbacks. Leaving any of these attached
                 // would allow a stale reference to the previous session's AgentController
                 // / loggers / hook manager to handle events for the next spawn call —

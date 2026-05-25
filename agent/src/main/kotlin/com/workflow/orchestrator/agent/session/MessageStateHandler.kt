@@ -784,9 +784,17 @@ class MessageStateHandler(
          * Resolve the most reliable "last activity" timestamp for an orphan session
          * directory.  Preference order (F-23):
          *
-         * 1. `ts` of the last entry in `ui_messages.json`   — written by the plugin
-         * 2. `lastModified` of `api_conversation_history.json` — written on every API turn
-         * 3. `lastModified` of the session directory itself   — fallback, mtime-unstable
+         * 1. `ts` of the last entry in `ui_messages.json`    — app-level timestamp,
+         *    immune to backup-tool mtime updates
+         * 2. `ts` of the last entry in `api_conversation_history.json` — same source
+         * 3. `lastModified` of the session directory itself   — last resort
+         *
+         * File mtime is intentionally **not** used as a timestamp source: backup
+         * tools (Time Machine, rsync) and filesystem events update file mtime without
+         * any real session activity.  We prefer the application-written `ts` field
+         * inside the JSON whenever at least one message was persisted.  If the files
+         * are empty or unreadable (e.g., a session that crashed on the very first
+         * write), we fall back to the directory mtime — same behaviour as before F-23.
          */
         private fun resolveSessionLastActivity(sessionDir: File): Long {
             // 1. Application-level timestamp from the last UI message
@@ -799,12 +807,15 @@ class MessageStateHandler(
                 }
             } catch (_: Exception) { /* fall through */ }
 
-            // 2. Mtime of the API history file (written by the plugin on every turn)
-            val apiFile = File(sessionDir, "api_conversation_history.json")
-            if (apiFile.exists()) {
-                val mt = apiFile.lastModified()
-                if (mt > 0L) return mt
-            }
+            // 2. Application-level timestamp from the last API history entry
+            try {
+                val apiFile = File(sessionDir, "api_conversation_history.json")
+                if (apiFile.exists()) {
+                    val history = loadApiHistory(sessionDir)
+                    val lastTs = history.lastOrNull()?.ts
+                    if (lastTs != null && lastTs > 0L) return lastTs
+                }
+            } catch (_: Exception) { /* fall through */ }
 
             // 3. Directory mtime (susceptible to clock-skew / backup-tool updates)
             return sessionDir.lastModified()
