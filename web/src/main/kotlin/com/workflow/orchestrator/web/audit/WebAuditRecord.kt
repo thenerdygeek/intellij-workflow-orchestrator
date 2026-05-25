@@ -37,4 +37,9 @@ data class WebAuditRecord(
     val sanitizerNotes: String?,
     val elapsedMs: Long,
     val error: String?,
+    /**
+     * True when this fetch was served from the in-memory cache (no network call,
+     * no sanitizer subagent). Defaults to false so existing entries deserialize unchanged.
+     */
+    val cacheHit: Boolean = false,
 )
