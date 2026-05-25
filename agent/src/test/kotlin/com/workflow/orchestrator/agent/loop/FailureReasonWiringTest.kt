@@ -68,6 +68,25 @@ class FailureReasonWiringTest {
     }
 
     @Test
+    fun `AgentLoop offline fail-fast exit carries OFFLINE reason`() {
+        val text = readSource("loop", "AgentLoop.kt")
+        assertTrue(
+            text.contains("reason = FailureReason.OFFLINE,"),
+            "AgentLoop.kt must pass FailureReason.OFFLINE to makeFailed() at the confirmed-offline fail-fast exit " +
+                "so the UI renders the offline-specific Retry caption."
+        )
+    }
+
+    @Test
+    fun `AgentController showRetryButton branches on OFFLINE for the offline caption`() {
+        val text = readSource("ui", "AgentController.kt")
+        assertTrue(
+            text.contains("result.reason == FailureReason.OFFLINE"),
+            "AgentController.kt must branch on FailureReason.OFFLINE to show the VPN-reconnect caption on the Retry pill."
+        )
+    }
+
+    @Test
     fun `AgentController retry handler sends continue not lastTaskText`() {
         val text = readSource("ui", "AgentController.kt")
         assertTrue(

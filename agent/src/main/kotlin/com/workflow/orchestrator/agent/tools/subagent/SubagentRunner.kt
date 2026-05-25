@@ -294,6 +294,10 @@ class SubagentRunner(
                 }
             )
 
+            // networkProbe / llmProbeUrl are intentionally omitted here: sub-agents do NOT get
+            // offline fail-fast. The parent orchestrator already fails fast with FailureReason.OFFLINE,
+            // and sub-agents are iteration-bounded, so a dead-tunnel retry burn is short-lived. Do not
+            // "fix" by wiring the probe in — that would surface offline failures at the wrong (sub-agent) layer.
             val loop = AgentLoop(
                 brain = brain,
                 tools = subagentRegistry.getActiveTools(),
