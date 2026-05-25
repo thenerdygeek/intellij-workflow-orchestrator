@@ -42,6 +42,7 @@ class HttpClientFactory(
             // Callers that need redirect support must open a new request themselves.
             .followRedirects(false)
             .followSslRedirects(false)
+            .addInterceptor(NetworkStateReportingInterceptor())
             .addInterceptor(RetryInterceptor())
             .addNetworkInterceptor(SensitiveEndpointNoCacheInterceptor())
             .build()
