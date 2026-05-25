@@ -10,6 +10,7 @@ import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ai.AgentChatRedirect
 import com.workflow.orchestrator.core.model.sonar.SonarRuleData
 import com.workflow.orchestrator.core.services.SonarService
+import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.core.util.HtmlEscape
@@ -304,13 +305,15 @@ class IssueDetailPanel(
         issueLine: Int,
         projectKey: String,
     ): String {
-        // Resolve the file's owning repo via projectKey — `relativePath` is repo-relative
-        // (Sonar component path), so the aggregator basePath is wrong on multi-repo setups.
-        val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
-        val owningRepo = settings.getRepos().firstOrNull { it.sonarProjectKey == projectKey }
-        val basePath = owningRepo?.localVcsRootPath?.takeIf { it.isNotBlank() }
-            ?: project.basePath
+        // Resolve the owning repo via projectKey, falling back to scanning all repos.
+        // Fixes sonar:F-12 — project.basePath is wrong for secondary repos in multi-repo
+        // projects; use resolveSonarRepoRoot() which walks the settings repo list and
+        // returns the root whose sonarProjectKey matches, or the first root where the
+        // file physically exists.
+        val basePath = resolveSonarRepoRoot(relativePath, projectKey)
             ?: return "Project base path not available"
+        val settings = PluginSettings.getInstance(project)
+        val owningRepo = settings.getRepos().firstOrNull { it.sonarProjectKey == projectKey }
         val resolver = com.workflow.orchestrator.core.settings.RepoContextResolver.getInstance(project)
         val branch = owningRepo?.localVcsRootPath?.let { resolver.findRepositoryForPath(it)?.currentBranchName }
 
@@ -404,6 +407,44 @@ class IssueDetailPanel(
          * The non-greedy `.*?` prevents stripping content between two separate tags.
          */
         private val HTML_TAG_REGEX = Regex("<.*?>", RegexOption.DOT_MATCHES_ALL)
+
+        /**
+         * Pure resolution logic for the owning VCS root of a Sonar-relative [filePath].
+         *
+         * Resolution tiers (fixes sonar:F-12 and sonar:F-13):
+         * 1. The first entry in [repoPairs] whose sonarKey == [sonarProjectKey] (exact key match).
+         * 2. The first entry in [repoRoots] under which `<root>/<filePath>` exists on disk
+         *    (file-existence scan; handles repos whose sonarProjectKey isn't configured).
+         * 3. [projectBasePath] as last resort (correct for single-repo projects).
+         *
+         * Exposed internally as a companion method so unit tests can exercise the tiers
+         * without a running IntelliJ platform.
+         *
+         * @param filePath       Sonar-relative path (e.g. `src/main/kotlin/Foo.kt`)
+         * @param sonarProjectKey Sonar project key from the issue/hotspot
+         * @param repoPairs      `(sonarKey, localVcsRootPath)` from configured repos (blanks excluded)
+         * @param repoRoots      All non-blank `localVcsRootPath` values from configured repos
+         * @param projectBasePath The IDE project's base path
+         */
+        internal fun resolveRepoRoot(
+            filePath: String,
+            sonarProjectKey: String,
+            repoPairs: List<Pair<String, String>>,
+            repoRoots: List<String>,
+            projectBasePath: String?,
+            fileExistsFn: (String, String) -> Boolean = { root, path -> File(root, path).exists() },
+        ): String? {
+            // Tier 1: exact sonarProjectKey match
+            repoPairs.firstOrNull { it.first == sonarProjectKey }
+                ?.second
+                ?.let { return it }
+            // Tier 2: file-existence probe across all repo roots
+            for (root in repoRoots) {
+                if (fileExistsFn(root, filePath)) return root
+            }
+            // Tier 3: aggregator basePath (single-repo projects)
+            return projectBasePath
+        }
     }
 
     // --- Navigation ---
@@ -411,13 +452,17 @@ class IssueDetailPanel(
     private fun navigateToItem(item: QualityListItem) {
         when (item) {
             is QualityListItem.IssueItem -> {
-                val basePath = project.basePath ?: return
+                // Use the issue's projectKey to locate the owning repo root (F-13).
+                val basePath = resolveSonarRepoRoot(item.issue.filePath, item.issue.projectKey)
+                    ?: return
                 val vf = LocalFileSystem.getInstance().findFileByPath(File(basePath, item.issue.filePath).path) ?: return
                 OpenFileDescriptor(project, vf, item.issue.startLine - 1, item.issue.startOffset).navigate(true)
             }
             is QualityListItem.HotspotItem -> {
-                val basePath = project.basePath ?: return
+                // Extract projectKey from component ("projectKey:path/to/File.java") (F-13).
                 val filePath = item.hotspot.component.substringAfterLast(':')
+                val hotspotProjectKey = item.hotspot.component.substringBeforeLast(':')
+                val basePath = resolveSonarRepoRoot(filePath, hotspotProjectKey) ?: return
                 val vf = LocalFileSystem.getInstance().findFileByPath(File(basePath, filePath).path) ?: return
                 val line = item.hotspot.line?.let { it - 1 } ?: 0
                 OpenFileDescriptor(project, vf, line, 0).navigate(true)
@@ -425,10 +470,31 @@ class IssueDetailPanel(
         }
     }
 
+    /**
+     * Resolves the local VCS root that owns a Sonar-relative [filePath].
+     *
+     * Delegates to [resolveRepoRoot] with the project's configured repos list.
+     * Fixes sonar:F-12 and sonar:F-13 — `project.basePath` is the aggregator
+     * root in multi-repo projects, which is wrong for files in secondary repos.
+     */
+    private fun resolveSonarRepoRoot(filePath: String, sonarProjectKey: String): String? {
+        val repos = PluginSettings.getInstance(project).getRepos()
+        return resolveRepoRoot(
+            filePath = filePath,
+            sonarProjectKey = sonarProjectKey,
+            repoPairs = repos.mapNotNull { r ->
+                r.sonarProjectKey?.takeIf { it.isNotBlank() }
+                    ?.let { key -> Pair(key, r.localVcsRootPath?.takeIf { it.isNotBlank() } ?: return@mapNotNull null) }
+            },
+            repoRoots = repos.mapNotNull { it.localVcsRootPath?.takeIf { it.isNotBlank() } },
+            projectBasePath = project.basePath,
+        )
+    }
+
     private fun fixWithAgent(item: QualityListItem) {
         if (item !is QualityListItem.IssueItem) return
         val issue = item.issue
-        val basePath = project.basePath ?: return
+        val basePath = resolveSonarRepoRoot(issue.filePath, issue.projectKey) ?: return
         val absolutePath = File(basePath, issue.filePath).absolutePath
         navigateToItem(item)
 
