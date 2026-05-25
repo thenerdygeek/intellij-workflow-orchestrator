@@ -274,6 +274,36 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         }
     }
 
+    override suspend fun enablePlanBranch(branchPlanKey: String): ToolResult<Unit> {
+        val api = client ?: return ToolResult(
+            data = Unit,
+            summary = "Bamboo not configured. Cannot enable branch $branchPlanKey.",
+            isError = true,
+            hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
+        )
+        return when (val result = api.enablePlanBranch(branchPlanKey)) {
+            is ApiResult.Success -> ToolResult.success(
+                data = Unit,
+                summary = "Enabled branch plan $branchPlanKey."
+            )
+            is ApiResult.Error -> {
+                log.warn("[BambooService] Failed to enable branch plan $branchPlanKey: ${result.message}")
+                ToolResult(
+                    data = Unit,
+                    summary = "Error enabling branch plan $branchPlanKey: ${result.message}",
+                    isError = true,
+                    hint = when (result.type) {
+                        ErrorType.AUTH_FAILED -> "Check your Bamboo token in Settings."
+                        ErrorType.AUTH_REDIRECT -> "Your Bamboo session expired. Re-authenticate in Settings."
+                        ErrorType.FORBIDDEN -> "You may not have permission to enable this branch plan (requires plan admin in Bamboo)."
+                        ErrorType.NOT_FOUND -> "Branch plan not found — it may have been removed in Bamboo."
+                        else -> "Check Bamboo connection in Settings."
+                    }
+                )
+            }
+        }
+    }
+
     override suspend fun getPlanVariables(planKey: String): ToolResult<List<PlanVariableData>> {
         val api = client ?: return ToolResult(
             data = emptyList(),

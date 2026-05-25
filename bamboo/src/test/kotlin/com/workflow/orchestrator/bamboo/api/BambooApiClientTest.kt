@@ -372,4 +372,30 @@ class BambooApiClientTest {
         assertTrue(result is ApiResult.Error)
         assertEquals(ErrorType.AUTH_REDIRECT, (result as ApiResult.Error).type)
     }
+
+    @Test
+    fun `enablePlanBranch sends POST to plan enable endpoint with X-Atlassian-Token`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(""))
+
+        val result = client.enablePlanBranch("PROJ-PLAN-3")
+
+        assertTrue(result.isSuccess)
+        val recorded = server.takeRequest()
+        assertEquals("POST", recorded.method)
+        assertTrue(
+            recorded.path!!.contains("/rest/api/latest/plan/PROJ-PLAN-3/enable"),
+            "Expected plan enable path; got ${recorded.path}"
+        )
+        assertEquals("no-check", recorded.getHeader("X-Atlassian-Token"))
+    }
+
+    @Test
+    fun `enablePlanBranch maps 403 to FORBIDDEN error`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(403))
+
+        val result = client.enablePlanBranch("PROJ-PLAN-3")
+
+        assertTrue(result is ApiResult.Error)
+        assertEquals(ErrorType.FORBIDDEN, (result as ApiResult.Error).type)
+    }
 }

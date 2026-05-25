@@ -56,6 +56,9 @@ interface BambooService {
     /** Rerun failed jobs in a build. */
     suspend fun rerunFailedJobs(planKey: String, buildNumber: Int): ToolResult<Unit>
 
+    /** Enable a (disabled) Bamboo plan branch so its jobs/stages can run. */
+    suspend fun enablePlanBranch(branchPlanKey: String): ToolResult<Unit>
+
     /** Get plan variables. */
     suspend fun getPlanVariables(planKey: String): ToolResult<List<PlanVariableData>>
 

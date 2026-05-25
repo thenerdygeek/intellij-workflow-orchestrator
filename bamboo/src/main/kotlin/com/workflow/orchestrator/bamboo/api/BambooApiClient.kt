@@ -348,6 +348,25 @@ class BambooApiClient(
         }
     }
 
+    /**
+     * Enable a disabled Bamboo plan branch so its jobs/stages can run.
+     *
+     * In Bamboo a branch IS a plan with its own key (e.g. `PROJ-AUTOMATIONTEST-3`),
+     * so enabling a branch = `POST /rest/api/latest/plan/{branchPlanKey}/enable` with
+     * an empty form body.
+     *
+     * Routes through [postForm] so [X-Atlassian-Token: no-check] is set automatically
+     * (write-path lessons §1 — Bamboo Struts/REST write operations 403 without it).
+     */
+    suspend fun enablePlanBranch(branchPlanKey: String): ApiResult<Unit> {
+        val url = "$baseUrl/rest/api/latest/plan/${URLEncoder.encode(branchPlanKey, "UTF-8")}/enable"
+        log.debug("[Bamboo:API] Enabling plan branch $branchPlanKey")
+        return when (val raw = postForm(httpClient, url, emptyMap())) {
+            is ApiResult.Success -> ApiResult.Success(Unit)
+            is ApiResult.Error -> raw
+        }
+    }
+
     /** Cancel a queued (not yet running) build. */
     suspend fun cancelBuild(resultKey: String): ApiResult<Unit> {
         log.debug("[Bamboo:API] Cancelling queued build resultKey=$resultKey")
