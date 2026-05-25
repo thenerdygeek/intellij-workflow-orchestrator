@@ -734,6 +734,19 @@ class JiraServiceImpl(private val project: Project) : JiraService {
         }
     }
 
+    /**
+     * Transitions [issueKey] to "In Progress" via [TicketTransitionService] and returns
+     * branch metadata that the caller provided.
+     *
+     * **IMPORTANT — no branch is created here.**
+     * [branchName] and [sourceBranch] are accepted so the agent can round-trip the intended
+     * branch name back to itself via [StartWorkResultData.branchName], but this method does
+     * NOT create a Git branch or a Bitbucket remote branch. Branch creation is handled by
+     * [com.workflow.orchestrator.jira.service.BranchingService.startWork], which is invoked
+     * exclusively from the UI dialog ([com.workflow.orchestrator.jira.ui.SprintDashboardPanel]).
+     *
+     * To avoid misleading callers, the success summary does not claim a branch was created.
+     */
     override suspend fun startWork(
         issueKey: String,
         branchName: String,
@@ -808,10 +821,12 @@ class JiraServiceImpl(private val project: Project) : JiraService {
         // workflow rule. Branch creation already succeeded; only the transition was
         // skipped. Other transition errors (forbidden, network, etc.) keep the previous
         // best-effort behaviour: log + report unchanged status.
+        // Note: branch creation is NOT performed here (see KDoc). The summary intentionally
+        // omits "Branch: ..." phrasing to avoid implying a branch was created.
         return if (missingFieldsBlocker != null) {
             ToolResult(
                 data = data,
-                summary = "Started work on $issueKey. Branch: $branchName (from $sourceBranch). $missingFieldsBlocker",
+                summary = "Started work on $issueKey (branch: $branchName). $missingFieldsBlocker",
                 isError = true,
                 hint = missingFieldsBlocker
             )
@@ -819,7 +834,7 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             ToolResult.success(
                 data = data,
                 summary = buildString {
-                    append("Started work on $issueKey. Branch: $branchName (from $sourceBranch).")
+                    append("Started work on $issueKey (intended branch: $branchName).")
                     when {
                         transitioned -> append(" Ticket transitioned to In Progress.")
                         transitionErrorMessage != null ->
