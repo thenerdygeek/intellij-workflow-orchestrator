@@ -2545,14 +2545,15 @@ class AgentController(
                         durationMs = durationMs,
                         status = RichStreamingPanel.SessionStatus.FAILED
                     )
-                    // Gap 17: Show retry/continue button based on failure type
+                    // Gap 17 + offline: Show retry/continue button based on failure type
                     if (lastTaskText != null) {
                         val isMaxIter = result.reason == FailureReason.MAX_ITERATIONS
+                        val isOffline = result.reason == FailureReason.OFFLINE
                         val kind = if (isMaxIter) "continue" else "retry"
-                        val caption = if (isMaxIter) {
-                            "The agent worked for many iterations without finishing. Click Continue to keep going."
-                        } else {
-                            "Something went wrong while running the task."
+                        val caption = when {
+                            isMaxIter -> "The agent worked for many iterations without finishing. Click Continue to keep going."
+                            isOffline -> "You appear to be offline — the VPN may still be reconnecting after unlock. Click Retry once you're back online."
+                            else -> "Something went wrong while running the task."
                         }
                         dashboard.showRetryButton(kind, caption)
                     }
