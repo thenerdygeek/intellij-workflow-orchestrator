@@ -56,6 +56,7 @@ class WebFetchEngine(
     private val resolver: UrlSafetyGuard.Resolver = UrlSafetyGuard.SystemResolver,
     private val shortenerResolver: ShortenerResolver,
     private val fetchCache: com.workflow.orchestrator.web.service.cache.WebFetchCache? = null,
+    private val promptExtractor: com.workflow.orchestrator.web.service.extract.PromptExtractor? = null,
     /**
      * When true, the SSRF guard allows loopback addresses (localhost, 127.x.x.x) and
      * private LAN ranges to pass. Default false (production posture — all internal addresses
@@ -93,6 +94,7 @@ class WebFetchEngine(
         resolver = resolver,
         shortenerResolver = shortenerResolver,
         fetchCache = null,
+        promptExtractor = null,
         allowLoopback = allowLoopback,
     )
 
@@ -371,7 +373,24 @@ class WebFetchEngine(
                 .joinToString("") { "%02x".format(it) }
                 .take(16)
 
-            val page = WebPage(
+            // Page-prompt fusion: if the caller supplied an extraction prompt, run a 2nd LLM
+            // pass on the cleaned text. The extracted answer replaces the body delivered to
+            // the agent; the FULL cleaned text is still what gets cached (so a later prompt-less
+            // fetch of the same URL returns the original page, and a later prompted fetch
+            // re-extracts from the cached clean text).
+            val extractionPrompt = request.extractionPrompt
+            val (deliveredText, extractionNote) = if (extractionPrompt != null && promptExtractor != null) {
+                when (val ex = promptExtractor.extract(project, finalText, extractionPrompt)) {
+                    is com.workflow.orchestrator.web.service.extract.PromptExtractor.Result.Complete ->
+                        ex.answer to "extractor: complete"
+                    is com.workflow.orchestrator.web.service.extract.PromptExtractor.Result.Partial ->
+                        ex.answer to "extractor: ${ex.note}"
+                    is com.workflow.orchestrator.web.service.extract.PromptExtractor.Result.NoAnswer ->
+                        finalText to "extractor: ${ex.reason} (returning full page)"
+                }
+            } else finalText to null
+
+            val baseWebPage = WebPage(
                 originalUrl = pass.originalUrl ?: request.url,
                 finalUrl = pass.finalUrl,
                 contentType = ct,
@@ -387,10 +406,19 @@ class WebFetchEngine(
                 elapsedMs = System.currentTimeMillis() - start,
             )
 
-            // Cache the successful result for future lookups.
+            // Cache the FULL clean text (pre-extraction) so prompt-less fetches reuse it.
             if (cacheKey != null) {
-                fetchCache.put(cacheKey, page)
+                fetchCache.put(cacheKey, baseWebPage)
             }
+
+            // Deliver the extracted answer if fusion ran; otherwise the full page.
+            val page = if (extractionNote != null) {
+                baseWebPage.copy(
+                    extractedText = deliveredText,
+                    extractedChars = deliveredText.length,
+                    sanitizerNotes = listOfNotNull(san.notes, extractionNote).joinToString("; ").ifEmpty { null },
+                )
+            } else baseWebPage
 
             auditSuccess(page, correlationId)
             return ToolResult.success(

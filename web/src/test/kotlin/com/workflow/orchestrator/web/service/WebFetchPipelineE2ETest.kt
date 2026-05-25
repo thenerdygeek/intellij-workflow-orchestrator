@@ -122,6 +122,37 @@ class WebFetchPipelineE2ETest {
     }
 
     /**
+     * Builds an engine wired through the primary (clientFactory) constructor so [promptExtractor]
+     * can be injected. The legacy secondary constructor hardcodes promptExtractor=null, which is
+     * why the extractor tests need this separate helper.
+     */
+    private fun buildEngineWithExtractor(
+        extractor: com.workflow.orchestrator.web.service.extract.PromptExtractor,
+        resolverOverride: UrlSafetyGuard.Resolver = mockWebServerResolver,
+        allowLoopbackOverride: Boolean = true,
+    ): WebFetchEngine {
+        val baseClient = OkHttpClient.Builder()
+            .followRedirects(false)
+            .addInterceptor(StripAuthHeadersInterceptor())
+            .build()
+        val shortenerClient = OkHttpClient.Builder().followRedirects(false).build()
+        return WebFetchEngine(
+            project = project,
+            settings = settings,
+            clientFactory = { pinnedDns -> baseClient.newBuilder().dns(pinnedDns).build() },
+            sanitizer = JsoupReadability(),
+            sanitizerSubagent = SanitizerSubagent(spawner),
+            approvalGate = gate,
+            auditLog = WebAuditLog(Files.createTempDirectory("audit-e2e-extract")),
+            resolver = resolverOverride,
+            shortenerResolver = ShortenerResolver(shortenerClient),
+            fetchCache = null,
+            promptExtractor = extractor,
+            allowLoopback = allowLoopbackOverride,
+        )
+    }
+
+    /**
      * Builds an engine wired through the primary (clientFactory) constructor so [fetchCache]
      * can be injected. The legacy secondary constructor hardcodes fetchCache=null, which is
      * why the cache tests need this separate helper.
@@ -772,6 +803,97 @@ class WebFetchPipelineE2ETest {
         assertFalse(first.isError, "first fetch (maxBytes=10000) should succeed: ${first.summary}")
         assertFalse(second.isError, "second fetch (maxBytes=50000) should succeed: ${second.summary}")
         assertEquals(2, server.requestCount, "different maxBytes must use different cache slots — both must hit the network")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Page-prompt fusion E2E tests (Task 3.4)
+    //
+    // Both tests use the allowlisted fast-path (localhost + 127.0.0.1) so the
+    // approval gate is skipped. The extractor is a canned anonymous subclass
+    // of PromptExtractor (which is `open`) — no real LLM call is made.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `E2E - extractionPrompt invokes extractor and returns its answer not full page`() = runTest {
+        state.webAllowlistJson =
+            """[{"domain":"localhost","httpOk":true,"addedAt":"2026-05-24T00:00:00Z"},{"domain":"127.0.0.1","httpOk":true,"addedAt":"2026-05-24T00:00:00Z"}]"""
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .addHeader("Content-Type", "text/html")
+                .setBody("<html><body><article>Release notes: version 3.4.1 shipped.</article></body></html>")
+        )
+
+        val cannedExtractor = object : com.workflow.orchestrator.web.service.extract.PromptExtractor(
+            io.mockk.mockk(), null, 1_000L
+        ) {
+            override suspend fun extract(
+                project: com.intellij.openapi.project.Project,
+                sourceText: String,
+                question: String,
+            ) = Result.Complete("EXTRACTED: v3.4.1")
+        }
+        val engineWithExtractor = buildEngineWithExtractor(cannedExtractor)
+
+        val result = engineWithExtractor.fetch(
+            WebFetchService.WebFetchRequest(
+                url = server.url("/release-notes").toString(),
+                extractionPrompt = "What version?",
+            )
+        )
+
+        assertFalse(result.isError, "fusion fetch should succeed: ${result.summary}")
+        assertEquals(
+            "EXTRACTED: v3.4.1",
+            result.data?.extractedText,
+            "delivered text must be the extracted answer, not the full page",
+        )
+        assertTrue(
+            result.data?.sanitizerNotes?.contains("extractor: complete") == true,
+            "sanitizerNotes must contain the extraction outcome: ${result.data?.sanitizerNotes}",
+        )
+    }
+
+    @Test
+    fun `E2E - extractor NoAnswer falls back to full page`() = runTest {
+        state.webAllowlistJson =
+            """[{"domain":"localhost","httpOk":true,"addedAt":"2026-05-24T00:00:00Z"},{"domain":"127.0.0.1","httpOk":true,"addedAt":"2026-05-24T00:00:00Z"}]"""
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .addHeader("Content-Type", "text/html")
+                .setBody("<html><body><article>Some unrelated content here.</article></body></html>")
+        )
+
+        val cannedExtractor = object : com.workflow.orchestrator.web.service.extract.PromptExtractor(
+            io.mockk.mockk(), null, 1_000L
+        ) {
+            override suspend fun extract(
+                project: com.intellij.openapi.project.Project,
+                sourceText: String,
+                question: String,
+            ) = Result.NoAnswer("unrelated")
+        }
+        val engineWithExtractor = buildEngineWithExtractor(cannedExtractor)
+
+        val result = engineWithExtractor.fetch(
+            WebFetchService.WebFetchRequest(
+                url = server.url("/no-answer-fallback").toString(),
+                extractionPrompt = "What version?",
+            )
+        )
+
+        assertFalse(result.isError, "NoAnswer must not produce a fetch error: ${result.summary}")
+        // On NoAnswer the body is the full cleaned page (whatever the sanitizer produced),
+        // NOT an empty string. Assert it's non-empty and does not equal an extracted marker.
+        assertTrue(
+            (result.data?.extractedText?.isNotEmpty()) == true,
+            "NoAnswer must fall back to the full page body, not empty: '${result.data?.extractedText}'",
+        )
+        assertTrue(
+            result.data?.sanitizerNotes?.contains("returning full page") == true,
+            "sanitizerNotes must record the NoAnswer fallback: ${result.data?.sanitizerNotes}",
+        )
     }
 
     // ─────────────────────────────────────────────────────────────────────────

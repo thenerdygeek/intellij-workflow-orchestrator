@@ -6,6 +6,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.model.web.WebPage
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.resolveSanitizerBrainId
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import com.workflow.orchestrator.core.web.SubagentSpawner
 import com.workflow.orchestrator.core.web.WebFetchService
@@ -89,6 +90,12 @@ class WebFetchServiceImpl(
             )
         } else null
 
+        val promptExtractor = com.workflow.orchestrator.web.service.extract.PromptExtractor(
+            spawner = project.service<SubagentSpawner>(),
+            brainId = settings.resolveSanitizerBrainId(),
+            timeoutMs = 60_000L,
+        )
+
         return WebFetchEngine(
             project = project,
             settings = settings,
@@ -101,6 +108,7 @@ class WebFetchServiceImpl(
             auditLog = WebAuditLog(auditLogDir),
             shortenerResolver = ShortenerResolver(shortenerClient),
             fetchCache = fetchCache,
+            promptExtractor = promptExtractor,
         )
     }
 }
