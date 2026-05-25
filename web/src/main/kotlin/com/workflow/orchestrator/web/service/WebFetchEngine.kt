@@ -55,6 +55,7 @@ class WebFetchEngine(
     private val auditLog: WebAuditLog,
     private val resolver: UrlSafetyGuard.Resolver = UrlSafetyGuard.SystemResolver,
     private val shortenerResolver: ShortenerResolver,
+    private val fetchCache: com.workflow.orchestrator.web.service.cache.WebFetchCache? = null,
     /**
      * When true, the SSRF guard allows loopback addresses (localhost, 127.x.x.x) and
      * private LAN ranges to pass. Default false (production posture — all internal addresses
@@ -91,6 +92,7 @@ class WebFetchEngine(
         auditLog = auditLog,
         resolver = resolver,
         shortenerResolver = shortenerResolver,
+        fetchCache = null,
         allowLoopback = allowLoopback,
     )
 
@@ -247,6 +249,27 @@ class WebFetchEngine(
             }
         }
 
+        // ── Cache lookup ────────────────────────────────────────────────────
+        // After URL screening, SSRF, allowlist, and approval pass — but BEFORE the network.
+        // A hit skips the HTTP call, jsoup, and the sanitizer subagent.
+        val cacheKey = fetchCache?.let {
+            com.workflow.orchestrator.web.service.cache.WebFetchCache.Key(
+                url = pass.finalUrl,
+                maxBytes = request.maxBytes,
+                sanitizerBrainId = settings.resolveSanitizerBrainId(),
+            )
+        }
+        if (cacheKey != null) {
+            val hit = fetchCache.get(cacheKey)
+            if (hit != null) {
+                auditCacheHit(hit, correlationId)
+                return ToolResult.success(
+                    data = hit,
+                    summary = "Fetched ${hit.finalUrl} (${hit.extractedChars} chars, ${hit.sanitizerVerdict}, cached)",
+                )
+            }
+        }
+
         // Stage 6: HTTP GET with manual redirect walking + streaming size cap
         val maxBytes = (request.maxBytes ?: state.webMaxBytes).toLong()
         val resp: Response = try {
@@ -363,6 +386,11 @@ class WebFetchEngine(
                 fetchedAt = Instant.now(),
                 elapsedMs = System.currentTimeMillis() - start,
             )
+
+            // Cache the successful result for future lookups.
+            if (cacheKey != null) {
+                fetchCache.put(cacheKey, page)
+            }
 
             auditSuccess(page, correlationId)
             return ToolResult.success(
@@ -527,6 +555,33 @@ class WebFetchEngine(
                 sanitizerNotes = page.sanitizerNotes,
                 elapsedMs = page.elapsedMs,
                 error = null,
+            )
+        )
+    }
+
+    private fun auditCacheHit(page: WebPage, correlationId: String) {
+        auditLog.append(
+            WebAuditRecord(
+                ts = Instant.now(),
+                op = "fetch",
+                agentSessionId = correlationId,
+                url = page.originalUrl,
+                finalUrl = page.finalUrl,
+                query = null,
+                provider = null,
+                allowlistDecision = page.allowlistDecision,
+                screenerFlags = page.screenerFlags.map { it.name },
+                ssrfPass = true,
+                httpStatus = null,
+                contentType = page.contentType,
+                responseBytes = page.responseBytes,
+                extractedChars = page.extractedChars,
+                resultCount = null,
+                sanitizerVerdict = page.sanitizerVerdict,
+                sanitizerNotes = page.sanitizerNotes,
+                elapsedMs = 0,
+                error = null,
+                cacheHit = true,
             )
         )
     }
