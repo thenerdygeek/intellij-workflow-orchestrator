@@ -398,4 +398,30 @@ class BambooApiClientTest {
         assertTrue(result is ApiResult.Error)
         assertEquals(ErrorType.FORBIDDEN, (result as ApiResult.Error).type)
     }
+
+    @Test
+    fun `enablePlanBranch maps 401 to AUTH_FAILED error`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401))
+
+        val result = client.enablePlanBranch("PROJ-PLAN-3")
+
+        assertTrue(result is ApiResult.Error)
+        assertEquals(ErrorType.AUTH_FAILED, (result as ApiResult.Error).type)
+    }
+
+    @Test
+    fun `enablePlanBranch maps text-html response to AUTH_REDIRECT`() = runTest {
+        // Expired PAT/session: Bamboo answers 200 with the login HTML page.
+        // postForm catches the text/html pattern and surfaces AUTH_REDIRECT.
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .setHeader("Content-Type", "text/html;charset=UTF-8")
+                .setBody("<html><body>Login required</body></html>")
+        )
+
+        val result = client.enablePlanBranch("PROJ-PLAN-3")
+
+        assertTrue(result is ApiResult.Error)
+        assertEquals(ErrorType.AUTH_REDIRECT, (result as ApiResult.Error).type)
+    }
 }

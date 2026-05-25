@@ -410,6 +410,9 @@ class AutomationPanel(
         // branch onto the new suite. Both are EDT-only fields touched here on the EDT.
         selectedBranchItem = null
         suppressBranchListener = true
+        // Clear any transient status (e.g. a lingering "Enabling …" from a branch
+        // enable that was still in flight when the user switched suites — I-2).
+        statusLabel.text = ""
         val token = ++loadGeneration
         log.info("[Automation:UI] Suite selected: $planKey (gen=$token) — sticky baseline, no scan")
         // Suite-switch only re-binds the selected-suite reference used by
@@ -1036,6 +1039,12 @@ class AutomationPanel(
      */
     private fun onDisabledBranchSelected(item: BranchComboItem) {
         val branchKey = item.branchKey ?: return
+        // Capture the suite this action belongs to. The enable call is async, and
+        // the user can switch suites while it's in flight; persisting / reloading
+        // against `currentSuitePlanKey` read inside the callback would contaminate
+        // whatever suite is selected by then (C-1). The modal dialog blocks the EDT,
+        // so the suite cannot change before scope.launch — capturing here is safe.
+        val capturedSuitePlanKey = currentSuitePlanKey
         val choice = Messages.showYesNoDialog(
             project,
             "The branch plan '$branchKey' is disabled in Bamboo, so triggering it won't run any jobs or stages.\n\n" +
@@ -1054,15 +1063,21 @@ class AutomationPanel(
         scope.launch {
             val result = bambooService.enablePlanBranch(branchKey)
             invokeLater {
+                // If the user switched suites while the call was in flight, drop the
+                // result entirely — the combo/status now belong to a different suite.
+                if (currentSuitePlanKey != capturedSuitePlanKey) {
+                    log.info("[Automation:UI] Dropping stale enable result for $branchKey (suite changed to $currentSuitePlanKey)")
+                    return@invokeLater
+                }
                 if (!result.isError) {
                     log.info("[Automation:UI] Enabled branch plan $branchKey")
                     statusLabel.text = ""
                     // Persist + re-render so the branch shows enabled and stays selected.
-                    if (currentSuitePlanKey.isNotBlank()) {
-                        AutomationSettingsService.getInstance().setSuiteSelectedBranch(currentSuitePlanKey, branchKey)
+                    if (capturedSuitePlanKey.isNotBlank()) {
+                        AutomationSettingsService.getInstance().setSuiteSelectedBranch(capturedSuitePlanKey, branchKey)
                     }
                     val token = ++loadGeneration
-                    loadBranchesFor(currentSuitePlanKey, token)
+                    loadBranchesFor(capturedSuitePlanKey, token)
                 } else {
                     log.warn("[Automation:UI] Failed to enable branch plan $branchKey: ${result.summary}")
                     statusLabel.text = ""
