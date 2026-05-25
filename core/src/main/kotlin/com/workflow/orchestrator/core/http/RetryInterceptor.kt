@@ -24,9 +24,32 @@ class RetryInterceptor(
     private val log = Logger.getInstance(RetryInterceptor::class.java)
     private val retryableCodes = setOf(429, 500, 502, 503, 504)
 
+    /**
+     * Only idempotent methods are safe to retry. Retrying POST/PUT/DELETE/PATCH
+     * on a 5xx can duplicate side effects (Bamboo builds, PR merges, Jira
+     * comments) because the server may have processed the request before the
+     * transient failure surfaced. HTTP method names are uppercase per RFC 9110.
+     */
+    private val safeMethods = setOf("GET", "HEAD", "OPTIONS")
+
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
-        var response = chain.proceed(request)
+        val response = chain.proceed(request)
+
+        // Idempotency guard: non-idempotent methods get a single attempt, no retry.
+        if (request.method !in safeMethods) {
+            return response
+        }
+
+        return retryIdempotent(chain, request, response)
+    }
+
+    private fun retryIdempotent(
+        chain: Interceptor.Chain,
+        request: okhttp3.Request,
+        firstResponse: Response
+    ): Response {
+        var response = firstResponse
         var attempt = 0
 
         while (response.code in retryableCodes && attempt < maxRetries) {
