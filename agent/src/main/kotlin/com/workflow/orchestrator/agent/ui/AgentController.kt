@@ -3981,6 +3981,13 @@ class AgentController(
         // Clear the auto-wake listener so a stale controller reference is not
         // held by AgentService after disposal.
         service.setAutoWakeListener(null)
+        // Null out this controller in the registry so that repeated tab opens do
+        // not accumulate stale AgentController instances (each holding a live
+        // controllerScope + JCEF browser). Compare-and-null to avoid clobbering
+        // a newer controller that has already registered itself (race-safe).
+        // Closes audit finding agent-ui:F-5.
+        val reg = AgentControllerRegistry.getInstance(project)
+        if (reg.controller === this) reg.controller = null
     }
 }
 
