@@ -126,19 +126,13 @@ class SubagentRunner(
      */
     private val onCompactionState: ((active: Boolean, phase: String) -> Unit)? = null,
     /**
-     * Optional model fallback manager. When set alongside [brainFactory], the sub-agent's
-     * AgentLoop can fall back to a cheaper model on network/timeout errors and escalate
-     * back. Without this, a transient network error fails the whole sub-agent.
-     */
-    private val fallbackManager: com.workflow.orchestrator.agent.loop.ModelFallbackManager? = null,
-    /**
-     * Optional factory that produces a fresh LlmBrain for a given model ID. Used by both
-     * fallbackManager (L1) and same-tier brain recycling (L2). Null = no recycling.
+     * Optional factory that produces a fresh LlmBrain for a given model ID. Used by
+     * same-tier brain recycling and L2 tier escalation. Null = no recycling.
      */
     private val brainFactory: (suspend (modelId: String, reason: String?) -> com.workflow.orchestrator.core.ai.LlmBrain)? = null,
     /**
-     * Optional fallback chain used by L2 tier escalation when [fallbackManager] is null
-     * but same-tier recycles are exhausted. Mirrors main agent's `cachedFallbackChain`.
+     * Optional fallback chain used by L2 tier escalation when same-tier recycles are
+     * exhausted. Mirrors main agent's `cachedFallbackChain`.
      */
     private val cachedFallbackChain: List<String>? = null,
     /**
@@ -392,7 +386,6 @@ class SubagentRunner(
                 outputSpiller = outputSpiller,
                 attachmentStoreProvider = attachmentStoreProvider,
                 onCompactionState = onCompactionState,
-                fallbackManager = fallbackManager,
                 brainFactory = brainFactory,
                 cachedFallbackChain = cachedFallbackChain,
                 onRetry = onRetry,

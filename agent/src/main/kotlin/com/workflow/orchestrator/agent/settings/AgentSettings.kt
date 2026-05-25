@@ -43,8 +43,9 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         var smartWorkingIndicator by property(true)
         /**
          * Strategy when network errors exhaust retries:
-         * - "none": fail immediately (default)
-         * - "model_fallback": switch to cheaper model, escalate back when stable
+         * - "none": fail immediately (default) — same-model brain recycle only
+         * - "model_fallback": after same-model recycles are exhausted, escalate one tier
+         *   down the fallback chain (Opus → Sonnet) via L2 tier escalation
          * - "context_compaction": compact context and retry with the same model
          */
         var networkErrorStrategy by string("none")

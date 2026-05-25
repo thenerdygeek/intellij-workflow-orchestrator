@@ -89,11 +89,6 @@ class SpawnAgentTool(
     /** Optional signal fired when the sub-agent's ContextManager runs a compaction pass. */
     private val onCompactionState: ((active: Boolean, phase: String) -> Unit)? = null,
     /**
-     * Provider for the model fallback manager — evaluated at dispatch time so sub-agents see
-     * the manager populated in executeTask, not the null snapshot at registerAllTools time.
-     */
-    private val fallbackManager: () -> com.workflow.orchestrator.agent.loop.ModelFallbackManager? = { null },
-    /**
      * Provider for the brain factory — evaluated at dispatch time so sub-agents see the factory
      * populated in executeTask, not the null snapshot at registerAllTools time.
      */
@@ -834,7 +829,6 @@ Tips:
             outputSpiller = outputSpiller(),
             attachmentStoreProvider = attachmentStoreProvider,
             onCompactionState = onCompactionState,
-            fallbackManager = fallbackManager(),
             brainFactory = brainFactory(),
             cachedFallbackChain = cachedFallbackChain(),
             onRetry = onRetry,
@@ -955,7 +949,6 @@ Tips:
                         outputSpiller = outputSpiller(),
                         attachmentStoreProvider = attachmentStoreProvider,
                         onCompactionState = onCompactionState,
-                        fallbackManager = fallbackManager(),
                         brainFactory = brainFactory(),
                         cachedFallbackChain = cachedFallbackChain(),
                         onRetry = onRetry,

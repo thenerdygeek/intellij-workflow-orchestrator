@@ -12,7 +12,7 @@ class SpawnAgentToolParityTest {
 
         val expectedFields = listOf(
             "outputSpiller", "attachmentStoreProvider", "onCompactionState",
-            "fallbackManager", "brainFactory", "cachedFallbackChain",
+            "brainFactory", "cachedFallbackChain",
             "onRetry", "onModelSwitch", "modelCatalogService",
         )
 

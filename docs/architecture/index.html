@@ -1297,12 +1297,12 @@ graph TD
 
         <h3>ModelCatalogService &amp; Vision-Aware Fallback</h3>
         <p>The shared <code>ModelCatalogService</code> (in <code>:core</code>) reads <code>/.api/modelconfig/supported-models.json</code> at session start and exposes <code>getContextWindow()</code>, <code>supportsVision()</code>, <code>supportsTools()</code>, <code>getStatus()</code>. <code>SharedCatalogHolder</code> caches it keyed on <code>sgUrl</code> (Phase 7 followup F-P6FU-2 dropped the dead <code>tokenProvider</code> half of the original cache key); a warm-up coroutine fetches the catalog as soon as the holder constructs.</p>
-        <p>When the in-flight payload has image parts, both fallback paths skip non-vision-capable models in the chain:</p>
+        <p>When the in-flight payload has image parts, the L2 tier-escalation path skips non-vision-capable models in the chain:</p>
         <ul>
-            <li><strong>L1 fallback</strong> (when <code>ModelFallbackManager</code> is non-null) calls <code>fallbackChainForVision(catalog)</code> and advances past any non-vision candidates.</li>
-            <li><strong>L2 tier escalation</strong> (Phase 7 followup F-P6FU-3, when <code>fallbackManager == null</code> and same-tier recycles &ge; MAX) applies the same filter using <code>catalog.supportsVision()</code> directly.</li>
+            <li><strong>L2 tier escalation</strong> (Phase 7 followup F-P6FU-3, when same-tier recycles &ge; MAX) filters chain candidates using <code>catalog.supportsVision()</code> directly, escalating past any non-vision model.</li>
         </ul>
-        <p>Cold-catalog safety: L1 falls back to the unfiltered chain with a warning so the loop keeps making progress; L2 surfaces a user-visible &ldquo;no vision-capable fallback available, retry on primary or remove image&rdquo; error and aborts. Pinned by <code>AgentLoopVisionFallbackTest</code>.</p>
+        <p>If no vision-capable model remains in the chain, L2 surfaces a user-visible &ldquo;no vision-capable fallback available, retry on primary or remove image&rdquo; error and aborts. Pinned by <code>AgentLoopVisionFallbackTest</code>.</p>
+        <p><em>Note (Phase 6f, audit agent-runtime:F-20):</em> the eager cross-model L1 fallback (<code>ModelFallbackManager</code> + <code>fallbackChainForVision()</code>) was removed. Same-model brain recycle (L1-recycle) plus L2 tier escalation are now the sole automatic recovery layers.</p>
 
         <h3>Phase 7 Picker &amp; Usage Indicator</h3>
         <p>The model picker dropdown gains a per-row capacity strip (<code>132K context &middot; 18K per-message</code>) and a capability badge strip (&#x1F441; vision &middot; &#x1F527; tools &middot; &#x1F9E0; reasoning &middot; &#x26A0; deprecated). Data flows from <code>ModelCatalogService</code> through <code>AgentController.loadModelList</code> into the Kotlin&rarr;JS <code>updateModelList</code> bridge call. <code>&lt;ModelPickerRow&gt;</code> defends against undefined for each new field so legacy payloads still render.</p>

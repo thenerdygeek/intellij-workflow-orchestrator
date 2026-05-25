@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.agent.tools.subagent
 
-import com.workflow.orchestrator.agent.loop.ModelFallbackManager
 import com.workflow.orchestrator.agent.tools.ToolOutputSpiller
 import com.workflow.orchestrator.agent.session.AttachmentStore
 import com.workflow.orchestrator.core.ai.LlmBrain
@@ -12,12 +11,11 @@ import org.junit.jupiter.api.Test
 class SubagentRunnerWiringTest {
 
     @Test
-    fun `SubagentRunner accepts outputSpiller attachmentStoreProvider onCompactionState fallbackManager brainFactory cachedFallbackChain onRetry onModelSwitch modelCatalogService as constructor params`() {
+    fun `SubagentRunner accepts outputSpiller attachmentStoreProvider onCompactionState brainFactory cachedFallbackChain onRetry onModelSwitch modelCatalogService as constructor params`() {
         val brain = mockk<LlmBrain>(relaxed = true)
         val project = mockk<com.intellij.openapi.project.Project>(relaxed = true)
         val spiller = mockk<ToolOutputSpiller>(relaxed = true)
         val storeProvider: () -> AttachmentStore? = { null }
-        val fallback = mockk<ModelFallbackManager>(relaxed = true)
         val catalog = mockk<ModelCatalogService>(relaxed = true)
         val brainFactory: suspend (String, String?) -> LlmBrain = { _, _ -> brain }
 
@@ -32,7 +30,6 @@ class SubagentRunnerWiringTest {
             outputSpiller = spiller,
             attachmentStoreProvider = storeProvider,
             onCompactionState = { _, _ -> },
-            fallbackManager = fallback,
             brainFactory = brainFactory,
             cachedFallbackChain = listOf("a", "b"),
             onRetry = { _, _, _, _ -> },
@@ -91,7 +88,6 @@ class SubagentRunnerWiringTest {
             "outputSpiller = outputSpiller",
             "attachmentStoreProvider = attachmentStoreProvider",
             "onCompactionState = onCompactionState",
-            "fallbackManager = fallbackManager",
             "brainFactory = brainFactory",
             "cachedFallbackChain = cachedFallbackChain",
             "onRetry = onRetry",

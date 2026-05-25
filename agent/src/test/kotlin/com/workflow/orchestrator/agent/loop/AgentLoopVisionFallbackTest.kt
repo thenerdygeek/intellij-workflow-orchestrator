@@ -22,28 +22,21 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- * Phase 6 review followup — wires `ModelFallbackManager.fallbackChainForVision()`
- * into [AgentLoop.run].
+ * Phase 7 followup F-P6FU-3 — wires the vision filter into [AgentLoop.run]'s **L2
+ * tier-escalation** path.
  *
- * **Risk being closed:** prior to this change, when the in-flight payload contained
- * image parts AND the primary model errored, [AgentLoop] would fall back to the
- * next model in the chain via [ModelFallbackManager.onNetworkError] — even if that
- * next model lacked the `vision` capability. The gateway silently strips image
- * content for non-vision models, producing a confusing reply with no error
- * (handoff §"Risk register" item 9).
+ * (The L1 `ModelFallbackManager` fallback path was removed in Phase 6f — see audit
+ * agent-runtime:F-20. Same-model brain recycling + L2 tier escalation are now the
+ * sole automatic recovery layers, and L2 owns the vision filter that L1 used to.)
  *
- * **Contract pinned by these tests:**
+ * **Risk being closed:** when the in-flight payload contains image parts AND the loop
+ * exhausts same-tier recycles, L2 tier escalation advances down `cachedFallbackChain`.
+ * Without a vision filter it could land on a model lacking the `vision` capability; the
+ * gateway silently strips image content for non-vision models, producing a confusing
+ * reply with no error.
  *
- *  1. **Image payload + mixed chain** — fallback must skip non-vision-capable
- *     models, advancing to the next vision-capable model in the chain.
- *  2. **Image payload + all-non-vision chain** — fallback must surface a
- *     user-visible message containing the verbatim string
- *     `"no vision-capable fallback available, retry on primary or remove image"`
- *     and abort the loop instead of silently routing to a non-vision model.
- *  3. **Text-only payload** — vision filter does not engage; fallback chain
- *     advances normally (regression guard for non-image turns).
- *
- * Tests written first per Phase 2-6 TDD discipline.
+ * **Contract pinned here:** image payload + mixed-vision chain → L2 must skip the
+ * non-vision intermediary and escalate directly to the next vision-capable model.
  */
 class AgentLoopVisionFallbackTest {
 
@@ -141,171 +134,10 @@ class AgentLoopVisionFallbackTest {
     // ---- Tests ----
 
     /**
-     * Image payload + mixed-vision chain → fallback advances PAST the non-vision
-     * intermediary to the first vision-capable model.
+     * Phase 7 followup F-P6FU-3 — L2 tier escalation must apply a vision filter.
      *
-     * Chain: primary[vision=true] → mid[vision=false] → late[vision=true]
-     * Primary errors. Expected: AgentLoop swaps directly to `late`, NEVER touches `mid`.
-     */
-    @Test
-    fun `image payload with mixed-vision chain skips non-vision intermediaries on fallback`() = runTest {
-        val chain = listOf("primary::vision", "mid::no-vision", "late::vision")
-        val fallbackManager = ModelFallbackManager(chain)
-        val catalog = StubCatalog(
-            visionSupport = mapOf(
-                "primary::vision" to true,
-                "mid::no-vision" to false,
-                "late::vision" to true,
-            ),
-        )
-
-        val primaryBrain = SequenceBrain(
-            modelId = "primary::vision",
-            responses = listOf(ApiResult.Error(ErrorType.NETWORK_ERROR, "Connection refused")),
-        )
-        val lateBrain = SequenceBrain(
-            modelId = "late::vision",
-            responses = listOf(ApiResult.Success(completionToolCallResponse())),
-        )
-        val midBrainCalls = java.util.concurrent.atomic.AtomicInteger(0)
-
-        val brainFactory: suspend (String, String?) -> LlmBrain = { modelId, _ ->
-            when (modelId) {
-                "primary::vision" -> primaryBrain
-                "mid::no-vision" -> {
-                    midBrainCalls.incrementAndGet()
-                    SequenceBrain(
-                        modelId = "mid::no-vision",
-                        responses = listOf(ApiResult.Error(ErrorType.NETWORK_ERROR, "should not be reached")),
-                    )
-                }
-                "late::vision" -> lateBrain
-                else -> throw IllegalArgumentException("Unexpected model: $modelId")
-            }
-        }
-
-        // Seed contextManager with an image-bearing user message so the in-flight
-        // payload contains image parts.
-        contextManager.addUserMessage("look at this")
-        // Replace the just-added user message with one carrying parts. (ContextManager
-        // exposes addAssistantMessage which takes a full ChatMessage, so we use that.)
-        contextManager.addAssistantMessage(
-            ChatMessage(
-                role = "user",
-                content = "look at this",
-                parts = listOf(
-                    ContentPart.Image(sha256 = "abc", mime = "image/png", originalFilename = null),
-                    ContentPart.Text("look at this"),
-                ),
-            ),
-        )
-
-        val tools = listOf(completionTool())
-
-        val loop = AgentLoop(
-            brain = primaryBrain,
-            tools = tools.associateBy { it.name },
-            toolDefinitions = tools.map { it.toToolDefinition() },
-            contextManager = contextManager,
-            project = project,
-            fallbackManager = fallbackManager,
-            brainFactory = brainFactory,
-            modelCatalogService = catalog,
-        )
-
-        val result = loop.run("Fix the bug")
-
-        assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
-        assertEquals(0, midBrainCalls.get(), "non-vision mid model must NOT be invoked")
-        // FallbackManager should now sit on `late::vision` (chain index 2), not `mid` (index 1).
-        assertEquals("late::vision", fallbackManager.getCurrentModelId())
-    }
-
-    /**
-     * Image payload + chain with NO vision-capable fallback after primary →
-     * AgentLoop must NOT swap to a non-vision model. Loop fails with a
-     * user-visible message containing the verbatim "no vision-capable fallback
-     * available" string from the reviewer's recommendation.
-     */
-    @Test
-    fun `image payload with all-non-vision fallback chain produces user-visible no-vision-fallback error`() = runTest {
-        val chain = listOf("primary::vision", "mid::no-vision", "late::no-vision")
-        val fallbackManager = ModelFallbackManager(chain)
-        val catalog = StubCatalog(
-            visionSupport = mapOf(
-                "primary::vision" to true,
-                "mid::no-vision" to false,
-                "late::no-vision" to false,
-            ),
-        )
-
-        val primaryBrain = SequenceBrain(
-            modelId = "primary::vision",
-            // Three errors so the loop exhausts retries even if it doesn't fall back.
-            responses = List(5) { ApiResult.Error(ErrorType.NETWORK_ERROR, "Connection refused") },
-        )
-        val nonVisionCalls = java.util.concurrent.atomic.AtomicInteger(0)
-
-        val brainFactory: suspend (String, String?) -> LlmBrain = { modelId, _ ->
-            when (modelId) {
-                "primary::vision" -> primaryBrain
-                "mid::no-vision", "late::no-vision" -> {
-                    nonVisionCalls.incrementAndGet()
-                    SequenceBrain(
-                        modelId = modelId,
-                        responses = listOf(ApiResult.Error(ErrorType.NETWORK_ERROR, "should not be reached")),
-                    )
-                }
-                else -> throw IllegalArgumentException("Unexpected model: $modelId")
-            }
-        }
-
-        contextManager.addAssistantMessage(
-            ChatMessage(
-                role = "user",
-                content = "look",
-                parts = listOf(
-                    ContentPart.Image(sha256 = "abc", mime = "image/png", originalFilename = null),
-                    ContentPart.Text("look"),
-                ),
-            ),
-        )
-
-        val tools = listOf(completionTool())
-        val loop = AgentLoop(
-            brain = primaryBrain,
-            tools = tools.associateBy { it.name },
-            toolDefinitions = tools.map { it.toToolDefinition() },
-            contextManager = contextManager,
-            project = project,
-            fallbackManager = fallbackManager,
-            brainFactory = brainFactory,
-            modelCatalogService = catalog,
-        )
-
-        val result = loop.run("Fix the bug")
-
-        // Loop must fail (not complete on a non-vision model)
-        assertTrue(result is LoopResult.Failed, "Expected Failed but got $result")
-        assertEquals(0, nonVisionCalls.get(), "non-vision fallback brains must NEVER be invoked when no vision fallback exists")
-        val errMsg = (result as LoopResult.Failed).error
-        assertTrue(
-            errMsg.contains("no vision-capable fallback available, retry on primary or remove image", ignoreCase = true),
-            "expected user-visible no-vision-fallback message, got: $errMsg",
-        )
-    }
-
-    /**
-     * Phase 7 followup F-P6FU-3 — L2 tier escalation must apply the same vision
-     * filter as L1 fallback. Reviewer's risk:
-     *
-     *   "L2 tier escalation in AgentLoop.kt:925-950 does NOT apply vision filter.
-     *    Triggers only when fallbackManager == null AND same-tier recycles ≥ MAX.
-     *    Same silent-image-strip risk applies."
-     *
-     * **Setup:** `fallbackManager = null` (so L1 fallback path is bypassed),
-     * `cachedFallbackChain = [primary::vision, mid::no-vision, late::vision]`,
-     * primary returns 4 timeout errors so the loop:
+     * **Setup:** `cachedFallbackChain = [primary::vision, mid::no-vision, late::vision]`,
+     * primary returns timeout errors so the loop:
      *
      *   1. Exhausts API retries (apiRetryCount = MAX_RETRIES).
      *   2. Drops into L1-recycle (same-tier brain recycle) — fires
@@ -316,9 +148,6 @@ class AgentLoopVisionFallbackTest {
      * `late::vision`. Without the vision filter, L2 would silently advance to
      * `mid::no-vision` and the gateway would strip images, producing the
      * confusing-reply failure mode.
-     *
-     * Stable-bug pattern: this test fails before the L2 vision filter is wired,
-     * passes after. Same red→green discipline as the L1 case.
      */
     @Test
     fun `image payload + L2 tier escalation skips non-vision intermediaries`() = runTest {
@@ -384,9 +213,6 @@ class AgentLoopVisionFallbackTest {
             toolDefinitions = tools.map { it.toToolDefinition() },
             contextManager = contextManager,
             project = project,
-            // CRITICAL: fallbackManager = null forces L2 to handle the
-            // escalation. With fallbackManager non-null, L1 would fire first.
-            fallbackManager = null,
             brainFactory = brainFactory,
             cachedFallbackChain = chain,
             modelCatalogService = catalog,
@@ -403,61 +229,5 @@ class AgentLoopVisionFallbackTest {
         assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
         assertEquals(0, midBrainCalls.get(),
             "L2 must skip non-vision intermediaries when payload has image parts — mid::no-vision must NOT be invoked")
-    }
-
-    /**
-     * Regression guard: text-only payload + mixed-vision chain → fallback ignores
-     * vision capability and advances to the very next model (mid::no-vision)
-     * normally. The vision filter must NEVER engage on text-only turns.
-     */
-    @Test
-    fun `text-only payload uses unfiltered fallback chain even when catalog is wired`() = runTest {
-        val chain = listOf("primary::vision", "mid::no-vision", "late::vision")
-        val fallbackManager = ModelFallbackManager(chain)
-        val catalog = StubCatalog(
-            visionSupport = mapOf(
-                "primary::vision" to true,
-                "mid::no-vision" to false,
-                "late::vision" to true,
-            ),
-        )
-
-        val primaryBrain = SequenceBrain(
-            modelId = "primary::vision",
-            responses = listOf(ApiResult.Error(ErrorType.NETWORK_ERROR, "Connection refused")),
-        )
-        val midBrain = SequenceBrain(
-            modelId = "mid::no-vision",
-            responses = listOf(ApiResult.Success(completionToolCallResponse())),
-        )
-
-        val brainFactory: suspend (String, String?) -> LlmBrain = { modelId, _ ->
-            when (modelId) {
-                "primary::vision" -> primaryBrain
-                "mid::no-vision" -> midBrain
-                else -> throw IllegalArgumentException("Unexpected model: $modelId")
-            }
-        }
-
-        // No image parts on the user message — text-only.
-        contextManager.addUserMessage("Fix the bug")
-
-        val tools = listOf(completionTool())
-        val loop = AgentLoop(
-            brain = primaryBrain,
-            tools = tools.associateBy { it.name },
-            toolDefinitions = tools.map { it.toToolDefinition() },
-            contextManager = contextManager,
-            project = project,
-            fallbackManager = fallbackManager,
-            brainFactory = brainFactory,
-            modelCatalogService = catalog,
-        )
-
-        val result = loop.run("Fix the bug")
-
-        assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
-        // Should have advanced to mid::no-vision normally (vision filter doesn't engage on text-only)
-        assertEquals("mid::no-vision", fallbackManager.getCurrentModelId())
     }
 }

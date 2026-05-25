@@ -77,7 +77,6 @@ import com.workflow.orchestrator.core.ai.OpenAiCompatBrain
 import com.workflow.orchestrator.core.ai.SourcegraphChatClient
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ServiceType
-import com.workflow.orchestrator.agent.loop.ModelFallbackManager
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import com.workflow.orchestrator.document.service.TikaDocumentExtractor
@@ -546,7 +545,6 @@ class AgentService(
     @Volatile private var liveOnRetry: ((Int, Int, String, Long) -> Unit)? = null
     @Volatile private var liveOnCompactionState: ((Boolean, String) -> Unit)? = null
     @Volatile private var liveOnModelSwitch: ((String, String, String) -> Unit)? = null
-    @Volatile private var liveFallbackManager: com.workflow.orchestrator.agent.loop.ModelFallbackManager? = null
     @Volatile private var liveBrainFactory: (suspend (String, String?) -> com.workflow.orchestrator.core.ai.LlmBrain)? = null
     @Volatile private var liveCachedFallbackChain: List<String>? = null
 
@@ -986,7 +984,6 @@ class AgentService(
             outputSpiller = { _outputSpiller },
             attachmentStoreProvider = { activeAttachmentStore },
             onCompactionState = { active, phase -> liveOnCompactionState?.invoke(active, phase) },
-            fallbackManager = { liveFallbackManager },
             brainFactory = { liveBrainFactory },
             cachedFallbackChain = { liveCachedFallbackChain },
             onRetry = { a, m, r, d -> liveOnRetry?.invoke(a, m, r, d) },
@@ -1637,12 +1634,11 @@ class AgentService(
                 val strategy = agentSettings.state.networkErrorStrategy ?: "none"
 
                 // Bug 2 — when strategy is "none", the user explicitly opted out of any
-                // automatic model switching. Disable BOTH L1 (ModelFallbackManager) AND L2
-                // (tier escalation that fires when fallbackManager is null) so the loop
-                // never silently changes the user's chosen model. Same-tier brain recycling
+                // automatic model switching. Disable L2 tier escalation so the loop never
+                // silently changes the user's chosen model. Same-tier brain recycling
                 // (fresh OkHttp pool on dead-socket) is unaffected — it preserves the model.
                 val cachedFallbackChain: List<String>? = if (strategy == "none") {
-                    log.info("[Agent] Network error strategy = 'none' — L1 fallback and L2 tier escalation both disabled")
+                    log.info("[Agent] Network error strategy = 'none' — L2 tier escalation disabled")
                     null
                 } else {
                     val cachedModels = ModelCache.getCached()
@@ -1656,10 +1652,6 @@ class AgentService(
                     }
                 }
 
-                val fallbackManager = if (strategy == "model_fallback" && cachedFallbackChain != null) {
-                    log.info("[Agent] Model fallback enabled (L1 takes priority over L2)")
-                    ModelFallbackManager(cachedFallbackChain)
-                } else null
                 val compactOnTimeoutExhaustion = strategy == "context_compaction"
 
                 // Counter for recycle marker filenames (recycle-001.txt, recycle-002.txt, ...).
@@ -1667,9 +1659,8 @@ class AgentService(
                 // (model fallback OR same-tier recycle).
                 val recycleMarkerCounter = java.util.concurrent.atomic.AtomicInteger(0)
 
-                // brainFactory is now ALWAYS built — even when model fallback is disabled.
-                // Used by AgentLoop for both:
-                //   - Model fallback (when fallbackManager != null and an alternate tier is available)
+                // brainFactory is now ALWAYS built. Used by AgentLoop for both:
+                //   - L2 tier escalation (when an alternate tier is available)
                 //   - Same-tier brain recycling on stream/timeout errors (always available now,
                 //     fixes broken socket / dead ConnectionPool / stale activeCall ref)
                 val fbConnections = ConnectionSettings.getInstance()
@@ -2043,7 +2034,6 @@ class AgentService(
                 liveOnRetry = onRetry
                 liveOnCompactionState = onCompactionState
                 liveOnModelSwitch = onModelSwitch
-                liveFallbackManager = fallbackManager
                 liveBrainFactory = brainFactory
                 liveCachedFallbackChain = cachedFallbackChain
 
@@ -2135,14 +2125,13 @@ class AgentService(
                     steeringQueue = steeringQueue,
                     onSteeringDrained = onSteeringDrained,
                     onAwaitingUserInput = onAwaitingUserInput,
-                    fallbackManager = fallbackManager,
                     brainFactory = brainFactory,
                     cachedFallbackChain = cachedFallbackChain,
                     // Phase 6 review followup — when the in-flight payload contains
-                    // image parts, the loop's L1-fallback branch filters the chain to
-                    // vision-capable models via ModelFallbackManager.fallbackChainForVision.
+                    // image parts, the loop's L2 tier-escalation branch filters the chain
+                    // to vision-capable models via ModelCatalogService.supportsVision().
                     // sharedCatalog is warmed up at session start so the first
-                    // image-bearing fallback decision sees authoritative data, not
+                    // image-bearing escalation decision sees authoritative data, not
                     // always-false from cold cache.
                     modelCatalogService = sharedCatalog,
                     onModelSwitch = onModelSwitch,

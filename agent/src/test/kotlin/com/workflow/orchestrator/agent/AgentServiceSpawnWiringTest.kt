@@ -10,7 +10,7 @@ class AgentServiceSpawnWiringTest {
             "src/main/kotlin/com/workflow/orchestrator/agent/AgentService.kt"
         ).readText()
         // Find each SpawnAgentTool(...) construction block and verify it passes
-        // all 9 parity params.
+        // all parity params.
         val blocks = Regex("""SpawnAgentTool\s*\(([\s\S]*?)^\s*\)""", RegexOption.MULTILINE)
             .findAll(src)
             .map { it.groupValues[1] }
@@ -20,7 +20,6 @@ class AgentServiceSpawnWiringTest {
             "outputSpiller",
             "attachmentStoreProvider",
             "onCompactionState",
-            "fallbackManager",
             "brainFactory",
             "cachedFallbackChain",
             "onRetry",

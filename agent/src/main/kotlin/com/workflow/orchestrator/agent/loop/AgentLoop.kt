@@ -269,26 +269,19 @@ class AgentLoop(
      */
     private val onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
     /**
-     * Optional model fallback manager. When provided with [brainFactory],
-     * the loop falls back to cheaper models on network errors and escalates back.
-     */
-    private val fallbackManager: ModelFallbackManager? = null,
-    /**
      * Factory to create a new LlmBrain for a given model ID, with an optional reason
      * string used by the factory to write a recycle marker file into api-debug/.
      * Used by:
-     *   - the model fallback manager to switch models mid-loop (reason describes the switch)
      *   - same-tier brain recycling on stream/timeout errors (reason describes the error)
-     *   - L2 tier escalation when same-tier recycles are exhausted and fallback is disabled
+     *   - L2 tier escalation when same-tier recycles are exhausted
      */
     private val brainFactory: (suspend (modelId: String, reason: String?) -> LlmBrain)? = null,
     /**
      * Always-built fallback chain (Opus thinking → Opus → Sonnet thinking → Sonnet, no Haiku)
-     * used by L2 tier escalation when [fallbackManager] is null but the loop has exhausted
-     * same-tier brain recycles. Must contain at least 2 entries for L2 to engage.
+     * used by L2 tier escalation after the loop has exhausted same-tier brain recycles.
+     * Must contain at least 2 entries for L2 to engage.
      *
-     * Built once at task start by AgentService from ModelCache.buildFallbackChain(). Independent
-     * from [fallbackManager] which handles the same chain when enableModelFallback is on.
+     * Built once at task start by AgentService from ModelCache.buildFallbackChain().
      */
     private val cachedFallbackChain: List<String>? = null,
     /**
@@ -765,7 +758,6 @@ class AgentLoop(
         val maxConsecutiveMistakes = 3  // Cline: configurable via settings. At max, asks user for feedback.
         var apiRetryCount = 0
         var contextOverflowRetries = 0
-        var pendingEscalation = false
         var compactionRetries = 0
         /**
          * Same-model brain recycles in the current tier. Reset to 0 on any successful
@@ -797,7 +789,7 @@ class AgentLoop(
 
             // Bug 3 — apply user-requested model change at the iteration boundary, before
             // compaction or the next API call. Resets fallback recycle counts so the new
-            // model gets a clean start (otherwise a stale L1/L2 cooldown would override).
+            // model gets a clean start (otherwise a stale L2 cooldown would override).
             pendingModelChangeProvider?.invoke()?.takeIf { it.isNotBlank() && it != brain.modelId }?.let { newModel ->
                 brainFactory?.let { factory ->
                     val oldModel = brain.modelId
@@ -806,8 +798,6 @@ class AgentLoop(
                     onModelSwitch?.invoke(oldModel, newModel, "User-requested model change")
                     sessionMetrics?.recordModelSwitch(oldModel, newModel, "User-requested model change")
                     sameTierRecycles = 0
-                    pendingEscalation = false
-                    fallbackManager?.reset()
                     l2TierIdx = cachedFallbackChain?.indexOf(brain.modelId) ?: -1
                     onModelChangeApplied?.invoke(newModel)
                 }
@@ -1086,110 +1076,21 @@ class AgentLoop(
                 if (apiResult.type in RETRYABLE_ERRORS && apiRetryCount < maxRetries) {
                     apiRetryCount++
 
-                    // Tracks whether any of the three recovery layers (L1-fallback,
-                    // L1-recycle, L2) has already swapped the brain in this iteration.
-                    // Used so the L1-recycle branch can fire even when L1-fallback is
-                    // enabled but its chain is exhausted (nextModel == null) — otherwise
-                    // the loop would retry against the same dead socket.
+                    // Tracks whether a recovery layer (L1-recycle or L2) has already
+                    // swapped the brain in this iteration, so same-tier recycle and tier
+                    // escalation stay mutually exclusive per iteration.
                     var brainSwapAttempted = false
 
-                    // L1-fallback: Smart model fallback on timeout/network errors (when fallback is enabled)
-                    if (fallbackManager != null && brainFactory != null && apiResult.type in TIMEOUT_ERRORS) {
-                        val oldModel = brain.modelId
-                        if (pendingEscalation) {
-                            // Escalation back to primary failed — always swaps
-                            val revertModel = fallbackManager.onEscalationFailed()
-                            brain = brainFactory.invoke(revertModel, "Fallback escalation failed — reverting from $oldModel to $revertModel")
-                            onModelSwitch?.invoke(oldModel, revertModel, "Escalation failed — reverting")
-                            sessionMetrics?.recordModelSwitch(oldModel, revertModel, "Escalation failed — reverting")
-                            LOG.info("[Loop] Escalation failed, reverting: $oldModel → $revertModel")
-                            pendingEscalation = false
-                            // Tier swap: resync L2 index + refill recycle budget for the new tier
-                            l2TierIdx = cachedFallbackChain?.indexOf(revertModel) ?: -1
-                            sameTierRecycles = 0
-                            brainSwapAttempted = true
-                        } else {
-                            // Normal fallback — advance down the chain if possible.
-                            //
-                            // Multimodal-agent Phase 6 review followup — when the in-flight
-                            // payload contains image parts, advance PAST any non-vision-capable
-                            // model in the chain. Without this, fallback could silently land
-                            // on a model that strips images server-side, producing a
-                            // confusing reply with no error.
-                            val payloadHasImage = contextManager.getMessages().any { it.hasImageParts() }
-                            val visionFilterActive = payloadHasImage && modelCatalogService != null
-                            val visionChain: List<String>? = if (visionFilterActive) {
-                                val filtered = fallbackManager.fallbackChainForVision(modelCatalogService!!)
-                                if (filtered.isEmpty() && fallbackManager.fullFallbackChain().isNotEmpty()) {
-                                    // Cold catalog (no model has supportsVision=true because the
-                                    // catalog hasn't loaded) → fall back to the unfiltered chain
-                                    // with a warning so the loop keeps making progress. The
-                                    // alternative (hard-fail every image-bearing fallback) is
-                                    // worse than the confusing-reply risk on a single fallback.
-                                    LOG.warn("[Loop] vision filter produced empty chain — catalog likely not loaded; using unfiltered chain")
-                                    null
-                                } else {
-                                    filtered
-                                }
-                            } else {
-                                null
-                            }
-                            // Advance the fallback manager to the next model. When the vision
-                            // filter is active, keep advancing while the candidate is not in
-                            // the filtered chain (i.e. is non-vision-capable).
-                            var nextModel = fallbackManager.onNetworkError()
-                            if (visionChain != null && nextModel != null) {
-                                while (nextModel != null && nextModel !in visionChain) {
-                                    LOG.info("[Loop] Vision filter — skipping non-vision fallback candidate: $nextModel")
-                                    nextModel = fallbackManager.onNetworkError()
-                                }
-                                if (nextModel == null) {
-                                    // Chain exhausted with no vision-capable fallback. Surface a
-                                    // user-visible message so the chat doesn't end on a generic
-                                    // network error — the user needs to either retry on the
-                                    // primary model or remove the image to proceed.
-                                    val msg = "no vision-capable fallback available, retry on primary or remove image"
-                                    LOG.warn("[Loop] Vision filter — $msg (image payload, no vision-capable model in chain after $oldModel)")
-                                    onDebugLog?.invoke("warn", "vision_fallback_exhausted", msg, mapOf(
-                                        "oldModel" to oldModel,
-                                        "errorType" to apiResult.type.name,
-                                    ))
-                                    return LoopResult.Failed(
-                                        error = msg,
-                                        reason = FailureReason.API_ERROR,
-                                        iterations = iteration,
-                                    )
-                                }
-                            }
-                            if (nextModel != null) {
-                                brain = brainFactory.invoke(nextModel, "Network error on $oldModel: ${apiResult.type.name} — falling back to $nextModel")
-                                onModelSwitch?.invoke(oldModel, nextModel, "Network error — falling back")
-                                sessionMetrics?.recordModelSwitch(oldModel, nextModel, "Network error — falling back")
-                                LOG.info("[Loop] Model fallback: $oldModel → $nextModel")
-                                // Tier swap: resync L2 index + refill recycle budget for the new tier
-                                l2TierIdx = cachedFallbackChain?.indexOf(nextModel) ?: -1
-                                sameTierRecycles = 0
-                                brainSwapAttempted = true
-                            }
-                            // else: fallback chain exhausted — fall through to L1-recycle below
-                            // so we at least retry against a fresh OkHttpClient instead of the
-                            // same dead socket.
-                        }
-                    }
-
-                    // L1-recycle: Same-model brain recycle when L1-fallback did not swap.
+                    // L1-recycle: Same-model brain recycle.
                     // Throws away the OpenAiCompatBrain (and its OkHttpClient + ConnectionPool +
                     // activeCall ref) and rebuilds it with the SAME model id. Fixes broken
                     // sockets / dead TCP state that OkHttp can't detect (e.g. corporate proxy
                     // RST injection mid-stream). Conversation context is unaffected — we only
                     // recycle the network plumbing, not the message history.
                     //
-                    // Fires when either:
-                    //   - fallback is disabled (original motivation), OR
-                    //   - fallback is enabled but its chain is exhausted (M3 fix: was leaving
-                    //     the loop to retry against the same dead socket)
                     // Bounded by MAX_SAME_TIER_RECYCLES — beyond that, the issue likely is
-                    // not socket-level and L2 tier escalation takes over.
+                    // not socket-level and L2 tier escalation takes over (when a fallback
+                    // chain is available).
                     if (!brainSwapAttempted && brainFactory != null && apiResult.type in TIMEOUT_ERRORS && sameTierRecycles < MAX_SAME_TIER_RECYCLES) {
                         sameTierRecycles++
                         val sameModel = brain.modelId
@@ -1211,17 +1112,14 @@ class AgentLoop(
                     }
 
                     // L2: Tier escalation when same-tier recycles are exhausted and an
-                    // alternate tier is available. Only engages when fallbackManager is
-                    // null (when fallback is enabled, fallbackManager owns chain advancement
-                    // and L2 would race against it on the same chain). Crosses the gateway
-                    // routing layer for -latest aliased models — the only client-side
-                    // intervention that actually changes which backend serves the request.
+                    // alternate tier is available. Crosses the gateway routing layer for
+                    // -latest aliased models — the only client-side intervention that
+                    // actually changes which backend serves the request.
                     //
                     // Guard order matters: check l2TierIdx >= 0 BEFORE the size arithmetic
                     // so the sentinel "model not in chain" (-1) cleanly disables L2.
                     if (
                         !brainSwapAttempted &&
-                        fallbackManager == null &&
                         brainFactory != null &&
                         apiResult.type in TIMEOUT_ERRORS &&
                         sameTierRecycles >= MAX_SAME_TIER_RECYCLES &&
@@ -1229,12 +1127,11 @@ class AgentLoop(
                         l2TierIdx >= 0 &&
                         l2TierIdx + 1 < cachedFallbackChain.size
                     ) {
-                        // Phase 7 followup F-P6FU-3 — apply the same vision filter to L2
-                        // tier escalation that L1 fallback already applies. Without this,
-                        // when the in-flight payload contains image parts AND L1 is
-                        // disabled (no fallbackManager), L2 silently advances to the next
-                        // chain entry even if it lacks the `vision` capability — same
-                        // confusing-reply risk as the original Phase 6 finding.
+                        // Phase 7 followup F-P6FU-3 — apply a vision filter to L2 tier
+                        // escalation. Without this, when the in-flight payload contains
+                        // image parts, L2 would silently advance to the next chain entry
+                        // even if it lacks the `vision` capability — same confusing-reply
+                        // risk as the original Phase 6 finding.
                         val payloadHasImage = contextManager.getMessages().any { it.hasImageParts() }
                         val visionFilterActive = payloadHasImage && modelCatalogService != null
                         // Find the next vision-capable index; if none, surface the same
@@ -1344,22 +1241,6 @@ class AgentLoop(
             contextOverflowRetries = 0
             compactionRetries = 0
             sameTierRecycles = 0  // recycle budget refills on every successful call
-            pendingEscalation = false // if we were escalating, it succeeded
-
-            // Smart model escalation: try primary model after cooldown
-            if (fallbackManager != null && brainFactory != null && !fallbackManager.isPrimary()) {
-                val escalationModel = fallbackManager.onIterationSuccess()
-                if (escalationModel != null) {
-                    val oldModel = brain.modelId
-                    brain = brainFactory.invoke(escalationModel, "Fallback cooldown elapsed — escalating from $oldModel to $escalationModel")
-                    onModelSwitch?.invoke(oldModel, escalationModel, "Escalating back")
-                    sessionMetrics?.recordModelSwitch(oldModel, escalationModel, "Escalating back")
-                    LOG.info("[Loop] Model escalation: $oldModel → $escalationModel")
-                    pendingEscalation = true
-                    // Tier swap: resync L2 index for the new tier
-                    l2TierIdx = cachedFallbackChain?.indexOf(escalationModel) ?: -1
-                }
-            }
 
             // Stage 3: Update token tracking (ported from Cline's cost tracking)
             // Cline accumulates tokensIn/tokensOut in HistoryItem after each API call.
