@@ -253,3 +253,10 @@ Accept the performance trade-off for large files (profiling showed ~2ms/MB on So
 - **core:F-9** — NOT REAL. `SmartPoller` is a sequential `while(isActive)` loop: `action()` (a `suspend` call) is awaited, THEN `delay(finalDelay)`, then loops. No overlap, delay already taken after body completion. No change.
 - **core:F-12** — SKIPPED. Emitting a SoftWarning for every URL lacking a trailing slash would false-alarm the common, correct case `https://host`; API clients join with leading-slash paths (`get("/rest/...")`) so the merge risk doesn't exist. A real fix would be normalization, not a noisy warning.
 - **core:F-13** — FIXED. SoftWarning balloon in `ConnectionsConfigurable.apply()` now carries an "Open Connection settings" `NotificationAction`.
+
+## RESOLUTION (2026-05-25, Tier-C incidentals pass — test-only)
+
+- **core:F-3** — DONE. Added `IPv6 link-local with scope id is rejected` to BaseUrlValidatorTest (`http://[fe80::1%25eth0]/` → Invalid).
+- **agent-runtime:F-11** — DONE. Added `Sourcegraph token in userText is redacted` (sgp_ + 40 hex) to CredentialRedactorCheckpointTest.
+- **bamboo:F-17** — DONE. Added `BuildFailureBridgeScopeDisposeTest` (source-text contract test) pinning the `Disposer.register(project, Disposable { scope.cancel() })` wiring. Behavioral verification isn't possible without a production-only-for-test refactor (scope is a local val inside the suspend execute()), so source-text per the codebase's RunInvocationLeakTest/SubagentRunnerWiringTest convention.
+- **sonar:F-15** — VERIFIED, no change. IssueDetailPanel.kt:261 already escapes `hotspot.probability` via `HtmlEscape.escapeHtml`; the metadataLabel (line 275) is plain-text (not `<html>`-mode) so needs no escaping.

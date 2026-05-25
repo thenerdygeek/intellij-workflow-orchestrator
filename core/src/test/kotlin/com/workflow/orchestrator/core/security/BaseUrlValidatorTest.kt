@@ -98,6 +98,13 @@ class BaseUrlValidatorTest {
         assertInvalid(BaseUrlValidator.validate("http://[::1]/"))
     }
 
+    // core:F-3 — IPv6 link-local with a percent-encoded scope id (%25 = "%").
+    // Must be rejected whether the URI parser chokes on the scope id (malformed)
+    // or parses it through to the fe80::/10 link-local check.
+    @Test fun `IPv6 link-local with scope id is rejected`() {
+        assertInvalid(BaseUrlValidator.validate("http://[fe80::1%25eth0]/"))
+    }
+
     // ── Malformed URLs ─────────────────────────────────────────────────────────
 
     @Test fun `completely invalid URL is rejected`() {

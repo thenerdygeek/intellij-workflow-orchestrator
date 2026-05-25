@@ -70,6 +70,26 @@ class CredentialRedactorCheckpointTest {
     }
 
     /**
+     * A Sourcegraph access token (sgp_ prefix + 40 hex) pasted into the chat is redacted
+     * before it reaches disk (agent-runtime:F-11). Sourcegraph tokens live in PasswordSafe
+     * and could be accidentally copied into the input.
+     */
+    @Test
+    fun `Sourcegraph token in userText is redacted before persisting meta json`(@TempDir tmp: java.nio.file.Path) {
+        val sgToken = "sgp_" + "a".repeat(40)
+        val userText = "Auth header is Authorization: token $sgToken"
+
+        val store = SessionCheckpointStore(sessionDir = tmp.toFile())
+        store.beginUserMessage(messageTs = 2500L, userText = userText)
+
+        val metaJson = File(tmp.toFile(), "checkpoints/msg-2500/meta.json").readText()
+        assertFalse(
+            metaJson.contains(sgToken),
+            "Sourcegraph token must NOT appear raw in on-disk meta.json; got: $metaJson"
+        )
+    }
+
+    /**
      * Non-sensitive text in the user message is NOT altered by redaction.
      */
     @Test
