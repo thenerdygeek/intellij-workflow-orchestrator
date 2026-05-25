@@ -318,6 +318,32 @@ class WebSettingsConfigurable(private val project: Project) : Configurable {
                         )
                 }
             }
+
+            // ── Group 7: Fetch — Response Cache ─────────────────────────────────
+            group("Fetch — Response Cache") {
+                row {
+                    checkBox("Enable in-memory response cache")
+                        .bindSelected(
+                            { settings.state.webFetchCacheEnabled },
+                            { settings.state.webFetchCacheEnabled = it },
+                        )
+                        .comment(
+                            "Repeat fetches of the same URL within the TTL skip the network, " +
+                                "jsoup, and sanitizer subagent. Lifetime is process-scoped — cache " +
+                                "is cleared on IDE restart."
+                        )
+                }
+                row("TTL (minutes):") {
+                    intTextField(1..1440)
+                        .bindIntText(settings.state::webFetchCacheTtlMinutes)
+                        .comment("How long a cached entry stays fresh. Default: 15 (matches Claude Code).")
+                }
+                row("Max entries:") {
+                    intTextField(10..10_000)
+                        .bindIntText(settings.state::webFetchCacheMaxEntries)
+                        .comment("LRU eviction kicks in beyond this. Default: 100.")
+                }
+            }
         }
 
         dialogPanel = inner
