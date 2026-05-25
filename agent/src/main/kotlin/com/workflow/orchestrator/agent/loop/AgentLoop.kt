@@ -538,8 +538,23 @@ class AgentLoop(
         private val LOG = Logger.getInstance(AgentLoop::class.java)
         private const val MAX_CONSECUTIVE_EMPTIES = 3
         private const val MAX_API_RETRIES = 5
-        /** Timeout/network errors get fewer retries — the server is likely down. */
-        private const val MAX_TIMEOUT_RETRIES = 3
+        /**
+         * Timeout/network errors get fewer retries — the server is likely down.
+         *
+         * MUST be strictly greater than [MAX_SAME_TIER_RECYCLES]: the retry block only runs
+         * while `apiRetryCount < maxRetries`, and `apiRetryCount` increments in lockstep with
+         * `sameTierRecycles`. If they were equal the block would stop being entered exactly when
+         * `sameTierRecycles` first reaches the cap — so L2 tier escalation (whose precondition is
+         * `sameTierRecycles >= MAX_SAME_TIER_RECYCLES`) could never fire on the `model_fallback`
+         * path (the only other route to L2 is `context_compaction`'s apiRetryCount reset). The +1
+         * gives L2 exactly one entry to fire after recycles are exhausted; L2 then resets
+         * apiRetryCount so escalation can walk the rest of the chain.
+         *
+         * NOTE: kept as a literal (= MAX_SAME_TIER_RECYCLES + 1 = 4) because Kotlin forbids a
+         * `const val` referencing another `const val` declared later in the same object. If you
+         * change MAX_SAME_TIER_RECYCLES, update this to stay = that + 1 (pinned by the L2 tests).
+         */
+        private const val MAX_TIMEOUT_RETRIES = 4
         /**
          * Max number of same-model brain recycles before escalating to a different
          * model tier (L2 escalation handled in commit 3). A recycle = throw away the
@@ -1177,6 +1192,7 @@ class AgentLoop(
                         onModelSwitch?.invoke(oldModel, newTierModel, "Same-tier recovery exhausted — escalating tier")
                         sessionMetrics?.recordModelSwitch(oldModel, newTierModel, "Same-tier recovery exhausted — escalating tier")
                         sameTierRecycles = 0  // reset budget for the new tier
+                        apiRetryCount = 0     // fresh retry budget for the new tier so escalation can walk the full chain
                         brainSwapAttempted = true
                     }
                     // Use server-provided retry delay if available (ported from Cline's retry.ts),

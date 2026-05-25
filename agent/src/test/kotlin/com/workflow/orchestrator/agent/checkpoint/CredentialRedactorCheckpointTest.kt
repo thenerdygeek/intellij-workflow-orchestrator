@@ -77,7 +77,9 @@ class CredentialRedactorCheckpointTest {
     @Test
     fun `Sourcegraph token in userText is redacted before persisting meta json`(@TempDir tmp: java.nio.file.Path) {
         val sgToken = "sgp_" + "a".repeat(40)
-        val userText = "Auth header is Authorization: token $sgToken"
+        // Standalone token (NOT in an `Authorization: token` header) so this exercises the
+        // raw `sgp_` redaction pattern specifically (agent-runtime:F-11), not the auth-header one.
+        val userText = "My Sourcegraph token is $sgToken — please configure it"
 
         val store = SessionCheckpointStore(sessionDir = tmp.toFile())
         store.beginUserMessage(messageTs = 2500L, userText = userText)

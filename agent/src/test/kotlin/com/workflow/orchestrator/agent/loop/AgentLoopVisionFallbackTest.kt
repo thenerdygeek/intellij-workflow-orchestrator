@@ -136,18 +136,18 @@ class AgentLoopVisionFallbackTest {
     /**
      * Phase 7 followup F-P6FU-3 — L2 tier escalation must apply a vision filter.
      *
+     * Also pins the Phase-6f reachability fix: L2 fires on the plain fallback-chain path
+     * (`compactOnTimeoutExhaustion = false`, i.e. the `model_fallback` strategy). Because
+     * `MAX_TIMEOUT_RETRIES = MAX_SAME_TIER_RECYCLES + 1`, the retry block is still entered on
+     * the error after recycles are exhausted, so L2 can fire without needing a compaction reset.
+     *
      * **Setup:** `cachedFallbackChain = [primary::vision, mid::no-vision, late::vision]`,
-     * primary returns timeout errors so the loop:
+     * primary returns TIMEOUT errors so the loop: (1) recycles same-tier MAX_SAME_TIER_RECYCLES
+     * times, (2) enters L2 tier escalation.
      *
-     *   1. Exhausts API retries (apiRetryCount = MAX_RETRIES).
-     *   2. Drops into L1-recycle (same-tier brain recycle) — fires
-     *      MAX_SAME_TIER_RECYCLES (=3) times.
-     *   3. Then enters L2 tier escalation.
-     *
-     * **Assertion:** L2 must skip `mid::no-vision` and escalate directly to
-     * `late::vision`. Without the vision filter, L2 would silently advance to
-     * `mid::no-vision` and the gateway would strip images, producing the
-     * confusing-reply failure mode.
+     * **Assertion:** L2 must skip `mid::no-vision` and escalate directly to `late::vision`.
+     * Without the vision filter, L2 would silently advance to `mid::no-vision` and the gateway
+     * would strip images, producing the confusing-reply failure mode.
      */
     @Test
     fun `image payload + L2 tier escalation skips non-vision intermediaries`() = runTest {
@@ -160,22 +160,14 @@ class AgentLoopVisionFallbackTest {
             ),
         )
 
-        // Primary errors enough times to exhaust API retries (5) AND same-tier
-        // recycles (3) so L2 tier escalation engages. After L2 swaps to late,
-        // the late brain succeeds.
-        val primaryBrain = SequenceBrain(
-            modelId = "primary::vision",
-            // 12 errors gives plenty of headroom: 5 API retries + 3 recycles +
-            // any further attempts. After L2 escalation, the late brain handles
-            // the next call.
-            responses = List(12) { ApiResult.Error(ErrorType.TIMEOUT, "Read timed out") },
-        )
+        val midBrainCalls = java.util.concurrent.atomic.AtomicInteger(0)
         val lateBrain = SequenceBrain(
             modelId = "late::vision",
             responses = listOf(ApiResult.Success(completionToolCallResponse())),
         )
-        val midBrainCalls = java.util.concurrent.atomic.AtomicInteger(0)
 
+        // Each erroring brain hands back a fresh TIMEOUT sequence on every (re)build so the
+        // loop keeps timing out on a tier until recycles are exhausted and L2 advances.
         val brainFactory: suspend (String, String?) -> LlmBrain = { modelId, _ ->
             when (modelId) {
                 "primary::vision" -> SequenceBrain(
@@ -208,7 +200,10 @@ class AgentLoopVisionFallbackTest {
 
         val tools = listOf(completionTool())
         val loop = AgentLoop(
-            brain = primaryBrain,
+            brain = SequenceBrain(
+                modelId = "primary::vision",
+                responses = List(12) { ApiResult.Error(ErrorType.TIMEOUT, "Read timed out") },
+            ),
             tools = tools.associateBy { it.name },
             toolDefinitions = tools.map { it.toToolDefinition() },
             contextManager = contextManager,
@@ -216,12 +211,7 @@ class AgentLoopVisionFallbackTest {
             brainFactory = brainFactory,
             cachedFallbackChain = chain,
             modelCatalogService = catalog,
-            // L2 only fires when `sameTierRecycles >= MAX_SAME_TIER_RECYCLES` AND
-            // `apiRetryCount < maxRetries`. The only path under current MAX values
-            // (both 3) is via `compactOnTimeoutExhaustion`: after L1-recycle exhausts,
-            // a compaction-retry resets `apiRetryCount = 0` while keeping
-            // `sameTierRecycles = 3`. The next TIMEOUT then hits L2.
-            compactOnTimeoutExhaustion = true,
+            // No compactOnTimeoutExhaustion — proves the model_fallback path reaches L2 on its own.
         )
 
         val result = loop.run("Fix the bug")
@@ -229,5 +219,80 @@ class AgentLoopVisionFallbackTest {
         assertTrue(result is LoopResult.Completed, "Expected Completed but got $result")
         assertEquals(0, midBrainCalls.get(),
             "L2 must skip non-vision intermediaries when payload has image parts — mid::no-vision must NOT be invoked")
+    }
+
+    /**
+     * L2 escalation with an image payload and a chain whose only fallback tiers lack vision →
+     * the loop must NOT silently route to a non-vision model. It surfaces the verbatim
+     * user-visible error and fails. Mirror of the removed L1 all-non-vision case, now on the
+     * L2 path (reachable on the plain fallback-chain path after the Phase-6f reachability fix).
+     */
+    @Test
+    fun `image payload + L2 with all-non-vision chain produces user-visible no-vision error`() = runTest {
+        val chain = listOf("primary::vision", "mid::no-vision", "late::no-vision")
+        val catalog = StubCatalog(
+            visionSupport = mapOf(
+                "primary::vision" to true,
+                "mid::no-vision" to false,
+                "late::no-vision" to false,
+            ),
+        )
+
+        val nonVisionCalls = java.util.concurrent.atomic.AtomicInteger(0)
+        val brainFactory: suspend (String, String?) -> LlmBrain = { modelId, _ ->
+            when (modelId) {
+                "primary::vision" -> SequenceBrain(
+                    modelId = "primary::vision",
+                    responses = List(12) { ApiResult.Error(ErrorType.TIMEOUT, "Read timed out") },
+                )
+                "mid::no-vision", "late::no-vision" -> {
+                    nonVisionCalls.incrementAndGet()
+                    SequenceBrain(
+                        modelId = modelId,
+                        responses = listOf(ApiResult.Error(ErrorType.TIMEOUT, "should not be reached")),
+                    )
+                }
+                else -> throw IllegalArgumentException("Unexpected model: $modelId")
+            }
+        }
+
+        contextManager.addAssistantMessage(
+            ChatMessage(
+                role = "user",
+                content = "look",
+                parts = listOf(
+                    ContentPart.Image(sha256 = "abc", mime = "image/png", originalFilename = null),
+                    ContentPart.Text("look"),
+                ),
+            ),
+        )
+
+        val tools = listOf(completionTool())
+        val loop = AgentLoop(
+            brain = SequenceBrain(
+                modelId = "primary::vision",
+                responses = List(12) { ApiResult.Error(ErrorType.TIMEOUT, "Read timed out") },
+            ),
+            tools = tools.associateBy { it.name },
+            toolDefinitions = tools.map { it.toToolDefinition() },
+            contextManager = contextManager,
+            project = project,
+            brainFactory = brainFactory,
+            cachedFallbackChain = chain,
+            modelCatalogService = catalog,
+        )
+
+        val result = loop.run("Fix the bug")
+
+        assertTrue(result is LoopResult.Failed, "Expected Failed but got $result")
+        assertEquals(0, nonVisionCalls.get(),
+            "L2 must NOT invoke any non-vision fallback brain when the payload has image parts")
+        assertTrue(
+            (result as LoopResult.Failed).error.contains(
+                "no vision-capable fallback available, retry on primary or remove image",
+                ignoreCase = true,
+            ),
+            "expected user-visible no-vision-fallback message, got: ${result.error}",
+        )
     }
 }
