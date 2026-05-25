@@ -2379,6 +2379,8 @@ class AgentService(
         onAwaitingUserInput: ((reason: String) -> Unit)? = null,
         onUserInputReceived: ((task: String) -> com.workflow.orchestrator.agent.session.UiMessage?)? = null,
         streamingEditCallback: com.workflow.orchestrator.agent.loop.StreamingEditCallback? = null,
+        onContextManagerReady: ((ContextManager) -> Unit)? = null,
+        onHandoffProposed: ((context: String) -> Unit)? = null,
     ): Job? {
         val basePath = project.basePath ?: System.getProperty("user.home")
         val sessionBaseDir = ProjectIdentifier.agentDir(basePath)
@@ -2651,6 +2653,8 @@ class AgentService(
                 onAwaitingUserInput = onAwaitingUserInput,
                 onUserInputReceived = onUserInputReceived,
                 streamingEditCallback = streamingEditCallback,
+                onContextManagerReady = onContextManagerReady,
+                onHandoffProposed = onHandoffProposed,
             )
             innerJob.join()
         }
@@ -2777,7 +2781,11 @@ class AgentService(
         handoffContext: String,
         onStreamChunk: (String) -> Unit = {},
         onToolCall: (ToolCallProgress) -> Unit = {},
-        onComplete: (LoopResult) -> Unit = {}
+        onComplete: (LoopResult) -> Unit = {},
+        onSessionStarted: ((sessionId: String) -> Unit)? = null,
+        onContextManagerReady: ((ContextManager) -> Unit)? = null,
+        onHandoffProposed: ((context: String) -> Unit)? = null,
+        userInputChannel: Channel<String>? = null,
     ): Job {
         // The handoff context becomes the task for the new session
         val preamble = "Continue from the previous session. Here is the preserved context:\n\n$handoffContext"
@@ -2788,7 +2796,11 @@ class AgentService(
             contextManager = null, // fresh context
             onStreamChunk = onStreamChunk,
             onToolCall = onToolCall,
-            onComplete = onComplete
+            onComplete = onComplete,
+            onSessionStarted = onSessionStarted,
+            onContextManagerReady = onContextManagerReady,
+            onHandoffProposed = onHandoffProposed,
+            userInputChannel = userInputChannel,
         )
     }
 

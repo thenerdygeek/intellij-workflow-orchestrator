@@ -22,4 +22,18 @@ class AgentServiceContextManagerReadyTest {
     fun `executeTask threads onHandoffProposed into the AgentLoop`() {
         assertTrue(src.contains("onHandoffProposed"), "onHandoffProposed not threaded")
     }
+
+    @Test
+    fun `startHandoffSession forwards onSessionStarted and onContextManagerReady to executeTask`() {
+        val block = src.substringAfter("fun startHandoffSession(").substringBefore("\n    fun ")
+        assertTrue(block.contains("onSessionStarted"), "handoff must forward onSessionStarted")
+        assertTrue(block.contains("onContextManagerReady"), "handoff must forward onContextManagerReady")
+        assertTrue(block.contains("onHandoffProposed"), "handoff must forward onHandoffProposed")
+    }
+
+    @Test
+    fun `resumeSession forwards onContextManagerReady to executeTask`() {
+        val block = src.substringAfter("fun resumeSession(").substringBefore("\n    fun ")
+        assertTrue(block.contains("onContextManagerReady"), "resume must forward onContextManagerReady")
+    }
 }
