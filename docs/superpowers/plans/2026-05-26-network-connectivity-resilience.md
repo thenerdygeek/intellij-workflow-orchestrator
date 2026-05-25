@@ -12,6 +12,8 @@
 
 **Scope note (trimmed from spec):** The spec's optional `ApplicationActivationListener` complement is deferred — the clock-gap watchdog alone solves the wake-detection requirement and avoids a `plugin.xml` listener registration. The per-host reachability map remains a documented non-goal.
 
+**Reporting coverage note (important):** Reactive `reportFailure`/`reportSuccess` (Task 4) flows only through clients built by `HttpClientFactory` — i.e. all the feature pollers (Jira/PR/Bamboo/Sonar). The agent's LLM client (`SourcegraphChatClient`) and `BitbucketBranchClient` deliberately build their own OkHttpClients and bypass `HttpClientFactory` (see memory: "Sourcegraph HTTP client kept isolated — never migrate"). The agent path is therefore **not** covered by reactive reporting — it is covered by the active `checkNow()` probe at the retry seam (Task 6), which independently probes the LLM host and also flips global state (pausing pollers + arming the recovery probe). This split is by design: pollers feed-and-consume reactive state; the agent actively probes. Do not "fix" it by routing the Sourcegraph client through `HttpClientFactory`.
+
 ---
 
 ### Task 1: NetworkState enum + probe interfaces (`:core`)
@@ -340,7 +342,13 @@ class NetworkStateService(
                     delay((PROBE_BASE_MS * (1L shl (attempt - 1).coerceAtMost(5))).coerceAtMost(PROBE_MAX_MS))
                     attempt++
                 }
-            } finally { probeLoopActive.set(false) }
+            } finally {
+                probeLoopActive.set(false)
+                // Re-arm guard: if a failure was re-signaled while we were exiting (TOCTOU
+                // between the loop break and clearing the flag), relaunch so we don't get
+                // permanently stuck OFFLINE with no prober running.
+                if (_state.value != NetworkState.ONLINE) ensureProbeLoop()
+            }
         }
     }
 
@@ -385,10 +393,18 @@ class NetworkStateService(
 Run: `./gradlew :core:test --tests "*NetworkStateServiceTest*"`
 Expected: PASS (4 cases).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Register the service in plugin.xml**
+
+The `@Service(Service.Level.APP)` annotation auto-registers the service (proven by `ArtifactResultRegistry`, which is annotation-only). But the dominant convention in this repo is to ALSO list services in `plugin.xml` (`ConnectionSettings`, `AutomationSettingsService`, `AgentService`, `HealthCheckService` all do, and coexist with the annotation without a duplicate-registration crash on the 2025.1+ target). Match that convention so registration is unambiguous. In `src/main/resources/META-INF/plugin.xml`, add after the `AutomationSettingsService` entry (current line 308):
+```xml
+        <applicationService
+            serviceImplementation="com.workflow.orchestrator.core.network.NetworkStateService"/>
+```
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add core/src/main/kotlin/com/workflow/orchestrator/core/network/NetworkStateService.kt core/src/test/kotlin/com/workflow/orchestrator/core/network/NetworkStateServiceTest.kt
+git add core/src/main/kotlin/com/workflow/orchestrator/core/network/NetworkStateService.kt core/src/test/kotlin/com/workflow/orchestrator/core/network/NetworkStateServiceTest.kt src/main/resources/META-INF/plugin.xml
 git commit -m "feat(core): NetworkStateService — APP authority with probe loop + clock-gap wake watchdog"
 ```
 
