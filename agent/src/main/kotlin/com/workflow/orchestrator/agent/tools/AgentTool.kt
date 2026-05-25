@@ -228,6 +228,8 @@ sealed class ToolResultType {
     data class PlanResponse(val needsMoreExploration: Boolean, val append: Boolean = false) : ToolResultType()
     data class SkillActivation(val skillName: String, val skillContent: String) : ToolResultType()
     data class SessionHandoff(val context: String) : ToolResultType()
+    /** new_task proposed a handoff; the loop renders a preview card and waits for the user's decision. */
+    data class HandoffProposed(val context: String) : ToolResultType()
     data object PlanModeToggle : ToolResultType()
     data object PlanDiscarded : ToolResultType()
 }
@@ -327,6 +329,9 @@ data class ToolResult(
 
         fun sessionHandoff(content: String, summary: String, tokenEstimate: Int, context: String) =
             ToolResult(content, summary, tokenEstimate, isSessionHandoff = true, handoffContext = context, type = ToolResultType.SessionHandoff(context))
+
+        fun handoffProposed(content: String, summary: String, tokenEstimate: Int, context: String) =
+            ToolResult(content, summary, tokenEstimate, type = ToolResultType.HandoffProposed(context))
 
         fun planModeToggle(content: String, summary: String, tokenEstimate: Int) =
             ToolResult(content, summary, tokenEstimate, enablePlanMode = true, type = ToolResultType.PlanModeToggle)

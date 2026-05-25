@@ -2270,6 +2270,10 @@ class AgentLoop(
                     val activation = toolResult.type
                     contextManager.setActiveSkill(activation.skillContent)
                 }
+                is ToolResultType.HandoffProposed -> {
+                    // Full suspend-and-decide implementation added in Task 3.
+                    // Placeholder: treat as a standard result so the sealed-class when is exhaustive.
+                }
                 is ToolResultType.Standard, is ToolResultType.Error -> {
                     // Feedback gate: if the LLM called `feedback` in response to our
                     // post-completion prompt, return the saved pending completion now.
