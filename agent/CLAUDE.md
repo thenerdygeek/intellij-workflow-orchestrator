@@ -940,6 +940,38 @@ Live unified-diff preview for `edit_file` tool calls — the chat panel renders 
 
 Why a tracker rather than push-on-execute: this mirrors Cline's `DiffViewProvider` UX but routes through the JCEF chat panel rather than a separate IntelliJ diff editor. Editor-pane streaming can be a follow-up.
 
+## Cross-IDE Delegation (doorbell consent model — Plan 6)
+
+Plan 6 adds a consent path for inbound-OFF targets. Two sockets per project:
+
+| | Delegation socket (`DelegationPaths.socketFor`) | Doorbell socket (`DelegationPaths.doorbellSocketFor`) |
+|---|---|---|
+| Path | `<hash>.sock` | `<hash>.doorbell.sock` |
+| Bound when | inbound setting ON or transient grant | **always**, every open project, on plugin load |
+| Accepts | full work protocol | **only** `Knock` |
+| Can start a session? | yes | **no** — raises a consent dialog only |
+
+**`DelegationDoorbellService`** (`@Service(PROJECT)`) binds `doorbellSocketFor` at project open via `DelegationDoorbellStartupActivity` (registered as `<postStartupActivity>`). On `Knock`: dedupe by nonce, rate-limit ≤ 1 dialog per delegator per 10 s, reply `KnockAck(RINGING)` immediately (before showing the dialog so IDE A's `knock()` returns promptly), then raise `DelegationInboundConsentDialog` on EDT.
+
+**`DelegationInboundConsentDialog`** — three exits:
+- **Allow once** → `DelegationInboundService.startTransient()` binds the delegation socket WITHOUT persisting the setting; calls `recordPreauth(nonce)`. Delegation socket unbinds when no active delegated sessions remain (`stopIfTransientAndIdle(count)`). State does not survive IDE restart.
+- **Allow always** → sets `PluginSettings.enableInboundCrossIdeDelegation = true` (fires `CrossIdeDelegationSettingsListener.inboundSettingChanged(true)` → existing `start()`); calls `recordPreauth(nonce)`.
+- **Cancel** → `PendingDelegationStore.markDeclined(nonce)`; IDE A's `AutoLaunchPoller` bail-out sees `isDeclined(nonce)` and throws `DelegationException.Rejected("inbound_consent_declined")`.
+
+**Preauth nonce** (`Connect.preauthNonce`) — single-use gate. `DelegationInboundService.recordPreauth(nonce)` + `consumePreauth(nonce)` (atomic `ConcurrentHashMap.remove`). When the nonce matches, `handleConnect` skips the `AcceptDelegationDialog`. Non-matching or null nonce falls back to the normal Accept dialog.
+
+**Fresh-launch path** — IDE A writes `pending-delegation/<nonce>.json` into IDE B's agent dir before launching. After smart mode, `DelegationDoorbellStartupActivity.replayPendingRequests()` scans `PendingDelegationStore.readFresh(ttl=5min)`, dedupes against any nonce already handled live, and raises the consent dialog for each.
+
+**Already-running path** — IDE A calls `DelegationClient.knock(doorbellSocketFor(target), Knock(..., nonce))`. A `KnockAck(RINGING|DUPLICATE)` means IDE B is up and a dialog is visible; null means IDE B is not running.
+
+**Outbound flow** (`DelegationOutboundService.send()`): ping `socketFor(B)` first; if reachable → existing path. If unreachable: generate nonce → write pending file → `knock(doorbellSocketFor(B))` → (no answer) spawn launcher → `AutoLaunchPoller` waits for socket-or-declined → on bind, `Connect(preauthNonce = nonce)`.
+
+**Transient teardown** — wired in `AgentService`: when a delegated session ends, calls `DelegationInboundService.stopIfTransientAndIdle(activeDelegatedSessionCount)`. If `transient && count == 0`, `stop()` unbinds and resets `transient = false`.
+
+**Tests** — `PendingDelegationStoreTest`, `DelegationPreauthConnectTest`, `DelegationDoorbellServiceTest`, `DelegationKnockFlowTest`, `DelegationE2ETest` (inbound-off → consent → work happy path).
+
+---
+
 ## Testing
 
 ```bash

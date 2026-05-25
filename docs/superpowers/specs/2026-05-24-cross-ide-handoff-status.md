@@ -222,6 +222,12 @@ Capture findings in `docs/superpowers/reviews/2026-05-XX-cross-ide-smoke-windows
 ### Snapshot regen
 - 7 orchestrator + 5 sub-agent prompt snapshot files regenerated twice (when hints added; when hints gated)
 
+## 12. Plan 6 — On-demand inbound consent ("doorbell") — SHIPPED
+
+**Plan 6** (`docs/superpowers/plans/2026-05-25-cross-ide-inbound-consent.md`) is fully implemented and tested (Tasks 1–10). A minimal always-bound doorbell socket (`DelegationPaths.doorbellSocketFor`) is bound for every open project regardless of the inbound setting; it can ONLY raise a `DelegationInboundConsentDialog` (Allow once / Allow always / Cancel) — it never accepts work. The real delegation socket stays gated. "Allow once" uses `DelegationInboundService.startTransient()` and a single-use `Connect.preauthNonce`; "Allow always" persists the setting; Cancel writes a declined marker that lets IDE A's poller bail early. Settings help text updated in `CrossIdeDelegationConfigurable`. Spec: `docs/superpowers/specs/2026-05-25-cross-ide-inbound-consent-design.md`.
+
+---
+
 ## 9. Recommended next steps
 
 In strict order:
