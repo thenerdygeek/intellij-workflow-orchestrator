@@ -10,6 +10,7 @@ import com.intellij.execution.runners.ProgramRunner
 import com.intellij.execution.configurations.RunProfileState
 import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.bamboo.service.BambooServiceImpl
+import com.workflow.orchestrator.core.settings.PluginSettings
 import com.intellij.openapi.util.Disposer
 import kotlinx.coroutines.*
 import java.io.OutputStream
@@ -107,7 +108,16 @@ class BambooBuildProcessHandler(
     }
 
     private suspend fun pollBuildStatus(bambooService: BambooServiceImpl, resultKey: String) {
-        printOutput("Polling build status every 15 seconds...\n\n")
+        // Use the configured poll interval (PluginSettings.buildPollIntervalSeconds, default 30s)
+        // with a floor of 10s so the run configuration respects the same setting as
+        // BuildMonitorService rather than using a hardcoded 15s.
+        val pollIntervalMs = run {
+            val project = environment.project
+            val configured = PluginSettings.getInstance(project).state.buildPollIntervalSeconds
+            maxOf(configured, MIN_POLL_INTERVAL_SECONDS).toLong() * 1000L
+        }
+
+        printOutput("Polling build status every ${pollIntervalMs / 1000}s...\n\n")
 
         while (isProcessTerminating.not() && isProcessTerminated.not()) {
             val result = bambooService.getBuild(resultKey)
@@ -133,12 +143,14 @@ class BambooBuildProcessHandler(
                 }
             }
 
-            delay(15_000)
+            delay(pollIntervalMs)
         }
     }
 
     companion object {
         private val TERMINAL_STATES = setOf("Successful", "Failed", "Unknown", "Finished")
+        /** Floor for the configured poll interval — prevents accidental sub-10s polling. */
+        private const val MIN_POLL_INTERVAL_SECONDS = 10
     }
 
     private fun printOutput(text: String) {
