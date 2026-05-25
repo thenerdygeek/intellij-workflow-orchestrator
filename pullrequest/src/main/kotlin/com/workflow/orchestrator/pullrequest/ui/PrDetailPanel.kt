@@ -1420,8 +1420,12 @@ class PrDetailPanel(
 
     /**
      * Resolve the current Bitbucket username via API (cached after first successful call).
+     *
+     * @Volatile ensures writes from the IO coroutine (resolveCurrentUsername) are
+     * immediately visible to reads on the EDT (renderReviewers approval-status check),
+     * preventing stale-reads across the EDT ↔ IO dispatcher boundary (F-12 fix).
      */
-    private var cachedUsername: String? = null
+    @Volatile private var cachedUsername: String? = null
 
     private suspend fun resolveCurrentUsername(): String? {
         cachedUsername?.let { return it }
