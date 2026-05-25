@@ -68,4 +68,36 @@ class AgentControllerSessionActiveSourceTest {
         assertTrue(branch.contains("onSessionStarted"), "onSessionStarted not in handoff branch")
         assertTrue(branch.contains("onContextManagerReady"), "onContextManagerReady not in handoff branch")
     }
+
+    // ── Regression guards for the two call-site omissions the final review caught ──
+    // The new_task card only works if the controller actually FORWARDS onHandoffProposed
+    // to the loop at every session-entry call site; otherwise the loop suspends with no
+    // card and deadlocks. These pin the primary executeTask path and the resume path.
+
+    @Test
+    fun `primary executeTask call forwards onHandoffProposed`() {
+        // handleUserMessage's executeTask call must pass the handoff render callback,
+        // or a new_task in a normal session renders no card and deadlocks.
+        // Bound on the unique comment that immediately follows the call's closing paren —
+        // substringBefore(")") would stop at the first paren inside an early lambda arg.
+        val call = src.substringAfter("currentJob = service.executeTask(")
+            .substringBefore("// Start 30s Haiku phrase timer")
+        assertTrue(
+            call.contains("onHandoffProposed = ::onHandoffProposed"),
+            "primary executeTask call must forward onHandoffProposed"
+        )
+    }
+
+    @Test
+    fun `resumeSession call forwards onHandoffProposed and onContextManagerReady`() {
+        val call = src.substringAfter("service.resumeSession(").substringBefore("\n        )")
+        assertTrue(
+            call.contains("onHandoffProposed = ::onHandoffProposed"),
+            "resumeSession call must forward onHandoffProposed (else new_task deadlocks on resume)"
+        )
+        assertTrue(
+            call.contains("onContextManagerReady"),
+            "resumeSession call must forward onContextManagerReady (else post-resume context is lost)"
+        )
+    }
 }

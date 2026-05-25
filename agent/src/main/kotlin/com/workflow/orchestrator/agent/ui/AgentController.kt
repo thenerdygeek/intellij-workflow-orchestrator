@@ -1974,6 +1974,7 @@ class AgentController(
                 pendingUiMessageOverride.getAndSet(null)
             },
             streamingEditCallback = streamingEditCallback,
+            onHandoffProposed = ::onHandoffProposed,
         )
 
         // Start 30s Haiku phrase timer (if smart working indicator is enabled)
@@ -3204,11 +3205,15 @@ class AgentController(
                 pendingUiMessageOverride.getAndSet(null)
             },
             streamingEditCallback = streamingEditCallback,
+            onContextManagerReady = { cm -> contextManager = cm },
+            onHandoffProposed = ::onHandoffProposed,
         )
 
         if (job != null) {
             currentJob = job
-            // Reset contextManager — the resumed session creates its own
+            // Reset contextManager to null transiently; onContextManagerReady (above)
+            // repopulates it with the resumed session's live manager once the loop builds
+            // it from persisted history, so the next user message appends to the correct context.
             contextManager = null
             // Start working indicator
             startPhraseTimer("Resumed session")
@@ -3432,13 +3437,12 @@ class AgentController(
     /** User clicked "Keep chatting here" — decline the handoff, stay in the current session. */
     private fun keepChatting() {
         LOG.info("AgentController.keepChatting (handoff declined)")
-        invokeLater {
-            dashboard.clearHandoffInUi()
-            dashboard.appendStatus("Staying in this session.", RichStreamingPanel.StatusType.INFO)
-        }
+        invokeLater { dashboard.clearHandoffInUi() }
         val channel = userInputChannel
         if (loopWaitingForInput && channel != null && currentJob?.isActive == true) {
             loopWaitingForInput = false
+            // Only confirm the choice once we know the decision will actually reach the loop.
+            invokeLater { dashboard.appendStatus("Staying in this session.", RichStreamingPanel.StatusType.INFO) }
             controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.keepChatting.send")) {
                 channel.send(com.workflow.orchestrator.agent.loop.AgentLoop.HANDOFF_DECLINE_SENTINEL)
             }
