@@ -1706,8 +1706,10 @@ class AgentCefPanel(
         // The webview side defines `window.__applyImageSettings(json)`; the
         // function rebinds the AttachmentManager singleton. Safe to call before
         // page-load — `callJs` queues until the dispatcher marks loaded.
-        val escaped = payload.replace("\\", "\\\\").replace("'", "\\'")
-        callJs("if (window.__applyImageSettings) { window.__applyImageSettings('$escaped'); }")
+        // Use the hardened JsEscape helper which handles backslash, single/double
+        // quotes, newlines, CR, tab, and U+2028/U+2029 (audit finding agent-ui:F-3).
+        val jsLiteral = JsEscape.toJsString(payload)   // returns 'escaped-content'
+        callJs("if (window.__applyImageSettings) { window.__applyImageSettings($jsLiteral); }")
     }
 
     /**
