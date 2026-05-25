@@ -29,6 +29,7 @@ Common error responses: UNLISTED_DOMAIN means the host isn't on the user's allow
         properties = mapOf(
             "url" to ParameterProperty(type = "string", description = "The URL to fetch (https:// required by default)."),
             "max_bytes" to ParameterProperty(type = "integer", description = "Optional cap on bytes read; capped at the configured global maximum."),
+            "prompt" to ParameterProperty(type = "string", description = "Optional extraction prompt. When set, a 2nd LLM call answers this question using the page's cleaned text and returns the answer instead of the full page. Use this when you only need a targeted fact ('what version of X does this support?', 'what's the rate limit?'). Skip for general reading. Costs ~2x but returns far less content."),
         ),
         required = listOf("url"),
     )
@@ -49,6 +50,7 @@ Common error responses: UNLISTED_DOMAIN means the host isn't on the user's allow
         val planMode = AgentService.planModeActive.get()
         val planAllow = settings.webPlanModeAllow
         val maxBytes = params["max_bytes"]?.jsonPrimitive?.int
+        val extractionPrompt = params["prompt"]?.jsonPrimitive?.contentOrNull
 
         // Populate agentContext from the last assistant message for the approval dialog.
         // Informational only — truncated to 200 chars. If the session has no messages, pass null.
@@ -73,6 +75,7 @@ Common error responses: UNLISTED_DOMAIN means the host isn't on the user's allow
             maxBytes = maxBytes,
             planMode = planMode && !planAllow,
             agentContext = agentContext,
+            extractionPrompt = extractionPrompt,
         ))
         if (rr.isError) return errorResult(rr.summary)
         val page = rr.data!!

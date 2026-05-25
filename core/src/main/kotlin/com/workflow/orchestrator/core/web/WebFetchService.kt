@@ -17,5 +17,13 @@ interface WebFetchService {
          * "why does the agent want to fetch this?" — informational, never required.
          */
         val agentContext: String? = null,
+        /**
+         * Optional extraction prompt. When non-null, after the page is fetched and sanitized,
+         * a second LLM call answers this prompt using the cleaned text as the source. The
+         * returned text in the wrapper is the extracted answer, not the full page — useful
+         * for targeted lookups ("what version of X does this support?"). Cost: ~2x a non-fused
+         * fetch (sanitize + extract = two LLM calls); benefit: smaller, on-target result.
+         */
+        val extractionPrompt: String? = null,
     )
 }
