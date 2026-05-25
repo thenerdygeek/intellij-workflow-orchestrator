@@ -252,6 +252,18 @@ class AgentController(
     private var currentSessionId: String? = null
 
     /**
+     * True once any session-entry path has started/resumed/forked a session. Replaces the
+     * old `contextManager == null` heuristic for deciding whether a user message starts a
+     * brand-new chat (which wiped the view). Reset only by [resetForNewChat].
+     *
+     * `@Volatile`: written from the IO coroutine (via `onSessionStarted` on the handoff path)
+     * and read on the EDT (in `handleUserMessage`). A plain `var` could let the EDT see a
+     * stale `false` and wrongly wipe the view. (Review blocking item #1.)
+     */
+    @Volatile
+    private var sessionActive = false
+
+    /**
      * Session ID being viewed (read-only) from the history panel.
      * Set by [showSession], cleared when the user starts a new chat or resumes.
      * The user must explicitly click "Resume" to start execution.
@@ -685,6 +697,12 @@ class AgentController(
             onRevise = ::revisePlan
         )
         panel.setCefPlanDismissCallback { dismissPlan() }
+
+        // Handoff card callbacks — new_task propose/fork/decline flow
+        panel.setCefHandoffCallbacks(
+            onStartFresh = ::startFreshSession,
+            onKeepChatting = ::keepChatting
+        )
 
         // "View Plan" button — opens the plan in a full JCEF editor tab
         panel.setCefFocusPlanEditorCallback { openPlanInEditor() }
@@ -1846,7 +1864,7 @@ class AgentController(
         // removed). AgentService.newContextManager wires the shared catalog +
         // a `currentModelRef` provider so utilization + compaction recompute
         // instantly on model fallback.
-        val isFirstMessage = contextManager == null
+        val isFirstMessage = !sessionActive
         if (isFirstMessage) {
             contextManager = service.newContextManager()
             val attachmentsJson = if (attachments.isNotEmpty()) attachmentsToJson(attachments) else null
@@ -1855,6 +1873,7 @@ class AgentController(
             } else {
                 dashboard.startSession(uiText, attachmentsJson)
             }
+            sessionActive = true
             // "First message wins" — capture the original task once, never overwrite
             if (originalTaskText == null) {
                 originalTaskText = task
@@ -2550,10 +2569,10 @@ class AgentController(
                 }
 
                 is LoopResult.SessionHandoff -> {
-                    // Session handoff (ported from Cline's new_task):
-                    // Notify user, then automatically start a new session with preserved context
+                    // User confirmed the fork on the new_task preview card. Start a fresh
+                    // session seeded with the preserved context; the old session is COMPLETED.
                     dashboard.appendStatus(
-                        "Context limit reached. Starting fresh session with preserved context.",
+                        "Continuing in a fresh session with the preserved context.",
                         RichStreamingPanel.StatusType.INFO
                     )
                     if (result.inputTokens > 0 || result.outputTokens > 0) {
@@ -2565,16 +2584,29 @@ class AgentController(
                         )
                     }
 
-                    // Reset context for the new session
+                    // Reset for the new session. The fork intentionally starts a fresh view;
+                    // currentSessionId + contextManager are repopulated by the callbacks below
+                    // so the NEXT user message appends instead of wiping (sessionActive stays true).
                     contextManager = null
                     sessionApprovalStore.clear()
 
-                    // Auto-start fresh session with handoff context
+                    // Fresh RENDEZVOUS channel so the forked session's own new_task (if any)
+                    // can suspend and present the card, and so startFreshSession/keepChatting
+                    // send into the live channel (review blocking item #2).
+                    userInputChannel = Channel(Channel.RENDEZVOUS)
+
                     currentJob = service.startHandoffSession(
                         handoffContext = result.context,
                         onStreamChunk = ::onStreamChunk,
                         onToolCall = ::onToolCall,
-                        onComplete = ::onComplete
+                        onComplete = ::onComplete,
+                        onSessionStarted = { sid ->
+                            currentSessionId = sid
+                            sessionActive = true
+                        },
+                        onContextManagerReady = { cm -> contextManager = cm },
+                        onHandoffProposed = ::onHandoffProposed,
+                        userInputChannel = userInputChannel
                     )
                     handledHandoff = true
                 }
@@ -2747,6 +2779,7 @@ class AgentController(
         lastDisplayMentionsJson = null
         originalTaskText = null
         currentSessionId = null
+        sessionActive = false
         currentPlanData = null
         accumulatedPlanText = ""
         pendingApproval?.cancel()
@@ -3083,6 +3116,7 @@ class AgentController(
         // AgentService.resumeSession has no onSessionStarted callback — we
         // know the id directly, so set it here.
         currentSessionId = sessionId
+        sessionActive = true
         prepareForReplay("Resuming session...")
 
         // Create a fresh input channel for the resumed loop
@@ -3245,6 +3279,7 @@ class AgentController(
     private suspend fun revertToUserMessage(sessionId: String, messageTs: Long) {
         LOG.info("AgentController.revertToUserMessage: session=$sessionId ts=$messageTs")
         currentSessionId = sessionId
+        sessionActive = true
 
         // Snapshot the job reference before prepareForReplay nulls it.
         val inflightJob = currentJob
@@ -3359,6 +3394,56 @@ class AgentController(
                 // Input is never locked — user always types freely
                 dashboard.focusInput()
             }
+        }
+    }
+
+    /**
+     * Callback from AgentLoop when new_task proposes a handoff. Renders the preview card
+     * and marks the loop as waiting — the user's button click feeds a sentinel into
+     * [userInputChannel] (see [startFreshSession] / [keepChatting]). Mirrors [onPlanResponse].
+     */
+    private fun onHandoffProposed(context: String) {
+        LOG.info("AgentController.onHandoffProposed (${context.length} chars)")
+        val json = taskEventJson.encodeToString(HandoffJson(summary = context))
+        invokeLater {
+            dashboard.renderHandoff(json)
+            loopWaitingForInput = true
+            dashboard.setBusy(false)
+            dashboard.focusInput()
+        }
+    }
+
+    /** User clicked "Start fresh session" on the handoff card — fork via the loop sentinel. */
+    private fun startFreshSession() {
+        LOG.info("AgentController.startFreshSession (handoff fork)")
+        invokeLater { dashboard.clearHandoffInUi() }
+        val channel = userInputChannel
+        if (loopWaitingForInput && channel != null && currentJob?.isActive == true) {
+            loopWaitingForInput = false
+            dashboard.setBusy(true)
+            controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.startFreshSession.send")) {
+                channel.send(com.workflow.orchestrator.agent.loop.AgentLoop.HANDOFF_FORK_SENTINEL)
+            }
+        } else {
+            LOG.warn("AgentController.startFreshSession: no suspended loop to receive the decision")
+        }
+    }
+
+    /** User clicked "Keep chatting here" — decline the handoff, stay in the current session. */
+    private fun keepChatting() {
+        LOG.info("AgentController.keepChatting (handoff declined)")
+        invokeLater {
+            dashboard.clearHandoffInUi()
+            dashboard.appendStatus("Staying in this session.", RichStreamingPanel.StatusType.INFO)
+        }
+        val channel = userInputChannel
+        if (loopWaitingForInput && channel != null && currentJob?.isActive == true) {
+            loopWaitingForInput = false
+            controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.keepChatting.send")) {
+                channel.send(com.workflow.orchestrator.agent.loop.AgentLoop.HANDOFF_DECLINE_SENTINEL)
+            }
+        } else {
+            LOG.warn("AgentController.keepChatting: no suspended loop to receive the decision")
         }
     }
 
@@ -4047,6 +4132,14 @@ private data class ValidatedPathJson(
     val line: Int,
     val column: Int,
 )
+
+/**
+ * JSON payload sent to the webview's `renderHandoff` function when new_task proposes
+ * a handoff. The webview renders [HandoffPreviewCard] with the summary and the
+ * two-button decision UI.
+ */
+@Serializable
+private data class HandoffJson(val summary: String)
 
 /**
  * Count the number of non-blank comments in a v2 revision payload.
