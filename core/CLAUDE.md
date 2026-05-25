@@ -41,6 +41,12 @@ Includes `RetryInterceptor` on all clients.
 
 Activity-aware polling: `baseIntervalMs` (default 30s), `maxIntervalMs` (default 300s). Backoff 1.5x on no-change, resets on change. Jitter +/-10%. Visibility gating (4x interval when IDE unfocused or tab hidden).
 
+**Connectivity gate.** At the top of each loop iteration, if `networkProbe.state != ONLINE` the poller suspends on `awaitOnline(maxIntervalMs)` instead of firing into a dead tunnel; on reconnect it resets backoff and applies a per-poller jittered stagger (0..baseInterval) to avoid a reconnect stampede. The `networkProbe` constructor param defaults to `NetworkStateService.getInstanceOrNull()`; it precedes `action` so existing trailing-lambda call sites are unaffected.
+
+## NetworkStateService
+
+`core/network/NetworkStateService.kt` — application-level (`@Service(Service.Level.APP)`, constructor-injected `cs`) connectivity authority. Single coalesced `StateFlow<NetworkState>` (`ONLINE`/`OFFLINE`/`RECONNECTING`); the VPN tunnel is per-machine, so this is APP-scoped, not per-project. Three inputs: (1) **reactive** — `NetworkStateReportingInterceptor` on `HttpClientFactory.baseClient` calls `reportSuccess()` on any HTTP response (server reached, even 4xx/5xx) and `reportFailure(origin)` on `IOException` (transport down); covers every `HttpClientFactory` client (all feature pollers). (2) **active probe** — one backoff loop (`NetworkReachabilityProbe`, a short-timeout HEAD on its OWN OkHttpClient that bypasses the factory) discovers reconnection while everything is paused; re-arms in `finally` to dodge a TOCTOU stuck-OFFLINE race. (3) **wake watchdog** — a monotonic clock-gap detector (`isWakeGap`) flips to `RECONNECTING` + reprobes when a tick gap shows the machine slept. APIs: `checkNow(url)` (bounded probe, used by the agent), `awaitOnline(timeoutMs)` (pollers suspend here). **Coverage note:** the agent's LLM client (`SourcegraphChatClient`) and `BitbucketBranchClient` bypass `HttpClientFactory` (kept isolated), so they are NOT reactively reported — the agent path is covered by the active `checkNow()` probe at its retry seam instead. Spec: `docs/superpowers/specs/2026-05-26-network-connectivity-resilience-design.md`.
+
 ## Extension points
 
 | EP | Interface | Purpose |

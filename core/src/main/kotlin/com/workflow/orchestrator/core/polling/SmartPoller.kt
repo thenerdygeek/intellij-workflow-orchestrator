@@ -21,8 +21,10 @@ class SmartPoller(
     private val baseIntervalMs: Long = 30_000,
     private val maxIntervalMs: Long = 300_000,
     private val scope: CoroutineScope,
-    private val action: suspend () -> Boolean,  // returns true if data changed
+    // networkProbe MUST precede `action`: existing call sites pass `action` as a trailing
+    // lambda, which Kotlin binds to the LAST parameter. Keeping `action` last preserves them.
     private val networkProbe: NetworkProbe? = NetworkStateService.getInstanceOrNull(),
+    private val action: suspend () -> Boolean,  // returns true if data changed
 ) {
     private val log = Logger.getInstance(SmartPoller::class.java)
     private var job: Job? = null
