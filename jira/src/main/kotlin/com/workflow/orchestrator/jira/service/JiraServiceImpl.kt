@@ -1204,6 +1204,37 @@ class JiraServiceImpl(private val project: Project) : JiraService {
     }
 
     override suspend fun searchTickets(jql: String, maxResults: Int): ToolResult<List<JiraTicketData>> {
+        // Lightweight sanity-validation of the agent-supplied JQL string.
+        // Goal: reject obviously malformed input while preserving the agent's
+        // full JQL expressiveness. This is NOT a full JQL parser — Jira's server
+        // enforces query authorization via the user's own PAT (no privilege escalation).
+        // Closes audit finding jira:F-12.
+        val trimmed = jql.trim()
+        if (trimmed.isBlank()) {
+            return ToolResult(
+                data = emptyList(),
+                summary = "JQL must not be blank.",
+                isError = true,
+                hint = "Provide a non-empty JQL query, e.g. \"project = PROJ AND status = Open\"."
+            )
+        }
+        if (trimmed.length > MAX_JQL_LENGTH) {
+            return ToolResult(
+                data = emptyList(),
+                summary = "JQL exceeds maximum allowed length ($MAX_JQL_LENGTH chars).",
+                isError = true,
+                hint = "Shorten the JQL query."
+            )
+        }
+        if (trimmed.any { it.code < 32 }) {
+            return ToolResult(
+                data = emptyList(),
+                summary = "JQL contains control characters and was rejected.",
+                isError = true,
+                hint = "Remove non-printable or control characters from the JQL query."
+            )
+        }
+
         val api = client ?: return ToolResult(
             data = emptyList(),
             summary = "Jira not configured.",
@@ -1211,7 +1242,8 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             hint = "Set up Jira connection in Settings."
         )
 
-        return when (val result = api.searchByJql(jql, maxResults)) {
+        // Note: search runs under the user's own Jira PAT — no privilege escalation is possible.
+        return when (val result = api.searchByJql(trimmed, maxResults)) {
             is ApiResult.Success -> {
                 val tickets = result.data.map { it.toTicketData() }
                 ToolResult.success(
@@ -1854,6 +1886,14 @@ class JiraServiceImpl(private val project: Project) : JiraService {
          */
         internal val JIRA_STARTED_FORMAT: DateTimeFormatter =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ")
+
+        /**
+         * Maximum length for agent-supplied JQL in [searchTickets].
+         * Jira DC URL path limit is ~8000 chars; JQL of 2000 chars leaves
+         * room for the URL prefix, encoding overhead, and other parameters.
+         * Closes audit finding jira:F-12.
+         */
+        internal const val MAX_JQL_LENGTH = 2000
     }
 }
 
