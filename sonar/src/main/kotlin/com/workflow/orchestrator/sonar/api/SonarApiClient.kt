@@ -23,18 +23,26 @@ class SonarApiClient(
 ) {
     companion object {
         /** Fetches both overall + new code metrics in one call. */
-        const val DEFAULT_METRIC_KEYS =
-            "coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions,lines_to_cover," +
-            "new_coverage,new_branch_coverage,new_uncovered_lines,new_uncovered_conditions,new_lines_to_cover," +
-            "bugs,vulnerabilities,code_smells," +
-            "new_bugs,new_vulnerabilities,new_code_smells," +
-            "sqale_index,sqale_rating,duplicated_lines_density,complexity,cognitive_complexity," +
-            "reliability_rating,security_rating"
+        @JvmField
+        val DEFAULT_METRIC_KEYS: String = SonarMetricKey.csv(
+            SonarMetricKey.COVERAGE, SonarMetricKey.LINE_COVERAGE, SonarMetricKey.BRANCH_COVERAGE,
+            SonarMetricKey.UNCOVERED_LINES, SonarMetricKey.UNCOVERED_CONDITIONS, SonarMetricKey.LINES_TO_COVER,
+            SonarMetricKey.NEW_COVERAGE, SonarMetricKey.NEW_BRANCH_COVERAGE, SonarMetricKey.NEW_UNCOVERED_LINES,
+            SonarMetricKey.NEW_UNCOVERED_CONDITIONS, SonarMetricKey.NEW_LINES_TO_COVER,
+            SonarMetricKey.BUGS, SonarMetricKey.VULNERABILITIES, SonarMetricKey.CODE_SMELLS,
+            SonarMetricKey.NEW_BUGS, SonarMetricKey.NEW_VULNERABILITIES, SonarMetricKey.NEW_CODE_SMELLS,
+            SonarMetricKey.SQALE_INDEX, SonarMetricKey.SQALE_RATING, SonarMetricKey.DUPLICATED_LINES_DENSITY,
+            SonarMetricKey.COMPLEXITY, SonarMetricKey.COGNITIVE_COMPLEXITY,
+            SonarMetricKey.RELIABILITY_RATING, SonarMetricKey.SECURITY_RATING,
+        )
 
         /** Project-level health metrics (not file-level). */
-        const val PROJECT_HEALTH_METRIC_KEYS =
-            "sqale_index,sqale_rating,duplicated_lines_density,cognitive_complexity," +
-            "reliability_rating,security_rating,coverage,branch_coverage"
+        @JvmField
+        val PROJECT_HEALTH_METRIC_KEYS: String = SonarMetricKey.csv(
+            SonarMetricKey.SQALE_INDEX, SonarMetricKey.SQALE_RATING, SonarMetricKey.DUPLICATED_LINES_DENSITY,
+            SonarMetricKey.COGNITIVE_COMPLEXITY, SonarMetricKey.RELIABILITY_RATING, SonarMetricKey.SECURITY_RATING,
+            SonarMetricKey.COVERAGE, SonarMetricKey.BRANCH_COVERAGE,
+        )
 
         /** SonarQube enforces ps ≤ 500 on /api/measures/component_tree and /api/issues/search. */
         const val MEASURES_PAGE_SIZE = 500
@@ -184,6 +192,41 @@ class SonarApiClient(
         )
     }
 
+    /**
+     * Fetches a SINGLE page of issues directly from the server (one HTTP request with
+     * `&p=$page&ps=$pageSize`). Unlike [getIssuesWithPaging] this does NOT loop to collect
+     * every page — it lets SonarQube paginate, so callers that only need one page (e.g. the
+     * agent's `getIssuesPaged`) don't fetch (and discard) up to 10 000 issues.
+     *
+     * `paging.total` in the returned envelope is the server-authoritative total issue count,
+     * so callers can report an accurate total alongside the single page they requested.
+     *
+     * F-15 fix: previously the agent's paged-issues path called [getIssuesWithPaging] (fetch-all)
+     * and then sliced client-side.
+     *
+     * @param pageSize requested page size. SonarQube caps this at [ISSUES_PAGE_SIZE] (500);
+     *   values above the cap are clamped so the request stays valid.
+     */
+    suspend fun getIssuesSinglePage(
+        projectKey: String,
+        page: Int,
+        pageSize: Int,
+        branch: String? = null,
+        filePath: String? = null,
+        inNewCodePeriod: Boolean = false
+    ): ApiResult<SonarIssueSearchResult> {
+        val effectivePage = page.coerceAtLeast(1)
+        val effectivePageSize = pageSize.coerceIn(1, ISSUES_PAGE_SIZE)
+        log.info(
+            "[Sonar:API] GET /api/issues/search (single page) for project '$projectKey' " +
+            "branch='${branch ?: "default"}' p=$effectivePage ps=$effectivePageSize newCode=$inNewCodePeriod"
+        )
+        val path = buildIssuesSearchPath(
+            projectKey, branch, filePath, inNewCodePeriod, effectivePage, effectivePageSize
+        )
+        return get<SonarIssueSearchResult>(path)
+    }
+
     // Sonar's /api/issues/search filters by component via `componentKeys=<projectKey>:<path>`
     // (or just `<projectKey>` for project-wide). The bare `&components=` parameter we used
     // pre-2026-05-18 was silently ignored, returning the full 500-issue project result.
@@ -193,11 +236,12 @@ class SonarApiClient(
         filePath: String?,
         inNewCodePeriod: Boolean,
         page: Int = 1,
+        pageSize: Int = ISSUES_PAGE_SIZE,
     ): String = buildString {
         append("/api/issues/search?componentKeys=")
         val componentKey = if (filePath != null) "$projectKey:$filePath" else projectKey
         append(URLEncoder.encode(componentKey, "UTF-8"))
-        append("&resolved=false&ps=$ISSUES_PAGE_SIZE&p=$page")
+        append("&resolved=false&ps=$pageSize&p=$page")
         branch?.let { append("&branch=${URLEncoder.encode(it, "UTF-8")}") }
         if (inNewCodePeriod) append("&inNewCodePeriod=true")
     }

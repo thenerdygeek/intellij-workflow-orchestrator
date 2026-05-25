@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.sonar.service
 
+import com.workflow.orchestrator.sonar.api.SonarMetricKey
 import com.workflow.orchestrator.sonar.api.dto.SonarMeasureComponentDto
 import com.workflow.orchestrator.sonar.api.dto.SonarSourceLineDto
 import com.workflow.orchestrator.sonar.model.FileCoverageData
@@ -22,17 +23,17 @@ object CoverageMapper {
                 val measures = comp.measures.associate { it.metric to it.effectiveValue() }
                 path to FileCoverageData(
                     filePath = path,
-                    lineCoverage = measures["line_coverage"]?.toDoubleOrNull() ?: 0.0,
-                    branchCoverage = measures["branch_coverage"]?.toDoubleOrNull() ?: 0.0,
-                    uncoveredLines = measures["uncovered_lines"]?.toIntOrNull() ?: 0,
-                    uncoveredConditions = measures["uncovered_conditions"]?.toIntOrNull() ?: 0,
+                    lineCoverage = measures[SonarMetricKey.LINE_COVERAGE]?.toDoubleOrNull() ?: 0.0,
+                    branchCoverage = measures[SonarMetricKey.BRANCH_COVERAGE]?.toDoubleOrNull() ?: 0.0,
+                    uncoveredLines = measures[SonarMetricKey.UNCOVERED_LINES]?.toIntOrNull() ?: 0,
+                    uncoveredConditions = measures[SonarMetricKey.UNCOVERED_CONDITIONS]?.toIntOrNull() ?: 0,
                     lineStatuses = emptyMap(),
-                    newCoverage = measures["new_coverage"]?.toDoubleOrNull(),
-                    newBranchCoverage = measures["new_branch_coverage"]?.toDoubleOrNull(),
-                    newUncoveredLines = measures["new_uncovered_lines"]?.toIntOrNull(),
-                    newLinesToCover = measures["new_lines_to_cover"]?.toIntOrNull(),
-                    complexity = measures["complexity"]?.toIntOrNull() ?: 0,
-                    cognitiveComplexity = measures["cognitive_complexity"]?.toIntOrNull() ?: 0,
+                    newCoverage = measures[SonarMetricKey.NEW_COVERAGE]?.toDoubleOrNull(),
+                    newBranchCoverage = measures[SonarMetricKey.NEW_BRANCH_COVERAGE]?.toDoubleOrNull(),
+                    newUncoveredLines = measures[SonarMetricKey.NEW_UNCOVERED_LINES]?.toIntOrNull(),
+                    newLinesToCover = measures[SonarMetricKey.NEW_LINES_TO_COVER]?.toIntOrNull(),
+                    complexity = measures[SonarMetricKey.COMPLEXITY]?.toIntOrNull() ?: 0,
+                    cognitiveComplexity = measures[SonarMetricKey.COGNITIVE_COMPLEXITY]?.toIntOrNull() ?: 0,
                     projectKey = projectKey,
                 )
             }

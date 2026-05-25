@@ -36,6 +36,7 @@ import com.workflow.orchestrator.core.services.SonarService
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.sonar.api.SonarApiClient
+import com.workflow.orchestrator.sonar.api.SonarMetricKey
 import com.workflow.orchestrator.sonar.util.SonarRatingUtils
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -234,15 +235,18 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         )
 
         // Use project-level measures API (not component_tree) for accurate aggregate coverage
-        val metricKeys = "coverage,branch_coverage,lines_to_cover,uncovered_lines"
+        val metricKeys = SonarMetricKey.csv(
+            SonarMetricKey.COVERAGE, SonarMetricKey.BRANCH_COVERAGE,
+            SonarMetricKey.LINES_TO_COVER, SonarMetricKey.UNCOVERED_LINES,
+        )
         return when (val result = api.getProjectMeasures(projectKey, branch = branch, metricKeys = metricKeys)) {
             is ApiResult.Success -> {
                 val measures = result.data.associate { it.metric to it.effectiveValue() }
 
-                val lineCoverage = measures["coverage"]?.toDoubleOrNull() ?: 0.0
-                val branchCoverage = measures["branch_coverage"]?.toDoubleOrNull() ?: 0.0
-                val totalLinesToCover = measures["lines_to_cover"]?.toIntOrNull() ?: 0
-                val uncoveredLines = measures["uncovered_lines"]?.toIntOrNull() ?: 0
+                val lineCoverage = measures[SonarMetricKey.COVERAGE]?.toDoubleOrNull() ?: 0.0
+                val branchCoverage = measures[SonarMetricKey.BRANCH_COVERAGE]?.toDoubleOrNull() ?: 0.0
+                val totalLinesToCover = measures[SonarMetricKey.LINES_TO_COVER]?.toIntOrNull() ?: 0
+                val uncoveredLines = measures[SonarMetricKey.UNCOVERED_LINES]?.toIntOrNull() ?: 0
                 val coveredLines = totalLinesToCover - uncoveredLines
 
                 val data = CoverageData(
@@ -467,7 +471,11 @@ class SonarServiceImpl(private val project: Project) : SonarService {
             hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        val metricKeys = "reliability_rating,security_rating,sqale_rating,coverage,duplicated_lines_density,sqale_debt_ratio,ncloc"
+        val metricKeys = SonarMetricKey.csv(
+            SonarMetricKey.RELIABILITY_RATING, SonarMetricKey.SECURITY_RATING, SonarMetricKey.SQALE_RATING,
+            SonarMetricKey.COVERAGE, SonarMetricKey.DUPLICATED_LINES_DENSITY,
+            SonarMetricKey.SQALE_DEBT_RATIO, SonarMetricKey.NCLOC,
+        )
         return when (val result = api.getProjectMeasures(projectKey, branch, metricKeys)) {
             is ApiResult.Success -> {
                 val measures = result.data.associate { it.metric to it.value }
@@ -479,13 +487,13 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                         .ifEmpty { value }
 
                 val data = ProjectMeasuresData(
-                    reliability = ratingToGrade(measures["reliability_rating"]),
-                    security = ratingToGrade(measures["security_rating"]),
-                    maintainability = ratingToGrade(measures["sqale_rating"]),
-                    coverage = measures["coverage"]?.toDoubleOrNull(),
-                    duplications = measures["duplicated_lines_density"]?.toDoubleOrNull(),
-                    technicalDebt = measures["sqale_debt_ratio"],
-                    linesOfCode = measures["ncloc"]?.toLongOrNull()
+                    reliability = ratingToGrade(measures[SonarMetricKey.RELIABILITY_RATING]),
+                    security = ratingToGrade(measures[SonarMetricKey.SECURITY_RATING]),
+                    maintainability = ratingToGrade(measures[SonarMetricKey.SQALE_RATING]),
+                    coverage = measures[SonarMetricKey.COVERAGE]?.toDoubleOrNull(),
+                    duplications = measures[SonarMetricKey.DUPLICATED_LINES_DENSITY]?.toDoubleOrNull(),
+                    technicalDebt = measures[SonarMetricKey.SQALE_DEBT_RATIO],
+                    linesOfCode = measures[SonarMetricKey.NCLOC]?.toLongOrNull()
                 )
 
                 val branchLabel = branch?.let { " ($it)" } ?: ""
@@ -589,9 +597,20 @@ class SonarServiceImpl(private val project: Project) : SonarService {
             hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        return when (val result = api.getIssuesWithPaging(projectKey, branch = branch, inNewCodePeriod = inNewCodePeriod)) {
+        // F-15: fetch a single server-side page (one request with &p=&ps=) instead of
+        // looping getIssuesWithPaging up to 10 000 issues and slicing one page client-side.
+        // paging.total in the response remains the server-authoritative count.
+        return when (
+            val result = api.getIssuesSinglePage(
+                projectKey,
+                page = page,
+                pageSize = pageSize,
+                branch = branch,
+                inNewCodePeriod = inNewCodePeriod,
+            )
+        ) {
             is ApiResult.Success -> {
-                val allIssues = result.data.issues.map { dto ->
+                val pagedIssues = result.data.issues.map { dto ->
                     SonarIssueData(
                         key = dto.key,
                         rule = dto.rule,
@@ -608,9 +627,6 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                     )
                 }
 
-                // Apply client-side paging over the fetched results
-                val startIndex = (page - 1) * pageSize
-                val pagedIssues = allIssues.drop(startIndex).take(pageSize)
                 val total = result.data.paging.total
 
                 val data = PagedIssuesData(
@@ -815,7 +831,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         )
 
         // Cheapest metric — we only care about the component tree itself, not the values.
-        return when (val result = api.getMeasures(projectKey, branch, metricKeys = "ncloc")) {
+        return when (val result = api.getMeasures(projectKey, branch, metricKeys = SonarMetricKey.NCLOC)) {
             is ApiResult.Success -> {
                 val components = result.data
                     .filter { it.qualifier == "FIL" }
@@ -863,8 +879,11 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         )
 
         // ── Phase 1: parallel project-level fetches ─────────────────────────
-        val newCodeMetrics = "new_uncovered_lines,new_line_coverage,new_branch_coverage," +
-            "new_uncovered_conditions,new_duplicated_lines,new_duplicated_lines_density"
+        val newCodeMetrics = SonarMetricKey.csv(
+            SonarMetricKey.NEW_UNCOVERED_LINES, SonarMetricKey.NEW_LINE_COVERAGE, SonarMetricKey.NEW_BRANCH_COVERAGE,
+            SonarMetricKey.NEW_UNCOVERED_CONDITIONS, SonarMetricKey.NEW_DUPLICATED_LINES,
+            SonarMetricKey.NEW_DUPLICATED_LINES_DENSITY,
+        )
 
         val gate: ApiResult<com.workflow.orchestrator.sonar.api.dto.SonarQualityGateDto>
         val issues: ApiResult<List<com.workflow.orchestrator.sonar.api.dto.SonarIssueDto>>
@@ -950,9 +969,9 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         val fileInfos = when (fileMeasures) {
             is ApiResult.Success -> fileMeasures.data.mapNotNull { comp ->
                 val m = comp.measures.associate { it.metric to it.effectiveValue() }
-                val uncoveredLines = m["new_uncovered_lines"]?.toIntOrNull() ?: 0
-                val uncoveredConds = m["new_uncovered_conditions"]?.toIntOrNull() ?: 0
-                val dupLines = m["new_duplicated_lines"]?.toIntOrNull() ?: 0
+                val uncoveredLines = m[SonarMetricKey.NEW_UNCOVERED_LINES]?.toIntOrNull() ?: 0
+                val uncoveredConds = m[SonarMetricKey.NEW_UNCOVERED_CONDITIONS]?.toIntOrNull() ?: 0
+                val dupLines = m[SonarMetricKey.NEW_DUPLICATED_LINES]?.toIntOrNull() ?: 0
                 // Only include files that have something to report
                 if (uncoveredLines > 0 || uncoveredConds > 0 || dupLines > 0) {
                     FileMeasureInfo(
@@ -960,8 +979,8 @@ class SonarServiceImpl(private val project: Project) : SonarService {
                         filePath = comp.path ?: comp.name,
                         newUncoveredLines = uncoveredLines,
                         newUncoveredConditions = uncoveredConds,
-                        newLineCoverage = m["new_line_coverage"]?.toDoubleOrNull(),
-                        newBranchCoverage = m["new_branch_coverage"]?.toDoubleOrNull(),
+                        newLineCoverage = m[SonarMetricKey.NEW_LINE_COVERAGE]?.toDoubleOrNull(),
+                        newBranchCoverage = m[SonarMetricKey.NEW_BRANCH_COVERAGE]?.toDoubleOrNull(),
                         newDuplicatedLines = dupLines
                     )
                 } else null
@@ -975,8 +994,11 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         // Get project-level new code coverage from measures/component
         // Fetch uncovered counts from project-level API (not file sums) to avoid undercounting
         // when component_tree is paginated (ps=500)
-        val projectNewCodeMetrics = "new_line_coverage,new_branch_coverage,new_duplicated_lines_density," +
-            "new_uncovered_lines,new_uncovered_conditions"
+        val projectNewCodeMetrics = SonarMetricKey.csv(
+            SonarMetricKey.NEW_LINE_COVERAGE, SonarMetricKey.NEW_BRANCH_COVERAGE,
+            SonarMetricKey.NEW_DUPLICATED_LINES_DENSITY,
+            SonarMetricKey.NEW_UNCOVERED_LINES, SonarMetricKey.NEW_UNCOVERED_CONDITIONS,
+        )
         val projectMeasures = api.getProjectMeasures(projectKey, branch, projectNewCodeMetrics)
         val projM = when (projectMeasures) {
             is ApiResult.Success -> projectMeasures.data.associate { it.metric to it.effectiveValue() }
@@ -984,11 +1006,11 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         }
 
         val coverageSummary = NewCodeCoverageSummary(
-            lineCoverage = projM["new_line_coverage"]?.toDoubleOrNull(),
-            branchCoverage = projM["new_branch_coverage"]?.toDoubleOrNull(),
-            newUncoveredLines = projM["new_uncovered_lines"]?.toIntOrNull() ?: 0,
-            newUncoveredConditions = projM["new_uncovered_conditions"]?.toIntOrNull() ?: 0,
-            duplicatedLinesDensity = projM["new_duplicated_lines_density"]?.toDoubleOrNull()
+            lineCoverage = projM[SonarMetricKey.NEW_LINE_COVERAGE]?.toDoubleOrNull(),
+            branchCoverage = projM[SonarMetricKey.NEW_BRANCH_COVERAGE]?.toDoubleOrNull(),
+            newUncoveredLines = projM[SonarMetricKey.NEW_UNCOVERED_LINES]?.toIntOrNull() ?: 0,
+            newUncoveredConditions = projM[SonarMetricKey.NEW_UNCOVERED_CONDITIONS]?.toIntOrNull() ?: 0,
+            duplicatedLinesDensity = projM[SonarMetricKey.NEW_DUPLICATED_LINES_DENSITY]?.toDoubleOrNull()
         )
 
         // ── Phase 3: per-file drill-down for exact line numbers ─────────────
@@ -1201,15 +1223,15 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         // and coverage percentage metrics showing 100% when the branch has no new lines.
         // Emitted only when both signals are simultaneously present (empty-new-code case).
         val hasGateZeroCoverageError = data.qualityGate.conditions.any { c ->
-            (c.metric.contains("new_coverage")) &&
+            (c.metric.contains(SonarMetricKey.NEW_COVERAGE)) &&
                 c.status.equals("ERROR", ignoreCase = true) &&
                 (c.value.toDoubleOrNull() ?: 1.0) <= 0.01
         }
-        val hasCoveragePctNearHundred = listOf("new_line_coverage", "new_branch_coverage").any { key ->
+        val hasCoveragePctNearHundred = listOf(SonarMetricKey.NEW_LINE_COVERAGE, SonarMetricKey.NEW_BRANCH_COVERAGE).any { key ->
             val v = when (key) {
-                "new_line_coverage"   -> cov.lineCoverage
-                "new_branch_coverage" -> cov.branchCoverage
-                else                  -> null
+                SonarMetricKey.NEW_LINE_COVERAGE   -> cov.lineCoverage
+                SonarMetricKey.NEW_BRANCH_COVERAGE -> cov.branchCoverage
+                else                               -> null
             }
             v != null && v >= 99.0
         }

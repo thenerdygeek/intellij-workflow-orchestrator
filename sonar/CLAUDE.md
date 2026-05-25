@@ -25,9 +25,10 @@ Key endpoints:
 
 ## Architecture
 
-- `SonarApiClient` — HTTP client for SonarQube REST API
+- `SonarApiClient` — HTTP client for SonarQube REST API. `getIssuesWithPaging` loops all pages (≤10 000) for coverage/aggregation paths; `getIssuesSinglePage(page, pageSize, …)` issues ONE request (`&p=&ps=`) for callers that only need one page (e.g. agent `getIssuesPaged`) — avoids fetch-all-then-slice (audit sonar:F-15).
+- `SonarMetricKey` (`api/SonarMetricKey.kt`) — canonical metric-key constants. All metric-key literals + CSV `metricKeys=` sets are built from these (`SonarMetricKey.csv(...)`); values are byte-identical to the former literals (audit sonar:F-17).
 - `SonarServiceImpl` — implements `SonarService` (in :core), delegates to `SonarDataService`, provides `searchProjects` for the manual project key picker
-- `SonarDataService` — caches state via `StateFlow<SonarState>`, refresh debouncing (500ms)
+- `SonarDataService` — `@Service(PROJECT)`, caches state via `StateFlow<SonarState>`, refresh debouncing (500ms). Constructor takes the **platform-injected** `cs: CoroutineScope` (2024.1+ pattern, mirrors core `HealthCheckService`); does NOT allocate or cancel its own scope — the platform cancels `cs` on teardown (audit sonar:F-14).
 - `IssueMapper` / `CoverageMapper` — transform DTOs to domain models
 
 ## EventBus emissions (T-B1, Phase 7)
