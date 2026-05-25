@@ -71,6 +71,17 @@ class CommentsTabPanel(
         visibleRowCount = 10
     }
 
+    /**
+     * "Toggle Resolved" button reference kept so its enabled state can be updated on
+     * selection change. Disabled when no comment is selected or when the selected comment's
+     * [PrCommentPermittedOps.transitionable] is false (server-side authorship guard).
+     * Closes audit finding pullrequest:F-7.
+     */
+    private val toggleResolvedButton = JButton("Toggle Resolved").apply {
+        isEnabled = false
+        addActionListener { toggleResolvedSelected() }
+    }
+
     private val statusLabel = JBLabel("Loading…").apply {
         border = JBUI.Borders.empty(0, 8)
     }
@@ -98,7 +109,7 @@ class CommentsTabPanel(
 
         val selectionActionsPanel = JBPanel<JBPanel<*>>(FlowLayout(FlowLayout.LEFT, 4, 4)).apply {
             add(JButton("Reply").apply { addActionListener { replySelected() } })
-            add(JButton("Toggle Resolved").apply { addActionListener { toggleResolvedSelected() } })
+            add(toggleResolvedButton)
         }
         centerPanel.add(selectionActionsPanel, BorderLayout.SOUTH)
         add(centerPanel, BorderLayout.CENTER)
@@ -113,6 +124,13 @@ class CommentsTabPanel(
         add(postPanel, BorderLayout.SOUTH)
 
         preferredSize = Dimension(800, 600)
+
+        // Update "Toggle Resolved" button state whenever the selection changes.
+        // Gate is permittedOperations.transitionable from the Bitbucket response —
+        // the server populates this only for comments the current user may transition.
+        commentList.addListSelectionListener {
+            updateToggleResolvedState()
+        }
 
         vm.addChangeListener {
             ApplicationManager.getApplication().invokeLater {
@@ -146,6 +164,19 @@ class CommentsTabPanel(
     private fun syncListModel() {
         listModel.clear()
         vm.comments.forEach { listModel.addElement(it) }
+        updateToggleResolvedState()
+    }
+
+    /**
+     * Enables "Toggle Resolved" only when a comment is selected AND its
+     * [PrCommentPermittedOps.transitionable] is true.  The server populates
+     * [PrCommentPermittedOps] based on ownership and comment state, so this
+     * is a defence-in-depth client guard — the server still enforces the rule.
+     * Closes audit finding pullrequest:F-7.
+     */
+    private fun updateToggleResolvedState() {
+        val sel = commentList.selectedValue
+        toggleResolvedButton.isEnabled = sel?.permittedOperations?.transitionable == true
     }
 
     private fun replySelected() {
@@ -156,6 +187,9 @@ class CommentsTabPanel(
 
     private fun toggleResolvedSelected() {
         val sel = commentList.selectedValue ?: return
+        // Double-check even though the button should already be disabled for non-transitionable
+        // comments (defence-in-depth against programmatic invocation paths).
+        if (sel.permittedOperations?.transitionable != true) return
         scope.launch {
             if (sel.state == PrCommentState.RESOLVED) vm.reopen(sel.id.toLong())
             else vm.resolve(sel.id.toLong())
