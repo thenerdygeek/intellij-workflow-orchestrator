@@ -130,14 +130,15 @@ class AutomationPanel(
     private val tabbedPane = JBTabbedPane()
 
     /**
-     * Passive branch label (Phase B) — displays the focused PR's chain branch name.
-     * Replaces the old interactive JComboBox: branch selection is now driven by
-     * [WorkflowContextService.state] → [onFocusBuildChanged], not by the user.
+     * Interactive branch selector — lets the user choose which Bamboo plan branch
+     * to trigger against. Populated by [loadBranchesFor] on suite selection; persisted
+     * per-suite by [AutomationSettingsService]. `null` branchKey means master/default.
      */
-    private val branchLabel = JBLabel("—").apply {
-        font = font.deriveFont(Font.PLAIN, JBUI.scale(11).toFloat())
-        foreground = StatusColors.SECONDARY_TEXT
+    private val branchCombo = JComboBox<BranchComboItem>().apply {
+        bindBoundedWidth(ComboBoxWidth.DEFAULT)
     }
+    @Volatile private var selectedBranchKey: String? = null
+    private var suppressBranchListener = false
 
     // State
     private var currentSuitePlanKey: String = ""
@@ -194,7 +195,7 @@ class AutomationPanel(
                     foreground = StatusColors.SECONDARY_TEXT
                     font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
                 })
-                add(branchLabel)
+                add(branchCombo)
                 add(statusLabel)
                 add(refreshButton)
             }
@@ -241,6 +242,16 @@ class AutomationPanel(
         suiteCombo.addActionListener {
             val item = suiteCombo.selectedItem as? SuiteComboItem ?: return@addActionListener
             onSuiteSelected(item.planKey)
+        }
+
+        // Branch selection listener — persists the chosen branch per suite
+        branchCombo.addActionListener {
+            if (suppressBranchListener) return@addActionListener
+            val item = branchCombo.selectedItem as? BranchComboItem ?: return@addActionListener
+            selectedBranchKey = item.branchKey
+            if (currentSuitePlanKey.isNotBlank()) {
+                AutomationSettingsService.getInstance().setSuiteSelectedBranch(currentSuitePlanKey, item.branchKey)
+            }
         }
 
         // Refresh button: cache-bust for the currently-selected suite
@@ -302,6 +313,7 @@ class AutomationPanel(
             if (!initialPlanKey.isNullOrBlank()) {
                 currentSuitePlanKey = initialPlanKey
                 val token = ++loadGeneration
+                loadBranchesFor(initialPlanKey, token)
                 scope.launch { onTabOpenedFor(initialPlanKey, token) }
             }
         }
@@ -374,6 +386,7 @@ class AutomationPanel(
         // Suite-switch only re-binds the selected-suite reference used by
         // Refresh and Trigger Now. The displayed baseline is sticky; the
         // user must click Refresh to recompute it for a different suite.
+        loadBranchesFor(planKey, token)
         scope.launch {
             // Reload plan variables (suite-specific) so the variables dropdown
             // in SuiteConfigPanel matches the new suite. The baseline display
@@ -391,6 +404,43 @@ class AutomationPanel(
     }
 
     /**
+     * Fetches plan branches from Bamboo for the given [planKey] and populates
+     * [branchCombo]. Restores the persisted selection for the suite, falling back
+     * to index 0 ("default") when the previously chosen branch no longer exists.
+     * Guarded by [loadGeneration] so stale async results don't clobber a newer
+     * suite selection.
+     */
+    private fun loadBranchesFor(planKey: String, token: Long) {
+        scope.launch {
+            val result = bambooService.getPlanBranches(planKey)
+            invokeLater {
+                if (token != loadGeneration) return@invokeLater
+                suppressBranchListener = true
+                try {
+                    branchCombo.removeAllItems()
+                    branchCombo.addItem(BranchComboItem(null, "default"))
+                    if (!result.isError) {
+                        for (b in result.data.orEmpty()) {
+                            branchCombo.addItem(BranchComboItem(b.key, b.shortName.ifBlank { b.name }))
+                        }
+                    } else {
+                        log.warn("[Automation:UI] getPlanBranches failed for $planKey: ${result.summary}")
+                    }
+                    // Restore persisted selection (falls back to "default" if the branch no longer exists)
+                    val persisted = AutomationSettingsService.getInstance().getSuiteSelectedBranch(planKey)
+                    val idx = (0 until branchCombo.itemCount)
+                        .firstOrNull { (branchCombo.getItemAt(it) as BranchComboItem).branchKey == persisted }
+                        ?: 0
+                    branchCombo.selectedIndex = idx
+                    selectedBranchKey = (branchCombo.getItemAt(idx) as BranchComboItem).branchKey
+                } finally {
+                    suppressBranchListener = false
+                }
+            }
+        }
+    }
+
+    /**
      * Phase B: called whenever [WorkflowContextService] emits a new [focusBuild].
      *
      * - Updates the passive branch label.
@@ -402,11 +452,6 @@ class AutomationPanel(
     private fun onFocusBuildChanged(focusBuild: BuildRef?) {
         currentFocusBuild = focusBuild
         log.info("[Automation:UI] focusBuild changed: planKey=${focusBuild?.planKey}, chainKey=${focusBuild?.chainKey}, branch=${focusBuild?.branch}")
-
-        invokeLater {
-            // Update the passive branch label
-            branchLabel.text = focusBuild?.branch ?: "—"
-        }
 
         if (focusBuild == null || focusBuild.chainKey == null) {
             invokeLater {
@@ -919,14 +964,15 @@ class AutomationPanel(
             stages = stages,
             enqueuedAt = java.time.Instant.now(),
             status = QueueEntryStatus.WAITING_LOCAL,
-            bambooResultKey = null
+            bambooResultKey = null,
+            branchKey = selectedBranchKey
         )
 
         queueService.enqueue(entry)
         statusLabel.text = "\u27F3 Queued"
         statusLabel.foreground = JBColor(0x0969DA, 0x89b4fa)
         tabbedPane.selectedIndex = 1
-        log.info("[Automation:UI] Run queued for suite $currentSuitePlanKey (stages=${stages ?: "all"})")
+        log.info("[Automation:UI] Run queued for suite $currentSuitePlanKey (stages=${stages ?: "all"}, branch=${selectedBranchKey ?: "<master>"})")
     }
 
     override fun dispose() {
@@ -936,6 +982,15 @@ class AutomationPanel(
 
 private data class SuiteComboItem(val planKey: String, val displayName: String) {
     override fun toString() = displayName.ifBlank { planKey }
+}
+
+/**
+ * Combo entry for the Bamboo plan branch selector. [branchKey] == null means
+ * the master/default branch (triggers with the suite plan key directly).
+ * [label] is shown in the dropdown — either `shortName` or `name` from Bamboo.
+ */
+private data class BranchComboItem(val branchKey: String?, val label: String) {
+    override fun toString() = label
 }
 
 /**
