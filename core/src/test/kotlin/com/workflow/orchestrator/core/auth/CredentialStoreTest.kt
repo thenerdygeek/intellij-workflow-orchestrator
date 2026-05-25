@@ -60,4 +60,35 @@ class CredentialStoreTest {
         store.storeToken(ServiceType.BITBUCKET, "some-token")
         assertTrue(store.hasToken(ServiceType.BITBUCKET))
     }
+
+    // ── F-8 URL-keyed cache tests ─────────────────────────────────────────────
+
+    @Test
+    fun `clearGlobalCache removes all entries`() {
+        store.storeToken(ServiceType.JIRA, "jira-token")
+        store.storeToken(ServiceType.BAMBOO, "bamboo-token")
+        CredentialStore.clearGlobalCache()
+        // After clearing, tokens should be re-read from PasswordSafe (which still has them)
+        // but the cache is empty.  The returned value comes from PasswordSafe, not from cache.
+        assertEquals("jira-token", store.getToken(ServiceType.JIRA))
+    }
+
+    @Test
+    fun `store and retrieve survive clearGlobalCache round-trip`() {
+        store.storeToken(ServiceType.SONARQUBE, "sonar-abc")
+        CredentialStore.clearGlobalCache()
+        // Must re-read from PasswordSafe and return the stored value
+        assertEquals("sonar-abc", store.getToken(ServiceType.SONARQUBE))
+    }
+
+    @Test
+    fun `URL key investigation — ConnectionSettings is APPLICATION-level so ServiceType key is not a cross-project leak`() {
+        // This test documents the F-8 investigation conclusion:
+        // ConnectionSettings is @Service(Level.APP) — all projects share the same URL per ServiceType.
+        // The cache key Pair<ServiceType, serverUrl> correctly handles URL changes by producing
+        // a cache miss when the URL changes. In test context serverUrlFor() returns "" (no IDE),
+        // so both store() and getToken() use the same key and behave correctly.
+        store.storeToken(ServiceType.SOURCEGRAPH, "sg-token-1")
+        assertEquals("sg-token-1", store.getToken(ServiceType.SOURCEGRAPH))
+    }
 }

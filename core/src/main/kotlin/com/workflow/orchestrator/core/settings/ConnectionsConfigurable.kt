@@ -176,6 +176,9 @@ class ConnectionsConfigurable(
         }
         pendingBitbucketUsername = null
 
+        // Invalidate the URL-keyed token cache so a URL change takes effect immediately
+        // rather than waiting for the 1-hour TTL to expire (F-8 fix defence-in-depth).
+        CredentialStore.clearGlobalCache()
         log.info("[Settings:Connections] Applied connection settings")
     }
 
