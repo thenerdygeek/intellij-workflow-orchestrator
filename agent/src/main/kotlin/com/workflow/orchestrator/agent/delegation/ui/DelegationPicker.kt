@@ -342,8 +342,19 @@ class DelegationPicker(
     }
 
     /**
-     * Auto-launch flow: Toolbox flavor check → process spawn → 90s poll → delegate or fall-through.
-     * Called from the "Launch & Delegate" button click handler.
+     * Launch & Delegate for a CLOSED (or inbound-off) target.
+     *
+     * Plan 6 Task 8 — routing fix: this no longer spawns the launcher and polls the
+     * delegation socket here. That was a dead end for the doorbell flow — the
+     * delegation socket only binds AFTER the target user consents, so polling it for
+     * 90 s always timed out for an inbound-off target and never reached [send].
+     *
+     * Instead we hand the picked CLOSED target straight to [DelegationOutboundService.send]
+     * (via [doDelegate] → OK), whose `knockAndWaitForBind` flow now owns the full
+     * knock-and-wait sequence: write the pending request, ring the doorbell, spawn the
+     * launcher if the doorbell is unreachable, then wait for the door to bind after the
+     * target user consents (or bail on a declined marker). The Toolbox flavor pre-flight
+     * check is retained here because it needs the picker's EDT modality + dialogs.
      */
     private fun onLaunchAndDelegate(selected: PickerEntry) {
         hideLaunchFailure()
@@ -365,78 +376,9 @@ class DelegationPicker(
                 showToolboxUnknownBanner()
             }
         }
-        val spawn = processSpawner.spawn(launcherResolver.resolveLauncher(), selected.path)
-        if (spawn is SpawnResult.Failed) {
-            showInlineLaunchFailure("Could not spawn IDE process: ${spawn.message}")
-            return
-        }
-        // Plan 5.4 — launcher-lifetime heuristic for inbound-off diagnosis.
-        // When an IntelliJ is already running on this host, `idea.sh /path` (or
-        // idea64.exe) signals it via single-instance IPC and exits within ~1s.
-        // When the IDE is NOT running, the launcher starts a fresh JVM and
-        // stays alive. So: process exits cleanly in <2s ⇒ handed off to a
-        // running IDE ⇒ if the socket then fails to bind, the most likely
-        // cause is the target's inbound setting being OFF (not a fresh-launch
-        // failure). Captured here on the EDT (the wait is bounded at 2s so we
-        // don't freeze the dialog); used by the poller's timeout branch below.
-        val handedOffToRunningIde: Boolean = try {
-            val proc = (spawn as? SpawnResult.Started)?.process
-            if (proc != null) {
-                val exited = proc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
-                exited && proc.exitValue() == 0
-            } else {
-                false
-            }
-        } catch (_: Exception) {
-            false
-        }
-        val socketPath = DelegationPaths.socketFor(selected.path)
-        ProgressManager.getInstance().run(
-            object : Task.Backgroundable(project, "Waiting for IDE…", true) {
-                override fun run(indicator: ProgressIndicator) {
-                    val poller = AutoLaunchPoller(
-                        socketPath = socketPath,
-                        scope = CoroutineScope(Dispatchers.IO),
-                        pingFn = { sp ->
-                            indicator.checkCanceled()
-                            DelegationClient.ping(sp)
-                        },
-                    )
-                    val outcome = runBlockingCancellable {
-                        poller.awaitOrTimeout()
-                    }
-                    ApplicationManager.getApplication().invokeLater {
-                        if (outcome is AutoLaunchOutcome.Ready) {
-                            doDelegate(selected)
-                        } else if (handedOffToRunningIde) {
-                            // Strong signal: the launcher handed off to an
-                            // already-running IDE that never bound an inbound
-                            // socket. Almost always = "Accept incoming
-                            // delegations from other IDEs" is OFF in that IDE.
-                            showInlineLaunchFailure(
-                                "<html>The target IDE appears to be running, but it didn't bind an " +
-                                    "inbound delegation socket within 90 s.<br><br>" +
-                                    "<b>Most likely cause:</b> the target IDE does not have " +
-                                    "<b>Accept incoming delegations from other IDEs</b> enabled.<br><br>" +
-                                    "In the target IDE: Settings → Tools → Workflow Orchestrator → " +
-                                    "Cross-IDE Delegation → enable the inbound checkbox, then restart " +
-                                    "that IDE. Then click <b>Retry probe</b>.</html>"
-                            )
-                        } else {
-                            showInlineLaunchFailure(
-                                "<html>Timed out after 90 s waiting for the target IDE.<br><br>" +
-                                    "<b>Likely causes</b> (in order):<br>" +
-                                    "1. The target IDE doesn't have <b>Accept incoming delegations from other IDEs</b> " +
-                                    "enabled (Settings → Tools → Workflow Orchestrator → Cross-IDE Delegation).<br>" +
-                                    "2. The IDE failed to start or opened a different project.<br>" +
-                                    "3. A different IDE flavor (Toolbox) opened the project.<br><br>" +
-                                    "Verify the setting, restart the target IDE, then click <b>Retry probe</b>.</html>"
-                            )
-                        }
-                    }
-                }
-            }
-        )
+        // Route to send() — it owns the knock → consent → bind → connect flow,
+        // including spawning the launcher when the doorbell is unreachable.
+        doDelegate(selected)
     }
 
     /**

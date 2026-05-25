@@ -126,6 +126,14 @@ class AgentService(
     private val activeTaskMutex = Mutex()
 
     /**
+     * Count of live inbound-delegated sessions (Plan 6 Task 8). Incremented on
+     * [startDelegatedSession] entry, decremented in the terminal callback before
+     * [DelegationInboundService.stopIfTransientAndIdle] is called so the count
+     * reflects the just-ended session. Drives transient-bind teardown.
+     */
+    private val activeDelegatedSessions = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /**
      * Test-only capture hooks keyed by sessionId — when set, background completion
      * messages for that session are delivered to the callback instead of being routed
      * to the live AgentLoop / persistence. See [setSteeringCapturerForTest].
@@ -3054,6 +3062,10 @@ class AgentService(
                 "repo=${delegationMetadata.delegatorRepo}, request='${request.take(60)}'"
         )
 
+        // Plan 6 Task 8: count this delegated session as live; decremented + checked
+        // for transient-bind teardown in the terminal callback's finally below.
+        activeDelegatedSessions.incrementAndGet()
+
         // Stamp the per-session state with delegation metadata BEFORE the loop starts
         // so AskQuestionsTool can detect the delegated context on the very first iteration.
         sessionStateFor(sid).also { it.delegated = delegationMetadata }
@@ -3089,6 +3101,9 @@ class AgentService(
             // F5 fix: synchronous setup failed — roll back what we did above to avoid leaks.
             releaseSessionState(sid)
             inbound.unregisterSessionChannel(sid)
+            // Plan 6 Task 8: the terminal callback below never runs on synchronous
+            // failure, so decrement + check teardown here to avoid a count leak.
+            inbound.stopIfTransientAndIdle(activeDelegatedSessions.decrementAndGet())
             throw e
         }
 
@@ -3145,6 +3160,10 @@ class AgentService(
                 )
             } finally {
                 inbound.unregisterSessionChannel(sid)
+                // Plan 6 Task 8: this delegated session has ended. Decrement first, then
+                // pass the post-decrement count so a transient ("Allow once") inbound bind
+                // is torn down once no delegated sessions remain. No-op for persistent binds.
+                inbound.stopIfTransientAndIdle(activeDelegatedSessions.decrementAndGet())
             }
         }
 
