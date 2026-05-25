@@ -199,9 +199,12 @@ class ToolRegistry {
 
     // Cached name/param sets, invalidated on any registration or activation change.
     // Avoids per-iteration allocation in the ReAct loop hot path.
-    private var cachedToolNames: Set<String>? = null
-    private var cachedParamNames: Set<String>? = null
-    private var cachedActiveDefinitions: List<ToolDefinition>? = null
+    // @Volatile ensures cache writes from @Synchronized writers (activateDeferred,
+    // resetActiveDeferred, registerCore, registerDeferred) are visible to unsynchronized
+    // readers (allToolNames, allParamNames, getActiveDefinitions) without stale reads.
+    @Volatile private var cachedToolNames: Set<String>? = null
+    @Volatile private var cachedParamNames: Set<String>? = null
+    @Volatile private var cachedActiveDefinitions: List<ToolDefinition>? = null
 
     private fun invalidateCache() {
         cachedToolNames = null

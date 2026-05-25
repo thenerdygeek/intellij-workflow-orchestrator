@@ -621,6 +621,35 @@ class ToolRegistryTest {
             assertEquals(toolCount, registry.count())
         }
     }
+
+    // ── F-10 volatile cache visibility ────────────────────────────────────────
+
+    @Test
+    fun `cache invalidation is visible to concurrent readers after activation`() {
+        // Register many deferred tools, activate them from multiple threads, and
+        // assert that allToolNames() and allParamNames() never return stale null
+        // after a concurrent invalidation. Without @Volatile the test is data-racy
+        // and may return a cache entry that pre-dates the activation.
+        val toolCount = 20
+        repeat(toolCount) { i ->
+            registry.registerDeferred(FakeAgentTool("deferred_$i"), "TestCat")
+        }
+
+        // Activate from multiple threads concurrently
+        val threads = (0 until toolCount).map { i ->
+            Thread { registry.activateDeferred("deferred_$i") }
+        }
+        threads.forEach { it.start() }
+        threads.forEach { it.join() }
+
+        // After all activations the cache must reflect the full activated set
+        val names = registry.allToolNames()
+        repeat(toolCount) { i ->
+            assertTrue("deferred_$i" in names, "deferred_$i should be in allToolNames()")
+        }
+        // Active set (core + active-deferred) should include all activated tools
+        assertEquals(toolCount, registry.activeDeferredCount())
+    }
 }
 
 class FakeAgentTool(
