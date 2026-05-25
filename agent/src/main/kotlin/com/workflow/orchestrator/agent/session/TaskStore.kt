@@ -15,6 +15,24 @@ class TaskStore(
 
     private val mutex = Mutex()
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = false }
+
+    /**
+     * Live task list.  All *mutations* (add, update, load-from-disk) are
+     * performed inside [mutex].  [getTask] and [listTasks] read this list
+     * **without** acquiring the mutex — see their KDocs for the rationale
+     * (re-entrant callers from within a mutex-held block; single-coroutine
+     * agent loop).
+     *
+     * Concurrency invariant (F-19):  reads are safe-by-convention only when
+     * the caller is the single agent-loop coroutine.  Any new method that
+     * (a) takes the mutex AND (b) delegates to [getTask] / [listTasks] will
+     * deadlock — use the inline lookup `tasks.firstOrNull { it.id == id }`
+     * inside the lock instead, as [updateTask] already does.
+     *
+     * [checkNoCycles] is only ever called from within a mutex-held block
+     * ([addTask], [updateTask]), so iterating `tasks` inside it is safe
+     * even though the function itself is not `suspend` and does not lock.
+     */
     private val tasks: MutableList<Task> = mutableListOf()
 
     private val sessionDir: File get() = File(baseDir, "sessions/$sessionId")
