@@ -48,6 +48,14 @@ class MessageStateHandler(
     private val apiHistory: MutableList<ApiMessage> = mutableListOf()
 
     /**
+     * Sealed once the handler is published for concurrent access.
+     * Set to `true` before assigning `activeMessageStateHandler` in `AgentService`.
+     * After that point, [setClineMessages] and [setApiConversationHistory] must NOT be
+     * called — the `@GuardedBy("init-thread-only")` contract is enforced at runtime.
+     */
+    @Volatile private var published: Boolean = false
+
+    /**
      * One-shot flag: true once [DialectDriftDetector] has flagged drift in this
      * session (either at write-time on a new assistant turn, or during the
      * one-pass [redactDialectXmlInHistory] on resume / retry). Consumed by
@@ -415,16 +423,26 @@ class MessageStateHandler(
         true
     }
 
-    /** Call ONLY during initialization, before any concurrent access begins. */
+    /**
+     * Mark this handler as published for concurrent access.
+     * Must be called by `AgentService` immediately before assigning the handler to
+     * `activeMessageStateHandler`. After this call, [setClineMessages] and
+     * [setApiConversationHistory] will throw if invoked.
+     */
+    fun markPublished() {
+        published = true
+    }
+
+    /** Call ONLY during initialization, before [markPublished] is called. */
     fun setClineMessages(messages: List<UiMessage>) {
-        check(!mutex.isLocked) { "setClineMessages must only be called during init, before concurrent access" }
+        check(!published) { "setClineMessages must only be called during init, before markPublished()" }
         uiMessages.clear()
         uiMessages.addAll(messages)
     }
 
-    /** Call ONLY during initialization, before any concurrent access begins. */
+    /** Call ONLY during initialization, before [markPublished] is called. */
     fun setApiConversationHistory(messages: List<ApiMessage>) {
-        check(!mutex.isLocked) { "setApiConversationHistory must only be called during init, before concurrent access" }
+        check(!published) { "setApiConversationHistory must only be called during init, before markPublished()" }
         apiHistory.clear()
         apiHistory.addAll(messages)
     }

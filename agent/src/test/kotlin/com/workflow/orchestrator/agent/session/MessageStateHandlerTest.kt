@@ -412,4 +412,44 @@ class MessageStateHandlerTest {
         val firstResult = firstUserMsg.content.filterIsInstance<ContentBlock.ToolResult>().first()
         assertEquals("First plan", firstResult.content, "earlier tool result should NOT be rewritten")
     }
+
+    // ── F-17 markPublished guard ──────────────────────────────────────────────
+
+    @Test
+    fun `setClineMessages is allowed before markPublished`() {
+        val h = handler()
+        val msg = UiMessage(ts = 1L, type = UiMessageType.SAY, say = UiSay.TEXT, text = "hi")
+        h.setClineMessages(listOf(msg))
+        assertEquals(1, h.getClineMessages().size)
+    }
+
+    @Test
+    fun `setApiConversationHistory is allowed before markPublished`() {
+        val h = handler()
+        val msg = ApiMessage(role = ApiRole.USER, content = listOf(ContentBlock.Text("hello")))
+        h.setApiConversationHistory(listOf(msg))
+        assertEquals(1, h.getApiConversationHistory().size)
+    }
+
+    @Test
+    fun `setClineMessages throws after markPublished`() {
+        val h = handler()
+        h.markPublished()
+        val msg = UiMessage(ts = 1L, type = UiMessageType.SAY, say = UiSay.TEXT, text = "hi")
+        val ex = org.junit.jupiter.api.assertThrows<IllegalStateException> {
+            h.setClineMessages(listOf(msg))
+        }
+        assertTrue(ex.message!!.contains("markPublished"))
+    }
+
+    @Test
+    fun `setApiConversationHistory throws after markPublished`() {
+        val h = handler()
+        h.markPublished()
+        val msg = ApiMessage(role = ApiRole.USER, content = listOf(ContentBlock.Text("hello")))
+        val ex = org.junit.jupiter.api.assertThrows<IllegalStateException> {
+            h.setApiConversationHistory(listOf(msg))
+        }
+        assertTrue(ex.message!!.contains("markPublished"))
+    }
 }

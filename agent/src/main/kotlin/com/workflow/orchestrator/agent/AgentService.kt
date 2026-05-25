@@ -1962,6 +1962,10 @@ class AgentService(
                     checkpointStore.beginUserMessage(messageTs = userMessageTs, userText = task)
                 }
 
+                // Seal the handler against further init-only mutations, then expose it
+                // for concurrent access. markPublished() must be called before
+                // activeMessageStateHandler is visible to other coroutines (F-17 fix).
+                messageState.markPublished()
                 // Expose active handler so AgentController.dismissPlan() can rewrite history.
                 activeMessageStateHandler = messageState
                 // Wire the forward-reference holder so the systemPromptBuilder lambda
