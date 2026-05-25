@@ -597,6 +597,9 @@ class MessageStateHandler(
         // (after a removal) deserialize to the field's default — null for
         // nullable enum fields — instead of throwing. Future-proofs against
         // any enum drift across releases.
+        // Single canonical compact instance: used by all read/decode paths and
+        // non-pretty write paths. encodeDefaults=true prevents config drift if
+        // any caller ever encodes through this instance in future.
         private val configuredJson = Json {
             ignoreUnknownKeys = true
             coerceInputValues = true
@@ -604,19 +607,9 @@ class MessageStateHandler(
             prettyPrint = false
             serializersModule = contentBlockModule
         }
+        // Single canonical pretty instance: used by all global-index write paths.
+        // Identical config to configuredJson except prettyPrint=true.
         private val configuredPrettyJson = Json {
-            ignoreUnknownKeys = true
-            coerceInputValues = true
-            encodeDefaults = true
-            prettyPrint = true
-            serializersModule = contentBlockModule
-        }
-        private val compactJson = Json {
-            ignoreUnknownKeys = true
-            coerceInputValues = true
-            serializersModule = contentBlockModule
-        }
-        private val prettyJsonStatic = Json {
             ignoreUnknownKeys = true
             coerceInputValues = true
             encodeDefaults = true
@@ -635,7 +628,7 @@ class MessageStateHandler(
             val file = File(sessionDir, "ui_messages.json")
             if (!file.exists()) return emptyList()
             return try {
-                compactJson.decodeFromString<List<UiMessage>>(file.readText())
+                configuredJson.decodeFromString<List<UiMessage>>(file.readText())
             } catch (_: Exception) { emptyList() }
         }
 
@@ -658,10 +651,10 @@ class MessageStateHandler(
             val text = file.readText()
             // Try v2 wrapper first
             return runCatching {
-                compactJson.decodeFromString(ApiHistoryFile.serializer(), text).messages
+                configuredJson.decodeFromString(ApiHistoryFile.serializer(), text).messages
             }.recoverCatching {
                 // v1 fallback: bare JSON array
-                compactJson.decodeFromString(ListSerializer(ApiMessage.serializer()), text)
+                configuredJson.decodeFromString(ListSerializer(ApiMessage.serializer()), text)
             }.getOrElse { error ->
                 // Both shapes failed. Most likely cause: forward-version file (v3+) being
                 // read by this plugin, or a corrupted write. Log loudly so a user reporting
@@ -680,7 +673,7 @@ class MessageStateHandler(
             val file = File(baseDir, "sessions.json")
             if (!file.exists()) return emptyList()
             return try {
-                compactJson.decodeFromString<List<HistoryItem>>(file.readText())
+                configuredJson.decodeFromString<List<HistoryItem>>(file.readText())
             } catch (_: Exception) { emptyList() }
         }
 
@@ -692,9 +685,9 @@ class MessageStateHandler(
             if (indexFile.exists()) {
                 withGlobalIndexFileLock(baseDir) {
                     try {
-                        val items = compactJson.decodeFromString<List<HistoryItem>>(indexFile.readText())
+                        val items = configuredJson.decodeFromString<List<HistoryItem>>(indexFile.readText())
                         val filtered = items.filter { it.id != sessionId }
-                        AtomicFileWriter.write(indexFile, prettyJsonStatic.encodeToString(filtered))
+                        AtomicFileWriter.write(indexFile, configuredPrettyJson.encodeToString(filtered))
                     } catch (_: Exception) { /* corrupted index, skip */ }
                 }
             }
@@ -718,13 +711,13 @@ class MessageStateHandler(
             if (!indexFile.exists()) return
             withGlobalIndexFileLock(baseDir) {
                 try {
-                    val items = compactJson.decodeFromString<List<HistoryItem>>(indexFile.readText())
+                    val items = configuredJson.decodeFromString<List<HistoryItem>>(indexFile.readText())
                     val idx = items.indexOfFirst { it.id == sessionId }
                     if (idx < 0) return@withGlobalIndexFileLock
                     val updated = items.toMutableList().also {
                         it[idx] = it[idx].copy(task = title.take(200))
                     }
-                    AtomicFileWriter.write(indexFile, prettyJsonStatic.encodeToString(updated))
+                    AtomicFileWriter.write(indexFile, configuredPrettyJson.encodeToString(updated))
                 } catch (_: Exception) { /* corrupted index, skip */ }
             }
         }
@@ -827,12 +820,12 @@ class MessageStateHandler(
             if (!indexFile.exists()) return
             withGlobalIndexFileLock(baseDir) {
                 try {
-                    val items = compactJson.decodeFromString<List<HistoryItem>>(indexFile.readText())
+                    val items = configuredJson.decodeFromString<List<HistoryItem>>(indexFile.readText())
                     val updated = items.map { item ->
                         if (item.id == sessionId) item.copy(isFavorited = !item.isFavorited) else item
                     }
                     if (updated != items) {
-                        AtomicFileWriter.write(indexFile, prettyJsonStatic.encodeToString(updated))
+                        AtomicFileWriter.write(indexFile, configuredPrettyJson.encodeToString(updated))
                     }
                 } catch (_: Exception) { /* corrupted index, skip */ }
             }
