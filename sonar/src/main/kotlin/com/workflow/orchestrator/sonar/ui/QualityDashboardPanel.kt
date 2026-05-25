@@ -2,7 +2,6 @@ package com.workflow.orchestrator.sonar.ui
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.*
-import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.icons.AllIcons
@@ -311,13 +310,15 @@ class QualityDashboardPanel(
         }
 
         // Subscribe to state updates — debounce to coalesce rapid state changes
-        // (e.g., branch change + PR selection firing within 500ms) into a single UI update
+        // (e.g., branch change + PR selection firing within 500ms) into a single UI update.
+        // scope uses Dispatchers.EDT, so the collector already runs on the EDT — the
+        // redundant invokeLater() is removed to prevent double-dispatch ordering issues (F-9 fix).
         @OptIn(FlowPreview::class)
         scope.launch {
             dataService.stateFlow
                 .debounce(300)
                 .collect { state ->
-                    invokeLater { updateUI(state) }
+                    updateUI(state)
                 }
         }
 
