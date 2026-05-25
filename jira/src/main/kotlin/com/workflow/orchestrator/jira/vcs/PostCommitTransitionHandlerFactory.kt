@@ -10,9 +10,12 @@ import com.intellij.openapi.vcs.checkin.CheckinHandlerFactory
 import com.workflow.orchestrator.core.services.jira.TransitionDialogOpener
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.jira.service.JiraServiceImpl
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.util.Disposer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
@@ -39,7 +42,11 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
         if (ticketId.isNullOrBlank()) return
 
         // Fire-and-forget: post-commit transition check must not block the commit flow.
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+        // Scope is tied to the project Disposable so it is cancelled when the project
+        // closes, preventing a leak for the process lifetime (audit finding jira:F-6).
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        Disposer.register(project as Disposable) { scope.cancel("project disposed") }
+        scope.launch {
             if (project.isDisposed) return@launch
             try {
                 val jiraService = JiraServiceImpl.getInstance(project)
