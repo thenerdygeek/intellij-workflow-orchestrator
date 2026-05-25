@@ -39,6 +39,39 @@ class DelegationInboundService(
     private val settings get() = project.getService(PluginSettings::class.java).state
     private var server: DelegationServer? = null
 
+    // ── On-demand inbound consent (Plan 6 Task 4) ─────────────────────────────
+
+    /**
+     * Single-use preauth registry. When IDE-B's user consents to a specific
+     * inbound delegation (via the doorbell consent dialog), the consented
+     * `nonce` is recorded here. The eventual [DelegationMessage.Connect] carrying
+     * that same `preauthNonce` skips the normal Accept dialog — but only ONCE.
+     * A leaked, multi-use nonce would let a delegator bypass consent on every
+     * subsequent connection, so [consumePreauth] removes the nonce atomically and
+     * returns true at most once per recorded nonce.
+     */
+    private val preauthNonces = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * True when the delegation socket was bound by [startTransient] (consent
+     * "Allow once") rather than because [PluginSettings.enableInboundCrossIdeDelegation]
+     * is on. A transient bind is torn down once no delegated sessions remain, and
+     * the inbound setting is never persisted.
+     */
+    @Volatile
+    private var transient: Boolean = false
+
+    /** Record a consented preauth nonce. The matching Connect skips the Accept dialog once. */
+    fun recordPreauth(nonce: String) {
+        preauthNonces.add(nonce)
+    }
+
+    /**
+     * Consume a preauth nonce. Returns true only the FIRST time a recorded nonce
+     * is presented (single-use security gate); a null or unknown nonce → false.
+     */
+    fun consumePreauth(nonce: String?): Boolean = nonce != null && preauthNonces.remove(nonce)
+
     // ── Per-session IPC channel registry (Plan 2 Task 4) ──────────────────────
 
     private data class SessionChannel(
@@ -74,6 +107,29 @@ class DelegationInboundService(
     fun start() {
         if (server != null) return
         if (!settings.enableInboundCrossIdeDelegation) return
+        bindServer()
+    }
+
+    /**
+     * Bind the delegation socket WITHOUT persisting [PluginSettings.enableInboundCrossIdeDelegation]
+     * (Plan 6 Task 4). Used by the doorbell's "Allow once" consent path: IDE-B binds the
+     * delegation socket just for this consented delegation, then tears it down via
+     * [stopIfTransientAndIdle] once the delegated session ends. Idempotent — early-returns
+     * if the server is already bound (whether persistent or transient).
+     */
+    @Synchronized
+    fun startTransient() {
+        if (server != null) return
+        transient = true
+        bindServer()
+    }
+
+    /**
+     * Socket-binding body shared by [start] (setting-gated) and [startTransient] (no gate).
+     * Must only be called while holding the instance lock (both callers are `@Synchronized`)
+     * and after the `server == null` guard.
+     */
+    private fun bindServer() {
         val projectPath = project.basePath ?: run {
             LOG.warn("Project has no basePath; cannot start DelegationInboundService")
             return
@@ -100,14 +156,31 @@ class DelegationInboundService(
         server = null
     }
 
+    /**
+     * Tear down a transient (consent "Allow once") bind once no delegated sessions
+     * remain (Plan 6 Task 4). No-op for a persistent (setting-on) bind. Wired from
+     * AgentService's delegated-session terminal callback in Task 8.
+     */
+    @Synchronized
+    fun stopIfTransientAndIdle(activeSessionCount: Int) {
+        if (transient && activeSessionCount == 0) {
+            stop()
+            transient = false
+        }
+    }
+
     private suspend fun handleConnect(
         connect: DelegationMessage.Connect,
         replyWith: suspend (DelegationMessage) -> Unit,
         readMessage: suspend () -> DelegationMessage,
         closeChannel: suspend () -> Unit,
     ) {
-        // Show the Accept dialog on the EDT.
-        val accepted = withContext(Dispatchers.EDT) {
+        // Plan 6 Task 4: a Connect carrying a consented preauth nonce skips the Accept
+        // dialog. consumePreauth is single-use, so a replayed nonce falls through to the
+        // dialog. A normal (non-doorbell) Connect has preauthNonce=null → preApproved=false.
+        val preApproved = consumePreauth(connect.preauthNonce)
+        // Show the Accept dialog on the EDT (unless already pre-approved via consent).
+        val accepted = if (preApproved) true else withContext(Dispatchers.EDT) {
             val dlg = AcceptDelegationDialog(project, connect)
             dlg.show()
             dlg.isOK
