@@ -361,8 +361,12 @@
 
         <!-- Agent Module -->
         <notificationGroup id="workflow.agent" displayType="BALLOON"/>
+        <!-- Agent security: hook file trust gate -->
+        <notificationGroup id="Workflow Orchestrator Security" displayType="STICKY_BALLOON"/>
         <!-- Insights Module -->
         <notificationGroup id="workflow.insights" displayType="BALLOON"/>
+        <projectService
+            serviceImplementation="com.workflow.orchestrator.agent.hooks.HookTrustStore"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.agent.settings.AgentSettings"/>
         <projectService

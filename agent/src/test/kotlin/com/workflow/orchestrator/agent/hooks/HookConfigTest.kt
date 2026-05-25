@@ -1,5 +1,8 @@
 package com.workflow.orchestrator.agent.hooks
 
+import com.intellij.openapi.project.Project
+import io.mockk.every
+import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -145,5 +148,85 @@ class HookConfigTest {
 
         val configs = HookConfigLoader.load(tempDir.toString())
         assertEquals(HookType.entries.size, configs.size)
+    }
+
+    // ════════════════════════════════════════════
+    //  Trust gate (audit finding agent-runtime:F-1)
+    //  When a Project is supplied, .agent-hooks.json is gated on
+    //  per-SHA trust via HookTrustStore.
+    // ════════════════════════════════════════════
+
+    private val validConfig = """
+        {"hooks": [{"type": "TaskStart", "command": "echo hi"}]}
+    """.trimIndent()
+
+    private fun projectWith(trustStore: HookTrustStore): Project {
+        val project = mockk<Project>(relaxed = true)
+        every { project.getService(HookTrustStore::class.java) } returns trustStore
+        return project
+    }
+
+    @Test
+    fun `computeSha256 is deterministic and content-sensitive`() {
+        val a1 = HookConfigLoader.computeSha256("abc".toByteArray())
+        val a2 = HookConfigLoader.computeSha256("abc".toByteArray())
+        val b = HookConfigLoader.computeSha256("abd".toByteArray())
+        assertEquals(a1, a2)
+        assertNotEquals(a1, b)
+        assertEquals(64, a1.length) // 32 bytes hex
+    }
+
+    @Test
+    fun `trusted SHA loads hooks normally`() {
+        File(tempDir.toFile(), HookConfigLoader.CONFIG_FILE_NAME).writeText(validConfig)
+        val sha = HookConfigLoader.computeSha256(validConfig.toByteArray())
+        val store = HookTrustStore().apply { setTrusted(sha) }
+
+        val configs = HookConfigLoader.load(tempDir.toString(), projectWith(store))
+        assertEquals(1, configs.size)
+        assertEquals(HookType.TASK_START, configs[0].type)
+    }
+
+    @Test
+    fun `rejected SHA returns empty config`() {
+        File(tempDir.toFile(), HookConfigLoader.CONFIG_FILE_NAME).writeText(validConfig)
+        val sha = HookConfigLoader.computeSha256(validConfig.toByteArray())
+        val store = HookTrustStore().apply { setRejected(sha) }
+
+        val configs = HookConfigLoader.load(tempDir.toString(), projectWith(store))
+        assertTrue(configs.isEmpty())
+    }
+
+    @Test
+    fun `unknown SHA returns empty config (degraded mode)`() {
+        File(tempDir.toFile(), HookConfigLoader.CONFIG_FILE_NAME).writeText(validConfig)
+        val store = HookTrustStore() // empty → every SHA is UNKNOWN
+
+        val configs = HookConfigLoader.load(tempDir.toString(), projectWith(store))
+        assertTrue(configs.isEmpty())
+    }
+
+    @Test
+    fun `file content change invalidates prior trust`() {
+        val file = File(tempDir.toFile(), HookConfigLoader.CONFIG_FILE_NAME)
+        file.writeText(validConfig)
+        val originalSha = HookConfigLoader.computeSha256(validConfig.toByteArray())
+        val store = HookTrustStore().apply { setTrusted(originalSha) }
+        val project = projectWith(store)
+
+        // First load with the trusted content → hooks present.
+        assertEquals(1, HookConfigLoader.load(tempDir.toString(), project).size)
+
+        // Modify the file: new SHA is UNKNOWN → degraded to empty.
+        file.writeText("""{"hooks": [{"type": "TaskStart", "command": "echo CHANGED"}]}""")
+        assertTrue(HookConfigLoader.load(tempDir.toString(), project).isEmpty())
+    }
+
+    @Test
+    fun `null project skips the gate (legacy callers)`() {
+        File(tempDir.toFile(), HookConfigLoader.CONFIG_FILE_NAME).writeText(validConfig)
+        // No project → no trust check → hooks load directly.
+        val configs = HookConfigLoader.load(tempDir.toString(), null)
+        assertEquals(1, configs.size)
     }
 }

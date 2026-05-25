@@ -310,7 +310,7 @@ class AgentService(
         // Initialize hook system (ported from Cline's HookFactory + getAllHooksDirs)
         val hookRunner = HookRunner(workingDir = basePath)
         hookManager = HookManager(hookRunner)
-        hookManager.loadFromConfigFile(basePath)
+        hookManager.loadFromConfigFile(basePath, project)
 
         registerAllTools()
 

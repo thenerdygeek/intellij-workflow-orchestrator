@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.hooks
 
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.project.Project
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -168,8 +169,8 @@ class HookManager(
      *
      * @param projectPath the project root directory path
      */
-    fun loadFromConfigFile(projectPath: String) {
-        val configs = HookConfigLoader.load(projectPath)
+    fun loadFromConfigFile(projectPath: String, project: Project? = null) {
+        val configs = HookConfigLoader.load(projectPath, project)
         for (config in configs) {
             register(config)
         }
