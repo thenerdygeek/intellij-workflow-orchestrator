@@ -103,8 +103,18 @@ class HttpClientFactory(
             )
         }
 
-        /** Shared connection pool across all OkHttpClient instances in the plugin. */
-        private val sharedConnectionPool = ConnectionPool(15, 5, TimeUnit.MINUTES)
+        /**
+         * Shared connection pool across all OkHttpClient instances in the plugin.
+         *
+         * 5 idle connections × 3 min keep-alive matches the ~5 upstream services
+         * (Jira, Bamboo, Bitbucket, SonarQube, Sourcegraph). The previous value of
+         * 15/5min was 3× over-allocated: it held unnecessary file descriptors and
+         * risked connection resets on enterprise firewalls whose idle-RST timers are
+         * typically ≤ 4 min. Aligned with core/CLAUDE.md ("ConnectionPool(5, 3min)").
+         *
+         * Audit finding core:F-15.
+         */
+        private val sharedConnectionPool = ConnectionPool(5, 3, TimeUnit.MINUTES)
 
         /** Shared HTTP response cache (10 MB) for ETag/304 support. */
         private val sharedCache: Cache by lazy {
