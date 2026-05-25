@@ -2168,6 +2168,9 @@ class AgentService(
                     checkpointStore = checkpointStore,
                     currentUserMessageTsProvider = { userMessageTs },
                     streamingEditCallback = streamingEditCallback,
+                    networkProbe = com.workflow.orchestrator.core.network.NetworkStateService.getInstanceOrNull(),
+                    llmProbeUrl = com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance()
+                        .state.sourcegraphUrl.trimEnd('/').ifBlank { null },
                 )
 
                 // D1: Set activeTask + activeMessageStateHandler atomically under Mutex.
