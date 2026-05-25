@@ -59,7 +59,6 @@ class JiraClosureService {
         }
 
         log.info("[Handover:Jira] Closure comment built with ${mergedTags.size} docker tags")
-        log.debug("[Handover:Jira] Comment preview: ${comment.take(200)}")
         return comment
     }
 
