@@ -1,9 +1,12 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.tools.ToolResultType
 import com.workflow.orchestrator.agent.tools.WorkerType
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Assertions.*
@@ -49,7 +52,7 @@ class NewTaskToolTest {
     }
 
     @Test
-    fun `returns session handoff with isSessionHandoff=true`() = runTest {
+    fun `returns HandoffProposed type with the context`() = runTest {
         val context = """
             1. Current Work: Implementing user authentication
             2. Key Technical Concepts: JWT tokens, Spring Security
@@ -62,11 +65,11 @@ class NewTaskToolTest {
             put("context", context)
         }, project)
 
-        assertTrue(result.isSessionHandoff)
+        assertTrue(result.type is ToolResultType.HandoffProposed)
+        assertEquals(context, (result.type as ToolResultType.HandoffProposed).context)
         assertFalse(result.isError)
         assertFalse(result.isCompletion)
         assertEquals(context, result.content)
-        assertEquals(context, result.handoffContext)
     }
 
     @Test
@@ -108,5 +111,14 @@ class NewTaskToolTest {
         }, project)
 
         assertEquals(100, result.tokenEstimate) // 400 chars / 4
+    }
+
+    @Test
+    fun `execute returns HandoffProposed carrying the context`() = runTest {
+        val params = Json.parseToJsonElement("""{"context":"## Current Work\nDoing X"}""") as JsonObject
+        val result = tool.execute(params, project)
+        val type = result.type
+        assertTrue(type is ToolResultType.HandoffProposed)
+        assertEquals("## Current Work\nDoing X", (type as ToolResultType.HandoffProposed).context)
     }
 }

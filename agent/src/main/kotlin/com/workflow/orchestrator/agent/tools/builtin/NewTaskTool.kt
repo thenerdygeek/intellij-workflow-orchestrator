@@ -17,10 +17,11 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * Session handoff tool -- faithful port of Cline's new_task.
  *
- * When context is exhausted (compaction can't save enough), the LLM calls
- * this tool to hand off to a fresh session with a structured context summary.
- * The summary preserves essential state so the new session can continue
- * without losing critical information.
+ * The LLM calls this tool to propose a handoff to a fresh session with a
+ * structured context summary. The proposal is shown to the user as a preview
+ * card; the user chooses whether to fork ("Start fresh session") or stay
+ * ("Keep chatting"). The summary preserves essential state so the new session
+ * can continue without losing critical information.
  *
  * From Cline (src/core/prompts/system-prompt/tools/new_task.ts):
  * "Request to create a new task with preloaded context covering the
@@ -227,7 +228,7 @@ class NewTaskTool : AgentTool {
             )
         }
 
-        return ToolResult.sessionHandoff(
+        return ToolResult.handoffProposed(
             content = context,
             summary = "Session handoff: context preserved (${context.length} chars)",
             tokenEstimate = context.length / 4,
