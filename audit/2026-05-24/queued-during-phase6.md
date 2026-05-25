@@ -43,6 +43,17 @@ named-field + `removeLoadHandler` in `dispose()` pattern to both files.
 
 ---
 
+## sonar: IssueListPanel.fixWithAgent still uses project.basePath (same F-13 pattern)
+
+`IssueListPanel.kt:321-322` — `fixWithAgent(issue: MappedIssue)` builds the absolute path
+via `File(project.basePath, issue.filePath)`.  `MappedIssue` already carries `projectKey`,
+so the fix is identical to the F-13 fix in `IssueDetailPanel`: call `resolveSonarRepoRoot`
+(or an equivalent helper in `IssueListPanel`) with `(issue.filePath, issue.projectKey)`.
+Observed during Phase 6d-3 F-12/F-13 pass; out of scope for this phase.
+**Queued — apply same pattern as IssueDetailPanel.resolveSonarRepoRoot.**
+
+---
+
 ## PromptBodyRedactor: `***REDACTED***` vs `[REDACTED]` marker inconsistency
 
 The new diff-specific patterns (AWS key, PEM header, assignment secret) use `[REDACTED]`

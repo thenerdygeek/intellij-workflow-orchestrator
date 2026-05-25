@@ -52,3 +52,17 @@ at the approval layer as well. Medium priority; phase 4c candidate.
 File: `agent/src/main/kotlin/com/workflow/orchestrator/agent/tools/process/ProcessEnvironment.kt`
 Note: `PYTHONSTARTUP` can load arbitrary Python code at interpreter start. `PYTHONDONTWRITEBYTECODE`
 is benign but indicative that the anti-interactive set may be incomplete. Minor coverage gap.
+
+## Incidental findings from Phase 4c (F3 + F4) — 2026-05-24
+
+### Q8 — writeAction is @Experimental in com.intellij.openapi.application.CoroutinesKt
+Files: `EditFileTool.kt`, `CreateFileTool.kt`, `DeleteFileTool.kt`
+Note: `writeAction` (com.intellij.openapi.application) is marked `@Experimental` in the
+IntelliJ platform. verifyPlugin now reports four NEW warnings (one per writeViaDocument,
+writeViaVfs in Edit, writeViaVfs in Create, deleteViaVfs in Delete). These are warnings
+only — not errors that block the build in isolation. The pre-existing Q4/Q5 @OverrideOnly
+violations are what actually fail verifyPlugin. When Q4/Q5 are fixed, check whether the
+@Experimental suppression annotation (@Suppress("UnstableApiUsage")) needs to be added
+to the three helper functions or whether the API has stabilised on the platform version
+in use by then. Low risk: @Experimental APIs in IJ Platform rarely break between minor
+releases; the pattern is widely used in IJ plugins including JetBrains' own.
