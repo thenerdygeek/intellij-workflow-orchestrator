@@ -33,6 +33,7 @@ Key endpoints:
 - `GET /rest/api/latest/result/{buildKey}/log` — build log
 - `POST /rest/api/latest/queue/{planKey}` — trigger build (with variables)
 - `GET /rest/api/latest/result/{planKey}` — running/queued builds
+- `POST /rest/api/latest/plan/{branchPlanKey}/enable` — enable a (disabled) plan branch. A branch IS a plan, so enable its own key. `BambooApiClient.enablePlanBranch` → `postForm` (sets `X-Atlassian-Token: no-check`), surfaced as `BambooService.enablePlanBranch(branchPlanKey): ToolResult<Unit>`. ⚠ NOT probed against live DC 10.2.14 (added 2026-05-26); non-admin PATs likely get 403 (mapped to a plan-admin permission hint). Verify on a live server before relying on it.
 
 Build variables include `dockerTagsAsJson` — JSON payload of service-to-docker-tag mappings used by automation suites.
 
