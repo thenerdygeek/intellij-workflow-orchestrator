@@ -427,11 +427,14 @@ class AutomationPanel(
                 suppressBranchListener = true
                 try {
                     branchCombo.removeAllItems()
+                    // "default" (master) is always pinned first; the actual plan
+                    // branches follow, sorted alphabetically by their display label.
                     branchCombo.addItem(BranchComboItem(null, "default"))
                     if (!result.isError) {
-                        for (b in result.data.orEmpty()) {
-                            branchCombo.addItem(BranchComboItem(b.key, b.shortName.ifBlank { b.name }.ifBlank { b.key }))
-                        }
+                        result.data.orEmpty()
+                            .map { b -> BranchComboItem(b.key, b.shortName.ifBlank { b.name }.ifBlank { b.key }) }
+                            .sortedBy { it.label.lowercase() }
+                            .forEach { branchCombo.addItem(it) }
                     } else {
                         log.warn("[Automation:UI] getPlanBranches failed for $planKey: ${result.summary}")
                     }
