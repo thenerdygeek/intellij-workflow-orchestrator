@@ -5,8 +5,11 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.Disposer
+import com.intellij.ui.ColoredListCellRenderer
 import com.intellij.ui.JBColor
+import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBLabel
 import com.workflow.orchestrator.core.model.workflow.BuildRef
 import com.workflow.orchestrator.core.ui.StatusColors
@@ -136,8 +139,23 @@ class AutomationPanel(
      */
     private val branchCombo = JComboBox<BranchComboItem>().apply {
         bindBoundedWidth(ComboBoxWidth.DEFAULT)
+        renderer = object : ColoredListCellRenderer<BranchComboItem>() {
+            override fun customizeCellRenderer(
+                list: JList<out BranchComboItem>, value: BranchComboItem?, index: Int,
+                selected: Boolean, hasFocus: Boolean
+            ) {
+                if (value == null) return
+                if (value.enabled) {
+                    append(value.label, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+                } else {
+                    append(value.label, SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                    append("  (disabled)", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                }
+            }
+        }
     }
-    @Volatile private var selectedBranchKey: String? = null
+    /** The committed branch selection (null = default/master). Updated only when a selection is accepted. */
+    @Volatile private var selectedBranchItem: BranchComboItem? = null
     private var suppressBranchListener = false
 
     // State
@@ -244,14 +262,16 @@ class AutomationPanel(
             onSuiteSelected(item.planKey)
         }
 
-        // Branch selection listener — persists the chosen branch per suite
+        // Branch selection listener — persists the chosen branch per suite.
+        // Disabled branches prompt to enable in Bamboo before being committed.
         branchCombo.addActionListener {
             if (suppressBranchListener) return@addActionListener
             val item = branchCombo.selectedItem as? BranchComboItem ?: return@addActionListener
-            selectedBranchKey = item.branchKey
-            if (currentSuitePlanKey.isNotBlank()) {
-                AutomationSettingsService.getInstance().setSuiteSelectedBranch(currentSuitePlanKey, item.branchKey)
+            if (item.branchKey != null && !item.enabled) {
+                onDisabledBranchSelected(item)   // prompt to enable; reverts if declined/failed
+                return@addActionListener
             }
+            commitBranchSelection(item)
         }
 
         // Refresh button: cache-bust for the currently-selected suite
@@ -388,7 +408,7 @@ class AutomationPanel(
         // this reset a trigger fired in that window would capture the old
         // branchKey (enqueueWith), and a user combo-click would persist the old
         // branch onto the new suite. Both are EDT-only fields touched here on the EDT.
-        selectedBranchKey = null
+        selectedBranchItem = null
         suppressBranchListener = true
         val token = ++loadGeneration
         log.info("[Automation:UI] Suite selected: $planKey (gen=$token) — sticky baseline, no scan")
@@ -432,7 +452,7 @@ class AutomationPanel(
                     branchCombo.addItem(BranchComboItem(null, "default"))
                     if (!result.isError) {
                         result.data.orEmpty()
-                            .map { b -> BranchComboItem(b.key, b.shortName.ifBlank { b.name }.ifBlank { b.key }) }
+                            .map { b -> BranchComboItem(b.key, b.shortName.ifBlank { b.name }.ifBlank { b.key }, b.enabled) }
                             .sortedBy { it.label.lowercase() }
                             .forEach { branchCombo.addItem(it) }
                     } else {
@@ -444,7 +464,7 @@ class AutomationPanel(
                         .firstOrNull { (branchCombo.getItemAt(it) as BranchComboItem).branchKey == persisted }
                         ?: 0
                     branchCombo.selectedIndex = idx
-                    selectedBranchKey = (branchCombo.getItemAt(idx) as BranchComboItem).branchKey
+                    selectedBranchItem = branchCombo.getItemAt(idx) as BranchComboItem
                 } finally {
                     suppressBranchListener = false
                 }
@@ -977,14 +997,84 @@ class AutomationPanel(
             enqueuedAt = java.time.Instant.now(),
             status = QueueEntryStatus.WAITING_LOCAL,
             bambooResultKey = null,
-            branchKey = selectedBranchKey
+            branchKey = selectedBranchItem?.branchKey
         )
 
         queueService.enqueue(entry)
         statusLabel.text = "\u27F3 Queued"
         statusLabel.foreground = JBColor(0x0969DA, 0x89b4fa)
         tabbedPane.selectedIndex = 1
-        log.info("[Automation:UI] Run queued for suite $currentSuitePlanKey (stages=${stages ?: "all"}, branch=${selectedBranchKey ?: "<master>"})")
+        log.info("[Automation:UI] Run queued for suite $currentSuitePlanKey (stages=${stages ?: "all"}, branch=${selectedBranchItem?.branchKey ?: "<master>"})")
+    }
+
+    /** Accept [item] as the committed selection and persist it for the current suite. */
+    private fun commitBranchSelection(item: BranchComboItem) {
+        selectedBranchItem = item
+        if (currentSuitePlanKey.isNotBlank()) {
+            AutomationSettingsService.getInstance().setSuiteSelectedBranch(currentSuitePlanKey, item.branchKey)
+        }
+    }
+
+    /** Restore the combo's visible selection to the committed [selectedBranchItem] without firing this listener. */
+    private fun revertBranchSelectionToCommitted() {
+        suppressBranchListener = true
+        try {
+            val target = selectedBranchItem
+            val idx = if (target == null) 0
+                else (0 until branchCombo.itemCount)
+                    .firstOrNull { (branchCombo.getItemAt(it) as BranchComboItem).branchKey == target.branchKey } ?: 0
+            branchCombo.selectedIndex = idx
+        } finally {
+            suppressBranchListener = false
+        }
+    }
+
+    /**
+     * Called when the user picks a disabled branch plan. Prompts to enable it in Bamboo.
+     * On cancel or failure the combo reverts to the previously-committed selection.
+     * On success, re-fetches branches so the branch shows as enabled and stays selected.
+     */
+    private fun onDisabledBranchSelected(item: BranchComboItem) {
+        val branchKey = item.branchKey ?: return
+        val choice = Messages.showYesNoDialog(
+            project,
+            "The branch plan '$branchKey' is disabled in Bamboo, so triggering it won't run any jobs or stages.\n\n" +
+                "Enable it now?",
+            "Branch Disabled",
+            "Enable",
+            "Cancel",
+            Messages.getQuestionIcon()
+        )
+        if (choice != Messages.YES) {
+            revertBranchSelectionToCommitted()
+            return
+        }
+        statusLabel.text = "Enabling ${item.label}…"
+        statusLabel.foreground = StatusColors.INFO
+        scope.launch {
+            val result = bambooService.enablePlanBranch(branchKey)
+            invokeLater {
+                if (!result.isError) {
+                    log.info("[Automation:UI] Enabled branch plan $branchKey")
+                    statusLabel.text = ""
+                    // Persist + re-render so the branch shows enabled and stays selected.
+                    if (currentSuitePlanKey.isNotBlank()) {
+                        AutomationSettingsService.getInstance().setSuiteSelectedBranch(currentSuitePlanKey, branchKey)
+                    }
+                    val token = ++loadGeneration
+                    loadBranchesFor(currentSuitePlanKey, token)
+                } else {
+                    log.warn("[Automation:UI] Failed to enable branch plan $branchKey: ${result.summary}")
+                    statusLabel.text = ""
+                    Messages.showErrorDialog(
+                        project,
+                        "${result.summary}\n\n${result.hint ?: ""}".trim(),
+                        "Could Not Enable Branch"
+                    )
+                    revertBranchSelectionToCommitted()
+                }
+            }
+        }
     }
 
     override fun dispose() {
@@ -1000,8 +1090,10 @@ private data class SuiteComboItem(val planKey: String, val displayName: String) 
  * Combo entry for the Bamboo plan branch selector. [branchKey] == null means
  * the master/default branch (triggers with the suite plan key directly).
  * [label] is shown in the dropdown — either `shortName` or `name` from Bamboo.
+ * [enabled] mirrors [PlanBranchData.enabled]; disabled branches render greyed
+ * and prompt to enable before being committed as the active selection.
  */
-private data class BranchComboItem(val branchKey: String?, val label: String) {
+private data class BranchComboItem(val branchKey: String?, val label: String, val enabled: Boolean = true) {
     override fun toString() = label
 }
 
