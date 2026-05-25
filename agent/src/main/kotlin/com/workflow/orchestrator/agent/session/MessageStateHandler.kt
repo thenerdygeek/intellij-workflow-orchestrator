@@ -523,6 +523,25 @@ class MessageStateHandler(
                 existingItems.add(0, item)
             }
 
+            // F-16: enforce a retention cap so sessions.json never grows without bound.
+            // Keep the MAX_GLOBAL_INDEX_SIZE most-recent sessions; always preserve
+            // favourited sessions regardless of age so the user never loses them.
+            if (existingItems.size > MAX_GLOBAL_INDEX_SIZE) {
+                val favourites = existingItems.filter { it.isFavorited }.map { it.id }.toSet()
+                val pruned = existingItems
+                    .take(MAX_GLOBAL_INDEX_SIZE)
+                    .toMutableList()
+                // Re-add any favourited sessions that were dropped by the age-based cut.
+                val prunedIds = pruned.map { it.id }.toSet()
+                for (extra in existingItems.drop(MAX_GLOBAL_INDEX_SIZE)) {
+                    if (extra.id in favourites && extra.id !in prunedIds) {
+                        pruned.add(extra)
+                    }
+                }
+                existingItems.clear()
+                existingItems.addAll(pruned)
+            }
+
             AtomicFileWriter.write(globalIndexFile, prettyJson.encodeToString(existingItems))
         }
     }
@@ -536,6 +555,20 @@ class MessageStateHandler(
          * Phase 4 of multimodal-agent plan.
          */
         const val SCHEMA_VERSION_CURRENT: Int = 2
+
+        /**
+         * Maximum number of sessions retained in the global `sessions.json` index.
+         * When a write would push the list beyond this cap the oldest non-favourited
+         * entries are pruned (F-16).  Favourited sessions are always kept regardless
+         * of their age so the user never loses bookmarked conversations.
+         *
+         * Rationale: at roughly 1 KB per HistoryItem entry and 500 entries the index
+         * stays under 512 KB, which is negligible to load and holds a FileLock for
+         * less than 1 ms on typical SSDs.  Users who run dozens of sessions per day
+         * accumulate 500 entries in 2–3 weeks — well past reasonable "recent history"
+         * expectations.  Increase this value if users report premature pruning.
+         */
+        const val MAX_GLOBAL_INDEX_SIZE: Int = 500
 
         private val LOG = Logger.getInstance(MessageStateHandler::class.java)
 
