@@ -23,6 +23,26 @@ class TagBuilderService {
     companion object {
         private val DOCKER_TAG_REGEX = Regex("Unique Docker Tag\\s*:\\s*(.+)")
         private val ANSI_ESCAPE_REGEX = Regex("\\x1B\\[[0-9;]*m")
+
+        /**
+         * Maximum number of lines to scan for the docker-tag marker.
+         *
+         * Bamboo build logs are commonly multi-megabyte. Scanning the entire
+         * string on every poll tick is an O(N) waste.  The "Unique Docker Tag"
+         * line always appears in the early phase of the build (post-docker-build
+         * step), so scanning the first [SCAN_LINE_LIMIT] lines is sufficient.
+         * If the tag is not found in those lines we bail out early.
+         * (Audit finding automation:F-5)
+         */
+        internal const val SCAN_LINE_LIMIT = 500
+
+        /**
+         * Maximum character count of the slice passed to [DOCKER_TAG_REGEX].
+         * Acts as a hard byte budget independent of line count (guards against
+         * single-line logs with no newlines).
+         * (Audit finding automation:F-5)
+         */
+        internal const val SCAN_CHAR_LIMIT = 65_536  // 64 KB
     }
 
     /** Project service constructor — used by IntelliJ DI. */
@@ -355,9 +375,23 @@ class TagBuilderService {
     /**
      * Extract docker tag from pre-fetched build log text.
      * Pure function — no API calls. Used by event-driven path (BuildLogReady).
+     *
+     * Scans only the first [SCAN_LINE_LIMIT] lines (capped at [SCAN_CHAR_LIMIT]
+     * characters) of the log to avoid O(N) traversal of multi-MB build logs on
+     * every poll tick. The "Unique Docker Tag" marker is always emitted in the
+     * early build phase; tags beyond this window are not real.
+     * (Audit finding automation:F-5)
      */
     fun extractDockerTagFromLog(logText: String): String? {
-        val match = DOCKER_TAG_REGEX.find(logText) ?: return null
+        // Bound the input: take the first SCAN_CHAR_LIMIT chars, then keep only
+        // the first SCAN_LINE_LIMIT lines of that slice. This is O(min(N, limit))
+        // rather than O(N) and eliminates the ReDoS surface on pathological logs.
+        val slice = logText.take(SCAN_CHAR_LIMIT)
+            .lineSequence()
+            .take(SCAN_LINE_LIMIT)
+            .joinToString("\n")
+
+        val match = DOCKER_TAG_REGEX.find(slice) ?: return null
         return match.groupValues[1].trim()
             .replace(ANSI_ESCAPE_REGEX, "")
             .takeIf { it.isNotBlank() }
