@@ -17,9 +17,11 @@ import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.agent.tools.process.OutputCollector
 import com.workflow.orchestrator.agent.tools.process.ShellResolver
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -257,8 +259,11 @@ class SendStdinTool : AgentTool {
             )
         }
 
-        // Step 6: Write stdin
-        val written = ProcessRegistry.writeStdin(processId, input)
+        // Step 6: Write stdin — blocking OutputStream write must run on Dispatchers.IO
+        // so the calling coroutine's dispatcher (potentially EDT) is never blocked (F-16 fix).
+        val written = withContext(Dispatchers.IO) {
+            ProcessRegistry.writeStdin(processId, input)
+        }
         if (!written) {
             return ToolResult(
                 "Error: Failed to write to stdin of process '$processId'. The process may have exited.",

@@ -16,6 +16,8 @@ import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.util.StringUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -806,13 +808,22 @@ class BackgroundProcessTool : AgentTool {
         )
     }
 
-    private fun doSendStdin(h: BackgroundHandle, params: JsonObject): ToolResult {
+    /**
+     * Performs the stdin write on [Dispatchers.IO] so the blocking [OutputStream.write]
+     * never runs on EDT or a UI-affine dispatcher (F-16 fix).
+     * Cancellation is checked via coroutine suspension inside [withContext].
+     */
+    private suspend fun doSendStdin(h: BackgroundHandle, params: JsonObject): ToolResult {
         val input = params["input"]?.jsonPrimitive?.content
             ?: return toolError("MISSING_INPUT: send_stdin requires 'input'")
-        val written = runCatching { h.sendStdin(input) }.getOrElse { e ->
-            if (e is UnsupportedOperationException) return toolError("UNSUPPORTED_FOR_KIND: ${h.kind} does not accept stdin")
-            return toolError("SEND_STDIN_FAILED: ${e.message}")
+        val written = withContext(Dispatchers.IO) {
+            runCatching { h.sendStdin(input) }.getOrElse { e ->
+                if (e is UnsupportedOperationException)
+                    return@withContext null  // propagate as "unsupported" below
+                throw e
+            }
         }
+        if (written == null) return toolError("UNSUPPORTED_FOR_KIND: ${h.kind} does not accept stdin")
         if (!written) return toolError("SEND_STDIN_FAILED: process may have exited")
         val content = "Wrote ${input.length} chars to ${h.bgId} stdin."
         return ToolResult(
