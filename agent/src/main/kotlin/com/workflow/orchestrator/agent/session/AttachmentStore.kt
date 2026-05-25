@@ -132,6 +132,16 @@ class AttachmentStore(val sessionDir: Path) {
     fun pathFor(sha256: String, ext: String): Path = attachmentsDir.resolve("$sha256.$ext")
 
     /**
+     * Returns the canonical (normalized) absolute path of this session's
+     * attachments directory. Used by callers that enforce canonical-path
+     * containment before serving bytes (e.g. [com.workflow.orchestrator.agent.ui.AttachmentReadHandler]).
+     *
+     * Uses [Path.normalize] rather than [Path.toRealPath] so the result is
+     * available even before the directory is created on disk (tests).
+     */
+    fun canonicalAttachmentsDir(): Path = attachmentsDir.toAbsolutePath().normalize()
+
+    /**
      * Returns the on-disk extension for [sha256] (e.g. "png", "jpg") or null
      * if no file with that prefix exists. Used by [com.workflow.orchestrator.agent.ui.AttachmentReadHandler]
      * to set Content-Type on `<img src="…/attachments/<sha>">` responses.

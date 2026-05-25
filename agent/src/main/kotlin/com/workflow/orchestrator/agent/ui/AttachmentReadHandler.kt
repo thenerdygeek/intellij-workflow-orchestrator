@@ -8,6 +8,7 @@ import org.cef.misc.IntRef
 import org.cef.misc.StringRef
 import org.cef.network.CefRequest
 import org.cef.network.CefResponse
+import java.nio.file.Path
 
 /**
  * Serves `GET http://workflow-agent/attachments/<sha256>` so the webview can
@@ -42,6 +43,23 @@ class AttachmentReadHandler(
 
         /** Returns true iff [url] should be routed to this handler. */
         fun matches(url: String): Boolean = url.startsWith(URL_PREFIX)
+
+        /**
+         * Returns `true` iff [candidate] is canonically contained within
+         * [allowedRoot] — i.e., its normalized absolute path starts with the
+         * normalized absolute path of [allowedRoot] followed by a path separator.
+         *
+         * This guards against path traversal and cross-session leakage: a sha
+         * that somehow resolves to a path outside the active session's
+         * `attachments/` directory is rejected with 404.
+         */
+        internal fun isWithinDir(candidate: Path, allowedRoot: Path): Boolean {
+            val root = allowedRoot.toAbsolutePath().normalize().toString()
+            val target = candidate.toAbsolutePath().normalize().toString()
+            // Require the candidate to start with root + separator so a path
+            // like "/a/b-evil" is not accepted when root is "/a/b".
+            return target.startsWith(root + java.io.File.separator) || target == root
+        }
 
         /** Reverse the on-disk extension → wire `Content-Type` mapping. */
         internal fun mimeFromExtension(ext: String): String = when (ext.lowercase()) {
@@ -86,16 +104,34 @@ class AttachmentReadHandler(
                 callback.Continue()
                 return true
             }
-            val bytes = store.readBlocking(sha) ?: run {
+            // Security: verify the resolved attachment path is canonically
+            // contained within the ACTIVE session's attachments directory before
+            // reading any bytes.  This blocks cross-session leakage via sha
+            // prefix collisions or future fallback-search extensions.
+            // (audit finding agent-ui:F-9)
+            val sessionAttachmentsDir = store.canonicalAttachmentsDir()
+            val ext = store.findExtensionForBlocking(sha) ?: run {
                 LOG.info("AttachmentReadHandler: not found sha256=${sha.take(12)}…")
                 respond404()
                 callback.Continue()
                 return true
             }
-            // Look up the on-disk extension so we can set Content-Type.
-            // AttachmentStore.read fetches by sha-prefix match; we re-derive
-            // ext by listing the same directory. Cheap (single dir scan).
-            val ext = store.findExtensionForBlocking(sha) ?: "bin"
+            val resolvedPath = store.pathFor(sha, ext).toAbsolutePath().normalize()
+            if (!isWithinDir(resolvedPath, sessionAttachmentsDir)) {
+                LOG.warn(
+                    "AttachmentReadHandler: rejected cross-session path for sha256=${sha.take(12)}… " +
+                        "resolved=${resolvedPath} sessionDir=${sessionAttachmentsDir}"
+                )
+                respond404()
+                callback.Continue()
+                return true
+            }
+            val bytes = store.readBlocking(sha) ?: run {
+                LOG.info("AttachmentReadHandler: bytes gone after extension lookup sha256=${sha.take(12)}…")
+                respond404()
+                callback.Continue()
+                return true
+            }
             responseBytes = bytes
             responseMime = mimeFromExtension(ext)
             responseStatus = 200
