@@ -25,6 +25,8 @@ import com.workflow.orchestrator.agent.tools.builtin.TaskReportTool
 import com.workflow.orchestrator.agent.tools.builtin.TaskUpdateTool
 import com.workflow.orchestrator.agent.tools.builtin.ToolSearchTool
 import com.workflow.orchestrator.agent.tools.builtin.UseSkillTool
+import com.workflow.orchestrator.agent.tools.builtin.WebFetchTool
+import com.workflow.orchestrator.agent.tools.builtin.WebSearchTool
 import com.workflow.orchestrator.agent.tools.database.DbExplainTool
 import com.workflow.orchestrator.agent.tools.database.DbListDatabasesTool
 import com.workflow.orchestrator.agent.tools.database.DbQueryTool
@@ -135,6 +137,8 @@ class ToolDslSchemaParityTest {
         "RunCommandTool" to { RunCommandTool() },
         "RevertFileTool" to { RevertFileTool() },
         "SendStdinTool" to { SendStdinTool() },
+        "WebFetchTool" to { WebFetchTool() },
+        "WebSearchTool" to { WebSearchTool() },
         "AttemptCompletionTool" to { AttemptCompletionTool() },
         "AskQuestionsTool" to { AskQuestionsTool() },
         "PlanModeRespondTool" to { PlanModeRespondTool() },
