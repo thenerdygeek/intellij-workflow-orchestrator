@@ -602,6 +602,20 @@ class AgentService(
         @Volatile var cumulativeInputTokens: Long = 0L
         @Volatile var cumulativeOutputTokens: Long = 0L
         @Volatile var cumulativeCostUsd: Double? = null
+        /**
+         * Cached default-branch resolution for this session (F-24).
+         * `null` → not yet resolved.  `AtomicReference<String?>` with a sentinel
+         * distinguishes "resolved to null" from "not resolved yet":
+         *   - compareAndSet(null, RESOLVING_SENTINEL) → winner resolves the branch
+         *   - Any other non-null value → already resolved (may be empty string for
+         *     "resolution failed/no repos").
+         *
+         * Using an AtomicReference<Optional<String>> avoids the null-vs-absent
+         * ambiguity without adding a Optional dependency — we encode absence as
+         * the sentinel constant and resolved-null as an empty String.
+         */
+        val defaultBranch: java.util.concurrent.atomic.AtomicReference<String?> =
+            java.util.concurrent.atomic.AtomicReference(null)
     }
 
     private val sessionRuntime = java.util.concurrent.ConcurrentHashMap<String, SessionRuntimeState>()
@@ -1996,18 +2010,32 @@ class AgentService(
                 // Resolve default target branch asynchronously — DefaultBranchResolver.resolve()
                 // is suspend. environmentDetailsProvider is now also a suspend lambda (D8b),
                 // but resolution is fire-and-forget so the provider doesn't block on git per
-                // invocation. Capture result once at task start; lambda reads the var once
-                // it is populated.
-                val resolvedDefaultBranch = AtomicReference<String?>(null)
-                launch(Dispatchers.IO) {
-                    try {
-                        val repos = git4idea.repo.GitRepositoryManager.getInstance(project).repositories
-                        val primary = repos.firstOrNull() ?: return@launch
-                        resolvedDefaultBranch.set(kotlinx.coroutines.withTimeoutOrNull(3000L) {
-                            com.workflow.orchestrator.core.util.DefaultBranchResolver
-                                .getInstance(project).resolve(primary)
-                        })
-                    } catch (_: Exception) { /* leave null if branch resolution fails */ }
+                // invocation.
+                //
+                // F-24: Cache the result at session level (SessionRuntimeState.defaultBranch)
+                // so repeated executeTask calls within the same session (multi-turn
+                // conversations) do NOT re-issue a 3 s git probe on every user message.
+                // The underlying DefaultBranchResolver has its own IntelliJ-platform cache, but
+                // we still paid 3 s × N turns in the worst case when the cache is cold or the
+                // resolver decides to re-probe.  The session-level cache is populated once per
+                // session (first turn) and reused verbatim on all subsequent turns.
+                val resolvedDefaultBranch = runtime.defaultBranch
+                if (resolvedDefaultBranch.get() == null) {
+                    launch(Dispatchers.IO) {
+                        try {
+                            val repos = git4idea.repo.GitRepositoryManager.getInstance(project).repositories
+                            val primary = repos.firstOrNull() ?: return@launch
+                            val branch = kotlinx.coroutines.withTimeoutOrNull(3000L) {
+                                com.workflow.orchestrator.core.util.DefaultBranchResolver
+                                    .getInstance(project).resolve(primary)
+                            }
+                            // Store empty string as "resolved but no branch found" sentinel so
+                            // subsequent turns skip the launch entirely.
+                            resolvedDefaultBranch.compareAndSet(null, branch ?: "")
+                        } catch (_: Exception) {
+                            resolvedDefaultBranch.compareAndSet(null, "") // mark resolved-empty
+                        }
+                    }
                 }
 
                 // Wire live fields for SpawnAgentTool — keeps the per-task callbacks
@@ -2099,7 +2127,8 @@ class AgentService(
                             contextManager = ctx,
                             activeTicketId = pluginSettings.state.activeTicketId,
                             activeTicketSummary = pluginSettings.state.activeTicketSummary,
-                            defaultTargetBranch = resolvedDefaultBranch.get(),
+                            // Convert empty-string sentinel back to null for the caller.
+                            defaultTargetBranch = resolvedDefaultBranch.get()?.ifEmpty { null },
                             repoBranches = repoBranches,
                         )
                     },
