@@ -928,13 +928,16 @@ class AgentCefPanel(
         // The real onLoadingStateChange handler will flush when the page is truly ready.
         val dispatcher = bridgeDispatcher
         if (dispatcher != null) {
-            java.util.Timer("cef-page-load-watchdog", true).schedule(object : java.util.TimerTask() {
-                override fun run() {
-                    if (!dispatcher.isLoaded && !dispatcher.isDisposed) {
-                        LOG.warn("AgentCefPanel: page not loaded after 15s — ${dispatcher.pendingCallCount} calls still buffered (will flush when page loads)")
-                    }
+            // Replace the previous java.util.Timer("cef-page-load-watchdog", true) with a
+            // scope.launch + delay so the watchdog is automatically cancelled when dispose()
+            // cancels `scope`. This avoids one daemon thread per createBrowser() call on
+            // repeated open/close (audit finding agent-ui:F-4).
+            scope.launch {
+                kotlinx.coroutines.delay(15_000L)
+                if (!dispatcher.isLoaded && !dispatcher.isDisposed) {
+                    LOG.warn("AgentCefPanel: page not loaded after 15s — ${dispatcher.pendingCallCount} calls still buffered (will flush when page loads)")
                 }
-            }, 15_000L)
+            }
         }
     }
 
