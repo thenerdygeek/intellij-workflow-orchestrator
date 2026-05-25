@@ -5,6 +5,7 @@ import java.io.IOException
 import java.io.OutputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -34,6 +35,15 @@ object ProcessRegistry {
 
     private val log = Logger.getInstance(ProcessRegistry::class.java)
     private val running = ConcurrentHashMap<String, ManagedProcess>()
+
+    /**
+     * Single-thread pool for the blocking SIGTERM-wait→SIGKILL phase of [gracefulKill].
+     * Prevents the EDT (or any caller thread) from blocking up to 5 s on process teardown.
+     * Daemon threads so the pool doesn't prevent JVM shutdown.
+     */
+    private val killExecutor = Executors.newCachedThreadPool { r ->
+        Thread(r, "ProcessRegistry-kill").also { it.isDaemon = true }
+    }
 
     fun register(toolCallId: String, process: Process, command: String): ManagedProcess {
         val managed = ManagedProcess(
@@ -123,14 +133,19 @@ object ProcessRegistry {
     }
 
     /**
-     * Two-phase graceful kill:
-     * 1. destroy() sends SIGTERM (allows Maven/Gradle/Docker to release locks and clean up)
-     * 2. Wait up to GRACEFUL_KILL_WAIT_MS for process to exit
-     * 3. destroyForcibly() sends SIGKILL if still alive
-     * Also attempts to kill child process tree via ProcessHandle API.
+     * Non-blocking two-phase graceful kill.
+     *
+     * Sends SIGTERM immediately on the calling thread (fast, non-blocking), then
+     * offloads the blocking SIGTERM-wait → SIGKILL phase to [killExecutor] so the
+     * caller (including EDT-affine JCEF callbacks) never blocks for up to 5 s.
+     *
+     * 1. Kill child process tree via ProcessHandle (prevents orphans).
+     * 2. `destroy()` — SIGTERM (graceful; lets Maven/Gradle/Docker release locks).
+     * 3. On [killExecutor]: wait up to [GRACEFUL_KILL_WAIT_MS] for exit.
+     * 4. `destroyForcibly()` — SIGKILL if still alive after the wait.
      */
     private fun gracefulKill(process: Process) {
-        // Kill child processes first (prevents orphans)
+        // Kill child processes first (prevents orphans) — fast, non-blocking
         try {
             process.toHandle().descendants().forEach { child ->
                 try { child.destroy() } catch (_: Exception) {}
@@ -139,18 +154,21 @@ object ProcessRegistry {
             // ProcessHandle may not be available on all JVMs
         }
 
-        // Phase 1: SIGTERM (graceful)
+        // Phase 1: SIGTERM (non-blocking — OS call, returns immediately)
         process.destroy()
 
-        // Phase 2: wait, then SIGKILL if needed
-        try {
-            if (!process.waitFor(GRACEFUL_KILL_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                log.info("[ProcessRegistry] Process did not exit after ${GRACEFUL_KILL_WAIT_MS}ms SIGTERM, sending SIGKILL")
+        // Phase 2: blocking wait → SIGKILL offloaded to background thread (F-15 fix).
+        // The calling thread (potentially EDT) must not block here.
+        killExecutor.execute {
+            try {
+                if (!process.waitFor(GRACEFUL_KILL_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    log.info("[ProcessRegistry] Process did not exit after ${GRACEFUL_KILL_WAIT_MS}ms SIGTERM, sending SIGKILL")
+                    process.destroyForcibly()
+                    process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+                }
+            } catch (_: InterruptedException) {
                 process.destroyForcibly()
-                process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
             }
-        } catch (_: InterruptedException) {
-            process.destroyForcibly()
         }
     }
 
