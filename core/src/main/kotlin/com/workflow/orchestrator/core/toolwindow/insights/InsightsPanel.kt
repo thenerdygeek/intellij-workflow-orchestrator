@@ -2,7 +2,9 @@ package com.workflow.orchestrator.core.toolwindow.insights
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionPlaces
+import com.intellij.openapi.actionSystem.ActionUiKind
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBLabel
@@ -119,10 +121,13 @@ class InsightsPanel(
             toolTipText = "Generate an AI-powered insights report"
             isFocusable = false
             addActionListener {
-                val dataContext = com.intellij.ide.DataManager.getInstance().getDataContext(this@InsightsPanel)
+                // Use ActionUtil.invokeAction(action, event, onDone) to trigger the action
+                // through the platform instead of calling actionPerformed directly
+                // (@ApiStatus.OverrideOnly — must not be invoked from client code).
                 val action = GenerateReportAction()
-                val event = AnActionEvent.createFromAnAction(action, null, ActionPlaces.TOOLWINDOW_CONTENT, dataContext)
-                action.actionPerformed(event)
+                val dataContext = com.intellij.ide.DataManager.getInstance().getDataContext(this@InsightsPanel)
+                val event = AnActionEvent.createEvent(action, dataContext, action.templatePresentation.clone(), ActionPlaces.TOOLWINDOW_CONTENT, ActionUiKind.NONE, null)
+                ActionUtil.invokeAction(action, event, null)
             }
         }
 
