@@ -71,6 +71,11 @@ export interface Plan {
   summary?: string;
 }
 
+export interface Handoff {
+  /** The LLM-authored 5-section handoff summary (markdown). */
+  summary: string;
+}
+
 // ── Task types ──
 
 export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'deleted';

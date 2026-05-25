@@ -3,6 +3,7 @@ import type {
   ToolCall,
   ToolCallStatus,
   Plan,
+  Handoff,
   Task,
   Question,
   SessionInfo,
@@ -272,6 +273,7 @@ interface ChatState {
   streamingEdits: Record<string, { path: string; diff: string; status: 'streaming' | 'finalized' }>;
   activeToolCalls: Map<string, ToolCall>;  // key = unique tool call ID
   plan: Plan | null;
+  handoff: Handoff | null;
   planCommentCount: number;
   /**
    * Bug 8 — identities of plan summaries the user has already seen the typewriter
@@ -413,6 +415,8 @@ interface ChatState {
   clearChat(): void;
   setPlan(plan: Plan): void;
   clearPlan(): void;
+  setHandoff(handoff: Handoff): void;
+  clearHandoff(): void;
   approvePlan(): void;
   setPlanPending(state: 'approve' | 'revise' | null): void;
   /** Bug 8 — record that the typewriter for a given plan-summary identity has played. */
@@ -542,6 +546,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingEdits: {},
   activeToolCalls: new Map(),
   plan: null,
+  handoff: null,
   planCommentCount: 0,
   seenPlanSummaries: new Set<string>(),
   workingFallbackPhrase: null,
@@ -623,6 +628,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       toolOutputStreams: {},
       toolCallOpen: {},
       plan: null,
+      handoff: null,
       planCompletedPendingClear: false,
       seenPlanSummaries: new Set<string>(),
       workingFallbackPhrase: null,
@@ -702,6 +708,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       toolCallOpen: {},
       messages,
       queuedSteeringMessages: [],
+      handoff: null,
       // Clear completed plan on session end (no more messages will arrive to trigger deferred clear)
       ...(state.planCompletedPendingClear ? { plan: null, planCompletedPendingClear: false } : {}),
     });
@@ -802,6 +809,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const haveStreamingEdits = Object.keys(state.streamingEdits).length > 0;
       if (state.streamingText == null || state.streamingMsgTs == null) {
         return {
+          handoff: null,
           ...(haveStreamingEdits ? { streamingEdits: {} } : {}),
           ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
         };
@@ -819,6 +827,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streamingMsgTs: null,
         streamingThinkingText: null,
         streamingThinkingTs: null,
+        handoff: null,
         ...(haveStreamingEdits ? { streamingEdits: {} } : {}),
         ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
       };
@@ -1161,6 +1170,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       toolOutputStreams: {},
       toolCallOpen: {},
       plan: null,
+      handoff: null,
       planCompletedPendingClear: false,
       seenPlanSummaries: new Set<string>(),
       workingFallbackPhrase: null,
@@ -1193,6 +1203,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   clearPlan() {
     set({ plan: null, planCommentCount: 0 });
+  },
+
+  setHandoff(handoff: Handoff) {
+    set({ handoff });
+  },
+
+  clearHandoff() {
+    set({ handoff: null });
   },
 
   approvePlan() {
