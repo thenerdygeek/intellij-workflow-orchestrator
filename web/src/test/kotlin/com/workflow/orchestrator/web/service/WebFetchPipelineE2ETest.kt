@@ -121,6 +121,36 @@ class WebFetchPipelineE2ETest {
         )
     }
 
+    /**
+     * Builds an engine wired through the primary (clientFactory) constructor so [fetchCache]
+     * can be injected. The legacy secondary constructor hardcodes fetchCache=null, which is
+     * why the cache tests need this separate helper.
+     */
+    private fun buildEngineWithCache(
+        fetchCache: com.workflow.orchestrator.web.service.cache.WebFetchCache,
+        resolverOverride: UrlSafetyGuard.Resolver = mockWebServerResolver,
+        allowLoopbackOverride: Boolean = true,
+    ): WebFetchEngine {
+        val baseClient = OkHttpClient.Builder()
+            .followRedirects(false)
+            .addInterceptor(StripAuthHeadersInterceptor())
+            .build()
+        val shortenerClient = OkHttpClient.Builder().followRedirects(false).build()
+        return WebFetchEngine(
+            project = project,
+            settings = settings,
+            clientFactory = { pinnedDns -> baseClient.newBuilder().dns(pinnedDns).build() },
+            sanitizer = JsoupReadability(),
+            sanitizerSubagent = SanitizerSubagent(spawner),
+            approvalGate = gate,
+            auditLog = WebAuditLog(Files.createTempDirectory("audit-e2e-cache")),
+            resolver = resolverOverride,
+            shortenerResolver = ShortenerResolver(shortenerClient),
+            fetchCache = fetchCache,
+            allowLoopback = allowLoopbackOverride,
+        )
+    }
+
     @BeforeEach
     fun setUp() {
         server = MockWebServer().apply { start() }
@@ -630,6 +660,118 @@ class WebFetchPipelineE2ETest {
             }
         }
         assertTrue(threw, "Cancellation must propagate CancellationException, not get swallowed into a fetch failure")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Cache E2E tests (Task 2.7)
+    //
+    // All three use the allowlisted fast-path (localhost + 127.0.0.1 on the
+    // allowlist) so the approval gate is skipped and the request count is driven
+    // entirely by genuine HTTP calls — not gate interactions.
+    // HTTP call count is measured via MockWebServer.requestCount.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `E2E - second fetch of same URL is cache hit, no second HTTP call`() = runTest {
+        state.webAllowlistJson =
+            """[{"domain":"localhost","httpOk":true,"addedAt":"2026-05-24T00:00:00Z"},{"domain":"127.0.0.1","httpOk":true,"addedAt":"2026-05-24T00:00:00Z"}]"""
+        val cache = com.workflow.orchestrator.web.service.cache.WebFetchCache(
+            maxEntries = 10,
+            ttl = java.time.Duration.ofMinutes(15),
+        )
+        val engineWithCache = buildEngineWithCache(fetchCache = cache)
+
+        // Enqueue one response — only one HTTP call should ever reach MockWebServer.
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .addHeader("Content-Type", "text/html")
+                .setBody("<html><body><article>hello cache</article></body></html>")
+        )
+
+        val url = server.url("/cache-hit-test").toString()
+        val req = WebFetchService.WebFetchRequest(url = url)
+
+        val first = engineWithCache.fetch(req)
+        val countAfterFirst = server.requestCount
+
+        val second = engineWithCache.fetch(req)
+        val countAfterSecond = server.requestCount
+
+        assertFalse(first.isError, "first fetch should succeed: ${first.summary}")
+        assertFalse(second.isError, "second fetch should succeed: ${second.summary}")
+        assertEquals(1, countAfterFirst, "first fetch must produce exactly one HTTP call")
+        assertEquals(1, countAfterSecond, "second fetch must be served from cache — no additional HTTP call")
+        assertTrue(second.summary.contains("cached"), "second summary should mark cache hit: ${second.summary}")
+    }
+
+    @Test
+    fun `E2E - cache expires after TTL and triggers refetch`() = runTest {
+        state.webAllowlistJson =
+            """[{"domain":"localhost","httpOk":true,"addedAt":"2026-05-24T00:00:00Z"},{"domain":"127.0.0.1","httpOk":true,"addedAt":"2026-05-24T00:00:00Z"}]"""
+        var now = java.time.Instant.parse("2026-05-24T12:00:00Z")
+        val cache = com.workflow.orchestrator.web.service.cache.WebFetchCache(
+            maxEntries = 10,
+            ttl = java.time.Duration.ofMinutes(15),
+            clock = { now },
+        )
+        val engineWithCache = buildEngineWithCache(fetchCache = cache)
+
+        // Two HTTP responses — the second is served after TTL expiry.
+        repeat(2) {
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html")
+                    .setBody("<html><body><p>ttl test</p></body></html>")
+            )
+        }
+
+        val url = server.url("/ttl-test").toString()
+        val req = WebFetchService.WebFetchRequest(url = url)
+
+        val first = engineWithCache.fetch(req)
+        assertFalse(first.isError, "first fetch should succeed: ${first.summary}")
+        assertEquals(1, server.requestCount, "first fetch must produce one HTTP call")
+
+        // Advance clock past TTL — the cached entry should be evicted on the next get().
+        now = now.plus(java.time.Duration.ofMinutes(16))
+
+        val second = engineWithCache.fetch(req)
+        assertFalse(second.isError, "post-TTL fetch should succeed: ${second.summary}")
+        assertEquals(2, server.requestCount, "after TTL, fetch must re-hit the network (requestCount must be 2)")
+    }
+
+    @Test
+    fun `E2E - different maxBytes uses a different cache slot`() = runTest {
+        state.webAllowlistJson =
+            """[{"domain":"localhost","httpOk":true,"addedAt":"2026-05-24T00:00:00Z"},{"domain":"127.0.0.1","httpOk":true,"addedAt":"2026-05-24T00:00:00Z"}]"""
+        val cache = com.workflow.orchestrator.web.service.cache.WebFetchCache(
+            maxEntries = 10,
+            ttl = java.time.Duration.ofMinutes(15),
+        )
+        val engineWithCache = buildEngineWithCache(fetchCache = cache)
+
+        // Two responses needed — one per distinct cache key (different maxBytes).
+        // Both maxBytes values are well above the stub body size (~50 bytes) so
+        // neither fetch errors with RESPONSE_TOO_LARGE.
+        repeat(2) {
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .addHeader("Content-Type", "text/html")
+                    .setBody("<html><body><p>key isolation</p></body></html>")
+            )
+        }
+
+        val url = server.url("/key-isolation-test").toString()
+
+        val first = engineWithCache.fetch(WebFetchService.WebFetchRequest(url = url, maxBytes = 10_000))
+        val second = engineWithCache.fetch(WebFetchService.WebFetchRequest(url = url, maxBytes = 50_000))
+
+        assertFalse(first.isError, "first fetch (maxBytes=10000) should succeed: ${first.summary}")
+        assertFalse(second.isError, "second fetch (maxBytes=50000) should succeed: ${second.summary}")
+        assertEquals(2, server.requestCount, "different maxBytes must use different cache slots — both must hit the network")
     }
 
     // ─────────────────────────────────────────────────────────────────────────
