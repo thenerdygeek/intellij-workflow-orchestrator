@@ -164,6 +164,15 @@ intellijPlatform {
         ides {
             recommended()
         }
+        // Fail on @OverrideOnly violations (Q4/Q5 fixed).
+        // EXPERIMENTAL_API_USAGES is intentionally not in this list: runBlockingCancellable is
+        // the canonical cancellable-background-thread API throughout the codebase (30+ sites),
+        // and writeAction is the correct coroutine-friendly write-action helper (@Suppress at
+        // call-site handles IDE/compiler warnings). Enabling EXPERIMENTAL_API_USAGES would
+        // require an ignoredProblemsFile for each of 34 verifier-level entries — deferred.
+        failureLevel = listOf(
+            org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.OVERRIDE_ONLY_API_USAGES,
+        )
     }
 }
 
