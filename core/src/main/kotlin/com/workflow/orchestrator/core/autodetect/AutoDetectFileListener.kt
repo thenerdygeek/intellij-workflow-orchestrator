@@ -1,13 +1,17 @@
 package com.workflow.orchestrator.core.autodetect
 
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.ProjectManager
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -20,12 +24,23 @@ import kotlinx.coroutines.launch
  * 500ms debounce per detector so a `git checkout` touching many files only
  * fires the walk once.
  */
-class AutoDetectFileListener : BulkFileListener {
+class AutoDetectFileListener : BulkFileListener, Disposable {
 
     private val log = logger<AutoDetectFileListener>()
-    // applicationListener has the same lifetime as the IDE session itself,
-    // so an ad-hoc scope here is acceptable — it won't outlive the process.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    init {
+        // Register with the Application Disposable so the scope is cancelled
+        // when the plugin is unloaded / the IDE session ends. Without this the
+        // SupervisorJob and any pending debounce coroutines would leak for the
+        // process lifetime, and could fire against already-disposed services on
+        // plugin reload. Closes audit finding core:F-9.
+        Disposer.register(ApplicationManager.getApplication() as Disposable, this)
+    }
+
+    override fun dispose() {
+        scope.cancel()
+    }
 
     @Volatile private var bambooSpecsJob: Job? = null
     @Volatile private var pomJob: Job? = null
