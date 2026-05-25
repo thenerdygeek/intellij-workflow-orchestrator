@@ -417,6 +417,8 @@
         <postStartupActivity
             implementation="com.workflow.orchestrator.agent.listeners.AgentStartupActivity"/>
         <postStartupActivity
+            implementation="com.workflow.orchestrator.agent.delegation.DelegationInboundStartupActivity"/>
+        <postStartupActivity
             implementation="com.workflow.orchestrator.core.insights.WeeklyDigestStartupActivity"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.agent.tools.database.DatabaseSettings"/>
