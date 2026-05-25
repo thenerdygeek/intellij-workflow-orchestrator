@@ -6,6 +6,12 @@ import com.workflow.orchestrator.bamboo.api.dto.BambooTestResultsDto
 import com.workflow.orchestrator.core.maven.TeamCityMessageConverter
 import com.workflow.orchestrator.core.model.bamboo.TestResultsData
 
+/** Maximum characters of build log fed to the error-extraction regex engine (last N chars). */
+private const val LOG_SLICE_CHARS = 65_536
+
+/** Maximum characters captured for a single test-failure error body. */
+private const val ERROR_BODY_MAX_CHARS = 4_000
+
 /**
  * Converts Bamboo test results to TeamCity service messages format.
  * These messages are consumed by IntelliJ's SMTRunnerConsoleView to render
@@ -145,26 +151,32 @@ object BambooTestResultConverter {
         simpleClassName: String,
         fullClassName: String
     ): TestErrorInfo? {
+        // Bound the input slice to the last 64 KB of the log to prevent the regex engine
+        // from scanning multi-MB logs. Surefire failure blocks always appear near the end.
+        val logSlice = if (log.length > LOG_SLICE_CHARS) log.takeLast(LOG_SLICE_CHARS) else log
+
         // Pattern 1: methodName(com.example.ClassName)  Time elapsed: X s  <<< FAILURE!
+        // Capture group bounded to ERROR_BODY_MAX_CHARS chars to avoid catastrophic
+        // backtracking caused by the alternation lookahead on unbounded [\s\S]*?.
         val pattern1 = Regex(
-            """${Regex.escape(methodName)}\(${Regex.escape(fullClassName)}\).*<<<\s*(FAILURE|ERROR)!\s*\n([\s\S]*?)(?=\n\S|\n\n|\Z)""",
+            """${Regex.escape(methodName)}\(${Regex.escape(fullClassName)}\).*<<<\s*(FAILURE|ERROR)!\s*\n([\s\S]{0,$ERROR_BODY_MAX_CHARS}?)(?=\n\S|\n\n|\Z)""",
             RegexOption.MULTILINE
         )
 
         // Pattern 2: methodName(ClassName)  Time elapsed: X s  <<< FAILURE!
         val pattern2 = Regex(
-            """${Regex.escape(methodName)}\(${Regex.escape(simpleClassName)}\).*<<<\s*(FAILURE|ERROR)!\s*\n([\s\S]*?)(?=\n\S|\n\n|\Z)""",
+            """${Regex.escape(methodName)}\(${Regex.escape(simpleClassName)}\).*<<<\s*(FAILURE|ERROR)!\s*\n([\s\S]{0,$ERROR_BODY_MAX_CHARS}?)(?=\n\S|\n\n|\Z)""",
             RegexOption.MULTILINE
         )
 
         // Pattern 3: [ERROR] Tests run: X, Failures: Y ... <<< FAILURE! - in className
         val pattern3 = Regex(
-            """${Regex.escape(methodName)}.*<<<\s*(FAILURE|ERROR)!\s*\n([\s\S]*?)(?=\n[^\s]|\n\n|\Z)""",
+            """${Regex.escape(methodName)}.*<<<\s*(FAILURE|ERROR)!\s*\n([\s\S]{0,$ERROR_BODY_MAX_CHARS}?)(?=\n[^\s]|\n\n|\Z)""",
             RegexOption.MULTILINE
         )
 
         for (pattern in listOf(pattern1, pattern2, pattern3)) {
-            val match = pattern.find(log)
+            val match = pattern.find(logSlice)
             if (match != null) {
                 val errorBlock = match.groupValues[2].trim()
                 val lines = errorBlock.lines()
