@@ -7,6 +7,7 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.bitbucket.PrState
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.polling.SmartPoller
@@ -71,11 +72,11 @@ class PrListService(
 
     /** Current PR state filter (OPEN, MERGED, DECLINED). */
     @Volatile
-    private var currentState: String = "OPEN"
+    private var currentState: String = PrState.OPEN
 
     /**
      * Changes the PR state filter and triggers a refresh.
-     * Valid values: "OPEN", "MERGED", "DECLINED".
+     * Valid values: [PrState.OPEN], [PrState.MERGED], [PrState.DECLINED].
      */
     fun setState(state: String) {
         currentState = state

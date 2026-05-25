@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.pullrequest.ui
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
@@ -40,7 +41,7 @@ class CommentsTabPanel(
     private val projectKey: String,
     private val repoSlug: String,
     private val prId: Int,
-) : JBPanel<CommentsTabPanel>(BorderLayout()), AutoCloseable {
+) : JBPanel<CommentsTabPanel>(BorderLayout()), AutoCloseable, Disposable {
 
     val vm = CommentsViewModel(
         service = service,
@@ -235,4 +236,7 @@ class CommentsTabPanel(
         poller.stop()
         scope.cancel()
     }
+
+    /** Delegates to [close] so the panel can be registered with [com.intellij.openapi.util.Disposer]. */
+    override fun dispose() = close()
 }

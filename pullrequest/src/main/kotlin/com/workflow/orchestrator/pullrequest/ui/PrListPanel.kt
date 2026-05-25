@@ -6,6 +6,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.model.bitbucket.PrState
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.core.util.StringUtils
@@ -307,9 +308,9 @@ class PrListPanel : JPanel(BorderLayout()) {
 
                 // Left border accent by PR status — sharp, no rounded corners
                 val accentColor = when (currentStatus.uppercase()) {
-                    "OPEN" -> STATUS_OPEN
-                    "MERGED" -> STATUS_MERGED
-                    "DECLINED" -> STATUS_DECLINED
+                    PrState.OPEN -> STATUS_OPEN
+                    PrState.MERGED -> STATUS_MERGED
+                    PrState.DECLINED -> STATUS_DECLINED
                     else -> null
                 }
                 if (accentColor != null) {
@@ -506,9 +507,9 @@ class PrListPanel : JPanel(BorderLayout()) {
             fun update(status: String) {
                 badgeText = status.uppercase()
                 badgeColor = when (badgeText) {
-                    "OPEN" -> STATUS_OPEN
-                    "MERGED" -> STATUS_MERGED
-                    "DECLINED" -> STATUS_DECLINED
+                    PrState.OPEN -> STATUS_OPEN
+                    PrState.MERGED -> STATUS_MERGED
+                    PrState.DECLINED -> STATUS_DECLINED
                     else -> SECONDARY_TEXT
                 }
                 val fm = getBadgeFontMetrics()

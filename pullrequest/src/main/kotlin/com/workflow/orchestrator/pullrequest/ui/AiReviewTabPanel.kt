@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.pullrequest.ui
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBLabel
@@ -27,7 +28,7 @@ class AiReviewTabPanel(
     private val repoSlug: String,
     private val prId: Int,
     private val onRunReviewClicked: () -> Unit,
-) : JBPanel<AiReviewTabPanel>(BorderLayout()), AutoCloseable {
+) : JBPanel<AiReviewTabPanel>(BorderLayout()), AutoCloseable, Disposable {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val listModel = DefaultListModel<PrReviewFinding>()
@@ -124,4 +125,7 @@ class AiReviewTabPanel(
     }
 
     override fun close() { scope.cancel() }
+
+    /** Delegates to [close] so the panel can be registered with [com.intellij.openapi.util.Disposer]. */
+    override fun dispose() = close()
 }

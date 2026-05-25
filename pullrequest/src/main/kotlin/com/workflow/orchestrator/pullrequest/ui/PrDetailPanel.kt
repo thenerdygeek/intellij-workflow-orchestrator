@@ -29,6 +29,7 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketCommit
 import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStatus
 import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStrategy
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.bitbucket.PrState
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrActivity
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrChange
 import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail
@@ -813,7 +814,13 @@ class PrDetailPanel(
      * Must be called on the EDT.
      */
     private fun rebuildAiReviewTab(prId: Int, prDetail: BitbucketPrDetail) {
-        aiReviewTabPanel?.close()
+        // Dispose the old panel through the Disposer so its registration under this
+        // PrDetailPanel is removed too — otherwise per-PR-switch registrations would
+        // accumulate under the parent until the parent itself disposes.
+        aiReviewTabPanel?.let {
+            contentCards.remove(it)
+            Disposer.dispose(it)
+        }
         // Use the PR's OWN coordinates (threaded in from PrDashboardPanel via showPr/showPrDetail)
         // so the review tab talks to the correct repo's Bitbucket. The name-based RepoConfig
         // lookup is a secondary fallback for cases where showPrDetail was called without an
@@ -837,6 +844,7 @@ class PrDetailPanel(
             onRunReviewClicked = { runAiReview(projectKey, repoSlug, prId, prDetail) },
         )
         aiReviewTabPanel = newPanel
+        Disposer.register(this, newPanel)
         val layout = contentCards.layout as CardLayout
         contentCards.add(newPanel, "aiReview")
         layout.show(contentCards, "description")   // keep current view unchanged
@@ -942,7 +950,12 @@ class PrDetailPanel(
      * Must be called on the EDT.
      */
     private fun rebuildCommentsTab(prId: Int) {
-        commentsTabPanel?.close()
+        // Dispose the old panel through the Disposer (see [rebuildAiReviewTab]) so the
+        // child registration under this PrDetailPanel is unregistered on each PR switch.
+        commentsTabPanel?.let {
+            contentCards.remove(it)
+            Disposer.dispose(it)
+        }
         // Same per-PR coordinate resolution as [rebuildAiReviewTab] — see that method's note.
         val pluginSettings = PluginSettings.getInstance(project)
         val byName = currentPr?.repoName?.takeIf { it.isNotBlank() }?.let { name ->
@@ -963,6 +976,7 @@ class PrDetailPanel(
             prId = prId,
         )
         commentsTabPanel = newTab
+        Disposer.register(this, newTab)
         // Replace or add the comments card
         val layout = contentCards.layout as CardLayout
         contentCards.add(newTab, "comments")
@@ -972,9 +986,13 @@ class PrDetailPanel(
     override fun dispose() {
         loadJob?.cancel()
         scope.cancel()
-        commentsTabPanel?.close()
+        // The tab panels are registered as children under this Disposable, so the
+        // platform would dispose them automatically; we dispose them explicitly here
+        // (Disposer.dispose is idempotent) to keep teardown deterministic and to null
+        // the references. Disposing an already-disposed child is a safe no-op.
+        commentsTabPanel?.let { Disposer.dispose(it) }
         commentsTabPanel = null
-        aiReviewTabPanel?.close()
+        aiReviewTabPanel?.let { Disposer.dispose(it) }
         aiReviewTabPanel = null
     }
 
@@ -1015,7 +1033,7 @@ class PrDetailPanel(
         // Double-click title label to enter edit mode
         titleLabel.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
-                if (e.clickCount == 2 && currentPr?.state.equals("OPEN", ignoreCase = true)) {
+                if (e.clickCount == 2 && currentPr?.state.equals(PrState.OPEN, ignoreCase = true)) {
                     enterTitleEditMode(titleContainer)
                 }
             }
@@ -1395,7 +1413,7 @@ class PrDetailPanel(
         statusBadgeContainer.revalidate()
 
         // Enable/disable action buttons based on state
-        val isOpen = state.equals("OPEN", ignoreCase = true)
+        val isOpen = state.equals(PrState.OPEN, ignoreCase = true)
         approveButton.isEnabled = isOpen
         needsWorkButton.isEnabled = isOpen
         mergeButton.isEnabled = isOpen
@@ -1448,7 +1466,7 @@ class PrDetailPanel(
 
     private fun renderReviewers(pr: BitbucketPrDetail) {
         reviewersPanel.removeAll()
-        val isOpen = pr.state.equals("OPEN", ignoreCase = true)
+        val isOpen = pr.state.equals(PrState.OPEN, ignoreCase = true)
 
         if (pr.reviewers.isEmpty()) {
             reviewersLabel.text = "No reviewers assigned"
@@ -1717,9 +1735,9 @@ class PrDetailPanel(
 
     private fun createStatusBadge(status: String): JPanel {
         val color = when (status.uppercase()) {
-            "OPEN" -> STATUS_OPEN
-            "MERGED" -> STATUS_MERGED
-            "DECLINED" -> STATUS_DECLINED
+            PrState.OPEN -> STATUS_OPEN
+            PrState.MERGED -> STATUS_MERGED
+            PrState.DECLINED -> STATUS_DECLINED
             else -> SECONDARY_TEXT
         }
         val text = status.uppercase()

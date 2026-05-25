@@ -19,6 +19,7 @@ import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.ui.ComboBoxWidth
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.ui.bindBoundedWidth
+import com.workflow.orchestrator.core.model.bitbucket.PrState
 import com.workflow.orchestrator.core.model.workflow.PrRef
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoContextResolver
@@ -331,15 +332,15 @@ class PrDashboardPanel(
         // State filter listeners — change PR state and trigger service refresh
         openToggle.addActionListener {
             setLoading(true, "Loading open PRs...")
-            PrListService.getInstance(project).setState("OPEN")
+            PrListService.getInstance(project).setState(PrState.OPEN)
         }
         mergedToggle.addActionListener {
             setLoading(true, "Loading merged PRs...")
-            PrListService.getInstance(project).setState("MERGED")
+            PrListService.getInstance(project).setState(PrState.MERGED)
         }
         declinedToggle.addActionListener {
             setLoading(true, "Loading declined PRs...")
-            PrListService.getInstance(project).setState("DECLINED")
+            PrListService.getInstance(project).setState(PrState.DECLINED)
         }
     }
 
