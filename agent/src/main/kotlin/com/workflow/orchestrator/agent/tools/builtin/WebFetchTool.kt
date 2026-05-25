@@ -87,7 +87,8 @@ Common error responses: UNLISTED_DOMAIN means the host isn't on the user's allow
         // never have passed the screener but defense-in-depth) cannot inject attributes.
         val safeUrl = page.finalUrl.replace("'", "&apos;")
         val content = "<external_content url='$safeUrl' source='web_fetch' " +
-                "verdict='${page.sanitizerVerdict}' size_chars='${page.extractedChars}'>\n" +
+                "verdict='${page.sanitizerVerdict}' size_chars='${page.extractedChars}' " +
+                "retrieved_at='${page.fetchedAt}' content_hash='${page.contentHash}'>\n" +
                 page.extractedText +
                 "\n</external_content>"
         return ToolResult(

@@ -72,6 +72,7 @@ class WebFetchToolTest {
         allowlistDecision = AllowlistDecision.APPROVED_AUTO,
         sanitizerVerdict = verdict,
         sanitizerNotes = null,
+        contentHash = "abcdef0123456789",
         fetchedAt = Instant.now(),
         elapsedMs = 42L,
     )
@@ -117,6 +118,8 @@ class WebFetchToolTest {
         assertTrue(result.contains("url='https://example.com/final'"), "missing url attr: $result")
         assertTrue(result.contains("verdict='SAFE'"), "missing verdict attr: $result")
         assertTrue(result.contains("size_chars='12'"), "missing size_chars attr: $result")
+        assertTrue(result.contains("retrieved_at='"), "missing retrieved_at attr: $result")
+        assertTrue(result.contains("content_hash='abcdef0123456789'"), "missing content_hash attr: $result")
         assertTrue(result.contains("article body"), "missing body text: $result")
         assertTrue(result.contains("</external_content>"), "missing closing tag: $result")
     }
@@ -266,6 +269,7 @@ class WebFetchToolTest {
 
 private fun formatExternalContent(page: WebPage): String =
     "<external_content url='${page.finalUrl}' source='web_fetch' " +
-        "verdict='${page.sanitizerVerdict}' size_chars='${page.extractedChars}'>\n" +
+        "verdict='${page.sanitizerVerdict}' size_chars='${page.extractedChars}' " +
+        "retrieved_at='${page.fetchedAt}' content_hash='${page.contentHash}'>\n" +
         page.extractedText +
         "\n</external_content>"
