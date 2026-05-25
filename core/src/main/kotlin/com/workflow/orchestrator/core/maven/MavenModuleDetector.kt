@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.core.maven
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
@@ -50,8 +51,34 @@ class MavenModuleDetector(private val project: Project) {
         return modules.toList()
     }
 
+    /**
+     * Splits [goals] on whitespace, validates each token against the Maven
+     * goal/phase allow-list, and builds the full argument list.
+     *
+     * Tokens that fail [MavenGoalValidator.isAllowed] are **dropped** with a
+     * warning rather than passed through — this matches the existing
+     * error-handling posture (soft failure, log the incident).
+     *
+     * (Audit finding core:F-11)
+     */
     fun buildMavenArgs(modules: List<String>, goals: String): List<String> {
-        val goalList = goals.trim().split("\\s+".toRegex())
+        val validationResult = MavenGoalValidator.validate(goals)
+        val goalList: List<String> = when (validationResult) {
+            is MavenGoalValidator.ValidationResult.Valid -> validationResult.tokens
+            is MavenGoalValidator.ValidationResult.Invalid -> {
+                LOG.warn(
+                    "[MavenModuleDetector] Dropping ${validationResult.offending.size} invalid goal token(s): " +
+                        validationResult.offending.joinToString { "'${it.take(80)}'" }
+                )
+                // Re-validate to get only the allowed tokens
+                goals.trim().split("\\s+".toRegex())
+                    .filter { it.isNotBlank() && MavenGoalValidator.isAllowed(it) }
+            }
+        }
+        if (goalList.isEmpty()) {
+            LOG.warn("[MavenModuleDetector] No valid Maven goal tokens remain after validation — skipping build args")
+            return emptyList()
+        }
         if (modules.isEmpty()) {
             return goalList
         }
@@ -99,6 +126,7 @@ class MavenModuleDetector(private val project: Project) {
     }
 
     companion object {
+        private val LOG = Logger.getInstance(MavenModuleDetector::class.java)
         private val ARTIFACT_ID_PATTERN = Regex("<artifactId>([^<]+)</artifactId>")
     }
 }
