@@ -1,0 +1,328 @@
+package com.workflow.orchestrator.agent.delegation
+
+import com.intellij.openapi.application.EDT
+import com.intellij.openapi.components.Service
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.delegation.ui.ConsentChoice
+import com.workflow.orchestrator.agent.delegation.ui.DelegationInboundConsentDialog
+import com.workflow.orchestrator.core.delegation.DelegationFraming
+import com.workflow.orchestrator.core.delegation.DelegationMessage
+import com.workflow.orchestrator.core.delegation.DelegationPaths
+import com.workflow.orchestrator.core.delegation.KnockOutcome
+import com.workflow.orchestrator.core.settings.CrossIdeDelegationSettingsListener
+import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.util.ProjectIdentifier
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import java.net.StandardProtocolFamily
+import java.net.UnixDomainSocketAddress
+import java.nio.channels.ServerSocketChannel
+import java.nio.channels.SocketChannel
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * Per-project doorbell service for on-demand inbound delegation consent (Plan 6).
+ *
+ * The doorbell is a minimal, always-bound Unix-domain socket — DISTINCT from the
+ * real delegation socket ([DelegationInboundService]'s [DelegationServer]). Its ONLY
+ * power is to raise a [DelegationInboundConsentDialog]. When IDE-A knocks
+ * ([DelegationMessage.Knock]), the doorbell replies [DelegationMessage.KnockAck]
+ * immediately, then raises the consent dialog; the user's choice either binds the
+ * delegation socket (transiently or persistently) and records a preauth nonce, or
+ * writes a declined marker.
+ *
+ * Security boundary (Plan 6 spec §4 / §10): the doorbell can NEVER start a session
+ * or accept work. Its accept loop is dedicated and handles ONLY [DelegationMessage.Knock]
+ * — any other message is logged and the connection is closed. This is why the doorbell
+ * does NOT reuse [com.workflow.orchestrator.core.delegation.DelegationServer], whose
+ * dispatch is hardcoded to Ping / Connect / ChannelResume and would (a) drop a Knock to
+ * its `else` branch and (b) wire the session-starting `onConnect` callback.
+ *
+ * Spec: docs/superpowers/specs/2026-05-25-cross-ide-inbound-consent.md (Task 5).
+ */
+@Service(Service.Level.PROJECT)
+class DelegationDoorbellService(
+    private val project: Project,
+    private val cs: CoroutineScope,
+) {
+    private val json = Json { ignoreUnknownKeys = true; classDiscriminator = "type" }
+
+    private var serverChannel: ServerSocketChannel? = null
+    private var acceptJob: Job? = null
+
+    /**
+     * Nonces (and the [DelegationMessage.delegatorSessionId] they belong to) for which a
+     * consent dialog is currently pending. Used for dedupe: a repeat knock for the same
+     * nonce — or an equivalent request from the same delegator session while a dialog is
+     * open — is answered [com.workflow.orchestrator.core.delegation.KnockOutcome.DUPLICATE]
+     * and raises no second dialog.
+     */
+    private val pendingNonces = ConcurrentHashMap.newKeySet<String>()
+    private val pendingDelegatorSessions = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Rate-limit gate keyed by [DelegationMessage.delegatorSessionId]: at most one consent
+     * dialog per delegator session per [RATE_LIMIT_WINDOW_MS]. Value is the epoch-ms of the
+     * last accepted knock for that delegator.
+     */
+    private val lastDialogAt = ConcurrentHashMap<String, Long>()
+
+    /**
+     * Visible-for-tests hook for raising the consent dialog. Production uses
+     * [showDialogAndApply] (EDT dialog → [applyConsent]); tests swap a no-op so
+     * [handleKnock] can be exercised without an [com.intellij.openapi.application.Application]
+     * and so the dedupe slots are not cleared by the dialog's `finally`.
+     */
+    internal var dialogLauncher: (DelegationMessage.Knock) -> Unit = { knock ->
+        cs.launch { showDialogAndApply(knock) }
+    }
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    /**
+     * Bind the doorbell socket and start the accept loop. Idempotent — early-returns
+     * if already bound. The socket is bound regardless of the inbound setting, so an
+     * inbound-OFF IDE can still receive a [DelegationMessage.Knock].
+     */
+    @Synchronized
+    fun start() {
+        if (serverChannel != null) return
+        val basePath = project.basePath ?: run {
+            LOG.warn("Project has no basePath; cannot start DelegationDoorbellService")
+            return
+        }
+        DelegationPaths.ensureIpcDir()
+        val socketPath = DelegationPaths.doorbellSocketFor(Path.of(basePath))
+        Files.deleteIfExists(socketPath) // clean up stale file from prior crash
+        val server = ServerSocketChannel.open(StandardProtocolFamily.UNIX)
+        server.bind(UnixDomainSocketAddress.of(socketPath))
+        serverChannel = server
+        acceptJob = cs.launch(Dispatchers.IO) { acceptLoop(server) }
+        LOG.info("DelegationDoorbellService bound at $socketPath for $basePath")
+    }
+
+    @Synchronized
+    fun stop() {
+        acceptJob?.cancel()
+        acceptJob = null
+        try { serverChannel?.close() } catch (_: Exception) { /* ignore */ }
+        serverChannel = null
+        val basePath = project.basePath
+        if (basePath != null) {
+            val socketPath = DelegationPaths.doorbellSocketFor(Path.of(basePath))
+            try { Files.deleteIfExists(socketPath) } catch (_: Exception) { /* ignore */ }
+        }
+        LOG.info("DelegationDoorbellService stopped")
+    }
+
+    // ── Dedicated minimal accept loop (REVIEW FIX B1) ──────────────────────────
+
+    /**
+     * Dedicated accept loop. Mirrors [DelegationServer]'s ServerSocketChannel bind +
+     * per-connection [runInterruptible] read + [DelegationFraming] idiom, but handles
+     * ONLY [DelegationMessage.Knock]. A non-Knock message is logged and the connection
+     * is closed — the doorbell NEVER starts a session.
+     */
+    private suspend fun acceptLoop(server: ServerSocketChannel) {
+        coroutineScope {
+            while (isActive) {
+                val client = try {
+                    runInterruptible { server.accept() }
+                } catch (e: Exception) {
+                    if (isActive) LOG.warn("doorbell accept failed", e)
+                    break
+                }
+                launch { handleConnection(client) }
+            }
+        }
+    }
+
+    private suspend fun handleConnection(client: SocketChannel) {
+        try {
+            val msg = withContext(Dispatchers.IO) { DelegationFraming.readFramed(client, json) }
+            when (msg) {
+                is DelegationMessage.Knock -> {
+                    // REVIEW FIX N2: reply KnockAck BEFORE showing/blocking on the dialog,
+                    // so IDE-A's knock() returns promptly without waiting on the human.
+                    val outcome = handleKnock(msg)
+                    withContext(Dispatchers.IO) {
+                        DelegationFraming.writeFramed(
+                            client,
+                            DelegationMessage.KnockAck(nonce = msg.nonce, outcome = outcome),
+                            json,
+                        )
+                    }
+                    try { client.close() } catch (_: Exception) {}
+                }
+                else -> {
+                    // Security boundary: the doorbell only handles Knock. Anything else is
+                    // dropped — it can NEVER start a session or accept work.
+                    LOG.warn("Unexpected message on doorbell socket (dropped): ${msg::class.simpleName}")
+                    try { client.close() } catch (_: Exception) {}
+                }
+            }
+        } catch (e: Exception) {
+            LOG.warn("doorbell connection handler failed", e)
+            try { client.close() } catch (_: Exception) {}
+        }
+    }
+
+    // ── Knock handling: dedupe → rate-limit → KnockAck → dialog → consent ──────
+
+    /**
+     * Decides the [com.workflow.orchestrator.core.delegation.KnockOutcome] for a knock and,
+     * when RINGING, launches the consent dialog asynchronously (so the KnockAck can be written
+     * by the caller without waiting on the human — REVIEW FIX N2). Returns the outcome to send
+     * back in the [DelegationMessage.KnockAck].
+     *
+     * Dedupe: if a dialog for this nonce (or an equivalent request from the same delegator
+     * session) is already pending → DUPLICATE, no dialog.
+     * Rate-limit: at most one dialog per delegator session per [RATE_LIMIT_WINDOW_MS] → DUPLICATE.
+     */
+    @Synchronized
+    internal fun handleKnock(knock: DelegationMessage.Knock): KnockOutcome {
+        // Dedupe by nonce or by an in-flight dialog for the same delegator session.
+        if (pendingNonces.contains(knock.nonce) ||
+            pendingDelegatorSessions.contains(knock.delegatorSessionId)
+        ) {
+            return KnockOutcome.DUPLICATE
+        }
+        // Rate-limit: ≤ 1 dialog per delegator session per window.
+        val now = System.currentTimeMillis()
+        val last = lastDialogAt[knock.delegatorSessionId]
+        if (last != null && now - last < RATE_LIMIT_WINDOW_MS) {
+            return KnockOutcome.DUPLICATE
+        }
+
+        // RINGING: reserve the dedupe slots, then raise the dialog asynchronously.
+        pendingNonces.add(knock.nonce)
+        pendingDelegatorSessions.add(knock.delegatorSessionId)
+        lastDialogAt[knock.delegatorSessionId] = now
+
+        dialogLauncher(knock)
+        return KnockOutcome.RINGING
+    }
+
+    /**
+     * Raise the [DelegationInboundConsentDialog] on the EDT and apply the user's choice.
+     * Clears the dedupe slots in a `finally` so a later knock for the same delegator can
+     * raise a fresh dialog once this one is resolved.
+     */
+    private suspend fun showDialogAndApply(knock: DelegationMessage.Knock) {
+        try {
+            val choice = withContext(Dispatchers.EDT) {
+                val dlg = DelegationInboundConsentDialog(project, knock)
+                dlg.show()
+                dlg.choice
+            }
+            val store = PendingDelegationStore(ProjectIdentifier.agentDir(project.basePath ?: ".").toPath())
+            val inbound = project.getService(DelegationInboundService::class.java)
+            applyConsent(knock, choice, store, inbound)
+        } catch (e: Exception) {
+            LOG.warn("doorbell consent dialog/apply failed for nonce=${knock.nonce}", e)
+        } finally {
+            pendingNonces.remove(knock.nonce)
+            pendingDelegatorSessions.remove(knock.delegatorSessionId)
+        }
+    }
+
+    // ── Consent application (socket/EDT-free for unit testing) ─────────────────
+
+    /**
+     * Apply the user's consent choice. Deliberately free of socket/EDT concerns so the
+     * test can drive it directly (REVIEW FIX N1 — also satisfies the spec's named
+     * DelegationConsentFlowTest assertions).
+     *
+     * - [ConsentChoice.ALLOW_ALWAYS] → persist [PluginSettings.State.enableInboundCrossIdeDelegation]
+     *   = true (fires the [CrossIdeDelegationSettingsListener] → DelegationInboundService.start()),
+     *   then record the preauth nonce.
+     * - [ConsentChoice.ALLOW_ONCE] → transient bind + record preauth nonce; setting unchanged.
+     * - [ConsentChoice.CANCEL] → write the declined marker; no bind, no preauth.
+     */
+    internal fun applyConsent(
+        knock: DelegationMessage.Knock,
+        choice: ConsentChoice,
+        store: PendingDelegationStore,
+        inbound: DelegationInboundService,
+    ) {
+        when (choice) {
+            ConsentChoice.ALLOW_ALWAYS -> {
+                val settings = PluginSettings.getInstance(project)
+                val wasEnabled = settings.state.enableInboundCrossIdeDelegation
+                settings.state.enableInboundCrossIdeDelegation = true
+                // Publishing the listener is what actually drives DelegationInboundService.start()
+                // (setting the raw state field alone does not fire the message-bus topic — only
+                // the Configurable.apply() path publishes on a UI toggle).
+                if (!wasEnabled) {
+                    try {
+                        project.messageBus
+                            .syncPublisher(CrossIdeDelegationSettingsListener.TOPIC)
+                            .inboundSettingChanged(true)
+                    } catch (e: Exception) {
+                        LOG.warn("applyConsent: failed to publish inboundSettingChanged", e)
+                    }
+                }
+                inbound.recordPreauth(knock.nonce)
+            }
+            ConsentChoice.ALLOW_ONCE -> {
+                inbound.startTransient()
+                inbound.recordPreauth(knock.nonce)
+            }
+            ConsentChoice.CANCEL -> {
+                store.markDeclined(knock.nonce)
+            }
+        }
+    }
+
+    // ── Startup-activity replay (Task 6) ───────────────────────────────────────
+
+    /**
+     * Replay any fresh file-based pending requests through the same dedupe → dialog →
+     * applyConsent path used for live knocks. Used by Task 6's startup activity after
+     * the project enters smart mode (fresh-launch path, where IDE-A knocked while IDE-B
+     * was not running). Reads from THIS project's agent dir.
+     */
+    fun replayPendingRequests() {
+        val basePath = project.basePath ?: return
+        val store = PendingDelegationStore(ProjectIdentifier.agentDir(basePath).toPath())
+        val fresh = try {
+            store.readFresh(ttlMillis = REPLAY_TTL_MS)
+        } catch (e: Exception) {
+            LOG.warn("replayPendingRequests: readFresh failed", e)
+            return
+        }
+        for (req in fresh) {
+            if (store.isDeclined(req.nonce)) continue
+            val knock = DelegationMessage.Knock(
+                delegatorIde = req.delegatorIde,
+                delegatorRepo = req.delegatorRepo,
+                delegatorSessionId = req.delegatorSessionId,
+                requestPreview = req.requestPreview,
+                nonce = req.nonce,
+            )
+            // Reuse the live dedupe gate so a request already handled by a live knock
+            // (or a duplicate file) doesn't raise a second dialog.
+            handleKnock(knock)
+        }
+    }
+
+    companion object {
+        private val LOG = Logger.getInstance(DelegationDoorbellService::class.java)
+
+        /** ≤ 1 consent dialog per delegator session per 10 s (Plan 6 spec §10). */
+        const val RATE_LIMIT_WINDOW_MS = 10_000L
+
+        /** Fresh-launch replay TTL: 5 minutes (Plan 6 spec §10). */
+        const val REPLAY_TTL_MS = 5L * 60 * 1000
+    }
+}
