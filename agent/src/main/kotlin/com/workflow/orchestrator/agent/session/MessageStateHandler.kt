@@ -731,8 +731,8 @@ class MessageStateHandler(
 
         /**
          * Orphan-session cleanup pass — removes top-level directories under
-         * `sessions/` that are NOT present in the global index AND whose last-modified
-         * time is older than [olderThanMs].
+         * `sessions/` that are NOT present in the global index AND whose last
+         * activity is older than [olderThanMs].
          *
          * Catches two real failure modes:
          *  - a session that crashed between writing per-session files and updating
@@ -743,6 +743,16 @@ class MessageStateHandler(
          * under their parent's directory. They are caught for free when the parent is
          * either kept (no cleanup) or deleted (cascade); this pass only iterates
          * top-level entries so we never remove a sub-agent whose parent is still live.
+         *
+         * **Timestamp source (F-23):** We prefer the `ts` field from `ui_messages.json`
+         * (the timestamp of the last UI message) over the filesystem `lastModified()`
+         * of the directory.  Directory mtime is susceptible to clock-skew and is
+         * routinely updated by backup tools (Time Machine, rsync, WSL).  If
+         * `ui_messages.json` is absent or unreadable we fall back to the mtime of
+         * `api_conversation_history.json` (a file we write on every API turn), and
+         * only as a last resort to the directory mtime itself.  Either way, before
+         * deleting we log the candidate at INFO level so operators can see what was
+         * pruned without needing a dry-run.
          *
          * Best-effort, never throws — startup must not be blocked on disk hiccups.
          *
@@ -760,12 +770,44 @@ class MessageStateHandler(
             for (child in children) {
                 if (!child.isDirectory) continue
                 if (child.name in knownIds) continue
-                if (child.lastModified() >= cutoff) continue
+                val lastActivity = resolveSessionLastActivity(child)
+                if (lastActivity >= cutoff) continue
+                LOG.info("[SessionCleanup] Removing orphan session dir ${child.name} (lastActivity=${lastActivity}ms)")
                 try {
                     if (child.deleteRecursively()) removed++
                 } catch (_: Exception) { /* skip, try next */ }
             }
             return removed
+        }
+
+        /**
+         * Resolve the most reliable "last activity" timestamp for an orphan session
+         * directory.  Preference order (F-23):
+         *
+         * 1. `ts` of the last entry in `ui_messages.json`   — written by the plugin
+         * 2. `lastModified` of `api_conversation_history.json` — written on every API turn
+         * 3. `lastModified` of the session directory itself   — fallback, mtime-unstable
+         */
+        private fun resolveSessionLastActivity(sessionDir: File): Long {
+            // 1. Application-level timestamp from the last UI message
+            try {
+                val uiFile = File(sessionDir, "ui_messages.json")
+                if (uiFile.exists()) {
+                    val msgs = loadUiMessages(sessionDir)
+                    val lastTs = msgs.lastOrNull()?.ts
+                    if (lastTs != null && lastTs > 0L) return lastTs
+                }
+            } catch (_: Exception) { /* fall through */ }
+
+            // 2. Mtime of the API history file (written by the plugin on every turn)
+            val apiFile = File(sessionDir, "api_conversation_history.json")
+            if (apiFile.exists()) {
+                val mt = apiFile.lastModified()
+                if (mt > 0L) return mt
+            }
+
+            // 3. Directory mtime (susceptible to clock-skew / backup-tool updates)
+            return sessionDir.lastModified()
         }
 
         fun toggleFavorite(baseDir: File, sessionId: String) {
