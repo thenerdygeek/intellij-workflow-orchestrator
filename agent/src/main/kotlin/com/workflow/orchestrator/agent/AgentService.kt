@@ -1491,6 +1491,15 @@ class AgentService(
          */
         onUserInputReceived: ((task: String) -> com.workflow.orchestrator.agent.session.UiMessage?)? = null,
         /**
+         * Fired once the loop's [ContextManager] is resolved (the existing one if passed,
+         * or a freshly built one). Lets the caller (AgentController) hold the live manager
+         * so the NEXT user message is added to the correct context instead of a fresh empty
+         * one — the root-cause fix for the post-handoff/post-resume chat wipe.
+         */
+        onContextManagerReady: ((ContextManager) -> Unit)? = null,
+        /** Forwarded to [AgentLoop.onHandoffProposed] — renders the new_task preview card. */
+        onHandoffProposed: ((context: String) -> Unit)? = null,
+        /**
          * Optional fan-out for the live `edit_file` streaming-diff preview. When
          * provided, the AgentLoop instantiates a
          * [com.workflow.orchestrator.agent.preview.StreamingEditTracker] that pushes
@@ -1744,6 +1753,8 @@ class AgentService(
                     modelCatalogService = sharedCatalogHolder.peek(),
                     currentModelRef = { currentBrainModelId },
                 )
+                // Report the resolved manager so the controller can hold it across turns.
+                onContextManagerReady?.invoke(ctx)
 
                 // I7: Always re-set system prompt (plan mode may have changed between turns)
                 val projectName = project.name
@@ -2066,6 +2077,7 @@ class AgentService(
                         onSessionStats?.invoke(modelId, tokensIn, tokensOut, costUsd)
                     },
                     onPlanResponse = onPlanResponse,
+                    onHandoffProposed = onHandoffProposed,
                     onPlanPartialContent = onPlanPartialContent,
                     onPlanModeToggle = { enabled ->
                         planModeActive.set(enabled)
