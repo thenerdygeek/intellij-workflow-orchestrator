@@ -161,6 +161,45 @@ class StageDetailPanel(
 
     companion object {
         private const val MAX_DISPLAY_CHARS = 50_000
+
+        /**
+         * Returns the safe basename for a server-supplied artifact name, stripping
+         * all path separators and `..` components so the resulting name can be
+         * appended to a user-chosen directory without escaping it.
+         *
+         * Returns `null` when the stripped name is blank, `.`, or `..`.
+         * (Audit finding bamboo:F-12)
+         *
+         * @param rawName  The artifact name from the Bamboo API response.
+         * @return         The sanitised single filename component, or `null` if the
+         *                 name is unsafe.
+         */
+        internal fun safeArtifactBasename(rawName: String): String? {
+            // java.io.File(name).name extracts the final path component on the
+            // current OS.  We also normalise forward and backward slashes
+            // explicitly so the check is OS-independent.
+            val stripped = rawName
+                .replace('/', java.io.File.separatorChar)
+                .replace('\\', java.io.File.separatorChar)
+            val basename = java.io.File(stripped).name
+            return if (basename.isBlank() || basename == ".." || basename == ".") null
+            else basename
+        }
+
+        /**
+         * Returns `true` iff [targetFile] is canonically contained within
+         * [chosenDir] — i.e. the resolved absolute path starts with the resolved
+         * absolute path of [chosenDir] followed by the platform separator.
+         *
+         * A malformed artifact name that somehow survives [safeArtifactBasename]
+         * would still be caught here.
+         * (Audit finding bamboo:F-12)
+         */
+        internal fun isContainedIn(targetFile: java.io.File, chosenDir: java.io.File): Boolean {
+            val root = chosenDir.canonicalPath
+            val target = targetFile.canonicalPath
+            return target.startsWith(root + java.io.File.separator) || target == root
+        }
     }
 
     init {
@@ -489,7 +528,34 @@ class StageDetailPanel(
         val descriptor = FileChooserDescriptor(false, true, false, false, false, false)
             .withTitle("Select Download Directory")
         val chosen = FileChooser.chooseFile(descriptor, project, null) ?: return
-        val targetFile = java.io.File(chosen.path, artifact.name)
+
+        // Security: strip all path separators and `..` components from the
+        // server-supplied artifact name, then verify containment.
+        // (Audit finding bamboo:F-12)
+        val safeBasename = safeArtifactBasename(artifact.name)
+        if (safeBasename == null) {
+            log.warn("[Build:Artifacts] Rejected unsafe artifact name='${artifact.name.take(200)}'")
+            WorkflowNotificationService.getInstance(project).notifyError(
+                WorkflowNotificationService.GROUP_BUILD,
+                "Artifact Download Failed",
+                "Artifact name '${artifact.name}' is unsafe and was rejected."
+            )
+            return
+        }
+        val chosenDir = java.io.File(chosen.path)
+        val targetFile = java.io.File(chosenDir, safeBasename)
+        if (!isContainedIn(targetFile, chosenDir)) {
+            log.warn(
+                "[Build:Artifacts] Containment check failed for artifact='${artifact.name.take(200)}'; " +
+                    "resolved='${targetFile.canonicalPath}' is outside chosen='${chosenDir.canonicalPath}'"
+            )
+            WorkflowNotificationService.getInstance(project).notifyError(
+                WorkflowNotificationService.GROUP_BUILD,
+                "Artifact Download Failed",
+                "Artifact '${artifact.name}' resolved outside the selected directory and was rejected."
+            )
+            return
+        }
 
         scope.launch {
             val result = bambooService.downloadArtifact(artifact.downloadUrl, targetFile)
@@ -499,14 +565,14 @@ class StageDetailPanel(
                     ns.notifyInfo(
                         WorkflowNotificationService.GROUP_BUILD,
                         "Artifact Downloaded",
-                        "Downloaded ${artifact.name} to ${targetFile.parentFile.absolutePath}"
+                        "Downloaded $safeBasename to ${targetFile.parentFile.absolutePath}"
                     )
-                    log.info("[Build:Artifacts] Downloaded ${artifact.name} to ${targetFile.absolutePath}")
+                    log.info("[Build:Artifacts] Downloaded $safeBasename to ${targetFile.absolutePath}")
                 } else {
                     ns.notifyError(
                         WorkflowNotificationService.GROUP_BUILD,
                         "Artifact Download Failed",
-                        "Failed to download ${artifact.name}: ${result.summary}"
+                        "Failed to download $safeBasename: ${result.summary}"
                     )
                 }
             }
