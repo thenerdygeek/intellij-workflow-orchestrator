@@ -68,8 +68,13 @@ internal class JiraTaskFunnel(
         val parts = mutableListOf<String>()
 
         if (query.isNotBlank()) {
-            // If query looks like a Jira key, search by key; otherwise text search
-            if (Regex("[A-Z][A-Z0-9]+-\\d+").matches(query)) {
+            // Use the same anchored key pattern as validateTicketKeys (C3) so both
+            // paths agree on what constitutes a valid Jira key. The key= branch would
+            // otherwise accept any string that merely contains a key-like substring
+            // (even though .matches() is a full-string match, the prior regex lacked
+            // underscore support and differed from the canonical validator).
+            // Closes audit finding jira:F-7.
+            if (isValidJiraKey(query)) {
                 parts.add("key = \"${escapeJql(query)}\"")
             } else {
                 parts.add("summary ~ \"${escapeJql(query)}\"")
@@ -82,5 +87,21 @@ internal class JiraTaskFunnel(
 
         val jql = parts.joinToString(" AND ")
         return if (jql.isNotBlank()) "$jql ORDER BY updated DESC" else "ORDER BY updated DESC"
+    }
+
+    companion object {
+        /**
+         * Anchored Jira key validator — same pattern used by [JiraApiClient.validateTicketKeys].
+         * `^[A-Z][A-Z0-9_]+-\d+$` requires uppercase project prefix (may contain digits/underscores)
+         * separated from a numeric issue number by a single hyphen.
+         */
+        internal val JIRA_KEY_REGEX = Regex("^[A-Z][A-Z0-9_]+-\\d+\$")
+
+        /**
+         * Returns true when [key] is a syntactically valid Jira issue key.
+         * Used to gate the `key = "..."` JQL branch so that arbitrary strings
+         * are never interpolated there.
+         */
+        fun isValidJiraKey(key: String): Boolean = JIRA_KEY_REGEX.matches(key)
     }
 }
