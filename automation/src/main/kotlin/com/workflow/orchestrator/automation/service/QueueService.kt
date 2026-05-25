@@ -168,7 +168,10 @@ class QueueService {
                 // idle for this plan, trigger immediately instead of waiting for the
                 // next poll tick (which could be up to 60s when the queue was empty).
                 if (autoTriggerEnabled && suiteEntries == 0) {
-                    val runningResult = bambooService.getRunningBuilds(entry.suitePlanKey)
+                    // Idle check targets the actual trigger plan (the branch plan when a
+                    // branch is selected), not the master — a build running on the master
+                    // plan must not gate a branch trigger and vice-versa.
+                    val runningResult = bambooService.getRunningBuilds(entry.branchKey ?: entry.suitePlanKey)
                     if (!runningResult.isError && runningResult.data!!.isEmpty()) {
                         log.info("[Automation:Queue] Fast-path trigger for entry ${entry.id} (queue was empty and Bamboo is idle)")
                         val triggerResult = doTrigger(entry)
@@ -383,7 +386,9 @@ class QueueService {
 
         if (oldestWaiting?.id != entry.id) return entry
 
-        val runningResult = bambooService.getRunningBuilds(planKey)
+        // Idle check targets the actual trigger plan (branch plan when selected),
+        // not the suite-grouping master key used for queue ordering above.
+        val runningResult = bambooService.getRunningBuilds(entry.branchKey ?: entry.suitePlanKey)
         if (!runningResult.isError && runningResult.data!!.isEmpty()) {
             val triggerResult = doTrigger(entry)
             if (!triggerResult.isError) {

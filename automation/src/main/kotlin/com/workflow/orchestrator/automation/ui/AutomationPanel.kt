@@ -381,6 +381,15 @@ class AutomationPanel(
 
     private fun onSuiteSelected(planKey: String) {
         currentSuitePlanKey = planKey
+        // Reset to master-default and suppress the combo listener for the whole
+        // async branch-load window. Until loadBranchesFor's invokeLater repopulates
+        // the combo (which re-asserts both and clears the suppression in its
+        // finally), the combo still shows the PREVIOUS suite's branches. Without
+        // this reset a trigger fired in that window would capture the old
+        // branchKey (enqueueWith), and a user combo-click would persist the old
+        // branch onto the new suite. Both are EDT-only fields touched here on the EDT.
+        selectedBranchKey = null
+        suppressBranchListener = true
         val token = ++loadGeneration
         log.info("[Automation:UI] Suite selected: $planKey (gen=$token) — sticky baseline, no scan")
         // Suite-switch only re-binds the selected-suite reference used by
@@ -421,7 +430,7 @@ class AutomationPanel(
                     branchCombo.addItem(BranchComboItem(null, "default"))
                     if (!result.isError) {
                         for (b in result.data.orEmpty()) {
-                            branchCombo.addItem(BranchComboItem(b.key, b.shortName.ifBlank { b.name }))
+                            branchCombo.addItem(BranchComboItem(b.key, b.shortName.ifBlank { b.name }.ifBlank { b.key }))
                         }
                     } else {
                         log.warn("[Automation:UI] getPlanBranches failed for $planKey: ${result.summary}")
