@@ -869,9 +869,19 @@ class PrDetailPanel(
                 return@launch
             }
 
-            val diff = diffResult.data!!
+            // Guard against isError=false but data=null (pullrequest:F-6 — forced !! NPE).
+            val diff = diffResult.data ?: run {
+                invokeLater {
+                    Messages.showErrorDialog(
+                        project,
+                        "PR diff was empty — cannot start AI review.",
+                        "AI Review Failed",
+                    )
+                }
+                return@launch
+            }
             val changedFiles = if (changesResult != null && !changesResult.isError) {
-                changesResult.data!!.map { it.path }
+                changesResult.data?.map { it.path } ?: emptyList()
             } else {
                 emptyList()
             }
