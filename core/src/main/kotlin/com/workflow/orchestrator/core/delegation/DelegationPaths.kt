@@ -32,6 +32,17 @@ object DelegationPaths {
         return ipcDir.resolve("$hash.sock")
     }
 
+    /**
+     * Doorbell socket — distinct from [socketFor]. Bound regardless of the inbound setting,
+     * so an inbound-OFF IDE can still receive a [DelegationMessage.Knock] and raise a
+     * consent prompt. Plan 6 spec §5.
+     */
+    fun doorbellSocketFor(projectRoot: Path): Path {
+        val canonical = projectRoot.toAbsolutePath().normalize().toString()
+        val hash = sha256Hex(canonical).take(HASH_LEN_CHARS)
+        return ipcDir().resolve("$hash.doorbell.sock")
+    }
+
     /** Returns the per-user IPC directory (`~/.workflow-orchestrator/ipc/`). */
     fun ipcDir(): Path = Path.of(System.getProperty("user.home"), IPC_DIR)
 

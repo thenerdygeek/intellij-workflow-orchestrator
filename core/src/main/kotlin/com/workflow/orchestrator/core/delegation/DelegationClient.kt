@@ -69,6 +69,33 @@ object DelegationClient {
         }
 
     /**
+     * Rings IDE-B's doorbell. Writes a [DelegationMessage.Knock] and awaits the
+     * [DelegationMessage.KnockAck]. Returns the ack on success, null if the doorbell
+     * isn't bound or didn't reply within [timeoutMillis]. IDE-B sends the ack BEFORE
+     * showing its consent dialog, so this returns promptly without waiting on the human.
+     *
+     * Mirrors [ping]'s EDT-safe framing pattern (Dispatchers.IO around socket I/O).
+     *
+     * Plan 6 spec §5 / §8.
+     */
+    suspend fun knock(doorbellPath: Path, knock: DelegationMessage.Knock, timeoutMillis: Long = 1000): DelegationMessage.KnockAck? =
+        withTimeoutOrNull(timeoutMillis) {
+            var ch: SocketChannel? = null
+            try {
+                ch = openChannel(doorbellPath)
+                withContext(Dispatchers.IO) {
+                    DelegationFraming.writeFramed(ch, knock, json)
+                    DelegationFraming.readFramed(ch, json) as? DelegationMessage.KnockAck
+                }
+            } catch (e: Exception) {
+                LOG.debug("knock failed for $doorbellPath", e)
+                null
+            } finally {
+                try { ch?.close() } catch (_: Exception) {}
+            }
+        }
+
+    /**
      * Sends a Connect and awaits the AcceptResult. Returns the channel still open
      * so the caller can hold it for further messages (Result + future Plan-2
      * questions). Caller must close the channel. Returns null if the target is
