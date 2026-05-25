@@ -200,6 +200,12 @@ class AgentLoop(
      */
     private val onPlanResponse: ((planText: String, needsMoreExploration: Boolean, append: Boolean) -> Unit)? = null,
     /**
+     * Fired when new_task proposes a handoff. The UI renders the preview card and
+     * the user picks "Start fresh session" or "Keep chatting"; the decision is sent
+     * back through [userInputChannel] as one of the HANDOFF_*_SENTINEL strings.
+     */
+    private val onHandoffProposed: ((context: String) -> Unit)? = null,
+    /**
      * Callback fired when a plan_mode_respond call is truncated mid-emission (finish_reason=length).
      * The partial <response> content that WAS emitted is extracted and forwarded here so the caller
      * can pre-populate the plan accumulator before the LLM continues with append=true.
@@ -536,6 +542,8 @@ class AgentLoop(
 
     companion object {
         private val LOG = Logger.getInstance(AgentLoop::class.java)
+        const val HANDOFF_FORK_SENTINEL = "__HANDOFF_FORK__"
+        const val HANDOFF_DECLINE_SENTINEL = "__HANDOFF_DECLINE__"
         private const val MAX_CONSECUTIVE_EMPTIES = 3
         private const val MAX_API_RETRIES = 5
         /**
@@ -2271,8 +2279,67 @@ class AgentLoop(
                     contextManager.setActiveSkill(activation.skillContent)
                 }
                 is ToolResultType.HandoffProposed -> {
-                    // Full suspend-and-decide implementation added in Task 3.
-                    // Placeholder: treat as a standard result so the sealed-class when is exhaustive.
+                    val proposed = toolResult.type
+                    // Pre-exit steering drain: if the user typed mid-final-stream, defer
+                    // the proposal and address the follow-up first (same guard as SessionHandoff).
+                    if (drainSteeringIntoContextOnExit()) {
+                        userInputReceivedInToolCall = true
+                        LOG.info("[Loop] Steering arrived during new_task stream — deferring handoff proposal")
+                        return null
+                    }
+                    LOG.info("[Loop] new_task proposed a handoff — presenting preview card")
+                    onHandoffProposed?.invoke(proposed.context)
+
+                    if (userInputChannel != null) {
+                        // Suspend until the card sends a decision sentinel (mirrors PlanResponse).
+                        when (userInputChannel.receive()) {
+                            HANDOFF_FORK_SENTINEL -> {
+                                onDebugLog?.invoke("info", "loop_exit", "Exit: new_task_handoff_fork", mapOf("iteration" to iteration))
+                                sessionMetrics?.recordIterationEnd()
+                                return LoopResult.SessionHandoff(
+                                    context = proposed.context,
+                                    iterations = iteration,
+                                    tokensUsed = totalTokensUsed,
+                                    inputTokens = totalInputTokens,
+                                    outputTokens = totalOutputTokens,
+                                    filesModified = filesModifiedList(),
+                                    linesAdded = totalLinesAdded,
+                                    linesRemoved = totalLinesRemoved
+                                )
+                            }
+                            else -> {
+                                // HANDOFF_DECLINE_SENTINEL (or any non-fork value): stay in this
+                                // session, discard the proposed summary, return control to the user.
+                                LOG.info("[Loop] handoff declined — continuing in current session")
+                                onDebugLog?.invoke("info", "loop_exit", "Exit: new_task_handoff_declined", mapOf("iteration" to iteration))
+                                sessionMetrics?.recordIterationEnd()
+                                return LoopResult.Completed(
+                                    summary = "Continuing in the current session — send your next message when ready.",
+                                    iterations = iteration,
+                                    tokensUsed = totalTokensUsed,
+                                    completionData = null,
+                                    inputTokens = totalInputTokens,
+                                    outputTokens = totalOutputTokens,
+                                    filesModified = filesModifiedList(),
+                                    linesAdded = totalLinesAdded,
+                                    linesRemoved = totalLinesRemoved
+                                )
+                            }
+                        }
+                    }
+                    // No channel (sub-agent / test): fall back to the legacy auto-fork so we
+                    // never strand the loop. Sub-agents cannot call new_task (ORCHESTRATOR-only),
+                    // so this is a safety net, not a normal path.
+                    return LoopResult.SessionHandoff(
+                        context = proposed.context,
+                        iterations = iteration,
+                        tokensUsed = totalTokensUsed,
+                        inputTokens = totalInputTokens,
+                        outputTokens = totalOutputTokens,
+                        filesModified = filesModifiedList(),
+                        linesAdded = totalLinesAdded,
+                        linesRemoved = totalLinesRemoved
+                    )
                 }
                 is ToolResultType.Standard, is ToolResultType.Error -> {
                     // Feedback gate: if the LLM called `feedback` in response to our
