@@ -4,6 +4,8 @@ import com.intellij.openapi.diagnostic.Logger
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * File-based cache for sprint pagination state, stored in the user's home directory.
@@ -72,16 +74,19 @@ object SprintPaginationCache {
         writeToDisk(snapshot)
     }
 
-    /** Load cache from disk if not yet in memory. Thread-safe. */
+    /**
+     * Load cache from disk if not yet in memory. Thread-safe.
+     *
+     * The lock is held across the entire load-and-store sequence so that concurrent
+     * callers never perform a disk read and cache assignment in an interleaved order.
+     * The disk read itself is inexpensive (small JSON file), so holding the lock here
+     * is acceptable and eliminates the TOCTOU window in the previous double-checked-lock
+     * implementation where the file read and the cache assignment were unsynchronized.
+     */
     private fun getOrLoadCache(): CacheData {
         synchronized(lock) {
             cache?.let { return it }
-        }
-        // Read from disk outside lock
-        val loaded = readFromDisk()
-        synchronized(lock) {
-            // Double-check: another thread may have loaded while we read
-            cache?.let { return it }
+            val loaded = readFromDisk()
             cache = loaded
             return loaded
         }
@@ -94,16 +99,29 @@ object SprintPaginationCache {
             } else {
                 CacheData()
             }
+        } catch (e: kotlinx.serialization.SerializationException) {
+            // Corrupt cache file — delete it so the next IDE start begins fresh
+            log.warn("[SprintCache] Corrupt cache file (deleting): ${e.message}")
+            runCatching { cacheFile.delete() }
+            CacheData()
         } catch (e: Exception) {
             log.warn("[SprintCache] Failed to read cache: ${e.message}")
             CacheData()
         }
     }
 
+    /**
+     * Write [data] to disk atomically: write to a sibling `.tmp` file then rename
+     * via [Files.move] with [StandardCopyOption.ATOMIC_MOVE]. This matches the agent
+     * session persistence pattern and prevents partially-written JSON from corrupting
+     * the cache file on a crash or concurrent write.
+     */
     private fun writeToDisk(data: CacheData) {
         try {
             cacheDir.mkdirs()
-            cacheFile.writeText(json.encodeToString(CacheData.serializer(), data))
+            val tmpFile = File(cacheDir, "sprint-pagination-cache.json.tmp")
+            tmpFile.writeText(json.encodeToString(CacheData.serializer(), data))
+            Files.move(tmpFile.toPath(), cacheFile.toPath(), StandardCopyOption.ATOMIC_MOVE)
         } catch (e: Exception) {
             log.warn("[SprintCache] Failed to write cache: ${e.message}")
         }
