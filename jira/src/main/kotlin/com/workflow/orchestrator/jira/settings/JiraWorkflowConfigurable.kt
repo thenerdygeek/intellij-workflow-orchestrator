@@ -308,6 +308,22 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                                 "Leave empty to disable."
                         )
                 }
+                row("Post-commit transition trigger statuses:") {
+                    textField()
+                        .bindText(
+                            {
+                                settings.state.postCommitTransitionTriggerStatuses
+                                    ?: "to do,open,new,backlog,selected for development"
+                            },
+                            { settings.state.postCommitTransitionTriggerStatuses = it }
+                        )
+                        .columns(COLUMNS_LARGE)
+                        .comment(
+                            "Comma-separated, case-insensitive status names treated as " +
+                                "\"not started\". After a successful commit, if the active ticket " +
+                                "is in one of these the plugin offers to open the transition dialog."
+                        )
+                }
             }
 
             // === 7. Time Tracking (collapsed by default) ===

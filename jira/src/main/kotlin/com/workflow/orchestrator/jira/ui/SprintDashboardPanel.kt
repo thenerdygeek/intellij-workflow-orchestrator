@@ -35,7 +35,7 @@ import com.workflow.orchestrator.core.model.jira.FilterData
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraSprint
 import com.workflow.orchestrator.jira.service.JiraServiceImpl
-import com.workflow.orchestrator.jira.service.toJiraTicketData
+import com.workflow.orchestrator.jira.service.toTicketData
 import com.workflow.orchestrator.jira.service.ActiveTicketService
 import com.workflow.orchestrator.jira.service.BranchNameValidator
 import com.workflow.orchestrator.jira.service.BranchingService
@@ -759,7 +759,7 @@ class SprintDashboardPanel(
     private fun emitSprintData(issues: List<JiraIssue>) {
         scope.launch {
             val eventBus = project.getService(EventBus::class.java)
-            val tickets = issues.map { it.toJiraTicketData() }
+            val tickets = issues.map { it.toTicketData(full = false) }
             eventBus.emit(WorkflowEvent.SprintDataLoaded(tickets))
         }
     }

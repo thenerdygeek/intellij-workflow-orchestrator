@@ -55,7 +55,10 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
                     log.debug("[Jira:PostCommit] Could not fetch $ticketId: ${issueResult.summary}")
                 } else {
                     val currentStatus = issueResult.data!!.status
-                    if (PostCommitTransitionLogic.shouldSuggestTransition(currentStatus)) {
+                    val triggerStatuses = PostCommitTransitionLogic.parseTriggerStatuses(
+                        settings.state.postCommitTransitionTriggerStatuses
+                    )
+                    if (PostCommitTransitionLogic.shouldSuggestTransition(currentStatus, triggerStatuses)) {
                         com.intellij.openapi.application.invokeLater {
                             val notification = com.intellij.notification.NotificationGroupManager.getInstance()
                                 .getNotificationGroup("workflow.automation")
@@ -85,10 +88,33 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
 
 /** Pure logic — testable without IntelliJ dependencies. */
 object PostCommitTransitionLogic {
-    private val NEEDS_TRANSITION_STATUSES = setOf("to do", "open", "new", "backlog", "selected for development")
+    /**
+     * Default "not started yet" status names. Mirrors the default of
+     * [PluginSettings.postCommitTransitionTriggerStatuses] so the behavior is identical
+     * out of the box when the setting is absent/blank (audit jira:F-14).
+     */
+    val DEFAULT_TRIGGER_STATUSES = setOf("to do", "open", "new", "backlog", "selected for development")
 
-    fun shouldSuggestTransition(currentStatus: String): Boolean {
+    /**
+     * Parses the comma-separated [PluginSettings.postCommitTransitionTriggerStatuses] setting into
+     * a lowercased set. Each entry is trimmed, lowercased, and blank entries are dropped. A null or
+     * effectively-empty configuration falls back to [DEFAULT_TRIGGER_STATUSES].
+     */
+    fun parseTriggerStatuses(raw: String?): Set<String> {
+        val parsed = raw
+            ?.split(',')
+            ?.map { it.trim().lowercase() }
+            ?.filter { it.isNotBlank() }
+            ?.toSet()
+            .orEmpty()
+        return parsed.ifEmpty { DEFAULT_TRIGGER_STATUSES }
+    }
+
+    fun shouldSuggestTransition(
+        currentStatus: String,
+        triggerStatuses: Set<String> = DEFAULT_TRIGGER_STATUSES
+    ): Boolean {
         if (currentStatus.isBlank()) return false
-        return currentStatus.lowercase() in NEEDS_TRANSITION_STATUSES
+        return currentStatus.lowercase() in triggerStatuses
     }
 }

@@ -932,54 +932,6 @@ class JiraServiceImpl(private val project: Project) : JiraService {
         )
     }
 
-    // ── Helper ────────────────────────────────────────────────────────────
-
-    private fun com.workflow.orchestrator.jira.api.dto.JiraIssue.toTicketData(): JiraTicketData {
-        return JiraTicketData(
-            key = key,
-            summary = fields.summary,
-            status = fields.status.name,
-            assignee = fields.assignee?.displayName,
-            reporter = fields.reporter?.displayName,
-            type = fields.issuetype?.name ?: "Unknown",
-            priority = fields.priority?.name,
-            description = fields.description,
-            labels = fields.labels,
-            created = fields.created,
-            updated = fields.updated,
-            sprintName = fields.sprint?.name,
-            sprintState = fields.sprint?.state,
-            closedSprints = fields.closedSprints.map { "${it.name} (${it.state})" },
-            epicKey = fields.parent?.key,
-            epicSummary = fields.parent?.fields?.summary,
-            originalEstimate = fields.timetracking?.originalEstimate,
-            remainingEstimate = fields.timetracking?.remainingEstimate,
-            timeSpent = fields.timetracking?.timeSpent,
-            commentCount = fields.comment?.total ?: 0,
-            attachmentCount = fields.attachment.size,
-            attachments = fields.attachment.map { att ->
-                JiraAttachmentData(id = att.id, filename = att.filename, mimeType = att.mimeType, sizeBytes = att.size)
-            },
-            subtasks = fields.subtasks.map { st ->
-                JiraSubtaskRef(
-                    key = st.key,
-                    summary = st.fields.summary,
-                    status = st.fields.status.name
-                )
-            },
-            linkedIssues = fields.issuelinks.mapNotNull { link ->
-                val linked = link.inwardIssue ?: link.outwardIssue ?: return@mapNotNull null
-                val relationship = if (link.inwardIssue != null) link.type.inward else link.type.outward
-                JiraLinkedIssueRef(
-                    key = linked.key,
-                    summary = linked.fields.summary,
-                    status = linked.fields.status.name,
-                    relationship = relationship
-                )
-            }
-        )
-    }
-
     /**
      * Provides the underlying [JiraApiClient] for modules that need direct API access
      * (e.g., SprintService, BranchingService). Returns null if Jira is not configured.
@@ -1912,9 +1864,20 @@ class JiraServiceImpl(private val project: Project) : JiraService {
     }
 }
 
-/** Convert a Jira API issue DTO to the shared [JiraTicketData] domain model.
- *  Used by Sprint tab to emit [WorkflowEvent.SprintDataLoaded] for the # ticket autocomplete cache. */
-internal fun com.workflow.orchestrator.jira.api.dto.JiraIssue.toJiraTicketData(): JiraTicketData {
+/**
+ * Convert a Jira API issue DTO to the shared [JiraTicketData] domain model.
+ *
+ * This is the single source of truth for `JiraIssue → JiraTicketData` mapping (audit jira:F-13;
+ * previously split across a rich member mapper and a lean top-level `toJiraTicketData`).
+ *
+ * @param full when `true` (default — used by detail/ticket/search fetches) the rich context
+ *   fields are populated: sprint, epic/parent, time-tracking, comment/attachment counts,
+ *   attachments, subtasks, and linked issues. When `false` (lightweight list/cache paths, e.g.
+ *   the Sprint tab's [WorkflowEvent.SprintDataLoaded] broadcast for the `#` ticket autocomplete
+ *   cache) only the base fields are mapped; every rich field is left at its [JiraTicketData]
+ *   default (null / empty list / 0), exactly matching the former lean mapper's output.
+ */
+internal fun com.workflow.orchestrator.jira.api.dto.JiraIssue.toTicketData(full: Boolean = true): JiraTicketData {
     return JiraTicketData(
         key = key,
         summary = fields.summary,
@@ -1927,5 +1890,35 @@ internal fun com.workflow.orchestrator.jira.api.dto.JiraIssue.toJiraTicketData()
         labels = fields.labels,
         created = fields.created,
         updated = fields.updated,
+        sprintName = if (full) fields.sprint?.name else null,
+        sprintState = if (full) fields.sprint?.state else null,
+        closedSprints = if (full) fields.closedSprints.map { "${it.name} (${it.state})" } else emptyList(),
+        epicKey = if (full) fields.parent?.key else null,
+        epicSummary = if (full) fields.parent?.fields?.summary else null,
+        originalEstimate = if (full) fields.timetracking?.originalEstimate else null,
+        remainingEstimate = if (full) fields.timetracking?.remainingEstimate else null,
+        timeSpent = if (full) fields.timetracking?.timeSpent else null,
+        commentCount = if (full) fields.comment?.total ?: 0 else 0,
+        attachmentCount = if (full) fields.attachment.size else 0,
+        attachments = if (full) fields.attachment.map { att ->
+            JiraAttachmentData(id = att.id, filename = att.filename, mimeType = att.mimeType, sizeBytes = att.size)
+        } else emptyList(),
+        subtasks = if (full) fields.subtasks.map { st ->
+            JiraSubtaskRef(
+                key = st.key,
+                summary = st.fields.summary,
+                status = st.fields.status.name
+            )
+        } else emptyList(),
+        linkedIssues = if (full) fields.issuelinks.mapNotNull { link ->
+            val linked = link.inwardIssue ?: link.outwardIssue ?: return@mapNotNull null
+            val relationship = if (link.inwardIssue != null) link.type.inward else link.type.outward
+            JiraLinkedIssueRef(
+                key = linked.key,
+                summary = linked.fields.summary,
+                status = linked.fields.status.name,
+                relationship = relationship
+            )
+        } else emptyList()
     )
 }

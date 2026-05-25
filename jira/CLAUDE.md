@@ -70,3 +70,8 @@ UI: `TicketTransitionDialog` + `FieldWidgetFactory` (sealed FieldSchema → widg
     + `SearchableChooser<T>` (debounced async)
 Parser: `JiraTransitionResponseParser` (kotlinx.serialization.json)
 Serializer: `TransitionInputSerializer` (FieldValue → Jira JSON)
+
+Post-commit transition trigger statuses are configurable via
+`PluginSettings.postCommitTransitionTriggerStatuses` (comma-separated, case-insensitive; default
+`to do,open,new,backlog,selected for development`). Parsed by `PostCommitTransitionLogic.parseTriggerStatuses`;
+surfaced in `JiraWorkflowConfigurable` → Ticket Transitions group (audit jira:F-14).

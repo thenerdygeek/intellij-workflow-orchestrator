@@ -166,6 +166,17 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
          */
         var ticketTransitionDefaultPrCreateStatusName by string("In Review")
 
+        /**
+         * Comma-separated list of (case-insensitive) status names that the post-commit
+         * transition check treats as "not started yet". When a successful commit's active
+         * ticket is in one of these statuses, the plugin surfaces a notification offering to
+         * open the transition dialog (see
+         * [com.workflow.orchestrator.jira.vcs.PostCommitTransitionLogic]). Each entry is
+         * trimmed, lowercased, and blank entries are ignored. Defaults to the original
+         * hardcoded set so behavior is unchanged out of the box (audit jira:F-14).
+         */
+        var postCommitTransitionTriggerStatuses by string("to do,open,new,backlog,selected for development")
+
         // ── Bamboo auto-detection ────────────────────────────────────────────────
         /**
          * When true, plan auto-detection falls back to the full N+1 plan-listing scan
