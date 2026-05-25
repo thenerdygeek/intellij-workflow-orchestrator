@@ -43,7 +43,7 @@ class HandoverPanelTest {
                 passed = true,
                 durationMs = 1000,
                 triggeredAt = Instant.now(),
-                bambooLink = "",
+                bambooLink = null,
             )
         )
     )

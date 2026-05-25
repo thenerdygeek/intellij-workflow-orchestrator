@@ -86,7 +86,7 @@ class ChecksTabTest {
             passed = null,
             durationMs = null,
             triggeredAt = Instant.now(),
-            bambooLink = ""
+            bambooLink = null
         )
         tab.updateState(fixture(suiteResults = listOf(running)))
         val labels = walkLabels(tab)
@@ -103,7 +103,7 @@ class ChecksTabTest {
             passed = false,
             durationMs = null,
             triggeredAt = Instant.now(),
-            bambooLink = ""
+            bambooLink = null
         )
         tab.updateState(fixture(suiteResults = listOf(failed)))
         val labels = walkLabels(tab)

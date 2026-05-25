@@ -242,6 +242,18 @@ class HandoverStateService {
 
             is WorkflowEvent.AutomationTriggered -> {
                 val bambooUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/')
+                // Security: validate buildResultKey against the Bamboo key format
+                // before assembling the browse URL.  An invalid key (e.g. one
+                // containing injection characters) produces a null link — the
+                // wiki comment and UI will show no link rather than a broken URL.
+                // (Audit finding automation:F-9)
+                val bambooLink = buildSafeBambooLink(bambooUrl, event.buildResultKey)
+                if (bambooLink == null) {
+                    log.warn(
+                        "[Handover:State] Omitting bambooLink — buildResultKey='${event.buildResultKey.take(120)}' " +
+                            "does not match expected Bamboo key format"
+                    )
+                }
                 val newSuite = SuiteResult(
                     suitePlanKey = event.suitePlanKey,
                     buildResultKey = event.buildResultKey,
@@ -249,7 +261,7 @@ class HandoverStateService {
                     passed = null,
                     durationMs = null,
                     triggeredAt = Instant.now(),
-                    bambooLink = "$bambooUrl/browse/${event.buildResultKey}"
+                    bambooLink = bambooLink
                 )
                 // Replace existing entry for same suite plan key (latest run wins)
                 val updated = current.suiteResults
@@ -332,5 +344,39 @@ class HandoverStateService {
     companion object {
         fun getInstance(project: Project): HandoverStateService =
             project.getService(HandoverStateService::class.java)
+
+        /**
+         * Bamboo build-result key pattern: one or more uppercase-alphanumeric
+         * segments separated by `-`, with a trailing numeric build-number
+         * segment.  Examples: `PROJ-PLAN-123`, `MYTEAM-BUILD-MAIN-42`.
+         *
+         * The trailing segment MUST be all digits; all other segments MUST be
+         * one or more uppercase letters or digits.
+         * (Audit finding automation:F-9)
+         */
+        private val BAMBOO_KEY_PATTERN = Regex(
+            """^[A-Z][A-Z0-9]*(?:-[A-Z][A-Z0-9]*)*-\d+$"""
+        )
+
+        /**
+         * Returns a validated, URL-safe Bamboo browse link for [buildResultKey],
+         * or `null` if the key does not match the expected Bamboo key format.
+         *
+         * Invalid keys are logged and omitted rather than rendered as a broken
+         * or injected URL.
+         * (Audit finding automation:F-9)
+         *
+         * @param bambooUrl      The base Bamboo URL (already trimmed of trailing `/`).
+         * @param buildResultKey The key from the server event (e.g. `PROJ-PLAN-42`).
+         * @return               The browse URL, or `null` if the key is malformed.
+         */
+        internal fun buildSafeBambooLink(bambooUrl: String, buildResultKey: String): String? {
+            if (!BAMBOO_KEY_PATTERN.matches(buildResultKey)) return null
+            // Each segment is already uppercase alnum + hyphen — no further percent
+            // encoding needed for the path component, but we sanitise for safety.
+            val encodedKey = java.net.URLEncoder.encode(buildResultKey, "UTF-8")
+                .replace("+", "%20")  // URLEncoder encodes space as +; normalise
+            return "$bambooUrl/browse/$encodedKey"
+        }
     }
 }

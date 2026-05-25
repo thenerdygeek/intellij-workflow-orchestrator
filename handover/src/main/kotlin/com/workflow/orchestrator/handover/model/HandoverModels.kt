@@ -42,7 +42,8 @@ data class SuiteResult(
     val passed: Boolean?,
     val durationMs: Long?,
     val triggeredAt: Instant,
-    val bambooLink: String
+    /** Validated Bamboo browse URL, or `null` when [buildResultKey] is malformed. */
+    val bambooLink: String?
 )
 
 data class BuildSummary(

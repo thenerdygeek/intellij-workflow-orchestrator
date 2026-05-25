@@ -44,7 +44,9 @@ class JiraClosureService {
                     false -> "(x) FAIL"
                     null -> "(?) RUNNING"
                 }
-                appendLine("| ${escapeWikiMarkup(suite.suitePlanKey)} | $statusIcon | [View Results|${suite.bambooLink}] |")
+                // bambooLink is null when buildResultKey was invalid (audit finding automation:F-9)
+                val linkCell = suite.bambooLink?.let { "[View Results|$it]" } ?: "—"
+                appendLine("| ${escapeWikiMarkup(suite.suitePlanKey)} | $statusIcon | $linkCell |")
             }
 
             if (mergedTags.isNotEmpty()) {
