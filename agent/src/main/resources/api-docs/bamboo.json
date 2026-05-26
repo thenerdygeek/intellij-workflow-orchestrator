@@ -1,0 +1,1165 @@
+{
+  "id": "bamboo",
+  "displayName": "Bamboo (Data Center)",
+  "authScheme": "Authorization: Bearer <PAT>",
+  "probedServerVersion": "Bamboo DC 10.2.14 (build 100220, built 2026-01-14)",
+  "categories": [
+    {
+      "id": "server-info",
+      "displayName": "Server Info & Identity",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/info",
+          "status": "PROBED_UNUSED",
+          "summary": "Return server version, build number, state, and edition.",
+          "params": [],
+          "sampleResponse": "{\"version\":\"10.2.14\",\"edition\":\"\",\"buildDate\":\"2026-01-14T12:39:36.000+01:00\",\"buildNumber\":\"100220\",\"state\":\"RUNNING\"}",
+          "provenance": "bundle-automation.unpacked/raw/info.json; bundle-automation.unpacked/summary.md endpoint GET /rest/api/latest/info → OK",
+          "verdict": {
+            "classification": "CONSIDER",
+            "reasoning": "Useful for connection-test and compatibility guard. Not currently called by BambooApiClient. Could replace or supplement currentUser as the auth-test endpoint since it also requires a valid PAT."
+          },
+          "gotchas": [
+            "Returns 200 even on trial/evaluation Bamboo instances; the `edition` field is an empty string on Data Center.",
+            "`state` can be RUNNING, PAUSED, or STOPPED; PAUSED means scheduled maintenance, builds are queued but not dispatched."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/currentUser",
+          "status": "PROBED_UNUSED",
+          "summary": "Return the authenticated user's name, full name, and email. Used as an auth-test probe.",
+          "params": [],
+          "sampleResponse": "{\"name\":\"<redacted>\",\"fullName\":\"<redacted>\",\"email\":\"<redacted>\"}",
+          "provenance": "bundle-automation.unpacked/raw/current_user.json; bundle-automation.unpacked/summary.md endpoint GET /rest/api/latest/currentUser → OK; bamboo/CLAUDE.md §Bamboo Server REST API 'GET /rest/api/latest/currentUser — test connection'",
+          "verdict": {
+            "classification": "ADOPT",
+            "reasoning": "The connection-test pattern (adopted in Jira, Bitbucket, Sonar) should be applied to Bamboo settings too. This is the natural auth-test endpoint."
+          },
+          "gotchas": [
+            "Returns 401 for an invalid/expired PAT — suitable as a lightweight auth test.",
+            "Does not verify plan-level permissions; a valid PAT with restricted scope may still 401 on plan endpoints."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "plans-projects",
+      "displayName": "Plans & Projects",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/plan",
+          "status": "USED",
+          "summary": "Paginated list of all plans (projects × plans). Each item includes projectKey, key, shortName, buildName, shortKey, type, enabled, isActive, isBuilding, averageBuildTimeInSeconds, and sizes for stages/branches.",
+          "params": [
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Expand nested objects. Client passes `plans.plan` to populate the plan array.",
+              "example": "plans.plan"
+            },
+            {
+              "name": "max-results",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Page size. Client uses 100.",
+              "example": "100"
+            },
+            {
+              "name": "start-index",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Zero-based pagination cursor. Client computes offset as previous start-index + actual items returned — NOT the server-echoed start-index (which is unreliable).",
+              "example": "0"
+            }
+          ],
+          "sampleResponse": "{\"expand\":\"plans\",\"plans\":{\"size\":2292,\"max-result\":100,\"start-index\":0,\"plan\":[{\"projectKey\":\"PROJ\",\"key\":\"PROJ-PLAN\",\"shortName\":\"Plan Name\",\"buildName\":\"<redacted>\",\"shortKey\":\"PLAN\",\"type\":\"chain\",\"enabled\":true,\"isFavourite\":false,\"isActive\":true,\"isBuilding\":false,\"averageBuildTimeInSeconds\":42,\"stages\":{\"size\":3},\"branches\":{\"size\":5}}]}}",
+          "callSite": "BambooApiClient.kt:39",
+          "provenance": "bundle-automation.unpacked/raw/plan_list.json; BambooApiClient.kt line 39 `getPlans()` → paginate loop with expand=plans.plan&max-results=100&start-index={start}; bundle-automation.unpacked/summary.md GET /rest/api/latest/plan → OK",
+          "gotchas": [
+            "The server-echoed `start-index` in the response is unreliable (Bamboo's `/plan/{key}/branch` echoes 0 on every page). The paginate() loop in BambooApiClient advances the cursor by requested start-index + actual items returned.",
+            "2292 plans in the probe org — without pagination this would hit Bamboo's max-results cap and silently truncate.",
+            "`type` can be `chain` (standard multi-stage), `branch`, or `maven` (legacy)."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/project",
+          "status": "USED",
+          "summary": "List all projects with basic metadata (key, name, planCount).",
+          "params": [
+            {
+              "name": "max-results",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Page size. Client uses 100.",
+              "example": "100"
+            }
+          ],
+          "callSite": "BambooApiClient.kt:48",
+          "provenance": "BambooApiClient.kt line 48 `getProjects()` → GET /rest/api/latest/project?max-results=100; bamboo/CLAUDE.md §Architecture",
+          "gotchas": []
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/project/{projectKey}",
+          "status": "USED",
+          "summary": "Get a single project and expand its plan list.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Bamboo project key (e.g. PROJ).",
+              "example": "PROJ"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Client passes `plans.plan` to inline the plan list.",
+              "example": "plans.plan"
+            }
+          ],
+          "callSite": "BambooApiClient.kt:54",
+          "provenance": "BambooApiClient.kt line 54 `getProjectPlans()` → GET /rest/api/latest/project/{key}?expand=plans.plan",
+          "gotchas": []
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/search/plans",
+          "status": "USED",
+          "summary": "Full-text / fuzzy search for plans by name or key fragment. Returns up to max-results matching plan stubs.",
+          "params": [
+            {
+              "name": "searchTerm",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Search term (plan name or key fragment).",
+              "example": "Deploy"
+            },
+            {
+              "name": "fuzzy",
+              "location": "QUERY",
+              "type": "boolean",
+              "required": false,
+              "description": "Enable fuzzy matching. Client passes true.",
+              "example": "true"
+            },
+            {
+              "name": "max-results",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Result cap. Client uses 25.",
+              "example": "25"
+            }
+          ],
+          "callSite": "BambooApiClient.kt:60",
+          "provenance": "BambooApiClient.kt line 60 `searchPlans()` → GET /rest/api/latest/search/plans?searchTerm={q}&fuzzy=true&max-results=25",
+          "gotchas": [
+            "The /search/plans path is not part of the core REST API documented on developer.atlassian.com — it's a Bamboo-specific endpoint only available on Data Center.",
+            "Fuzzy matching is case-insensitive but can return false positives for very short search terms."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/plan/{planKey}/specs",
+          "status": "USED",
+          "summary": "Retrieve the plan's YAML spec (Bamboo Specs / infrastructure-as-code definition).",
+          "params": [
+            {
+              "name": "planKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Bamboo plan key (e.g. PROJ-PLAN).",
+              "example": "PROJ-PLAN"
+            },
+            {
+              "name": "format",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Response format. Client passes YAML.",
+              "example": "YAML"
+            }
+          ],
+          "callSite": "BambooApiClient.kt:78",
+          "provenance": "BambooApiClient.kt line 78 `getPlanSpecs()` → GET /rest/api/latest/plan/{key}/specs?format=YAML; bundle-automation.unpacked/summary.md GET /rest/api/latest/plan/{planKey}/specs → FAIL (403)",
+          "verdict": {
+            "classification": "WARN",
+            "reasoning": "Returns 403 with a non-admin PAT on both probe bundles. The client calls it but the feature is gated by Bamboo admin permissions. Should be surfaced to the user as a graceful 403 rather than a silent error."
+          },
+          "gotchas": [
+            "Returns HTTP 403 for non-admin PATs — confirmed on both probe bundles against DC 10.2.14.",
+            "Only plans managed as Bamboo Specs (YAML-in-VCS) have a meaningful response; legacy manually-configured plans return an empty or minimal document."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/plan/{planKey}/branch",
+          "status": "USED",
+          "summary": "List plan branches for a given master plan. Used both to enumerate branches (getBranches) and to populate the Automation branch selector (getPlanBranches). Each item has key, shortName, enabled.",
+          "params": [
+            {
+              "name": "planKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Master plan key.",
+              "example": "PROJ-PLAN"
+            },
+            {
+              "name": "max-results",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Page size. Client uses configurable value.",
+              "example": "25"
+            },
+            {
+              "name": "start-index",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Pagination cursor. CRITICAL: server always echoes start-index: 0 for this endpoint — client must advance cursor by actual items returned.",
+              "example": "0"
+            }
+          ],
+          "callSite": "BambooApiClient.kt:83",
+          "provenance": "BambooApiClient.kt line 83 `getBranches()` and line 505 `getPlanBranches()` → GET /rest/api/latest/plan/{key}/branch?max-results={n}&start-index={start}; bamboo/CLAUDE.md §Architecture 'Bamboo's /plan/{key}/branch endpoint echoes start-index: 0 on every page' (fixed 2026-05-26, regression test BambooApiClientPaginationTest)",
+          "gotchas": [
+            "CRITICAL: This endpoint echoes `start-index: 0` on EVERY page response — the paginate() loop MUST advance the cursor by `requestedStart + actualItemCount`, NOT by the server-echoed value. Trusting the server value stalls the cursor and re-fetches the same window up to the page cap, duplicating branches (bug fixed 2026-05-26).",
+            "BambooServiceImpl.getPlanBranches also applies `distinctBy { it.key }` as a defensive second deduplication layer.",
+            "Branch plan keys follow the pattern `{MASTER-KEY}-{SHORTKEY}` — the segment after the last hyphen is the branch short key."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/plan/{planKey}",
+          "status": "USED",
+          "summary": "Get plan metadata. Used both as a full getPlanInfo call and as a lightweight validatePlan check (returns boolean based on 200 vs 404).",
+          "params": [
+            {
+              "name": "planKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Plan key (e.g. PROJ-PLAN).",
+              "example": "PROJ-PLAN"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Optional expand. For variableContext see the dedicated endpoint.",
+              "example": "stages"
+            }
+          ],
+          "callSite": "BambooApiClient.kt:166",
+          "provenance": "BambooApiClient.kt line 166 `getPlanInfo()` and line 536 `validatePlan()` → GET /rest/api/latest/plan/{candidate}; bundle-automation.unpacked/summary.md GET /rest/api/latest/plan/{planKey} → OK",
+          "gotchas": [
+            "validatePlan() calls this and treats 404 as false/not-found, any 200 as valid — it does NOT parse the body.",
+            "On branch plans, the response includes a `master` block linking back to the master plan key."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/plan/{planKey}",
+          "status": "USED",
+          "summary": "Retrieve plan-level variables via variableContext expand. Returns variable[]{key, value, variableType, isPassword}. Note: uses `key` field, NOT `name`.",
+          "params": [
+            {
+              "name": "planKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Plan key.",
+              "example": "PROJ-PLAN"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Must be `variableContext` to retrieve plan variables.",
+              "example": "variableContext"
+            }
+          ],
+          "sampleResponse": "{\"variableContext\":{\"variable\":[{\"key\":\"docker.tag\",\"value\":\"latest\",\"variableType\":\"PLAN\",\"isPassword\":false},{\"key\":\"secret.token\",\"variableType\":\"PLAN\",\"isPassword\":true}]}}",
+          "callSite": "BambooApiClient.kt:152",
+          "provenance": "bundle-automation.unpacked/raw/plan_variables_via_context.json (variable[]{key,value,variableType,isPassword}); BambooApiClient.kt line 152 `getPlanVariableContext()` → GET /rest/api/latest/plan/{key}?expand=variableContext; 2026-05-07-bamboo-audit-recommendations.md §variableContext finding: field is `key` not `name`",
+          "verdict": {
+            "classification": "WARN",
+            "reasoning": "The audit identified a DTO mismatch: the plan-level variableContext response uses `key` but the plugin's DTO originally mapped `name`. Verify the DTO field name matches `key`."
+          },
+          "gotchas": [
+            "CRITICAL: Plan-level variableContext uses `key` field — NOT `name`. Build-level variables (`?expand=variables`) use `name`. These are different response shapes for the same concept.",
+            "variableType ∈ {PLAN, GLOBAL, PROJECT}.",
+            "Password variables omit the `value` field entirely — the key is present but value is absent.",
+            "The legacy `/rest/api/latest/plan/{key}/variable` path always returns 404 on DC 10.2.14 — do not use it as a fallback (see KNOWN_UNUSED entry)."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "build-results",
+      "displayName": "Build Results",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/result/{planOrJobKey}/latest",
+          "status": "USED",
+          "summary": "Get the latest build result for a plan key or branch plan key. Includes all stages and nested job results when expanded. Also has a branch variant: /result/{planKey}/branch/{branchName}/latest.",
+          "params": [
+            {
+              "name": "planOrJobKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Plan key (PROJ-PLAN), branch plan key (PROJ-PLAN-BRANCHKEY), or chain key.",
+              "example": "PROJ-PLAN"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Client passes `stages.stage.results.result` to inline stage and job data.",
+              "example": "stages.stage.results.result"
+            }
+          ],
+          "sampleResponse": "{\"buildState\":\"Successful\",\"buildNumber\":138,\"buildResultKey\":\"PROJ-PLAN138\",\"lifeCycleState\":\"Finished\",\"vcsRevisionKey\":\"<redacted>\",\"buildDurationInSeconds\":312,\"stages\":{\"stage\":[{\"name\":\"Build Stage\",\"state\":\"Successful\",\"results\":{\"result\":[{\"buildResultKey\":\"PROJ-PLAN138-UNIT-4\",\"buildState\":\"Successful\"}]}}]}}",
+          "callSite": "BambooApiClient.kt:90",
+          "provenance": "bundle-automation.unpacked/raw/result_latest_plan.json; BambooApiClient.kt line 90 `getLatestResult()` → two URL variants: /result/{key}/latest and /result/{plan}/branch/{branch}/latest, both with ?expand=stages.stage.results.result; bamboo/CLAUDE.md §Architecture 'BambooServiceImpl returns BuildResultData.stages[].jobs[] populated from ?expand=stages.stage.results.result responses'",
+          "gotchas": [
+            "The branch variant `/result/{planKey}/branch/{branchName}/latest` returns 404 when branchName equals the plan's tracked branch (usually `master` or `main`) — use the plan-key variant directly for the tracked branch. Confirmed in 2026-05-07-bamboo-audit-recommendations.md.",
+            "Each job's `buildResultKey` (e.g. `PROJ-PLAN138-UNIT-4`) is what the agent passes to `bamboo_builds.get_build_log` for per-job logs.",
+            "The `stages.stage.results.result` expand produces nested arrays; a plan-level key returns plan results, a job-level key returns job details."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/result/{resultKey}",
+          "status": "USED",
+          "summary": "Get a specific build result by full result key. Used for getBuildResult (with stages expand) and getResultVcsRevision (with vcsRevisions expand).",
+          "params": [
+            {
+              "name": "resultKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Full build result key (e.g. PROJ-PLAN138 or PROJ-PLAN138-UNIT-4).",
+              "example": "PROJ-PLAN138"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Pass `stages.stage.results.result` for full stage/job data; `vcsRevisions` for commit SHA.",
+              "example": "stages.stage.results.result"
+            }
+          ],
+          "sampleResponse": "{\"buildState\":\"Failed\",\"buildNumber\":138,\"buildResultKey\":\"PROJ-PLAN138\",\"vcsRevisions\":{\"vcsRevision\":[{\"repositoryId\":1,\"repositoryName\":\"<redacted>\",\"vcsRevisionKey\":\"<redacted>\"}]}}",
+          "callSite": "BambooApiClient.kt:467",
+          "provenance": "bundle-automation.unpacked/raw/result_full.json; BambooApiClient.kt line 467 `getBuildResult()` → GET /rest/api/latest/result/{key}?expand=stages.stage.results.result; line 125 `getResultVcsRevision()` → GET /rest/api/latest/result/{key}?expand=vcsRevisions; bamboo/CLAUDE.md §Bamboo→Bitbucket bridge 'resolves the commit SHA via BambooApiClient.getResultVcsRevision'",
+          "gotchas": [
+            "vcsRevisions is null/absent when the plan has no source repository linked — getResultVcsRevision returns null in that case.",
+            "The same path template serves getBuildResult (expand=stages) and getResultVcsRevision (expand=vcsRevisions) — they are separate client methods at different line numbers."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/result/{planKey}",
+          "status": "USED",
+          "summary": "Get running and recently-queued builds for a plan. Client uses includeAllStates=true plus a small max-results to show active builds in the dashboard.",
+          "params": [
+            {
+              "name": "planKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Plan or chain key.",
+              "example": "PROJ-PLAN"
+            },
+            {
+              "name": "includeAllStates",
+              "location": "QUERY",
+              "type": "boolean",
+              "required": false,
+              "description": "Include queued and building entries in addition to finished results.",
+              "example": "true"
+            },
+            {
+              "name": "max-results",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Client uses 5 for the running-builds check.",
+              "example": "5"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Client passes `stages.stage.results.result` for active build stage detail.",
+              "example": "stages.stage.results.result"
+            }
+          ],
+          "callSite": "BambooApiClient.kt:273",
+          "provenance": "BambooApiClient.kt line 273 `getRunningAndQueuedBuilds()` → GET /rest/api/latest/result/{key}?includeAllStates=true&max-results=5&expand=stages.stage.results.result",
+          "gotchas": [
+            "This path is overloaded with multiple client usages via different query parameters — getRunningAndQueuedBuilds and getRecentResults both call /result/{key} with different expand strings.",
+            "Without includeAllStates=true, only FINISHED results are returned; BUILDING/QUEUED builds are invisible."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/result/{planKey}",
+          "status": "USED",
+          "summary": "Get recent build history with stage and variable detail. Client requests a configurable number of results with full stage + variable expansion for the build dashboard history list.",
+          "params": [
+            {
+              "name": "planKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Plan or chain key.",
+              "example": "PROJ-PLAN"
+            },
+            {
+              "name": "max-results",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Number of recent results. Client uses a configurable value.",
+              "example": "10"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Client passes `results.result.stages.stage.results.result,results.result.variables.variable` for full history.",
+              "example": "results.result.stages.stage.results.result,results.result.variables.variable"
+            }
+          ],
+          "callSite": "BambooApiClient.kt:291",
+          "provenance": "BambooApiClient.kt line 291 `getRecentResults()` → GET /rest/api/latest/result/{key}?max-results={n}&expand=results.result.stages.stage.results.result,results.result.variables.variable",
+          "gotchas": [
+            "The deeply nested expand `results.result.stages.stage.results.result,results.result.variables.variable` can produce large payloads on plans with many jobs and variables.",
+            "Variables in this path use `name` (not `key`) — this is the build-level variable shape."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/result/byChangeset/{commitSha}",
+          "status": "USED",
+          "summary": "Find all builds associated with a specific VCS commit SHA. Used by the Bamboo→Bitbucket bridge to link failed builds to PRs.",
+          "params": [
+            {
+              "name": "commitSha",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Full commit SHA from VCS.",
+              "example": "<redacted>"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Client passes `results.result.plan` to get plan metadata alongside results.",
+              "example": "results.result.plan"
+            }
+          ],
+          "sampleResponse": "{\"results\":{\"result\":[{\"buildResultKey\":\"PROJ-PLAN138\",\"state\":\"Failed\",\"buildNumber\":138,\"vcsRevisionKey\":\"<redacted>\",\"plan\":{\"key\":\"PROJ-PLAN\",\"type\":\"chain\"}}]}}",
+          "callSite": "BambooApiClient.kt:476",
+          "provenance": "bundle-automation.unpacked/raw/result_by_changeset.json; BambooApiClient.kt line 476 `getResultsByChangeset()` → GET /rest/api/latest/result/byChangeset/{sha}?expand=results.result.plan; bamboo/CLAUDE.md §Bamboo→Bitbucket bridge",
+          "gotchas": [
+            "The `chain_branch` entries in the response also include a `master.{key}` link back to the master plan.",
+            "Only returns results where Bamboo has recorded the VCS revision; builds from plans with no linked repository are absent."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/result/{resultKey}",
+          "status": "USED",
+          "summary": "Get commit/change history for a specific build result. Returns changes.change[] with author, comment, file list.",
+          "params": [
+            {
+              "name": "resultKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Build result key.",
+              "example": "PROJ-PLAN138"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Must be `changes.change` to retrieve commit history.",
+              "example": "changes.change"
+            }
+          ],
+          "callSite": "BambooApiClient.kt:522",
+          "provenance": "BambooApiClient.kt line 522 `getBuildChanges()` → GET /rest/api/latest/result/{key}?expand=changes.change; 2026-05-07-bamboo-audit-recommendations.md §R-ADD-1 ADOPTED",
+          "gotchas": [
+            "Added as R-ADD-1 from the 2026-05-07 audit recommendations — this endpoint was not in the original client but was adopted.",
+            "Returns an empty changes array when the plan has no linked VCS repository."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "variables",
+      "displayName": "Build Variables",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/result/{resultKey}",
+          "status": "USED",
+          "summary": "Get variables attached to a specific build execution. Returns variable[]{name, value}. Note: uses `name` field at the build level (vs `key` at plan level).",
+          "params": [
+            {
+              "name": "resultKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Build result key.",
+              "example": "PROJ-PLAN138"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Must be `variables` to retrieve build-level variables.",
+              "example": "variables"
+            }
+          ],
+          "sampleResponse": "{\"variables\":{\"variable\":[{\"name\":\"DockerTagsAsJSON\",\"value\":\"{\\\"service-a\\\":\\\"1.2.3\\\",\\\"service-b\\\":\\\"4.5.6\\\"}\"},{\"name\":\"branch\",\"value\":\"feature/my-feature\"}]}}",
+          "callSite": "BambooApiClient.kt:283",
+          "provenance": "bundle-automation.unpacked/raw/result_variables.json (variables.variable[]{name,value} with DockerTagsAsJSON payload); BambooApiClient.kt line 283 `getBuildVariables()` → GET /rest/api/latest/result/{key}?expand=variables; bamboo/CLAUDE.md §Architecture 'Build variables include dockerTagsAsJson — JSON payload of service-to-docker-tag mappings'",
+          "gotchas": [
+            "CRITICAL: Build-level variables use `name` field. Plan-level variableContext uses `key` field. These are different shapes — using the wrong DTO field name is a silent mapping failure.",
+            "DockerTagsAsJSON is a JSON string value — it must be parsed a second time to extract the service→tag map.",
+            "Password-type variables: the API may omit the `value` field; callers should handle absent values gracefully."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/plan/{planKey}/variable",
+          "status": "KNOWN_UNUSED",
+          "summary": "Legacy plan-variable endpoint. Returns 404 on Bamboo DC 10.2.14 — this path was removed or never existed on DC. Do not use.",
+          "params": [
+            {
+              "name": "planKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Plan key.",
+              "example": "PROJ-PLAN"
+            }
+          ],
+          "sampleResponse": null,
+          "provenance": "2026-05-07-bamboo-audit-recommendations.md §dead-fallback finding: /plan/{key}/variable always 404 on DC 10.2.14; bundle-automation.unpacked/summary.md GET /rest/api/latest/plan/{planKey}/variable → FAIL (404)",
+          "verdict": {
+            "classification": "REJECT",
+            "reasoning": "Consistently 404 on both probe bundles against DC 10.2.14. The audit recommended removing any client fallback to this path. Use /plan/{key}?expand=variableContext instead."
+          },
+          "gotchas": [
+            "This path 404s on every probe attempt — it is dead on DC 10.2.14.",
+            "If legacy code has a fallback to this endpoint, remove it; it will never return data."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "build-logs-artifacts",
+      "displayName": "Build Logs & Artifacts",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/download/{resultKey}/build_logs/{resultKey}.log",
+          "status": "USED",
+          "summary": "Download the plain-text build log for a specific job result. Returns text/plain content, NOT JSON. Job-level result keys yield real logs (~30KB typical); plan-level keys yield a small wrapper.",
+          "params": [
+            {
+              "name": "resultKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Job-level build result key (appears TWICE in the path — once as directory segment, once as filename). E.g. PROJ-PLAN138-UNIT-4.",
+              "example": "PROJ-PLAN138-UNIT-4"
+            }
+          ],
+          "callSite": "BambooApiClient.kt:131",
+          "provenance": "bundle-automation.unpacked/raw/build_log_download.json (payload_kind='text', Content-Type='text/plain;charset=utf-8', 22791 bytes); BambooApiClient.kt line 131 `getBuildLog()` → GET /download/{resultKey}/build_logs/{resultKey}.log via getRaw(); bamboo/CLAUDE.md §Architecture 'Each BuildJobData.resultKey ... is what the agent passes to bamboo_builds.get_build_log for per-job logs'",
+          "gotchas": [
+            "CRITICAL: Response is plain text, NOT JSON. The getRaw() client method must be used — do not attempt JSON deserialization.",
+            "The resultKey appears TWICE in the URL — once as the directory segment and once as the `.log` filename.",
+            "Use the JOB-level result key (e.g. PROJ-PLAN138-UNIT-4), NOT the plan-level key (PROJ-PLAN138). The plan-level key yields a tiny wrapper document, not the real job log.",
+            "This endpoint lives under /download/, not /rest/api/latest/ — it does not share the same base path as other endpoints.",
+            "Probe recorded 22791 bytes for the automation bundle log — typical job logs are ~30KB."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/result/{resultKey}",
+          "status": "USED",
+          "summary": "Get the list of artifacts produced by a build result. Returns artifacts.artifact[]{name, link.href, producerJobKey, shared}.",
+          "params": [
+            {
+              "name": "resultKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Build result key.",
+              "example": "PROJ-PLAN138"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Must be `artifacts.artifact` to retrieve the artifact list.",
+              "example": "artifacts.artifact"
+            }
+          ],
+          "sampleResponse": "{\"artifacts\":{\"artifact\":[{\"name\":\"test-report\",\"link\":{\"href\":\"https://<redacted>/artifact/PROJ-PLAN138/shared/test-report.html\"},\"producerJobKey\":\"PROJ-PLAN138-UNIT-4\",\"shared\":true}]}}",
+          "callSite": "BambooApiClient.kt:431",
+          "provenance": "bundle-automation.unpacked/raw/result_artifacts.json; BambooApiClient.kt line 431 `getArtifacts()` → GET /rest/api/latest/result/{key}?expand=artifacts.artifact",
+          "gotchas": [
+            "The `link.href` is an absolute URL pointing to the artifact download location — pass it directly to downloadArtifact().",
+            "`shared: true` means the artifact is available to downstream jobs/plans; `shared: false` is job-private."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "{artifactUrl}",
+          "status": "USED",
+          "summary": "Download an artifact by its absolute URL from the artifact list. The URL comes from artifacts.artifact[].link.href and is not a fixed template.",
+          "params": [
+            {
+              "name": "artifactUrl",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Absolute artifact URL from getArtifacts() response.",
+              "example": "https://<redacted>/artifact/PROJ-PLAN138/shared/test-report.html"
+            }
+          ],
+          "callSite": "BambooApiClient.kt:438",
+          "provenance": "BambooApiClient.kt line 438 `downloadArtifact()` → GET {artifactUrl} (arbitrary URL, not a fixed template)",
+          "gotchas": [
+            "This is not a fixed REST path — the URL is opaque and comes from the artifact list response.",
+            "Artifact URLs may require the same Bearer PAT for auth, or may be publicly accessible depending on Bamboo's artifact-sharing settings.",
+            "Large artifacts (e.g. Docker image manifests, test reports) can be hundreds of MB — handle streaming appropriately."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "test-results",
+      "displayName": "Test Results",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/result/{resultKey}",
+          "status": "USED",
+          "summary": "Get test results for a build. Returns testResults.{successfulTests.testResult[], failedTests.testResult[]} each with className, methodName, status, duration.",
+          "params": [
+            {
+              "name": "resultKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Build result key (plan or job level).",
+              "example": "PROJ-PLAN138"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Must include `testResults.failedTests.testResult,testResults.successfulTests.testResult`.",
+              "example": "testResults.failedTests.testResult,testResults.successfulTests.testResult"
+            }
+          ],
+          "sampleResponse": "{\"testResults\":{\"successfulTests\":{\"testResult\":[{\"className\":\"com.example.FooTest\",\"methodName\":\"testBar\",\"status\":\"successful\",\"duration\":0.12}]},\"failedTests\":{\"testResult\":[{\"className\":\"com.example.BazTest\",\"methodName\":\"testQux\",\"status\":\"failed\",\"duration\":0.05,\"errors\":{\"error\":[{\"message\":\"expected: <true> but was: <false>\"}]}}]}}}",
+          "callSite": "BambooApiClient.kt:141",
+          "provenance": "bundle-automation.unpacked/raw/result_test_results.json; BambooApiClient.kt line 141 `getTestResults()` → GET /rest/api/latest/result/{key}?expand=testResults.failedTests.testResult,testResults.successfulTests.testResult",
+          "gotchas": [
+            "Failed test entries include an `errors.error[].message` array with failure details — this is the primary input for BuildLogParser CVE/failure extraction.",
+            "The expand string must list both `failedTests.testResult` AND `successfulTests.testResult` explicitly; shorthand like `testResults` alone does not inline the individual test objects.",
+            "For plans with many tests, this response can be large — consider requesting only failedTests for failure-analysis use cases."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "queue-triggers",
+      "displayName": "Queue & Triggers (Write)",
+      "endpoints": [
+        {
+          "method": "POST",
+          "pathTemplate": "/rest/api/latest/queue/{planKey}",
+          "status": "USED",
+          "summary": "Trigger (queue) a build for a plan. Optionally selects a specific manual stage. Build variables are passed as `bamboo.variable.<key>=<value>` QUERY parameters, NOT as a JSON body.",
+          "params": [
+            {
+              "name": "planKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Plan or chain key to trigger.",
+              "example": "PROJ-PLAN"
+            },
+            {
+              "name": "executeAllStages",
+              "location": "QUERY",
+              "type": "boolean",
+              "required": false,
+              "description": "Pass true to run all stages; false to run up to a specific stage.",
+              "example": "true"
+            },
+            {
+              "name": "stage",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Name of the stage to execute up to (when executeAllStages=false).",
+              "example": "Run QA Automation"
+            },
+            {
+              "name": "bamboo.variable.*",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Build variables passed as `bamboo.variable.<key>=<value>` query parameters. E.g. bamboo.variable.dockerTagsAsJson={...}. JSON body is silently ignored — variables MUST be query params.",
+              "example": "bamboo.variable.dockerTagsAsJson={\"svc\":\"1.0.0\"}"
+            },
+            {
+              "name": "X-Atlassian-Token",
+              "location": "HEADER",
+              "type": "string",
+              "required": true,
+              "description": "CSRF bypass header required on ALL Bamboo write operations. Value must be `no-check`.",
+              "example": "no-check"
+            }
+          ],
+          "requestBody": "Form-encoded request body via postForm(). Build variables are passed as bamboo.variable.<key>=<value> query parameters on the URL. A JSON body is silently ignored by Bamboo.",
+          "callSite": "BambooApiClient.kt:228",
+          "provenance": "BambooApiClient.kt line 228 `queueBuildWithStageSelection()` → POST /rest/api/latest/queue/{chainKey}?executeAllStages=... via postForm(); 2026-05-07-bamboo-write-ops-audit.md F-1 P0: 'queue endpoint requires bamboo.variable.<k>=<v> query params, NOT JSON body — JSON body silently ignored'; bamboo/CLAUDE.md §Architecture 'Build variables include dockerTagsAsJson'",
+          "verdict": {
+            "classification": "WARN",
+            "reasoning": "F-1 P0 from the write-ops audit: original implementation was passing variables as JSON body which Bamboo silently discards. Variables MUST be URL query parameters with the bamboo.variable.* prefix."
+          },
+          "gotchas": [
+            "CRITICAL P0: Variables MUST be passed as `bamboo.variable.<key>=<value>` QUERY parameters, NOT as a JSON request body. Bamboo silently ignores JSON bodies on this endpoint.",
+            "CRITICAL: The `X-Atlassian-Token: no-check` header is REQUIRED on all Bamboo write operations (POST, PUT, DELETE). Omitting it causes a 403 CSRF rejection.",
+            "The `executeAllStages=false&stage={name}` variant triggers up to and including the named manual stage — stage name must match exactly (case-sensitive).",
+            "On success, Bamboo returns HTTP 200 with the queued build info, NOT 201 or 204.",
+            "Non-admin PATs may lack permission to trigger certain plans — returns 403 with a plan-permission message."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/queue",
+          "status": "PROBED_UNUSED",
+          "summary": "Get the global build queue showing all currently queued builds across all plans.",
+          "params": [],
+          "sampleResponse": "{\"expand\":\"queuedBuilds\",\"queuedBuilds\":{\"size\":51,\"max-result\":51}}",
+          "provenance": "bundle-automation.unpacked/raw/queue_global.json; bundle-automation.unpacked/summary.md GET /rest/api/latest/queue → OK; 2026-05-07-bamboo-audit-recommendations.md §R-ADD-5 global-queue DEFERRED",
+          "verdict": {
+            "classification": "CONSIDER",
+            "reasoning": "51 builds queued at probe time — this endpoint surfaces org-wide build pressure, useful for the agent to diagnose slow builds. Deferred in the audit; could be adopted for a queue-depth diagnostic tool."
+          },
+          "gotchas": [
+            "Returns global queue across ALL plans, not filtered to the current plan.",
+            "The probe response only includes the size/count — expand may be needed to see per-build details."
+          ]
+        },
+        {
+          "method": "DELETE",
+          "pathTemplate": "/rest/api/latest/queue/{resultKey}",
+          "status": "USED",
+          "summary": "Remove a queued build from the queue (cancel before it starts). Only valid while the build is in QUEUED state.",
+          "params": [
+            {
+              "name": "resultKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Result key of the queued build to cancel.",
+              "example": "PROJ-PLAN139"
+            },
+            {
+              "name": "X-Atlassian-Token",
+              "location": "HEADER",
+              "type": "string",
+              "required": true,
+              "description": "CSRF bypass header, value `no-check`.",
+              "example": "no-check"
+            }
+          ],
+          "callSite": "BambooApiClient.kt:357",
+          "provenance": "BambooApiClient.kt line 357 `cancelBuild()` → DELETE /rest/api/latest/queue/{resultKey}; 2026-05-07-bamboo-write-ops-audit.md §write-inventory DELETE /rest/api/latest/queue/{resultKey}",
+          "gotchas": [
+            "Only works on QUEUED builds — a build that has already started must be stopped via PUT /rest/api/latest/result/{key}/stop instead.",
+            "The X-Atlassian-Token: no-check header is required on DELETE as well as POST/PUT.",
+            "Returns 404 if the build key is no longer in the queue (already started or already cancelled)."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rerun-control",
+      "displayName": "Rerun & Control (Write)",
+      "endpoints": [
+        {
+          "method": "PUT",
+          "pathTemplate": "/rest/api/latest/result/{resultKey}/stop",
+          "status": "USED",
+          "summary": "Stop a currently-running build. Only valid for builds in BUILDING state.",
+          "params": [
+            {
+              "name": "resultKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Result key of the running build to stop.",
+              "example": "PROJ-PLAN138"
+            },
+            {
+              "name": "X-Atlassian-Token",
+              "location": "HEADER",
+              "type": "string",
+              "required": true,
+              "description": "CSRF bypass header, value `no-check`.",
+              "example": "no-check"
+            }
+          ],
+          "callSite": "BambooApiClient.kt:362",
+          "provenance": "BambooApiClient.kt line 362 `stopBuild()` → PUT /rest/api/latest/result/{resultKey}/stop; 2026-05-07-bamboo-write-ops-audit.md §write-inventory PUT /rest/api/latest/result/{resultKey}/stop",
+          "gotchas": [
+            "Only works on BUILDING builds — use DELETE /queue/{key} for queued builds instead.",
+            "The X-Atlassian-Token: no-check header is required.",
+            "May take several seconds for Bamboo agents to acknowledge the stop signal — the build may show BUILDING briefly after the PUT returns 200."
+          ]
+        },
+        {
+          "method": "POST",
+          "pathTemplate": "/build/admin/restartBuild.action",
+          "status": "USED",
+          "summary": "Rerun failed jobs in a completed build via a Struts admin action. Returns HTTP 302 on success. This is NOT a REST API endpoint — it is a Struts action under /build/admin/.",
+          "params": [
+            {
+              "name": "planKey",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Plan key of the build to rerun.",
+              "example": "PROJ-PLAN"
+            },
+            {
+              "name": "buildNumber",
+              "location": "QUERY",
+              "type": "integer",
+              "required": true,
+              "description": "Build number to rerun.",
+              "example": "138"
+            },
+            {
+              "name": "X-Atlassian-Token",
+              "location": "HEADER",
+              "type": "string",
+              "required": true,
+              "description": "CSRF bypass header, value `no-check`. Required for all Bamboo admin actions.",
+              "example": "no-check"
+            }
+          ],
+          "requestBody": "Form-encoded POST via postForm(). Parameters are passed as query parameters on the URL. No body required.",
+          "callSite": "BambooApiClient.kt:326",
+          "provenance": "BambooApiClient.kt line 326 `rerunFailedJobs()` → POST /build/admin/restartBuild.action?planKey={k}&buildNumber={n} via postForm(); 2026-05-07-bamboo-write-ops-audit.md F-6: 'restartBuild.action needs X-Atlassian-Token: no-check; returns 302 on success'",
+          "gotchas": [
+            "CRITICAL: This is a Struts action under /build/admin/, NOT a REST API endpoint. It returns HTTP 302 on success, NOT 200. The HTTP client must be configured to NOT follow redirects, or treat 302 as success.",
+            "The X-Atlassian-Token: no-check header is required.",
+            "This endpoint is undocumented in the official Bamboo REST API docs — it is a legacy admin action that may change between Bamboo versions.",
+            "Only reruns failed jobs within the existing build — it does not create a new build result key."
+          ]
+        },
+        {
+          "method": "POST",
+          "pathTemplate": "/rest/api/latest/plan/{branchPlanKey}/enable",
+          "status": "USED",
+          "summary": "Enable a disabled plan branch. A branch IS a plan, so this enables the branch plan key itself.",
+          "params": [
+            {
+              "name": "branchPlanKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Branch plan key to enable (e.g. PROJ-PLAN-FEATURE1). Branch keys follow pattern ^.+-.+-\\d+ but in practice are alphanumeric.",
+              "example": "PROJ-PLAN-FEATURE1"
+            },
+            {
+              "name": "X-Atlassian-Token",
+              "location": "HEADER",
+              "type": "string",
+              "required": true,
+              "description": "CSRF bypass header, value `no-check`.",
+              "example": "no-check"
+            }
+          ],
+          "callSite": "BambooApiClient.kt:347",
+          "provenance": "BambooApiClient.kt line 347 `enablePlanBranch()` → POST /rest/api/latest/plan/{branchPlanKey}/enable via postForm(); bamboo/CLAUDE.md §Bamboo Server REST API 'BambooApiClient.enablePlanBranch → postForm (sets X-Atlassian-Token: no-check), surfaced as BambooService.enablePlanBranch(branchPlanKey): ToolResult<Unit>. ⚠ NOT probed against live DC 10.2.14 (added 2026-05-26); non-admin PATs likely get 403'",
+          "verdict": {
+            "classification": "WARN",
+            "reasoning": "Added 2026-05-26 but NOT probed against live DC 10.2.14. Non-admin PATs likely get 403 — surfaced as a plan-admin permission hint. Verify on a live server before relying on it."
+          },
+          "gotchas": [
+            "⚠ NOT probed against live DC 10.2.14 — correctness unverified as of 2026-05-26.",
+            "Non-admin PATs likely receive HTTP 403 — map to a user-visible plan-admin permission hint.",
+            "A branch plan key follows the naming pattern of the master plan key plus a branch suffix — it is NOT the Git branch name.",
+            "The X-Atlassian-Token: no-check header is required."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "repositories",
+      "displayName": "Linked Repositories",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/repository",
+          "status": "USED",
+          "summary": "List all linked repositories configured in Bamboo (global repository settings). Returns size and searchResults[].",
+          "params": [
+            {
+              "name": "max-results",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Page size. Client uses 200.",
+              "example": "200"
+            },
+            {
+              "name": "start-index",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Pagination cursor.",
+              "example": "0"
+            }
+          ],
+          "sampleResponse": "{\"size\":0,\"searchResults\":[]}",
+          "callSite": "BambooApiClient.kt:485",
+          "provenance": "bundle-automation.unpacked/raw/repository_list.json (size:0, empty searchResults — admin-gated or org doesn't use Linked Repositories); BambooApiClient.kt line 485 `getLinkedRepositories()` → GET /rest/api/latest/repository?max-results=200&start-index={start}",
+          "gotchas": [
+            "Returned empty (size: 0) in both probe bundles — this endpoint may be admin-gated, or the org does not use Bamboo's global Linked Repository feature.",
+            "An empty response does not indicate an error — simply no repositories are configured at the global level.",
+            "Paginated via start-index; uses the same paginate() loop as getPlans/getBranches."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/repository/{repositoryId}/usedBy",
+          "status": "USED",
+          "summary": "List all plans that use a given linked repository.",
+          "params": [
+            {
+              "name": "repositoryId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Numeric ID of the linked repository.",
+              "example": "1"
+            }
+          ],
+          "callSite": "BambooApiClient.kt:496",
+          "provenance": "BambooApiClient.kt line 496 `getRepositoryUsedBy()` → GET /rest/api/latest/repository/{id}/usedBy",
+          "gotchas": [
+            "The repository ID is a numeric Bamboo internal ID, not a repository name or slug.",
+            "If getLinkedRepositories() returns empty, this endpoint will never be called in practice."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "agents",
+      "displayName": "Build Agents",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/agent",
+          "status": "PROBED_UNUSED",
+          "summary": "List all build agents registered with Bamboo. Returns an array of {id, name, type, active, enabled, busy}.",
+          "params": [],
+          "sampleResponse": "[{\"id\":1,\"name\":\"<redacted>\",\"type\":\"REMOTE\",\"active\":true,\"enabled\":true,\"busy\":false}]",
+          "provenance": "bundle-automation.unpacked/raw/agent_list.json (array of {id,name,type,active,enabled,busy}, 300+ agents); bundle-automation.unpacked/summary.md GET /rest/api/latest/agent → OK; 2026-05-07-bamboo-audit-recommendations.md §R-ADD-4 agents DEFERRED",
+          "verdict": {
+            "classification": "CONSIDER",
+            "reasoning": "300+ agents visible in the probe org. Useful for a queue-pressure diagnostic — if all agents are busy, that explains slow build times. Deferred in the audit but low implementation cost."
+          },
+          "gotchas": [
+            "Returns all agents including disabled and offline ones — filter by `active: true` and `enabled: true` for available capacity.",
+            "`busy: true` means the agent is currently executing a build.",
+            "type ∈ {REMOTE, LOCAL, ELASTIC} — ELASTIC agents are Bamboo-managed cloud agents (rare on on-prem DC)."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "deprecated",
+      "displayName": "Deprecated / Not Available on DC 10.2.14",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/labels",
+          "status": "DEPRECATED",
+          "summary": "Global labels list. Returns 404 on DC 10.2.14 — this path does not exist on the probed version.",
+          "params": [
+            {
+              "name": "max-results",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Result cap.",
+              "example": "20"
+            }
+          ],
+          "sampleResponse": null,
+          "provenance": "bundle-automation.unpacked/summary.md GET /rest/api/latest/labels → FAIL (404); 2026-05-07-bamboo-audit-recommendations.md §R-ADD-2 labels DEFERRED (404 failure reason)",
+          "verdict": {
+            "classification": "REJECT",
+            "reasoning": "404 on both probe bundles. Bamboo DC 10.2.14 does not expose a global /labels endpoint. Build-label access requires ?expand=labels.label on a specific result key."
+          },
+          "gotchas": [
+            "404 on DC 10.2.14 — do not use.",
+            "To access labels for a specific build, use GET /rest/api/latest/result/{key}?expand=labels.label instead."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/result/{resultKey}/jiraIssues",
+          "status": "DEPRECATED",
+          "summary": "List Jira issues linked to a build result. Returns 404 on DC 10.2.14.",
+          "params": [
+            {
+              "name": "resultKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Build result key.",
+              "example": "PROJ-PLAN138"
+            }
+          ],
+          "sampleResponse": null,
+          "provenance": "bundle-automation.unpacked/summary.md GET /rest/api/latest/result/{resultKey}/jiraIssues → FAIL (404)",
+          "verdict": {
+            "classification": "REJECT",
+            "reasoning": "404 on both probe bundles against DC 10.2.14. This endpoint may require a Bamboo-Jira application link with specific permissions, or may not be available in this DC version."
+          },
+          "gotchas": [
+            "404 on DC 10.2.14 — do not use without verifying Bamboo-Jira application link configuration.",
+            "The Bamboo-Jira integration for issue tracking requires an Application Link configured in Bamboo admin settings."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/deploy/project/all",
+          "status": "PROBED_UNUSED",
+          "summary": "List all deployment projects. Returns 200 with deployment project metadata.",
+          "params": [],
+          "sampleResponse": null,
+          "provenance": "bundle-automation.unpacked/summary.md GET /rest/api/latest/deploy/project/all → OK; 2026-05-07-bamboo-audit-recommendations.md §R-ADD-6 deployment projects REJECTED",
+          "verdict": {
+            "classification": "REJECT",
+            "reasoning": "Returned 200 on probe but explicitly rejected in the audit: the org's deployment workflow does not use Bamboo Deployments. The plugin's CI/CD surface uses the standard build pipeline only."
+          },
+          "gotchas": [
+            "Returns 200 on DC 10.2.14 but the org does not use Bamboo Deployments — data would be empty or misleading.",
+            "The /deploy/ path prefix is separate from /rest/api/latest/ in Bamboo's URL scheme."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/result/{resultKey}/comment",
+          "status": "PROBED_UNUSED",
+          "summary": "List comments on a build result.",
+          "params": [
+            {
+              "name": "resultKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Build result key.",
+              "example": "PROJ-PLAN138"
+            }
+          ],
+          "sampleResponse": null,
+          "provenance": "bundle-automation.unpacked/summary.md GET /rest/api/latest/result/{resultKey}/comment → OK; 2026-05-07-bamboo-audit-recommendations.md §R-ADD-3 comments DEFERRED",
+          "verdict": {
+            "classification": "CONSIDER",
+            "reasoning": "200 on probe. Deferred in audit — low priority but could be useful for the agent to read human annotations on builds."
+          },
+          "gotchas": []
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/latest/result/{resultKey}",
+          "status": "PROBED_UNUSED",
+          "summary": "Get build labels via expand=labels.label. Alternative to the non-existent /labels global endpoint.",
+          "params": [
+            {
+              "name": "resultKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Build result key.",
+              "example": "PROJ-PLAN138"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Must be `labels.label` to retrieve build labels.",
+              "example": "labels.label"
+            }
+          ],
+          "sampleResponse": null,
+          "provenance": "bundle-automation.unpacked/summary.md GET /rest/api/latest/result/{resultKey}?expand=labels.label → OK; 2026-05-07-bamboo-audit-recommendations.md §R-ADD-2 labels DEFERRED",
+          "verdict": {
+            "classification": "CONSIDER",
+            "reasoning": "200 on probe. The global /labels path 404s but per-result labels work. If build-tagging/labeling is ever needed, this is the correct path."
+          },
+          "gotchas": [
+            "The global GET /rest/api/latest/labels endpoint 404s — use this per-result path instead.",
+            "Deferred in the audit — the org does not actively use Bamboo build labels."
+          ]
+        }
+      ]
+    }
+  ]
+}
