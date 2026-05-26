@@ -10,7 +10,7 @@ const JIRA_RE = /\b[A-Z][A-Z0-9]+-\d+\b/g;
 // inside path segments. The trailing extension list intentionally excludes
 // generic suffixes like `txt` and `log` that produce too many false positives.
 const FILE_RE =
-  /(?<![\w./-])([\w./-]+\.(?:kt|java|ts|tsx|js|jsx|md|yml|yaml|gradle|kts|py|html|css|json|xml|properties))(?::(\d+)(?:-(\d+))?)?(?![\w./-])/g;
+  /(?<![\w./-])([\w./-]+\.(?:kt|java|ts|tsx|js|jsx|md|yml|yaml|gradle|kts|py|html|css|json|xml|properties|sql|proto|graphql|toml|sh|dockerfile|tf|csv))(?::(\d+)(?:-(\d+))?)?(?![\w./-])/g;
 
 interface Match {
   index: number;

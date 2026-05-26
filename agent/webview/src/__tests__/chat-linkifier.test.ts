@@ -67,6 +67,30 @@ describe('remarkChatLinkify — file paths', () => {
     const out = run('Open README please.');
     expect(out).not.toContain('file:');
   });
+
+  it.each([
+    ['db/schema.sql', 'schema.sql'],
+    ['proto/user.proto', 'user.proto'],
+    ['api/schema.graphql', 'schema.graphql'],
+    ['Cargo.toml', 'Cargo.toml'],
+    ['scripts/deploy.sh', 'deploy.sh'],
+    ['build/api.dockerfile', 'api.dockerfile'],
+    ['infra/main.tf', 'main.tf'],
+    ['data/export.csv', 'export.csv'],
+  ])('linkifies %s (newly-allowed data/config extension)', (path) => {
+    const out = run(`Look at ${path} for details.`);
+    expect(out).toContain(`](file:${path})`);
+  });
+
+  it('linkifies a newly-allowed extension with a :line suffix', () => {
+    const out = run('See db/schema.sql:88 for the table.');
+    expect(out).toContain('[db/schema.sql:88](file:db/schema.sql:88)');
+  });
+
+  it('still does NOT linkify generic suffixes excluded to avoid false positives', () => {
+    const out = run('Check notes.txt and server.log for output.');
+    expect(out).not.toContain('](file:');
+  });
 });
 
 describe('remarkChatLinkify — code skip', () => {
