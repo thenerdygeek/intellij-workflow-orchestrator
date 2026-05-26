@@ -493,7 +493,8 @@ Two-layer enforcement:
 
 ## Error Handling
 
-- **API retry**: 5 attempts, exponential backoff with jitter (base 1s, max 30s), retries on 429, 5xx, NETWORK_ERROR, TIMEOUT
+- **API retry**: 5 attempts, exponential backoff with **equal jitter** (base 1s, max 30s; `computeBackoffMs` returns `[computed/2, computed]` so no retry is ever near-instant — switched from full jitter `[0, computed]` in 2026-05), retries on 429, 5xx, NETWORK_ERROR, TIMEOUT
+- **Retry pacing invariant**: EVERY recovery path that re-calls the LLM is paced via `computeBackoffMs` and bounded. The four that previously did a bare delay-less `continue` (output-length truncation, upstream gateway timeout, context-overflow replay, empty-`choice` guard) now back off; truncation (`MAX_TRUNCATED_RETRIES=8`) and gateway-timeout (`MAX_UPSTREAM_TIMEOUT_RETRIES=5`) carry their own caps + reset on a clean response. Pinned by `AgentLoopRetryPacingTest` + `AgentLoopBackoffHelperTest`.
 - **Context overflow**: ContextManager compaction triggered + replay
 - **Streaming**: Heuristic token estimate when API returns usage: null
 - **Truncated tool calls**: When finishReason=length produces invalid JSON, asks LLM to retry with smaller operation
