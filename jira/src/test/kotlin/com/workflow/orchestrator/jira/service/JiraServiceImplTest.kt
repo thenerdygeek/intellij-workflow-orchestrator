@@ -376,4 +376,42 @@ class JiraServiceImplTest {
             "Default (currentUserOnly=false) must not inject a current-user filter; path=$decoded"
         )
     }
+
+    // ── getWorklogs: pages past the first 20 and keeps the author username ──
+
+    @Test
+    fun `getWorklogs pages to exhaustion instead of capping at 20`() = runTest {
+        // Page 1: 100 worklogs, total=102 → must fetch page 2.
+        val page1 = (1..100).joinToString(",") {
+            """{"author":{"displayName":"Jane Doe","name":"jdoe"},"timeSpent":"1h","timeSpentSeconds":3600,"started":"2026-05-10T09:00:00.000+0000"}"""
+        }
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json")
+            .setBody("""{"total":102,"worklogs":[$page1]}"""))
+        val page2 = (1..2).joinToString(",") {
+            """{"author":{"displayName":"Jane Doe","name":"jdoe"},"timeSpent":"1h","timeSpentSeconds":3600,"started":"2026-05-11T09:00:00.000+0000"}"""
+        }
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json")
+            .setBody("""{"total":102,"worklogs":[$page2]}"""))
+
+        val result = service.getWorklogs("PROJ-1")
+
+        assertFalse(result.isError)
+        assertEquals(102, result.data!!.size, "all worklogs across both pages must be returned")
+        // Second request advances startAt past the first page.
+        server.takeRequest()
+        assertTrue(server.takeRequest().path!!.contains("startAt=100"))
+    }
+
+    @Test
+    fun `getWorklogs retains the author username alongside the display name`() = runTest {
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(
+            """{"total":1,"worklogs":[{"author":{"displayName":"Jane Doe","name":"jdoe"},"timeSpent":"1h","timeSpentSeconds":3600,"started":"2026-05-10T09:00:00.000+0000"}]}"""
+        ))
+
+        val result = service.getWorklogs("PROJ-1")
+
+        assertFalse(result.isError)
+        assertEquals("Jane Doe", result.data!![0].author)
+        assertEquals("jdoe", result.data!![0].authorUsername)
+    }
 }

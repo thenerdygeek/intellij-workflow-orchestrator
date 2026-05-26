@@ -463,7 +463,8 @@ class JiraServiceImpl(private val project: Project) : JiraService {
                         timeSpent = w.timeSpent,
                         timeSpentSeconds = w.timeSpentSeconds,
                         comment = w.comment,
-                        started = w.started
+                        started = w.started,
+                        authorUsername = w.author?.name
                     )
                 }
                 val totalSeconds = worklogs.sumOf { it.timeSpentSeconds }

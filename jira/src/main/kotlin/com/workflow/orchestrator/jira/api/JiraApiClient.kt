@@ -559,10 +559,32 @@ class JiraApiClient(
         }
     }
 
-    suspend fun getWorklogs(issueKey: String, maxResults: Int = 20): ApiResult<JiraWorklogResponse> {
+    /**
+     * Fetches ALL worklogs for an issue by paging (`startAt`/`maxResults`). The previous fixed
+     * `maxResults=20` silently truncated busy tickets, so any date/author filter applied
+     * downstream operated on an arbitrary first page and missed entries.
+     */
+    suspend fun getWorklogs(issueKey: String, pageSize: Int = 100): ApiResult<JiraWorklogResponse> {
         val encoded = URLEncoder.encode(issueKey, "UTF-8")
-        log.debug("[Jira:API] GET /rest/api/2/issue/$encoded/worklog")
-        return get<JiraWorklogResponse>("/rest/api/2/issue/$encoded/worklog?maxResults=$maxResults")
+        val all = mutableListOf<JiraWorklog>()
+        var startAt = 0
+        var total = 0
+        var pages = 0
+        while (pages < MAX_WORKLOG_PAGES) {
+            log.debug("[Jira:API] GET /rest/api/2/issue/$encoded/worklog?startAt=$startAt")
+            val page = when (val r = get<JiraWorklogResponse>(
+                "/rest/api/2/issue/$encoded/worklog?startAt=$startAt&maxResults=$pageSize"
+            )) {
+                is ApiResult.Error -> return r
+                is ApiResult.Success -> r.data
+            }
+            all += page.worklogs
+            total = page.total
+            startAt += page.worklogs.size
+            pages++
+            if (page.worklogs.isEmpty() || startAt >= total) break
+        }
+        return ApiResult.Success(JiraWorklogResponse(worklogs = all, total = total))
     }
 
     suspend fun getClosedSprints(boardId: Int, startAt: Int = 0, maxResults: Int = 50): ApiResult<JiraSprintSearchResult> {
@@ -963,6 +985,9 @@ class JiraApiClient(
 
 /** Max length of free-text search input accepted by [JiraApiClient.searchIssues] (bounds GET URL size). */
 private const val MAX_SEARCH_TEXT_LENGTH = 500
+
+/** Safety cap on worklog pagination — at pageSize=100 this covers 50k worklogs per issue. */
+private const val MAX_WORKLOG_PAGES = 500
 
 /** Escapes JQL reserved characters in user-supplied text. Shared by [JiraApiClient] and Tasks integration. */
 internal fun escapeJql(text: String): String {

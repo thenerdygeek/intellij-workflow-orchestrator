@@ -168,7 +168,13 @@ data class WorklogData(
     val timeSpent: String,
     val timeSpentSeconds: Long,
     val comment: String?,
-    val started: String
+    val started: String,
+    /**
+     * The author's username (Jira DC `name`), kept alongside the human-readable [author]
+     * (displayName) so an author filter can match either form. Comparing a username filter
+     * against the displayName alone silently matched nothing. Null when the server omits it.
+     */
+    val authorUsername: String? = null
 ) {
     override fun toString(): String = "[$started] $author: $timeSpent${if (!comment.isNullOrBlank()) " — $comment" else ""}"
 }

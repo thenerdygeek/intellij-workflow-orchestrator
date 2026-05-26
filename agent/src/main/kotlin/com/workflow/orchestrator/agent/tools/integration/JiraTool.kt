@@ -1930,12 +1930,17 @@ description optional: for approval dialog on write actions.
     internal fun worklogStarted(wl: com.workflow.orchestrator.core.model.jira.WorklogData): java.time.OffsetDateTime? =
         parseStartedDateTime(wl.started)
 
-    /** Loose author match — Jira returns displayName / accountId / username inconsistently across versions. */
+    /**
+     * Loose author match — Jira returns displayName / username inconsistently across versions,
+     * so the query is matched against BOTH the worklog's displayName ([WorklogData.author]) and
+     * its username ([WorklogData.authorUsername]). Matching only the displayName meant a username
+     * filter (e.g. "jdoe" vs displayName "Jane Doe") never matched.
+     */
     internal fun worklogMatchesAuthor(
         wl: com.workflow.orchestrator.core.model.jira.WorklogData,
         author: String,
-    ): Boolean = wl.author.equals(author, ignoreCase = true) ||
-        wl.author.contains(author, ignoreCase = true)
+    ): Boolean = listOfNotNull(wl.author, wl.authorUsername)
+        .any { it.equals(author, ignoreCase = true) || it.contains(author, ignoreCase = true) }
 
     /** Extract the ticket key from a JiraTicketData — defensive against changing model shape. */
     internal fun extractTicketKey(

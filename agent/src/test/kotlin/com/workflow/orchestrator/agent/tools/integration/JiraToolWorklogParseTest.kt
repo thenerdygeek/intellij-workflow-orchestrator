@@ -70,4 +70,20 @@ class JiraToolWorklogParseTest {
         assertTrue(tool.worklogMatchesAuthor(wl, "Jane Doe"))
         assertFalse(tool.worklogMatchesAuthor(wl, "jdoe"))
     }
+
+    @Test
+    fun `worklog author matches on username when present`() {
+        // When the worklog carries the username (authorUsername), a username filter must match —
+        // previously only the displayName was retained so a 'jdoe' filter dropped everything.
+        val wl = WorklogData(
+            author = "Jane Doe",
+            timeSpent = "1h",
+            timeSpentSeconds = 3600,
+            comment = null,
+            started = "2026-05-10T09:00:00.000+0000",
+            authorUsername = "jdoe",
+        )
+        assertTrue(tool.worklogMatchesAuthor(wl, "jdoe"), "username filter must match authorUsername")
+        assertTrue(tool.worklogMatchesAuthor(wl, "Jane Doe"), "displayName filter still matches")
+    }
 }
