@@ -1,0 +1,1103 @@
+{
+  "id": "jira",
+  "displayName": "Jira (Data Center)",
+  "authScheme": "Authorization: Bearer <PAT>",
+  "probedServerVersion": "Jira DC 10.3.16 (build 10030016, 2026-01-07)",
+  "description": "Jira Software Data Center REST API v2 (Agile v1.0 for boards/sprints). Server-only; Cloud-specific endpoints (api/3/search/jql, search/approximate-count) are NOT backported on this instance. Bearer PAT auth via PasswordSafe. All calls go through JiraApiClient.",
+  "categories": [
+    {
+      "name": "Identity",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/serverInfo",
+          "status": "PROBED_UNUSED",
+          "summary": "Server version, build number and deployment type. Used for version detection at connection setup.",
+          "params": [],
+          "sampleResponse": "{\"baseUrl\":\"https://jira.<redacted>\",\"version\":\"10.3.16\",\"versionNumbers\":[10,3,16],\"deploymentType\":\"Server\",\"buildNumber\":10030016,\"buildDate\":\"2026-01-07T00:00:00.000+0100\",\"serverTime\":\"2026-05-06T18:49:14.361+0200\"}",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/serverInfo.json; bundle.unpacked/summary.md row 1",
+          "verdict": {
+            "classification": "R-INV: inventoried, not yet adopted in plugin code",
+            "reasoning": "Confirmed 200 on DC 10.3.16. Plugin does not call this endpoint today — version detection happens ad-hoc. Useful for settings validation and future version-gating."
+          },
+          "gotchas": [
+            "deploymentType must be 'Server' (not 'Cloud') to confirm DC context before using DC-only endpoints"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/myself",
+          "status": "USED",
+          "summary": "Connection check and current-user identity. Returns name, key, emailAddress, timeZone, groups, applicationRoles.",
+          "params": [],
+          "sampleResponse": "{\"self\":\"https://jira.<redacted>/rest/api/2/user?username=<redacted>\",\"key\":\"<redacted>\",\"name\":\"<redacted>\",\"emailAddress\":\"<redacted>\",\"active\":true,\"deleted\":false,\"timeZone\":\"Asia/Kolkata\",\"locale\":\"en_US\",\"groups\":{\"size\":14,\"items\":[]},\"applicationRoles\":{\"size\":1,\"items\":[]}}",
+          "callSite": "JiraApiClient.kt:421",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/myself.json; JiraApiClient.kt:419-422",
+          "gotchas": [
+            "When auth token expires, Jira responds 302 to /login.jsp and with followRedirects=true the plugin receives HTML on 200. JiraApiClient.checkJsonContentType guards against this by mapping text/html responses to AUTH_FAILED."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/myself?expand=groups,applicationRoles",
+          "status": "USED",
+          "summary": "Extended current-user info including group memberships and application roles. Used for onboarding banner role display.",
+          "params": [
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Must be 'groups,applicationRoles' to populate those fields",
+              "example": "groups,applicationRoles"
+            }
+          ],
+          "sampleResponse": "{\"self\":\"https://jira.<redacted>/rest/api/2/user?username=<redacted>\",\"key\":\"<redacted>\",\"name\":\"<redacted>\",\"emailAddress\":\"<redacted>\",\"active\":true,\"groups\":{\"size\":14,\"items\":[]},\"applicationRoles\":{\"size\":1,\"items\":[]},\"expand\":\"groups,applicationRoles\"}",
+          "callSite": "JiraApiClient.kt:920",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/myself_expanded.json; JiraApiClient.kt:918-921",
+          "gotchas": [
+            "groups.items is empty in the probe response even though groups.size=14; items are only populated when the user has VIEW_USER_DATA or admin rights",
+            "applicationRoles.items may also be empty when the token lacks admin scope"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/mypermissions",
+          "status": "USED",
+          "summary": "Global permission flags for the connected user. Used to gate UI buttons (Transition, Comment, Log Work, Watch) before the user clicks.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "When provided, returns project-scoped permissions instead of global. Confirmed working on DC 10.3.16.",
+              "example": "PROJ"
+            }
+          ],
+          "sampleResponse": "{\"permissions\":{\"CREATE_ISSUES\":{\"id\":\"11\",\"key\":\"CREATE_ISSUES\",\"name\":\"Create Issues\",\"type\":\"PROJECT\",\"havePermission\":true},\"TRANSITION_ISSUES\":{\"id\":\"25\",\"key\":\"TRANSITION_ISSUES\",\"name\":\"Transition Issues\",\"type\":\"PROJECT\",\"havePermission\":true}}}",
+          "callSite": "JiraApiClient.kt:868",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/mypermissions.json; bundle-audit-followup.unpacked/raw/mypermissions_project.json; JiraApiClient.kt:861-869",
+          "gotchas": [
+            "Response contains both deprecated keys (e.g. EDIT_ISSUE) and modern keys (EDIT_ISSUES). Read modern keys; ignore entries where deprecatedKey==true to avoid double-counting.",
+            "Cache per project for 5 minutes to avoid hammering the endpoint on every panel render"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Issues",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/issue/{key}",
+          "status": "USED",
+          "summary": "Fetch a single issue. Used with expand=issuelinks for the basic ticket fetch (Start Work, validation).",
+          "params": [
+            {
+              "name": "key",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira issue key",
+              "example": "PROJ-123"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Comma-separated expand list. 'issuelinks' is used for the basic fetch; 'renderedFields' for PR context; 'changelog' for history feed.",
+              "example": "issuelinks"
+            },
+            {
+              "name": "fields",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Comma-separated field list to limit response size.",
+              "example": "summary,description,status,priority,issuetype,assignee,reporter,labels,components,fixVersions,comment"
+            }
+          ],
+          "sampleResponse": "{\"expand\":\"renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations\",\"id\":\"<redacted>\",\"self\":\"https://jira.<redacted>/rest/api/2/issue/<redacted>\",\"key\":\"PROJ-030\",\"fields\":{\"summary\":\"<redacted>\",\"status\":{\"name\":\"To Verify\",\"statusCategory\":{\"key\":\"indeterminate\"}},\"issuetype\":{\"name\":\"Task\",\"subtask\":false},\"priority\":{\"name\":\"3 - Medium\"}}}",
+          "callSite": "JiraApiClient.kt:84",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/issue_basic.json; JiraApiClient.kt:82-85",
+          "gotchas": [
+            "issuelinks are not populated unless expand=issuelinks is passed",
+            "The issue numeric id (used by dev-status API) is at top-level 'id' field, not the alphanumeric 'key'"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/issue/{key}",
+          "status": "USED",
+          "summary": "Rich issue fetch with rendered fields for PR context and commit message generation. Uses fields whitelist + expand=renderedFields.",
+          "params": [
+            {
+              "name": "key",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira issue key",
+              "example": "PROJ-123"
+            },
+            {
+              "name": "fields",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Fields: summary,description,status,priority,issuetype,assignee,reporter,labels,components,fixVersions,comment",
+              "example": "summary,description,status,priority,issuetype,assignee,reporter,labels,components,fixVersions,comment"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "renderedFields gives description as HTML (easier to strip to plain text than wiki markup)",
+              "example": "renderedFields"
+            }
+          ],
+          "callSite": "JiraApiClient.kt:101",
+          "provenance": "JiraApiClient.kt:97-102; 2026-05-06-jira-api-call-site-inventory.md §Ticket detail panel",
+          "gotchas": [
+            "renderedFields.description is HTML; strip tags before feeding to LLM",
+            "comment.comments[] is already populated in this response — no separate comment fetch needed when using this variant"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/issue/{key}",
+          "status": "USED",
+          "summary": "Combined rich fetch + changelog in one call. Used for detail panel to get fields, rendered description, comments, and change history in a single round-trip.",
+          "params": [
+            {
+              "name": "key",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira issue key",
+              "example": "PROJ-123"
+            },
+            {
+              "name": "fields",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Fields whitelist: summary,description,status,priority,issuetype,assignee,reporter,labels,components,fixVersions,comment",
+              "example": "summary,description,status,priority,issuetype,assignee,reporter,labels,components,fixVersions,comment"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Both renderedFields and changelog in one call confirmed working on DC 10.3.16 (bundle-audit-followup probe E)",
+              "example": "renderedFields,changelog"
+            }
+          ],
+          "sampleResponse": "{\"expand\":\"renderedFields,names,schema,operations,editmeta,changelog\",\"id\":\"<redacted>\",\"key\":\"PROJ3-003\",\"fields\":{\"summary\":\"<redacted>\",\"comment\":{\"comments\":[],\"total\":0},\"status\":{\"name\":\"In Progress\"}},\"changelog\":{\"startAt\":0,\"maxResults\":100,\"total\":5,\"histories\":[]}}",
+          "callSite": "JiraApiClient.kt:960",
+          "provenance": "probe Result_Jira/bundle-audit-followup.unpacked/raw/issue_rich_with_changelog.json; JiraApiClient.kt:956-961",
+          "gotchas": [
+            "changelog.histories[].items[] contains field-level changes with 'field', 'from', 'to', 'fromString', 'toString' keys",
+            "Saves two round-trips vs separate rich fetch + getComments + getChangelog calls"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/issue/{issueKey}/transitions",
+          "status": "USED",
+          "summary": "Available workflow transitions for an issue, with optional field schema for the transition screen.",
+          "params": [
+            {
+              "name": "issueKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira issue key",
+              "example": "PROJ-123"
+            },
+            {
+              "name": "expand",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Use 'transitions.fields' to include field schema (required fields, allowed values, autoCompleteUrl) for each transition screen",
+              "example": "transitions.fields"
+            }
+          ],
+          "sampleResponse": "{\"expand\":\"transitions\",\"transitions\":[{\"id\":\"191\",\"name\":\"New\",\"to\":{\"name\":\"New\",\"statusCategory\":{\"key\":\"new\"}},\"fields\":{}},{\"id\":\"211\",\"name\":\"In Progress\",\"to\":{\"name\":\"In Progress\",\"statusCategory\":{\"key\":\"indeterminate\"}},\"fields\":{\"timetracking\":{\"required\":false},\"assignee\":{\"required\":false,\"autoCompleteUrl\":\"https://jira.<redacted>/rest/api/2/user/assignable/search?issueKey=PROJ-030&query=\"}}}]}",
+          "callSite": "JiraApiClient.kt:157",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/issue_transitions.json; JiraApiClient.kt:150-194",
+          "gotchas": [
+            "autoCompleteUrl values in field metadata point back to the same Jira host — JiraApiClient.getRawString has a same-origin guard to prevent token exfiltration via adversarial autoCompleteUrl",
+            "Required fields vary per transition and per workflow admin configuration; always check transitions[].fields[x].required before sending a transition with fields={}",
+            "60-second cache in TicketTransitionServiceImpl — stale after admin workflow changes"
+          ]
+        },
+        {
+          "method": "POST",
+          "pathTemplate": "/rest/api/2/issue/{issueKey}/transitions",
+          "status": "USED",
+          "summary": "Execute a workflow transition (change issue status). Accepts optional fields and inline comment.",
+          "params": [
+            {
+              "name": "issueKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira issue key",
+              "example": "PROJ-123"
+            }
+          ],
+          "requestBody": "JSON: {\"transition\":{\"id\":\"<transitionId>\"}, \"fields\":{<fieldId>:<value>,...}, \"update\":{\"comment\":[{\"add\":{\"body\":\"<wiki-markup>\"}}]}}. The 'fields' and 'update' keys are optional when the transition screen has no required fields.",
+          "callSite": "JiraApiClient.kt:431",
+          "provenance": "JiraApiClient.kt:424-467; 2026-05-07-jira-write-ops-audit.md §3.1; probe Result_Jira/bundle.unpacked/raw/issue_transitions.json",
+          "gotchas": [
+            "Returns 204 No Content on success — no response body",
+            "400 body contains errorMessages[] + errors{} — JiraApiClient.parseJiraErrorMessage extracts user-readable text",
+            "BranchingService.startWork sends fields={} which silently 400s when admin has marked a field required on the In Progress transition (write-ops audit finding P1)"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/issue/{issueKey}/comment",
+          "status": "USED",
+          "summary": "List comments on an issue, ordered by most-recent first.",
+          "params": [
+            {
+              "name": "issueKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira issue key",
+              "example": "PROJ-123"
+            },
+            {
+              "name": "maxResults",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Maximum comments to return",
+              "example": "50"
+            },
+            {
+              "name": "orderBy",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Sort order. Use '-created' for newest first.",
+              "example": "-created"
+            }
+          ],
+          "callSite": "JiraApiClient.kt:511",
+          "provenance": "JiraApiClient.kt:505-513; probe Result_Jira/bundle.unpacked/summary.md row for issue_comments",
+          "gotchas": [
+            "When using getIssueWithContextAndChangelog, comments are already in fields.comment.comments[] — no separate call needed"
+          ]
+        },
+        {
+          "method": "POST",
+          "pathTemplate": "/rest/api/2/issue/{issueKey}/comment",
+          "status": "USED",
+          "summary": "Add a comment to an issue. Body is wiki markup. Optional visibility block restricts to a role or group.",
+          "params": [
+            {
+              "name": "issueKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira issue key",
+              "example": "PROJ-123"
+            }
+          ],
+          "requestBody": "JSON: {\"body\":\"<wiki-markup-text>\", \"visibility\":{\"type\":\"role\"|\"group\",\"value\":\"<name>\"}}. The visibility block must be OMITTED ENTIRELY (not set to null) when no restriction is wanted — Jira rejects visibility:null.",
+          "callSite": "JiraApiClient.kt:255",
+          "provenance": "JiraApiClient.kt:236-256; 2026-05-07-jira-write-ops-audit.md §3.3",
+          "gotchas": [
+            "QuickCommentPanel and JiraCommentPanel currently send no visibility block — all comments are unrestricted even when team policy requires role-restricted closure comments (write-ops audit P1)",
+            "DC uses [~username] for @mentions, NOT @username (Slack style) and NOT [~accountId:...] (Cloud style)"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/issue/{issueKey}/worklog",
+          "status": "USED",
+          "summary": "List worklogs for an issue.",
+          "params": [
+            {
+              "name": "issueKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira issue key",
+              "example": "PROJ-123"
+            },
+            {
+              "name": "maxResults",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Maximum worklogs to return",
+              "example": "20"
+            }
+          ],
+          "callSite": "JiraApiClient.kt:565",
+          "provenance": "JiraApiClient.kt:562-566; probe Result_Jira/bundle.unpacked/summary.md row for issue_worklogs"
+        },
+        {
+          "method": "POST",
+          "pathTemplate": "/rest/api/2/issue/{issueKey}/worklog",
+          "status": "USED",
+          "summary": "Log time worked on an issue. Accepts timeSpent in Jira format (e.g. '2h 30m'), optional comment, optional started date, and optional estimate adjustment.",
+          "params": [
+            {
+              "name": "issueKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira issue key",
+              "example": "PROJ-123"
+            },
+            {
+              "name": "adjustEstimate",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "How to adjust remaining estimate: 'auto' (server default), 'new', 'manual', 'leave'",
+              "example": "auto"
+            }
+          ],
+          "requestBody": "JSON: {\"timeSpent\":\"2h 30m\", \"comment\":\"<text>\", \"started\":\"yyyy-MM-dd'T'HH:mm:ss.SSSZ\"}. 'comment' and 'started' are optional. Server defaults started to 'now' when absent.",
+          "callSite": "JiraApiClient.kt:224",
+          "provenance": "JiraApiClient.kt:202-225; 2026-05-07-jira-write-ops-audit.md §3.5",
+          "gotchas": [
+            "TimeLogPanel collects a date field but currently discards it (write-ops audit P1) — the server silently defaults started to now",
+            "adjustEstimate=new requires additional newEstimate query param; adjustEstimate=manual requires reduceBy query param",
+            "timeSpent must be Jira canonical format 'Nh Mm' — invalid formats like '2hrs' return 400"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/issue/{key}/remotelink",
+          "status": "USED",
+          "summary": "External links attached to an issue. Returns Confluence backlinks and generic external URLs.",
+          "params": [
+            {
+              "name": "key",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira issue key",
+              "example": "PROJ-123"
+            }
+          ],
+          "sampleResponse": "[{\"id\":852038,\"self\":\"https://jira.<redacted>/rest/api/2/issue/PROJ-030/remotelink/852038\",\"globalId\":\"appId=<redacted>&pageId=711531944\",\"application\":{\"type\":\"com.atlassian.confluence\",\"name\":\"<redacted>\"},\"relationship\":\"mentioned in\",\"object\":{\"url\":\"<redacted>\",\"title\":\"<redacted>\"}}]",
+          "callSite": "JiraApiClient.kt:885",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/issue_remotelink.json; JiraApiClient.kt:883-886",
+          "gotchas": [
+            "application.type == 'com.atlassian.confluence' identifies Confluence backlinks vs generic external URLs",
+            "Returns empty array [] when no remote links are attached — not 404"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/issue/{key}/watchers",
+          "status": "USED",
+          "summary": "List watchers on an issue. isWatching flag indicates if the current user is watching.",
+          "params": [
+            {
+              "name": "key",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira issue key",
+              "example": "PROJ-123"
+            }
+          ],
+          "sampleResponse": "{\"self\":\"https://jira.<redacted>/rest/api/2/issue/PROJ-030/watchers\",\"watchers\":[{\"self\":\"...\",\"name\":\"<redacted>\",\"key\":\"<redacted>\",\"displayName\":\"<redacted>\",\"active\":true}],\"isWatching\":false,\"watchCount\":6}",
+          "callSite": "JiraApiClient.kt:893",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/issue_watchers.json; JiraApiClient.kt:891-894"
+        },
+        {
+          "method": "POST",
+          "pathTemplate": "/rest/api/2/issue/{key}/watchers",
+          "status": "USED",
+          "summary": "Add current user (or named user) as a watcher. Body is a bare JSON string (the username as a JSON-quoted scalar).",
+          "params": [
+            {
+              "name": "key",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira issue key",
+              "example": "PROJ-123"
+            }
+          ],
+          "requestBody": "A bare JSON string literal — the username quoted as JSON, e.g. \"jdoe\". This is the documented Jira DC API shape; NOT a JSON object.",
+          "callSite": "JiraApiClient.kt:903",
+          "provenance": "JiraApiClient.kt:900-904; 2026-05-07-jira-write-ops-audit.md §3.7",
+          "gotchas": [
+            "Body must be a raw JSON string (e.g. \"jdoe\"), not {\"username\":\"jdoe\"}",
+            "Returns 204 No Content on success",
+            "The watch toggle UI exists in TicketDetailPanel but currently does not invoke addWatcher/removeWatcher (write-ops audit: NOT-EXPOSED-AS-UI)"
+          ]
+        },
+        {
+          "method": "DELETE",
+          "pathTemplate": "/rest/api/2/issue/{key}/watchers",
+          "status": "USED",
+          "summary": "Remove a watcher from an issue. Username passed as query param.",
+          "params": [
+            {
+              "name": "key",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira issue key",
+              "example": "PROJ-123"
+            },
+            {
+              "name": "username",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Username of the watcher to remove",
+              "example": "jdoe"
+            }
+          ],
+          "callSite": "JiraApiClient.kt:912",
+          "provenance": "JiraApiClient.kt:909-913; 2026-05-07-jira-write-ops-audit.md §3.7"
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/issue/{key}",
+          "status": "USED",
+          "summary": "Fetch a single custom field value for an issue. Used for acceptance-criteria custom field lookup.",
+          "params": [
+            {
+              "name": "key",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira issue key",
+              "example": "PROJ-123"
+            },
+            {
+              "name": "fields",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Single customfield ID to fetch",
+              "example": "customfield_10001"
+            }
+          ],
+          "callSite": "JiraApiClient.kt:283",
+          "provenance": "JiraApiClient.kt:282-297; 2026-05-06-jira-api-call-site-inventory.md §Ticket detail panel"
+        }
+      ]
+    },
+    {
+      "name": "Search",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/search",
+          "status": "USED",
+          "summary": "JQL issue search (GET variant). Used by searchIssues, searchByJql, searchByJqlPaged.",
+          "params": [
+            {
+              "name": "jql",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "URL-encoded JQL expression",
+              "example": "assignee=currentUser() ORDER BY updated DESC"
+            },
+            {
+              "name": "maxResults",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max issues to return (default 50 server-side)",
+              "example": "20"
+            },
+            {
+              "name": "startAt",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Zero-based offset for pagination",
+              "example": "0"
+            },
+            {
+              "name": "fields",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Comma-separated field list",
+              "example": "summary,status,issuetype,priority,assignee"
+            }
+          ],
+          "sampleResponse": "{\"expand\":\"schema,names\",\"startAt\":0,\"maxResults\":5,\"total\":186,\"issues\":[{\"id\":\"<redacted>\",\"key\":\"PROJ-030\",\"fields\":{\"summary\":\"<redacted>\",\"status\":{\"name\":\"To Verify\"},\"priority\":{\"name\":\"3 - Medium\"}}}]}",
+          "callSite": "JiraApiClient.kt:125",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/search_jql_v2.json; JiraApiClient.kt:104-135",
+          "gotchas": [
+            "GET URL length limit applies — JQL with 100+ keys (key IN (...)) exceeds URL limits; use POST /rest/api/2/search for batch validation",
+            "searchIssues caps input at MAX_SEARCH_TEXT_LENGTH=500 chars and rejects control characters"
+          ]
+        },
+        {
+          "method": "POST",
+          "pathTemplate": "/rest/api/2/search",
+          "status": "USED",
+          "summary": "JQL issue search (POST variant). Used by validateTicketKeys to avoid URL-length limits with large IN-clause batches.",
+          "params": [],
+          "requestBody": "JSON: {\"jql\":\"key in (PROJ-1,PROJ-2,...)\", \"fields\":[\"summary\",\"status\"], \"maxResults\":100}. Same response shape as GET /rest/api/2/search.",
+          "sampleResponse": "{\"expand\":\"names,schema\",\"startAt\":0,\"maxResults\":1,\"total\":3673642,\"issues\":[{\"id\":\"<redacted>\",\"key\":\"PROJ-030\",\"fields\":{\"summary\":\"<redacted>\",\"status\":{\"name\":\"To Verify\"}}}]}",
+          "callSite": "JiraApiClient.kt:544",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/search_v2_post.json; probe bundle-audit-followup.unpacked/raw/search_v2_post_keys.json; JiraApiClient.kt:522-560",
+          "gotchas": [
+            "Exactly same JSON response shape as GET — existing JiraIssueSearchResult parser works unchanged",
+            "Keys must match anchored regex ^[A-Z][A-Z0-9_]+-\\d+$ before JQL interpolation to prevent JQL injection via joinToString",
+            "POST /rest/api/3/search/jql (Cloud cursor pagination) returns 302 on this DC — NOT backported; stay on v2"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/issue/picker",
+          "status": "USED",
+          "summary": "History-grouped issue suggestions for @-mention input. Returns sections with matching issues grouped by search type.",
+          "params": [
+            {
+              "name": "query",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Search term — can be key-prefix (e.g. 'PROJ-') or free text",
+              "example": "PROJ3-"
+            },
+            {
+              "name": "showSubTasks",
+              "location": "QUERY",
+              "type": "boolean",
+              "required": false,
+              "description": "Include sub-tasks in results",
+              "example": "true"
+            },
+            {
+              "name": "showSubTaskParent",
+              "location": "QUERY",
+              "type": "boolean",
+              "required": false,
+              "description": "Include parent of sub-tasks",
+              "example": "true"
+            }
+          ],
+          "sampleResponse": "{\"sections\":[{\"label\":\"History Search\",\"id\":\"hs\",\"sub\":\"Showing 19 of 24 matching issues\",\"issues\":[{\"key\":\"PROJ3-003\",\"keyHtml\":\"<b>PROJ3</b>-003\",\"img\":\"<redacted>\",\"summary\":\"<redacted>\",\"summaryText\":\"<redacted>\"}]}]}",
+          "callSite": "JiraApiClient.kt:933",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/issue_picker.json; probe bundle-audit-followup.unpacked/raw/issue_picker_keyprefix.json; JiraApiClient.kt:930-934",
+          "gotchas": [
+            "For key-prefix queries (e.g. 'PROJ3-'), only 'History Search' section appears — 'Current Search' section does NOT appear",
+            "Use summaryText (plain text) for display labels, not keyHtml which contains <b> markup",
+            "Replaces the former manual board+sprint walking in MentionSearchProvider (R-SWAP-2)"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/filter/favourite",
+          "status": "USED",
+          "summary": "User's favourite saved JQL filters. Used to populate the Saved Filters section in the Sprint tab.",
+          "params": [],
+          "sampleResponse": "[{\"self\":\"https://jira.<redacted>/rest/api/2/filter/91483\",\"id\":\"91483\",\"name\":\"<redacted_filter_name>\",\"owner\":{\"name\":\"<redacted>\"},\"jql\":\"<redacted jql>\",\"favourite\":true,\"sharePermissions\":[]}]",
+          "callSite": "JiraApiClient.kt:941",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/filter_favourite.json; probe bundle-audit-followup.unpacked/raw/filter_favourite.json; JiraApiClient.kt:939-942",
+          "gotchas": [
+            "GET /rest/api/2/filter/search returned 404 on this DC — only favourite filters are available, not arbitrary filter search",
+            "Filter name values are not redacted in probe output (redactor leak) — treat as potentially containing PII"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/filter/{id}",
+          "status": "USED",
+          "summary": "Single saved filter detail including its full JQL. Used when user clicks a favourite filter to execute its query.",
+          "params": [
+            {
+              "name": "id",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Filter numeric ID from /filter/favourite response",
+              "example": "91483"
+            }
+          ],
+          "sampleResponse": "{\"id\":\"91483\",\"name\":\"<redacted_filter_name>\",\"description\":\"\",\"owner\":{\"name\":\"<redacted>\"},\"jql\":\"<redacted jql>\",\"viewUrl\":\"https://jira.<redacted>/issues/?filter=91483\",\"searchUrl\":\"https://jira.<redacted>/rest/api/2/search?jql=<redacted>\",\"favourite\":true,\"sharePermissions\":[],\"editable\":false}",
+          "callSite": "JiraApiClient.kt:949",
+          "provenance": "probe bundle-audit-followup.unpacked/raw/filter_detail.json; JiraApiClient.kt:947-950",
+          "gotchas": [
+            "The 'jql' field is the migration target — feed it into the existing searchIssues(jql) after user clicks",
+            "GET /rest/api/2/filter/search (search by name) returned 404 on this DC — favourites list is the only discovery mechanism"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/filter/search",
+          "status": "DEPRECATED",
+          "summary": "Search saved filters by name. Returns 404 on Jira DC 10.3.16 — not backported from Cloud.",
+          "params": [
+            {
+              "name": "maxResults",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results",
+              "example": "5"
+            }
+          ],
+          "provenance": "probe Result_Jira/bundle.unpacked/summary.md (❌ 404 row); 2026-05-06-jira-recommendations.md §Skipped",
+          "verdict": {
+            "classification": "Removed / not backported on DC 10.3.16",
+            "reasoning": "Probed and received 404. Cloud-only. Plugin must use /filter/favourite instead."
+          }
+        },
+        {
+          "method": "POST",
+          "pathTemplate": "/rest/api/2/search/approximate-count",
+          "status": "DEPRECATED",
+          "summary": "Fast approximate JQL hit count without fetching results. Returns 404 on Jira DC 10.3.16 — Jira 10 native endpoint, not backported.",
+          "params": [],
+          "provenance": "probe Result_Jira/bundle.unpacked/summary.md (❌ 404 row); 2026-05-06-jira-recommendations.md §Skipped",
+          "verdict": {
+            "classification": "Removed / not backported on DC 10.3.16",
+            "reasoning": "Probed and received 404. Would have been useful for Sprint tab badge counters. Not available on this instance."
+          }
+        },
+        {
+          "method": "POST",
+          "pathTemplate": "/rest/api/3/search/jql",
+          "status": "DEPRECATED",
+          "summary": "Modern cursor-based JQL search (Cloud-style). Returns 302 redirect to login on Jira DC 10.3.16.",
+          "params": [],
+          "provenance": "probe Result_Jira/bundle.unpacked/summary.md (❌ 302 row); 2026-05-06-jira-recommendations.md finding #3",
+          "verdict": {
+            "classification": "Removed / not backported on DC 10.3.16",
+            "reasoning": "Probed and received 302 → /login.jsp?permissionViolation=true. Not backported to this DC instance. Plugin must remain on v2 search."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sprints & Boards",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/agile/1.0/board",
+          "status": "USED",
+          "summary": "List boards. Supports optional type filter (scrum/kanban) and name filter. Used by Sprint tab board picker.",
+          "params": [
+            {
+              "name": "type",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Board type filter: 'scrum' or 'kanban'",
+              "example": "scrum"
+            },
+            {
+              "name": "name",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Filter by board name (URL-encoded)",
+              "example": "M2GO"
+            },
+            {
+              "name": "maxResults",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results per page. Plugin uses 200.",
+              "example": "200"
+            }
+          ],
+          "sampleResponse": "{\"maxResults\":50,\"startAt\":0,\"total\":6691,\"isLast\":false,\"values\":[{\"id\":15447,\"self\":\"https://jira.<redacted>/rest/agile/1.0/board/15447\",\"name\":\"D_IP_MIPI_I3C_SYN\",\"type\":\"kanban\"}]}",
+          "callSite": "JiraApiClient.kt:51",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/boards.json; JiraApiClient.kt:46-52",
+          "gotchas": [
+            "Response is paginated (isLast flag); total=6691 on the probed instance — plugin uses maxResults=200 which may not return all boards for large enterprise instances"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/agile/1.0/board/{boardId}/sprint",
+          "status": "USED",
+          "summary": "List sprints for a board, filtered by state. Used for active and closed sprint fetching.",
+          "params": [
+            {
+              "name": "boardId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Board numeric ID",
+              "example": "11272"
+            },
+            {
+              "name": "state",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Sprint state filter: 'active', 'closed', 'future'",
+              "example": "active"
+            },
+            {
+              "name": "startAt",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Zero-based pagination offset",
+              "example": "0"
+            },
+            {
+              "name": "maxResults",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results per page",
+              "example": "10"
+            }
+          ],
+          "sampleResponse": "{\"maxResults\":50,\"startAt\":0,\"isLast\":true,\"values\":[{\"id\":72931,\"self\":\"https://jira.<redacted>/rest/agile/1.0/sprint/72931\",\"state\":\"active\",\"name\":\"M2GO_Sprint_20260503\",\"startDate\":\"2026-05-03T04:54:00.000+02:00\",\"endDate\":\"2026-05-17T04:54:00.000+02:00\",\"originBoardId\":11272,\"goal\":\"\"}]}",
+          "callSite": "JiraApiClient.kt:56",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/active_sprints.json; probe Result_Jira/bundle.unpacked/raw/closed_sprints.json; JiraApiClient.kt:54-57 and 569-571"
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/agile/1.0/sprint/{sprintId}/issue",
+          "status": "USED",
+          "summary": "Issues in a sprint. JQL filter applied server-side; plugin uses assignee=currentUser() by default.",
+          "params": [
+            {
+              "name": "sprintId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Sprint numeric ID",
+              "example": "72931"
+            },
+            {
+              "name": "jql",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Additional JQL filter applied within the sprint scope",
+              "example": "assignee=currentUser()"
+            },
+            {
+              "name": "maxResults",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max issues to return",
+              "example": "200"
+            }
+          ],
+          "sampleResponse": "{\"expand\":\"schema,names\",\"startAt\":0,\"maxResults\":20,\"total\":5,\"issues\":[{\"id\":\"<redacted>\",\"key\":\"PROJ-030\",\"fields\":{\"summary\":\"<redacted>\",\"status\":{\"name\":\"To Verify\"}}}]}",
+          "callSite": "JiraApiClient.kt:69",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/sprint_issues.json; JiraApiClient.kt:60-71"
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/agile/1.0/board/{boardId}/issue",
+          "status": "USED",
+          "summary": "Issues on a Kanban board (no active sprint). JQL filter applied server-side; plugin uses resolution=Unresolved AND assignee=currentUser() by default.",
+          "params": [
+            {
+              "name": "boardId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Board numeric ID",
+              "example": "11272"
+            },
+            {
+              "name": "jql",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "JQL filter within board scope",
+              "example": "resolution=Unresolved AND assignee=currentUser()"
+            },
+            {
+              "name": "maxResults",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max issues to return",
+              "example": "200"
+            }
+          ],
+          "callSite": "JiraApiClient.kt:78",
+          "provenance": "probe Result_Jira/bundle.unpacked/summary.md (board_issues row ✅ 200); JiraApiClient.kt:73-79"
+        }
+      ]
+    },
+    {
+      "name": "Dev-status (Internal)",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/dev-status/1.0/issue/detail",
+          "status": "USED",
+          "summary": "Atlassian-internal dev-status API. Returns development data (branches, pull requests, commits, builds, deployments, reviews) for an issue by numeric ID. Powers the Dev Status section in the plugin's ticket detail panel.",
+          "params": [
+            {
+              "name": "issueId",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Numeric Jira issue ID (NOT the alphanumeric key). Read from issue.id field.",
+              "example": "3825349"
+            },
+            {
+              "name": "applicationType",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Integration type. Use 'stash' for Bitbucket Data Center.",
+              "example": "stash"
+            },
+            {
+              "name": "dataType",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Data type to fetch: 'branch', 'pullrequest', 'repository', 'build', 'deployment', 'review'",
+              "example": "branch"
+            }
+          ],
+          "sampleResponse": "{\"errors\":[],\"detail\":[]}",
+          "callSite": "JiraApiClient.kt:490",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/devstatus_branch.json (and devstatus_pullrequest, devstatus_repository, devstatus_build, devstatus_deployment, devstatus_review); JiraApiClient.kt:486-499 and 573-603",
+          "verdict": {
+            "classification": "R-INV: internal Atlassian API, not officially supported",
+            "reasoning": "All 6 dataType variants probed and returned 200. Stable since Jira 7.x, powers Jira's own Dev Panel. No public deprecation policy — treat as high-risk if this ever returns 404."
+          },
+          "gotchas": [
+            "INTERNAL API — no public deprecation policy; no SLA from Atlassian if removed in a future DC version",
+            "issueId must be the numeric ID from issue.id (e.g. '3825349'), NOT the alphanumeric key (e.g. 'PROJ-030')",
+            "applicationType must be 'stash' for Bitbucket DC — 'bitbucket' (Cloud) would be different",
+            "Empty detail[] array is a valid response (no linked dev data), not an error",
+            "getDevStatusBranches delegates to this endpoint; getDevStatusPullRequests/Commits/Builds/Deployments/Reviews also use it with different dataType values"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Users & Groups",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/user/assignable/search",
+          "status": "USED",
+          "summary": "Search for users assignable to a specific issue. Used in transition dialog assignee picker.",
+          "params": [
+            {
+              "name": "issueKey",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Issue key to scope assignable user search",
+              "example": "PROJ-123"
+            },
+            {
+              "name": "query",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Partial username or display name to search",
+              "example": "joh"
+            }
+          ],
+          "sampleResponse": "[{\"self\":\"https://jira.<redacted>/rest/api/2/user?username=<redacted>\",\"key\":\"<redacted>\",\"name\":\"<redacted>\",\"emailAddress\":\"<redacted>\",\"displayName\":\"<redacted>\",\"active\":true,\"timeZone\":\"Europe/Amsterdam\"}]",
+          "callSite": "JiraApiClient.kt:311",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/issue_assignable.json; 2026-05-06-jira-api-call-site-inventory.md §Transition dialog",
+          "gotchas": [
+            "Accepts both 'query' and 'username' params unlike generic /user/search (which requires 'username' on DC)"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/user/search",
+          "status": "USED",
+          "summary": "Generic user search. On Data Center requires 'username' param (NOT 'query'). The plugin had a bug using query= which returned 400.",
+          "params": [
+            {
+              "name": "username",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Username prefix to search. DC requires 'username' param; 'query' param returns 400 on Server.",
+              "example": "joh"
+            },
+            {
+              "name": "maxResults",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results",
+              "example": "5"
+            }
+          ],
+          "sampleResponse": "{\"errorMessages\":[\"The username query parameter was not provided\"],\"errors\":{}}",
+          "callSite": "JiraApiClient.kt:311",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/user_search.json (❌ 400 with query=); 2026-05-06-jira-recommendations.md R-FIX-1",
+          "verdict": {
+            "classification": "R-FIX-1: DC requires username= param, not query=",
+            "reasoning": "Probe confirmed 400 with query=a. DC /user/search requires username= parameter. Cloud-only syntax uses query=. Bug in JiraSearchServiceImpl.searchUsers was renamed in the implementation commit."
+          },
+          "gotchas": [
+            "DC Server requires 'username' query param — 'query' param (Cloud style) returns 400 with 'The username query parameter was not provided'",
+            "Use /user/assignable/search (which accepts both) when searching within issue context"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/groups/picker",
+          "status": "USED",
+          "summary": "Search for groups. Used in transition dialog for group-type fields.",
+          "params": [
+            {
+              "name": "query",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Partial group name to search",
+              "example": "dev"
+            },
+            {
+              "name": "maxResults",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results",
+              "example": "5"
+            }
+          ],
+          "sampleResponse": "{\"header\":\"Showing 5 of 630 matching groups\",\"total\":630,\"groups\":[{\"name\":\"<redacted>\",\"html\":\"<redacted>\",\"labels\":[]}]}",
+          "callSite": "JiraApiClient.kt:311",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/groups_picker.json; 2026-05-06-jira-api-call-site-inventory.md §Transition dialog"
+        }
+      ]
+    },
+    {
+      "name": "Project Metadata",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/project/{projectKey}/versions",
+          "status": "USED",
+          "summary": "All fix versions for a project. Cached 5 minutes in plugin. Used in transition dialog version picker.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira project key",
+              "example": "PROJ"
+            }
+          ],
+          "callSite": "JiraApiClient.kt:311",
+          "provenance": "probe Result_Jira/bundle.unpacked/summary.md (project_versions ✅ 200); 2026-05-06-jira-api-call-site-inventory.md §Transition dialog"
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/project/{projectKey}/components",
+          "status": "USED",
+          "summary": "All components for a project. Cached 5 minutes in plugin. Used in transition dialog component picker.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira project key",
+              "example": "PROJ"
+            }
+          ],
+          "callSite": "JiraApiClient.kt:311",
+          "provenance": "probe Result_Jira/bundle.unpacked/summary.md (project_components ✅ 200); 2026-05-06-jira-api-call-site-inventory.md §Transition dialog"
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/project/{projectKey}/role",
+          "status": "USED",
+          "summary": "List project roles for a project. Returns a name-keyed object; role ID parseable from the URL tail. Used to populate comment visibility combo.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Jira project key",
+              "example": "PROJ"
+            }
+          ],
+          "callSite": "JiraApiClient.kt:268",
+          "provenance": "JiraApiClient.kt:258-269; 2026-05-07-jira-write-ops-audit.md §4.2",
+          "gotchas": [
+            "Returns a JSON object keyed by role name, NOT an array: {\"Developers\":\"https://jira.host/rest/api/2/project/PROJ/role/10001\", ...}",
+            "Role ID is parsed from the URL tail (last path segment after /role/)"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/2/field",
+          "status": "USED",
+          "summary": "All fields (system + custom). Used for acceptance-criteria custom field discovery to replace manual customfield_10001 config.",
+          "params": [],
+          "callSite": "JiraApiClient.kt:877",
+          "provenance": "probe Result_Jira/bundle.unpacked/summary.md (field_list ✅ 200); JiraApiClient.kt:875-878; 2026-05-06-jira-recommendations.md R-ADD-2",
+          "gotchas": [
+            "Returns a flat array of all fields. The 'custom' boolean distinguishes system vs custom fields.",
+            "Cache 5 minutes per settings page load to avoid repeated calls"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Labels (Internal)",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/labels/suggest",
+          "status": "USED",
+          "summary": "Label autocomplete suggestions. Internal Atlassian endpoint — code has a 404 fallback that returns empty list, degrading to free-form input.",
+          "params": [
+            {
+              "name": "query",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Label prefix to search",
+              "example": "fix"
+            }
+          ],
+          "sampleResponse": "{\"token\":\"a\",\"suggestions\":[{\"label\":\"<redacted>\",\"html\":\"<redacted>\"}]}",
+          "callSite": "JiraApiClient.kt:311",
+          "provenance": "probe Result_Jira/bundle.unpacked/raw/labels_suggest_internal.json; 2026-05-06-jira-api-call-site-inventory.md §Transition dialog",
+          "verdict": {
+            "classification": "R-INV: internal endpoint, stable since Jira 7.x but unsupported",
+            "reasoning": "Probed 200 on DC 10.3.16. Code already has 404 → empty-list fallback which is the correct defensive pattern."
+          },
+          "gotchas": [
+            "INTERNAL endpoint under /rest/api/1.0/ — no public deprecation policy",
+            "Must handle 404 gracefully (return empty list) since this endpoint can disappear without notice"
+          ]
+        }
+      ]
+    }
+  ]
+}
