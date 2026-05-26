@@ -1901,16 +1901,24 @@ description optional: for approval dialog on write actions.
      * OffsetDateTime. Bare dates are promoted to start-of-day at the system zone offset,
      * which matches Jira's worklog convention for date-only `worklogDate` JQL filters.
      */
-    internal fun parseStartedDateTime(raw: String): java.time.OffsetDateTime? = try {
-        java.time.OffsetDateTime.parse(raw)
-    } catch (_: Exception) {
+    internal fun parseStartedDateTime(raw: String): java.time.OffsetDateTime? {
+        // 1. Strict ISO-8601 with a colon offset or 'Z' (e.g. a user-supplied 2026-05-10T09:00:00+01:00).
+        try { return java.time.OffsetDateTime.parse(raw) } catch (_: Exception) {}
+        // 2. Jira's wire format uses a BASIC offset with no colon (e.g. 2026-05-10T09:00:00.000+0000),
+        //    which OffsetDateTime.parse rejects. Every worklog `started` arrives in this shape, so
+        //    without this branch my_worklogs/get_worklogs date-filtering dropped every entry.
+        try { return java.time.OffsetDateTime.parse(raw, JIRA_WORKLOG_STARTED_FORMAT) } catch (_: Exception) {}
+        // 3. Bare date (YYYY-MM-DD) → start-of-day at the local offset.
         try {
             val date = java.time.LocalDate.parse(raw)
-            date.atStartOfDay().atOffset(java.time.OffsetDateTime.now().offset)
-        } catch (_: Exception) {
-            null
-        }
+            return date.atStartOfDay().atOffset(java.time.OffsetDateTime.now().offset)
+        } catch (_: Exception) {}
+        return null
     }
+
+    /** Jira worklog `started` wire format: basic offset (`+0000`), optional millis. */
+    private val JIRA_WORKLOG_STARTED_FORMAT: java.time.format.DateTimeFormatter =
+        java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss[.SSS]Z")
 
     internal fun worklogStarted(wl: com.workflow.orchestrator.core.model.jira.WorklogData): java.time.OffsetDateTime? =
         parseStartedDateTime(wl.started)
