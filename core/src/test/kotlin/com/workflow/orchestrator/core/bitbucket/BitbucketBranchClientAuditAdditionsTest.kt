@@ -183,14 +183,28 @@ class BitbucketBranchClientAuditAdditionsTest {
     // --- Phase 2.4: blocker comments -------------------------------------------
 
     @Test
-    fun `getBlockerComments with countOnly=true uses count parameter`() = runTest {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"size":3}"""))
+    fun `getBlockerComments with countOnly=true reads the count-only body shape`() = runTest {
+        // DC's ?count=true returns a count-only body {"count": N} — NOT {"size": N}. Reading
+        // `size` alone returned 0; effectiveCount must surface the real blocker count.
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"count":3}"""))
         val result = client.getBlockerComments("P", "R", 1, countOnly = true)
         assertTrue(result is ApiResult.Success)
-        assertEquals(3, (result as ApiResult.Success).data.size)
+        assertEquals(3, (result as ApiResult.Success).data.effectiveCount)
         val req = server.takeRequest()
         assertTrue(req.path!!.contains("/blocker-comments"))
         assertTrue(req.path!!.contains("count=true"))
+    }
+
+    @Test
+    fun `getBlockerComments full listing derives effectiveCount from values`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"size":2,"values":[{"id":1,"text":"a"},{"id":2,"text":"b"}]}"""
+            )
+        )
+        val result = client.getBlockerComments("P", "R", 1, countOnly = false)
+        assertTrue(result is ApiResult.Success)
+        assertEquals(2, (result as ApiResult.Success).data.effectiveCount)
     }
 
     @Test

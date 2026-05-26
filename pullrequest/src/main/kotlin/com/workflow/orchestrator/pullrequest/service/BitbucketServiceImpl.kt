@@ -1158,7 +1158,7 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
             hint = "Set Bitbucket project key and repo slug in Settings."
         )
         return when (val result = api.getBlockerComments(projectKey, repoSlug, prId, countOnly = true)) {
-            is ApiResult.Success -> ToolResult.success(result.data.size, "PR #$prId has ${result.data.size} blocker comment(s)")
+            is ApiResult.Success -> ToolResult.success(result.data.effectiveCount, "PR #$prId has ${result.data.effectiveCount} blocker comment(s)")
             is ApiResult.Error -> ToolResult(
                 data = 0, summary = "Error fetching blocker count: ${result.message}", isError = true,
                 hint = "Verify the PR exists."

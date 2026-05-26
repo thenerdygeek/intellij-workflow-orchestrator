@@ -663,8 +663,16 @@ private data class ReviewerStatusRequest(val status: String, val approved: Boole
 @Serializable
 data class BitbucketBlockerCommentsResponse(
     val size: Int = 0,
+    val count: Int? = null,
     val values: List<BitbucketPrCommentResponse> = emptyList(),
-)
+) {
+    /**
+     * Blocker count regardless of response shape. DC's `?count=true` returns a count-only body
+     * `{"count": N}` (so `size`/`values` stay at their defaults); the full listing returns
+     * `{"size": N, "values": [...]}`. Reading `size` alone returned 0 for the count-only path.
+     */
+    val effectiveCount: Int get() = count ?: values.size.takeIf { it > 0 } ?: size
+}
 
 /**
  * Response shape from `GET /pull-requests/{id}/participants` — explicit endpoint
