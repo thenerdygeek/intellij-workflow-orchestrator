@@ -64,7 +64,7 @@ Actions and their parameters:
 - get_worklogs(key) → List work logs
 - get_sprints(board_id) → List sprints for board
 - get_boards(type?, name_filter?) → List boards (type: scrum|kanban)
-- get_sprint_issues(sprint_id) → Issues in sprint
+- get_sprint_issues(sprint_id, current_user_only?) → Issues in sprint (current_user_only=true scopes to you; default whole sprint)
 - get_board_issues(board_id) → Issues on board
 - search_issues(text, max_results?, current_user_only?) → JQL/text search (default 20 results, default current user only)
 - search_tickets(jql, max_results?) → Run raw JQL query
@@ -149,7 +149,7 @@ description optional: for approval dialog on write actions.
             ),
             "current_user_only" to ParameterProperty(
                 type = "string",
-                description = "Filter to current user's tickets only: 'true' (default) or 'false' — for search_issues",
+                description = "Filter to the current user's tickets only ('true'/'false'). search_issues defaults 'true'; get_sprint_issues defaults 'false' (whole sprint) and applies it server-side as assignee=currentUser().",
                 enumValues = listOf("true", "false")
             ),
             "attachment_id" to ParameterProperty(
@@ -202,11 +202,6 @@ description optional: for approval dialog on write actions.
             "until" to ParameterProperty(
                 type = "string",
                 description = "Optional ISO date (YYYY-MM-DD or full ISO 8601) upper bound — for get_worklogs, my_worklogs. Inclusive."
-            ),
-            "assignee" to ParameterProperty(
-                type = "string",
-                description = "Optional Jira username filter — for get_sprint_issues. " +
-                    "Pass 'currentUser()' to filter to the authenticated user."
             ),
             "query" to ParameterProperty(
                 type = "string",
@@ -743,16 +738,15 @@ description optional: for approval dialog on write actions.
                         constraint("must be a numeric string convertible via toIntOrNull")
                         example("123")
                     }
-                    optional("assignee", "string") {
-                        llmSeesIt("Optional Jira username filter — for get_sprint_issues. Pass 'currentUser()' to filter to the authenticated user.")
-                        humanReadable("Filter sprint issues to those assigned to this user. Pass 'currentUser()' to scope to the current user.")
-                        whenPresent("Issues not assigned to this user are excluded from the result.")
-                        whenAbsent("All assignees included; the full sprint issue list is returned.")
-                        example("jdoe")
-                        example("currentUser()")
+                    optional("current_user_only", "string") {
+                        llmSeesIt("Filter to the current user's tickets only ('true'/'false'). search_issues defaults 'true'; get_sprint_issues defaults 'false' (whole sprint) and applies it server-side as assignee=currentUser().")
+                        humanReadable("When true, only your assigned issues are returned, resolved server-side the same way the Sprint tab does.")
+                        whenPresent("'true' adds a server-side assignee=currentUser() filter; 'false' returns every issue in the sprint.")
+                        whenAbsent("Defaults to the full sprint issue list (all assignees).")
+                        enumValue("true", "false")
                     }
                 }
-                onSuccess("Returns the sprint's issue list.")
+                onSuccess("Returns the sprint's issue list (scoped to you when current_user_only=true).")
                 onFailure("sprint_id not numeric", "Explicit error before network.")
                 onFailure("sprint not found", "404 surfaced.")
                 example("'what's in this sprint'") {
@@ -815,7 +809,7 @@ description optional: for approval dialog on write actions.
                         example("50")
                     }
                     optional("current_user_only", "string") {
-                        llmSeesIt("Filter to current user's tickets only: 'true' (default) or 'false' — for search_issues")
+                        llmSeesIt("Filter to the current user's tickets only ('true'/'false'). search_issues defaults 'true'; get_sprint_issues defaults 'false' (whole sprint) and applies it server-side as assignee=currentUser().")
                         humanReadable("Only include tickets where the current user is reporter or assignee.")
                         whenPresent("If 'false', searches across all users; otherwise scopes to current user.")
                         whenAbsent("Defaults to 'true' (current user only).")
@@ -1507,19 +1501,11 @@ description optional: for approval dialog on write actions.
                     ?: return ToolValidation.missingParam("sprint_id")
                 val sprintId = sprintIdStr.toIntOrNull()
                     ?: return ToolResult("Error: 'sprint_id' must be an integer, got '$sprintIdStr'", "Error: invalid sprint_id", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
-                val assignee = params["assignee"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
-                val result = service.getSprintIssues(sprintId)
-                if (result.isError || assignee == null) return result.toAgentToolResult()
-                // Post-filter the issue list — pre-fix the LLM had to fetch all 200 sprint
-                // issues and grep client-side. Feedback.md §13.
-                val all = result.data.orEmpty()
-                val filtered = all.filter { ticketAssigneeMatches(it, assignee) }
-                val summary = "${filtered.size} of ${all.size} issue(s) in sprint $sprintId assigned to '$assignee'"
-                val content = buildString {
-                    appendLine(summary)
-                    filtered.forEach { appendLine(it.toString()) }
-                }
-                ToolResult(content, summary, TokenEstimator.estimate(content))
+                // current_user_only routes through the service's server-side
+                // assignee=currentUser() filter (the probed Sprint-tab path) — no
+                // client-side string matching. Default false = whole sprint.
+                val currentUserOnly = params["current_user_only"]?.jsonPrimitive?.content?.lowercase() == "true"
+                service.getSprintIssues(sprintId, currentUserOnly).toAgentToolResult()
             }
 
             "get_board_issues" -> {
@@ -1935,14 +1921,6 @@ description optional: for approval dialog on write actions.
         author: String,
     ): Boolean = wl.author.equals(author, ignoreCase = true) ||
         wl.author.contains(author, ignoreCase = true)
-
-    internal fun ticketAssigneeMatches(
-        ticket: com.workflow.orchestrator.core.model.jira.JiraTicketData,
-        assignee: String,
-    ): Boolean {
-        val a = ticket.assignee ?: return false
-        return a.equals(assignee, ignoreCase = true) || a.contains(assignee, ignoreCase = true)
-    }
 
     /** Extract the ticket key from a JiraTicketData — defensive against changing model shape. */
     internal fun extractTicketKey(

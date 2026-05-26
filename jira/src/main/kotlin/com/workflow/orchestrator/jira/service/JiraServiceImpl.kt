@@ -619,7 +619,7 @@ class JiraServiceImpl(private val project: Project) : JiraService {
         }
     }
 
-    override suspend fun getSprintIssues(sprintId: Int): ToolResult<List<JiraTicketData>> {
+    override suspend fun getSprintIssues(sprintId: Int, currentUserOnly: Boolean): ToolResult<List<JiraTicketData>> {
         val api = client ?: return ToolResult(
             data = emptyList(),
             summary = "Jira not configured. Cannot fetch sprint issues.",
@@ -627,7 +627,10 @@ class JiraServiceImpl(private val project: Project) : JiraService {
             hint = "Set up Jira connection in Settings."
         )
 
-        return when (val result = api.getSprintIssues(sprintId, true)) {
+        // allUsers is the inverse of currentUserOnly: when the caller wants only their
+        // own issues, the API client adds the server-side `assignee=currentUser()` JQL
+        // (the probed Sprint-tab path) instead of any client-side string matching.
+        return when (val result = api.getSprintIssues(sprintId, allUsers = !currentUserOnly)) {
             is ApiResult.Success -> {
                 val tickets = result.data.map { it.toTicketData() }
                 ToolResult.success(

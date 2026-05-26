@@ -107,8 +107,12 @@ interface JiraService {
     /** Get boards, optionally filtered by type (scrum/kanban) and name. */
     suspend fun getBoards(type: String? = null, nameFilter: String? = null): ToolResult<List<BoardData>>
 
-    /** Get all issues in a sprint. */
-    suspend fun getSprintIssues(sprintId: Int): ToolResult<List<JiraTicketData>>
+    /**
+     * Get issues in a sprint. When [currentUserOnly] is true the filter is applied
+     * server-side as `assignee=currentUser()` (the same path the Sprint tab uses);
+     * false (default) returns the whole sprint.
+     */
+    suspend fun getSprintIssues(sprintId: Int, currentUserOnly: Boolean = false): ToolResult<List<JiraTicketData>>
 
     /** Get unresolved issues on a board. */
     suspend fun getBoardIssues(boardId: Int): ToolResult<List<JiraTicketData>>

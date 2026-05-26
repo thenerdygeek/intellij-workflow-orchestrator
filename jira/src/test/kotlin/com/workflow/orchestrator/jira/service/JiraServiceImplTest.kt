@@ -342,4 +342,38 @@ class JiraServiceImplTest {
         assertFalse(result.isError)
         assertTrue(result.summary.contains("jdoe"))
     }
+
+    // ── getSprintIssues: current-user filter routes through the probed server-side JQL ──
+
+    @Test
+    fun `getSprintIssues with currentUserOnly true requests server-side assignee=currentUser()`() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody("""{"issues":[]}""")
+        )
+
+        val result = service.getSprintIssues(12345, currentUserOnly = true)
+
+        assertFalse(result.isError)
+        val decoded = java.net.URLDecoder.decode(server.takeRequest().path ?: "", "UTF-8")
+        assertTrue(
+            decoded.contains("assignee=currentUser()"),
+            "currentUserOnly=true must apply the probed Sprint-tab server-side filter; path=$decoded"
+        )
+    }
+
+    @Test
+    fun `getSprintIssues default returns the whole sprint with no current-user filter`() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody("""{"issues":[]}""")
+        )
+
+        val result = service.getSprintIssues(12345)
+
+        assertFalse(result.isError)
+        val decoded = java.net.URLDecoder.decode(server.takeRequest().path ?: "", "UTF-8")
+        assertFalse(
+            decoded.contains("assignee=currentUser()"),
+            "Default (currentUserOnly=false) must not inject a current-user filter; path=$decoded"
+        )
+    }
 }
