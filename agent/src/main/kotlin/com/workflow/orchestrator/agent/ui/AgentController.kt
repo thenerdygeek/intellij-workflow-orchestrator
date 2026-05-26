@@ -3824,7 +3824,10 @@ class AgentController(
         controllerScope.launch(Dispatchers.IO) {
             val resultJson = try {
                 val hrefs = Json.decodeFromString<List<String>>(hrefsJson)
-                val resolver = com.workflow.orchestrator.core.util.SymbolLinkResolver(project)
+                val resolver = com.workflow.orchestrator.agent.link.SymbolLinkResolver(
+                    project,
+                    service.providerRegistry,
+                )
                 val validated = resolver.resolveAll(hrefs).map {
                     ValidatedPathJson(it.input, it.canonicalPath, it.line, it.column)
                 }

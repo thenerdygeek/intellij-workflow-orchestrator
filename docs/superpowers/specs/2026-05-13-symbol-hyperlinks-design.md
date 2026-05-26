@@ -339,11 +339,11 @@ The IDE renders valid links as clickable; invalid or ambiguous ones fall back to
 | Scenario | Behaviour |
 |---|---|
 | FQN not in project | Resolved count 0 → href stripped → plain text |
-| 2+ matches (e.g. same simple name, different packages) | Resolved count 2+ → href stripped → plain text |
+| Ambiguous simple name (same name, different packages) | Resolution prefers the full FQN; the simple-name fallback (used for members and as a last resort) picks the first provider match. |
 | Overloaded method (`#doThing` with 3 overloads) | Picks first overload by PSI order; navigates to its definition |
 | `resolveSymbols` times out (2 s) | Returns `[]` → all symbol hrefs stripped → no broken links shown |
 | PSI not ready (dumb mode / indexing) | `readAction` returns null → treated as not-found |
-| Kotlin top-level functions | V1: `JavaPsiFacade.findClass` returns null → plain text. Extend in v2 via `KotlinTopLevelFunctionFqnNameIndex`. |
+| Kotlin top-level functions (FQN form) | Still unresolved — `findSymbol` has no top-level-function-by-FQN index. A bare name may resolve via `PsiShortNamesCache`. Extend later via `KotlinTopLevelFunctionFqnNameIndex`. |
 | LLM omits `symbol:` prefix | No special handling — plain `[Foo](Foo)` is already handled by `AnchorNode` as a file path, which will fail validation and render as a plain link |
 
 ---
@@ -353,13 +353,19 @@ The IDE renders valid links as clickable; invalid or ambiguous ones fall back to
 | Test file | Coverage |
 |---|---|
 | `agent/webview/src/__tests__/symbol-link-scanner.test.tsx` | collectSymbolAnchors, valid/invalid patch, timeout fallback, dedup |
-| `core/src/test/kotlin/…/core/util/SymbolLinkResolverTest.kt` | class resolution, method resolution, field resolution, not-found returns null, ambiguous skipped |
+| `agent/src/test/kotlin/…/agent/link/SymbolLinkResolverTest.kt` | class resolution, member resolution (simple-class query), class fallback, multi-provider fan-out, not-found returns null |
 
 ---
 
-## Out of Scope (V1)
+## Update — 2026-05-26: language-agnostic resolution + `class:` consolidation
 
-- Kotlin top-level functions (no `#` separator — need separate index)
-- Python / TypeScript symbol resolution
+- `SymbolLinkResolver` moved from `:core` (`core/util`) to `:agent` (`agent/link`) and now resolves through `LanguageProviderRegistry.allProviders()` instead of `JavaPsiFacade` directly. **Python symbols now resolve** (and any future language provider works without changes). It lives in `:agent` because the registry is owned there by `AgentService`.
+- Member links query the **simple** class form (`Foo.member`) because that is the only 2-part shape both `JavaKotlinProvider` (splits on `#`/`.`) and `PythonProvider` (splits on `.`) accept; a full FQN+member is not recognized by either. Misses fall back to the enclosing class.
+- The redundant `class:` scheme is **no longer advertised** to the agent — the system-prompt `OUTPUT FORMATTING` section now lists only `symbol:` for code symbols. `class:` parsing/resolution (`LinkParser` + `ClassLinkResolver`) is **retained for backward compatibility** with already-persisted sessions.
+
+## Out of Scope (still)
+
+- Kotlin top-level functions by FQN (no top-level-function-by-FQN index — needs `KotlinTopLevelFunctionFqnNameIndex`)
+- TypeScript / other non-provider languages (no `LanguageIntelligenceProvider` registered)
 - Auto-detection of class names in plain text (regex approach; user explicitly declined)
-- Disambiguation UI (dropped: LLM must use FQN; ambiguous → plain text)
+- Disambiguation UI (dropped: LLM must use FQN; ambiguous → first match)
