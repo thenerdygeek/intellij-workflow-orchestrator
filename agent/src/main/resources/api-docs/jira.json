@@ -921,7 +921,7 @@
             }
           ],
           "sampleResponse": "[{\"self\":\"https://jira.<redacted>/rest/api/2/user?username=<redacted>\",\"key\":\"<redacted>\",\"name\":\"<redacted>\",\"emailAddress\":\"<redacted>\",\"displayName\":\"<redacted>\",\"active\":true,\"timeZone\":\"Europe/Amsterdam\"}]",
-          "callSite": "JiraApiClient.kt:311",
+          "callSite": "JiraSearchServiceImpl.kt:99",
           "provenance": "probe Result_Jira/bundle.unpacked/raw/issue_assignable.json; 2026-05-06-jira-api-call-site-inventory.md §Transition dialog",
           "gotchas": [
             "Accepts both 'query' and 'username' params unlike generic /user/search (which requires 'username' on DC)"
@@ -951,7 +951,7 @@
             }
           ],
           "sampleResponse": "{\"errorMessages\":[\"The username query parameter was not provided\"],\"errors\":{}}",
-          "callSite": "JiraApiClient.kt:311",
+          "callSite": "JiraSearchServiceImpl.kt:122",
           "provenance": "probe Result_Jira/bundle.unpacked/raw/user_search.json (❌ 400 with query=); 2026-05-06-jira-recommendations.md R-FIX-1",
           "verdict": {
             "classification": "R-FIX-1: DC requires username= param, not query=",
@@ -986,7 +986,7 @@
             }
           ],
           "sampleResponse": "{\"header\":\"Showing 5 of 630 matching groups\",\"total\":630,\"groups\":[{\"name\":\"<redacted>\",\"html\":\"<redacted>\",\"labels\":[]}]}",
-          "callSite": "JiraApiClient.kt:311",
+          "callSite": "JiraSearchServiceImpl.kt:175",
           "provenance": "probe Result_Jira/bundle.unpacked/raw/groups_picker.json; 2026-05-06-jira-api-call-site-inventory.md §Transition dialog"
         }
       ]
@@ -1009,7 +1009,7 @@
               "example": "PROJ"
             }
           ],
-          "callSite": "JiraApiClient.kt:311",
+          "callSite": "JiraSearchServiceImpl.kt:208",
           "provenance": "probe Result_Jira/bundle.unpacked/summary.md (project_versions ✅ 200); 2026-05-06-jira-api-call-site-inventory.md §Transition dialog"
         },
         {
@@ -1027,7 +1027,7 @@
               "example": "PROJ"
             }
           ],
-          "callSite": "JiraApiClient.kt:311",
+          "callSite": "JiraSearchServiceImpl.kt:242",
           "provenance": "probe Result_Jira/bundle.unpacked/summary.md (project_components ✅ 200); 2026-05-06-jira-api-call-site-inventory.md §Transition dialog"
         },
         {
@@ -1086,7 +1086,7 @@
             }
           ],
           "sampleResponse": "{\"token\":\"a\",\"suggestions\":[{\"label\":\"<redacted>\",\"html\":\"<redacted>\"}]}",
-          "callSite": "JiraApiClient.kt:311",
+          "callSite": "JiraSearchServiceImpl.kt:144",
           "provenance": "probe Result_Jira/bundle.unpacked/raw/labels_suggest_internal.json; 2026-05-06-jira-api-call-site-inventory.md §Transition dialog",
           "verdict": {
             "classification": "R-INV: internal endpoint, stable since Jira 7.x but unsupported",

@@ -28,7 +28,7 @@
           "status": "USED",
           "summary": "Current authenticated user identity: login, name, email, groups, externalProvider, global permissions. Used by the plugin for the settings-page identity badge and to gate admin-only hints.",
           "params": [],
-          "sampleResponse": "{\"isLoggedIn\": true, \"login\": \"xoe66936\", \"name\": \"<redacted>\", \"email\": \"<redacted>\", \"local\": false, \"externalProvider\": \"LDAP_default\", \"scmAccounts\": [], \"groups\": [\"sonar-users\"], \"permissions\": {\"global\": []}}",
+          "sampleResponse": "{\"isLoggedIn\": true, \"login\": \"<redacted>\", \"name\": \"<redacted>\", \"email\": \"<redacted>\", \"local\": false, \"externalProvider\": \"LDAP_default\", \"scmAccounts\": [], \"groups\": [\"sonar-users\"], \"permissions\": {\"global\": []}}",
           "callSite": "SonarApiClient.kt:431",
           "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/users_current.json; bundle-sweeep-compresesd-v2.unpacked/summary.md feature-endpoints row; SonarApiClient.kt:431-434; 2026-05-07-sonar-audit-recommendations.md §2",
           "gotchas": [

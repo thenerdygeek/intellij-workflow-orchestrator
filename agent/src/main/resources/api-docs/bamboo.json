@@ -851,7 +851,7 @@
               "example": "no-check"
             }
           ],
-          "callSite": "BambooApiClient.kt:362",
+          "callSite": "BambooApiClient.kt:363",
           "provenance": "BambooApiClient.kt line 362 `stopBuild()` → PUT /rest/api/latest/result/{resultKey}/stop; 2026-05-07-bamboo-write-ops-audit.md §write-inventory PUT /rest/api/latest/result/{resultKey}/stop",
           "gotchas": [
             "Only works on BUILDING builds — use DELETE /queue/{key} for queued builds instead.",

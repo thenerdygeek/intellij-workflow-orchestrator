@@ -264,32 +264,6 @@
       ]
     },
     {
-      "name": "Auth and Token Formats",
-      "endpoints": [
-        {
-          "method": "N/A",
-          "pathTemplate": "Authorization: token <TOKEN>",
-          "status": "KNOWN_UNUSED",
-          "summary": "Auth scheme reference: all Sourcegraph endpoints use 'Authorization: token <TOKEN>' — the literal word 'token', NOT 'Bearer'. Three token formats exist; v3 is current, v1 and v2 are deprecated.",
-          "params": [],
-          "sampleResponse": null,
-          "callSite": null,
-          "provenance": "AuthInterceptor.kt:24 (AuthScheme.TOKEN -> 'token $token'), SourcegraphChatClient.kt:129 (addInterceptor(AuthInterceptor(tokenProvider, AuthScheme.TOKEN))), SourcegraphCompletionsStreamClient.kt:84 (same), ModelCatalogService.kt:74 (same), research/2026-04-08-sourcegraph-api-surfaces.md Surface 1 Auth section + Surface 2 Auth section (both confirm 'token' prefix)",
-          "verdict": {
-            "classification": "R-REF: auth scheme reference entry — not an HTTP endpoint",
-            "reasoning": "Captured as a category entry so the token-vs-Bearer distinction is visible to any LLM reading this file. The wrong prefix (Bearer) would cause 401s on all endpoints."
-          },
-          "gotchas": [
-            "Token v3 format: sgp_(?:[a-fA-F0-9]{16}|local)_[a-fA-F0-9]{40}. This is the current format.",
-            "Token v2 format: sgp_[a-fA-F0-9]{40}. Deprecated — still accepted by the server but new tokens are v3.",
-            "Token v1 format: [a-fA-F0-9]{40} (bare hex, no sgp_ prefix). Deprecated.",
-            "All three clients (SourcegraphChatClient, SourcegraphCompletionsStreamClient, ModelCatalogService) inject auth via AuthInterceptor(tokenProvider, AuthScheme.TOKEN) which emits 'Authorization: token <value>'. Never set this header manually in request builders — the interceptor owns it.",
-            "Sourcegraph isolation policy: all three clients construct their own OkHttpClient (no HttpClientFactory.clientFor(SOURCEGRAPH)). Shared connection pool and CachingInterceptor are forbidden on Sourcegraph endpoints."
-          ]
-        }
-      ]
-    },
-    {
       "name": "Legacy GraphQL (Surface 2)",
       "endpoints": [
         {
