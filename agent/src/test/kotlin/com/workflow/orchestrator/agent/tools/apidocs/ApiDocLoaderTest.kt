@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.tools.apidocs
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -28,5 +29,10 @@ class ApiDocLoaderTest {
         assertEquals("demo", family.id)
         assertEquals(1, family.categories.size)
         assertEquals(ApiEndpointStatus.USED, family.categories[0].endpoints[0].status)
+    }
+
+    @Test
+    fun `parse throws on malformed JSON (the contract loadFamily's catch relies on)`() {
+        assertThrows(Exception::class.java) { ApiDocLoader.parse("{ not valid json }") }
     }
 }

@@ -79,7 +79,9 @@ class ApiDocsEditor(
             ApiDocPayloadBuilder.buildJson()
         } catch (e: Exception) {
             LOG.warn("ApiDocsEditor: failed to build payload", e)
-            """{"families":[],"loadErrors":[{"id":"all","error":"Failed to build payload: ${e.message}"}]}"""
+            // JSON-escape the message so a `"`/`\` in e.message can't malform the payload
+            // (matches ToolDocsEditor.jsonString — agent-ui error-payload safety).
+            """{"families":[],"loadErrors":[{"id":"all","error":${jsonString("Failed to build payload: ${e.message}")}}]}"""
         }
         val isDark = UIUtil.isUnderDarcula()
         val themeObj = themeVarsJs(isDark)
@@ -117,6 +119,9 @@ class ApiDocsEditor(
         return vars.entries.joinToString(",") { (k, v) -> "'$k':'$v'" }
     }
 
+    private fun jsonString(s: String): String =
+        "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""
+
     override fun getComponent(): JComponent = browser.component
     override fun getPreferredFocusedComponent(): JComponent = browser.component
     override fun getName() = "API Docs"
@@ -128,6 +133,8 @@ class ApiDocsEditor(
     override fun getFile(): VirtualFile = docsFile
 
     override fun dispose() {
+        // Explicit removal — browser.dispose() does not cascade-remove handlers added via
+        // addLoadHandler(handler, cefBrowser) (agent-ui:F-7, same as ToolDocsEditor).
         browser.jbCefClient.removeLoadHandler(loadHandler, browser.cefBrowser)
         browser.dispose()
     }
