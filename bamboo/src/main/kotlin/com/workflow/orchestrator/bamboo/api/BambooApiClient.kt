@@ -271,11 +271,16 @@ class BambooApiClient(
     }
 
     suspend fun getRunningAndQueuedBuilds(planKey: String): ApiResult<List<BambooResultDto>> {
+        // includeAllStates=true is required so non-finished builds appear at all. The cap is
+        // applied by the server BEFORE we filter, so it must be large enough that live builds
+        // can't be pushed out of the window by recently-finished ones (was 5 → silently reported
+        // "none running"). Filter by EXCLUDING terminal states rather than an inclusion allowlist
+        // so any live state Bamboo reports (InProgress/Queued/Pending/…) is caught.
         return get<BambooBuildStatusResponse>(
-            "/rest/api/latest/result/$planKey?includeAllStates=true&max-results=5&expand=stages.stage.results.result"
+            "/rest/api/latest/result/$planKey?includeAllStates=true&max-results=25&expand=stages.stage.results.result"
         ).map { response ->
             response.results.result.filter { dto ->
-                dto.lifeCycleState in listOf("InProgress", "Queued", "Pending")
+                dto.lifeCycleState !in TERMINAL_LIFECYCLE_STATES
             }
         }
     }
@@ -682,5 +687,8 @@ class BambooApiClient(
          * [PlanDetectionService.resolveBranchKeyOrNull] so the two code paths stay in lockstep.
          */
         internal val BRANCH_PLAN_KEY_REGEX = Regex("^.+-.+-\\d+$")
+
+        /** Bamboo build lifeCycleStates that are NOT live — used to filter running/queued builds. */
+        internal val TERMINAL_LIFECYCLE_STATES = setOf("Finished", "NotBuilt")
     }
 }

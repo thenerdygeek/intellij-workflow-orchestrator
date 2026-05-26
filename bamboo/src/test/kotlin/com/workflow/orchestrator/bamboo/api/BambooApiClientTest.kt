@@ -262,6 +262,33 @@ class BambooApiClientTest {
     }
 
     @Test
+    fun `getRunningAndQueuedBuilds excludes terminal states and keeps all live states`() = runTest {
+        // Filter by EXCLUDING terminal states (Finished/NotBuilt), not an inclusion allowlist,
+        // and request a larger window so a live build can't be truncated out by finished ones.
+        server.enqueue(
+            MockResponse().setBody(
+                """{"results":{"result":[
+                    {"lifeCycleState":"Finished","buildResultKey":"PROJ-AUTO-1"},
+                    {"lifeCycleState":"InProgress","buildResultKey":"PROJ-AUTO-2"},
+                    {"lifeCycleState":"NotBuilt","buildResultKey":"PROJ-AUTO-3"},
+                    {"lifeCycleState":"Queued","buildResultKey":"PROJ-AUTO-4"},
+                    {"lifeCycleState":"Pending","buildResultKey":"PROJ-AUTO-5"}
+                ]}}"""
+            )
+        )
+
+        val result = client.getRunningAndQueuedBuilds("PROJ-AUTO")
+
+        assertTrue(result.isSuccess)
+        val states = (result as ApiResult.Success).data.map { it.lifeCycleState }
+        assertEquals(listOf("InProgress", "Queued", "Pending"), states,
+            "Finished + NotBuilt excluded; every other (live) state kept")
+        val recorded = server.takeRequest()
+        assertTrue(recorded.path!!.contains("max-results=25"),
+            "cap must be wide enough that live builds aren't truncated out; path=${recorded.path}")
+    }
+
+    @Test
     fun `getBuildVariables returns variable map from build result`() = runTest {
         server.enqueue(MockResponse().setBody(fixture("build-variables.json")))
 
