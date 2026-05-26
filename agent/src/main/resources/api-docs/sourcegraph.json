@@ -1,0 +1,318 @@
+{
+  "id": "sourcegraph",
+  "displayName": "Sourcegraph",
+  "authScheme": "Authorization: token <TOKEN>",
+  "probedServerVersion": "Sourcegraph Enterprise (probed 2026-04-08; streaming lab probed 2026-05-05 on anthropic::2024-10-22::claude-sonnet-4-5-latest)",
+  "description": "Sourcegraph Enterprise LLM and model-catalog HTTP surfaces used by the plugin. Two distinct wire shapes: (1) OpenAI-compatible REST at /.api/llm/* for text-only agent turns; (2) Cody-shape SSE at /.api/completions/stream for image-bearing turns. Additional catalog endpoints (/.api/modelconfig/supported-models.json, /.api/client-config) drive per-model context-window sizing and api-version negotiation. Auth is always 'Authorization: token <TOKEN>' — not Bearer. All clients are constructed in isolation (no HttpClientFactory shared pool) per project_sourcegraph_isolation.md.",
+  "categories": [
+    {
+      "name": "Chat Completions",
+      "endpoints": [
+        {
+          "method": "POST",
+          "pathTemplate": "/.api/llm/chat/completions",
+          "status": "USED",
+          "summary": "OpenAI-compatible streaming and non-streaming chat completions. Used for all text-only agent turns (BrainRouter routes text-only here; image-bearing turns route to /.api/completions/stream instead). As of 2026-05-13 XML-in-content migration, tools are NOT sent as a request parameter — tool definitions live in the system prompt only, and the LLM emits tool calls as XML in assistant text content.",
+          "params": [
+            {
+              "name": "Authorization",
+              "location": "HEADER",
+              "type": "string",
+              "required": true,
+              "description": "Sourcegraph token auth. Literal prefix 'token' (not Bearer). Emitted automatically by AuthInterceptor(AuthScheme.TOKEN).",
+              "example": "token sgp_xxxx_yyyyyyyy"
+            }
+          ],
+          "requestBody": "ChatCompletionRequest JSON: {model (required, format provider::apiVersion::modelId), messages (OpenAI-compatible, system role remapped to user with <system_instructions> tags by MessageSanitizer), max_tokens (optional; MANDATORY for thinking models — omitting causes HTTP 500), temperature (default 0.0), stream (boolean), stream_options: {include_usage: true} when streaming}. NOTE: tools field is always null in production (XML-in-content migration 2026-05-13). tool_choice is NOT sent (unsupported by API). Consecutive same-role messages are merged by MessageSanitizer before sending.",
+          "sampleResponse": "data: {\"id\":\"chat-5962e626\",\"object\":\"chat.completion.chunk\",\"created\":1775726642,\"model\":\"\",\"choices\":[{\"delta\":{\"content\":\"\",\"tool_calls\":[{\"index\":0,\"id\":\"toolu_vrtx_01SP5neyz6\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"\"}}],\"role\":\"assistant\"},\"finish_reason\":\"\",\"index\":0}]}\ndata: {\"id\":\"chat-941ad2c3\",\"object\":\"chat.completion.chunk\",\"created\":1775726642,\"model\":\"\",\"choices\":[{\"delta\":{\"content\":\"\",\"tool_calls\":[{\"index\":0,\"id\":\"\",\"type\":\"function\",\"function\":{\"name\":\"\",\"arguments\":\"{\\\"path\\\": \\\"src/main/kotlin/Foo.kt\\\"}\"}}],\"role\":\"assistant\"},\"finish_reason\":\"\",\"index\":0}]}\ndata: {\"id\":\"chat-37336d2e\",\"object\":\"chat.completion.chunk\",\"created\":1775726643,\"model\":\"\",\"choices\":[{\"delta\":{\"content\":\"\",\"role\":\"assistant\"},\"finish_reason\":\"tool_calls\",\"index\":0}],\"usage\":{\"completion_tokens\":62,\"prompt_tokens\":748,\"total_tokens\":810,\"credits\":1}}",
+          "callSite": "SourcegraphChatClient.kt:254 (sendMessageStream), SourcegraphChatClient.kt:465 (sendMessage)",
+          "provenance": "SourcegraphChatClient.kt:79 (CHAT_COMPLETIONS_PATH constant), SourcegraphChatClient.kt:36-50 (KDoc), raw_sse/text_only_A.txt + single_tool_A.txt (streaming lab), research/2026-04-08-sourcegraph-api-surfaces.md Surface 1",
+          "verdict": {
+            "classification": "R-CORE: primary LLM inference endpoint for all text-only agent turns",
+            "reasoning": "All non-image agent turns go through this endpoint via OpenAiCompatBrain. Post 2026-05-13 migration tools are XML-in-system-prompt; native tool_calls frames are still emitted by the server (probe confirmed) but are no longer requested and are parsed by AssistantMessageParser from raw SSE text."
+          },
+          "gotchas": [
+            "Auth prefix is 'token' (not 'Bearer'). AuthInterceptor(AuthScheme.TOKEN) emits 'Authorization: token <value>' — confirmed in AuthInterceptor.kt:24.",
+            "model field uses triple-colon format: provider::apiVersion::modelId (e.g. anthropic::2024-10-22::claude-sonnet-4-5-latest). Confirmed in streaming_lab_results.json and ModelInfo.kt KDoc.",
+            "max_tokens is MANDATORY for thinking models — omitting causes HTTP 500. Limit varies per model; probe confirmed 8K/16K/100K accepted. Agent sends up to 64K successfully.",
+            "tool_choice is NOT supported by the Sourcegraph API. The field is accepted for interface compatibility in sendMessage() but is always set to null before serialization (SourcegraphChatClient.kt:459 toolChoice=null).",
+            "tools field is always null on the wire since XML-in-content migration 2026-05-13. Tool definitions live in system prompt only. Native tool_calls SSE delta frames are still emitted by the server if tools were declared, but the plugin never declares them.",
+            "stream: true uses SSE on the same endpoint. Sourcegraph's spec labels stream as 'Unsupported' but it works in practice (confirmed probe + research/2026-04-08-sourcegraph-api-surfaces.md).",
+            "response object field value is the literal string 'object' (not 'chat.completion' like upstream OpenAI). Confirmed in SourcegraphChatClient.kt:48.",
+            "tool role messages are not in the Sourcegraph spec. MessageSanitizer remaps tool-role turns to user with plain-text prefix 'RESULT of {toolName}:' before sending.",
+            "system role is not supported. MessageSanitizer converts system messages to user with <system_instructions> wrapper.",
+            "Sourcegraph Cody Gateway may emit a mid-stream 'context deadline exceeded' error frame on HTTP 200 when upstream times out. GatewayErrorDetector detects this; SourcegraphChatClient sets finishReason='upstream_timeout'.",
+            "HTTP/2 RST_STREAM (CANCEL) errors occur with corporate proxies and Sourcegraph gateway timeouts. Plugin forces HTTP/1.1 via protocols(listOf(Protocol.HTTP_1_1)).",
+            "Partial XML tool call without gateway frame (truncation) is also promoted to upstream_timeout and triggers AgentLoop's retry+smaller-chunks recovery.",
+            "Force HTTP/1.1: both SourcegraphChatClient and SourcegraphCompletionsStreamClient set .protocols(listOf(Protocol.HTTP_1_1)) to avoid RST_STREAM errors.",
+            "SSE usage chunk is emitted in the FINAL delta frame (the one carrying finish_reason). Probe confirmed: saw_usage_chunk=true on all scenarios in streaming_lab_results.json.",
+            "Rate-limit headers parsed in priority order: retry-after > x-ratelimit-reset > ratelimit-reset. Handles both delta-seconds and Unix timestamp formats (SourcegraphChatClient.kt:581-595)."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Models",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/.api/llm/models",
+          "status": "USED",
+          "summary": "List all available LLM models on the Sourcegraph instance. Used by ModelCache to resolve the best available model at session start (priority: Anthropic Opus thinking > Opus > Sonnet). Result cached for 24 hours (TTL_MS in ModelCache).",
+          "params": [
+            {
+              "name": "Authorization",
+              "location": "HEADER",
+              "type": "string",
+              "required": true,
+              "description": "Sourcegraph token auth. Same scheme as chat/completions.",
+              "example": "token sgp_xxxx_yyyyyyyy"
+            }
+          ],
+          "sampleResponse": "{\"data\":[{\"id\":\"anthropic::2024-10-22::claude-sonnet-4-5-latest\",\"owned_by\":\"anthropic\",\"created\":1747699200},{\"id\":\"anthropic::2024-10-22::claude-opus-4-5-20250514\",\"owned_by\":\"anthropic\",\"created\":1747785600}]}",
+          "callSite": "SourcegraphChatClient.kt:153 (listModels), ModelCache.kt:48 (fetchModels calls client.listModels())",
+          "provenance": "SourcegraphChatClient.kt:83 (MODELS_PATH constant), SourcegraphChatClient.kt:151-179 (listModels impl), ModelCache.kt:22-58, ModelModels.kt:9-12 (ListModelsResponse DTO), research/2026-04-08-sourcegraph-api-surfaces.md Surface 1 table",
+          "verdict": {
+            "classification": "R-CORE: model discovery endpoint used at session start",
+            "reasoning": "ModelCache.fetchModels calls this on first use (force=false) with a 24h TTL. Result drives ModelCache.pickBest() which picks the orchestrator model for the agent session. ModelInfo.id follows provider::apiVersion::modelId triple-colon format."
+          },
+          "gotchas": [
+            "Response shape is OpenAI ListModels: {data: [{id, owned_by, created}]}. ModelInfo extracts provider via substringBefore('::') and modelName via substringAfterLast('::').",
+            "ModelCache is a process-wide singleton (object). TTL is 24 hours. Call with force=true to bypass cache (e.g. Settings 'Refresh' button).",
+            "ModelCache.pickBest() preference order: Anthropic Opus thinking > Opus (any) > Sonnet (any) > any Anthropic > any. No hardcoded model IDs — selection is purely by tier heuristics on the live list.",
+            "On fetch failure, ModelCache returns cached models (possibly empty list) and logs a warn. Empty cached list means no model is selected and the agent cannot start."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/.api/llm/models/{modelId}",
+          "status": "PROBED_UNUSED",
+          "summary": "Retrieve a single model by ID. Documented in the Sourcegraph OpenAPI spec (LLMService_retrieveModel) but not called by the plugin. Per-model metadata is obtained from /.api/modelconfig/supported-models.json instead.",
+          "params": [
+            {
+              "name": "modelId",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Full model ID in provider::apiVersion::modelId format.",
+              "example": "anthropic::2024-10-22::claude-sonnet-4-5-latest"
+            }
+          ],
+          "sampleResponse": null,
+          "callSite": null,
+          "provenance": "research/2026-04-08-sourcegraph-api-surfaces.md Surface 1 table (LLMService_retrieveModel operation ID)",
+          "verdict": {
+            "classification": "R-INV: documented in OpenAPI spec, not called by plugin",
+            "reasoning": "The plugin resolves per-model context windows and capabilities from /.api/modelconfig/supported-models.json (ModelCatalogService) rather than individual model GETs. This endpoint could be used for on-demand capability checks but is not needed today."
+          },
+          "gotchas": [
+            "modelId in the path must be URL-encoded if it contains '::' separators."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Streaming Completions (Cody-Shape)",
+      "endpoints": [
+        {
+          "method": "POST",
+          "pathTemplate": "/.api/completions/stream",
+          "status": "USED",
+          "summary": "Cody-shape SSE streaming endpoint for image-bearing turns. Used by SourcegraphCompletionsStreamClient when BrainRouter detects any image content part in the message list. Distinct wire format from /.api/llm/chat/completions: uses 'speaker' instead of 'role', 'maxTokensToSample' instead of 'max_tokens', and returns SSE frames with 'deltaText' or 'completion' fields. The api-version query parameter is negotiated from /.api/client-config at runtime (default 8).",
+          "params": [
+            {
+              "name": "api-version",
+              "location": "QUERY",
+              "type": "integer",
+              "required": true,
+              "description": "SSE frame shape version. Read from ModelCatalogService.getLatestStreamApiVersion() which reads latestSupportedCompletionsStreamAPIVersion from /.api/client-config. Default 8 (lowest version accepting image_url content parts). api-version >= 2 emits incremental deltaText; api-version 1 emits cumulative completion fields.",
+              "example": "9"
+            },
+            {
+              "name": "Authorization",
+              "location": "HEADER",
+              "type": "string",
+              "required": true,
+              "description": "Same token auth as other endpoints.",
+              "example": "token sgp_xxxx_yyyyyyyy"
+            },
+            {
+              "name": "Accept",
+              "location": "HEADER",
+              "type": "string",
+              "required": true,
+              "description": "Must be text/event-stream to receive SSE response.",
+              "example": "text/event-stream"
+            }
+          ],
+          "requestBody": "CompletionStreamRequest JSON: {model (required, triple-colon format), messages: [{speaker: 'human'|'assistant'|'system', content: [{type:'text',text:'...'} | {type:'image_url',image_url:{url:'data:image/png;base64,...'}}]}], maxTokensToSample (required), temperature (default 0.0), stream: true, topK: -1, topP: -1, tools: null (XML-in-content migration — tool defs are in system prompt, not on wire)}. NOTE: 'speaker' NOT 'role'. stray tool-role turns are coerced to 'human' by BrainRouter because this endpoint only accepts human/assistant/system.",
+          "sampleResponse": "event: completion\ndata: {\"deltaText\":\"Hello\",\"stopReason\":null}\nevent: completion\ndata: {\"deltaText\":\" world\",\"stopReason\":null}\nevent: completion\ndata: {\"deltaText\":\"\",\"stopReason\":\"end_turn\"}\nevent: done\ndata: {}",
+          "callSite": "SourcegraphCompletionsStreamClient.kt:117 (chat method, builds URL with STREAM_PATH + ?api-version=N), SourcegraphCompletionsStreamClient.kt:195 (STREAM_PATH constant)",
+          "provenance": "SourcegraphCompletionsStreamClient.kt:29-58 (class KDoc), SourcegraphCompletionsStreamClient.kt:117-191 (chat impl), CompletionStreamDtos.kt:26-47 (CompletionStreamRequest), CompletionStreamDtos.kt:50-57 (StreamMessage with speaker field), research/2026-04-08-sourcegraph-api-surfaces.md Surface 2 (legacy SSE endpoint, independently confirms speaker lowercase + token auth)",
+          "verdict": {
+            "classification": "R-CORE: multimodal path; used for all image-bearing turns since Phase 6 (2026-05-05)",
+            "reasoning": "BrainRouter.routeImageBearingTurn() uses this client when messages.any { it.hasImageParts() }. Post format_lab 2026-05-05 probe confirming tools on api-version=9, this client also forwarded tools; they were removed again in the 2026-05-13 XML-in-content migration."
+          },
+          "gotchas": [
+            "Wire format uses 'speaker' (not 'role') and 'maxTokensToSample' (not 'max_tokens'). Sending OpenAI-shaped fields to this endpoint will be silently ignored or cause errors.",
+            "Only three speaker values are accepted: 'human', 'assistant', 'system'. Tool-role messages must be coerced to 'human' (BrainRouter does this, preserving tool name in text body).",
+            "api-version >= 2 emits incremental deltaText frames; api-version 1 emits cumulative 'completion' field (callers must REPLACE, not append). CodyStreamSseParser handles both shapes.",
+            "End-of-stream is signaled by the FIRST of: 'event: done', 'data: [DONE]', or EOF. No [DONE] sentinel was observed in lab probes (saw_done_sentinel: false in streaming_lab_results.json).",
+            "Gateway in-band rejection is signaled via 'event: error' on HTTP 200 (not HTTP 4xx). BrainRouter renders this as a user-visible assistant bubble rather than a network error.",
+            "Unsupported image formats (HEIC, HEIF, BMP, TIFF, AVIF, SVG) result in an 'event: error' frame. BrainRouter surfaces: 'Sourcegraph rejected this attachment: ... Supported: PNG, JPEG, WebP.'",
+            "delta_tool_calls SSE frames are dropped by CodyStreamSseParser since XML-in-content migration 2026-05-13 (SourcegraphCompletionsStreamClient.kt:178).",
+            "The client is Sourcegraph-isolated: separate OkHttpClient, no shared connection pool, no CachingInterceptor (per project_sourcegraph_isolation.md).",
+            "Legacy speaker casing quirk: GraphQL completions use uppercase 'HUMAN'/'ASSISTANT', but the SSE endpoint requires lowercase 'human'/'assistant'. Only the SSE path is used by this plugin."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Model Catalog",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/.api/modelconfig/supported-models.json",
+          "status": "USED",
+          "summary": "Full model catalog with per-model context windows, capabilities, tier overrides, and status. Used by ModelCatalogService to replace hard-coded 150K context assumptions with live, per-model values. Results cached for 1 hour. Drives vision capability detection, context-window sizing, and model status badge display in the model picker.",
+          "params": [
+            {
+              "name": "Authorization",
+              "location": "HEADER",
+              "type": "string",
+              "required": true,
+              "description": "Sourcegraph token auth.",
+              "example": "token sgp_xxxx_yyyyyyyy"
+            }
+          ],
+          "sampleResponse": "{\"schemaVersion\":\"1.0\",\"revision\":\"...\",\"providers\":[{\"id\":\"anthropic\",\"displayName\":\"Anthropic\"}],\"models\":[{\"modelRef\":\"anthropic::2024-10-22::claude-sonnet-4-5-latest\",\"displayName\":\"Claude Sonnet 4.5\",\"modelName\":\"claude-sonnet-4-5-latest\",\"capabilities\":[\"chat\",\"tools\",\"vision\"],\"category\":\"balanced\",\"status\":\"stable\",\"tier\":\"enterprise\",\"contextWindow\":{\"maxInputTokens\":45000,\"maxOutputTokens\":16000},\"modelConfigAllTiers\":{\"enterprise\":{\"contextWindow\":{\"maxInputTokens\":132000,\"maxOutputTokens\":16000}}}}],\"defaultModels\":{\"chat\":\"anthropic::2024-10-22::claude-sonnet-4-5-latest\"}}",
+          "callSite": "ModelCatalogService.kt:152 (fetchCatalogFromGateway, URL built with CATALOG_PATH constant at line 195)",
+          "provenance": "ModelCatalogService.kt:195 (CATALOG_PATH constant), ModelCatalogService.kt:145-168 (fetchCatalogFromGateway impl), ModelCatalogDtos.kt:14-67 (ModelCatalog + Model + ContextWindow + TierOverride DTOs), ModelCatalogService.kt:26-47 (class KDoc)",
+          "verdict": {
+            "classification": "R-CORE: live model capability source; replaces all hard-coded model assumptions",
+            "reasoning": "getContextWindow(modelRef, tier='enterprise') reads modelConfigAllTiers first (real value) then falls back to top-level contextWindow. Top-level is often a misleading minimum (e.g. 45K); per-tier override is the actual limit (e.g. enterprise 132K non-thinking). supportsVision() and supportsTools() also read from this catalog."
+          },
+          "gotchas": [
+            "Top-level contextWindow.maxInputTokens is often a low minimum (e.g. 45K). The REAL per-tier cap is in modelConfigAllTiers['enterprise'].contextWindow.maxInputTokens (e.g. 132K). Always read the per-tier value first.",
+            "TTL is 1 hour. Call getCatalog(force=true) to bypass (e.g. Settings 'Refresh capabilities' button).",
+            "modelConfigAllTiers is nullable — models without tier overrides use top-level contextWindow.",
+            "SharedCatalogHolder keys the catalog by sgUrl only; the tokenProvider half of the original cache key was removed (F-P6FU-2). One catalog instance per Sourcegraph base URL."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/.api/client-config",
+          "status": "USED",
+          "summary": "Sourcegraph instance feature flags and the latest supported completions stream API version. The latestSupportedCompletionsStreamAPIVersion field is used by ModelCatalogService.getLatestStreamApiVersion() to set the ?api-version=N query parameter on /.api/completions/stream calls. Results cached for 1 hour.",
+          "params": [
+            {
+              "name": "Authorization",
+              "location": "HEADER",
+              "type": "string",
+              "required": true,
+              "description": "Sourcegraph token auth.",
+              "example": "token sgp_xxxx_yyyyyyyy"
+            }
+          ],
+          "sampleResponse": "{\"codyEnabled\":true,\"chatEnabled\":true,\"autoCompleteEnabled\":true,\"customCommandsEnabled\":true,\"attributionEnabled\":false,\"smartContextWindowEnabled\":true,\"modelsAPIEnabled\":true,\"latestSupportedCompletionsStreamAPIVersion\":9}",
+          "callSite": "ModelCatalogService.kt:171 (fetchClientConfigFromGateway, URL built with CLIENT_CONFIG_PATH constant at line 197)",
+          "provenance": "ModelCatalogService.kt:197 (CLIENT_CONFIG_PATH constant), ModelCatalogService.kt:170-191 (fetchClientConfigFromGateway impl), ModelCatalogService.kt:131-133 (getLatestStreamApiVersion, default 8), ClientConfigDto.kt:14-24 (ClientConfig DTO)",
+          "verdict": {
+            "classification": "R-CORE: api-version negotiation for image streaming path",
+            "reasoning": "getLatestStreamApiVersion() defaults to 8 (DEFAULT_STREAM_API_VERSION) when client-config has not been loaded. v8 is the minimum version accepting image_url content parts. The value is appended as ?api-version=N to every /.api/completions/stream call."
+          },
+          "gotchas": [
+            "Default is 8 (not 9) when client-config fetch fails or has not run. v8 accepts image_url parts but may not support all streaming features of v9.",
+            "Both getCatalog and getClientConfig share the same 1-hour TTL and Mutex. refresh() fetches them in parallel via coroutineScope+async.",
+            "Plugin only reads latestSupportedCompletionsStreamAPIVersion from this response. All other flags (codyEnabled, chatEnabled, etc.) are fetched but not currently acted upon."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Code Context",
+      "endpoints": [
+        {
+          "method": "POST",
+          "pathTemplate": "/.api/cody/context",
+          "status": "PROBED_UNUSED",
+          "summary": "Repo-aware semantic code context retrieval. Returns ranked FileChunkContext results from the specified repositories for a natural-language query. Documented in the Sourcegraph OpenAPI spec (CodyService_context). Not called by the plugin today — the agent uses IDE-native search tools (search_code, find_references, etc.) for context gathering.",
+          "params": [
+            {
+              "name": "Authorization",
+              "location": "HEADER",
+              "type": "string",
+              "required": true,
+              "description": "Sourcegraph token auth.",
+              "example": "token sgp_xxxx_yyyyyyyy"
+            }
+          ],
+          "requestBody": "CodyContextRequest JSON: {query (required, natural-language), repos: [{name: string}] (RepoSpec array), codeResultsCount (0-100, default 15), textResultsCount (0-100, default 5), filePatterns: [glob], version: '1.0'|'2.0' (default '1.0')}",
+          "sampleResponse": null,
+          "callSite": null,
+          "provenance": "research/2026-04-08-sourcegraph-api-surfaces.md Surface 1 table (CodyService_context operation ID) + Cody Context request/response schema section",
+          "verdict": {
+            "classification": "R-INV: documented, not adopted — could power future @repo mention feature",
+            "reasoning": "The research doc explicitly notes this as a direct HTTP endpoint the agent could call for @repo mention features without going through the Cody JSON-RPC agent. Currently the plugin relies on IDE-native PSI + search tools instead."
+          },
+          "gotchas": [
+            "Response is results[] of FileChunkContext {blob (BlobInfo), startLine, endLine, chunkContent} with associated RepositoryInfo and CommitInfo.",
+            "RepoSpec.name must be the fully-qualified Sourcegraph repo name (e.g. github.com/org/repo), not a bare repo name.",
+            "version '2.0' may return richer metadata; '1.0' is the default and more widely supported."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Auth and Token Formats",
+      "endpoints": [
+        {
+          "method": "N/A",
+          "pathTemplate": "Authorization: token <TOKEN>",
+          "status": "KNOWN_UNUSED",
+          "summary": "Auth scheme reference: all Sourcegraph endpoints use 'Authorization: token <TOKEN>' — the literal word 'token', NOT 'Bearer'. Three token formats exist; v3 is current, v1 and v2 are deprecated.",
+          "params": [],
+          "sampleResponse": null,
+          "callSite": null,
+          "provenance": "AuthInterceptor.kt:24 (AuthScheme.TOKEN -> 'token $token'), SourcegraphChatClient.kt:129 (addInterceptor(AuthInterceptor(tokenProvider, AuthScheme.TOKEN))), SourcegraphCompletionsStreamClient.kt:84 (same), ModelCatalogService.kt:74 (same), research/2026-04-08-sourcegraph-api-surfaces.md Surface 1 Auth section + Surface 2 Auth section (both confirm 'token' prefix)",
+          "verdict": {
+            "classification": "R-REF: auth scheme reference entry — not an HTTP endpoint",
+            "reasoning": "Captured as a category entry so the token-vs-Bearer distinction is visible to any LLM reading this file. The wrong prefix (Bearer) would cause 401s on all endpoints."
+          },
+          "gotchas": [
+            "Token v3 format: sgp_(?:[a-fA-F0-9]{16}|local)_[a-fA-F0-9]{40}. This is the current format.",
+            "Token v2 format: sgp_[a-fA-F0-9]{40}. Deprecated — still accepted by the server but new tokens are v3.",
+            "Token v1 format: [a-fA-F0-9]{40} (bare hex, no sgp_ prefix). Deprecated.",
+            "All three clients (SourcegraphChatClient, SourcegraphCompletionsStreamClient, ModelCatalogService) inject auth via AuthInterceptor(tokenProvider, AuthScheme.TOKEN) which emits 'Authorization: token <value>'. Never set this header manually in request builders — the interceptor owns it.",
+            "Sourcegraph isolation policy: all three clients construct their own OkHttpClient (no HttpClientFactory.clientFor(SOURCEGRAPH)). Shared connection pool and CachingInterceptor are forbidden on Sourcegraph endpoints."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Legacy GraphQL (Surface 2)",
+      "endpoints": [
+        {
+          "method": "POST",
+          "pathTemplate": "/.api/graphql",
+          "status": "KNOWN_UNUSED",
+          "summary": "Legacy Sourcegraph GraphQL completions endpoint (GetCompletions query). Uses uppercase speaker values (HUMAN/ASSISTANT) and returns a single non-streamed string in data.completions. Marked EXPERIMENTAL in the llmsp README. Not used by the plugin — the plugin targets the modern OpenAI-compatible REST surface only.",
+          "params": [],
+          "requestBody": "GraphQL query: {query: 'GetCompletions', variables: {messages: [{speaker: 'HUMAN'|'ASSISTANT', text: string}], temperature: Float, maxTokensToSample: Int, topK: Int, topP: Int}}. NOTE uppercase speaker, unlike the SSE endpoint.",
+          "sampleResponse": null,
+          "callSite": null,
+          "provenance": "research/2026-04-08-sourcegraph-api-surfaces.md Surface 2 — GraphQL completions section",
+          "verdict": {
+            "classification": "R-LEGACY: experimental/unsupported surface, not used",
+            "reasoning": "Surface 2 (llmsp) is marked EXPERIMENTAL with 'API may change at any point'. The plugin targets Surface 1 (OpenAI-compatible REST) exclusively. The GraphQL completions endpoint and its uppercase speaker values are documented here only for historical reference."
+          },
+          "gotchas": [
+            "Speaker casing is UPPERCASE for GraphQL (HUMAN/ASSISTANT) but lowercase for the SSE endpoint (human/assistant). This is a documented Sourcegraph-side quirk, not an llmsp bug.",
+            "Response is a single non-streamed string in data.completions — no SSE, no streaming.",
+            "This endpoint is on the same /.api/ path prefix as the modern API but is a completely different protocol (GraphQL vs REST)."
+          ]
+        }
+      ]
+    }
+  ]
+}
