@@ -104,7 +104,7 @@ function EndpointCard({ ep }: { ep: ApiEndpoint }) {
 
       {ep.gotchas && ep.gotchas.length > 0 && (
         <ul style={{ marginTop: 8, fontSize: 12, color: 'var(--warning,#D97706)' }}>
-          {ep.gotchas.map((g, i) => <li key={i}>{g}</li>)}
+          {ep.gotchas.map((g, i) => <li key={`${i}-${g}`}>{g}</li>)}
         </ul>
       )}
 
@@ -151,11 +151,12 @@ export function ApiDocView({ doc }: { doc: ApiDocPayload }) {
   }
   const fam = families[Math.min(active, families.length - 1)]!;
   return (
-    <div style={{ padding: 16, color: 'var(--fg,#1E293B)' }}>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+    <div style={{ padding: 16, color: 'var(--fg,#1E293B)', maxWidth: 1080, margin: '0 auto' }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
         {families.map((f, i) => (
           <button key={f.id} onClick={() => setActive(i)} style={{
-            padding: '4px 12px', borderRadius: 8, cursor: 'pointer',
+            padding: '5px 12px', borderRadius: 8, cursor: 'pointer', fontSize: 13,
+            fontWeight: i === active ? 600 : 400,
             border: '1px solid var(--border,#E2E8F0)',
             background: i === active ? 'var(--accent,#2563EB)' : 'transparent',
             color: i === active ? '#fff' : 'var(--fg,#1E293B)',
@@ -169,15 +170,21 @@ export function ApiDocView({ doc }: { doc: ApiDocPayload }) {
         </div>
       )}
 
-      <h2 style={{ margin: '0 0 4px' }}>{fam.displayName}</h2>
-      <div style={{ fontSize: 12, color: 'var(--fg-muted,#64748B)', marginBottom: 4 }}>
+      <h2 style={{ margin: '0 0 4px', fontSize: 21, fontWeight: 700 }}>{fam.displayName}</h2>
+      <div style={{ fontSize: 12, color: 'var(--fg-muted,#64748B)', marginBottom: 6 }}>
         Auth: <code>{fam.authScheme}</code> · Probed: {fam.probedServerVersion}
       </div>
-      <div style={{ fontSize: 13, marginBottom: 16 }}>{fam.description}</div>
+      <div style={{ fontSize: 13, marginBottom: 20, color: 'var(--fg-secondary,#475569)', lineHeight: 1.5 }}>
+        {fam.description}
+      </div>
 
       {fam.categories.map((cat) => (
-        <section key={cat.name} style={{ marginBottom: 20 }}>
-          <h3 style={{ borderBottom: '1px solid var(--border,#E2E8F0)', paddingBottom: 4 }}>
+        <section key={cat.name} style={{ marginBottom: 24 }}>
+          <h3 style={{
+            borderBottom: '1px solid var(--border,#E2E8F0)', paddingBottom: 5, marginBottom: 12,
+            fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px',
+            color: 'var(--fg-secondary,#475569)',
+          }}>
             {cat.name}
           </h3>
           {cat.endpoints.map((ep, i) => <EndpointCard key={`${ep.method}-${ep.pathTemplate}-${i}`} ep={ep} />)}
