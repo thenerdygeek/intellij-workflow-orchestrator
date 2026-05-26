@@ -13,6 +13,11 @@ Four read-only Opus audits (jira / bamboo / sonar / bitbucket) hunted the same f
 
 Verdicts are the auditors' analysis (read-only); CONFIRMED still benefits from a live smoke.
 
+**Resolution status (2026-05-26):** CONFIRMED #1–#5 FIXED (commits `e92e0efe8`, `f987b2cd9`,
+`0f7631940`, `2c7e7ac1d`). SUSPECTED #7, #8, #10 verified + FIXED (`a5f26baab`, `2d9977532`).
+#6 (bare-date tz edge), #9 (source-lines server cap — unconfirmed), #11 (merge-strategy
+pre-validation) DEFERRED — low impact / need a live server to confirm. MINOR #12–#19 open.
+
 ## CONFIRMED (will misbehave)
 
 1. **Jira `get_worklogs` author filter — Pattern D (structural).** `WorklogData` keeps only
