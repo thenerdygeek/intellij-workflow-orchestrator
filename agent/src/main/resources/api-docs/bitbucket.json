@@ -1,0 +1,1880 @@
+{
+  "id": "bitbucket",
+  "displayName": "Bitbucket (Data Center)",
+  "authScheme": "Authorization: Bearer <PAT>",
+  "probedServerVersion": "Bitbucket DC 9.4.16 (build 9004016, 2026-01-12)",
+  "description": "Bitbucket Data Center REST API 1.0 (plus build-status/1.0, default-reviewers/1.0, required-builds/latest, jira/1.0, insights/1.0). Bearer PAT auth via PasswordSafe. All calls go through BitbucketBranchClient in :core; no per-module client duplication. DC edition confirmed via /rest/capabilities 'repository-mirroring' capability.",
+  "categories": [
+    {
+      "name": "Server Info & Capabilities",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/application-properties",
+          "status": "PROBED_UNUSED",
+          "summary": "Server version, build number and display name. Mirrors Jira's /serverInfo. Use for settings validation and DC edition detection.",
+          "params": [],
+          "sampleResponse": "{\"version\":\"9.4.16\",\"buildNumber\":\"9004016\",\"buildDate\":\"1768254573030\",\"displayName\":\"Bitbucket\"}",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/summary.md version table row 1; raw/application_properties.json",
+          "gotchas": [
+            "Prefer /rest/capabilities for edition detection — repository-mirroring capability is DC-exclusive and works without admin scope"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/capabilities",
+          "status": "PROBED_UNUSED",
+          "summary": "Capability map listing installed plugins (build, deployment, code-insights, default-reviewers, jira-link, repository-mirroring, webhooks). Use to gate optional endpoint adoption.",
+          "params": [],
+          "sampleResponse": "{\"links\":{\"self\":\"https://<redacted>/rest/capabilities\"},\"application\":\"stash\",\"buildDate\":\"2026-01-12T21:49:33Z\",\"capabilities\":{\"repository-mirroring\":\"\",\"code-insights\":\"\",\"build\":\"\",\"deployment\":\"\",\"dev-status\":\"\"}}",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/capabilities.json; summary.md version table row 4",
+          "gotchas": [
+            "repository-mirroring presence confirms Data Center edition without requiring admin token",
+            "Code Insights, Jira-link, default-reviewers capabilities must be confirmed before adopting those sub-API endpoints"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Repositories & Branches",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects",
+          "status": "USED",
+          "summary": "List all projects visible to the authenticated user. Returns key, name, description per project.",
+          "params": [
+            {
+              "name": "limit",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results per page (default 25, used as 100 in plugin)",
+              "example": "100"
+            }
+          ],
+          "sampleResponse": "{\"size\":100,\"limit\":100,\"isLastPage\":false,\"values\":[{\"key\":\"WMAP\",\"id\":123,\"name\":\"<redacted>\",\"public\":false,\"type\":\"NORMAL\"}]}",
+          "callSite": "BitbucketBranchClient.kt:907",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/projects_list.json; BitbucketBranchClient.kt:902-928",
+          "gotchas": [
+            "Returns paginated results; isLastPage=false when more pages remain — plugin hardcodes limit=100 and does not paginate beyond page 1"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos",
+          "status": "PROBED_UNUSED",
+          "summary": "List repositories in a project. Returns slug, name, description, scmId per repo.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key (e.g. WMAP)",
+              "example": "WMAP"
+            },
+            {
+              "name": "limit",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results per page",
+              "example": "20"
+            }
+          ],
+          "sampleResponse": "{\"size\":20,\"limit\":20,\"isLastPage\":false,\"values\":[{\"slug\":\"<redacted>\",\"id\":53499,\"name\":\"<redacted>\",\"scmId\":\"git\"}]}",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/project_repos.json; summary.md existing table row 3",
+          "verdict": {
+            "classification": "R-INV: probed, not yet called by plugin code",
+            "reasoning": "Confirmed 200 on DC 9.4.16. Useful for agent's bitbucket_repo list_repos action and the repo picker flow."
+          },
+          "gotchas": []
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}",
+          "status": "USED",
+          "summary": "Get repository metadata including server-canonical clone URLs (links.clone). Used by auto-detection to validate remote URLs.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            }
+          ],
+          "sampleResponse": "{\"slug\":\"<redacted>\",\"id\":53499,\"name\":\"<redacted>\",\"description\":\"<redacted>\",\"hierarchyId\":\"168703d92e907b76ae4a\",\"scmId\":\"git\",\"state\":\"AVAILABLE\",\"statusMessage\":\"Available\",\"forkable\":true,\"project\":{\"key\":\"WMAP\"},\"public\":false,\"archived\":false,\"links\":{\"clone\":[{\"href\":\"https://<redacted>/scm/wmap/<redacted>.git\",\"name\":\"http\"},{\"href\":\"ssh://git@<redacted>/<redacted>.git\",\"name\":\"ssh\"}],\"self\":[{\"href\":\"https://<redacted>/projects/WMAP/repos/<redacted>/browse\"}]}}",
+          "callSite": "BitbucketBranchClient.kt:944",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/repo_get.json; BitbucketBranchClient.kt:938-964",
+          "gotchas": [
+            "links.clone[] contains both http and ssh entries — plugin resolves https entry by name='http'",
+            "404 = repo not found (wrong projectKey/repoSlug)"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/default-branch",
+          "status": "USED",
+          "summary": "Get the default branch of a repository. Returns branch id, displayId, latestCommit.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            }
+          ],
+          "sampleResponse": "{\"id\":\"refs/heads/develop\",\"displayId\":\"develop\",\"type\":\"BRANCH\",\"latestCommit\":\"<redacted-sha>\",\"latestChangeset\":\"<redacted-sha>\",\"isDefault\":true}",
+          "callSite": "BitbucketBranchClient.kt:1028",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/summary.md existing table row 5; raw/repo_default_branch.json; BitbucketBranchClient.kt:1020-1050",
+          "gotchas": []
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/branches",
+          "status": "USED",
+          "summary": "List branches sorted by modification date. With details=true (R-SWAP-3) returns metadata per branch including aheadBehind, latestCommit info, jira issues and build state — eliminating per-branch follow-up calls.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "limit",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results (plugin uses 100)",
+              "example": "100"
+            },
+            {
+              "name": "orderBy",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Sort order. Plugin uses MODIFICATION.",
+              "example": "MODIFICATION"
+            },
+            {
+              "name": "details",
+              "location": "QUERY",
+              "type": "boolean",
+              "required": false,
+              "description": "When true, includes metadata per branch (aheadBehind, latestCommit author, jiraIssues, build). R-SWAP-3 from 2026-05-07 audit — eliminates N follow-up calls.",
+              "example": "true"
+            },
+            {
+              "name": "filterText",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Case-insensitive prefix filter on branch displayId",
+              "example": "feature/"
+            }
+          ],
+          "sampleResponse": "{\"size\":20,\"limit\":100,\"isLastPage\":false,\"values\":[{\"id\":\"refs/heads/develop\",\"displayId\":\"develop\",\"type\":\"BRANCH\",\"latestCommit\":\"<redacted-sha>\",\"isDefault\":true,\"metadata\":{\"com.atlassian.bitbucket.server.bitbucket-branch:ahead-behind-metadata-provider\":{\"ahead\":3,\"behind\":0}}}]}",
+          "callSite": "BitbucketBranchClient.kt:985",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/repo_branches.json; raw/repo_branches_with_details.json; BitbucketBranchClient.kt:970-1014; research/2026-05-07-bitbucket-recommendations.md §3 R-SWAP-3",
+          "gotchas": [
+            "filterText is added via OkHttp addQueryParameter to prevent injection when branch name contains & or = characters",
+            "metadata provider keys are long dotted strings; decode each key on demand — the set varies by installed plugins"
+          ]
+        },
+        {
+          "method": "POST",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/branches",
+          "status": "USED",
+          "summary": "Create a new branch from a start point (SHA or ref). Returns the created branch object.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            }
+          ],
+          "requestBody": "JSON: {\"name\": \"<branchName>\", \"startPoint\": \"<sha-or-ref>\"}",
+          "sampleResponse": null,
+          "callSite": "BitbucketBranchClient.kt:1106",
+          "provenance": "BitbucketBranchClient.kt:1094-1141; research/2026-05-06-bitbucket-audit-brief.md §3; probe summary.md writes-inventoried table",
+          "gotchas": [
+            "Requires Repository Write (or Admin) permission — 401/403 returned otherwise",
+            "409 = branch already exists",
+            "startPoint can be a full SHA or refs/heads/<name>"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/browse/{filePath}",
+          "status": "USED",
+          "summary": "Get raw file content at a specific ref. Returns plain text when ?raw query param is present.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "filePath",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "File path within the repo (NOT URL-encoded; literal slashes are preserved)",
+              "example": "src/main/README.md"
+            },
+            {
+              "name": "at",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Branch ref or SHA to read file at",
+              "example": "refs/heads/develop"
+            },
+            {
+              "name": "raw",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Presence of this param (no value) returns raw file bytes instead of JSON",
+              "example": ""
+            }
+          ],
+          "sampleResponse": null,
+          "callSite": "BitbucketBranchClient.kt:2762",
+          "provenance": "BitbucketBranchClient.kt:2752-2783; research/2026-05-06-bitbucket-audit-brief.md §3; probe summary.md existing table",
+          "gotchas": [
+            "filePath must NOT be URL-encoded — Bitbucket expects literal path separators in the URL",
+            "Returns text/plain, not JSON — plugin sends Accept: text/plain",
+            "404 if file does not exist at the specified ref"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/users",
+          "status": "USED",
+          "summary": "Search users by filter text. Matches case-insensitively across username (name), displayName, and emailAddress. With permission.1=REPO_READ params, restricts results to users who have effective read access on the target repo.",
+          "params": [
+            {
+              "name": "filter",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Filter string matched against name, displayName, emailAddress",
+              "example": "jane"
+            },
+            {
+              "name": "limit",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results (plugin uses 10)",
+              "example": "10"
+            },
+            {
+              "name": "permission.1",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "When set to REPO_READ alongside permission.1.projectKey and permission.1.repositorySlug, restricts results to users with effective read access on that repo (honours group-expanded permissions)",
+              "example": "REPO_READ"
+            },
+            {
+              "name": "permission.1.projectKey",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Project key for repo-scoped permission filter",
+              "example": "WMAP"
+            },
+            {
+              "name": "permission.1.repositorySlug",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Repository slug for repo-scoped permission filter",
+              "example": "my-repo"
+            }
+          ],
+          "sampleResponse": "{\"size\":10,\"limit\":10,\"isLastPage\":false,\"values\":[{\"name\":\"<redacted>\",\"emailAddress\":\"<redacted>\",\"active\":true,\"displayName\":\"<redacted>\",\"id\":12345}]}",
+          "callSite": "BitbucketBranchClient.kt:1368",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/users_filter.json; BitbucketBranchClient.kt:1353-1388; research/2026-05-07-bitbucket-pr-write-ops-audit.md §2",
+          "gotchas": [
+            "The permission.1=REPO_READ variant mirrors the Bitbucket web UI reviewer picker and honours group-expanded permissions, unlike /repos/{r}/permissions/users which only covers direct grants",
+            "CreatePrDialog uses the repo-scoped variant; the existing-PR Add Reviewer popup was missing the repo scope until the 2026-05-07 write-ops audit fix"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/plugins/servlet/applinks/whoami",
+          "status": "USED",
+          "summary": "Returns the plain-text username of the currently authenticated user. Used to identify the current user for role-filter queries.",
+          "params": [],
+          "sampleResponse": null,
+          "callSite": "BitbucketBranchClient.kt:1433",
+          "provenance": "BitbucketBranchClient.kt:1428-1450; research/2026-05-06-bitbucket-audit-brief.md §3",
+          "gotchas": [
+            "Returns plain text (not JSON) — do not parse as JSON",
+            "Not a REST API endpoint; lives under /plugins/servlet/"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/profile/recent/repos",
+          "status": "PROBED_UNUSED",
+          "summary": "Recently-touched repositories for the calling user. Useful for ranking the repo picker by recency-for-me instead of alphabetical.",
+          "params": [
+            {
+              "name": "limit",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results",
+              "example": "10"
+            }
+          ],
+          "sampleResponse": "{\"size\":10,\"limit\":10,\"isLastPage\":false,\"values\":[{\"slug\":\"<redacted>\",\"id\":12345,\"name\":\"<redacted>\"}]}",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/profile_recent_repos.json; summary.md swap table R-ADD-4",
+          "verdict": {
+            "classification": "R-ADD-4: inventoried, not yet adopted",
+            "reasoning": "Confirmed 200 on DC 9.4.16. Candidate for repo picker UX improvement."
+          },
+          "gotchas": []
+        }
+      ]
+    },
+    {
+      "name": "Default Reviewers",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/default-reviewers/1.0/projects/{projectKey}/repos/{repoSlug}/conditions",
+          "status": "USED",
+          "summary": "Fetch all default-reviewer conditions for a repo. Each condition has sourceRefMatcher, targetRefMatcher, reviewers list and requiredApprovals. Gated on default-reviewers plugin installation (404 if not installed).",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            }
+          ],
+          "sampleResponse": "[{\"id\":2525,\"scope\":{\"type\":\"REPOSITORY\",\"resourceId\":53499},\"sourceRefMatcher\":{\"id\":\"ANY_REF_MATCHER_ID\",\"displayId\":\"Any branch\",\"type\":{\"id\":\"ANY_REF\",\"name\":\"Any branch\"},\"active\":true},\"targetRefMatcher\":{\"id\":\"refs/heads/develop\",\"displayId\":\"develop\",\"type\":{\"id\":\"BRANCH\",\"name\":\"Branch\"},\"active\":true},\"reviewers\":[{\"name\":\"<redacted>\",\"displayName\":\"<redacted>\",\"emailAddress\":\"<redacted>\",\"active\":true}],\"requiredApprovals\":1}]",
+          "callSite": "BitbucketBranchClient.kt:1315",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/default_reviewers_conditions.json; BitbucketBranchClient.kt:1309-1336; research/2026-05-07-bitbucket-recommendations.md §3 R-SWAP-3 (cross-ref)",
+          "gotchas": [
+            "404 if the default-reviewers plugin is not installed — treat as empty list, not a failure",
+            "Matcher type discriminator is the nested type.id field (BRANCH, MODEL_BRANCH, MODEL_CATEGORY, ANY_REF, PATTERN) — not the top-level id string",
+            "Plugin's getDefaultReviewers() unions ALL conditions; getDefaultReviewersForBranch() filters by sourceRefMatcher AND targetRefMatcher to match web UI behaviour (2026-05-07 audit P1 fix #6)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Pull Requests (read)",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests",
+          "status": "USED",
+          "summary": "List pull requests for a repo. Supports state, role, direction, at (branch ref) filtering. Paginated. Used for per-repo PR listing (AUTHOR/REVIEWER roles and all-open variants).",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "state",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Filter by PR state: OPEN, MERGED, DECLINED, ALL",
+              "example": "OPEN"
+            },
+            {
+              "name": "role.1",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Filter by current user's role: AUTHOR or REVIEWER",
+              "example": "AUTHOR"
+            },
+            {
+              "name": "username.1",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Username to filter by when role.1 is set",
+              "example": "jdoe"
+            },
+            {
+              "name": "direction",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "OUTGOING for PRs from a branch, INCOMING for PRs targeting a branch",
+              "example": "OUTGOING"
+            },
+            {
+              "name": "at",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Branch ref to filter by (used with direction=OUTGOING to check if a PR already exists for a branch)",
+              "example": "refs/heads/feature/ABC-123"
+            },
+            {
+              "name": "start",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Pagination start offset",
+              "example": "0"
+            },
+            {
+              "name": "limit",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results per page (plugin uses 25 or 100)",
+              "example": "25"
+            }
+          ],
+          "sampleResponse": "{\"size\":8,\"limit\":10,\"isLastPage\":true,\"values\":[{\"id\":438,\"version\":4,\"title\":\"<redacted>\",\"description\":\"<redacted>\",\"state\":\"OPEN\",\"fromRef\":{\"id\":\"refs/heads/<redacted>\",\"displayId\":\"<redacted>\",\"latestCommit\":\"<redacted-sha>\"},\"toRef\":{\"id\":\"refs/heads/develop\",\"displayId\":\"develop\",\"latestCommit\":\"<redacted-sha>\"},\"author\":{\"user\":{\"name\":\"<redacted>\",\"displayName\":\"<redacted>\"}}}],\"start\":0}",
+          "callSite": "BitbucketBranchClient.kt:1066",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/repo_pull_requests_open.json; raw/repo_pull_requests_outgoing.json; raw/repo_pull_requests_role_author.json; raw/repo_pull_requests_role_reviewer.json; BitbucketBranchClient.kt:1056-1088, 1201-1241, 1458-1493, 1499-1534",
+          "gotchas": [
+            "direction=OUTGOING + at=refs/heads/{branch} is the 'is there already a PR for this branch' check — plugin uses this before offering Create PR",
+            "role.1=AUTHOR/REVIEWER returns per-repo results; for cross-repo use the dashboard endpoint (R-SWAP-1/2)"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/dashboard/pull-requests",
+          "status": "USED",
+          "summary": "Cross-repo PR dashboard. Collapses N per-repo calls into 1 by returning PRs across all repos the user has access to. Replaces per-repo AUTHOR/REVIEWER iteration (R-SWAP-1 and R-SWAP-2 from 2026-05-07 audit). Returns toRef.repository for repo identification.",
+          "params": [
+            {
+              "name": "role",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "AUTHOR, REVIEWER or PARTICIPANT",
+              "example": "AUTHOR"
+            },
+            {
+              "name": "state",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "OPEN, MERGED, or DECLINED",
+              "example": "OPEN"
+            },
+            {
+              "name": "limit",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results (DC hard max 100)",
+              "example": "25"
+            },
+            {
+              "name": "start",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Pagination start offset",
+              "example": "0"
+            }
+          ],
+          "sampleResponse": "{\"size\":6,\"limit\":10,\"isLastPage\":true,\"values\":[{\"id\":438,\"version\":4,\"title\":\"<redacted>\",\"state\":\"OPEN\",\"fromRef\":{\"repository\":{\"slug\":\"<redacted>\",\"project\":{\"key\":\"WMAP\"}}},\"toRef\":{\"repository\":{\"slug\":\"<redacted>\",\"project\":{\"key\":\"WMAP\"}}}}]}",
+          "callSite": "BitbucketBranchClient.kt:2897",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/dashboard_pull_requests_author.json; raw/dashboard_pull_requests_reviewer.json; BitbucketBranchClient.kt:2887-2917; research/2026-05-07-bitbucket-recommendations.md §3 R-SWAP-1 R-SWAP-2",
+          "gotchas": [
+            "fromRef and toRef carry repository.slug + repository.project.key on dashboard results — use these to bucket PRs per repo"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}",
+          "status": "USED",
+          "summary": "Get full details of a specific pull request including title, description, state, version (for optimistic locking), reviewers, fromRef, toRef, author.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            }
+          ],
+          "sampleResponse": "{\"id\":438,\"version\":4,\"title\":\"<redacted>\",\"description\":\"<redacted>\",\"state\":\"OPEN\",\"createdDate\":1746000000000,\"updatedDate\":1746100000000,\"fromRef\":{\"id\":\"refs/heads/<redacted>\",\"displayId\":\"<redacted>\",\"latestCommit\":\"<redacted-sha>\"},\"toRef\":{\"id\":\"refs/heads/develop\",\"displayId\":\"develop\",\"latestCommit\":\"<redacted-sha>\"},\"author\":{\"user\":{\"name\":\"<redacted>\",\"displayName\":\"<redacted>\"}},\"reviewers\":[{\"user\":{\"name\":\"<redacted>\"},\"role\":\"REVIEWER\",\"approved\":false,\"status\":\"UNAPPROVED\"}]}",
+          "callSite": "BitbucketBranchClient.kt:1588",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/pr_get.json; BitbucketBranchClient.kt:1579-1610",
+          "gotchas": [
+            "version field is required for all PUT/POST mutation endpoints — always fetch fresh before mutating",
+            "modifyPullRequest() and mergePullRequestWithRetry() implement fetch-modify-write with one 409 retry to handle concurrent edits"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/activities",
+          "status": "USED",
+          "summary": "Activity timeline for a PR: COMMENTED, APPROVED, UNAPPROVED, REVIEWED, DECLINED, MERGED, RESCOPED, OPENED events. Also used as the canonical source for PR comments on DC 9.4 (direct /comments returns 400 — see gotchas).",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            },
+            {
+              "name": "limit",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results per page (plugin uses 50)",
+              "example": "50"
+            },
+            {
+              "name": "start",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Pagination start offset",
+              "example": "0"
+            }
+          ],
+          "sampleResponse": "{\"size\":5,\"limit\":50,\"isLastPage\":true,\"values\":[{\"id\":99001,\"createdDate\":1746000000000,\"user\":{\"name\":\"<redacted>\",\"displayName\":\"<redacted>\"},\"action\":\"COMMENTED\",\"comment\":{\"id\":5371848,\"text\":\"<redacted>\",\"author\":{\"name\":\"<redacted>\"},\"anchor\":{\"path\":\"src/Foo.kt\",\"line\":42,\"lineType\":\"ADDED\",\"fileType\":\"TO\"}}}]}",
+          "callSite": "BitbucketBranchClient.kt:1758",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/pr_activities.json; BitbucketBranchClient.kt:1787-1819; research/2026-05-07-bitbucket-recommendations.md §1.1",
+          "gotchas": [
+            "DC 9.4: GET /pull-requests/{id}/comments without path= or count=true returns 400 — the activities timeline is the correct replacement for listing all PR comments",
+            "Plugin paginator aggregates up to 20 pages (safety cap of ~1000 activities) before returning with isLastPage=false indicating truncation",
+            "listPrComments() in the plugin filters action=COMMENTED from activities and maps to BitbucketPrCommentResponse — some fields (severity, state, thread replies) are absent from the activity payload"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/diff",
+          "status": "USED",
+          "summary": "Full unified diff for a PR as plain text. Capped at 327,680 chars in the plugin.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            }
+          ],
+          "sampleResponse": null,
+          "callSite": "BitbucketBranchClient.kt:2296",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/pr_diff.json (200, 811ms); BitbucketBranchClient.kt:2287-2322",
+          "gotchas": [
+            "Returns text/plain unified diff — plugin sends Accept: text/plain",
+            "Large PRs can be megabytes — plugin caps at MAX_DIFF_CHARS=327680 chars and appends a truncation notice"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/diff/{filePath}",
+          "status": "PROBED_UNUSED",
+          "summary": "Per-file scoped diff. Smaller payload than the full /diff endpoint for large PRs. Supports contextLines query param.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            },
+            {
+              "name": "filePath",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "File path within the PR to scope the diff to",
+              "example": "src/main/Foo.kt"
+            },
+            {
+              "name": "contextLines",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Number of context lines around each hunk",
+              "example": "10"
+            }
+          ],
+          "sampleResponse": null,
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/pr_diff_filescoped.json (200, 274ms); summary.md swap table R-ADD-14; research/2026-05-07-bitbucket-recommendations.md §4 R-ADD-14",
+          "verdict": {
+            "classification": "R-ADD-14: probed, not yet adopted",
+            "reasoning": "Confirmed 200 on DC 9.4.16. Candidate swap for huge PRs to fetch diff per file instead of the monolithic /diff."
+          },
+          "gotchas": [
+            "Same plain-text response shape as /diff but scoped to one file"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/changes",
+          "status": "USED",
+          "summary": "List files changed in a PR (paginated). Returns path, srcPath, type (ADD/MODIFY/DELETE/COPY/MOVE) and nodeType per change.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            },
+            {
+              "name": "limit",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results per page (plugin uses 100)",
+              "example": "100"
+            },
+            {
+              "name": "start",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Pagination start offset",
+              "example": "0"
+            }
+          ],
+          "sampleResponse": "{\"fromHash\":\"<redacted-sha>\",\"toHash\":\"<redacted-sha>\",\"properties\":{\"changeScope\":\"ALL\"},\"values\":[{\"contentId\":\"<redacted-sha>\",\"fromContentId\":\"<redacted-sha>\",\"path\":{\"toString\":\"src/main/Foo.kt\",\"name\":\"Foo.kt\"},\"type\":\"MODIFY\",\"nodeType\":\"FILE\"}],\"isLastPage\":true}",
+          "callSite": "BitbucketBranchClient.kt:2337",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/pr_changes.json; BitbucketBranchClient.kt:2364-2396",
+          "gotchas": [
+            "Plugin aggregates up to 20 pages (safety cap of 2000 files) before returning with isLastPage=false indicating truncation"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/commits",
+          "status": "USED",
+          "summary": "List commits included in a PR. Returns commit id, displayId, message, author, authorTimestamp.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            },
+            {
+              "name": "limit",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results (plugin uses 50)",
+              "example": "50"
+            },
+            {
+              "name": "start",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Pagination start offset",
+              "example": "0"
+            }
+          ],
+          "sampleResponse": "{\"values\":[{\"id\":\"<redacted-sha>\",\"displayId\":\"<redacted-short>\",\"author\":{\"name\":\"<redacted>\",\"displayName\":\"<redacted>\"},\"authorTimestamp\":1746000000000,\"message\":\"<redacted>\",\"parents\":[{\"id\":\"<redacted-sha>\",\"displayId\":\"<redacted-short>\"}]}],\"size\":3,\"isLastPage\":true}",
+          "callSite": "BitbucketBranchClient.kt:2562",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/pr_commits.json; BitbucketBranchClient.kt:2551-2584",
+          "gotchas": []
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/merge",
+          "status": "USED",
+          "summary": "Check merge preconditions. Returns canMerge, conflicted, outcome, and vetoes list with human-readable messages.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            }
+          ],
+          "sampleResponse": "{\"canMerge\":false,\"conflicted\":false,\"outcome\":\"CLEAN\",\"vetoes\":[{\"summaryMessage\":\"Not all required builds are successful yet\",\"detailedMessage\":\"<redacted>\"},{\"summaryMessage\":\"Requires approvals\",\"detailedMessage\":\"<redacted>\"}]}",
+          "callSite": "BitbucketBranchClient.kt:2124",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/pr_merge_check.json; BitbucketBranchClient.kt:2115-2149; research/2026-05-07-bitbucket-pr-write-ops-audit.md §2",
+          "gotchas": [
+            "vetoes[] may contain 'Not all required builds are successful yet', 'Requires approvals', 'Not all required reviewers have approved yet', 'Merge vetoed: must rebase' — all confirmed on DC 9.4.16"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/participants",
+          "status": "USED",
+          "summary": "Explicit participants endpoint with role, approved, status (UNAPPROVED/APPROVED/NEEDS_WORK) and lastReviewedCommit per reviewer. Richer than the embedded reviewers array on getPullRequest (R-SWAP-5).",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            },
+            {
+              "name": "limit",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results (plugin uses 100)",
+              "example": "100"
+            }
+          ],
+          "sampleResponse": "{\"size\":7,\"limit\":20,\"isLastPage\":true,\"values\":[{\"user\":{\"name\":\"<redacted>\",\"displayName\":\"<redacted>\"},\"role\":\"REVIEWER\",\"approved\":false,\"status\":\"UNAPPROVED\",\"lastReviewedCommit\":null}]}",
+          "callSite": "BitbucketBranchClient.kt:2979",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/pr_participants.json; BitbucketBranchClient.kt:2970-3000; research/2026-05-07-bitbucket-recommendations.md §3 R-SWAP-5",
+          "gotchas": []
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/blocker-comments",
+          "status": "USED",
+          "summary": "Blocker-severity comments on a PR. With count=true returns just {size} for cheap badge counters. Without count=true returns the values list. Replaces client-side filtering of the full comments list (R-SWAP-4).",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            },
+            {
+              "name": "count",
+              "location": "QUERY",
+              "type": "boolean",
+              "required": false,
+              "description": "When true, returns only {size} — faster for badge display",
+              "example": "true"
+            }
+          ],
+          "sampleResponse": "{\"size\":0}",
+          "callSite": "BitbucketBranchClient.kt:2940",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/pr_blocker_comments.json; BitbucketBranchClient.kt:2929-2961; research/2026-05-07-bitbucket-recommendations.md §3 R-SWAP-4",
+          "gotchas": []
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/inbox/pull-requests/count",
+          "status": "PROBED_UNUSED",
+          "summary": "Inbox PR count — returns {count: N} integer. Cheap endpoint for tool-window unread badge.",
+          "params": [],
+          "sampleResponse": "{\"count\":0}",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/inbox_pr_count.json; summary.md swap table R-ADD-1; research/2026-05-07-bitbucket-recommendations.md §4 R-ADD-1",
+          "verdict": {
+            "classification": "R-ADD-1: probed, not yet adopted",
+            "reasoning": "Confirmed 200 on DC 9.4.16. Candidate for a tool-window PR inbox badge."
+          },
+          "gotchas": []
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/inbox/pull-requests",
+          "status": "PROBED_UNUSED",
+          "summary": "PRs requiring the current user's action (Atlassian's algorithmic inbox). More targeted than role=REVIEWER dashboard.",
+          "params": [
+            {
+              "name": "limit",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results",
+              "example": "10"
+            }
+          ],
+          "sampleResponse": "{\"size\":0,\"limit\":10,\"isLastPage\":true,\"values\":[],\"start\":0}",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/inbox_pr_list.json; summary.md swap table R-ADD-2; research/2026-05-07-bitbucket-recommendations.md §4 R-ADD-2",
+          "verdict": {
+            "classification": "R-ADD-2: probed, not yet adopted",
+            "reasoning": "Confirmed 200 on DC 9.4.16. Candidate for a 'PRs needing your attention' panel."
+          },
+          "gotchas": []
+        }
+      ]
+    },
+    {
+      "name": "Pull Requests (write)",
+      "endpoints": [
+        {
+          "method": "POST",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests",
+          "status": "USED",
+          "summary": "Create a pull request. Returns the created PR including id and links.self.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            }
+          ],
+          "requestBody": "JSON: {\"title\": \"...\", \"description\": \"...\", \"fromRef\": {\"id\": \"refs/heads/<src>\"}, \"toRef\": {\"id\": \"refs/heads/<tgt>\"}, \"reviewers\": [{\"user\": {\"name\": \"<username>\"}}]}",
+          "sampleResponse": null,
+          "callSite": "BitbucketBranchClient.kt:1169",
+          "provenance": "BitbucketBranchClient.kt:1147-1195; research/2026-05-07-bitbucket-pr-write-ops-audit.md §3.2; probe summary.md writes-inventoried table",
+          "gotchas": [
+            "fromRef and toRef only need {id} for same-repo PRs — the server fills repository from the URL path",
+            "Cross-fork PRs require full repository context in fromRef/toRef — not supported by this plugin",
+            "409 = PR already exists for that from/to branch combination",
+            "reviewers[].user.name must be the Bitbucket username (not displayName)"
+          ]
+        },
+        {
+          "method": "PUT",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}",
+          "status": "USED",
+          "summary": "Update PR title, description, and reviewers. Requires current version in body for optimistic locking. Returns updated PR detail.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            }
+          ],
+          "requestBody": "JSON: {\"title\": \"...\", \"description\": \"...\", \"version\": <current-version>, \"reviewers\": [{\"user\": {\"name\": \"<username>\"}}]}",
+          "sampleResponse": null,
+          "callSite": "BitbucketBranchClient.kt:1627",
+          "provenance": "BitbucketBranchClient.kt:1617-1655; probe summary.md writes-inventoried table; research/2026-05-07-bitbucket-pr-write-ops-audit.md §3 P0",
+          "gotchas": [
+            "409 = stale version — another user modified the PR between GET and PUT. Plugin's modifyPullRequest() wraps this with one automatic retry on 409",
+            "Always fetch fresh PR detail to get the current version before calling PUT — never cache the version across user interactions"
+          ]
+        },
+        {
+          "method": "POST",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/merge",
+          "status": "USED",
+          "summary": "Merge a PR. Version is required as a query parameter. Optional body: strategyId, deleteSourceRef, message.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            },
+            {
+              "name": "version",
+              "location": "QUERY",
+              "type": "integer",
+              "required": true,
+              "description": "Current PR version for optimistic locking",
+              "example": "4"
+            }
+          ],
+          "requestBody": "JSON: {\"message\": \"<optional commit message>\", \"strategyId\": \"<optional>\", \"deleteSourceRef\": false}",
+          "sampleResponse": null,
+          "callSite": "BitbucketBranchClient.kt:1970",
+          "provenance": "BitbucketBranchClient.kt:1951-2018; probe summary.md writes-inventoried table; research/2026-05-07-bitbucket-pr-write-ops-audit.md §3 P1",
+          "gotchas": [
+            "409 with PullRequestOutOfDateException in body = stale version (retry with fresh version). 409 with other exceptionName = merge veto (don't retry). Plugin distinguishes by parsing errors[].exceptionName",
+            "mergePullRequestWithRetry() implements fetch-version + merge POST with one 409 retry for the stale-version case",
+            "GET /merge (without POST body) is the pre-flight check for canMerge — always call that first to surface veto messages before showing the merge dialog"
+          ]
+        },
+        {
+          "method": "POST",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/decline",
+          "status": "USED",
+          "summary": "Decline a PR. Version is a required query parameter.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            },
+            {
+              "name": "version",
+              "location": "QUERY",
+              "type": "integer",
+              "required": true,
+              "description": "Current PR version for optimistic locking",
+              "example": "4"
+            }
+          ],
+          "requestBody": "Empty JSON body (send empty string with Content-Type: application/json)",
+          "sampleResponse": null,
+          "callSite": "BitbucketBranchClient.kt:2254",
+          "provenance": "BitbucketBranchClient.kt:2244-2280; probe summary.md writes-inventoried table",
+          "gotchas": [
+            "409 = stale version — refresh PR and retry"
+          ]
+        },
+        {
+          "method": "POST",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/approve",
+          "status": "USED",
+          "summary": "Approve a PR as the current user. Returns the reviewer object with approved=true.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            }
+          ],
+          "requestBody": "Empty JSON body (send empty string with Content-Type: application/json)",
+          "sampleResponse": null,
+          "callSite": "BitbucketBranchClient.kt:1878",
+          "provenance": "BitbucketBranchClient.kt:1868-1903; probe summary.md writes-inventoried table",
+          "gotchas": [
+            "409 = already approved or not a reviewer on this PR"
+          ]
+        },
+        {
+          "method": "DELETE",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/approve",
+          "status": "USED",
+          "summary": "Remove (unapprove) a PR approval by the current user.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            }
+          ],
+          "sampleResponse": null,
+          "callSite": "BitbucketBranchClient.kt:1919",
+          "provenance": "BitbucketBranchClient.kt:1909-1943; probe summary.md writes-inventoried table",
+          "gotchas": []
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/settings/pull-requests/git",
+          "status": "USED",
+          "summary": "Get repo-level merge strategy settings. Returns defaultStrategy and list of enabled strategies. On 404 (repo has no per-repo override) falls back to the project-level equivalent endpoint.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            }
+          ],
+          "sampleResponse": null,
+          "callSite": "BitbucketBranchClient.kt:2183",
+          "provenance": "BitbucketBranchClient.kt:2175-2237; probe Result_Bitbucket/bundle-full-sweep.unpacked/summary.md existing table (404 on test repo); research/2026-05-07-bitbucket-recommendations.md §1.2",
+          "gotchas": [
+            "404 means the repo has no per-repo override — must fall back to GET /rest/api/1.0/projects/{p}/settings/pull-requests/git",
+            "Plugin caches the resolution per (projectKey, repoSlug) in-memory so subsequent calls skip the 404",
+            "Both repo and project URLs return the same BitbucketRepoSettingsResponse shape"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Comments & Review",
+      "endpoints": [
+        {
+          "method": "POST",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/comments",
+          "status": "USED",
+          "summary": "Add a comment, inline (file/line) comment, or reply to an existing comment on a PR. All three variants use the same endpoint with different body shapes.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            }
+          ],
+          "requestBody": "General: {\"text\": \"comment text\"}. Inline: {\"text\": \"...\", \"anchor\": {\"path\": \"src/Foo.kt\", \"line\": 42, \"lineType\": \"ADDED\", \"fileType\": \"TO\", \"diffType\": \"COMMIT\", \"fromHash\": \"<sha>\", \"toHash\": \"<sha>\"}}. Reply: {\"text\": \"...\", \"parent\": {\"id\": <parentCommentId>}}",
+          "sampleResponse": null,
+          "callSite": "BitbucketBranchClient.kt:1836",
+          "provenance": "BitbucketBranchClient.kt:1825-1862, 2598-2656, 2662-2702; probe summary.md writes-inventoried table; research/2026-05-07-bitbucket-pr-write-ops-audit.md §3; research/2026-05-07-bitbucket-recommendations.md §4 R-ADD-7 (inline audit)",
+          "gotchas": [
+            "diffType=COMMIT + fromHash + toHash pins the inline comment to the specific diff range so it doesn't float when new commits land. Omitting these three fields gives server-default EFFECTIVE behaviour",
+            "For AI reviews, capture toRef.latestCommit at review time and pass as toHash with diffType=COMMIT (2026-05-07 audit P1 fix #7)",
+            "lineType: ADDED, REMOVED, or CONTEXT. fileType: TO for new/added lines, FROM for removed lines. Plugin derives fileType automatically from lineType"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/comments/{commentId}",
+          "status": "USED",
+          "summary": "Get a single comment by ID. Returns full comment detail including version (needed for edit/delete), text, author, anchor, state.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            },
+            {
+              "name": "commentId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Comment ID",
+              "example": "5371848"
+            }
+          ],
+          "sampleResponse": "{\"properties\":{\"repositoryId\":53499},\"id\":5371848,\"version\":0,\"text\":\"<redacted>\",\"author\":{\"name\":\"<redacted>\",\"displayName\":\"<redacted>\",\"active\":true},\"createdDate\":1746000000000,\"updatedDate\":1746000000000,\"permittedOperations\":{\"editable\":true,\"transitionable\":true,\"deletable\":true}}",
+          "callSite": "BitbucketBranchClient.kt:2476",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/pr_comment_by_id.json; BitbucketBranchClient.kt:2470-2498",
+          "gotchas": [
+            "permittedOperations tells whether the authenticated user can edit/delete/transition this comment",
+            "version is required for subsequent PUT (edit) or DELETE calls"
+          ]
+        },
+        {
+          "method": "PUT",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/comments/{commentId}",
+          "status": "USED",
+          "summary": "Edit a comment (update text) or change its state (RESOLVED/OPEN). Both operations use the same endpoint path; the body shape differs. Version is required for optimistic locking.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            },
+            {
+              "name": "commentId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Comment ID",
+              "example": "5371848"
+            }
+          ],
+          "requestBody": "Edit: {\"text\": \"new text\", \"version\": <current-version>}. Resolve/reopen: {\"state\": \"RESOLVED\"} or {\"state\": \"OPEN\"}",
+          "sampleResponse": null,
+          "callSite": "BitbucketBranchClient.kt:2516",
+          "provenance": "BitbucketBranchClient.kt:2506-2543, 2837-2866; probe summary.md writes-inventoried table",
+          "gotchas": [
+            "409 = stale version (STALE_VERSION) — re-fetch comment and retry",
+            "Plugin's resolvePrComment() and reopenPrComment() both route through setCommentState() which uses this same PUT path with {state: 'RESOLVED'} or {state: 'OPEN'}"
+          ]
+        },
+        {
+          "method": "DELETE",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/comments/{commentId}",
+          "status": "USED",
+          "summary": "Delete a comment. Version is a required query parameter for optimistic locking.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            },
+            {
+              "name": "commentId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Comment ID",
+              "example": "5371848"
+            },
+            {
+              "name": "version",
+              "location": "QUERY",
+              "type": "integer",
+              "required": true,
+              "description": "Comment version for optimistic locking",
+              "example": "0"
+            }
+          ],
+          "sampleResponse": null,
+          "callSite": "BitbucketBranchClient.kt:2800",
+          "provenance": "BitbucketBranchClient.kt:2790-2813; probe summary.md writes-inventoried table",
+          "gotchas": [
+            "409 = stale version — re-fetch and retry"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Reviewers & Participants",
+      "endpoints": [
+        {
+          "method": "PUT",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/participants/{username}",
+          "status": "USED",
+          "summary": "Set reviewer status for a named participant: APPROVED, NEEDS_WORK, or UNAPPROVED. Body includes status and approved fields.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            },
+            {
+              "name": "username",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Bitbucket username of the participant",
+              "example": "jdoe"
+            }
+          ],
+          "requestBody": "JSON: {\"status\": \"APPROVED\", \"approved\": true}",
+          "sampleResponse": null,
+          "callSite": "BitbucketBranchClient.kt:2721",
+          "provenance": "BitbucketBranchClient.kt:2708-2745; probe summary.md writes-inventoried table",
+          "gotchas": [
+            "409 = participant not found on this PR or status transition invalid",
+            "approved field must mirror status: true when status=APPROVED, false otherwise"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Build Status",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/build-status/1.0/commits/{commitId}",
+          "status": "USED",
+          "summary": "List build statuses for a commit SHA. Returns {state, key, name, url, description, dateAdded} per build. Used for PR build-status badge.",
+          "params": [
+            {
+              "name": "commitId",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Full commit SHA",
+              "example": "<redacted-sha>"
+            }
+          ],
+          "sampleResponse": "{\"size\":2,\"limit\":25,\"isLastPage\":true,\"values\":[{\"state\":\"SUCCESSFUL\",\"key\":\"PROJ-PLAN-42\",\"name\":\"<redacted>\",\"url\":\"https://<redacted>/browse/PROJ-PLAN-42\",\"description\":\"Tests passed\"}]}",
+          "callSite": "BitbucketBranchClient.kt:1400",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/build_status_v1.json; BitbucketBranchClient.kt:1395-1422; research/2026-05-07-bitbucket-recommendations.md §2 B5",
+          "gotchas": [
+            "key field is typically the Bamboo build key including the build number (e.g. PROJ-PLAN-42). Plugin's extractPlanKey() strips the trailing numeric build number to get the plan key for triggering new builds",
+            "404 = no builds for this commit — treated as empty list, not an error",
+            "Rich endpoint GET /rest/api/latest/.../commits/{cid}/builds returned 400 on this org's DC instance because Bamboo agents publish only basic v1 schema — keep v1 as the long-term build-status fetch"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/build-status/1.0/commits/stats/{commitId}",
+          "status": "USED",
+          "summary": "Cheap aggregate build counter for a commit: {successful, failed, inProgress, cancelled, unknown}. More efficient than listing all build statuses when only counts are needed.",
+          "params": [
+            {
+              "name": "commitId",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Full commit SHA",
+              "example": "<redacted-sha>"
+            }
+          ],
+          "sampleResponse": "{\"cancelled\":0,\"successful\":2,\"inProgress\":0,\"failed\":0,\"unknown\":0}",
+          "callSite": "BitbucketBranchClient.kt:3053",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/build_status_v1_stats.json; BitbucketBranchClient.kt:3048-3074; research/2026-05-07-bitbucket-recommendations.md §2 B6 §4 R-ADD-12",
+          "gotchas": []
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/commits/{sha}/pull-requests",
+          "status": "USED",
+          "summary": "Reverse lookup: given a commit SHA, return all PRs that contain that commit. Powers the Bamboo→PR notification bridge — when a build fails for commit X, look up the affected PR authors.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "sha",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Full commit SHA",
+              "example": "<redacted-sha>"
+            },
+            {
+              "name": "limit",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results (plugin uses 25)",
+              "example": "25"
+            }
+          ],
+          "sampleResponse": "{\"size\":0,\"limit\":25,\"isLastPage\":true,\"values\":[],\"start\":0}",
+          "callSite": "BitbucketBranchClient.kt:3020",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/commit_pull_requests_reverse.json; BitbucketBranchClient.kt:3010-3041; research/2026-05-07-bitbucket-recommendations.md §2 B1 §4 R-ADD-5",
+          "gotchas": [
+            "Probe returned size=0 on the test SHA (schema validated, correct shape) — endpoint is live even when no PRs contain the commit"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Jira Integration",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/jira/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/issues",
+          "status": "USED",
+          "summary": "Jira issues linked to a PR via the Atlassian Jira-link plugin. Returns [{key, url}] per linked issue. Replaces the plugin's previous manual regex extraction over PR title, branch name and commit messages.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "prId",
+              "location": "PATH",
+              "type": "integer",
+              "required": true,
+              "description": "Pull request ID",
+              "example": "438"
+            }
+          ],
+          "sampleResponse": "[{\"key\":\"PROJ-002\",\"url\":\"https://<redacted>/url/3\"}]",
+          "callSite": "BitbucketBranchClient.kt:3098",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/pr_linked_jira_issues.json; BitbucketBranchClient.kt:3089-3120; research/2026-05-07-bitbucket-recommendations.md §4 R-ADD-11",
+          "gotchas": [
+            "404 = Jira-link plugin not installed — treat as empty list, not a failure",
+            "Requires Jira-link plugin (capability 'dev-status' confirmed installed on this instance via /rest/capabilities)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Required Builds",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/required-builds/latest/projects/{projectKey}/repos/{repoSlug}/conditions",
+          "status": "USED",
+          "summary": "Required-builds merge-check conditions for a repo. Returns {buildParentKeys, refMatcher, exemptRefMatcher} per condition. Used to display 'required builds before merge' indicators on PRs.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            }
+          ],
+          "sampleResponse": "{\"size\":0,\"limit\":25,\"isLastPage\":true,\"values\":[],\"start\":0}",
+          "callSite": "BitbucketBranchClient.kt:3140",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/repo_required_builds.json; BitbucketBranchClient.kt:3132-3162; research/2026-05-07-bitbucket-recommendations.md §4 R-ADD-15",
+          "gotchas": [
+            "Use /rest/required-builds/latest/ base path — NOT /rest/api/1.0/ which 404s on DC 9.4",
+            "404 = required-builds plugin not installed — treated as empty list, not a failure",
+            "Empty values[] is a valid response meaning no required builds are configured for this repo"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Code Insights",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/insights/1.0/projects/{projectKey}/repos/{repoSlug}/commits/{commitId}/reports",
+          "status": "PROBED_UNUSED",
+          "summary": "Code Insights reports for a commit (Sonar, SCA tools publish here). Returns list of reports with reporter, result, data.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "commitId",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Full commit SHA",
+              "example": "<redacted-sha>"
+            }
+          ],
+          "sampleResponse": "{\"size\":0,\"limit\":25,\"isLastPage\":true,\"values\":[],\"start\":0}",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/insights_reports.json (200, empty — no reports published on test commit); summary.md feature table R-ADD-9; research/2026-05-07-bitbucket-recommendations.md §4 R-ADD-9",
+          "verdict": {
+            "classification": "R-ADD-9: probed, not yet adopted",
+            "reasoning": "Confirmed 200 on DC 9.4.16. Code Insights capability confirmed installed. Empty on test commit but endpoint and schema are valid. Candidate for Quality tab integration."
+          },
+          "gotchas": [
+            "Gated on Code Insights plugin — check capabilities before adopting",
+            "Base path /rest/insights/1.0/ confirmed on this instance via /rest/insights/latest/capabilities endpoint"
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/insights/1.0/projects/{projectKey}/repos/{repoSlug}/commits/{commitId}/annotations",
+          "status": "PROBED_UNUSED",
+          "summary": "All Code Insights annotations on a commit across all reports. Supports optional key, path, severity, type filter params.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "WMAP"
+            },
+            {
+              "name": "repoSlug",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Repository slug",
+              "example": "my-repo"
+            },
+            {
+              "name": "commitId",
+              "location": "PATH",
+              "type": "string",
+              "required": true,
+              "description": "Full commit SHA",
+              "example": "<redacted-sha>"
+            },
+            {
+              "name": "limit",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Max results",
+              "example": "50"
+            }
+          ],
+          "sampleResponse": "{\"totalCount\":0,\"annotations\":[]}",
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/insights_annotations_all.json (200, empty); summary.md feature table R-ADD-10; research/2026-05-07-bitbucket-recommendations.md §4 R-ADD-10",
+          "verdict": {
+            "classification": "R-ADD-10: probed, not yet adopted",
+            "reasoning": "Confirmed 200 on DC 9.4.16. Would power inline-on-diff overlays for Sonar/SCA findings."
+          },
+          "gotchas": [
+            "Gated on Code Insights plugin"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Deprecated",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}/comments",
+          "status": "DEPRECATED",
+          "summary": "List all PR comments (root threads). Returns 400 on DC 9.4 without required path= or count=true parameter. Plugin migrated to using /activities and filtering action=COMMENTED.",
+          "params": [
+            {
+              "name": "path",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Required on DC 9.4 to list file-path-scoped comments; omitting it causes 400",
+              "example": "src/main/Foo.kt"
+            },
+            {
+              "name": "count",
+              "location": "QUERY",
+              "type": "boolean",
+              "required": false,
+              "description": "When true, returns only size counter (also works on DC 9.4 without path)",
+              "example": "true"
+            }
+          ],
+          "sampleResponse": null,
+          "provenance": "probe Result_Bitbucket/bundle-full-sweep.unpacked/raw/pr_comments.json (400); summary.md existing table row (FAIL 400); research/2026-05-07-bitbucket-recommendations.md §1.1",
+          "verdict": {
+            "classification": "Broken on DC 9.4: requires path= or count=true parameter",
+            "reasoning": "DC 9.4's /comments listing requires either path (for path-anchored comments) or count=true. Listing 'all root threads in a PR' without those parameters is rejected. Plugin replaced this call with /activities filtering."
+          },
+          "gotchas": [
+            "This endpoint WORKED on older DC versions — the rejection is a DC 9.4 behaviour change"
+          ]
+        }
+      ]
+    }
+  ]
+}
