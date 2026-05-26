@@ -1419,8 +1419,14 @@ description optional: for approval dialog on write actions.
                 }
                 // Resolve the current user once so we can post-filter worklogs by author on
                 // each ticket (a ticket the user touched may also have entries from teammates).
+                // Match against BOTH identities: WorklogData.author is Jira's displayName, while
+                // MyselfData.name is the username — comparing only one against the other dropped
+                // every worklog (e.g. "Jane Doe" vs "jdoe").
                 val myselfResult = service.getMyselfExpanded()
-                val myselfName = myselfResult.data?.name
+                val myIdentities = listOfNotNull(
+                    myselfResult.data?.displayName,
+                    myselfResult.data?.name,
+                ).filter { it.isNotBlank() }
                 // Fetch worklogs in parallel but BOUNDED by a Semaphore — Jira Cloud rate-limits
                 // around ~50 req/10s per token, so 50 simultaneous getWorklogs calls would hit
                 // 429 and all fail together. Code-review concern.
@@ -1435,7 +1441,8 @@ description optional: for approval dialog on write actions.
                                         val started = worklogStarted(wl) ?: return@filter false
                                         val inWindow = !started.isBefore(since) &&
                                             (until == null || !started.isAfter(until))
-                                        val byMe = myselfName == null || worklogMatchesAuthor(wl, myselfName)
+                                        val byMe = myIdentities.isEmpty() ||
+                                            myIdentities.any { worklogMatchesAuthor(wl, it) }
                                         inWindow && byMe
                                     }
                             }
@@ -1446,7 +1453,7 @@ description optional: for approval dialog on write actions.
                 val content = buildString {
                     appendLine("$total worklog(s) across ${perTicket.count { it.second.isNotEmpty() }} ticket(s) " +
                         "from ${since.toLocalDate()}${until?.let { " to ${it.toLocalDate()}" } ?: ""}:")
-                    if (myselfName == null) {
+                    if (myIdentities.isEmpty()) {
                         // Without /myself we can't filter to the current user, so any teammates'
                         // worklogs on the same tickets are also included. Flag this to the LLM
                         // so it can decide whether to retry or proceed with mixed-author data.

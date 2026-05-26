@@ -2,8 +2,10 @@ package com.workflow.orchestrator.agent.tools.integration
 
 import com.workflow.orchestrator.core.model.jira.WorklogData
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -52,5 +54,20 @@ class JiraToolWorklogParseTest {
     fun `still parses bare date and rejects garbage`() {
         assertNotNull(tool.parseStartedDateTime("2026-05-10"))
         assertNull(tool.parseStartedDateTime("not-a-date"))
+    }
+
+    @Test
+    fun `worklog author matches on display name — the value WorklogData carries`() {
+        // WorklogData.author is Jira's displayName; my_worklogs matches against the user's
+        // displayName AND username, so a displayName worklog must match the displayName identity.
+        val wl = WorklogData(
+            author = "Jane Doe",
+            timeSpent = "1h",
+            timeSpentSeconds = 3600,
+            comment = null,
+            started = "2026-05-10T09:00:00.000+0000",
+        )
+        assertTrue(tool.worklogMatchesAuthor(wl, "Jane Doe"))
+        assertFalse(tool.worklogMatchesAuthor(wl, "jdoe"))
     }
 }
