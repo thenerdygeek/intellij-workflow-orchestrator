@@ -396,8 +396,13 @@ data class SonarCurrentUserData(
     val externalProvider: String?,
     val isLoggedIn: Boolean
 ) {
-    /** Heuristic — token has admin scope if any global permission is set. */
-    val isAdmin: Boolean get() = globalPermissions.isNotEmpty()
+    /**
+     * True only when the token holds SonarQube's global `admin` permission. Previously this
+     * returned true for ANY global permission (e.g. `scan`/`provisioning`), wrongly reporting
+     * a non-admin token as admin and contradicting the "403 on admin-only actions ⇒ not admin"
+     * guidance the tool gives the LLM.
+     */
+    val isAdmin: Boolean get() = globalPermissions.any { it.equals("admin", ignoreCase = true) }
 }
 
 /**
