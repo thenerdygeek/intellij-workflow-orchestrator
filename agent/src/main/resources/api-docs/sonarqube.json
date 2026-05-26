@@ -1,0 +1,1013 @@
+{
+  "id": "sonarqube",
+  "displayName": "SonarQube",
+  "authScheme": "Authorization: Bearer <userToken>",
+  "probedServerVersion": "SonarQube Community Build 25.9.0.112764 (edition: community)",
+  "description": "SonarQube Web REST API for code quality, coverage, issues, and security hotspots. Auth is Bearer user-token (PasswordSafe), NOT HTTP Basic. Three probe sweeps on Community Build 25.9.0.112764 (versionEOL 2026-04-01). IMPORTANT edition note: SonarQube 25.x renamed Community Edition to 'Community Build' and moved multi-branch analysis + security hotspots to the free tier — pre-25.x Community behaved very differently (branch= ignored, hotspots 404, branches/list only main). The 'edition' field still reports 'community' in 25.x. Two endpoints (/api/ce/activity, /api/new_code_periods/show) require Administer Project permission and return 403 for non-admin tokens. Plugin is a pure read consumer — zero POST/PUT/DELETE in :sonar module. User-Agent ends in '(read-only)'.",
+  "categories": [
+    {
+      "name": "Authentication & Identity",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/api/authentication/validate",
+          "status": "USED",
+          "summary": "Validate the current user token. Returns {valid: true/false}. Used as the plugin's connection check (validateConnection()).",
+          "params": [],
+          "sampleResponse": "{\"valid\": true}",
+          "callSite": "SonarApiClient.kt:114",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/auth_validate.json; bundle-sweeep-compresesd-v2.unpacked/summary.md row auth_validate; SonarApiClient.kt:114-117",
+          "gotchas": [
+            "Returns 200 with {valid:false} for an expired or revoked token — NOT 401. Always check the 'valid' field.",
+            "First sweep used /api/zodofqcgjeffts/validate path (probe artifact); the canonical plugin-used path is /api/authentication/validate confirmed in bundle-sweeep-compresesd-v2 and SonarApiClient.kt:116."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/api/users/current",
+          "status": "USED",
+          "summary": "Current authenticated user identity: login, name, email, groups, externalProvider, global permissions. Used by the plugin for the settings-page identity badge and to gate admin-only hints.",
+          "params": [],
+          "sampleResponse": "{\"isLoggedIn\": true, \"login\": \"xoe66936\", \"name\": \"<redacted>\", \"email\": \"<redacted>\", \"local\": false, \"externalProvider\": \"LDAP_default\", \"scmAccounts\": [], \"groups\": [\"sonar-users\"], \"permissions\": {\"global\": []}}",
+          "callSite": "SonarApiClient.kt:431",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/users_current.json; bundle-sweeep-compresesd-v2.unpacked/summary.md feature-endpoints row; SonarApiClient.kt:431-434; 2026-05-07-sonar-audit-recommendations.md §2",
+          "gotchas": [
+            "permissions.global is an empty array for non-admin tokens — this is how the plugin detects admin scope.",
+            "canAdmin on /api/navigation/global also reflects admin status."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Server & Version Detection",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/api/server/version",
+          "status": "PROBED_UNUSED",
+          "summary": "Returns plain-text server version string (e.g. '25.9.0.112764'). Content-Type is text/plain, NOT JSON.",
+          "params": [],
+          "sampleResponse": "25.9.0.112764",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/server_version.json; bundle-sweeep-compresesd-v2.unpacked/summary.md version-endpoints row 1",
+          "verdict": {
+            "classification": "R-INV: inventoried, not adopted in plugin code",
+            "reasoning": "Confirmed 200 on Community Build 25.9. Plugin uses /api/authentication/validate for liveness. This is the cheapest version detect with no auth required. Useful for settings validation and future version-gating."
+          },
+          "gotchas": [
+            "Response is Content-Type: text/plain — NOT JSON. Plugin's generic get<T> method will reject it with PARSE_ERROR. Use raw string read, not JSON deserialization."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/api/system/status",
+          "status": "PROBED_UNUSED",
+          "summary": "Server status and version. Returns {id, version, status}. Status values: UP, DOWN, STARTING, RESTARTING, DB_MIGRATION_NEEDED, DB_MIGRATION_RUNNING.",
+          "params": [],
+          "sampleResponse": "{\"id\": \"0B1824E7-AYGz2L6shWioIVeAW7Ej\", \"version\": \"25.9.0.112764\", \"status\": \"UP\"}",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/system_status.json; bundle-sweeep-compresesd-v2.unpacked/summary.md version-endpoints row 2",
+          "verdict": {
+            "classification": "R-INV: inventoried, not adopted in plugin code",
+            "reasoning": "Confirmed 200 on Community Build 25.9. Could power a 'Sonar UP' liveness indicator in the plugin health-check panel."
+          },
+          "gotchas": []
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/api/navigation/global",
+          "status": "PROBED_UNUSED",
+          "summary": "Global navigation info. Exposes edition (community/developer/enterprise/datacenter), canAdmin, version, versionEOL, qualifiers, settings.",
+          "params": [],
+          "sampleResponse": "{\"canAdmin\": false, \"edition\": \"community\", \"version\": \"25.9.0.112764\", \"versionEOL\": \"2026-04-01\", \"qualifiers\": [\"TRK\"], \"standalone\": true}",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/navigation_global.json; bundle-sweeep-compresesd-v2.unpacked/summary.md version-endpoints row 3",
+          "verdict": {
+            "classification": "R-EVOLVE: useful for edition detection + dropping pre-25.x dead code paths",
+            "reasoning": "Plugin should detect edition once at startup to eliminate pre-25.x degradation code (branch-ignore guards, hotspots-404 fallbacks) that are now dead on Community Build 25.x."
+          },
+          "gotchas": [
+            "edition field still reports 'community' on SonarQube 25.x Community Build — the 'edition: developer' guard used pre-25.x to gate multi-branch and hotspots is now incorrect.",
+            "versionEOL indicates when the minor version stops receiving security patches."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Projects & Components",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/api/components/search",
+          "status": "USED",
+          "summary": "Search projects (TRK qualifier) by name/key substring. Returns paging + components[]{key, name, qualifier, project}. Used by the project-picker dialog.",
+          "params": [
+            {
+              "name": "qualifiers",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Must be 'TRK' to search project-level components",
+              "example": "TRK"
+            },
+            {
+              "name": "q",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Free-text search substring. Omitting returns all TRK components (plugin always sends a value at runtime).",
+              "example": "myproject"
+            },
+            {
+              "name": "ps",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Page size. Plugin sends ps=25.",
+              "example": "25"
+            }
+          ],
+          "sampleResponse": "{\"paging\": {\"pageIndex\": 1, \"pageSize\": 25, \"total\": 53}, \"components\": [{\"key\": \"card-info-payload-parser\", \"name\": \"card-info-payload-parser\", \"qualifier\": \"TRK\", \"project\": \"card-info-payload-parser\"}]}",
+          "callSite": "SonarApiClient.kt:119",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/components_search.json; SonarApiClient.kt:119-124",
+          "gotchas": [
+            "Omitting q lists ALL TRK components on the server — potentially large. Plugin always passes a q value at runtime."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/api/components/show",
+          "status": "USED",
+          "summary": "Fetch single component by key. Used as a cheap preflight existence probe — if the project key is unknown, /api/issues/search returns 200-with-empty-array which is indistinguishable from 'no open issues'. A 404 here means the key is wrong.",
+          "params": [
+            {
+              "name": "component",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Project key to probe for existence",
+              "example": "my-project-key"
+            }
+          ],
+          "callSite": "SonarApiClient.kt:131",
+          "provenance": "SonarApiClient.kt:131-138 (componentExists method)",
+          "gotchas": [
+            "Returns 404 for an unknown component key; plugin maps this to ApiResult.Success(false) for the existence check, passing any other error through."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Branches",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/api/project_branches/list",
+          "status": "USED",
+          "summary": "List all branches for a project. Returns branches[]{name, isMain, type, status{qualityGateStatus}, analysisDate, branchId, excludedFromPurge}.",
+          "params": [
+            {
+              "name": "project",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "my-project-key"
+            }
+          ],
+          "sampleResponse": "{\"branches\": [{\"name\": \"develop\", \"isMain\": true, \"type\": \"BRANCH\", \"status\": {\"qualityGateStatus\": \"OK\"}, \"analysisDate\": \"2026-05-06T16:18:53+0000\", \"excludedFromPurge\": true, \"branchId\": \"AY3UcNurxGXz_GGKfkeh\"}]}",
+          "callSite": "SonarApiClient.kt:140",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/project_branches_list.json; bundle-sweeep-compresesd-v2.unpacked/summary.md existing-endpoints row; SonarApiClient.kt:140-145",
+          "gotchas": [
+            "Pre-25.x Community Edition returned ONLY the main branch. SonarQube 25.x Community Build returns ALL branches with full metadata — multi-branch moved to the free tier in the 25.x rebrand.",
+            "Plugin's SonarBranchDto currently lacks branchId and excludedFromPurge fields — cosmetic gap, neither is used by the plugin today."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Quality Gates",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/api/qualitygates/project_status",
+          "status": "USED",
+          "summary": "Quality gate pass/fail status for a project+branch. Returns projectStatus{status, conditions[], ignoredConditions, period{mode,parameter}, caycStatus}.",
+          "params": [
+            {
+              "name": "projectKey",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "my-project-key"
+            },
+            {
+              "name": "branch",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Branch name. Honored on SonarQube 25.x Community Build. Pre-25.x Community silently ignored this and returned main-branch status.",
+              "example": "develop-PROJ-001"
+            }
+          ],
+          "sampleResponse": "{\"projectStatus\": {\"status\": \"ERROR\", \"conditions\": [{\"status\": \"ERROR\", \"metricKey\": \"new_line_coverage\", \"comparator\": \"LT\", \"errorThreshold\": \"100\", \"actualValue\": \"98.9\"}], \"ignoredConditions\": false, \"period\": {\"mode\": \"REFERENCE_BRANCH\", \"parameter\": \"release\"}, \"caycStatus\": \"over-compliant\"}}",
+          "callSite": "SonarApiClient.kt:147",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/quality_gate_status.json; SonarApiClient.kt:147-153",
+          "gotchas": [
+            "Pre-25.x Community Edition silently ignored branch= and returned main-branch gate status. SonarQube 25.x Community Build honors branch= correctly.",
+            "caycStatus (Clean as You Code compliance) is new in 25.x: values are 'compliant'/'non-compliant'/'over-compliant'. Plugin's SonarQualityGateDto currently drops this field (R-EVOLVE-1 in audit).",
+            "The period field here is the same data as /api/new_code_periods/show but accessible to non-admin tokens. Use it as a fallback when getNewCodePeriod() returns 403."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/api/qualitygates/list",
+          "status": "USED",
+          "summary": "List all configured quality gates with their caycStatus and isAiCodeSupported flag.",
+          "params": [],
+          "sampleResponse": "{\"qualitygates\": [{\"name\": \"Sonar way\", \"isDefault\": true, \"isBuiltIn\": true, \"caycStatus\": \"compliant\", \"actions\": {\"rename\": false, \"setAsDefault\": false, \"copy\": false}}], \"actions\": {\"create\": false}}",
+          "callSite": "SonarApiClient.kt:440",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/qualitygates_list.json; SonarApiClient.kt:440-443",
+          "gotchas": [
+            "isAiCodeSupported is false on all gates for Community Build — AI Code Fix requires Enterprise + paid AI subscription.",
+            "actions.create=false for non-admin tokens."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Issues",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/api/issues/search",
+          "status": "USED",
+          "summary": "Search open issues for a project. Supports branch, file-level filtering, new-code-period scope, and facets. Plugin paginates up to 20 pages x 500 items (10 000 cap). Also used for single-page agent access and facet triage breakdown.",
+          "params": [
+            {
+              "name": "componentKeys",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Project key, or 'projectKey:src/path/File.java' for file-level scope.",
+              "example": "my-project-key"
+            },
+            {
+              "name": "resolved",
+              "location": "QUERY",
+              "type": "boolean",
+              "required": false,
+              "description": "Pass false to retrieve only open issues.",
+              "example": "false"
+            },
+            {
+              "name": "branch",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Branch name. Honored on SonarQube 25.x. Pre-25.x Community silently ignored it.",
+              "example": "develop-PROJ-001"
+            },
+            {
+              "name": "ps",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Page size. Plugin uses 500 (SonarQube maximum). Probe used 10 to keep payloads small.",
+              "example": "500"
+            },
+            {
+              "name": "p",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Page number (1-indexed).",
+              "example": "1"
+            },
+            {
+              "name": "inNewCodePeriod",
+              "location": "QUERY",
+              "type": "boolean",
+              "required": false,
+              "description": "When true, restricts results to issues introduced in the new-code period (Clean as You Code delta). Used by the plugin's New Code tab.",
+              "example": "true"
+            },
+            {
+              "name": "facets",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Comma-separated facet names for triage breakdown. Valid 25.x values include: severities, types, tags, impactSoftwareQualities, impactSeverities, cleanCodeAttributeCategories, assignees, files, rules, statuses, resolutions, languages. Use 'files' NOT 'fileUuids' (400 confirmed in probe).",
+              "example": "severities,types,impactSoftwareQualities,files,rules"
+            }
+          ],
+          "sampleResponse": "{\"total\": 681, \"paging\": {\"pageIndex\": 1, \"pageSize\": 10, \"total\": 681}, \"issues\": [{\"key\": \"7ce7c20f-2893-479a-9cb6-915c7d08cbb4\", \"rule\": \"java:S1128\", \"severity\": \"MINOR\", \"component\": \"my-project:src/main/java/Example.java\", \"project\": \"my-project\", \"line\": 31, \"status\": \"OPEN\", \"effort\": \"1min\"}]}",
+          "callSite": "SonarApiClient.kt:155",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/issues_search.json; bundle-sweeep-compresesd-v2.unpacked/raw/issues_search_new_code.json; bundle-sweeep-compresesd-v2.unpacked/raw/issues_search_facets_new_code.json; SonarApiClient.kt:155-425",
+          "gotchas": [
+            "SonarQube enforces ps <= 500. Values above 500 produce a 400 error.",
+            "20-page x 500 hard cap in the plugin (MAX_ISSUES_PAGES=20, ISSUES_PAGE_SIZE=500 = 10 000 items max). Partial data returned with a warning log if cap is hit.",
+            "branch= on 25.x Community Build is honored. It means 'present in the branch snapshot', NOT 'unique to this branch'. Use inNewCodePeriod=true to get the new-code delta.",
+            "Issues in 25.x carry CCT fields: cleanCodeAttribute, cleanCodeAttributeCategory, impacts[{softwareQuality, severity}], issueStatus. Plugin DTO uses ignoreUnknownKeys so these are silently dropped if not in the DTO.",
+            "Facet 'fileUuids' is NOT valid on 25.x — use 'files'. The 400 error enumerates all valid facets including pciDss, owasp, stig, cwe compliance sets.",
+            "getIssuesSinglePage issues ONE HTTP request (no loop). getIssuesWithPaging loops all pages. getIssueFacets uses ps=1 (only needs facet counts, not full issue list)."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Security Hotspots",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/api/hotspots/search",
+          "status": "USED",
+          "summary": "List security hotspots for a project. Returns paging + hotspots[]{key, component, project, securityCategory, vulnerabilityProbability, status, line, message, ruleKey, textRange}. Paginated up to 20 pages x 500.",
+          "params": [
+            {
+              "name": "project",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "my-project-key"
+            },
+            {
+              "name": "branch",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Branch name. Honored on SonarQube 25.x Community Build. Pre-25.x Community returned 404 for this entire endpoint.",
+              "example": "develop-PROJ-001"
+            },
+            {
+              "name": "ps",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Page size. Plugin uses 500 (SonarQube maximum).",
+              "example": "500"
+            },
+            {
+              "name": "p",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Page number (1-indexed).",
+              "example": "1"
+            }
+          ],
+          "sampleResponse": "{\"paging\": {\"pageIndex\": 1, \"pageSize\": 10, \"total\": 1}, \"hotspots\": [{\"key\": \"b19b559f-7bab-4cb6-b573-37ebd99b6c2f\", \"component\": \"my-project:src/main/java/util/CommonUtil.java\", \"project\": \"my-project\", \"securityCategory\": \"weak-cryptography\", \"vulnerabilityProbability\": \"MEDIUM\", \"status\": \"TO_REVIEW\", \"line\": 278, \"ruleKey\": \"java:S2245\"}]}",
+          "callSite": "SonarApiClient.kt:453",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/hotspots_search.json; SonarApiClient.kt:453-476",
+          "gotchas": [
+            "Pre-25.x Community Edition returned 404 for this endpoint — multi-branch and security hotspots were Developer Edition+ only. SonarQube 25.x Community Build includes this endpoint at all editions.",
+            "Plugin KDoc comment saying 'Developer Edition+' is stale for 25.x (R-DROP in audit).",
+            "20-page x 500 hard cap same as issues (MAX_ISSUES_PAGES)."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/api/hotspots/show",
+          "status": "USED",
+          "summary": "Full hotspot detail for autonomous agent remediation. Returns {key, component, project, rule:{key, name, vulnerabilityProbability, securityCategory, riskDescription, vulnerabilityDescription, fixRecommendations}, status, line, message, assignee, author, creationDate, updateDate, changelog[], comment[], textRange, flows[]}.",
+          "params": [
+            {
+              "name": "hotspot",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Hotspot key (from /api/hotspots/search)",
+              "example": "b19b559f-7bab-4cb6-b573-37ebd99b6c2f"
+            }
+          ],
+          "sampleResponse": "{\"key\": \"b19b559f-7bab-4cb6-b573-37ebd99b6c2f\", \"rule\": {\"key\": \"java:S2245\", \"name\": \"Using pseudorandom number generators is security-sensitive\", \"vulnerabilityProbability\": \"MEDIUM\", \"riskDescription\": \"<p>...(truncated)</p>\", \"fixRecommendations\": \"<p>SecureRandom random = new SecureRandom();</p>\"}, \"status\": \"TO_REVIEW\", \"line\": 278}",
+          "callSite": "SonarApiClient.kt:390",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/hotspots_show.json; SonarApiClient.kt:390-394; 2026-05-07-sonar-audit-recommendations.md R-ADD-AGENT-1",
+          "gotchas": [
+            "rule.fixRecommendations contains curated HTML with a compliant-solution code example from Sonar's rule team — not AI-generated. This is what the agent feeds to the LLM as the 'good pattern' example.",
+            "canChangeStatus is false for non-admin tokens — agent must fix via code edit + re-analysis, not by directly mutating hotspot status via API."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Measures & Coverage",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/api/measures/component_tree",
+          "status": "USED",
+          "summary": "File-level code metrics tree. Returns paging + components[]{key, name, qualifier, path, language, measures[]}. Plugin fetches up to 10 pages x 500 (5 000 files max). Used for the Coverage tab and Quality tab file list.",
+          "params": [
+            {
+              "name": "component",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "my-project-key"
+            },
+            {
+              "name": "metricKeys",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Comma-separated metric keys. Plugin sends coverage, line_coverage, branch_coverage, uncovered_lines, uncovered_conditions, lines_to_cover, new_coverage, new_branch_coverage, new_uncovered_lines, new_uncovered_conditions, new_lines_to_cover, bugs, vulnerabilities, code_smells, new_bugs, new_vulnerabilities, new_code_smells, sqale_index, sqale_rating, duplicated_lines_density, complexity, cognitive_complexity, reliability_rating, security_rating.",
+              "example": "coverage,line_coverage,new_coverage"
+            },
+            {
+              "name": "qualifiers",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Filter by component type. Plugin uses 'FIL' (files only).",
+              "example": "FIL"
+            },
+            {
+              "name": "additionalFields",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Must include 'period' to populate period.value for new_* metrics. Without it Sonar returns the value but no period metadata.",
+              "example": "period"
+            },
+            {
+              "name": "branch",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Branch name. Honored on SonarQube 25.x.",
+              "example": "develop-PROJ-001"
+            },
+            {
+              "name": "ps",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Page size. Plugin uses 500 (SonarQube maximum).",
+              "example": "500"
+            },
+            {
+              "name": "p",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Page number (1-indexed).",
+              "example": "1"
+            },
+            {
+              "name": "s",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Sort field. Plugin sends 'metric' when new_lines_to_cover is in metricKeys.",
+              "example": "metric"
+            },
+            {
+              "name": "metricSort",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Metric key to sort by when s=metric. Plugin uses 'new_lines_to_cover' descending so files with the most new code surface on the first page.",
+              "example": "new_lines_to_cover"
+            },
+            {
+              "name": "asc",
+              "location": "QUERY",
+              "type": "boolean",
+              "required": false,
+              "description": "Sort direction. Plugin sends false (descending) for new_lines_to_cover sort.",
+              "example": "false"
+            }
+          ],
+          "sampleResponse": "{\"paging\": {\"pageIndex\": 1, \"pageSize\": 20, \"total\": 531}, \"baseComponent\": {\"key\": \"my-project\", \"qualifier\": \"TRK\"}, \"components\": [{\"key\": \"my-project:src/Main.java\", \"qualifier\": \"FIL\", \"path\": \"src/Main.java\", \"language\": \"java\", \"measures\": [{\"metric\": \"coverage\", \"value\": \"95.8\"}]}], \"period\": {\"index\": 1, \"mode\": \"REFERENCE_BRANCH\", \"parameter\": \"release\"}}",
+          "callSite": "SonarApiClient.kt:300",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/measures_component_tree.json; SonarApiClient.kt:300-347",
+          "gotchas": [
+            "additionalFields=period is required for new_* metrics. Without it Sonar returns the metric value but no period meta — the SonarMeasureDto.effectiveValue() method correctly disambiguates period.value vs value.",
+            "10-page x 500 hard cap (MAX_MEASURES_PAGES=10, MEASURES_PAGE_SIZE=500 = 5 000 components). Partial data logged as warning if cap is hit.",
+            "Default sort is alphabetical by name. Plugin adds s=metric&metricSort=new_lines_to_cover&asc=false to surface new-code files early — without this, large projects bury new-code files past the page cap."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/api/measures/component",
+          "status": "USED",
+          "summary": "Project-level aggregate measures (not file-level). Returns {component: {key, name, qualifier, measures[], branch}}. Used for the OverviewPanel cards.",
+          "params": [
+            {
+              "name": "component",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "my-project-key"
+            },
+            {
+              "name": "metricKeys",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Comma-separated metric keys. Plugin sends sqale_index, sqale_rating, duplicated_lines_density, cognitive_complexity, reliability_rating, security_rating, coverage, branch_coverage.",
+              "example": "coverage,reliability_rating,sqale_rating"
+            },
+            {
+              "name": "additionalFields",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Include 'period' for new_* metric values.",
+              "example": "period"
+            },
+            {
+              "name": "branch",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Branch name. Honored on SonarQube 25.x.",
+              "example": "develop-PROJ-001"
+            }
+          ],
+          "sampleResponse": "{\"component\": {\"key\": \"my-project\", \"qualifier\": \"TRK\", \"measures\": [{\"metric\": \"coverage\", \"value\": \"95.8\", \"bestValue\": false}, {\"metric\": \"reliability_rating\", \"value\": \"4.0\", \"bestValue\": false}], \"branch\": \"develop-PROJ-001\"}}",
+          "callSite": "SonarApiClient.kt:354",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/measures_component.json; SonarApiClient.kt:354-368",
+          "gotchas": [
+            "Returns {component: {measures: [...]}} — NOT a list at the top level. Different shape from component_tree."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/api/measures/search_history",
+          "status": "PROBED_UNUSED",
+          "summary": "Historical metric values over time for a component. Returns paging + measures[]{metric, history[{date, value}]}. Candidate for a coverage-trend sparkline.",
+          "params": [
+            {
+              "name": "component",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "my-project-key"
+            },
+            {
+              "name": "metrics",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Comma-separated metric keys",
+              "example": "coverage,new_coverage,sqale_index"
+            },
+            {
+              "name": "branch",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Branch name.",
+              "example": "develop-PROJ-001"
+            },
+            {
+              "name": "ps",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Number of historical data points to return.",
+              "example": "20"
+            }
+          ],
+          "sampleResponse": "{\"paging\": {\"pageIndex\": 1, \"pageSize\": 20, \"total\": 8}, \"measures\": [{\"metric\": \"coverage\", \"history\": [{\"date\": \"2026-04-20T11:56:54+0000\", \"value\": \"95.2\"}, {\"date\": \"2026-05-06T16:18:53+0000\", \"value\": \"95.8\"}]}]}",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/measures_search_history.json; bundle-sweeep-compresesd-v2.unpacked/summary.md feature-endpoints row",
+          "verdict": {
+            "classification": "R-INV: inventoried, not adopted in plugin code",
+            "reasoning": "Confirmed 200 on Community Build 25.9. Could power a coverage-trend sparkline on the OverviewPanel without needing to poll component_tree. Low adoption effort."
+          },
+          "gotchas": []
+        }
+      ]
+    },
+    {
+      "name": "Sources & Duplications",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/api/sources/lines",
+          "status": "USED",
+          "summary": "Source lines with coverage data for a specific file. Returns sources[]{line, code, scmAuthor, scmDate, scmRevision, lineHits, conditions, coveredConditions, duplicated, isNew}. Used by CoverageLineMarkerProvider for gutter markers.",
+          "params": [
+            {
+              "name": "key",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "File component key in the format 'projectKey:src/path/File.java'",
+              "example": "my-project:src/main/java/Example.java"
+            },
+            {
+              "name": "from",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Start line (1-indexed, inclusive).",
+              "example": "1"
+            },
+            {
+              "name": "to",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "End line (1-indexed, inclusive).",
+              "example": "50"
+            },
+            {
+              "name": "branch",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Branch name. Note: the sonar CLAUDE.md describes this as an 'internal param'. Honored on 25.x.",
+              "example": "develop-PROJ-001"
+            }
+          ],
+          "sampleResponse": "{\"sources\": [{\"line\": 1, \"code\": \"<span class=\\\"cd\\\">/*</span>\", \"scmRevision\": \"b3e744...\", \"scmAuthor\": \"<redacted>\", \"scmDate\": \"2024-02-22T10:57:15+0000\", \"duplicated\": false, \"isNew\": false}, {\"line\": 5, \"lineHits\": 0, \"conditions\": 2, \"coveredConditions\": 1, \"isNew\": true}]}",
+          "callSite": "SonarApiClient.kt:497",
+          "provenance": "probe Result_Sonar/bundle-sweep-compresses-v3.unpacked/raw/sources_lines.json (200 OK on v3); bundle-sweeep-compresesd-v2.unpacked/raw/sources_lines.json (404 in v2 — wrong file key); SonarApiClient.kt:497-512",
+          "gotchas": [
+            "lineHits=0 AND conditions>0 means an uncovered branch — the agent uses this to identify exactly which lines need a test. coveredConditions vs conditions shows which branches of a compound predicate weren't exercised.",
+            "isNew indicates the line was introduced in the current new-code period.",
+            "v2 probe returned 404 because the file key was invalid (probe artifact). v3 probe with a valid file key returned 200 with coverage data. The endpoint is correct."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/api/sources/scm",
+          "status": "PROBED_UNUSED",
+          "summary": "Per-line SCM blame data. Returns scm[[lineNumber, author, date, revision], ...]. With commits_by_line=true every line gets attribution.",
+          "params": [
+            {
+              "name": "key",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "File component key in the format 'projectKey:src/path/File.java'",
+              "example": "my-project:src/main/java/Example.java"
+            },
+            {
+              "name": "from",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Start line (1-indexed, inclusive).",
+              "example": "1"
+            },
+            {
+              "name": "to",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "End line (1-indexed, inclusive).",
+              "example": "50"
+            },
+            {
+              "name": "commits_by_line",
+              "location": "QUERY",
+              "type": "boolean",
+              "required": false,
+              "description": "When true, every line gets full SCM attribution. Without it, only the first line of each contiguous commit block is attributed.",
+              "example": "true"
+            }
+          ],
+          "sampleResponse": "{\"scm\": [[1, \"<redacted>\", \"2024-04-11T15:13:07+0000\", \"255d447ed95e79068cc2db398ce424297e8ab4ab\"], [2, \"<redacted>\", \"2025-03-19T13:40:49+0000\", \"b1b661a69d8e8b6b6b6f0c6570af9c9fa5bcc8af\"]]}",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/sources_scm.json; bundle-sweeep-compresesd-v2.unpacked/summary.md feature-endpoints row",
+          "verdict": {
+            "classification": "R-ADD-AGENT: agent-targeted, not adopted in plugin code",
+            "reasoning": "The agent uses this to filter pre-existing lines when targeting new-code-only fixes — a line is in the new code period if its scmDate >= the new-code period start date. Confirmed 200 on Community Build 25.9."
+          },
+          "gotchas": [
+            "Without commits_by_line=true, only the first line of each contiguous same-commit block gets attribution — insufficient for precise new-code targeting."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/api/duplications/show",
+          "status": "USED",
+          "summary": "Duplicate code block locations for a file. Returns duplications[]{blocks[{from, size, _ref}]} + files{<ref>: {key, name, project}}. Maps each duplicated block to line range and the files it duplicates with.",
+          "params": [
+            {
+              "name": "key",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "File component key in the format 'projectKey:src/path/File.java'",
+              "example": "my-project:src/main/java/Example.java"
+            },
+            {
+              "name": "branch",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Branch name. Note: the sonar CLAUDE.md describes this as an 'internal param'. Honored on 25.x.",
+              "example": "develop-PROJ-001"
+            }
+          ],
+          "sampleResponse": "{\"duplications\": [], \"files\": {}}",
+          "callSite": "SonarApiClient.kt:478",
+          "provenance": "probe Result_Sonar/bundle-sweep-compresses-v3.unpacked/raw/duplications_show.json (200 OK, empty duplications); bundle-sweeep-compresesd-v2.unpacked/raw/duplications_show.json (404 — invalid file key in probe); SonarApiClient.kt:478-489",
+          "gotchas": [
+            "v2 probe returned 404 due to an invalid file key (probe artifact). v3 probe with a valid file key returned 200 with empty duplications (file had no dups). Shape confirmed: {duplications:[], files:{}}.",
+            "Plugin DTO SonarDuplicationFileDto.projectName maps to JSON field 'project' (no 'Name'). Currently parses as empty string — cosmetic gap noted in audit."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Rules",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/api/rules/show",
+          "status": "USED",
+          "summary": "Full rule definition by key. Returns rule{key, repo, name, severity, type, lang, langName, descriptionSections[], tags, remFnBaseEffort, cleanCodeAttribute, cleanCodeAttributeCategory, impacts[]}.",
+          "params": [
+            {
+              "name": "key",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Rule key in the format 'repo:ruleId'. Rule keys are case-sensitive.",
+              "example": "java:S1135"
+            }
+          ],
+          "sampleResponse": "{\"rule\": {\"key\": \"java:S1135\", \"repo\": \"java\", \"name\": \"Track uses of \\\"TODO\\\" tags\", \"severity\": \"INFO\", \"status\": \"READY\", \"type\": \"CODE_SMELL\", \"lang\": \"java\", \"langName\": \"Java\", \"tags\": [], \"sysTags\": [\"cwe\"], \"remFnBaseEffort\": \"0min\", \"descriptionSections\": [{\"key\": \"root_cause\", \"content\": \"<p>...</p>\"}]}, \"actives\": []}",
+          "callSite": "SonarApiClient.kt:491",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/rules_show.json; probe Result_Sonar/bundle-sweep-compresses-v3.unpacked/raw/rules_show.json; SonarApiClient.kt:491-495; 2026-05-07-sonar-audit-recommendations.md §5.1",
+          "gotchas": [
+            "CRITICAL: SonarQube 25.x OMITS htmlDesc and mdDesc entirely — they were deprecated in 9.6 and removed in 25.x. Plugin SonarServiceImpl.kt reads dto.mdDesc ?: dto.htmlDesc ?: \"\" which yields empty string on 25.x, causing the IssueDetailPanel to show an empty rule description (R-FIX-1 in audit).",
+            "25.x replaces htmlDesc/mdDesc with descriptionSections[{key, content}] where key is one of: root_cause, resources, how_to_fix, introduction. The description must be assembled from these sections.",
+            "Rule keys are case-sensitive: 'java:S1135' differs from 'JAVA:S1135'."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Compute Engine",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/api/ce/activity",
+          "status": "USED",
+          "summary": "Recent Compute Engine (analysis) task history for a project. Returns tasks[]{id, type, status, branch, submittedAt, executedAt, executionTimeMs}. Status values: SUCCESS, FAILED, CANCELED, PENDING, IN_PROGRESS.",
+          "params": [
+            {
+              "name": "component",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "my-project-key"
+            },
+            {
+              "name": "ps",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Number of tasks to return. Plugin sends 10.",
+              "example": "10"
+            }
+          ],
+          "callSite": "SonarApiClient.kt:370",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/ce_activity.json; SonarApiClient.kt:370-375; 2026-05-07-sonar-audit-recommendations.md §4.1",
+          "gotchas": [
+            "Returns 403 Insufficient Privileges for non-admin tokens on SonarQube 25.x Community Build. Requires 'Administer System' or 'Administer' permission on the component. Plugin's token must have project-admin scope for this to work.",
+            "Plugin shows 'no analysis history' silently when 403 occurs — user has no idea it is a permission issue (R-FIX-2 in audit). Should surface a 'requires Administer Project permission' hint.",
+            "branch field in task results is only present on Developer+ editions on pre-25.x Sonar."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/api/ce/task",
+          "status": "USED",
+          "summary": "Poll a specific Compute Engine task by ID. Used to wait for a local scanner analysis to complete after triggering a scan. Returns {task: {id, type, status, branch, submittedAt, executedAt, executionTimeMs, analysisId, errorMessage?}}.",
+          "params": [
+            {
+              "name": "id",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "CE task ID (obtained from the scanner output or ce/activity)",
+              "example": "AXqf_RKU-H...truncated"
+            }
+          ],
+          "callSite": "SonarApiClient.kt:378",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/summary.md (SKIP row — no ce_task_id available); SonarApiClient.kt:378-382; 2026-05-07-sonar-audit-recommendations.md §3 row getCeTask",
+          "gotchas": [
+            "Endpoint was skipped in all three probes because no CE task ID was available (ce/activity returned 403). Shape documented from probe notes and client code.",
+            "Only useful after a successful local scanner run that produces a task ID in the scanner output. For non-admin users who cannot read ce/activity, the only way to get a task ID is from the scanner stdout."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "New Code Periods",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/api/new_code_periods/show",
+          "status": "PROBED_UNUSED",
+          "summary": "New code period definition for a project/branch. Returns {projectKey, branchKey, type, value, inherited}. type values: PREVIOUS_VERSION, NUMBER_OF_DAYS, REFERENCE_BRANCH, SPECIFIC_ANALYSIS. Listed in module CLAUDE.md but no method exists in SonarApiClient.kt — probe confirmed it returns 403 for non-admin tokens.",
+          "params": [
+            {
+              "name": "project",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "my-project-key"
+            },
+            {
+              "name": "branch",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Branch name. On pre-25.x Community Edition, branch param was silently ignored and project-level period was returned.",
+              "example": "develop-PROJ-001"
+            }
+          ],
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/new_code_period_show.json (403); bundle-sweep-compresses-v3.unpacked/summary.md existing-endpoints row (403); 2026-05-07-sonar-audit-recommendations.md §4.2; sonar/src/main/kotlin/com/workflow/orchestrator/sonar/api/dto/SonarDtos.kt:66",
+          "verdict": {
+            "classification": "R-FIX-3: not adopted; workaround available via qualitygates/project_status period field",
+            "reasoning": "Returns 403 for non-admin tokens every time it has been probed. The same period data (mode + parameter) is already present in /api/qualitygates/project_status's 'period' field, which is accessible to non-admin tokens. Audit recommends using that cached data as the fallback instead of calling this endpoint."
+          },
+          "gotchas": [
+            "Returns 403 Insufficient Privileges for non-admin tokens on SonarQube 25.x. Requires 'Administer Project' permission.",
+            "WORKAROUND: The same period data (mode + parameter) is already in /api/qualitygates/project_status response's 'period' field, which IS accessible to non-admin tokens. When this endpoint returns 403, use the cached gate status period instead (R-FIX-3 in audit).",
+            "The obfuscated type constants seen in the probe (e.g. 'MXMMYLIQQ_PPPFAI') are probe redaction artifacts — the real type values are PREVIOUS_VERSION, NUMBER_OF_DAYS, REFERENCE_BRANCH, SPECIFIC_ANALYSIS."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Project Analyses",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/api/project_analyses/search",
+          "status": "PROBED_UNUSED",
+          "summary": "Analysis history for a project. Returns paging + analyses[]{key, date, projectVersion, events[], manualNewCodePeriodBaseline}. Candidate to replace ce/activity polling for the 'last successful analysis' chip.",
+          "params": [
+            {
+              "name": "project",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Project key. NOTE: parameter name is 'project' (NOT 'projectKey') in 25.x.",
+              "example": "my-project-key"
+            },
+            {
+              "name": "branch",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Branch name.",
+              "example": "develop-PROJ-001"
+            },
+            {
+              "name": "ps",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Number of analyses to return.",
+              "example": "10"
+            }
+          ],
+          "sampleResponse": "{\"paging\": {\"pageIndex\": 1, \"pageSize\": 10, \"total\": 8}, \"analyses\": [{\"key\": \"AYGz2L6s...\", \"date\": \"2026-05-06T16:18:53+0000\", \"projectVersion\": \"1.78.0\", \"events\": []}]}",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/project_analyses_search.json; bundle-sweeep-compresesd-v2.unpacked/summary.md feature-endpoints row",
+          "verdict": {
+            "classification": "R-INV: inventoried, not adopted in plugin code",
+            "reasoning": "Confirmed 200 on Community Build 25.9. Could replace ce/activity (which 403s for non-admin) for showing the last-successful-analysis timestamp. First sweep probed with 'projectKey=' param and got 400; second sweep corrected to 'project=' and got 200."
+          },
+          "gotchas": [
+            "Parameter name is 'project=' (NOT 'projectKey='). The first probe sweep used 'projectKey=' and got 400. The v2/v3 sweeps used 'project=' and got 200."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Languages",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/api/languages/list",
+          "status": "PROBED_UNUSED",
+          "summary": "List installed language analyzers. Returns languages[]{key, name}. Candidate for a 'what scanners cover this project' chip.",
+          "params": [],
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/languages_list.json; bundle-sweeep-compresesd-v2.unpacked/summary.md feature-endpoints row",
+          "verdict": {
+            "classification": "R-INV: inventoried, not adopted in plugin code",
+            "reasoning": "Confirmed 200 on Community Build 25.9. Tiny payload. Could power a 'what scanners cover this project' chip on the Quality tab."
+          },
+          "gotchas": []
+        }
+      ]
+    },
+    {
+      "name": "Issues — Facets",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/api/issues/search",
+          "status": "USED",
+          "summary": "Issue facet counts for triage breakdown. Uses ps=1 and facets= parameter — only needs the facet aggregates, not the full issue list. Returns {issues:[1 item], facets:[{property, values:[{val, count}]}]}.",
+          "params": [
+            {
+              "name": "componentKeys",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Project key",
+              "example": "my-project-key"
+            },
+            {
+              "name": "facets",
+              "location": "QUERY",
+              "type": "string",
+              "required": true,
+              "description": "Comma-separated facet names. Valid 25.x values: severities, types, tags, impactSoftwareQualities, impactSeverities, cleanCodeAttributeCategories, assignees, files, rules, statuses, resolutions, languages, codeVariants, issueStatuses, prioritizedRule, createdAt, sonarsourceSecurity, pciDss-3.2, pciDss-4.0, owaspAsvs-4.0, owaspMobileTop10-2024, stig-ASD_V5R3, casa, sansTop25, cwe. Use 'files' NOT 'fileUuids'.",
+              "example": "severities,types,impactSoftwareQualities,files,rules"
+            },
+            {
+              "name": "resolved",
+              "location": "QUERY",
+              "type": "boolean",
+              "required": false,
+              "description": "false to count only open issues",
+              "example": "false"
+            },
+            {
+              "name": "ps",
+              "location": "QUERY",
+              "type": "integer",
+              "required": false,
+              "description": "Plugin sends 1 — only facet aggregates are needed, not the issue list.",
+              "example": "1"
+            },
+            {
+              "name": "inNewCodePeriod",
+              "location": "QUERY",
+              "type": "boolean",
+              "required": false,
+              "description": "When true, facets are scoped to the new-code period delta.",
+              "example": "true"
+            },
+            {
+              "name": "branch",
+              "location": "QUERY",
+              "type": "string",
+              "required": false,
+              "description": "Branch name.",
+              "example": "develop-PROJ-001"
+            }
+          ],
+          "callSite": "SonarApiClient.kt:409",
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/issues_search_facets_new_code.json (400 — used 'fileUuids' invalid facet); probe Result_Sonar/bundle-sweep-compresses-v3.unpacked summary facets row (200 OK with 'files'); SonarApiClient.kt:409-425",
+          "gotchas": [
+            "The v2 probe used 'fileUuids' as a facet and got 400. The 400 error body enumerates the full list of valid facet names — 'files' is the correct name, not 'fileUuids'. The v3 probe corrected this and got 200.",
+            "Lets the agent prioritize: '3 RELIABILITY/HIGH issues, 2 MAINTAINABILITY/MEDIUM — fix reliability first'. Without facets the agent has to walk all issues to compute the same breakdown."
+          ]
+        }
+      ]
+    },
+    {
+      "name": "AI Code Fix (Unavailable on Community Build)",
+      "endpoints": [
+        {
+          "method": "GET",
+          "pathTemplate": "/api/v2/ai-codefix/feature",
+          "status": "KNOWN_UNUSED",
+          "summary": "AI Code Fix feature availability detect. Returns feature flags when the AI Code Fix add-on is licensed.",
+          "params": [],
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/ai_codefix_feature.json (404); bundle-sweeep-compresesd-v2.unpacked/summary.md feature-endpoints row; 2026-05-07-sonar-audit-recommendations.md §4.3",
+          "verdict": {
+            "classification": "R-ADD-AGENT: agent-targeted, not adopted — feature absent on Community Build",
+            "reasoning": "Both /feature and /availability returned 404 on Community Build 25.9. qualitygates/list confirms isAiCodeSupported:false on every gate. AI Code Fix requires Enterprise + paid AI subscription. Agent must use its own LLM path for code fixes."
+          },
+          "gotchas": [
+            "404 on Community Build — endpoint is absent, not access-controlled. Do not treat as 403.",
+            "When/if the user upgrades to Enterprise with AI Code Fix, probe /api/v2/ai-codefix/feature first. A 200 means Sonar-side fixes are available; the agent can skip its own LLM fix path."
+          ]
+        },
+        {
+          "method": "GET",
+          "pathTemplate": "/api/v2/ai-codefix/availability",
+          "status": "KNOWN_UNUSED",
+          "summary": "AI Code Fix availability check. Companion to /api/v2/ai-codefix/feature.",
+          "params": [],
+          "provenance": "probe Result_Sonar/bundle-sweeep-compresesd-v2.unpacked/raw/ai_codefix_availability.json (404); bundle-sweeep-compresesd-v2.unpacked/summary.md feature-endpoints row",
+          "verdict": {
+            "classification": "R-ADD-AGENT: agent-targeted, not adopted — feature absent on Community Build",
+            "reasoning": "404 on Community Build 25.9. Same tier gate as /feature endpoint."
+          },
+          "gotchas": [
+            "404 on Community Build — endpoint is absent."
+          ]
+        }
+      ]
+    }
+  ]
+}
