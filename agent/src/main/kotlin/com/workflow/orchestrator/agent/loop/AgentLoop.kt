@@ -580,6 +580,20 @@ class AgentLoop(
         private const val MAX_CONTEXT_OVERFLOW_RETRIES = 2
         /** Max times to compact context and retry after timeout retries are exhausted. */
         private const val MAX_COMPACTION_RETRIES = 2
+        /**
+         * Max consecutive output-length truncations to recover from before failing. Each
+         * recovery re-asks the model to resume; a generous cap because a genuinely long output
+         * may legitimately span several max-output chunks, but bounded so a model stuck
+         * re-emitting truncated content can't loop to the maxIterations ceiling. Reset on any
+         * clean (non-truncated) response.
+         */
+        private const val MAX_TRUNCATED_RETRIES = 8
+        /**
+         * Max consecutive upstream gateway-timeout recoveries before failing. Lower than
+         * [MAX_TRUNCATED_RETRIES] because a repeating gateway timeout is a pure failure (not
+         * forward progress). Reset on any clean response.
+         */
+        private const val MAX_UPSTREAM_TIMEOUT_RETRIES = 5
         private const val INITIAL_RETRY_DELAY_MS = 1000L
         /** Cap on retry-after header delay to prevent unreasonable waits (Cline: maxDelay 10s). */
         private const val MAX_RETRY_DELAY_MS = 30_000L
@@ -589,12 +603,16 @@ class AgentLoop(
         /**
          * Computes a jittered backoff delay for retry pacing.
          *
-         * Full-jitter shape (AWS pattern): returns a random value in [0, computed], where
-         * `computed = min(baseMs * 2^(attempt-1), capMs)` unless `retryAfterMs` overrides
-         * it (capped to capMs, still jittered).
+         * Equal-jitter shape (AWS pattern): returns a random value in [computed/2, computed],
+         * where `computed = min(baseMs * 2^(attempt-1), capMs)` unless `retryAfterMs` overrides
+         * it (capped to capMs, still jittered). The computed/2 floor guarantees no retry is ever
+         * near-instant — switched from full jitter [0, computed] because that produced visibly
+         * back-to-back retries on unlucky low draws.
          *
-         * Used by all four retry sites: Layer 1 (API error), Layer 2 (compaction-on-timeout),
-         * Layer 3 (empty response, Case C), Layer 4 (text-only nudge, Case B).
+         * Used by every retry/recovery site that re-calls the LLM: API error, compaction-on-timeout,
+         * empty response (Case C), text-only nudge (Case B), context-overflow replay, empty-choice
+         * guard, output-length truncation recovery, and upstream gateway-timeout recovery. (The
+         * previous "no-delay continue" recovery paths were paced through this helper in 2026-05.)
          *
          * `internal` (not `private`) so AgentLoopBackoffHelperTest can call it directly.
          *
@@ -611,7 +629,11 @@ class AgentLoop(
         ): Long {
             val computed = retryAfterMs?.coerceAtMost(capMs)
                 ?: (baseMs * (1L shl (attempt - 1).coerceAtMost(30))).coerceAtMost(capMs)
-            return Random.nextLong(computed + 1)
+            // Equal jitter (not full jitter): half the computed delay is a fixed floor, the
+            // other half is randomized. Guarantees every retry waits at least computed/2 so a
+            // retry is never near-instant, while still spreading load to avoid a thundering herd.
+            val half = computed / 2
+            return half + Random.nextLong(half + 1)
         }
 
         /**
@@ -784,6 +806,10 @@ class AgentLoop(
         var apiRetryCount = 0
         var contextOverflowRetries = 0
         var compactionRetries = 0
+        // Output-length truncation recoveries; reset on any clean (non-truncated) response.
+        var truncatedRetries = 0
+        // Upstream gateway-timeout recoveries; reset on any clean response.
+        var upstreamTimeoutRetries = 0
         /**
          * Same-model brain recycles in the current tier. Reset to 0 on any successful
          * API call OR when L2 tier escalation switches to a different model.
@@ -1092,6 +1118,7 @@ class AgentLoop(
                     } finally {
                         onCompactionState?.invoke(false, "")
                     }
+                    delay(computeBackoffMs(contextOverflowRetries)) // pace the compact-and-replay
                     iteration-- // Don't count overflow retries as iterations
                     continue
                 }
@@ -1320,7 +1347,14 @@ class AgentLoop(
                 }
             }
 
-            val choice = response.choices.firstOrNull() ?: continue
+            val choice = response.choices.firstOrNull()
+            if (choice == null) {
+                // Malformed success: 200 OK but no choices. Back off before re-calling so this
+                // can't spin instantly. Bounded by maxIterations (this iteration is counted).
+                LOG.warn("[Loop] API success but response contained no choices at iteration $iteration — backing off and retrying")
+                delay(computeBackoffMs(1))
+                continue
+            }
             val rawAssistantMessage = choice.message
 
             // Normalise zero-width / format-character echoes to empty string before
@@ -1351,6 +1385,17 @@ class AgentLoop(
             //      before calling plan_mode_respond → tell LLM to continue verbatim
             //      (NOT "use smaller steps", which causes it to pivot to a "focused plan").
             if (choice.finishReason == "length") {
+                truncatedRetries++
+                if (truncatedRetries > MAX_TRUNCATED_RETRIES) {
+                    LOG.warn("[Loop] Output-length truncation recovery exhausted ($truncatedRetries/$MAX_TRUNCATED_RETRIES) — aborting")
+                    abortStream(lastAccumulatedText, "length_truncation_exhausted")
+                    onDebugLog?.invoke("error", "loop_exit", "Exit: length_truncation_exhausted", mapOf("iteration" to iteration, "truncatedRetries" to truncatedRetries))
+                    return makeFailed(
+                        "The model's response kept being cut off by the output length limit after $MAX_TRUNCATED_RETRIES recovery attempts. Try a smaller request or raise the max output tokens setting.",
+                        iteration,
+                        FailureReason.API_ERROR
+                    )
+                }
                 val partialText = assistantMessage.content ?: ""
                 val isPlanModeRespondTruncation = partialText.contains("<plan_mode_respond")
                 val hasPartialToolCall = !isPlanModeRespondTruncation &&
@@ -1392,6 +1437,7 @@ class AgentLoop(
                         "(This is an automated message — do not acknowledge it.)"
                 }
                 contextManager.addNudgeMessage(lengthNudge)
+                delay(computeBackoffMs(truncatedRetries)) // pace truncation-resume re-calls
                 continue
             }
 
@@ -1402,6 +1448,17 @@ class AgentLoop(
             // failure so the model self-corrects by chunking smaller.
             // Source pattern: continue/gui/src/redux/thunks/streamNormalInput.ts:257-291
             if (choice.finishReason == "upstream_timeout") {
+                upstreamTimeoutRetries++
+                if (upstreamTimeoutRetries > MAX_UPSTREAM_TIMEOUT_RETRIES) {
+                    LOG.warn("[Loop] Upstream gateway-timeout recovery exhausted ($upstreamTimeoutRetries/$MAX_UPSTREAM_TIMEOUT_RETRIES) — aborting")
+                    abortStream(lastAccumulatedText, "upstream_timeout_exhausted")
+                    onDebugLog?.invoke("error", "loop_exit", "Exit: upstream_timeout_exhausted", mapOf("iteration" to iteration, "upstreamTimeoutRetries" to upstreamTimeoutRetries))
+                    return makeFailed(
+                        "The upstream gateway kept timing out after $MAX_UPSTREAM_TIMEOUT_RETRIES attempts. The model may be overloaded — try again shortly or reduce the request size.",
+                        iteration,
+                        FailureReason.API_ERROR
+                    )
+                }
                 val nudge = "Your previous response was truncated by an upstream gateway timeout. " +
                     "Retry the same operation but split the work into smaller chunks " +
                     "(for plan_mode_respond: emit a shorter plan or call the tool multiple times " +
@@ -1429,8 +1486,14 @@ class AgentLoop(
                     )
                     contextManager.addNudgeMessage(nudge)
                 }
+                delay(computeBackoffMs(upstreamTimeoutRetries)) // pace gateway-timeout re-calls
                 continue
             }
+
+            // Clean response (neither length-truncated nor gateway-timed-out): the truncation
+            // and timeout recovery sequences completed, so reset their counters.
+            truncatedRetries = 0
+            upstreamTimeoutRetries = 0
 
             // Stage 4: Add assistant message to context
             contextManager.addAssistantMessage(assistantMessage)
