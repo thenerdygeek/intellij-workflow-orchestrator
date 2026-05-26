@@ -24,6 +24,7 @@ export default defineConfig(({ mode }) => ({
         main: resolve(__dirname, 'index.html'),
         'plan-editor': resolve(__dirname, 'plan-editor.html'),
         'tool-docs': resolve(__dirname, 'tool-docs.html'),
+        'api-docs': resolve(__dirname, 'api-docs.html'),
         'artifact-sandbox': resolve(__dirname, 'artifact-sandbox.html'),
         // Showcase is dev-only — excluded from production build
         ...(mode === 'development' ? { showcase: resolve(__dirname, 'showcase.html') } : {}),
