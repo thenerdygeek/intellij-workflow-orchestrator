@@ -54,8 +54,11 @@ class SonarServiceImpl(private val project: Project) : SonarService {
 
     private val log = Logger.getInstance(SonarServiceImpl::class.java)
 
+    /** Test-only seam: when set, used instead of the shared client so unit tests need no DI. */
+    internal var testClient: SonarApiClient? = null
+
     private val client: SonarApiClient?
-        get() = SonarDataService.getInstance(project).getSharedApiClient()
+        get() = testClient ?: SonarDataService.getInstance(project).getSharedApiClient()
 
     // Session cache for the issues-action preflight (`/api/components/show`). Keyed on
     // (sonarUrl, projectKey) so a mid-session URL change in settings doesn't return
@@ -901,21 +904,19 @@ class SonarServiceImpl(private val project: Project) : SonarService {
             fileMeasures = measuresDeferred.await()
         }
 
-        // Map quality gate — filter to new code conditions only for branch report
+        // Quality gate: trust the server's authoritative status (for a branch this already IS
+        // the new-code gate result). The displayed conditions are filtered to new-code for the
+        // report, but recomputing the STATUS from that subset could downgrade a real failure —
+        // e.g. a WARN new-code condition would mask an ERROR on a non-new_ condition.
         val qualityGate = when (gate) {
-            is ApiResult.Success -> {
-                val newCodeConditions = gate.data.conditions.filter { c ->
-                    c.metricKey.startsWith("new_")
-                }
-                QualityGateData(
-                    status = if (newCodeConditions.any { it.status == "ERROR" }) "ERROR"
-                             else if (newCodeConditions.any { it.status == "WARN" }) "WARN"
-                             else gate.data.status,
-                    conditions = newCodeConditions.map { c ->
+            is ApiResult.Success -> QualityGateData(
+                status = gate.data.status,
+                conditions = gate.data.conditions
+                    .filter { c -> c.metricKey.startsWith("new_") }
+                    .map { c ->
                         QualityCondition(metric = c.metricKey, operator = c.comparator, value = c.actualValue, status = c.status)
                     }
-                )
-            }
+            )
             is ApiResult.Error -> QualityGateData(status = "ERROR")
         }
 
@@ -1100,14 +1101,18 @@ class SonarServiceImpl(private val project: Project) : SonarService {
             when (dupResult) {
                 is ApiResult.Success -> {
                     val fileMap = dupResult.data.files
-                    // Find the ref for this file
-                    val selfRef = fileMap.entries.find {
-                        it.value.key == componentKey || it.value.name == filePath.substringAfterLast('/')
-                    }?.key
-                    for (dup in dupResult.data.duplications) {
-                        for (block in dup.blocks) {
-                            if (block.ref == selfRef || selfRef == null) {
-                                dupRanges.add(LineRange(block.from, block.from + block.size - 1))
+                    // Identify THIS file's ref by exact component key only. The previous basename
+                    // fallback (name == file.kt) collided across modules, and treating an
+                    // unresolved ref as "matches everything" attributed every duplication block in
+                    // the response to this file — inflating its ranges. If we can't identify the
+                    // file's ref, emit no ranges rather than all.
+                    val selfRef = fileMap.entries.find { it.value.key == componentKey }?.key
+                    if (selfRef != null) {
+                        for (dup in dupResult.data.duplications) {
+                            for (block in dup.blocks) {
+                                if (block.ref == selfRef) {
+                                    dupRanges.add(LineRange(block.from, block.from + block.size - 1))
+                                }
                             }
                         }
                     }
