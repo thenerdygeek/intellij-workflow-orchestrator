@@ -5,9 +5,11 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.ComboBoxWithWidePopup
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.ColoredListCellRenderer
+import com.intellij.ui.ComboboxSpeedSearch
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBLabel
@@ -137,8 +139,13 @@ class AutomationPanel(
      * to trigger against. Populated by [loadBranchesFor] on suite selection; persisted
      * per-suite by [AutomationSettingsService]. `null` branchKey means master/default.
      */
-    private val branchCombo = JComboBox<BranchComboItem>().apply {
-        bindBoundedWidth(ComboBoxWidth.DEFAULT)
+    private val branchCombo = ComboBoxWithWidePopup<BranchComboItem>().apply {
+        // Expanded popup floors wider than the (capped) closed combo so longer branch
+        // names are readable; it still grows to fit content beyond this floor.
+        setMinLength(JBUI.scale(ComboBoxWidth.WIDE))
+        // Renderer MUST be set before bindBoundedWidth — the helper wraps the current
+        // renderer to add the truncation tooltip; setting it afterwards would discard
+        // that wrapper (and the hover tooltip with it).
         renderer = object : ColoredListCellRenderer<BranchComboItem>() {
             override fun customizeCellRenderer(
                 list: JList<out BranchComboItem>, value: BranchComboItem?, index: Int,
@@ -153,6 +160,15 @@ class AutomationPanel(
                 }
             }
         }
+        // Closed-combo width cap + full-name hover tooltip (keyed on the display label,
+        // not BranchComboItem.toString() which carries the key/enabled fields).
+        bindBoundedWidth(ComboBoxWidth.DEFAULT, textOf = { it?.label.orEmpty() })
+    }.also { combo ->
+        // Type-to-filter the popup, matching on the branch label.
+        object : ComboboxSpeedSearch(combo, null) {
+            override fun getElementText(element: Any?): String =
+                (element as? BranchComboItem)?.label ?: ""
+        }.setupListeners()
     }
     /** The committed branch selection (null = default/master). Updated only when a selection is accepted. */
     @Volatile private var selectedBranchItem: BranchComboItem? = null
