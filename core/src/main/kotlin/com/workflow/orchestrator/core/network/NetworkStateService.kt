@@ -17,9 +17,17 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Application-level connectivity authority (the VPN tunnel is per-machine, not per-project).
  * Constructor takes the platform-injected [cs]; never allocate a CoroutineScope here.
+ *
+ * `@JvmOverloads` is required: the platform DI container instantiates services by matching a
+ * constructor against a fixed allow-list of signatures (`(CoroutineScope)` here). A bare Kotlin
+ * default for [probe] compiles to a single `(CoroutineScope, ReachabilityProbe)` JVM constructor
+ * that the container can't match — it then tries (forbidden) constructor injection of
+ * [ReachabilityProbe] and crashes at startup. `@JvmOverloads` emits the zero-default
+ * `(CoroutineScope)` overload the container needs, while tests keep using the two-arg form to
+ * inject a fake probe. (Mirrors `BuildProblemsServiceImpl`.)
  */
 @Service(Service.Level.APP)
-class NetworkStateService(
+class NetworkStateService @JvmOverloads constructor(
     private val cs: CoroutineScope,
     private val probe: ReachabilityProbe = NetworkReachabilityProbe()
 ) : NetworkProbe {
