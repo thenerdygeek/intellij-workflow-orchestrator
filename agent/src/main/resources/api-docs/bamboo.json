@@ -3,10 +3,10 @@
   "displayName": "Bamboo (Data Center)",
   "authScheme": "Authorization: Bearer <PAT>",
   "probedServerVersion": "Bamboo DC 10.2.14 (build 100220, built 2026-01-14)",
+  "description": "Bamboo Data Center REST API (/rest/api/latest). Read paths are JSON; write paths (queue/trigger, stage trigger) use form-encoded bamboo.variable.* bodies and require the X-Atlassian-Token: no-check header, and rerun uses the /build/admin/restartBuild.action Struts endpoint. Build logs are served as plain text from /download. Probed against DC 10.2.14.",
   "categories": [
     {
-      "id": "server-info",
-      "displayName": "Server Info & Identity",
+      "name": "Server Info & Identity",
       "endpoints": [
         {
           "method": "GET",
@@ -45,8 +45,7 @@
       ]
     },
     {
-      "id": "plans-projects",
-      "displayName": "Plans & Projects",
+      "name": "Plans & Projects",
       "endpoints": [
         {
           "method": "GET",
@@ -315,8 +314,7 @@
       ]
     },
     {
-      "id": "build-results",
-      "displayName": "Build Results",
+      "name": "Build Results",
       "endpoints": [
         {
           "method": "GET",
@@ -529,8 +527,7 @@
       ]
     },
     {
-      "id": "variables",
-      "displayName": "Build Variables",
+      "name": "Build Variables",
       "endpoints": [
         {
           "method": "GET",
@@ -593,8 +590,7 @@
       ]
     },
     {
-      "id": "build-logs-artifacts",
-      "displayName": "Build Logs & Artifacts",
+      "name": "Build Logs & Artifacts",
       "endpoints": [
         {
           "method": "GET",
@@ -678,8 +674,7 @@
       ]
     },
     {
-      "id": "test-results",
-      "displayName": "Test Results",
+      "name": "Test Results",
       "endpoints": [
         {
           "method": "GET",
@@ -716,8 +711,7 @@
       ]
     },
     {
-      "id": "queue-triggers",
-      "displayName": "Queue & Triggers (Write)",
+      "name": "Queue & Triggers (Write)",
       "endpoints": [
         {
           "method": "POST",
@@ -832,8 +826,7 @@
       ]
     },
     {
-      "id": "rerun-control",
-      "displayName": "Rerun & Control (Write)",
+      "name": "Rerun & Control (Write)",
       "endpoints": [
         {
           "method": "PUT",
@@ -946,8 +939,7 @@
       ]
     },
     {
-      "id": "repositories",
-      "displayName": "Linked Repositories",
+      "name": "Linked Repositories",
       "endpoints": [
         {
           "method": "GET",
@@ -1006,8 +998,7 @@
       ]
     },
     {
-      "id": "agents",
-      "displayName": "Build Agents",
+      "name": "Build Agents",
       "endpoints": [
         {
           "method": "GET",
@@ -1030,8 +1021,7 @@
       ]
     },
     {
-      "id": "deprecated",
-      "displayName": "Deprecated / Not Available on DC 10.2.14",
+      "name": "Deprecated / Not Available on DC 10.2.14",
       "endpoints": [
         {
           "method": "GET",
