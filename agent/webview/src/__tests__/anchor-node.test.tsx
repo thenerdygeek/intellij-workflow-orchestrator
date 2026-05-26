@@ -101,27 +101,46 @@ describe('AnchorNode — symbol: click routing', () => {
   });
 });
 
-describe('AnchorNode — regular link regression', () => {
+describe('AnchorNode — IDE-local vs browser link routing', () => {
   beforeEach(() => {
     cleanup();
     vi.clearAllMocks();
+    (window as any)._openLink = vi.fn();
   });
 
-  it('does NOT call _navigateToFile directly for non-symbol links — the confirmation modal is now the gate', () => {
-    // Phase 4 hyperlink modal: non-symbol clicks open the LinkConfirmModal
-    // instead of dispatching straight to _navigateToFile. The Kotlin-side
-    // _openLink bridge handles navigation only after the user confirms in
-    // the modal. _navigateToFile remains available for legacy callers but
-    // is no longer invoked by the AnchorNode click path.
+  it('opens file: links directly via _openLink with NO confirmation dialogue', () => {
+    // file:/class: are IDE-local navigations — they dispatch straight to the
+    // _openLink bridge. Only browser/external links (jira:, http(s):) get the
+    // confirm-and-copy modal. The user reported the modal wrongly gating every
+    // link; this pins file: to the direct path.
     const { container } = render(
       <MarkdownRenderer content="[see file](file:agent/src/main/kotlin/AgentLoop.kt:42)" />,
     );
 
     const anchor = container.querySelector('a') as HTMLAnchorElement | null;
-    if (!anchor || !anchor.getAttribute('href')) return;
+    expect(anchor).not.toBeNull();
 
-    fireEvent.click(anchor);
+    fireEvent.click(anchor!);
 
+    // Opened directly; no modal "Open in browser?" dialog rendered.
+    expect((window as any)._openLink).toHaveBeenCalledWith(
+      'file:agent/src/main/kotlin/AgentLoop.kt:42',
+    );
     expect(getNavigateMock()).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain('Open in browser?');
+  });
+
+  it('routes a jira: link through the confirmation modal (does NOT open directly)', () => {
+    const { container } = render(
+      <MarkdownRenderer content="[WORK-1](jira:WORK-1)" />,
+    );
+
+    const anchor = container.querySelector('a') as HTMLAnchorElement | null;
+    expect(anchor).not.toBeNull();
+
+    fireEvent.click(anchor!);
+
+    // Browser link: must NOT open directly — the modal is the gate.
+    expect((window as any)._openLink).not.toHaveBeenCalled();
   });
 });

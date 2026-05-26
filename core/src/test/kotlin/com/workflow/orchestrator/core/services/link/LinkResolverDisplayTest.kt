@@ -5,6 +5,7 @@ import com.workflow.orchestrator.core.model.ChatLink
 import com.workflow.orchestrator.core.model.LinkResolution
 import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 
@@ -23,6 +24,7 @@ class LinkResolverDisplayTest {
             assertEquals("file:Foo.kt", r.raw)
             assertEquals("Foo.kt", r.displayLabel)
             assertEquals("Opens file", r.targetDescription)
+            assertNull(r.browserUrl) // IDE-local: never opens a browser
         }
 
         @Test
@@ -91,6 +93,7 @@ class LinkResolverDisplayTest {
             assertEquals(LinkResolution.Kind.CLASS, r.kind)
             assertEquals("Bar", r.displayLabel)
             assertEquals("Opens class com.foo.Bar", r.targetDescription)
+            assertNull(r.browserUrl) // IDE-local: never opens a browser
         }
 
         @Test
@@ -154,6 +157,8 @@ class LinkResolverDisplayTest {
             assertEquals("WORK-1234", r.displayLabel)
             assertEquals("Opens Jira ticket WORK-1234 in browser", r.targetDescription)
             assertEquals("jira:WORK-1234", r.raw)
+            // The modal copies/displays the resolved browser URL, NOT the raw jira: scheme.
+            assertEquals("https://jira.example.com/browse/WORK-1234", r.browserUrl)
         }
 
         @Test
@@ -163,6 +168,18 @@ class LinkResolverDisplayTest {
             )
             assertEquals("AFTER8TE-912", r.displayLabel)
             assertEquals("Opens Jira ticket AFTER8TE-912 in browser", r.targetDescription)
+            assertEquals("https://jira.example.com/browse/AFTER8TE-912", r.browserUrl)
+        }
+
+        @Test
+        fun `no browser url and explanatory description when base URL not configured`() {
+            val unconfigured = JiraLinkResolver(getJiraBaseUrl = { "" }, notifyMissingUrl = {})
+            val r = unconfigured.resolve(ChatLink.JiraLink(raw = "jira:WORK-1", ticketId = "WORK-1"))
+            assertNull(r.browserUrl)
+            assertEquals(
+                "Jira base URL not configured — set it in Tools > Workflow Orchestrator settings",
+                r.targetDescription,
+            )
         }
     }
 
@@ -178,6 +195,7 @@ class LinkResolverDisplayTest {
             assertEquals(LinkResolution.Kind.WEB, r.kind)
             assertEquals("github.com", r.displayLabel)
             assertEquals("Opens in external browser", r.targetDescription)
+            assertEquals("https://github.com/x", r.browserUrl) // copy/open uses the full URL
         }
 
         @Test

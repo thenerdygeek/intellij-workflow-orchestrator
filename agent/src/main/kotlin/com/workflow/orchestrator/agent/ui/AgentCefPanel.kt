@@ -705,11 +705,12 @@ class AgentCefPanel(
                 ?: com.intellij.openapi.project.ProjectManager.getInstance().defaultProject
             val link = com.workflow.orchestrator.core.services.LinkParser.parse(href)
             val json = if (link == null) {
-                """{"kind":"UNKNOWN","raw":${JsEscape.toJsonString(href)},"displayLabel":${JsEscape.toJsonString(href)},"targetDescription":${JsEscape.toJsonString("Unrecognised link")}}"""
+                """{"kind":"UNKNOWN","raw":${JsEscape.toJsonString(href)},"displayLabel":${JsEscape.toJsonString(href)},"targetDescription":${JsEscape.toJsonString("Unrecognised link")},"browserUrl":null}"""
             } else {
                 val service = proj.service<com.workflow.orchestrator.core.services.LinkResolver>()
                 val res = service.resolve(link)
-                """{"kind":${JsEscape.toJsonString(res.kind.name)},"raw":${JsEscape.toJsonString(res.raw)},"displayLabel":${JsEscape.toJsonString(res.displayLabel)},"targetDescription":${JsEscape.toJsonString(res.targetDescription)}}"""
+                val browserUrlJson = res.browserUrl?.let { JsEscape.toJsonString(it) } ?: "null"
+                """{"kind":${JsEscape.toJsonString(res.kind.name)},"raw":${JsEscape.toJsonString(res.raw)},"displayLabel":${JsEscape.toJsonString(res.displayLabel)},"targetDescription":${JsEscape.toJsonString(res.targetDescription)},"browserUrl":$browserUrlJson}"""
             }
             JBCefJSQuery.Response(json)
         }

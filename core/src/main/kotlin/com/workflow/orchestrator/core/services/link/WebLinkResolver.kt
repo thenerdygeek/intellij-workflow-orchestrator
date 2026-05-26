@@ -14,6 +14,7 @@ class WebLinkResolver {
             raw = link.raw,
             displayLabel = label,
             targetDescription = "Opens in external browser",
+            browserUrl = link.url,
         )
     }
 

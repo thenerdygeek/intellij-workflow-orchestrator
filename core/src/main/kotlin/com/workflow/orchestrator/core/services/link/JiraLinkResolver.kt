@@ -8,20 +8,31 @@ class JiraLinkResolver(
     private val getJiraBaseUrl: () -> String?,
     private val notifyMissingUrl: () -> Unit,
 ) {
-    fun resolve(link: ChatLink.JiraLink): LinkResolution =
-        LinkResolution(
+    fun resolve(link: ChatLink.JiraLink): LinkResolution {
+        val url = browserUrlFor(link)
+        return LinkResolution(
             kind = LinkResolution.Kind.JIRA,
             raw = link.raw,
             displayLabel = link.ticketId,
-            targetDescription = "Opens Jira ticket ${link.ticketId} in browser",
+            targetDescription = if (url != null)
+                "Opens Jira ticket ${link.ticketId} in browser"
+            else
+                "Jira base URL not configured — set it in Tools > Workflow Orchestrator settings",
+            browserUrl = url,
         )
+    }
 
     fun open(link: ChatLink.JiraLink) {
-        val base = getJiraBaseUrl()?.trim()?.trimEnd('/')
-        if (base.isNullOrEmpty()) {
+        val url = browserUrlFor(link)
+        if (url == null) {
             notifyMissingUrl()
             return
         }
-        BrowserUtil.browse("$base/browse/${link.ticketId}")
+        BrowserUtil.browse(url)
+    }
+
+    private fun browserUrlFor(link: ChatLink.JiraLink): String? {
+        val base = getJiraBaseUrl()?.trim()?.trimEnd('/')
+        return if (base.isNullOrEmpty()) null else "$base/browse/${link.ticketId}"
     }
 }

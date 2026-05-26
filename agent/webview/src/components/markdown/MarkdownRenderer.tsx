@@ -298,30 +298,58 @@ function CodeNode({ className, children, node, ...props }: any) {
   );
 }
 
+// Schemes that navigate inside the IDE (no browser, no network) — these open
+// directly with no confirmation dialogue. Browser/external links (jira:, http(s):,
+// mailto:, anything unrecognized) route through ChatLink's confirm-and-copy modal.
+const IDE_LOCAL_SCHEMES = ['file:', 'class:'];
+
 function AnchorNode({ href, children, ...props }: any) {
-  // `symbol:` links keep the legacy direct-navigation behavior because the
-  // PSI scanner stamps data-canonical/data-line onto the anchor and uses them
-  // to skip the resolver round-trip. Every other scheme routes through the
-  // confirmation-modal pipeline in ChatLink.
-  if (typeof href === 'string' && href.startsWith('symbol:')) {
-    return (
-      <a
-        href={href}
-        className="text-[var(--link)] underline decoration-[var(--link)]/30 hover:decoration-[var(--link)]"
-        onClick={(e: React.MouseEvent) => {
-          e.preventDefault();
-          if (!href) return;
-          const el = e.currentTarget as HTMLAnchorElement;
-          const canonical = el.dataset.canonical;
-          const line = parseInt(el.dataset.line ?? '0', 10);
-          if (canonical) (window as any)._navigateToFile?.(`${canonical}:${line + 1}`);
-        }}
-        {...props}
-      >
-        {children}
-      </a>
-    );
+  const linkClass =
+    'text-[var(--link)] underline decoration-[var(--link)]/30 hover:decoration-[var(--link)]';
+
+  if (typeof href === 'string') {
+    // `symbol:` links navigate directly: the PSI scanner stamps data-canonical/
+    // data-line onto the anchor, so we skip the resolver round-trip entirely.
+    if (href.startsWith('symbol:')) {
+      return (
+        <a
+          href={href}
+          className={linkClass}
+          onClick={(e: React.MouseEvent) => {
+            e.preventDefault();
+            if (!href) return;
+            const el = e.currentTarget as HTMLAnchorElement;
+            const canonical = el.dataset.canonical;
+            const line = parseInt(el.dataset.line ?? '0', 10);
+            if (canonical) (window as any)._navigateToFile?.(`${canonical}:${line + 1}`);
+          }}
+          {...props}
+        >
+          {children}
+        </a>
+      );
+    }
+
+    // file:/class: open in the IDE editor — no "open in browser?" dialogue.
+    if (IDE_LOCAL_SCHEMES.some((s) => href.startsWith(s))) {
+      return (
+        <a
+          href={href}
+          className={linkClass}
+          onClick={(e: React.MouseEvent) => {
+            e.preventDefault();
+            if (!href) return;
+            (window as any)._openLink?.(href);
+          }}
+          {...props}
+        >
+          {children}
+        </a>
+      );
+    }
   }
+
+  // Browser/external links (jira:, http(s):, mailto:, unknown) — confirm + copy URL.
   return (
     <ChatLink href={href} {...props}>
       {children}

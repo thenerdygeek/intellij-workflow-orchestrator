@@ -16,6 +16,8 @@ interface Resolution {
   raw: string;
   displayLabel: string;
   targetDescription: string;
+  /** Resolved external URL (JIRA → …/browse/TICKET, WEB → the URL). Null/absent for non-browser links. */
+  browserUrl?: string | null;
 }
 
 interface LinkConfirmModalProps {
@@ -102,15 +104,19 @@ export function LinkConfirmModal({ href, onClose }: LinkConfirmModalProps) {
     onClose();
   };
 
+  // The user-facing URL: the resolved external link (e.g. https://jira…/browse/WORK-1
+  // for a jira: href), falling back to the raw href only when the resolver gave none.
+  const copyUrl = res?.browserUrl ?? res?.raw ?? href;
+
   const handleCopy = async () => {
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(href);
+        await navigator.clipboard.writeText(copyUrl);
       } else {
         const copyBridge = (window as unknown as {
           _copyToClipboard?: (s: string) => void;
         })._copyToClipboard;
-        copyBridge?.(href);
+        copyBridge?.(copyUrl);
       }
       setCopied(true);
       window.setTimeout(onClose, 350);
@@ -119,7 +125,7 @@ export function LinkConfirmModal({ href, onClose }: LinkConfirmModalProps) {
       const copyBridge = (window as unknown as {
         _copyToClipboard?: (s: string) => void;
       })._copyToClipboard;
-      copyBridge?.(href);
+      copyBridge?.(copyUrl);
       onClose();
     }
   };
@@ -128,7 +134,6 @@ export function LinkConfirmModal({ href, onClose }: LinkConfirmModalProps) {
   const badge = KIND_BADGE[kind];
   const description = res?.targetDescription ?? 'Resolving link…';
   const label = res?.displayLabel ?? href;
-  const raw = res?.raw ?? href;
 
   return (
     <Dialog
@@ -149,7 +154,7 @@ export function LinkConfirmModal({ href, onClose }: LinkConfirmModalProps) {
             >
               {badge.label}
             </span>
-            <DialogTitle className="text-base">Open link?</DialogTitle>
+            <DialogTitle className="text-base">Open in browser?</DialogTitle>
           </div>
           <DialogDescription className="text-[12px]">
             {description}
@@ -157,7 +162,7 @@ export function LinkConfirmModal({ href, onClose }: LinkConfirmModalProps) {
         </DialogHeader>
 
         <div className="space-y-2 text-[12px]">
-          {label !== raw && (
+          {label !== copyUrl && (
             <div>
               <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
                 Label
@@ -167,13 +172,13 @@ export function LinkConfirmModal({ href, onClose }: LinkConfirmModalProps) {
           )}
           <div>
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Raw
+              URL
             </div>
             <div
               className="break-all rounded border bg-[var(--code-bg,#1e1e1e)] p-2 font-mono text-[11px]"
               style={{ wordBreak: 'break-all' }}
             >
-              {raw}
+              {copyUrl}
             </div>
           </div>
         </div>
