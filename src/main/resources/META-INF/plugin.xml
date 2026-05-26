@@ -436,6 +436,8 @@
             implementation="com.workflow.orchestrator.agent.testing.ToolTestingEditorProvider"/>
         <fileEditorProvider
             implementation="com.workflow.orchestrator.agent.ui.tooldocs.ToolDocsEditorProvider"/>
+        <fileEditorProvider
+            implementation="com.workflow.orchestrator.agent.ui.apidocs.ApiDocsEditorProvider"/>
 
         <!-- Commit Dialog: Jira Time Tracking -->
         <checkinHandlerFactory
@@ -507,6 +509,13 @@
             text="View Tool Documentation"
             description="Browse rich per-tool documentation for documented agent tools"
             class="com.workflow.orchestrator.agent.ui.tooldocs.OpenToolDocsAction">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action
+            id="Workflow.ViewApiDocumentation"
+            text="View API Documentation"
+            description="Browse documented external API endpoints (Jira, Bitbucket, Bamboo, SonarQube, Sourcegraph)"
+            class="com.workflow.orchestrator.agent.ui.apidocs.OpenApiDocsAction">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
         <action
