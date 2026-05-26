@@ -6,9 +6,11 @@ import com.workflow.orchestrator.core.model.PrComment
 import com.workflow.orchestrator.core.model.PrCommentAuthor
 import com.workflow.orchestrator.core.model.PrCommentSeverity
 import com.workflow.orchestrator.core.model.PrCommentState
+import com.workflow.orchestrator.core.model.bitbucket.PullRequestDetailData
 import com.workflow.orchestrator.core.services.BitbucketService
 import com.workflow.orchestrator.core.services.ToolResult as CoreToolResult
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -180,6 +182,54 @@ class BitbucketReviewToolTest {
             put("repo_slug", "my-repo")
         }, project)
         assertTrue(result.isError)
+    }
+
+    // --- add_inline_comment: SHA anchoring ---
+
+    private fun prDetail(toRefLatestCommit: String?) = PullRequestDetailData(
+        id = 42, title = "t", description = null, state = "OPEN",
+        fromBranch = "feature", toBranch = "main", authorName = null, reviewers = emptyList(),
+        createdDate = 0L, updatedDate = 0L, version = 1, toRefLatestCommit = toRefLatestCommit,
+    )
+
+    @Test
+    fun `add_inline_comment pins to the PR target commit when available`() = runTest {
+        val svc = mockBitbucketService()
+        coEvery { svc.getPullRequestDetail(42, null) } returns CoreToolResult(data = prDetail("abc123"), summary = "PR 42")
+        coEvery {
+            svc.addInlineComment(any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns CoreToolResult(data = Unit, summary = "inline comment added")
+
+        val result = tool.execute(buildJsonObject {
+            put("action", "add_inline_comment")
+            put("pr_id", "42"); put("file_path", "src/A.kt"); put("line", "10")
+            put("line_type", "ADDED"); put("text", "nit")
+        }, project)
+
+        assertFalse(result.isError)
+        coVerify {
+            svc.addInlineComment(42, "src/A.kt", 10, "ADDED", "nit", null, "COMMIT", any(), "abc123")
+        }
+    }
+
+    @Test
+    fun `add_inline_comment posts unanchored when no target commit is resolved`() = runTest {
+        val svc = mockBitbucketService()
+        coEvery { svc.getPullRequestDetail(42, null) } returns CoreToolResult(data = prDetail(null), summary = "PR 42")
+        coEvery {
+            svc.addInlineComment(any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns CoreToolResult(data = Unit, summary = "inline comment added")
+
+        val result = tool.execute(buildJsonObject {
+            put("action", "add_inline_comment")
+            put("pr_id", "42"); put("file_path", "src/A.kt"); put("line", "10")
+            put("line_type", "ADDED"); put("text", "nit")
+        }, project)
+
+        assertFalse(result.isError)
+        coVerify {
+            svc.addInlineComment(42, "src/A.kt", 10, "ADDED", "nit", null, null, any(), null)
+        }
     }
 
     // --- Task 2: get_comment ---

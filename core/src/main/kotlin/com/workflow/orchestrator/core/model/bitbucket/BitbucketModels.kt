@@ -66,7 +66,13 @@ data class PullRequestDetailData(
     val reviewers: List<ReviewerData>,
     val createdDate: Long,
     val updatedDate: Long,
-    val version: Int
+    val version: Int,
+    /**
+     * The target ref's latest commit SHA (`toRef.latestCommit`). Used to pin inline review
+     * comments to a specific diff (`diffType=COMMIT` + `toHash`) so they don't float off their
+     * line when new commits land. Null when the server omitted it.
+     */
+    val toRefLatestCommit: String? = null
 ) {
     override fun toString(): String = buildString {
         append("PR #$id [$state] $title ($fromBranch → $toBranch)")

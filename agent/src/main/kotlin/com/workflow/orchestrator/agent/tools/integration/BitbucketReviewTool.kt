@@ -1083,7 +1083,16 @@ Common optional: repo_name for multi-repo projects. description for approval dia
                 val text = params["text"]?.jsonPrimitive?.content ?: return BitbucketToolUtils.missingParam("text")
                 ToolValidation.validateNotBlank(text, "text")?.let { return it }
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
-                service.addInlineComment(prId, filePath, line, lineType, text, repoName = repoName).toAgentToolResult()
+                // Pin the comment to the PR's target commit (diffType=COMMIT + toHash) so it doesn't
+                // float off its line when new commits land — the same anchoring the PR-tab AI review
+                // uses. Best-effort: if the detail/commit can't be resolved, post unanchored (the
+                // server-default EFFECTIVE diff), preserving prior behavior.
+                val toHash = service.getPullRequestDetail(prId, repoName).data?.toRefLatestCommit?.takeIf { it.isNotBlank() }
+                service.addInlineComment(
+                    prId, filePath, line, lineType, text, repoName = repoName,
+                    diffType = if (toHash != null) "COMMIT" else null,
+                    toHash = toHash,
+                ).toAgentToolResult()
             }
 
             "reply_to_comment" -> {

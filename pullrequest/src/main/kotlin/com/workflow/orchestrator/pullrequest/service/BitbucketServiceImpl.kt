@@ -906,7 +906,8 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
                     status = r.status
                 )
             },
-            createdDate = createdDate, updatedDate = updatedDate, version = version
+            createdDate = createdDate, updatedDate = updatedDate, version = version,
+            toRefLatestCommit = toRef?.latestCommit
         )
 
     private fun emptyPrDetail(prId: Int) = PullRequestDetailData(
