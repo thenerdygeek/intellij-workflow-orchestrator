@@ -39,7 +39,7 @@ Build variables include `dockerTagsAsJson` — JSON payload of service-to-docker
 
 ## Architecture
 
-- `BambooApiClient` — HTTP client for all Bamboo REST calls
+- `BambooApiClient` — HTTP client for all Bamboo REST calls. The shared `paginate()` loop (used by `getPlans`/`getBranches`/`getPlanBranches`/`getLinkedRepositories`) advances the offset from the **requested** start-index plus the **actual item count returned** — never from the server-echoed `start-index`/`size` fields. Bamboo's `/plan/{key}/branch` endpoint echoes `start-index: 0` on every page, so trusting it stalled the cursor and re-fetched the same window up to the page cap, duplicating branches in the Automation branch selector (fixed 2026-05-26; regression test in `BambooApiClientPaginationTest`). `BambooServiceImpl.getPlanBranches` also `distinctBy { it.key }` as a defensive second layer.
 - `BambooServiceImpl` — implements `BambooService` (in :core), returns `ToolResult<T>`
 - `BambooServiceImpl` returns `BuildResultData.stages[].jobs[]` populated from `?expand=stages.stage.results.result` responses. Each `BuildJobData.resultKey` (e.g. `PROJ-PLAN138-UNIT-4`) is what the agent passes to `bamboo_builds.get_build_log` for per-job logs.
 - `BuildPlanResolutionPolicy` (in `:bamboo/ui/`) is a pure object encapsulating the Build dashboard's "use detected plan / use configured master / show hint" decision, so the resolution matrix is testable without IntelliJ infrastructure. The dashboard delegates to it after every `BambooService.autoDetectPlan` call.

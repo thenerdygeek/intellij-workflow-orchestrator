@@ -742,7 +742,10 @@ class BambooServiceImpl(private val project: Project) : BambooService {
 
         return when (val result = api.getBranches(planKey)) {
             is ApiResult.Success -> {
-                val data = result.data.map { dto ->
+                // distinctBy(key): a branch key is unique, so a repeated key can only be a
+                // pagination/transport artefact. Guarantees the branch selector never lists
+                // the same branch twice regardless of server pagination behaviour.
+                val data = result.data.distinctBy { it.key }.map { dto ->
                     PlanBranchData(
                         key = dto.key,
                         name = dto.name,

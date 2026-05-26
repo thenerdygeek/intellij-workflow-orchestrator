@@ -2,8 +2,10 @@ package com.workflow.orchestrator.bamboo.api
 
 import com.workflow.orchestrator.core.model.ApiResult
 import kotlinx.coroutines.test.runTest
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -172,6 +174,38 @@ class BambooApiClientPaginationTest {
         val req2 = server.takeRequest()
         assertTrue(req2.path?.contains("start-index=100") == true,
             "Second page must use start-index=100; path=${req2.path}")
+    }
+
+    @Test
+    fun `getBranches does not duplicate when server echoes start-index=0 on every page`() = runTest {
+        // Real-Bamboo quirk: the /branch endpoint honours the requested start-index but
+        // echoes `start-index: 0` in the body on every page. The old loop advanced the
+        // offset from the echoed field (page.startIndex + page.size), so it stalled at
+        // 100 and re-fetched the same window up to the 50-page cap → the same branch
+        // repeated. The loop must advance from the *requested* offset + actual item count.
+        val page0 = (1..100).map { "feature-$it" }   // full page  -> more to come
+        val page100 = (101..200).map { "feature-$it" } // full page  -> more to come
+        val page200 = listOf("hotfix-1", "hotfix-2")    // partial    -> last page
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val start = Regex("start-index=(\\d+)").find(request.path ?: "")?.groupValues?.get(1)?.toInt() ?: 0
+                val names = when {
+                    start <= 0 -> page0
+                    start < 200 -> page100
+                    else -> page200
+                }
+                // Always echo start-index=0 (the quirk).
+                return MockResponse().setResponseCode(200)
+                    .setBody(branchesPage(names, startIndex = 0, maxResult = 100))
+            }
+        }
+
+        val result = client.getBranches("PROJ-PLAN")
+        assertTrue(result is ApiResult.Success)
+        val branches = (result as ApiResult.Success).data
+        val keys = branches.map { it.key }
+        assertEquals(keys.distinct().size, keys.size, "No branch key should appear more than once")
+        assertEquals(202, branches.size, "All three pages collected exactly once")
     }
 
     // ── getPlanBranches ──────────────────────────────────────────────────────────

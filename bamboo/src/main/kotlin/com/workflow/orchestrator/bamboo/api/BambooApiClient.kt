@@ -41,14 +41,7 @@ class BambooApiClient(
         return paginate(pageSize = 100, maxPages = 50, label = "plans") { start ->
             get<BambooPlanListResponse>(
                 "/rest/api/latest/plan?expand=plans.plan&max-results=100&start-index=$start"
-            ).map { page ->
-                PaginatedPage(
-                    items = page.plans.plan,
-                    startIndex = page.plans.startIndex,
-                    size = page.plans.size,
-                    maxResult = page.plans.maxResult,
-                )
-            }
+            ).map { page -> page.plans.plan }
         }
     }
 
@@ -91,14 +84,7 @@ class BambooApiClient(
         paginate(pageSize = 100, maxPages = 50, label = "branches/$planKey") { start ->
             get<BambooBranchListResponse>(
                 "/rest/api/latest/plan/$planKey/branch?max-results=100&start-index=$start"
-            ).map { page ->
-                PaginatedPage(
-                    items = page.branches.branch,
-                    startIndex = page.branches.startIndex,
-                    size = page.branches.size,
-                    maxResult = page.branches.maxResult,
-                )
-            }
+            ).map { page -> page.branches.branch }
         }
 
     suspend fun getLatestResult(planKey: String, branch: String? = null): ApiResult<BambooResultDto> {
@@ -500,14 +486,7 @@ class BambooApiClient(
         paginate(pageSize = 200, maxPages = 50, label = "repositories") { start ->
             get<com.workflow.orchestrator.bamboo.api.dto.BambooLinkedRepositoryListResponse>(
                 "/rest/api/latest/repository?max-results=200&start-index=$start"
-            ).map { page ->
-                PaginatedPage(
-                    items = page.searchResults.map { item -> item.searchEntity.copy(id = item.id) },
-                    startIndex = page.startIndex,
-                    size = page.size,
-                    maxResult = page.maxResult,
-                )
-            }
+            ).map { page -> page.searchResults.map { item -> item.searchEntity.copy(id = item.id) } }
         }
 
     /**
@@ -530,14 +509,7 @@ class BambooApiClient(
         paginate(pageSize = maxResults, maxPages = 50, label = "planBranches/$masterPlanKey") { start ->
             get<com.workflow.orchestrator.bamboo.api.dto.BambooPlanBranchListResponse>(
                 "/rest/api/latest/plan/$masterPlanKey/branch?max-results=$maxResults&start-index=$start"
-            ).map { page ->
-                PaginatedPage(
-                    items = page.branches.branch,
-                    startIndex = page.branches.startIndex,
-                    size = page.branches.size,
-                    maxResult = page.branches.maxResult,
-                )
-            }
+            ).map { page -> page.branches.branch }
         }
 
     /**
@@ -621,37 +593,26 @@ class BambooApiClient(
         }
 
     /**
-     * Carries one Bamboo page of results together with the offset fields needed to
-     * determine whether a next page exists and what its start-index should be.
-     *
-     * Bamboo uses offset-based pagination: `size < maxResult` means the server returned
-     * fewer items than requested → this is the last page. The next page's start-index is
-     * `startIndex + size`. Both conditions are checked by [paginate].
-     */
-    private data class PaginatedPage<T>(
-        val items: List<T>,
-        val startIndex: Int,
-        val size: Int,
-        val maxResult: Int,
-    )
-
-    /**
-     * Generic Bamboo pagination loop (50-page cap, shared by [getPlans],
+     * Generic Bamboo offset-pagination loop (50-page cap, shared by [getPlans],
      * [getBranches], [getPlanBranches], and [getLinkedRepositories]).
      *
-     * Bamboo's sentinel: if `size < maxResult` there are no more pages.
-     * Otherwise the next page starts at `startIndex + size`.
+     * The next offset is derived from the offset we *requested* plus the number of items
+     * the page *actually contained* — never from the server-echoed `start-index`/`size`
+     * fields. Some Bamboo endpoints (notably `/plan/{key}/branch`) echo `start-index: 0`
+     * on every page while still honouring the requested offset; trusting that echoed
+     * value stalled the cursor and re-fetched the same window up to the page cap, so the
+     * same branch was aggregated repeatedly. A page shorter than [pageSize] is the last one.
      *
      * @param pageSize   Number of items requested per page (same value used in the URL).
      * @param maxPages   Safety cap — stops after this many pages even if more exist.
      * @param label      Human-readable description for the debug log.
-     * @param fetchPage  Suspending fetcher that accepts a start-index and returns a page.
+     * @param fetchPage  Suspending fetcher that accepts a start-index and returns that page's items.
      */
     private suspend fun <T> paginate(
         pageSize: Int,
         maxPages: Int,
         label: String,
-        fetchPage: suspend (startIndex: Int) -> ApiResult<PaginatedPage<T>>,
+        fetchPage: suspend (startIndex: Int) -> ApiResult<List<T>>,
     ): ApiResult<List<T>> {
         val aggregated = mutableListOf<T>()
         var startIndex = 0
@@ -660,15 +621,15 @@ class BambooApiClient(
             when (val result = fetchPage(startIndex)) {
                 is ApiResult.Error -> return result
                 is ApiResult.Success -> {
-                    val page = result.data
-                    aggregated += page.items
+                    val items = result.data
+                    aggregated += items
                     pages++
-                    if (page.size < page.maxResult || page.maxResult == 0 || page.items.isEmpty()) {
-                        // Last page: server returned fewer items than requested (or zero)
+                    if (items.size < pageSize) {
+                        // Short page (incl. empty) ⇒ no more results.
                         log.debug("[Bamboo:API] paginate($label): $pages page(s), ${aggregated.size} total items")
                         return ApiResult.Success(aggregated)
                     }
-                    startIndex = page.startIndex + page.size
+                    startIndex += items.size
                 }
             }
         }
