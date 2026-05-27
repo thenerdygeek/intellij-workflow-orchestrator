@@ -155,6 +155,11 @@ interface QuestionViewProps {
 
 export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
   const [showSummary, setShowSummary] = useState(false);
+  // When the user clicks "Edit answer" on the review summary we navigate back to
+  // that question locally (the Kotlin _editQuestion callback is a no-op — editing
+  // is a pure webview concern). editingIndex overrides activeIndex while editing
+  // and suppresses the all-answered auto-summary so the question card is reachable.
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [chatAbout, setChatAbout] = useState<{ qid: string; questionText: string } | null>(null);
   const [customText, setCustomText] = useState('');
   const [customSelected, setCustomSelected] = useState(false);
@@ -187,8 +192,10 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
   // Cancel any pending timer on unmount.
   useEffect(() => cancelSummaryTimer, [cancelSummaryTimer]);
 
-  const question = questions[activeIndex];
-  const isLastQuestion = activeIndex === questions.length - 1;
+  // While editing, the shown question is the edit target, not the live activeIndex.
+  const shownIndex = editingIndex ?? activeIndex;
+  const question = questions[shownIndex];
+  const isLastQuestion = shownIndex === questions.length - 1;
 
   // Track answered questions
   const answeredIndices = useMemo(() => {
@@ -224,10 +231,15 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
     setCustomSelected(false);
     storeAnswer(question.id, answer);
     window._questionAnswered?.(question.id, JSON.stringify(answer));
-    if (isLastQuestion) {
+    if (editingIndex !== null) {
+      // Finished editing one answer → return to the review summary.
+      cancelSummaryTimer();
+      setEditingIndex(null);
+      setShowSummary(true);
+    } else if (isLastQuestion) {
       scheduleSummary();
     }
-  }, [question, isLastQuestion, storeAnswer, scheduleSummary]);
+  }, [question, editingIndex, isLastQuestion, storeAnswer, scheduleSummary, cancelSummaryTimer]);
 
   const handleSelect = useCallback((optionIds: string[]) => {
     // Multi-select: fold a free-text "Other" value into the option set so the two
@@ -253,21 +265,21 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
   }, [question, customText, liveSelectedIds, submitAnswer]);
 
   const handleTextAnswer = useCallback((text: string) => {
-    if (!question) return;
-    storeAnswer(question.id, [text]);
-    window._questionAnswered?.(question.id, JSON.stringify([text]));
-    if (isLastQuestion) {
-      scheduleSummary();
-    }
-  }, [question, isLastQuestion, storeAnswer, scheduleSummary]);
+    submitAnswer([text]);
+  }, [submitAnswer]);
 
   const handleBack = useCallback(() => {
-    if (activeIndex <= 0) return;
     cancelSummaryTimer();
-    setShowSummary(false);
     setCustomSelected(false);
-    window._editQuestion?.(questions[activeIndex - 1]!.id);
-  }, [activeIndex, questions, cancelSummaryTimer]);
+    if (editingIndex !== null) {
+      // Back out of an edit → return to the review summary.
+      setEditingIndex(null);
+      setShowSummary(true);
+      return;
+    }
+    if (shownIndex <= 0) return;
+    window._editQuestion?.(questions[shownIndex - 1]!.id);
+  }, [editingIndex, shownIndex, questions, cancelSummaryTimer]);
 
   const handleSkip = useCallback(() => {
     if (!question) return;
@@ -275,13 +287,19 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
     setCustomSelected(false);
     storeSkip(question.id);
     window._questionSkipped?.(question.id);
-  }, [question, storeSkip, cancelSummaryTimer]);
+    if (editingIndex !== null) {
+      setEditingIndex(null);
+      setShowSummary(true);
+    }
+  }, [question, editingIndex, storeSkip, cancelSummaryTimer]);
 
   const handleEditFromSummary = useCallback((index: number) => {
+    cancelSummaryTimer();
     setShowSummary(false);
     setCustomSelected(false);
+    setEditingIndex(index);
     window._editQuestion?.(questions[index]!.id);
-  }, [questions]);
+  }, [questions, cancelSummaryTimer]);
 
   const handleSubmitAll = useCallback(() => {
     window._questionsSubmitted?.();
@@ -294,8 +312,8 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
     window._questionsCancelled?.();
   }, [storeClear, cancelSummaryTimer]);
 
-  // ── Summary page ──
-  if (showSummary || allAnswered) {
+  // ── Summary page ── (suppressed while editing a specific answer)
+  if ((showSummary || allAnswered) && editingIndex === null) {
     return (
       <div className="question-view my-3 animate-[fade-in_220ms_ease-out]">
         <div
@@ -385,7 +403,7 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
               <QuestionFlow
                 key={question.id}
                 id={`question-${question.id}`}
-                step={activeIndex + 1}
+                step={shownIndex + 1}
                 title={<MarkdownRenderer content={question.text} />}
                 titleText={question.text}
                 options={flowOptions}
@@ -393,7 +411,7 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
                 defaultValue={defaultValue}
                 onSelect={handleSelect}
                 onSelectionChange={handleSelectionChange}
-                onBack={activeIndex > 0 ? handleBack : undefined}
+                onBack={(editingIndex !== null || shownIndex > 0) ? handleBack : undefined}
               />
             </div>
 
@@ -483,7 +501,7 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
         {/* Step dots — inside the card */}
         <StepDots
           total={questions.length}
-          current={activeIndex}
+          current={shownIndex}
           answeredIndices={answeredIndices}
         />
       </div>
