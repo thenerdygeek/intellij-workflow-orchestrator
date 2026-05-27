@@ -23,27 +23,6 @@ class TagBuilderService {
     companion object {
         private val DOCKER_TAG_REGEX = Regex("Unique Docker Tag\\s*:\\s*(.+)")
         private val ANSI_ESCAPE_REGEX = Regex("\\x1B\\[[0-9;]*m")
-
-        /**
-         * Upper bound on how much of a build log we scan for the "Unique Docker Tag" marker.
-         *
-         * The marker is emitted once, EARLY within a SINGLE job's output. But
-         * `BuildMonitorService` concatenates every job's log into one blob in Bamboo's
-         * REST job order — which is UNSTABLE (the 2026-05-07 probe returned the same plan's
-         * jobs in different orders across builds). So the marker can sit well past the first
-         * job's log. Scanning only the head (the previous 500-line / 64 KB window) silently
-         * dropped the tag whenever its job wasn't ordered first — the root cause of the
-         * "build X has no Unique Docker Tag" reports.
-         *
-         * [DOCKER_TAG_REGEX] is anchored on a long literal and has no nested quantifiers, so
-         * `find()` is linear and short-circuits at the first match — the common (tag-present)
-         * case is cheap regardless of the marker's position. This cap only bounds the
-         * pathological no-match scan. 4 MB comfortably covers a realistic multi-job
-         * concatenation (a single CI job log was ~400 KB in the probe). Supersedes the
-         * head-window cap from audit finding automation:F-5, preserving its perf intent
-         * (bounded work, no ReDoS) without its correctness bug (dropping later-ordered tags).
-         */
-        internal const val MAX_SCAN_CHARS = 4 * 1024 * 1024  // 4 MB
     }
 
     /** Project service constructor — used by IntelliJ DI. */
@@ -400,15 +379,20 @@ class TagBuilderService {
      * where [logText] is the concatenation of every job's log in Bamboo's unstable
      * REST job order.
      *
-     * Scans up to [MAX_SCAN_CHARS] for the marker — NOT just the head — because the
-     * job that emits it may be ordered anywhere in the concatenation. [DOCKER_TAG_REGEX]
-     * is linear and `find()` short-circuits at the first match, so a present tag is found
-     * cheaply wherever it sits; the cap only bounds the no-match case (ReDoS/perf guard,
-     * preserving the intent of audit finding automation:F-5).
+     * Scans the WHOLE log — no positional window. The "Unique Docker Tag" line is emitted
+     * near the END of the publishing job's output (after the image is built/pushed), and
+     * that job can be ordered anywhere in the concatenation, so the marker may be at the
+     * tail or the middle. Any head/tail truncation risks dropping it — that was the bug
+     * behind the "build X has no Unique Docker Tag" reports (the old audit:F-5 head window
+     * assumed the tag appears early; it does not).
+     *
+     * Safe to scan fully: [DOCKER_TAG_REGEX] is anchored on a long literal with no nested
+     * quantifiers (`.` does not cross newlines), so `find()` is linear and short-circuits at
+     * the first match. This runs once per terminal build / panel mount — not per poll tick —
+     * so a linear pass over a few-MB log is negligible.
      */
     fun extractDockerTagFromLog(logText: String): String? {
-        val scanned = if (logText.length > MAX_SCAN_CHARS) logText.substring(0, MAX_SCAN_CHARS) else logText
-        val match = DOCKER_TAG_REGEX.find(scanned) ?: return null
+        val match = DOCKER_TAG_REGEX.find(logText) ?: return null
         return match.groupValues[1].trim()
             .replace(ANSI_ESCAPE_REGEX, "")
             .takeIf { it.isNotBlank() }

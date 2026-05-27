@@ -9,14 +9,13 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Tests that [TagBuilderService.extractDockerTagFromLog] (a) extracts docker tags
- * correctly regardless of where the marker sits in a concatenated multi-job log,
- * and (b) stays bounded/quick on pathological large inputs.
+ * correctly regardless of where the marker sits — including at the END of a large log,
+ * which is where the publishing job actually emits it — and (b) stays quick on large inputs.
  *
- * The scan reaches up to [TagBuilderService.MAX_SCAN_CHARS] (not just a head window),
- * because job logs are concatenated in Bamboo's unstable REST order — the marker's job
- * may be ordered last. `find()` short-circuits at the first match, preserving the perf
- * intent of audit finding automation:F-5 without its correctness bug (dropping
- * later-ordered tags).
+ * The scan covers the WHOLE log (no head/tail window): the marker's job can be ordered
+ * anywhere in the concatenation and the marker itself is near that job's end. `find()` is
+ * linear and short-circuits at the first match. This supersedes the head-window cap from
+ * audit finding automation:F-5, whose "tag appears early" assumption was simply wrong.
  */
 class DockerTagRegexBoundTest {
 
@@ -83,10 +82,13 @@ class DockerTagRegexBoundTest {
     }
 
     @Test
-    fun `marker beyond MAX_SCAN_CHARS is not found (scan stays bounded)`() {
-        val noise = "X".repeat(TagBuilderService.MAX_SCAN_CHARS + 1_000)
-        val log = "$noise\nUnique Docker Tag : 9.9.9"
-        assertNull(service.extractDockerTagFromLog(log))
+    fun `marker at the very end of a large log is found`() {
+        // The real scenario: the "Unique Docker Tag" line is emitted at the END of the
+        // publishing job's output, after a large amount of build output. It must be found
+        // no matter how much precedes it.
+        val build = "X".repeat(2_000_000)  // ~2 MB of leading build output, no marker
+        val log = "$build\nUnique Docker Tag : end-of-log-tag-7\n"
+        assertEquals("end-of-log-tag-7", service.extractDockerTagFromLog(log))
     }
 
     // ── Performance: pathological large input completes within 2 seconds ──────
