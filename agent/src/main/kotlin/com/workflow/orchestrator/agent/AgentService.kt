@@ -1353,6 +1353,19 @@ class AgentService(
     }
 
     /**
+     * Activate a deferred tool by name (e.g. "read_document") so it is available
+     * to the LLM on the next turn without an explicit tool_search. No-op if the
+     * tool is already active or unknown. Used by file-attachment ingestion.
+     */
+    fun activateDeferredTool(toolName: String) {
+        try {
+            registry.activateDeferred(toolName)
+        } catch (e: Throwable) {
+            log.warn("activateDeferredTool($toolName) failed", e)
+        }
+    }
+
+    /**
      * Computes the snapshot of cross-IDE delegation targets surfaced into the
      * system prompt's Capabilities section. Returns empty when outbound delegation
      * is off (defensive — caller already gates, but avoids accidental socket probes
