@@ -52,4 +52,33 @@ class DocumentToolDelegationTest {
         tool.execute(params("path" to "\"/tmp/x.pdf\"", "page" to "47"), mockk<Project>())
         assertEquals(DocumentCursor.Page(47), cursorSlot.captured)
     }
+
+    @Test
+    fun `empty slice surfaces the service summary as the body so the LLM sees the instruction`() = runBlocking {
+        val svc = io.mockk.mockk<com.workflow.orchestrator.core.services.DocumentArtifactService>()
+        io.mockk.coEvery { svc.read(any<java.nio.file.Path>(), any(), any()) } returns
+            com.workflow.orchestrator.core.services.ToolResult.success(
+                data = com.workflow.orchestrator.core.model.DocumentSlice("", 0, 0, 0, null, null),
+                summary = "Document extraction in progress — call read_document again shortly.",
+            )
+        val tool = DocumentTool(artifactService = svc)
+        val result = tool.execute(params("path" to "\"/tmp/x.pdf\"", "offset" to "0"), io.mockk.mockk<com.intellij.openapi.project.Project>())
+        assertFalse(result.isError)
+        assertTrue(result.content.contains("in progress", ignoreCase = true),
+            "in-progress instruction must be in content (LLM reads content, not summary); got: '${result.content}'")
+    }
+
+    @Test
+    fun `non-empty slice still renders content plus continuation hint`() = runBlocking {
+        val svc = io.mockk.mockk<com.workflow.orchestrator.core.services.DocumentArtifactService>()
+        io.mockk.coEvery { svc.read(any<java.nio.file.Path>(), any(), any()) } returns
+            com.workflow.orchestrator.core.services.ToolResult.success(
+                data = com.workflow.orchestrator.core.model.DocumentSlice("real text", 0, 9, 100, 1, 5),
+                summary = "ok",
+            )
+        val tool = DocumentTool(artifactService = svc)
+        val result = tool.execute(params("path" to "\"/tmp/x.pdf\"", "offset" to "0"), io.mockk.mockk<com.intellij.openapi.project.Project>())
+        assertTrue(result.content.startsWith("real text"))
+        assertTrue(result.content.contains("read_document(offset=9)"))
+    }
 }

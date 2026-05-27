@@ -375,7 +375,11 @@ class DocumentTool(
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
         val slice = result.data!!
-        val body = buildString {
+        val body = if (slice.content.isEmpty()) {
+            // No content to show (extraction in progress, end-of-document, or empty result).
+            // The LLM is fed `content`, not `summary`, so the explanation/instruction must go here.
+            result.summary
+        } else buildString {
             append(slice.content)
             if (slice.remaining > 0) {
                 val pageClause = if (slice.pageOfStart != null && slice.totalPages != null)
