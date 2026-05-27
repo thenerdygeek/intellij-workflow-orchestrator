@@ -51,20 +51,32 @@ describe('EditStatsBar', () => {
     expect((window as any)._navigateToFile).toHaveBeenCalledWith('src/Foo.kt');
   });
 
-  it('global revert calls _revertAll', () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+  // "Revert all" must use an inline two-step confirm, not native window.confirm
+  // (which does not work in the JCEF webview — see UserMessageRevertButton).
+  it('first click on "Revert all" asks for confirmation inline, does not revert', () => {
+    const confirmSpy = vi.spyOn(window, 'confirm');
     render(<EditStatsBar diff={sampleDiff} />);
-    fireEvent.click(screen.getByText(/revert all/i));
-    expect((window as any)._revertAll).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /^revert all$/i }));
+    expect((window as any)._revertAll).not.toHaveBeenCalled();
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /confirm revert all/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /cancel revert all/i })).toBeInTheDocument();
     confirmSpy.mockRestore();
   });
 
-  it('global revert does NOT call _revertAll when user cancels confirmation', () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+  it('confirming "Revert all" calls _revertAll', () => {
     render(<EditStatsBar diff={sampleDiff} />);
-    fireEvent.click(screen.getByText(/revert all/i));
+    fireEvent.click(screen.getByRole('button', { name: /^revert all$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /confirm revert all/i }));
+    expect((window as any)._revertAll).toHaveBeenCalled();
+  });
+
+  it('cancelling "Revert all" does NOT call _revertAll', () => {
+    render(<EditStatsBar diff={sampleDiff} />);
+    fireEvent.click(screen.getByRole('button', { name: /^revert all$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /cancel revert all/i }));
     expect((window as any)._revertAll).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
+    expect(screen.getByRole('button', { name: /^revert all$/i })).toBeInTheDocument();
   });
 
   it('hides MODIFIED files with zero added and zero removed from expanded list', () => {
