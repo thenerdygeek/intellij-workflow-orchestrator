@@ -67,6 +67,13 @@ class ContextManager(
     private var activePlanPath: String? = null
 
     /**
+     * Provider that returns the list of session documents (user attachments + tool downloads)
+     * available this session. Invoked after compaction to re-inject an exact-path manifest so
+     * the LLM never has to guess or reconstruct a path from a filename.
+     */
+    private var sessionDocumentsProvider: (() -> List<com.workflow.orchestrator.agent.session.SessionDocument>)? = null
+
+    /**
      * Summary of pre-user prefix from the most recent compaction. Reused verbatim in Case B
      * (no new user message since last compaction); folded into the new L1 prompt in Case A.
      */
@@ -570,6 +577,7 @@ class ContextManager(
         stripImagePartsFromAllMessages()
         reInjectActiveSkill()
         reInjectActivePlan()
+        reInjectSessionDocuments()
 
         // Step 12: Save state for next compaction
         previousPreUserSummary = l1Content ?: previousPreUserSummary
@@ -614,6 +622,7 @@ class ContextManager(
         stripImagePartsFromAllMessages()
         reInjectActiveSkill()
         reInjectActivePlan()
+        reInjectSessionDocuments()
         previousPreUserSummary = summary
         lastCompactionUserMessageCount = totalUserMessageCount
         lastCompactionRanSummary = true
@@ -977,6 +986,37 @@ class ContextManager(
                         "Use read_file to review the plan steps if needed."
                 )
             )
+        }
+    }
+
+    // ── Session Documents ─────────────────────────────────────────────────────
+
+    fun setSessionDocumentsProvider(provider: () -> List<com.workflow.orchestrator.agent.session.SessionDocument>) {
+        sessionDocumentsProvider = provider
+    }
+
+    /**
+     * Builds the session-documents manifest message body, or null if no provider is set or
+     * it returns an empty list. Made [internal] so the test can call it directly as a seam.
+     */
+    internal fun buildSessionDocumentsMessage(): String? {
+        val docs = sessionDocumentsProvider?.invoke().orEmpty()
+        if (docs.isEmpty()) return null
+        return buildString {
+            append("[Session Documents] Files available to read this session. Use these EXACT absolute paths ")
+            append("with read_document / read_file — do NOT guess or reconstruct a path from a filename:\n")
+            docs.forEach { append("- ${it.displayName} → ${it.absolutePath}\n") }
+        }
+    }
+
+    internal fun reInjectSessionDocuments() {
+        val content = buildSessionDocumentsMessage() ?: return
+        val recentMessages = messages.takeLast(10)
+        val alreadyPresent = recentMessages.any { msg ->
+            msg.content?.contains("[Session Documents]") == true
+        }
+        if (!alreadyPresent) {
+            messages.add(ChatMessage(role = "assistant", content = content))
         }
     }
 

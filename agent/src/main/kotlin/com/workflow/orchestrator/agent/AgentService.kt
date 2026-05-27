@@ -2212,6 +2212,13 @@ class AgentService(
                 // Attach TaskStore to ContextManager so renderTaskProgressMarkdown() reads live task state.
                 ctx.attachTaskStore(store)
 
+                // Wire session-documents provider so the manifest of exact attachment/download
+                // paths is re-injected after compaction. Scanned from the session directory
+                // (ground truth) every time compaction runs — no stale registry needed.
+                ctx.setSessionDocumentsProvider {
+                    com.workflow.orchestrator.agent.session.DocumentManifestScanner.scan(sessionDirPath)
+                }
+
                 // Wire onHistoryOverwrite callback so compaction persists truncated history.
                 // Ported from Cline's conversationHistoryDeletedRange pattern: after context
                 // truncation/summarization, the modified api_conversation_history is overwritten.
