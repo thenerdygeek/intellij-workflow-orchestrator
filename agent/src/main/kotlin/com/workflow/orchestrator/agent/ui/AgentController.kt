@@ -1662,7 +1662,8 @@ class AgentController(
     private fun executeTaskWithMentions(text: String, mentionsJson: String, attachmentsJson: String? = null) {
         if (text.isBlank() && mentionsJson == "[]" && attachmentsJson.isNullOrBlank()) return
 
-        val attachments = parseAttachments(attachmentsJson)
+        val (attachments, files) = splitAttachmentsJson(attachmentsJson)
+        val fileMarker = composeFileMarker(files)
 
         val mentions = try {
             val arr = Json.parseToJsonElement(mentionsJson).jsonArray
@@ -1676,12 +1677,12 @@ class AgentController(
             }
         } catch (e: Exception) {
             LOG.warn("AgentController: failed to parse mentions JSON, falling back to plain text", e)
-            executeTask(text, attachments = attachments)
+            executeTask(text + fileMarker, displayText = text, attachments = attachments)
             return
         }
 
         if (mentions.isEmpty()) {
-            executeTask(text, attachments = attachments)
+            executeTask(text + fileMarker, displayText = text, attachments = attachments)
             return
         }
 
@@ -1703,38 +1704,8 @@ class AgentController(
 
             invokeLater {
                 // Display clean text with chips in UI; pass XML-enriched text to LLM
-                executeTask(taskWithContext, displayText = text, displayMentionsJson = mentionsJson, attachments = attachments)
+                executeTask(taskWithContext + fileMarker, displayText = text, displayMentionsJson = mentionsJson, attachments = attachments)
             }
-        }
-    }
-
-    /**
-     * Multimodal-agent: parse the attachments JSON payload from the JS bridge
-     * into ContentBlock.ImageRef list. The wire shape is
-     * `[{sha256, mime, size, originalFilename}, ...]`. Returns empty list on
-     * any parse error so an attachment-payload bug never blocks a turn from
-     * being sent — the LLM just won't see the image.
-     */
-    private fun parseAttachments(attachmentsJson: String?): List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef> {
-        if (attachmentsJson.isNullOrBlank()) return emptyList()
-        return try {
-            val arr = Json.parseToJsonElement(attachmentsJson).jsonArray
-            arr.mapNotNull { elem ->
-                val obj = elem.jsonObject
-                val sha = obj["sha256"]?.jsonPrimitive?.content ?: return@mapNotNull null
-                val mime = obj["mime"]?.jsonPrimitive?.content ?: return@mapNotNull null
-                val size = obj["size"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
-                val name = obj["originalFilename"]?.jsonPrimitive?.content
-                com.workflow.orchestrator.agent.session.ContentBlock.ImageRef(
-                    sha256 = sha,
-                    mime = mime,
-                    size = size,
-                    originalFilename = name,
-                )
-            }
-        } catch (e: Exception) {
-            LOG.warn("AgentController: failed to parse attachments JSON: ${e.message}, raw='${attachmentsJson.take(200)}'")
-            emptyList()
         }
     }
 
@@ -4233,4 +4204,56 @@ internal fun countRevisionComments(commentsJson: String): Int {
     } catch (_: Exception) {
         0
     }
+}
+
+/** A non-image file attachment parsed from the JS bridge payload. */
+data class FileAttachment(
+    val sha256: String,
+    val mime: String,
+    val size: Long,
+    val originalFilename: String?,
+    val path: String,
+)
+
+/**
+ * Splits the bridge attachments JSON into image refs (existing vision path) and
+ * file attachments (read-on-demand). Attachments with no "kind" default to
+ * image for backward compatibility with the pre-file payload shape.
+ */
+fun splitAttachmentsJson(
+    attachmentsJson: String?,
+): Pair<List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef>, List<FileAttachment>> {
+    if (attachmentsJson.isNullOrBlank()) return emptyList<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef>() to emptyList()
+    return try {
+        val arr = kotlinx.serialization.json.Json.parseToJsonElement(attachmentsJson).jsonArray
+        val images = mutableListOf<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef>()
+        val files = mutableListOf<FileAttachment>()
+        for (elem in arr) {
+            val obj = elem.jsonObject
+            val sha = obj["sha256"]?.jsonPrimitive?.content ?: continue
+            val mime = obj["mime"]?.jsonPrimitive?.content ?: continue
+            val size = obj["size"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
+            val name = obj["originalFilename"]?.jsonPrimitive?.content
+            val kind = obj["kind"]?.jsonPrimitive?.content ?: "image"
+            if (kind == "file") {
+                val path = obj["path"]?.jsonPrimitive?.content ?: continue
+                files += FileAttachment(sha, mime, size, name, path)
+            } else {
+                images += com.workflow.orchestrator.agent.session.ContentBlock.ImageRef(sha, mime, size, name)
+            }
+        }
+        images to files
+    } catch (e: Exception) {
+        emptyList<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef>() to emptyList()
+    }
+}
+
+/** Builds the `<attached_files>` marker appended to the user message, or "" if none. */
+fun composeFileMarker(files: List<FileAttachment>): String {
+    if (files.isEmpty()) return ""
+    val lines = files.joinToString("\n") { "- ${it.path}" }
+    return "\n\n<attached_files>\n" +
+        "The user attached these files. Read them when relevant with read_file " +
+        "(text/code/config) or read_document (pdf, office, rtf, odt, epub, html, csv):\n" +
+        "$lines\n</attached_files>"
 }
