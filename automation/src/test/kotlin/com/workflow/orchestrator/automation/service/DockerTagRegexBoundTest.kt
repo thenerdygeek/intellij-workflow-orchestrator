@@ -8,14 +8,15 @@ import org.junit.jupiter.api.Timeout
 import java.util.concurrent.TimeUnit
 
 /**
- * Tests that [TagBuilderService.extractDockerTagFromLog] (a) still extracts
- * docker tags correctly from normal logs, and (b) completes quickly on
- * pathological large inputs.
+ * Tests that [TagBuilderService.extractDockerTagFromLog] (a) extracts docker tags
+ * correctly regardless of where the marker sits in a concatenated multi-job log,
+ * and (b) stays bounded/quick on pathological large inputs.
  *
- * The second case verifies the fix for audit finding automation:F-5: the
- * method now scans only the first [TagBuilderService.SCAN_LINE_LIMIT] lines
- * (capped at [TagBuilderService.SCAN_CHAR_LIMIT] chars) instead of the entire
- * multi-MB string.
+ * The scan reaches up to [TagBuilderService.MAX_SCAN_CHARS] (not just a head window),
+ * because job logs are concatenated in Bamboo's unstable REST order — the marker's job
+ * may be ordered last. `find()` short-circuits at the first match, preserving the perf
+ * intent of audit finding automation:F-5 without its correctness bug (dropping
+ * later-ordered tags).
  */
 class DockerTagRegexBoundTest {
 
@@ -62,7 +63,7 @@ class DockerTagRegexBoundTest {
     }
 
     @Test
-    fun `extracts tag when marker is within first SCAN_LINE_LIMIT lines`() {
+    fun `extracts tag when marker is within the first few lines`() {
         val prefix = (1..10).joinToString("\n") { "line $it" }
         val suffix = (1..10).joinToString("\n") { "tail $it" }
         val log = "$prefix\nUnique Docker Tag : 1.2.3\n$suffix"
@@ -72,12 +73,19 @@ class DockerTagRegexBoundTest {
     // ── Negative cases: marker beyond scan window is not found ────────────────
 
     @Test
-    fun `marker beyond SCAN_LINE_LIMIT is not found`() {
-        // Build a log where the marker appears on line SCAN_LINE_LIMIT + 1
-        val noise = (1..(TagBuilderService.SCAN_LINE_LIMIT + 5))
-            .joinToString("\n") { "noise line $it" }
+    fun `marker far past the first 500 lines is still found (multi-job concat)`() {
+        // Regression for the "build has no Unique Docker Tag" reports: when job logs are
+        // concatenated in Bamboo's unstable order, the tag's job may sit well past the old
+        // 500-line head window. The marker must still be found.
+        val leadingJobLog = (1..2_000).joinToString("\n") { "earlier-job noise line $it" }
+        val log = "$leadingJobLog\nUnique Docker Tag : feature-abc123\ntrailing output"
+        assertEquals("feature-abc123", service.extractDockerTagFromLog(log))
+    }
+
+    @Test
+    fun `marker beyond MAX_SCAN_CHARS is not found (scan stays bounded)`() {
+        val noise = "X".repeat(TagBuilderService.MAX_SCAN_CHARS + 1_000)
         val log = "$noise\nUnique Docker Tag : 9.9.9"
-        // Should return null because the marker is beyond the scan window
         assertNull(service.extractDockerTagFromLog(log))
     }
 
@@ -114,10 +122,10 @@ class DockerTagRegexBoundTest {
 
     @Test
     @Timeout(value = 2, unit = TimeUnit.SECONDS)
-    fun `log exceeding SCAN_CHAR_LIMIT is capped before line-split`() {
-        // Single-line log (no newlines) larger than SCAN_CHAR_LIMIT — should not scan it all
-        val bigLine = "Z".repeat(TagBuilderService.SCAN_CHAR_LIMIT * 3)
-        // No marker — just ensure it returns quickly without exception
+    fun `large single-line log with no marker returns null quickly`() {
+        // Single-line log (no newlines), larger than the old 64 KB head cap — the linear,
+        // short-circuiting find() must still return quickly without exception.
+        val bigLine = "Z".repeat(200_000)
         val result = service.extractDockerTagFromLog(bigLine)
         assertNull(result)
     }

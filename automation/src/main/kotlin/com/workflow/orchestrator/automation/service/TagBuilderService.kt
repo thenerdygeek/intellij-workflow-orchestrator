@@ -25,24 +25,25 @@ class TagBuilderService {
         private val ANSI_ESCAPE_REGEX = Regex("\\x1B\\[[0-9;]*m")
 
         /**
-         * Maximum number of lines to scan for the docker-tag marker.
+         * Upper bound on how much of a build log we scan for the "Unique Docker Tag" marker.
          *
-         * Bamboo build logs are commonly multi-megabyte. Scanning the entire
-         * string on every poll tick is an O(N) waste.  The "Unique Docker Tag"
-         * line always appears in the early phase of the build (post-docker-build
-         * step), so scanning the first [SCAN_LINE_LIMIT] lines is sufficient.
-         * If the tag is not found in those lines we bail out early.
-         * (Audit finding automation:F-5)
+         * The marker is emitted once, EARLY within a SINGLE job's output. But
+         * `BuildMonitorService` concatenates every job's log into one blob in Bamboo's
+         * REST job order — which is UNSTABLE (the 2026-05-07 probe returned the same plan's
+         * jobs in different orders across builds). So the marker can sit well past the first
+         * job's log. Scanning only the head (the previous 500-line / 64 KB window) silently
+         * dropped the tag whenever its job wasn't ordered first — the root cause of the
+         * "build X has no Unique Docker Tag" reports.
+         *
+         * [DOCKER_TAG_REGEX] is anchored on a long literal and has no nested quantifiers, so
+         * `find()` is linear and short-circuits at the first match — the common (tag-present)
+         * case is cheap regardless of the marker's position. This cap only bounds the
+         * pathological no-match scan. 4 MB comfortably covers a realistic multi-job
+         * concatenation (a single CI job log was ~400 KB in the probe). Supersedes the
+         * head-window cap from audit finding automation:F-5, preserving its perf intent
+         * (bounded work, no ReDoS) without its correctness bug (dropping later-ordered tags).
          */
-        internal const val SCAN_LINE_LIMIT = 500
-
-        /**
-         * Maximum character count of the slice passed to [DOCKER_TAG_REGEX].
-         * Acts as a hard byte budget independent of line count (guards against
-         * single-line logs with no newlines).
-         * (Audit finding automation:F-5)
-         */
-        internal const val SCAN_CHAR_LIMIT = 65_536  // 64 KB
+        internal const val MAX_SCAN_CHARS = 4 * 1024 * 1024  // 4 MB
     }
 
     /** Project service constructor — used by IntelliJ DI. */
@@ -355,45 +356,59 @@ class TagBuilderService {
             return TagDetectionResult.noBuild("(unknown)")
         }
 
-        val resultKey = buildResult.data!!.buildResultKey
-        log.info("[Automation:Tags] Found build $resultKey, fetching log...")
+        val build = buildResult.data!!
 
-        val logResult = bambooService.getBuildLog(resultKey)
-        if (logResult.isError) {
-            log.warn("[Automation:Tags] Failed to fetch build log for $resultKey: ${logResult.summary}")
-            return TagDetectionResult.logFetchFailed(resultKey)
+        // The "Unique Docker Tag" marker lives in ONE job's log, never the chain/plan-level
+        // log (which is empty or 404 on this Bamboo). Bamboo's REST job order is unstable, so
+        // we scan EVERY job's log and stop at the first that carries the tag — instead of the
+        // old single getBuildLog(chainKey) call, which fetched the useless plan-level log and
+        // reported "no tag" even when a job had one.
+        val jobKeys = build.stages
+            .flatMap { it.jobs }
+            .map { it.resultKey }
+            .filter { it.isNotBlank() }
+            .ifEmpty { listOf(build.buildResultKey) }  // degenerate: result had no expanded jobs
+        log.info("[Automation:Tags] Scanning ${jobKeys.size} job log(s) for chain build ${build.buildResultKey}")
+
+        var anyLogFetched = false
+        for (jobKey in jobKeys) {
+            val logResult = bambooService.getBuildLog(jobKey)
+            if (logResult.isError) {
+                log.warn("[Automation:Tags] Failed to fetch job log $jobKey: ${logResult.summary}")
+                continue
+            }
+            anyLogFetched = true
+            val tag = extractDockerTagFromLog(logResult.data!!)
+            if (tag != null) {
+                log.info("[Automation:Tags] Detected docker tag '$tag' from job $jobKey")
+                return TagDetectionResult.success(tag, jobKey)
+            }
         }
 
-        val tag = extractDockerTagFromLog(logResult.data!!)
-        return if (tag != null) {
-            log.info("[Automation:Tags] Detected docker tag: '$tag' from $resultKey")
-            TagDetectionResult.success(tag, resultKey)
+        return if (!anyLogFetched) {
+            log.warn("[Automation:Tags] Could not fetch any job log for ${build.buildResultKey}")
+            TagDetectionResult.logFetchFailed(build.buildResultKey)
         } else {
-            log.warn("[Automation:Tags] 'Unique Docker Tag' not found in build log for $resultKey")
-            TagDetectionResult.noTagInLog(resultKey)
+            log.warn("[Automation:Tags] 'Unique Docker Tag' not found in any job log for ${build.buildResultKey}")
+            TagDetectionResult.noTagInLog(build.buildResultKey)
         }
     }
 
     /**
-     * Extract docker tag from pre-fetched build log text.
-     * Pure function — no API calls. Used by event-driven path (BuildLogReady).
+     * Extract the docker tag from pre-fetched build log text.
+     * Pure function — no API calls. Used by the event-driven path (BuildLogReady),
+     * where [logText] is the concatenation of every job's log in Bamboo's unstable
+     * REST job order.
      *
-     * Scans only the first [SCAN_LINE_LIMIT] lines (capped at [SCAN_CHAR_LIMIT]
-     * characters) of the log to avoid O(N) traversal of multi-MB build logs on
-     * every poll tick. The "Unique Docker Tag" marker is always emitted in the
-     * early build phase; tags beyond this window are not real.
-     * (Audit finding automation:F-5)
+     * Scans up to [MAX_SCAN_CHARS] for the marker — NOT just the head — because the
+     * job that emits it may be ordered anywhere in the concatenation. [DOCKER_TAG_REGEX]
+     * is linear and `find()` short-circuits at the first match, so a present tag is found
+     * cheaply wherever it sits; the cap only bounds the no-match case (ReDoS/perf guard,
+     * preserving the intent of audit finding automation:F-5).
      */
     fun extractDockerTagFromLog(logText: String): String? {
-        // Bound the input: take the first SCAN_CHAR_LIMIT chars, then keep only
-        // the first SCAN_LINE_LIMIT lines of that slice. This is O(min(N, limit))
-        // rather than O(N) and eliminates the ReDoS surface on pathological logs.
-        val slice = logText.take(SCAN_CHAR_LIMIT)
-            .lineSequence()
-            .take(SCAN_LINE_LIMIT)
-            .joinToString("\n")
-
-        val match = DOCKER_TAG_REGEX.find(slice) ?: return null
+        val scanned = if (logText.length > MAX_SCAN_CHARS) logText.substring(0, MAX_SCAN_CHARS) else logText
+        val match = DOCKER_TAG_REGEX.find(scanned) ?: return null
         return match.groupValues[1].trim()
             .replace(ANSI_ESCAPE_REGEX, "")
             .takeIf { it.isNotBlank() }
