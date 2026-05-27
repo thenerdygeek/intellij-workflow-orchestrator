@@ -144,6 +144,21 @@ export function installMockBridge(): void {
   w._searchTickets = (query: string) => {
     state.calls.push({ method: '_searchTickets', args: [query] });
   };
+  // @-mention search (mock): push-based via chatStore.receiveMentionResults.
+  // Two of the files share a label ("alpha.ts") with different paths so tests
+  // can exercise same-name-file mentions. Echoes the search term (sans prefix)
+  // so MentionDropdown's staleness gate accepts the results.
+  w._searchMentions = (query: string) => {
+    state.calls.push({ method: '_searchMentions', args: [query] });
+    const colon = query.indexOf(':');
+    const searchTerm = colon >= 0 ? query.slice(colon + 1) : query;
+    const items = [
+      { type: 'file' as const, label: 'alpha.ts', path: 'src/a/alpha.ts', description: 'src/a' },
+      { type: 'file' as const, label: 'alpha.ts', path: 'src/b/alpha.ts', description: 'src/b' },
+      { type: 'file' as const, label: 'beta.ts', path: 'src/beta.ts', description: 'src' },
+    ];
+    useChatStore.getState().receiveMentionResults(searchTerm, items);
+  };
   w._validateTicket = (ticketKey: string, callbackKey: string) => {
     state.calls.push({ method: '_validateTicket', args: [ticketKey, callbackKey] });
     const cb = (w as Record<string, unknown>)[callbackKey];
