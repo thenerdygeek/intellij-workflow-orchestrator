@@ -63,3 +63,20 @@ sealed interface ExtractionStatus {
     data class Ready(val artifact: DocumentArtifact) : ExtractionStatus
     data class Failed(val reason: String) : ExtractionStatus
 }
+
+/**
+ * Snapshot of in-flight document extraction progress, surfaced to the chat UI while a
+ * read_document call blocks. `pagesTotal` is null for formats with no page concept
+ * (XLSX/CSV) or before the page count is known; in that case the UI shows elapsed only.
+ *
+ * @param stage human-readable phase, e.g. "reading", "tables", "text", "finalizing".
+ * @param pagesDone pages processed so far in the current paged pass (0 when not applicable).
+ * @param pagesTotal total pages when known, else null.
+ * @param elapsedMs wall-clock ms since extraction started.
+ */
+data class DocumentExtractionProgress(
+    val stage: String,
+    val pagesDone: Int,
+    val pagesTotal: Int?,
+    val elapsedMs: Long,
+)
