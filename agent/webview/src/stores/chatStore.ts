@@ -1062,6 +1062,61 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (state.streamingThinkingTs == null || state.streamingThinkingText == null) {
         return {};
       }
+
+      // Emission-order fix: before committing this REASONING block, drain any
+      // content emitted BEFORE it that is still parked in side channels — the
+      // streaming text bubble (`streamingText`) and the active tool-call map
+      // (`activeToolCalls`). Symmetric with `appendToken` (drains tools before
+      // new text) and `addToolCall` (flushes text before a tool). Without it, a
+      // tool/text emitted between two thinking blocks rendered AFTER both,
+      // because `endThinking` used to append REASONING straight into messages[]
+      // while tools/text waited for a later unrelated drain trigger.
+      let messages = state.messages;
+      let activeToolCalls = state.activeToolCalls;
+      let toolOutputStreams = state.toolOutputStreams;
+      let streamingText = state.streamingText;
+      let streamingMsgTs = state.streamingMsgTs;
+
+      if (streamingText != null && streamingMsgTs != null) {
+        const textMsg: UiMessage = {
+          ts: streamingMsgTs,
+          type: 'SAY',
+          say: 'TEXT',
+          text: streamingText,
+          partial: false,
+        };
+        messages = [...messages, textMsg];
+        streamingText = null;
+        streamingMsgTs = null;
+      }
+
+      if (activeToolCalls.size > 0) {
+        const streams = toolOutputStreams;
+        const toolMsgs: UiMessage[] = Array.from(activeToolCalls.values()).map(tc => {
+          const s = streams[tc.id];
+          const output = tc.output || s || undefined;
+          return {
+            ts: uniqueTs(),
+            type: 'SAY' as const,
+            say: 'TOOL' as const,
+            toolCallData: {
+              toolCallId: tc.id,
+              toolName: tc.name,
+              args: tc.args,
+              status: tc.status,
+              result: tc.result,
+              output,
+              durationMs: tc.durationMs,
+              diff: tc.diff,
+              imageRefs: tc.imageRefs,
+            },
+          };
+        });
+        messages = [...messages, ...toolMsgs];
+        activeToolCalls = new Map();
+        toolOutputStreams = {};
+      }
+
       const finalized: UiMessage = {
         ts: state.streamingThinkingTs,
         type: 'SAY',
@@ -1070,7 +1125,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...(durationMs > 0 && { thinkingDurationMs: durationMs }),
       };
       return {
-        messages: capMessages([...state.messages, finalized]),
+        messages: capMessages([...messages, finalized]),
+        activeToolCalls,
+        toolOutputStreams,
+        streamingText,
+        streamingMsgTs,
         streamingThinkingText: null,
         streamingThinkingTs: null,
       };
