@@ -130,6 +130,7 @@ class AgentCefPanel(
     private var attachmentExistsQuery: JBCefJSQuery? = null
     private var contextUsageQuery: JBCefJSQuery? = null
     private var imageSettingsQuery: JBCefJSQuery? = null
+    private var pickAttachmentQuery: JBCefJSQuery? = null
     private var resolveLinkQuery: JBCefJSQuery? = null
     private var openLinkQuery: JBCefJSQuery? = null
     private var handoffForkQuery: JBCefJSQuery? = null
@@ -163,6 +164,9 @@ class AgentCefPanel(
      * `IMAGE_DEFAULT_SETTINGS` literal. Wired by [AgentController].
      */
     var imageSettingsProvider: (() -> String)? = null
+
+    /** Invoked when JS calls window._pickAttachment(); reads files off-EDT and ingests them. */
+    var onPickAttachment: (() -> Unit)? = null
 
     /**
      * Bridge dispatcher: manages the pageLoaded/pendingCalls state machine.
@@ -694,6 +698,14 @@ class AgentCefPanel(
             JBCefJSQuery.Response(payload)
         }
 
+        // File-attachment picker bridge. JS calls window._pickAttachment() to
+        // open the native IntelliJ FileChooser; the actual pick + ingest runs
+        // off-EDT via onPickAttachment (wired by AgentController in Task 8).
+        pickAttachmentQuery = registerQuery(b) { _ ->
+            onPickAttachment?.invoke()
+            JBCefJSQuery.Response("ok")
+        }
+
         // Phase 4 chat hyperlink bridges. The webview's <ChatLink> intercepts
         // every <a> click, calls _resolveLink to populate the confirmation
         // modal, and (on the user's confirm) calls _openLink to fire the
@@ -861,6 +873,14 @@ class AgentCefPanel(
                                     " ${q.inject("'pull'", "function(r) { try { resolve(JSON.parse(r)); } catch(e) { resolve(null); } }", "function(_) { resolve(null); }")}" +
                                     " }); };"
                             )
+                        }
+                    }
+                    // File-attachment picker — triggers the native IntelliJ
+                    // FileChooser; JCEF cannot open an OS file dialog from HTML
+                    // <input type=file>, so we handle it on the JVM side.
+                    injectBridge("_pickAttachment") {
+                        pickAttachmentQuery?.let { q ->
+                            js("window._pickAttachment = function() { ${q.inject("'pick'")} };")
                         }
                     }
                     // Phase 5: image-attachment pre-flight. JS asks Kotlin
