@@ -134,13 +134,21 @@ Algorithm (no string-shape inspection anywhere):
    existing offset-echo-safe pagination loop). Match an entry by
    `shortName == branchName` (case-sensitive, mirrors current `resolveBranchKey`):
    - match → `BranchPlan(entry.key, masterKey, entry.shortName)`.
-3. No branch match → determine the master's tracked branch from a single deterministic
-   API source: `getPlanInfo(masterKey)` (`/plan/{master}`, probe-validated 200). The
-   exact tracked-branch field is confirmed against the captured `/plan/{key}` body during
-   implementation; if the field is absent on this DC, the implementation falls straight to
-   step 4 (no speculative second source):
-   - tracked branch == `branchName` → `MasterTrackedBranch(masterKey, branchName)`.
-4. Otherwise → `null` (state 3, strict empty state).
+3. No branch match → check whether `branchName` is the repo's **default branch**
+   (`DefaultBranchResolver.resolve(gitRepo)`, supplied by the caller as `repoDefaultBranch`).
+   Master plans track the repo's default/main branch, so this is the deterministic signal
+   for state 2. This compares **branch names** (real git data), not plan-key shapes — it is
+   categorically different from the heuristics being removed. Verified absent: neither
+   `BambooPlanDetailResponse` (`/plan/{key}`) nor `BambooResultDto` (`/result/{key}/latest`)
+   exposes a tracked-branch label, so there is no API field to read instead.
+   - `repoDefaultBranch != null && branchName == repoDefaultBranch` →
+     `MasterTrackedBranch(masterKey, branchName)`.
+4. Otherwise (including `repoDefaultBranch == null`) → `null` (state 3, strict empty state).
+
+`resolve` signature: `resolve(masterKey: String, branchName: String?, repoDefaultBranch: String? = null): BambooPlanRef?`.
+The default branch is threaded only from call sites that already hold the `GitRepository`
+(`ChainKeyResolverImpl`); other call sites pass `null` and therefore never produce
+`MasterTrackedBranch` — they yield `BranchPlan` or the strict empty state.
 
 Caching: per-master branch map cached with a short TTL and invalidated on
 `WorkflowEvent.BranchChanged`. Resolution failures (network) are not cached.
@@ -202,7 +210,7 @@ returns `null` → dashboard shows "No Bamboo branch plan for `<branch>` (master
 | Resolver returns `null` (state 3) | Dashboard empty state naming the master plan; `focusBuild` stays null (existing strict directive). |
 | `/plan/{key}/branch` non-200 | Resolver returns `null` (cannot confirm a branch plan); logged. Not cached. |
 | `/result/{key}/latest` non-200 | Existing error surface in `pollOnce` (`log.warn`, stateFlow unchanged). |
-| Master tracked-branch lookup fails | Treat as state 3 (`null`) — we cannot prove the master is the target. |
+| `repoDefaultBranch` unavailable / git read fails | Treat as state 3 (`null`) — we cannot prove the master is the target, so no substitution. |
 
 ---
 
