@@ -168,6 +168,9 @@ class AgentCefPanel(
     /** Invoked when JS calls window._pickAttachment(); reads files off-EDT and ingests them. */
     var onPickAttachment: (() -> Unit)? = null
 
+    /** Invoked with dropped OS files; reads bytes off-EDT and ingests them. */
+    var onDropTargetReady: ((List<java.io.File>) -> Unit)? = null
+
     /**
      * Bridge dispatcher: manages the pageLoaded/pendingCalls state machine.
      * Initialized lazily in [createBrowser] once the browser instance exists.
@@ -938,6 +941,14 @@ class AgentCefPanel(
 
         browser = b
         add(b.component, BorderLayout.CENTER)
+
+        onDropTargetReady?.let { ready ->
+            val dt = AttachmentDropTarget(
+                onDropActive = { active -> callJs("if (window._setDropActive) window._setDropActive($active);") },
+                onFilesDropped = { files -> ready(files) },
+            )
+            dt.installOn(b.component)
+        }
 
         // Load the page LAST — after the load handler is registered.
         // If loadURL is called before addLoadHandler, the page can finish loading
@@ -1755,6 +1766,17 @@ class AgentCefPanel(
         // quotes, newlines, CR, tab, and U+2028/U+2029 (audit finding agent-ui:F-3).
         val jsLiteral = JsEscape.toJsString(payload)   // returns 'escaped-content'
         callJs("if (window.__applyImageSettings) { window.__applyImageSettings($jsLiteral); }")
+    }
+
+    /**
+     * Push one attachment chip's metadata to the webview. The JSON is wrapped as a
+     * single-quoted JS string literal and parsed in the receiver — mirror the existing
+     * `pushImageSettings()` escaping (uses `JsEscape.toJsString`) rather than embedding raw
+     * JSON into the expression, which breaks on filenames containing quotes (review fix S7).
+     */
+    fun pushAttachmentChip(json: String) {
+        val jsLiteral = JsEscape.toJsString(json)   // same helper as pushImageSettings
+        callJs("if (window._addAttachmentChip) { window._addAttachmentChip(JSON.parse($jsLiteral)); }")
     }
 
     /**
