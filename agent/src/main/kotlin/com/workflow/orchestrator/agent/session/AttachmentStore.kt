@@ -36,6 +36,7 @@ import java.security.MessageDigest
 class AttachmentStore(val sessionDir: Path) {
 
     private val attachmentsDir: Path = sessionDir.resolve("attachments")
+    private val filesDir: Path = sessionDir.resolve("attachments").resolve("files")
 
     init {
         Files.createDirectories(attachmentsDir)
@@ -103,6 +104,33 @@ class AttachmentStore(val sessionDir: Path) {
             originalFilename = originalFilename,
             onDiskPath = finalPath
         )
+    }
+
+    /**
+     * Stores a non-image file under `attachments/files/<sha8>-<sanitizedName>`
+     * and returns the absolute path. The original filename is preserved
+     * (sanitized) so read_document/read_file type-detection by extension works
+     * and the path is human-meaningful. The sha8 prefix prevents collisions
+     * between two same-named files attached in one turn. Idempotent per sha.
+     * Synchronous JDK I/O — caller must be off-EDT.
+     */
+    fun storeFileBlocking(bytes: ByteArray, originalFilename: String?): Path {
+        Files.createDirectories(filesDir)
+        val sha = sha256(bytes)
+        val safeName = sanitizeFilename(originalFilename ?: "file")
+        val finalPath = filesDir.resolve("${sha.take(8)}-$safeName")
+        if (!Files.exists(finalPath)) {
+            val tmp = filesDir.resolve("${sha.take(8)}-$safeName.tmp.${System.nanoTime()}")
+            Files.write(tmp, bytes, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+            Files.move(tmp, finalPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        }
+        return finalPath.toAbsolutePath().normalize()
+    }
+
+    private fun sanitizeFilename(name: String): String {
+        val base = name.substringAfterLast('/').substringAfterLast('\\')
+        val cleaned = base.replace(Regex("[^A-Za-z0-9._-]"), "_").trim('_', '.')
+        return cleaned.ifBlank { "file" }
     }
 
     /**
