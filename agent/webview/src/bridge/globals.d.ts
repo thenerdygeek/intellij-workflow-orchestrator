@@ -88,6 +88,16 @@ declare global {
     _openLink?: (href: string) => void;
     _copyToClipboard?: (text: string) => void;
     /**
+     * Document-extraction progress bridges.
+     * Driven by Kotlin's AgentController.pushDocumentProgress while a
+     * read_document call is blocking. The arg to `_documentExtractionProgress`
+     * is a JSON string `{stage, pagesDone, pagesTotal, elapsedMs}`.
+     * `_documentExtractionClear` fires when the read_document call completes.
+     * See `DocumentExtractionProgressView.tsx` for the chat-side renderer.
+     */
+    _documentExtractionProgress?: (json: string) => void;
+    _documentExtractionClear?: () => void;
+    /**
      * Streaming `edit_file` preview bridges (Commit 2 of live-preview feature).
      * Driven by Kotlin's StreamingEditTracker during partial edit_file tool
      * calls. Args are JSON-encoded so multiline diffs and quotes survive the

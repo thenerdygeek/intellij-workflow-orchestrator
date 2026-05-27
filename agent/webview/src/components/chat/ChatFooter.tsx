@@ -12,6 +12,7 @@ import { PlanProgressWidget } from '@/components/agent/PlanProgressWidget';
 import { QuestionView } from '@/components/agent/QuestionView';
 import { ThinkingView } from '@/components/agent/ThinkingView';
 import { StreamingEditPreviewView } from '@/components/agent/StreamingEditPreviewView';
+import { DocumentExtractionProgressView } from './DocumentExtractionProgressView';
 
 /**
  * Trailing UI that flows below the last finalized message inside the
@@ -105,6 +106,11 @@ export const ChatFooter = memo(function ChatFooter() {
           the map is empty. Sits below the prose stream and above the tool-call
           chain so the user sees the diff growing as the LLM emits new_string. */}
       <StreamingEditPreviewView />
+
+      {/* Live document-extraction progress row — shown while read_document is
+          blocking on background Tika extraction. Quiet when no extraction is
+          active (`chatStore.documentExtraction === null`). */}
+      <DocumentExtractionProgressView />
 
       {toolCallsArray.length > 0 && <ToolCallChain toolCalls={toolCallsArray} />}
 

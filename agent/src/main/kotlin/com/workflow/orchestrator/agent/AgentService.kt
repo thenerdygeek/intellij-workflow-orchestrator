@@ -183,6 +183,20 @@ class AgentService(
         this.autoWakeListener = listener
     }
 
+    /**
+     * Document-extraction progress sink wired by [AgentController] after construction.
+     *
+     * The [SessionDocumentArtifactService] calls this lambda once per page (stage "tables")
+     * and once on finalizing. [AgentController] sets it to its [pushDocumentProgress]
+     * method so live progress is streamed to the JCEF chat UI without re-constructing
+     * the service. Null = no-op (headless tests, pre-controller-init).
+     *
+     * Thread-safe: volatile field; written from EDT (controller init), read from Dispatchers.IO
+     * (extraction coroutine).
+     */
+    @Volatile
+    var onDocumentProgress: ((com.workflow.orchestrator.core.model.DocumentExtractionProgress) -> Unit)? = null
+
     /** Dedicated structured agent log file — one per project, lives for plugin lifetime. */
     private val fileLogger: AgentFileLogger by lazy {
         AgentFileLogger(logDir = ProjectIdentifier.logsDir(project.basePath ?: ""))
@@ -1215,6 +1229,7 @@ class AgentService(
             cs = cs,
             cacheDirProvider = { com.workflow.orchestrator.agent.tools.integration.SessionDocumentArtifactService.defaultCacheDirProvider() },
             jobBudgetMs = PluginSettings.getInstance(project).state.documentExtractionJobTimeoutMs,
+            progressSink = { p -> onDocumentProgress?.invoke(p) },
         )
         safeRegisterDeferred("File") {
             DocumentTool(

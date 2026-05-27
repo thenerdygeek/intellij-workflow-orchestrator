@@ -274,6 +274,18 @@ interface ChatState {
    * of the live-preview feature.
    */
   streamingEdits: Record<string, { path: string; diff: string; status: 'streaming' | 'finalized' }>;
+  /**
+   * Live document-extraction progress — set while a `read_document` call is blocking.
+   * Rendered by `<DocumentExtractionProgressView />` inside `ChatFooter` as
+   * "Extracting document… page {pagesDone} of {pagesTotal} ({mm:ss})" or
+   * "Extracting document… ({mm:ss})" when page count is unknown.
+   *
+   * Pushed by Kotlin's AgentController.pushDocumentProgress via the
+   * `_documentExtractionProgress(json)` bridge; cleared by `_documentExtractionClear()`.
+   * Also reset in endStream / clearChat / startSession / completeSession alongside
+   * streamingEdits so stale progress never bleeds across sessions.
+   */
+  documentExtraction: { stage: string; pagesDone: number; pagesTotal: number | null; elapsedMs: number } | null;
   activeToolCalls: Map<string, ToolCall>;  // key = unique tool call ID
   plan: Plan | null;
   handoff: Handoff | null;
@@ -439,6 +451,12 @@ interface ChatState {
   streamingEditCancel(callId: string): void;
   /** Drop every active streaming-edit preview. Called on stream end / new chat. */
   clearStreamingEdits(): void;
+
+  // Document-extraction progress actions
+  /** Set or update the live extraction progress. Called by _documentExtractionProgress bridge. */
+  setDocumentExtraction(p: { stage: string; pagesDone: number; pagesTotal: number | null; elapsedMs: number }): void;
+  /** Clear the extraction progress indicator. Called by _documentExtractionClear bridge. */
+  clearDocumentExtraction(): void;
   clearChat(): void;
   setPlan(plan: Plan): void;
   clearPlan(): void;
@@ -579,6 +597,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingThinkingText: null,
   streamingThinkingTs: null,
   streamingEdits: {},
+  documentExtraction: null,
   activeToolCalls: new Map(),
   plan: null,
   handoff: null,
@@ -662,6 +681,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingThinkingText: null,
       streamingThinkingTs: null,
       streamingEdits: {},
+      documentExtraction: null,
       activeToolCalls: new Map(),
       // Reset tool output streams alongside activeToolCalls — they are keyed by
       // the same tool call IDs and would otherwise leak across sessions.
@@ -749,6 +769,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingThinkingText: null,
       streamingThinkingTs: null,
       streamingEdits: {},
+      documentExtraction: null,
       activeToolCalls: new Map(),
       // Drop all tool output streams — the map was keyed by the now-cleared
       // tool call IDs and would otherwise leak for the rest of the app's life.
@@ -873,6 +894,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (state.streamingText == null || state.streamingMsgTs == null) {
         return {
           handoff: null,
+          documentExtraction: null,
           ...(thinkingFlush.length > 0
             ? {
                 messages: capMessages([...state.messages, ...thinkingFlush]),
@@ -898,6 +920,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streamingThinkingText: null,
         streamingThinkingTs: null,
         handoff: null,
+        documentExtraction: null,
         ...(haveStreamingEdits ? { streamingEdits: {} } : {}),
         ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
       };
@@ -1247,6 +1270,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set(state => Object.keys(state.streamingEdits).length === 0 ? {} : { streamingEdits: {} });
   },
 
+  // ── Document-extraction progress actions ──────────────────────────────────
+  setDocumentExtraction(p) {
+    set({ documentExtraction: p });
+  },
+  clearDocumentExtraction() {
+    set(state => state.documentExtraction === null ? {} : { documentExtraction: null });
+  },
+  // ──────────────────────────────────────────────────────────────────────────
+
   finalizeToolChain() {
     // Move current active tool calls into individual UiMessage entries.
     // Before clearing toolOutputStreams, merge any accumulated stream output
@@ -1294,6 +1326,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingThinkingText: null,
       streamingThinkingTs: null,
       streamingEdits: {},
+      documentExtraction: null,
       activeToolCalls: new Map(),
       // Drop tool output streams in lockstep with activeToolCalls.
       toolOutputStreams: {},

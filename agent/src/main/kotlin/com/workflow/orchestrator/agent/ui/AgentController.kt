@@ -428,6 +428,10 @@ class AgentController(
         // event (e.g. a background process completed and the session is dormant), drive
         // a real session resume through AgentController so all UI callbacks are attached.
         wireAutoWakeListener()
+
+        // Wire document-extraction progress so SessionDocumentArtifactService can push
+        // live "page X of Y" updates to the JCEF chat panel while read_document blocks.
+        service.onDocumentProgress = ::pushDocumentProgress
     }
 
     /**
@@ -1146,6 +1150,52 @@ class AgentController(
      */
     val streamingEditCallback: com.workflow.orchestrator.agent.loop.StreamingEditCallback
         get() = streamingEditCallbackImpl
+
+    // ── Document-extraction progress streaming ─────────────────────────────────
+    // Mirrors the streaming-edit-preview pattern: AgentService's
+    // SessionDocumentArtifactService calls `onDocumentProgress` per page;
+    // the controller throttles to ≤1 push per 200ms (except "finalizing") and
+    // forwards as `window._documentExtractionProgress(json)` / `window._documentExtractionClear()`.
+    // Cleared automatically by `onToolCall` when `read_document` completes.
+
+    /** Epoch-ms of the last forwarded progress push; 0 = never pushed. Volatile for IO→any-thread reads. */
+    @Volatile private var lastProgressPushMs: Long = 0L
+
+    /**
+     * Push a [DocumentExtractionProgress] update to the JCEF webview.
+     *
+     * Throttled to at most one push every 200ms, but "finalizing" ticks always
+     * pass through so the UI can show the closing state promptly. Uses the same
+     * `dashboard.callJs(...)` mechanism as the streaming-edit-preview pushes.
+     * Safe to call from any thread (IO coroutine inside SessionDocumentArtifactService).
+     */
+    fun pushDocumentProgress(p: com.workflow.orchestrator.core.model.DocumentExtractionProgress) {
+        val now = System.currentTimeMillis()
+        if (p.stage != "finalizing" && (now - lastProgressPushMs) < 200L) return
+        lastProgressPushMs = now
+        val json = buildString {
+            append("{\"stage\":")
+            append(Json.encodeToString(p.stage))
+            append(",\"pagesDone\":")
+            append(p.pagesDone)
+            append(",\"pagesTotal\":")
+            append(if (p.pagesTotal != null) p.pagesTotal.toString() else "null")
+            append(",\"elapsedMs\":")
+            append(p.elapsedMs)
+            append("}")
+        }
+        val escaped = JsEscape.escapeJsonForJsBridge(Json.encodeToString(json))
+        dashboard.callJs("if (window._documentExtractionProgress) { window._documentExtractionProgress($escaped); }")
+    }
+
+    /**
+     * Clear the extraction progress indicator in the webview.
+     * Called when a `read_document` tool call completes (success or error).
+     */
+    private fun pushDocumentExtractionClear() {
+        dashboard.callJs("if (window._documentExtractionClear) { window._documentExtractionClear(); }")
+    }
+    // ──────────────────────────────────────────────────────────────────────────
 
     /**
      * Push the delegation-question-pending state to IDE-B's webview. Only pushes
@@ -2587,6 +2637,12 @@ class AgentController(
                     // tool" badge. Empty for tools that don't produce images.
                     imageRefs = progress.imageRefs
                 )
+
+                // Clear document-extraction progress indicator when read_document finishes
+                // (success or error) so the "Extracting document…" row disappears.
+                if (progress.toolName == "read_document") {
+                    pushDocumentExtractionClear()
+                }
 
                 // Show skill banner when use_skill activates a skill
                 if (progress.toolName == "use_skill" && !progress.isError) {

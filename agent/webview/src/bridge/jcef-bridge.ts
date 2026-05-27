@@ -115,6 +115,22 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     stores?.getChatStore().endStream();
   },
 
+  // ── Document-extraction progress bridges ──────────────────────────────────
+  // Pushed by Kotlin's AgentController.pushDocumentProgress while a read_document
+  // call is blocking. The JSON arg is the serialised progress object. The clear
+  // bridge fires when the read_document call completes (success or error).
+  _documentExtractionProgress(json: string) {
+    try {
+      const p = JSON.parse(json) as { stage: string; pagesDone: number; pagesTotal: number | null; elapsedMs: number };
+      stores?.getChatStore().setDocumentExtraction(p);
+    } catch (e) {
+      if (BRIDGE_DEBUG) console.warn('[bridge] _documentExtractionProgress malformed', e);
+    }
+  },
+  _documentExtractionClear() {
+    stores?.getChatStore().clearDocumentExtraction();
+  },
+
   // ── Streaming `edit_file` preview bridges (Commit 2 of live-preview feature) ──
   // Driven by Kotlin's StreamingEditTracker. Each Kotlin call wraps args in JSON
   // (so quoting / multiline diff bodies survive the JS literal); the JS side
