@@ -24,6 +24,7 @@ import type {
   ImageRef,
 } from '../bridge/types';
 import { answerToDisplay } from '../util/question-answer';
+import { splitThinkingSegments } from '../util/thinking-segments';
 
 // ── Internal ID generator ──
 let _idCounter = 0;
@@ -2365,10 +2366,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return { ...m, subagentData: upgraded2 };
     });
 
+    // Recover reasoning blocks on resume: the live ThinkingTagSplitter that pulls
+    // <thinking>…</thinking> out of the assistant text into a collapsible block
+    // never runs on resume, and the persisted TEXT keeps the raw tags. Split each
+    // assistant TEXT into ordered REASONING / TEXT messages so the resumed chat
+    // shows the same reasoning blocks the live chat did (duration isn't recoverable
+    // from the raw text, so resumed blocks read "Thought for <1s").
+    const expanded = withSubagentUpgrade.flatMap((m): UiMessage[] => {
+      if (m.say !== 'TEXT' || !m.text || !m.text.includes('<thinking>')) return [m];
+      const segs = splitThinkingSegments(m.text);
+      if (segs.length === 0) return [m];
+      if (segs.length === 1 && segs[0]!.kind === 'text') return [{ ...m, text: segs[0]!.content }];
+      return segs.map(s =>
+        s.kind === 'thinking'
+          ? ({ ts: m.ts, type: 'SAY' as const, say: 'REASONING' as const, text: s.content })
+          : ({ ...m, text: s.content }),
+      );
+    });
+
     // Restore plan from last PLAN_UPDATE message (steps field removed in Phase 5 — task system port)
     let restoredPlan: Plan | null = null;
-    for (let i = withSubagentUpgrade.length - 1; i >= 0; i--) {
-      const m = withSubagentUpgrade[i]!;
+    for (let i = expanded.length - 1; i >= 0; i--) {
+      const m = expanded[i]!;
       if (m.planData) {
         const pd = m.planData;
         restoredPlan = {
@@ -2385,7 +2404,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // long-conversation OOM trajectory that the live append paths now
       // guard against. UI-only — the agent's ContextManager still sees the
       // full persisted api_conversation_history.json.
-      messages: capMessages(withSubagentUpgrade),
+      messages: capMessages(expanded),
       streamingText: null,
       streamingMsgTs: null,
       streamingThinkingText: null,
