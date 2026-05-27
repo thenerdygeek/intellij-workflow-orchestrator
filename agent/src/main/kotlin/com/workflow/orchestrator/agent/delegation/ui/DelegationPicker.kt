@@ -11,7 +11,6 @@ import com.intellij.openapi.progress.Task
 import com.intellij.openapi.progress.runBlockingCancellable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
-import com.intellij.openapi.ui.DialogWrapper.IdeModalityType
 import com.intellij.openapi.ui.Messages
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
@@ -84,22 +83,19 @@ class DelegationPicker(
     private val launcherResolver: LauncherResolver = LauncherResolver(),
     private val toolboxFlavorReader: ToolboxFlavorReader = ToolboxFlavorReader(),
     private val processSpawner: ProcessSpawner = DefaultProcessSpawner,
-    // MODELESS is required for Launch & Delegate. The default DialogWrapper(project)
-    // construction is project-modal (Swing APPLICATION_MODAL), which suspends the
-    // outer AWT event loop. JetBrains' single-instance IPC — invoked by the
-    // spawned `idea.sh /path/repo` launcher when an IDE is already running from
-    // the same install — dispatches "open project" requests via
-    // ApplicationManager.invokeLater(NON_MODAL). NON_MODAL runnables do NOT fire
-    // while a modal dialog is up, so under the previous (default) modality the
-    // spawned launcher's open-project request queued behind the picker and the
-    // new window only appeared after the picker was dismissed (often firing
-    // multiple times if the user clicked Launch & Delegate repeatedly).
+    // Project-modal (the default). pickTarget() in DelegationOutboundService shows this dialog via
+    // showAndGet(), and DialogWrapper.showAndGet() throws
+    // IllegalStateException("The showAndGet() method is for modal dialogs only") for any non-modal
+    // (IdeModalityType.MODELESS) dialog — so the picker MUST stay modal.
     //
-    // MODELESS keeps the dialog's blocking semantics for the calling coroutine
-    // (showAndGet still suspends until OK / Cancel) but lets the EDT continue
-    // draining invokeLater(NON_MODAL), so the new IDE window can actually open
-    // while the picker waits for its socket via AutoLaunchPoller.
-) : DialogWrapper(project, true, IdeModalityType.MODELESS) {
+    // History: this was briefly MODELESS (commit 15b835d69) to let the EDT keep draining
+    // invokeLater(NON_MODAL) so a launcher spawned *while the picker was open* could open its IDE
+    // window. That changed the next day: since Plan 6 Task 8 (commit 3a9823d04) Launch & Delegate
+    // closes the picker first (doDelegate → doOKAction) and DelegationOutboundService.send() owns the
+    // whole knock → spawn → AutoLaunchPoller-wait sequence AFTER the picker is dismissed. Nothing
+    // spawns a window while the picker is open anymore, so MODELESS is no longer needed — and it was
+    // incompatible with showAndGet(). Pinned by DialogModalityContractTest.
+) : DialogWrapper(project, true) {
 
     var selectedEntry: PickerEntry? = null
         private set
