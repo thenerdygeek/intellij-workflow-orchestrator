@@ -401,7 +401,7 @@ interface InputBarContentProps {
   onStop: () => void;
   onTriggerInsert: (char: '@' | '/' | '#') => void;
   onRichInputChange: (text: string, trigger: { type: '@' | '#' | '/'; query: string } | null) => void;
-  onPastedTickets: (ticketKeys: string[]) => void;
+  onPastedTickets: (tickets: Array<{ key: string; chipId: string }>) => void;
   canSend: boolean;
   // Keyboard navigation props (passed down from InputBar which owns the hook)
   dropdownKeyDown: (e: React.KeyboardEvent) => boolean;
@@ -883,10 +883,10 @@ export const InputBar = memo(function InputBar() {
       if (prevQuery && /^[A-Za-z][A-Za-z0-9]+-\d+$/.test(prevQuery)) {
         const ticketKey = prevQuery.toUpperCase();
         const mention: Mention = { type: 'ticket', label: ticketKey, path: ticketKey };
-        richInputRef.current?.insertChip(mention, '#', 'pending');
+        const chipId = richInputRef.current?.insertChip(mention, '#', 'pending');
 
-        // Async validation via Kotlin bridge
-        validateTicket(ticketKey);
+        // Async validation via Kotlin bridge — target the exact chip we just created.
+        if (chipId) validateTicket(ticketKey, chipId);
       }
       setShowMentions(false); setShowSkills(false); setShowTickets(false);
       setMentionQuery(''); setSkillQuery(''); setTicketQuery('');
@@ -896,8 +896,10 @@ export const InputBar = memo(function InputBar() {
 
   // Validate a manually-typed ticket key asynchronously with 5s timeout.
   // On failure/timeout: strip the chip and leave raw #KEY text so LLM can self-fetch via tools.
-  const validateTicket = useCallback((ticketKey: string) => {
-    const callbackKey = `__validateTicket_${ticketKey}`;
+  // `chipId` targets the exact chip created for this key — a same-label chip of a
+  // different type (e.g. a file literally named like the ticket) is never touched.
+  const validateTicket = useCallback((ticketKey: string, chipId: string) => {
+    const callbackKey = `__validateTicket_${chipId}`;
     let resolved = false;
     console.log('[Mention] validateTicket: starting validation for', ticketKey);
 
@@ -907,7 +909,7 @@ export const InputBar = memo(function InputBar() {
       resolved = true;
       delete (window as any)[callbackKey];
       console.warn('[Mention] validateTicket: timeout for', ticketKey, '— removing chip');
-      richInputRef.current?.removeChipByLabel?.(ticketKey);
+      richInputRef.current?.removeChipById?.(chipId);
     }, 5000);
 
     (window as any)[callbackKey] = (json: string) => {
@@ -918,13 +920,13 @@ export const InputBar = memo(function InputBar() {
       try {
         const result = JSON.parse(json);
         if (result.valid) {
-          richInputRef.current?.updateChipStatus(ticketKey, 'valid', `${ticketKey}: ${result.summary}`);
+          richInputRef.current?.updateChipStatus(chipId, 'valid', `${ticketKey}: ${result.summary}`);
         } else {
           // Invalid ticket — strip chip, leave raw text for LLM to handle
-          richInputRef.current?.removeChipByLabel?.(ticketKey);
+          richInputRef.current?.removeChipById?.(chipId);
         }
       } catch {
-        richInputRef.current?.removeChipByLabel?.(ticketKey);
+        richInputRef.current?.removeChipById?.(chipId);
       }
     };
 
@@ -940,10 +942,10 @@ export const InputBar = memo(function InputBar() {
     }
   }, []);
 
-  // Handle ticket keys found in pasted text — validate each one
-  const handlePastedTickets = useCallback((ticketKeys: string[]) => {
-    for (const key of ticketKeys) {
-      validateTicket(key);
+  // Handle ticket keys found in pasted text — validate each one by its chip id
+  const handlePastedTickets = useCallback((tickets: Array<{ key: string; chipId: string }>) => {
+    for (const { key, chipId } of tickets) {
+      validateTicket(key, chipId);
     }
   }, [validateTicket]);
 

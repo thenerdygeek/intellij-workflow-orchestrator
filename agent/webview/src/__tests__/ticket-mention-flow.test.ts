@@ -286,14 +286,14 @@ describe('Chip select → getMentions → send flow', () => {
   });
 
   it('getMentions returns empty array when chip removed before send', () => {
-    // Simulate mentionsRef state
-    const mentionsRef: Array<{ type: string; label: string; path: string }> = [
-      { type: 'ticket', label: 'PROJ-123', path: 'PROJ-123' },
+    // Simulate mentionsRef state — tracked by unique chip id (Bug #10 model)
+    const mentionsRef: Array<{ id: string; type: string; label: string; path: string }> = [
+      { id: 'chip-1', type: 'ticket', label: 'PROJ-123', path: 'PROJ-123' },
     ];
 
-    // Simulate removeChipByLabel
-    const removeChipByLabel = (label: string) => {
-      const idx = mentionsRef.findIndex(m => m.label === label);
+    // Simulate removeChipById — keyed by id, never by label
+    const removeChipById = (chipId: string) => {
+      const idx = mentionsRef.findIndex(m => m.id === chipId);
       if (idx !== -1) mentionsRef.splice(idx, 1);
     };
 
@@ -302,7 +302,7 @@ describe('Chip select → getMentions → send flow', () => {
 
     expect(getMentions()).toHaveLength(1);
 
-    removeChipByLabel('PROJ-123');
+    removeChipById('chip-1');
     expect(getMentions()).toHaveLength(0);
   });
 });
@@ -380,15 +380,15 @@ describe('validateTicket timeout and idempotency', () => {
   afterEach(() => vi.useRealTimers());
 
   it('chip is removed after 5s timeout when bridge does not respond', () => {
-    const removeChipByLabel = vi.fn();
+    const removeChipById = vi.fn();
 
-    // Simulate the timeout from validateTicket
-    const validateTicket = (ticketKey: string) => {
+    // Simulate the timeout from validateTicket — targets the chip by id
+    const validateTicket = (_ticketKey: string, chipId: string) => {
       let resolved = false;
       const timeoutId = setTimeout(() => {
         if (resolved) return;
         resolved = true;
-        removeChipByLabel(ticketKey);
+        removeChipById(chipId);
       }, 5000);
       return () => {
         resolved = true;
@@ -396,23 +396,23 @@ describe('validateTicket timeout and idempotency', () => {
       };
     };
 
-    validateTicket('PROJ-123');
-    expect(removeChipByLabel).not.toHaveBeenCalled();
+    validateTicket('PROJ-123', 'chip-1');
+    expect(removeChipById).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(5000);
-    expect(removeChipByLabel).toHaveBeenCalledWith('PROJ-123');
+    expect(removeChipById).toHaveBeenCalledWith('chip-1');
   });
 
   it('chip is NOT removed if bridge responds before 5s timeout', () => {
-    const removeChipByLabel = vi.fn();
+    const removeChipById = vi.fn();
     const updateChipStatus = vi.fn();
 
-    const validateTicket = (ticketKey: string, response: { valid: boolean; summary: string }, responseDelayMs: number) => {
+    const validateTicket = (ticketKey: string, chipId: string, response: { valid: boolean; summary: string }, responseDelayMs: number) => {
       let resolved = false;
       const timeoutId = setTimeout(() => {
         if (resolved) return;
         resolved = true;
-        removeChipByLabel(ticketKey);
+        removeChipById(chipId);
       }, 5000);
 
       // Simulate the bridge callback arriving at responseDelayMs
@@ -421,41 +421,41 @@ describe('validateTicket timeout and idempotency', () => {
         resolved = true;
         clearTimeout(timeoutId);
         if (response.valid) {
-          updateChipStatus(ticketKey, 'valid', `${ticketKey}: ${response.summary}`);
+          updateChipStatus(chipId, 'valid', `${ticketKey}: ${response.summary}`);
         } else {
-          removeChipByLabel(ticketKey);
+          removeChipById(chipId);
         }
       }, responseDelayMs);
     };
 
-    validateTicket('PROJ-123', { valid: true, summary: 'Fix login bug' }, 2000);
+    validateTicket('PROJ-123', 'chip-1', { valid: true, summary: 'Fix login bug' }, 2000);
 
     vi.advanceTimersByTime(2000); // bridge responds
-    expect(updateChipStatus).toHaveBeenCalledWith('PROJ-123', 'valid', 'PROJ-123: Fix login bug');
-    expect(removeChipByLabel).not.toHaveBeenCalled();
+    expect(updateChipStatus).toHaveBeenCalledWith('chip-1', 'valid', 'PROJ-123: Fix login bug');
+    expect(removeChipById).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(3000); // timeout would have fired
-    expect(removeChipByLabel).not.toHaveBeenCalled(); // guard: resolved=true blocks it
+    expect(removeChipById).not.toHaveBeenCalled(); // guard: resolved=true blocks it
   });
 
   it('second validateTicket for same key is guarded by resolved flag', () => {
-    const removeChipByLabel = vi.fn();
+    const removeChipById = vi.fn();
 
     let sharedResolved = false;
 
-    const makeTimer = (ticketKey: string) => {
+    const makeTimer = (chipId: string) => {
       const capturedResolved = () => sharedResolved;
       const setResolved = () => { sharedResolved = true; };
 
       setTimeout(() => {
         if (capturedResolved()) return;
         setResolved();
-        removeChipByLabel(ticketKey);
+        removeChipById(chipId);
       }, 5000);
     };
 
     // First validation triggered by auto-chip (the bug case)
-    makeTimer('PROJ-123');
+    makeTimer('chip-1');
 
     // Second validation triggered by dropdown select (what the user actually wanted)
     // In the fixed code, this second call never happens (prevTicketQueryRef cleared),
@@ -463,6 +463,6 @@ describe('validateTicket timeout and idempotency', () => {
     // The main protection is NOT launching the second call at all (Bug 1 fix).
 
     vi.advanceTimersByTime(4999);
-    expect(removeChipByLabel).not.toHaveBeenCalled();
+    expect(removeChipById).not.toHaveBeenCalled();
   });
 });

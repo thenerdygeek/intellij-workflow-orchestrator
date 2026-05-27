@@ -49,20 +49,31 @@ const UNDO_COALESCE_MS = 400;
 /** Cap on retained undo snapshots (oldest dropped beyond this). */
 const UNDO_MAX_HISTORY = 100;
 
+/**
+ * A chip's tracked mention plus the unique id that ties the DOM element
+ * (`data-chip-id`) to this entry. Every operation that targets a specific chip
+ * keys on `id`, never on the (non-unique) label.
+ */
+interface TrackedMention {
+  id: string;
+  mention: Mention;
+}
+
 /** A point-in-time snapshot of the editor used by the undo/redo stack. */
 interface InputSnapshot {
   html: string;
-  mentions: Mention[];
+  mentions: TrackedMention[];
 }
 
 export interface RichInputHandle {
   focus: () => void;
   insertTrigger: (char: string) => void;
-  insertChip: (mention: Mention, triggerChar: string, status?: ChipStatus) => void;
-  /** Update the visual status of a chip by label (for async ticket validation) */
-  updateChipStatus: (label: string, status: ChipStatus, tooltip?: string) => void;
-  /** Remove a chip by label, replacing it with raw #label text (for failed validation) */
-  removeChipByLabel: (label: string) => void;
+  /** Insert a chip and return its unique chip id (for later status update / removal). */
+  insertChip: (mention: Mention, triggerChar: string, status?: ChipStatus) => string;
+  /** Update the visual status of a chip by its unique id (for async ticket validation) */
+  updateChipStatus: (chipId: string, status: ChipStatus, tooltip?: string) => void;
+  /** Remove a chip by its unique id, replacing it with raw #label text (for failed validation) */
+  removeChipById: (chipId: string) => void;
   clear: () => void;
   /** Set the input text content (replaces existing text, clears mentions) */
   setText: (text: string) => void;
@@ -83,8 +94,13 @@ interface RichInputProps {
    * should NOT process it further (e.g. Enter should not submit the message).
    */
   onDropdownKeyDown?: (e: React.KeyboardEvent) => boolean;
-  /** Called when pasted text contains ticket keys (e.g. #PROJ-123) that need async validation */
-  onPastedTickets?: (ticketKeys: string[]) => void;
+  /**
+   * Called when pasted text contains ticket keys (e.g. #PROJ-123) that need async
+   * validation. Each entry carries the ticket `key` plus the unique `chipId` of the
+   * chip that was inserted, so the validation callback can target exactly that chip
+   * (not every same-label chip).
+   */
+  onPastedTickets?: (tickets: Array<{ key: string; chipId: string }>) => void;
   /**
    * Phase 5: invoked when an image file is pasted (e.g. "paste error
    * screenshot from Snipping Tool"). Returning true means the handler
@@ -116,7 +132,11 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
   ref
 ) {
   const editorRef = useRef<HTMLDivElement>(null);
-  const mentionsRef = useRef<Mention[]>([]);
+  const mentionsRef = useRef<TrackedMention[]>([]);
+  // Monotonic per-instance counter for unique chip ids. Never decremented (even
+  // on undo), so a chip id can never collide with a later-inserted chip.
+  const chipIdSeq = useRef(0);
+  const nextChipId = useCallback(() => `chip-${++chipIdSeq.current}`, []);
 
   // ── Undo/redo history ──
   // Native contentEditable undo is unreliable once we mutate the DOM directly (chips, paste,
@@ -167,10 +187,10 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
 
   // ── Update chip visual status (for async validation) ──
 
-  const updateChipStatus = useCallback((label: string, status: ChipStatus, tooltip?: string) => {
+  const updateChipStatus = useCallback((chipId: string, status: ChipStatus, tooltip?: string) => {
     const el = editorRef.current;
     if (!el) return;
-    const chips = el.querySelectorAll<HTMLElement>(`[data-mention-label="${label}"]`);
+    const chips = el.querySelectorAll<HTMLElement>(`[data-chip-id="${chipId}"]`);
     const colors = statusColors[status];
     chips.forEach(chip => {
       chip.dataset.chipStatus = status;
@@ -196,21 +216,24 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
 
   // ── Remove chip by label, replacing with raw #label text ──
 
-  const removeChipByLabel = useCallback((label: string) => {
+  const removeChipById = useCallback((chipId: string) => {
     const el = editorRef.current;
     if (!el) return;
-    const chips = el.querySelectorAll<HTMLElement>(`[data-mention-label="${label}"]`);
-    const hadMention = mentionsRef.current.some(m => m.label === label);
+    const chips = el.querySelectorAll<HTMLElement>(`[data-chip-id="${chipId}"]`);
+    const hadMention = mentionsRef.current.some(m => m.id === chipId);
     // No-op guard: a stale validateTicket timeout (5s) can call this after the
     // chip is already gone (cleared / restored / sent). Without this guard it
     // would push a spurious undo snapshot of the unrelated current content.
     if (chips.length === 0 && !hadMention) return;
     chips.forEach(chip => {
+      // Restore the user's raw "#LABEL" text so the intent still reaches the LLM.
+      const label = chip.dataset.mentionLabel ?? '';
       const textNode = document.createTextNode(`#${label} `);
       chip.parentNode?.replaceChild(textNode, chip);
     });
-    // Remove from mentions ref
-    mentionsRef.current = mentionsRef.current.filter(m => m.label !== label);
+    // Remove from mentions ref by id (never by label — same-label chips of a
+    // different type/entity must survive).
+    mentionsRef.current = mentionsRef.current.filter(m => m.id !== chipId);
     recordHistory(false);
   }, [recordHistory]);
 
@@ -224,7 +247,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     },
     insertChip: (mention: Mention, triggerChar: string, status?: ChipStatus) => insertChip(mention, triggerChar, status),
     updateChipStatus,
-    removeChipByLabel,
+    removeChipById,
     clear: () => {
       if (editorRef.current) {
         editorRef.current.innerHTML = '';
@@ -259,28 +282,23 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       // Only return valid/pending mentions. Invalid (red) chips are excluded —
       // they get rendered as plain text by getText() instead.
       const el = editorRef.current;
-      if (!el) return [...mentionsRef.current];
+      if (!el) return mentionsRef.current.map(t => t.mention);
       const validMentions: Mention[] = [];
-      // Identity is the PATH, not the label. Two different files can share a
-      // filename (label) — e.g. src/a/index.ts and src/b/index.ts both labelled
-      // "index.ts" — and BOTH must survive. Deduping by path still collapses the
-      // same entity inserted twice (e.g. a ticket pasted + dropdown-selected,
-      // same path). Falls back to label only when a chip carries no path.
+      // Each chip is resolved to its tracked mention by unique chip id (the only
+      // reliable DOM↔mention link). The OUTPUT payload is still deduped by entity
+      // (path||label) so two different files sharing a filename both survive while
+      // the same entity inserted twice — e.g. a ticket pasted + dropdown-selected —
+      // collapses to one mention.
       const seen = new Set<string>();
-      const chipEls = el.querySelectorAll<HTMLElement>('[data-mention-label]');
+      const chipEls = el.querySelectorAll<HTMLElement>('[data-chip-id]');
       chipEls.forEach(chip => {
-        const status = chip.dataset.chipStatus;
-        const label = chip.dataset.mentionLabel;
-        const path = chip.dataset.mentionPath;
-        const key = path || label;
-        if (status !== 'invalid' && key && !seen.has(key)) {
-          const mention = path
-            ? mentionsRef.current.find(m => m.path === path)
-            : mentionsRef.current.find(m => m.label === label);
-          if (mention) {
-            validMentions.push(mention);
-            seen.add(key);
-          }
+        if (chip.dataset.chipStatus === 'invalid') return;
+        const tracked = mentionsRef.current.find(t => t.id === chip.dataset.chipId);
+        if (!tracked) return;
+        const entityKey = tracked.mention.path || tracked.mention.label;
+        if (entityKey && !seen.has(entityKey)) {
+          validMentions.push(tracked.mention);
+          seen.add(entityKey);
         }
       });
       return validMentions;
@@ -338,22 +356,24 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
 
   // ── Insert a chip at the current cursor position, replacing trigger text ──
 
-  const insertChip = useCallback((mention: Mention, triggerChar: string, status: ChipStatus = 'default') => {
+  const insertChip = useCallback((mention: Mention, triggerChar: string, status: ChipStatus = 'default'): string => {
     const el = editorRef.current;
-    if (!el) return;
+    if (!el) return '';
 
     const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0) return;
+    if (!sel || sel.rangeCount === 0) return '';
 
     const range = sel.getRangeAt(0);
 
     // Walk backward from cursor to find the trigger character
     const textNode = range.startContainer;
-    if (textNode.nodeType !== Node.TEXT_NODE) return;
+    if (textNode.nodeType !== Node.TEXT_NODE) return '';
     const text = textNode.textContent ?? '';
     const cursorOffset = range.startOffset;
     const triggerIdx = text.lastIndexOf(triggerChar, cursorOffset - 1);
-    if (triggerIdx < 0) return;
+    if (triggerIdx < 0) return '';
+
+    const chipId = nextChipId();
 
     // Split the text node: [before trigger] [chip] [after cursor]
     const before = text.slice(0, triggerIdx);
@@ -367,6 +387,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     // Create chip element
     const chip = document.createElement('span');
     chip.contentEditable = 'false';
+    chip.dataset.chipId = chipId;
     chip.dataset.mentionType = mention.type;
     chip.dataset.mentionLabel = mention.label;
     chip.dataset.mentionPath = mention.path ?? '';
@@ -404,8 +425,8 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     sel.removeAllRanges();
     sel.addRange(newRange);
 
-    // Track the mention
-    mentionsRef.current.push(mention);
+    // Track the mention by its unique chip id
+    mentionsRef.current.push({ id: chipId, mention });
 
     // When a chip is inserted directly in the valid state (e.g. from the ticket dropdown,
     // where the ticket was already validated by the backend), fire the same success glow
@@ -421,9 +442,10 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     // Notify parent
     fireChange();
     recordHistory(false);
+    return chipId;
     // NOTE: fireChange is declared below this callback, so it must not appear in the dep array
     // (the array is evaluated eagerly at render → TDZ). It's referenced as a stable closure.
-  }, [recordHistory]);
+  }, [recordHistory, nextChipId]);
 
   // ── Detect triggers and notify parent ──
 
@@ -596,11 +618,11 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     if (!el) return;
 
     const chipObserver = new MutationObserver(() => {
-      const existingLabels = new Set<string>();
-      el.querySelectorAll<HTMLElement>('[data-mention-label]').forEach(chip => {
-        existingLabels.add(chip.dataset.mentionLabel!);
+      const existingIds = new Set<string>();
+      el.querySelectorAll<HTMLElement>('[data-chip-id]').forEach(chip => {
+        existingIds.add(chip.dataset.chipId!);
       });
-      mentionsRef.current = mentionsRef.current.filter(m => existingLabels.has(m.label));
+      mentionsRef.current = mentionsRef.current.filter(t => existingIds.has(t.id));
     });
     chipObserver.observe(el, { childList: true, subtree: true });
 
@@ -683,7 +705,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     range.deleteContents();
 
     const fragment = document.createDocumentFragment();
-    const ticketKeys: string[] = [];
+    const pastedTickets: Array<{ key: string; chipId: string }> = [];
     let lastIndex = 0;
 
     for (const match of matches) {
@@ -697,9 +719,11 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       }
 
       // Create pending chip
+      const chipId = nextChipId();
       const colors = statusColors['pending'];
       const chip = document.createElement('span');
       chip.contentEditable = 'false';
+      chip.dataset.chipId = chipId;
       chip.dataset.mentionType = 'ticket';
       chip.dataset.mentionLabel = ticketKey;
       chip.dataset.mentionPath = ticketKey;
@@ -717,9 +741,9 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       chip.appendChild(ticketRemoveBtn);
       fragment.appendChild(chip);
 
-      // Track the mention
-      mentionsRef.current.push({ type: 'ticket', label: ticketKey, path: ticketKey });
-      ticketKeys.push(ticketKey);
+      // Track the mention by its unique chip id
+      mentionsRef.current.push({ id: chipId, mention: { type: 'ticket', label: ticketKey, path: ticketKey } });
+      pastedTickets.push({ key: ticketKey, chipId });
 
       lastIndex = matchStart + fullMatch.length;
     }
@@ -743,10 +767,10 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     recordHistory(false);
 
     // Notify parent to validate each ticket
-    if (ticketKeys.length > 0) {
-      onPastedTickets?.(ticketKeys);
+    if (pastedTickets.length > 0) {
+      onPastedTickets?.(pastedTickets);
     }
-  }, [fireChange, onPastedTickets, onPasteImage, recordHistory]);
+  }, [fireChange, onPastedTickets, onPasteImage, recordHistory, nextChipId]);
 
   // When a hint is present, surface it as the empty-state placeholder. The
   // underlying CSS uses `:empty:before:content-[attr(data-placeholder)]`,

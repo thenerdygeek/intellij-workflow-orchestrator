@@ -125,8 +125,9 @@ describe('Ticket chip glow', () => {
     window.getSelection()!.addRange(range);
 
     // Step 1: auto-chip inserted as pending (what handleRichInputChange does)
+    let chipId = '';
     act(() => {
-      ref.current!.insertChip(
+      chipId = ref.current!.insertChip(
         { type: 'ticket', label: 'PROJ-200', path: 'PROJ-200' },
         '#',
         'pending'
@@ -140,7 +141,7 @@ describe('Ticket chip glow', () => {
 
     // Step 2: validation returns valid → updateChipStatus triggers glow
     act(() => {
-      ref.current!.updateChipStatus('PROJ-200', 'valid', 'PROJ-200: Fix login');
+      ref.current!.updateChipStatus(chipId, 'valid', 'PROJ-200: Fix login');
     });
 
     expect(chip!.dataset.chipStatus).toBe('valid');
@@ -206,8 +207,9 @@ describe('getMentions after insertChip', () => {
     window.getSelection()!.removeAllRanges();
     window.getSelection()!.addRange(range);
 
+    let chipId = '';
     act(() => {
-      ref.current!.insertChip(
+      chipId = ref.current!.insertChip(
         { type: 'ticket', label: 'BAD-1', path: 'BAD-1' },
         '#',
         'pending'
@@ -215,7 +217,7 @@ describe('getMentions after insertChip', () => {
     });
 
     act(() => {
-      ref.current!.updateChipStatus('BAD-1', 'invalid');
+      ref.current!.updateChipStatus(chipId, 'invalid');
     });
 
     // Invalid ticket → chip stays as strikethrough text, NOT returned as a mention

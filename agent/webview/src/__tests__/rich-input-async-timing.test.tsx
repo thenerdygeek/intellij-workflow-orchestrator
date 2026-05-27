@@ -93,7 +93,7 @@ describe('undo/redo vs async MutationObserver', () => {
     );
   });
 
-  it('a stale removeChipByLabel (e.g. late validation timeout) does not pollute undo history', () => {
+  it('a stale removeChipById (e.g. late validation timeout) does not pollute undo history', () => {
     const ref = createRef<RichInputHandle>();
     const { container } = render(<RichInput ref={ref} onChange={() => {}} onSend={() => {}} />);
     const editor = container.querySelector('[contenteditable="true"]') as HTMLElement;
@@ -102,7 +102,7 @@ describe('undo/redo vs async MutationObserver', () => {
     act(() => ref.current!.setText('hello world'));
     // Simulate a stale validateTicket timeout firing for a chip that no longer
     // exists (it was cleared/restored). This must be a no-op — not a snapshot.
-    act(() => ref.current!.removeChipByLabel('PROJ-GHOST'));
+    act(() => ref.current!.removeChipById('chip-ghost'));
 
     // A single undo should return straight to the empty baseline; a phantom
     // snapshot would make the first undo a no-op (content stuck at "hello world").
