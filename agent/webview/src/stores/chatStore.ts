@@ -2273,10 +2273,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // ── Session Rehydration ──
   hydrateFromUiMessages(uiMessages: UiMessage[]) {
-    // Filter out internal tracking messages and partial (interrupted) messages.
+    // Filter out internal tracking messages. Partial (interrupted) messages are
+    // NOT blanket-dropped (bug #15): a turn cut off mid-stream is persisted with
+    // partial:true and may carry real content (e.g. an open ```fence). Drop only
+    // EMPTY partial placeholders; keep content-bearing ones and finalize them
+    // (partial:false) below so they render as completed rather than a stuck stream.
     const visible = uiMessages.filter(
-      m => m.say !== 'API_REQ_STARTED' && m.say !== 'API_REQ_FINISHED' && !m.partial
-    );
+      m => m.say !== 'API_REQ_STARTED' && m.say !== 'API_REQ_FINISHED' &&
+        (!m.partial || (m.text?.trim().length ?? 0) > 0)
+    ).map(m => (m.partial ? { ...m, partial: false } : m));
 
     // Upgrade legacy TOOL messages for communication tools into their proper
     // semantic types.  Old sessions (or sessions from SessionMigrator) may

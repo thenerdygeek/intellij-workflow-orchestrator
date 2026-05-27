@@ -65,15 +65,11 @@ describe('hydration round-trip', () => {
     expect(hydrated[0]!.text).toBe('Let me analyze this...');
   });
 
-  it('partial (streaming) messages are filtered during hydration', () => {
-    // Simulate messages loaded from a persisted session that was interrupted
-    // mid-stream. The Kotlin side marks interrupted stream messages with
-    // partial: true. Hydration must filter these out so stale streaming state
-    // is never re-displayed on resume.
-    // (In the live store, streaming text is held in streamingText — not in
-    // messages — so appendToken no longer produces a partial: true entry in
-    // messages. This test directly exercises the hydrateFromUiMessages filter
-    // using a disk-origin message, which is the real use-case for the guard.)
+  it('content-bearing partial messages are preserved and finalized on hydration (bug #15)', () => {
+    // A session interrupted mid-stream persists its last chunk with partial:true.
+    // It must NOT be dropped — the content is recovered best-effort and finalized
+    // (partial:false) so it renders as a completed message rather than vanishing.
+    // (Empty partial placeholders are still dropped — see hydrate-partial-message.test.ts.)
     const partialMsg: UiMessage = {
       ts: Date.now(),
       type: 'SAY',
@@ -84,7 +80,10 @@ describe('hydration round-trip', () => {
 
     chatState().hydrateFromUiMessages([partialMsg]);
 
-    expect(chatState().messages).toHaveLength(0);
+    const messages = chatState().messages;
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.text).toBe('In progress...');
+    expect(messages[0]!.partial).toBe(false);
   });
 
   it('plan state is restored from PLAN_UPDATE messages', () => {

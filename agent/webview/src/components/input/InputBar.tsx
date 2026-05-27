@@ -21,6 +21,7 @@ import { SkillDropdown } from './SkillDropdown';
 import { TicketDropdown } from './TicketDropdown';
 import { useDropdownKeyboard } from '@/hooks/useDropdownKeyboard';
 import { AttachmentManager, type PendingAttachment } from './AttachmentManager';
+import { useCompressQueue } from './useCompressQueue';
 import { ChipPreview } from './ChipPreview';
 import { DropOverlay } from './DropOverlay';
 
@@ -681,12 +682,9 @@ export const InputBar = memo(function InputBar() {
   // AttachmentManager calls `confirmCompress(...)` when a file exceeds the
   // configured cap; that promise resolves when the user clicks Compress (true)
   // or Cancel (false). Cancel aborts the entire attach — no upload, no chip.
-  const [compressPrompt, setCompressPrompt] = useState<{
-    originalKB: number;
-    capKB: number;
-    filename: string;
-    resolve: (proceed: boolean) => void;
-  } | null>(null);
+  // Bug #7: prompts are SERIALIZED via a queue so a second oversize attach while
+  // the first prompt is open no longer orphans the first promise.
+  const compress = useCompressQueue();
 
   // Phase 5: AttachmentManager owns the pending image list. We construct it
   // once per InputBar mount; the manager's `onChange` flips local state so
@@ -702,10 +700,7 @@ export const InputBar = memo(function InputBar() {
         const durationMs = type === 'error' ? 6000 : 3000;
         useChatStore.getState().showToast(msg, type, durationMs);
       },
-      (originalKB, capKB, filename) =>
-        new Promise<boolean>(resolve => {
-          setCompressPrompt({ originalKB, capKB, filename, resolve });
-        }),
+      (originalKB, capKB, filename) => compress.request(originalKB, capKB, filename),
     );
   }
 
@@ -1145,16 +1140,15 @@ export const InputBar = memo(function InputBar() {
           onPasteImage={handlePasteImage}
         />
       </div>
-      {/* Phase 5/v1.1 — oversize-image compression confirmation modal */}
-      {compressPrompt && (
+      {/* Phase 5/v1.1 — oversize-image compression confirmation modal.
+          Bug #7: driven by the serialized queue so overlapping prompts each get
+          answered in turn instead of overwriting one another. */}
+      {compress.current && (
         <CompressConfirmModal
-          originalKB={compressPrompt.originalKB}
-          capKB={compressPrompt.capKB}
-          filename={compressPrompt.filename}
-          onChoose={proceed => {
-            compressPrompt.resolve(proceed);
-            setCompressPrompt(null);
-          }}
+          originalKB={compress.current.originalKB}
+          capKB={compress.current.capKB}
+          filename={compress.current.filename}
+          onChoose={proceed => compress.resolveCurrent(proceed)}
         />
       )}
     </div>

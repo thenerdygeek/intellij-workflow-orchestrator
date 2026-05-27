@@ -32,9 +32,11 @@ Key commits: `7d8757bab..b2932ec97` (attach feature) + `8f12901d1`, `98919d9b8`,
 
 ---
 
-## REMAINING OPEN BUGS — all CONFIRMED real, MUST be fixed (no deferral)
+## BUGS — ✅ ALL FIXED (2026-05-27)
 
-User directive: **reproduce each with a test first; if genuine, fix at the ROOT (architectural, not a cheap patch); validate. For all bug types.**
+All bugs below were closed on `feature/cross-ide-delegation` (commits `cb0a76006`, `3739cf62b`, `e6ae97160`, `71d04b9cb`). Each was reproduced with a failing-first test and fixed at the root. Suite after: **vitest 610, e2e 21, tsc clean.** Still UNPUSHED; no PR. Manual `runIde` smoke of the attachment feature (§"Pending non-code items") remains the only open task.
+
+User directive (applied throughout): **reproduce each with a test first; if genuine, fix at the ROOT (architectural, not a cheap patch); validate. For all bug types.**
 
 ### Question wizard — ✅ ALL FIXED (commit `3739cf62b`)
 - **#17 "Chat about this" always targeted `options[0]` — FIXED.** Design decision taken: chat-about is **per-QUESTION** (the button is a single per-question button). `setChatAbout` now carries `{ qid, questionText }`; `ChatAboutInput` shows "Ask about this question" + the question text and sends `_chatAboutOption(qid, questionText, msg)`. Placeholder/labels updated. Pinned by `question-view-cluster.test.tsx`.
@@ -42,21 +44,21 @@ User directive: **reproduce each with a test first; if genuine, fix at the ROOT 
 - **#13 zero-selection multi-select dead-end — FIXED.** `question-flow.tsx`: `canProceed = selectionMode === 'multi' || size > 0`; both `handleNext` (Progressive + Upfront) allow an empty answer for multi-select. Single-select still requires a choice. Pinned by `question-flow-zero-select.test.tsx`.
 - **#5 summary 300ms timer no cleanup — FIXED.** `QuestionView` now owns a single `summaryTimerRef` via `scheduleSummary()`/`cancelSummaryTimer()`; cancelled from Back/Skip/Cancel and an unmount `useEffect`. Pinned by `question-view-cluster.test.tsx` (Back-within-window no longer flashes the summary).
 
-### History view (`src/components/history/HistoryView.tsx`)
-- **#14 bulk-delete has no confirmation + selectedIds diverges from the filtered list** — `handleBulkDelete` fires `bulkDeleteSessions` immediately (irreversible, N sessions); `handleSelectAll` overwrites `selectedIds` with the filtered set so hidden selections silently change what's deleted vs shown. Root: destructive action with no confirm + selection set not reconciled against the visible/filtered list.
+### History view — ✅ FIXED (commit `71d04b9cb`)
+- **#14 bulk-delete no confirm + selectedIds divergence — FIXED.** Added an `alertdialog` confirmation step (two-step: first click opens it, the dialog deletes). Introduced `visibleSelectedIds` (= filteredItems ∩ selectedIds) and routed the count, the delete payload, and the Select-All/Deselect toggle through it, so a selection made before a filter narrowed the list can never delete hidden rows — "what's deleted" == "what's shown". Pinned by `history-bulk-delete.test.tsx`.
 
 ### Plan card — ✅ FIXED (commit `e6ae97160`)
 - **#11 button stuck "Approving…" on a same-title plan revision — FIXED.** Root taken: plans now have a stable identity. `chatStore.setPlan` assigns a monotonic `revision` (from session-scoped `planRevisionSeq`), bumped on content change, preserved on identical re-push, unique across `clearPlan` within a session. `PlanSummaryCard` derives ONE identity formula `planIdentity(plan)` (`rev:N`, with a content-hash fallback for store-less/legacy renders) used by BOTH the button-reset effect and the summary typewriter seen-set — eliminating the two divergent formulas (`title:approved` vs `title::text`) that caused the drift. Pinned by `plan-card-identity.test.tsx` (component reset on revision + 3 store cases).
 
-### Attachments (`src/components/input/InputBar.tsx`, `AttachmentManager.ts`)
-- **#7 compress-confirm modal single-slot orphans the first promise** — `compressPrompt` state is one slot; a second oversize paste overwrites it, leaving the first `confirmCompress` promise unresolved forever (and per-turn cap counting off). Root: `confirmCompress` needs to serialize (queue) prompts or reject/await while one is open.
+### Attachments — ✅ FIXED (commit `71d04b9cb`)
+- **#7 compress-confirm single-slot orphan — FIXED.** Extracted `useCompressQueue` (`src/components/input/useCompressQueue.ts`): each `confirmCompress` request enqueues its own `resolve`; only the head prompt is shown and `resolveCurrent` answers it and advances. A second oversize attach while the first prompt is open no longer overwrites/orphans the first promise. Pinned by `compress-queue.test.ts`.
 
 ### Chip identity (RECURRING ROOT — the big architectural one)
 - **#10 cross-TYPE same-label chip operations — ✅ FIXED (commit `cb0a76006`).** Root fix landed: every chip now gets a unique `data-chip-id` at insert time. `insertChip` returns the id; `updateChipStatus(chipId, …)` and the renamed `removeChipById(chipId)` target that id; `mentionsRef` tracks `{id, mention}`; the MutationObserver prunes by id; `getMentions` resolves each chip→mention by id while still deduping the OUTPUT payload by entity (`path||label`, so same-name-files survive and the same ticket inserted twice collapses). `onPastedTickets` now carries `{key, chipId}` so paste validation targets the right chip. `validateTicket(ticketKey, chipId)` in `InputBar`. Pinned by `rich-input-chip-identity.test.tsx` (5 cases). vitest 589 / e2e 21 / tsc clean.
   - Note: the path-keyed `getMentions` dedup (`28bb30835`) and same-name-files behaviour are **preserved** as the payload-dedup rule — chip-id is the DOM↔mention identity; entity key is still how the send list dedups. They were not removed, just no longer load-bearing for targeting.
 
-### Resume / streaming (`chatStore.ts hydrateFromUiMessages`)
-- **#15 open code-fence content dropped on resume** — `hydrateFromUiMessages` filters out `!m.partial` (~line 2233), so an interrupted streaming message (persisted `partial:true`, e.g. an open ```fence) is dropped entirely on reload instead of rendered best-effort. Root: partial-but-has-content messages should be finalized (rendered) on hydrate, not filtered. Coordinate with the Kotlin persist side (interrupted turns may already write a finalized marker).
+### Resume / streaming — ✅ FIXED (commit `71d04b9cb`)
+- **#15 open code-fence content dropped on resume — FIXED.** `hydrateFromUiMessages` no longer blanket-drops `partial` messages: a partial message with non-empty `text` is kept and finalized (`partial:false`) so interrupted content (e.g. an open code-fence) renders best-effort. Empty partial placeholders and `API_REQ_*` rows are still filtered. (No Kotlin change needed — the webview now recovers the persisted partial content directly.) Pinned by `hydrate-partial-message.test.ts`; the stale `hydration-roundtrip` test that asserted the old drop-all behavior was updated.
 
 Full original analysis: devil's-advocate agent reports `a142d4425164335c1` (non-input surfaces) and the earlier input-surface one. Re-run a devil's advocate scoped to any surface for fresh combinations.
 

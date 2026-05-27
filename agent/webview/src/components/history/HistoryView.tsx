@@ -15,6 +15,7 @@ export function HistoryView() {
   // Bulk selection state
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // Active card state (shows action bar on click)
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
@@ -31,6 +32,15 @@ export function HistoryView() {
       item.task.toLowerCase().includes(query)
     );
   }, [historyItems, historySearch]);
+
+  // Reconcile the selection against the visible (filtered) list (bug #14): a
+  // selection made before a filter narrowed the list must never delete sessions
+  // the user can no longer see. The visible selection is the source of truth for
+  // the count, the Select-All toggle, and the delete payload.
+  const visibleSelectedIds = useMemo(
+    () => filteredItems.filter((item) => selectedIds.has(item.id)).map((item) => item.id),
+    [filteredItems, selectedIds],
+  );
 
   const handleResume = (id: string) => {
     // Stash delegation metadata before handing off to Kotlin so the banner
@@ -63,6 +73,7 @@ export function HistoryView() {
   // ── Bulk selection handlers ──
 
   const toggleSelectionMode = () => {
+    setConfirmingDelete(false);
     if (selectionMode) {
       setSelectionMode(false);
       setSelectedIds(new Set());
@@ -89,12 +100,24 @@ export function HistoryView() {
     setSelectedIds(new Set());
   };
 
+  // Two-step: first click opens the confirmation; the dialog actually deletes.
   const handleBulkDelete = () => {
-    if (selectedIds.size === 0) return;
-    kotlinBridge.bulkDeleteSessions(JSON.stringify(Array.from(selectedIds)));
+    if (visibleSelectedIds.length === 0) return;
+    setConfirmingDelete(true);
+  };
+
+  const confirmBulkDelete = () => {
+    if (visibleSelectedIds.length === 0) {
+      setConfirmingDelete(false);
+      return;
+    }
+    kotlinBridge.bulkDeleteSessions(JSON.stringify(visibleSelectedIds));
+    setConfirmingDelete(false);
     setSelectionMode(false);
     setSelectedIds(new Set());
   };
+
+  const cancelBulkDelete = () => setConfirmingDelete(false);
 
   // ── Context menu handler ──
 
@@ -115,12 +138,12 @@ export function HistoryView() {
         {selectionMode ? (
           <>
             <span className="text-xs font-medium text-[var(--fg-secondary)]">
-              {selectedIds.size} selected
+              {visibleSelectedIds.length} selected
             </span>
             <div className="flex items-center gap-2">
               <button
                 onClick={handleBulkDelete}
-                disabled={selectedIds.size === 0}
+                disabled={visibleSelectedIds.length === 0}
                 className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium
                   bg-[var(--error)] text-white hover:opacity-90 transition-opacity
                   disabled:opacity-40 disabled:cursor-not-allowed"
@@ -180,7 +203,7 @@ export function HistoryView() {
       {selectionMode && filteredItems.length > 0 && (
         <div className="px-3 pb-1.5 shrink-0">
           <div className="flex items-center gap-2 text-[11px]">
-            {selectedIds.size < filteredItems.length ? (
+            {visibleSelectedIds.length < filteredItems.length ? (
               <button
                 onClick={handleSelectAll}
                 className="text-[var(--accent)] hover:underline"
@@ -286,6 +309,47 @@ export function HistoryView() {
           onDelete={handleDelete}
           onClose={closeContextMenu}
         />
+      )}
+
+      {/* Bulk-delete confirmation — destructive + irreversible, so it's gated (bug #14) */}
+      {confirmingDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={cancelBulkDelete}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="bulk-delete-title"
+            className="mx-4 w-[320px] rounded-lg border p-4 shadow-xl"
+            style={{ borderColor: 'var(--border)', backgroundColor: 'var(--card, var(--bg))' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="bulk-delete-title" className="text-sm font-semibold mb-1.5" style={{ color: 'var(--fg)' }}>
+              Delete {visibleSelectedIds.length} session{visibleSelectedIds.length === 1 ? '' : 's'}?
+            </h3>
+            <p className="text-xs mb-4" style={{ color: 'var(--fg-muted)' }}>
+              This permanently removes the selected session{visibleSelectedIds.length === 1 ? '' : 's'} and can’t be undone.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={cancelBulkDelete}
+                className="px-3 py-1.5 rounded-md text-[11px] font-medium
+                  text-[var(--fg-muted)] hover:text-[var(--fg)] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmBulkDelete}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-md text-[11px] font-medium
+                  bg-[var(--error)] text-white hover:opacity-90 transition-opacity"
+              >
+                <Trash2 size={11} />
+                Delete {visibleSelectedIds.length}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
