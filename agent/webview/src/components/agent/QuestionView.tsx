@@ -171,6 +171,10 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
   const storeAnswer = useChatStore(s => s.answerQuestion);
   const storeSkip = useChatStore(s => s.skipQuestion);
   const storeClear = useChatStore(s => s.clearQuestions);
+  // The wizard's source of truth for which question is active. Forward/back
+  // navigation drives this (nothing else advanced it — multi-question wizards
+  // were stuck on the first question).
+  const storeShowQuestion = useChatStore(s => s.showQuestion);
 
   // Single owned handle for the "reveal summary" delay. Tracked so navigation
   // (Back / Skip / Cancel) and unmount can cancel it — otherwise a pending timer
@@ -238,8 +242,11 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
       setShowSummary(true);
     } else if (isLastQuestion) {
       scheduleSummary();
+    } else {
+      // Advance to the next question.
+      storeShowQuestion(shownIndex + 1);
     }
-  }, [question, editingIndex, isLastQuestion, storeAnswer, scheduleSummary, cancelSummaryTimer]);
+  }, [question, editingIndex, isLastQuestion, shownIndex, storeAnswer, scheduleSummary, cancelSummaryTimer, storeShowQuestion]);
 
   const handleSelect = useCallback((optionIds: string[]) => {
     // Multi-select: fold a free-text "Other" value into the option set so the two
@@ -279,7 +286,8 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
     }
     if (shownIndex <= 0) return;
     window._editQuestion?.(questions[shownIndex - 1]!.id);
-  }, [editingIndex, shownIndex, questions, cancelSummaryTimer]);
+    storeShowQuestion(shownIndex - 1);
+  }, [editingIndex, shownIndex, questions, cancelSummaryTimer, storeShowQuestion]);
 
   const handleSkip = useCallback(() => {
     if (!question) return;
@@ -290,8 +298,12 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
     if (editingIndex !== null) {
       setEditingIndex(null);
       setShowSummary(true);
+    } else if (!isLastQuestion) {
+      // Advance to the next question (skipping the last lets the all-answered
+      // guard surface the summary once the store update flows back).
+      storeShowQuestion(shownIndex + 1);
     }
-  }, [question, editingIndex, storeSkip, cancelSummaryTimer]);
+  }, [question, editingIndex, isLastQuestion, shownIndex, storeSkip, cancelSummaryTimer, storeShowQuestion]);
 
   const handleEditFromSummary = useCallback((index: number) => {
     cancelSummaryTimer();
