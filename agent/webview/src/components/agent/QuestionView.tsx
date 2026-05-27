@@ -158,6 +158,11 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
   const [chatAbout, setChatAbout] = useState<{ qid: string; questionText: string } | null>(null);
   const [customText, setCustomText] = useState('');
   const [customSelected, setCustomSelected] = useState(false);
+  // Mirror of QuestionFlow's live option selection so a multi-select answer can
+  // UNION checked options with a free-text "Other" value (instead of either path
+  // overwriting the other).
+  const [liveSelectedIds, setLiveSelectedIds] = useState<string[]>([]);
+  const handleSelectionChange = useCallback((ids: string[]) => setLiveSelectedIds(ids), []);
   const storeAnswer = useChatStore(s => s.answerQuestion);
   const storeSkip = useChatStore(s => s.skipQuestion);
   const storeClear = useChatStore(s => s.clearQuestions);
@@ -214,27 +219,38 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
   }, [question]);
 
   // Handlers
-  const handleSelect = useCallback((optionIds: string[]) => {
+  const submitAnswer = useCallback((answer: string[]) => {
     if (!question) return;
     setCustomSelected(false);
-    storeAnswer(question.id, optionIds);
-    window._questionAnswered?.(question.id, JSON.stringify(optionIds));
+    storeAnswer(question.id, answer);
+    window._questionAnswered?.(question.id, JSON.stringify(answer));
     if (isLastQuestion) {
       scheduleSummary();
     }
   }, [question, isLastQuestion, storeAnswer, scheduleSummary]);
 
+  const handleSelect = useCallback((optionIds: string[]) => {
+    // Multi-select: fold a free-text "Other" value into the option set so the two
+    // can coexist. Single-select stays mutually exclusive (option wins).
+    const custom = customSelected && customText.trim() ? [customText.trim()] : [];
+    const answer = question?.type === 'multi-select'
+      ? Array.from(new Set([...optionIds, ...custom]))
+      : optionIds;
+    submitAnswer(answer);
+  }, [question, customSelected, customText, submitAnswer]);
+
   const handleCustomSubmit = useCallback(() => {
     if (!question || !customText.trim()) return;
-    const answer = [customText.trim()];
-    storeAnswer(question.id, answer);
-    window._questionAnswered?.(question.id, JSON.stringify(answer));
-    setCustomSelected(false);
+    const custom = customText.trim();
+    // Multi-select: union the live option selection with the "Other" value so
+    // submitting from the Other field keeps the checked options. Single-select
+    // replaces (the custom answer IS the single choice).
+    const answer = question.type === 'multi-select'
+      ? Array.from(new Set([...liveSelectedIds, custom]))
+      : [custom];
     setCustomText('');
-    if (isLastQuestion) {
-      scheduleSummary();
-    }
-  }, [question, customText, isLastQuestion, storeAnswer, scheduleSummary]);
+    submitAnswer(answer);
+  }, [question, customText, liveSelectedIds, submitAnswer]);
 
   const handleTextAnswer = useCallback((text: string) => {
     if (!question) return;
@@ -376,6 +392,7 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
                 selectionMode={selectionMode}
                 defaultValue={defaultValue}
                 onSelect={handleSelect}
+                onSelectionChange={handleSelectionChange}
                 onBack={activeIndex > 0 ? handleBack : undefined}
               />
             </div>

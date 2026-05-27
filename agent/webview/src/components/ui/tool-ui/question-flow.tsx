@@ -61,6 +61,9 @@ export interface QuestionFlowProgressiveProps extends BaseRuntimeProps {
   selectionMode?: "single" | "multi";
   defaultValue?: string[];
   onSelect?: (optionIds: string[]) => void | Promise<void>;
+  /** Fires whenever the live selection changes (lets a parent combine it with
+   *  its own inputs, e.g. a free-text "Other" value alongside checked options). */
+  onSelectionChange?: (optionIds: string[]) => void;
   onBack?: () => void;
   steps?: never;
   choice?: never;
@@ -669,12 +672,19 @@ function QuestionFlowProgressive({
   selectionMode = "single",
   defaultValue,
   onSelect,
+  onSelectionChange,
   onBack,
   className,
 }: QuestionFlowProgressiveProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(
     () => new Set(defaultValue ?? []),
   );
+
+  // Surface live selection to the parent so it can combine checked options with
+  // its own inputs (e.g. a free-text "Other" value) at submit time.
+  useEffect(() => {
+    onSelectionChange?.(Array.from(selectedIds));
+  }, [selectedIds, onSelectionChange]);
 
   const handleToggle = useCallback(
     (optionId: string) => {
