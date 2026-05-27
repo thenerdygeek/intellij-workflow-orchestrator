@@ -21,6 +21,13 @@ import org.apache.tika.parser.AutoDetectParser
 import java.nio.file.Files
 import java.nio.file.Path
 
+/** Result of extracting a document to its typed block list, before markdown assembly. */
+data class BlockExtraction(
+    val blocks: List<DocumentBlock>,
+    val mime: String,
+    val pageCount: Int?,
+)
+
 /**
  * Primary implementation of [DocumentExtractor]. Dispatches extractions by MIME type to the
  * appropriate pipeline, applies concurrency and timeout controls, and maps all exceptions to
@@ -119,9 +126,36 @@ class TikaDocumentExtractor(
             } ?: timeoutFailure(options.timeoutMs)
         }
 
+    suspend fun extractBlocks(
+        path: Path,
+        options: ExtractOptions = ExtractOptions(),
+    ): ToolResult<BlockExtraction> =
+        semaphore.withPermit {
+            withTimeoutOrNull(options.timeoutMs) {
+                withContext(Dispatchers.IO) {
+                    val previousCcl = Thread.currentThread().contextClassLoader
+                    try {
+                        Thread.currentThread().contextClassLoader = TikaConfig::class.java.classLoader
+                        runCatching { doExtractToBlocks(path, options) }.fold(
+                            onSuccess = { be ->
+                                ToolResult(
+                                    data = be,
+                                    summary = "Extracted ${be.blocks.size} blocks (${be.mime})",
+                                    isError = false,
+                                )
+                            },
+                            onFailure = { e -> mapErrorToFailure(e) },
+                        )
+                    } finally {
+                        Thread.currentThread().contextClassLoader = previousCcl
+                    }
+                }
+            } ?: timeoutFailure(options.timeoutMs)
+        }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    private suspend fun doExtract(path: Path, options: ExtractOptions): DocumentContent {
+    private suspend fun doExtractToBlocks(path: Path, options: ExtractOptions): BlockExtraction {
         val mime = mimeDetector.detect(path)
         val downloadsRoot = SessionDownloadDir.current()
         val imageService = ImageExtractionService(downloadsRoot = downloadsRoot)
@@ -133,14 +167,20 @@ class TikaDocumentExtractor(
             }
             else -> Files.newInputStream(path).use { tikaXhtml.extract(it, mime) }
         }
+        val pageCount = blocks.count { it is DocumentBlock.PageMarker }.takeIf { it > 0 }
+        return BlockExtraction(blocks = blocks, mime = mime, pageCount = pageCount)
+    }
+
+    private suspend fun doExtract(path: Path, options: ExtractOptions): DocumentContent {
+        val be = doExtractToBlocks(path, options)
         val maxChars = options.maxChars ?: maxCharsProvider()
-        val (markdown, truncated, contentLength) = assembler.assemble(blocks, maxChars)
+        val (markdown, truncated, contentLength) = assembler.assemble(be.blocks, maxChars)
         return DocumentContent(
             markdown = markdown,
-            mime = mime,
+            mime = be.mime,
             truncated = truncated,
             contentLength = if (truncated) contentLength else null,
-            pageCount = blocks.count { it is DocumentBlock.PageMarker }.takeIf { it > 0 },
+            pageCount = be.pageCount,
         )
     }
 
@@ -149,7 +189,7 @@ class TikaDocumentExtractor(
             (if (content.truncated) " (truncated)" else "") +
             (content.pageCount?.let { " across $it pages" } ?: "")
 
-    private fun mapErrorToFailure(e: Throwable): ToolResult<DocumentContent> {
+    private fun <T> mapErrorToFailure(e: Throwable): ToolResult<T> {
         val msg = when (e) {
             is org.apache.poi.EncryptedDocumentException ->
                 "Document is password-protected; v1 does not support encrypted documents."
@@ -173,14 +213,14 @@ class TikaDocumentExtractor(
                 "Document extraction failed: ${e::class.simpleName ?: "Throwable"}: ${e.message ?: ""}"
         }
         return ToolResult(
-            data = DocumentContent(markdown = "", mime = "", truncated = false),
+            data = null,
             summary = msg,
             isError = true,
         )
     }
 
-    private fun timeoutFailure(ms: Long): ToolResult<DocumentContent> = ToolResult(
-        data = DocumentContent(markdown = "", mime = "", truncated = false),
+    private fun <T> timeoutFailure(ms: Long): ToolResult<T> = ToolResult(
+        data = null,
         summary = "Document extraction timed out after ${ms}ms",
         isError = true,
     )
