@@ -239,7 +239,7 @@ class DocumentTool(
                 example("1")
                 example("5")
             }
-            optional("section", "integer") {
+            optional("section", "string") {
                 llmSeesIt(
                     "Optional. Jump to the heading with this text (case-insensitive). Resolved via the document " +
                         "index. Mutually exclusive with offset/page."
