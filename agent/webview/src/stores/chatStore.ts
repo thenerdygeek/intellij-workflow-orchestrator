@@ -718,12 +718,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       };
     });
-    // Flush any in-flight streaming text first (chronology: text → tool calls → session end).
+    // Flush any in-flight streaming content (chronology mirrors the live footer:
+    // thinking → text → tool calls → session end). Previously a thinking block
+    // mid-stream at completion was dropped (only text was flushed).
+    const thinkingFlush: UiMessage[] = (state.streamingThinkingText != null && state.streamingThinkingTs != null)
+      ? [{ ts: state.streamingThinkingTs, type: 'SAY' as const, say: 'REASONING' as const, text: state.streamingThinkingText }]
+      : [];
     const streamFlush: UiMessage[] = (state.streamingText != null && state.streamingMsgTs != null)
       ? [{ ts: state.streamingMsgTs, type: 'SAY' as const, say: 'TEXT' as const, text: state.streamingText, partial: false }]
       : [];
-    const messages = (streamFlush.length > 0 || toolMessages.length > 0)
-      ? [...state.messages, ...streamFlush, ...toolMessages]
+    const messages = (thinkingFlush.length > 0 || streamFlush.length > 0 || toolMessages.length > 0)
+      ? [...state.messages, ...thinkingFlush, ...streamFlush, ...toolMessages]
       : state.messages;
     set({
       session: info,
@@ -742,6 +747,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages,
       queuedSteeringMessages: [],
       handoff: null,
+      // Clear transient interactive UI so a stale approval card / question
+      // wizard / process-input prompt from this turn doesn't survive into the
+      // completed (or next) session. Previously only resolveApproval cleared
+      // pendingApproval, so it could hang or bleed across sessions.
+      pendingApproval: null,
+      pendingProcessInput: null,
+      questions: null,
+      activeQuestionIndex: 0,
+      questionSummary: null,
       // Clear completed plan on session end (no more messages will arrive to trigger deferred clear)
       ...(state.planCompletedPendingClear ? { plan: null, planCompletedPendingClear: false } : {}),
     });
@@ -2340,6 +2354,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingMsgTs: null,
       streamingThinkingText: null,
       streamingThinkingTs: null,
+      // Resume must start clean: a pending approval / question wizard / process
+      // input / queued steering / streaming-edit preview from the previously
+      // live session must not bleed into the loaded one.
+      pendingApproval: null,
+      pendingProcessInput: null,
+      questions: null,
+      activeQuestionIndex: 0,
+      questionSummary: null,
+      queuedSteeringMessages: [],
+      streamingEdits: {},
       viewMode: 'chat',
       ...(restoredPlan ? { plan: restoredPlan } : {}),
     });

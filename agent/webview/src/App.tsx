@@ -14,6 +14,7 @@ import { EditStatsBar } from '@/components/agent/EditStatsBar'
 import { HistoryView } from './components/history/HistoryView'
 import { DelegationBanner } from './components/history/DelegationBanner'
 import { ScreenReaderAnnouncer } from '@/components/common/ScreenReaderAnnouncer'
+import { ToastStack } from '@/components/chat/ToastStack'
 import { useEscapeHandler } from '@/hooks/useEscapeHandler'
 
 function App() {
@@ -98,6 +99,7 @@ function App() {
       <div className="flex h-screen flex-col bg-[var(--bg,#1e1e1e)] text-[var(--fg,#cccccc)]">
         <ScreenReaderAnnouncer />
         <ChatView />
+        <ToastStack />
       </div>
     );
   }
@@ -105,6 +107,7 @@ function App() {
   return (
     <div className="flex h-screen flex-col bg-[var(--bg,#1e1e1e)] text-[var(--fg,#cccccc)]">
       <ScreenReaderAnnouncer />
+      <ToastStack />
       {viewMode === 'history' ? (
         <HistoryView />
       ) : (
