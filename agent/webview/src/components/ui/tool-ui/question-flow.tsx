@@ -551,7 +551,9 @@ function StepContent({
 }: StepContentProps) {
   const isTransitioning =
     exitingStepData !== null && exitingStepData !== undefined;
-  const canProceed = selectedIds.size > 0;
+  // Multi-select: an empty set is a legitimate answer ("none of these"), so Next
+  // is always enabled. Single-select: you must pick exactly one to proceed.
+  const canProceed = selectionMode === "multi" || selectedIds.size > 0;
   const resolvedStepKey = stepKey ?? "current";
   const { titleId, descriptionId } = getQuestionFlowStepIds(
     id,
@@ -699,10 +701,11 @@ function QuestionFlowProgressive({
   );
 
   const handleNext = useCallback(() => {
-    if (selectedIds.size === 0) return;
+    // Single-select still requires a choice; multi-select allows an empty answer.
+    if (selectionMode === "single" && selectedIds.size === 0) return;
     const selection = Array.from(selectedIds);
     onSelect?.(selection);
-  }, [onSelect, selectedIds]);
+  }, [onSelect, selectedIds, selectionMode]);
 
   return (
     <StepContent
@@ -804,7 +807,9 @@ function QuestionFlowUpfront({
   }, [answers, currentStepIndex, onStepChange, steps]);
 
   const handleNext = useCallback(() => {
-    if (currentSelection.size === 0) return;
+    // Multi-select steps accept an empty answer; single-select requires a choice.
+    const mode = currentStep.selectionMode ?? "single";
+    if (mode === "single" && currentSelection.size === 0) return;
 
     if (isLastStep) {
       onComplete?.(answers);

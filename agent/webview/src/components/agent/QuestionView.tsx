@@ -2,14 +2,14 @@
  * QuestionView — wraps tool-ui QuestionFlow with additional features:
  * - Text input questions (not just select)
  * - Skip button per question
- * - "Chat about this" option per selection
+ * - "Chat about this" follow-up per question
  * - Summary page before final submit
  * - Submit all / Cancel buttons
  *
  * All content is wrapped in a single unified card boundary.
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import type { Question } from '@/bridge/types';
 import {
   QuestionFlow,
@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/badge';
 import { MessageSquare, SkipForward, Send, X, Pencil } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
+import { answerToDisplay } from '@/util/question-answer';
 
 // ── Step indicator dots ──
 
@@ -62,18 +63,21 @@ function StepDots({
 
 function ChatAboutInput({
   questionId,
-  optionLabel,
+  subject,
   onClose,
 }: {
   questionId: string;
-  optionLabel: string;
+  /** The QUESTION this follow-up is about (its text), not any single option. */
+  subject: string;
   onClose: () => void;
 }) {
   const [msg, setMsg] = useState('');
 
   const handleSend = () => {
     if (msg.trim()) {
-      window._chatAboutOption?.(questionId, optionLabel, msg.trim());
+      // Chat-about is per-question: send the question id + its text so the agent
+      // has the right context, regardless of which options were offered.
+      window._chatAboutOption?.(questionId, subject, msg.trim());
       onClose();
     }
   };
@@ -84,7 +88,8 @@ function ChatAboutInput({
       style={{ backgroundColor: 'var(--tool-bg)' }}
     >
       <div className="text-[11px] mb-2" style={{ color: 'var(--fg-muted)' }}>
-        Ask about: <Badge variant="secondary" className="text-[10px] ml-1">{optionLabel}</Badge>
+        Ask about this question
+        <Badge variant="secondary" className="text-[10px] ml-1">{subject}</Badge>
       </div>
       <div className="flex gap-1.5">
         <input
@@ -92,7 +97,7 @@ function ChatAboutInput({
           value={msg}
           onChange={e => setMsg(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') handleSend(); if (e.key === 'Escape') onClose(); }}
-          placeholder="What would you like to know about this option?"
+          placeholder="What would you like to know about this question?"
           className="flex-1 text-xs px-2 py-1.5 rounded-md border bg-transparent outline-none"
           style={{ borderColor: 'var(--input-border)', color: 'var(--fg)' }}
         />
@@ -150,12 +155,32 @@ interface QuestionViewProps {
 
 export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
   const [showSummary, setShowSummary] = useState(false);
-  const [chatAbout, setChatAbout] = useState<{ qid: string; label: string } | null>(null);
+  const [chatAbout, setChatAbout] = useState<{ qid: string; questionText: string } | null>(null);
   const [customText, setCustomText] = useState('');
   const [customSelected, setCustomSelected] = useState(false);
   const storeAnswer = useChatStore(s => s.answerQuestion);
   const storeSkip = useChatStore(s => s.skipQuestion);
   const storeClear = useChatStore(s => s.clearQuestions);
+
+  // Single owned handle for the "reveal summary" delay. Tracked so navigation
+  // (Back / Skip / Cancel) and unmount can cancel it — otherwise a pending timer
+  // fires setShowSummary against stale/cleared questions and flashes the summary.
+  const summaryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelSummaryTimer = useCallback(() => {
+    if (summaryTimerRef.current !== null) {
+      clearTimeout(summaryTimerRef.current);
+      summaryTimerRef.current = null;
+    }
+  }, []);
+  const scheduleSummary = useCallback(() => {
+    cancelSummaryTimer();
+    summaryTimerRef.current = setTimeout(() => {
+      summaryTimerRef.current = null;
+      setShowSummary(true);
+    }, 300);
+  }, [cancelSummaryTimer]);
+  // Cancel any pending timer on unmount.
+  useEffect(() => cancelSummaryTimer, [cancelSummaryTimer]);
 
   const question = questions[activeIndex];
   const isLastQuestion = activeIndex === questions.length - 1;
@@ -195,9 +220,9 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
     storeAnswer(question.id, optionIds);
     window._questionAnswered?.(question.id, JSON.stringify(optionIds));
     if (isLastQuestion) {
-      setTimeout(() => setShowSummary(true), 300);
+      scheduleSummary();
     }
-  }, [question, isLastQuestion, storeAnswer]);
+  }, [question, isLastQuestion, storeAnswer, scheduleSummary]);
 
   const handleCustomSubmit = useCallback(() => {
     if (!question || !customText.trim()) return;
@@ -207,32 +232,34 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
     setCustomSelected(false);
     setCustomText('');
     if (isLastQuestion) {
-      setTimeout(() => setShowSummary(true), 300);
+      scheduleSummary();
     }
-  }, [question, customText, isLastQuestion, storeAnswer]);
+  }, [question, customText, isLastQuestion, storeAnswer, scheduleSummary]);
 
   const handleTextAnswer = useCallback((text: string) => {
     if (!question) return;
     storeAnswer(question.id, [text]);
     window._questionAnswered?.(question.id, JSON.stringify([text]));
     if (isLastQuestion) {
-      setTimeout(() => setShowSummary(true), 300);
+      scheduleSummary();
     }
-  }, [question, isLastQuestion, storeAnswer]);
+  }, [question, isLastQuestion, storeAnswer, scheduleSummary]);
 
   const handleBack = useCallback(() => {
     if (activeIndex <= 0) return;
+    cancelSummaryTimer();
     setShowSummary(false);
     setCustomSelected(false);
     window._editQuestion?.(questions[activeIndex - 1]!.id);
-  }, [activeIndex, questions]);
+  }, [activeIndex, questions, cancelSummaryTimer]);
 
   const handleSkip = useCallback(() => {
     if (!question) return;
+    cancelSummaryTimer();
     setCustomSelected(false);
     storeSkip(question.id);
     window._questionSkipped?.(question.id);
-  }, [question, storeSkip]);
+  }, [question, storeSkip, cancelSummaryTimer]);
 
   const handleEditFromSummary = useCallback((index: number) => {
     setShowSummary(false);
@@ -245,10 +272,11 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
   }, []);
 
   const handleCancel = useCallback(() => {
+    cancelSummaryTimer();
     setCustomSelected(false);
     storeClear();
     window._questionsCancelled?.();
-  }, [storeClear]);
+  }, [storeClear, cancelSummaryTimer]);
 
   // ── Summary page ──
   if (showSummary || allAnswered) {
@@ -266,15 +294,9 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
             {questions.map((q, i) => {
               const answerDisplay = q.skipped
                 ? 'Skipped'
-                : (() => {
-                    if (!q.answer) return 'No answer';
-                    const ids = Array.isArray(q.answer) ? q.answer : [q.answer];
-                    const labels = ids.map(id => {
-                      const opt = q.options.find(o => (o.id ?? o.label) === id);
-                      return opt?.label ?? id;
-                    });
-                    return labels.join(', ');
-                  })();
+                : !q.answer
+                  ? 'No answer'
+                  : answerToDisplay(q.options, q.answer);
 
               return (
                 <div
@@ -423,7 +445,7 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
             question={question}
             onSkip={handleSkip}
             onChatAbout={question.type !== 'text' && question.options.length > 0
-              ? () => setChatAbout({ qid: question.id, label: question.options[0]?.label ?? '' })
+              ? () => setChatAbout({ qid: question.id, questionText: question.text })
               : undefined
             }
             onCancel={handleCancel}
@@ -435,7 +457,7 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
           <div className="px-4 pb-3">
             <ChatAboutInput
               questionId={chatAbout.qid}
-              optionLabel={chatAbout.label}
+              subject={chatAbout.questionText}
               onClose={() => setChatAbout(null)}
             />
           </div>

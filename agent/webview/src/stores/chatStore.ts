@@ -23,6 +23,7 @@ import type {
   CompletionKind,
   ImageRef,
 } from '../bridge/types';
+import { answerToDisplay } from '../util/question-answer';
 
 // ── Internal ID generator ──
 let _idCounter = 0;
@@ -1395,12 +1396,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           currentIndex: snapshot.length - 1,
           answers: snapshot.reduce((acc, q, i) => {
             if (q.answer) {
-              const ids = Array.isArray(q.answer) ? q.answer : [q.answer];
-              const labels = ids.map(id => {
-                const opt = q.options.find(o => (o.id ?? o.label) === id);
-                return opt?.label ?? id;  // fallback: if id not found in options, show it as-is (handles free-text answers)
-              });
-              acc[i] = labels.join(', ');
+              // Single source of truth shared with the QuestionView summary (bug #18).
+              acc[i] = answerToDisplay(q.options, q.answer);
             }
             return acc;
           }, {} as Record<number, string>),
