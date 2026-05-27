@@ -472,6 +472,9 @@ function InputBarContent({
   const hintActive = !!nextStepHint && !compacting && !(busy && !steeringMode) && !locked;
   const handleAcceptHint = useCallback(() => {
     if (!nextStepHint) return;
+    // #12: setText now fires onChange internally, so hasText updates and the
+    // Send button enables — previously setText was silent and the accepted hint
+    // left the Send button disabled until the user typed another character.
     richInputRef.current?.setText(nextStepHint);
     clearNextStepHint();
     richInputRef.current?.focus();
@@ -815,6 +818,10 @@ export const InputBar = memo(function InputBar() {
   const handleDismiss = useCallback(() => {
     setShowMentions(false); setShowSkills(false); setShowTickets(false);
     setMentionQuery(''); setSkillQuery(''); setTicketQuery('');
+    // #20: Escape / dismiss must also cancel an in-progress typed #ticket,
+    // otherwise the null-trigger auto-chip path or handleSend would still commit
+    // it as a ghost mention after the user explicitly dismissed.
+    prevTicketQueryRef.current = '';
   }, []);
 
   const mentionKbd = useDropdownKeyboard({
@@ -1078,7 +1085,10 @@ export const InputBar = memo(function InputBar() {
     }
   }, [restoredInputText]);
 
-  const canSend = hasText && !inputState.locked && !outerCompacting && (!busy || steeringMode);
+  // #6: an image/file-only message (no text) is sendable — handleSend allows
+  // pending attachments with empty text — so the Send button must enable when
+  // attachments are present, not only when there is text.
+  const canSend = (hasText || attachments.length > 0) && !inputState.locked && !outerCompacting && (!busy || steeringMode);
   const planActive = inputState.mode === 'plan';
   const delegationQuestionPending = useChatStore(s => s.delegationQuestionPending);
 

@@ -37,6 +37,7 @@ declare global {
       setImageSettings: (s: Partial<ImageSettings>) => void;
       pushImageSettingsToWebview: () => Promise<void>;
       pushModelList: (json: string) => void;
+      setNextStepHint: (text: string) => void;
       getCalls: () => HarnessState['calls'];
       clearCalls: () => void;
     };
@@ -185,6 +186,9 @@ export function installMockBridge(): void {
       if (typeof w.updateModelList === 'function') {
         w.updateModelList(json);
       }
+    },
+    setNextStepHint(text: string) {
+      useChatStore.setState({ nextStepHint: text } as never);
     },
     getCalls: () => [...state.calls],
     clearCalls: () => {

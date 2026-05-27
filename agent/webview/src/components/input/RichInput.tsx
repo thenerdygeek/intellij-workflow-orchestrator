@@ -244,6 +244,10 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       sel?.removeAllRanges();
       sel?.addRange(range);
       recordHistory(false);
+      // #12: notify the parent so hasText / Send-button state updates. Without
+      // this, programmatic setText (hint accept, steering restore) left the
+      // Send button disabled until the next manual keystroke.
+      fireChange();
     },
     getText: () => extractText(),
     getMentions: () => {
@@ -286,38 +290,45 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
   const extractText = useCallback(() => {
     const el = editorRef.current;
     if (!el) return '';
-    let text = '';
-    for (const node of el.childNodes) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        text += node.textContent ?? '';
-      } else if (node instanceof HTMLElement && node.dataset.mentionLabel) {
-        const status = node.dataset.chipStatus;
-        const mentionType = node.dataset.mentionType;
-        if (status === 'invalid') {
-          // Red chip → convert back to plain text with # prefix
-          text += `#${node.dataset.mentionLabel}`;
+
+    // Render a chip span to its text form: invalid → "#label" (raw), otherwise
+    // the type prefix + label. Never recurse into the chip (its × button text
+    // must not leak into the message).
+    const chipToText = (chip: HTMLElement): string => {
+      if (chip.dataset.chipStatus === 'invalid') return `#${chip.dataset.mentionLabel}`;
+      const t = chip.dataset.mentionType;
+      const prefix = t === 'skill' ? '/' : t === 'ticket' ? '#' : '@';
+      return `${prefix}${chip.dataset.mentionLabel}`;
+    };
+
+    // Walk children chip-aware. Recurse into block elements (the <div>/<p>
+    // wrappers contentEditable creates per line) so a chip on a non-first line
+    // keeps its prefix instead of being flattened to bare textContent (which
+    // dropped the @/#// prefix AND included the chip's × button text).
+    const flatten = (nodes: NodeListOf<ChildNode>): string => {
+      let out = '';
+      nodes.forEach(node => {
+        if (node.nodeType === Node.TEXT_NODE) {
+          out += node.textContent ?? '';
+        } else if (node instanceof HTMLElement && node.dataset.mentionLabel) {
+          out += chipToText(node);
+        } else if (node instanceof HTMLElement) {
+          if (node.tagName === 'BR') {
+            out += '\n';
+          } else {
+            // Block-level line wrapper — newline-separate from prior content.
+            if (out.length > 0) out += '\n';
+            out += flatten(node.childNodes);
+          }
         } else {
-          // Valid/pending chips → include as @label or /label in text
-          // so the displayed user message is readable
-          const prefix = mentionType === 'skill' ? '/' : mentionType === 'ticket' ? '#' : '@';
-          text += `${prefix}${node.dataset.mentionLabel}`;
+          out += node.textContent ?? '';
         }
-      } else if (node instanceof HTMLElement) {
-        const tag = node.tagName;
-        if (tag === 'BR') {
-          // <br> = explicit line break
-          text += '\n';
-        } else {
-          // Block-level elements (<div>, <p>) created by contentEditable for each line
-          // Prepend \n unless this is the very first content
-          if (text.length > 0) text += '\n';
-          text += node.textContent ?? '';
-        }
-      } else {
-        text += node.textContent ?? '';
-      }
-    }
-    return text.trim();
+      });
+      return out;
+    };
+
+    // Drop any zero-width-space caret fillers so they never reach the message.
+    return flatten(el.childNodes).replace(/​/g, '').trim();
   }, []);
 
   // ── Insert a chip at the current cursor position, replacing trigger text ──
@@ -425,7 +436,11 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       if (textNode.nodeType === Node.TEXT_NODE) {
         const content = textNode.textContent ?? '';
         const pos = range.startOffset;
-        const before = content.slice(0, pos);
+        // Strip the zero-width space (U+200B) insertChip leaves at the caret.
+        // Without this, a `/` typed right after a chip sits as "<ZWSP>/" and the
+        // slash regex's `(?:^|\s)` boundary fails (U+200B is not \s), so the
+        // skill dropdown never opens. Stripping also keeps @/# queries clean.
+        const before = content.slice(0, pos).replace(/​/g, '');
 
         // Check for @ trigger
         const atMatch = before.match(/@(\S*)$/);
@@ -437,8 +452,12 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
           if (hashMatch) {
             trigger = { type: '#', query: hashMatch[1] ?? '' };
           } else {
-            // Check for / trigger
-            const slashMatch = before.match(/(?:^|\s)\/(\S*)$/);
+            // Check for / trigger. The boundary class includes U+200B (the
+            // zero-width space insertChip leaves at the caret) so a `/` typed
+            // immediately after a chip still opens the skill dropdown — plain
+            // \s does not match U+200B. (Path-internal slashes like foo/bar
+            // still have no boundary before them, so they don't trigger.)
+            const slashMatch = before.match(/(?:^|[\s])\/(\S*)$/);
             if (slashMatch) {
               trigger = { type: '/', query: slashMatch[1] ?? '' };
             }
