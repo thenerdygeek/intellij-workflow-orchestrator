@@ -186,3 +186,20 @@ configurations.all {
 tasks.test {
     useJUnitPlatform()
 }
+
+// Expose test helper classes (fixture factories) so :agent integration tests can consume them
+// without the java-test-fixtures plugin overhead. :agent declares:
+//   testImplementation(project(":document", "testOutput"))
+val testOutput: Configuration by configurations.creating {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+}
+// Register the Kotlin test classes dir as the single artifact on the testOutput variant.
+// :agent tests use this to reach LargePdfFixtureFactory and EncryptedPdfFixtureFactory
+// without a full java-test-fixtures setup.
+val documentKotlinTestClasses = layout.buildDirectory.dir("classes/kotlin/test")
+artifacts {
+    add(testOutput.name, documentKotlinTestClasses) {
+        builtBy(tasks.named("compileTestKotlin"))
+    }
+}

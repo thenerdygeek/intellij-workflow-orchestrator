@@ -37,6 +37,9 @@ dependencies {
     // :agent owns the AgentTool wrapping for every feature module. :document is a
     // controlled exception to the "no feature-to-feature imports" rule.
     implementation(project(":document"))
+    // Expose :document test helpers (LargePdfFixtureFactory, EncryptedPdfFixtureFactory) to
+    // :agent integration tests that exercise the full extraction + service stack with real PDFs.
+    testImplementation(project(":document", "testOutput"))
     compileOnly(libs.kotlinx.coroutines.core)
     compileOnly(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
