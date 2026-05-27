@@ -1046,4 +1046,12 @@ export function initBridge(storeAccessors: StoreAccessors): void {
       console.error('[bridge] _setDelegationQuestionPending: bad payload', e);
     }
   };
+
+  // ── OS file-drag overlay (Task 11) ──
+  // Pushed by Kotlin's AttachmentDropTarget via AgentCefPanel.callJs() when an
+  // OS file drag enters or exits the JCEF component. The browser can't see a
+  // CSS :drag-over for OS drags, so the JVM side drives feedback explicitly.
+  (window as any)._setDropActive = function (active: boolean): void {
+    stores?.getChatStore().setDropActive(!!active);
+  };
 }

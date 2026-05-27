@@ -392,6 +392,10 @@ interface ChatState {
   // answer arrives. Plan 4 spec §5.5.
   delegationQuestionPending: { active: boolean; delegatorRepo?: string };
 
+  // Drop-zone overlay — true while the JVM Swing DropTarget signals an OS file drag
+  // is hovering over the JCEF component. Driven by window._setDropActive(true/false).
+  dropActive: boolean;
+
   // Actions
   startSession(task: string, mentions?: Mention[], attachments?: ImageRef[]): void;
   completeSession(info: SessionInfo): void;
@@ -547,6 +551,9 @@ interface ChatState {
 
   // Delegation question pending banner (Plan 4 §5.5)
   setDelegationQuestionPending(active: boolean, delegatorRepo?: string): void;
+
+  // Drop-zone overlay
+  setDropActive(active: boolean): void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -619,6 +626,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   backgroundProcesses: [],
   editorTabMode: false,
   delegationQuestionPending: { active: false },
+  dropActive: false,
 
   // Actions
   startSession(task: string, mentions?: Mention[], attachments?: ImageRef[]) {
@@ -2330,6 +2338,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // ── Delegation question pending banner (Plan 4 §5.5) ──
   setDelegationQuestionPending: (active, delegatorRepo) =>
     set({ delegationQuestionPending: { active, delegatorRepo } }),
+
+  // ── Drop-zone overlay (OS file drag feedback via JVM Swing DropTarget) ──
+  setDropActive: (active) => set({ dropActive: active }),
 }));
 
 /**

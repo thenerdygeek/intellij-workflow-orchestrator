@@ -22,6 +22,7 @@ import { TicketDropdown } from './TicketDropdown';
 import { useDropdownKeyboard } from '@/hooks/useDropdownKeyboard';
 import { AttachmentManager, type PendingAttachment } from './AttachmentManager';
 import { ChipPreview } from './ChipPreview';
+import { DropOverlay } from './DropOverlay';
 
 // Phase 5: image-attachment defaults. These mirror the Kotlin
 // PluginSettings.State defaults; eventually a settings bridge will push live
@@ -1113,6 +1114,7 @@ export const InputBar = memo(function InputBar() {
         onDrop={handleDrop}
         onDragOver={handleDragOver}
       >
+        <DropOverlay active={useChatStore(s => s.dropActive)} />
         <ChipPreview attachments={attachments} onRemove={handleRemoveAttachment} />
         {/* Hidden picker — opened by the "Image" dropdown item */}
         <input

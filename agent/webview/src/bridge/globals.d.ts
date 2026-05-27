@@ -103,6 +103,23 @@ declare global {
      */
     _setDelegationQuestionPending?: (json: string) => void;
     /**
+     * Task 11 — drop-zone overlay driven by the JVM Swing DropTarget.
+     * Pushed by Kotlin's AttachmentDropTarget via AgentCefPanel.callJs()
+     * when an OS file drag enters (true) or exits (false) the JCEF component.
+     */
+    _setDropActive?: (active: boolean) => void;
+    /**
+     * Task 11/12 — pushes a chip metadata object into the webview
+     * AttachmentManager for a file already stored on the JVM side
+     * (picker or drop). Defined by InputBar at mount.
+     */
+    _addAttachmentChip?: (meta: unknown) => void;
+    /**
+     * Task 11/12 — invokes the JVM-side FileChooser picker.
+     * Injected by AgentCefPanel as a JBCefJSQuery bridge function.
+     */
+    _pickAttachment?: () => void;
+    /**
      * Phase 7 — namespace for new bridges. Distinct from the legacy `window._xxx`
      * flat namespace; the picker / usage indicator / image-settings push live
      * here so future additions don't pollute the global object.
