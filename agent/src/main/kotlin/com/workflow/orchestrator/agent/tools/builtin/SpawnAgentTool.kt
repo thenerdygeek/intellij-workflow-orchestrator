@@ -179,6 +179,14 @@ Tips:
                 type = "string",
                 description = "Complete task description. Include ALL context the agent needs — file paths, class names, what to look for or change, and why. The agent has NO access to your conversation history."
             ),
+            "shared_prompt" to ParameterProperty(
+                type = "string",
+                description = "Optional shared context PREPENDED to every prompt (prompt, prompt_2..5). " +
+                    "Use this when fanning out multiple sub-agents over the SAME large payload from different " +
+                    "angles: state the common payload once here, and put only the per-agent angle/question in each " +
+                    "prompt_N. Do NOT write placeholders like '[same as above]' in prompt_2..5 — sub-agents cannot " +
+                    "see each other's prompts; use shared_prompt for the common part instead."
+            ),
             "prompt_2" to ParameterProperty(
                 type = "string",
                 description = "Optional second prompt (parallel execution, read-only agents only)."
@@ -301,6 +309,16 @@ Tips:
                         constraint("non-empty; no upper length cap, but counts against sub-agent's context budget")
                         example("In src/main/kotlin/com/example/UserService.kt, the login() method at line 45 throws NPE when email is null. Add a null check returning a Result.failure with a clear message, then run `./gradlew :user:test --tests UserServiceTest`.")
                     }
+                    optional("shared_prompt", "string") {
+                        llmSeesIt("Optional shared context PREPENDED to every prompt (prompt, prompt_2..5). " +
+                            "Use this when fanning out multiple sub-agents over the SAME large payload from different " +
+                            "angles: state the common payload once here, and put only the per-agent angle/question in each " +
+                            "prompt_N. Do NOT write placeholders like '[same as above]' in prompt_2..5 — sub-agents cannot " +
+                            "see each other's prompts; use shared_prompt for the common part instead.")
+                        humanReadable("Common context prepended to `prompt`. Rarely needed in single mode (just write it into `prompt`); exists so the field behaves consistently across single and parallel dispatch.")
+                        whenPresent("`composePromptPairs` prepends `shared_prompt + \"\\n\\n\"` to the single worker's prompt.")
+                        whenAbsent("`prompt` is dispatched as-is.")
+                    }
                     optional("agent_type", "string") {
                         llmSeesIt("Agent type to use. Defaults to 'general-purpose' if not specified. Each type has a curated system prompt and tool set.")
                         humanReadable("Which specialist persona to hire — `code-reviewer`, `spring-boot-engineer`, `security-auditor`, `explorer`, etc. Each is a markdown file with a system prompt + curated tool list.")
@@ -417,6 +435,16 @@ Tips:
                         humanReadable("The first prompt — first sub-agent's task brief. Same rules as single mode: spell out file paths, class names, expected return shape.")
                         whenPresent("Worker #1's prompt. Worker #1's label uses the primary `description`.")
                         example("Search for all uses of validateToken() in agent/src and report file:line for each.")
+                    }
+                    optional("shared_prompt", "string") {
+                        llmSeesIt("Optional shared context PREPENDED to every prompt (prompt, prompt_2..5). " +
+                            "Use this when fanning out multiple sub-agents over the SAME large payload from different " +
+                            "angles: state the common payload once here, and put only the per-agent angle/question in each " +
+                            "prompt_N. Do NOT write placeholders like '[same as above]' in prompt_2..5 — sub-agents cannot " +
+                            "see each other's prompts; use shared_prompt for the common part instead.")
+                        humanReadable("Common context every worker shares — stated once instead of duplicated into each prompt_N. Prepended verbatim (plus a blank line) to each branch's prompt before dispatch.")
+                        whenPresent("`composePromptPairs` prepends `shared_prompt + \"\\n\\n\"` to every branch's effective prompt.")
+                        whenAbsent("Each prompt_N is dispatched as-is; behaviour is unchanged from before the field existed.")
                     }
                     optional("prompt_2", "string") {
                         llmSeesIt("Optional second prompt (parallel execution, read-only agents only).")
@@ -652,21 +680,12 @@ Tips:
 
         val isReadOnly = inferPlanMode(coreTools)
 
-        // Collect parallel prompts for read-only agents, paired with their per-worker descriptions.
-        // Alignment: PROMPT_KEYS[i] ↔ DESCRIPTION_KEYS[i]. Missing description_N falls back to the primary description.
-        val promptPairs: List<Pair<String, String>> = if (isReadOnly) {
-            PROMPT_KEYS.mapIndexedNotNull { i, pKey ->
-                val p = params[pKey]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: return@mapIndexedNotNull null
-                val dKey = DESCRIPTION_KEYS[i]
-                val d = params[dKey]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: description
-                p to d
-            }
-        } else {
-            listOf(prompt to description)
-        }
-
-        if (promptPairs.isEmpty()) {
-            return errorResult("No valid prompts provided")
+        // Compose per-worker (effectivePrompt, description) pairs: prepend `shared_prompt` to every
+        // branch, fan out prompt_2..5 for read-only agents only, and reject placeholder-stub branches.
+        // Alignment: PROMPT_KEYS[i] ↔ DESCRIPTION_KEYS[i]. Missing description_N falls back to the primary.
+        val promptPairs: List<Pair<String, String>> = when (val composed = composePromptPairs(params, isReadOnly)) {
+            is PromptComposition.Invalid -> return errorResult(composed.message)
+            is PromptComposition.Resolved -> composed.pairs
         }
 
         // Effective model: explicit param > YAML frontmatter > Sonnet non-thinking (sub-agent default tier)
@@ -1089,6 +1108,15 @@ Tips:
         isError = true
     )
 
+    /**
+     * Result of [composePromptPairs]: either the resolved (effectivePrompt, description)
+     * pairs ready for dispatch, or a validation error to surface to the LLM.
+     */
+    sealed class PromptComposition {
+        data class Resolved(val pairs: List<Pair<String, String>>) : PromptComposition()
+        data class Invalid(val message: String) : PromptComposition()
+    }
+
     companion object {
         private val LOG = Logger.getInstance(SpawnAgentTool::class.java)
 
@@ -1097,6 +1125,77 @@ Tips:
         const val DEFAULT_AGENT_TYPE = "general-purpose"
         val PROMPT_KEYS = listOf("prompt", "prompt_2", "prompt_3", "prompt_4", "prompt_5")
         val DESCRIPTION_KEYS = listOf("description", "description_2", "description_3", "description_4", "description_5")
+
+        /**
+         * Phrases that only make sense if a sub-agent prompt is referencing a SIBLING prompt
+         * it cannot see (each worker starts with a fresh context). Used by the parallel
+         * placeholder-stub guard. Matched case-insensitively against trimmed prompts that are
+         * short enough (<= [PLACEHOLDER_STUB_MAX_LEN]) to be stubs rather than real tasks.
+         */
+        private val PLACEHOLDER_STUB_PHRASES = listOf(
+            "as above", "see above", "same as prompt", "same prompt as",
+            "previous prompt", "full system prompt content", "full prompt content", "placeholder"
+        )
+        private const val PLACEHOLDER_STUB_MAX_LEN = 200
+
+        /** Prepend the shared payload (when present) to one branch's prompt. */
+        private fun composeBranchPrompt(sharedPrompt: String?, branchPrompt: String): String =
+            if (sharedPrompt.isNullOrBlank()) branchPrompt else "$sharedPrompt\n\n$branchPrompt"
+
+        /**
+         * True when a prompt looks like a placeholder referencing another prompt the sub-agent
+         * cannot see (e.g. "[Same prompt as above …]"). Only short prompts are considered so a
+         * genuine multi-sentence task that incidentally says "as above" is not flagged.
+         */
+        internal fun looksLikePlaceholderStub(prompt: String): Boolean {
+            val trimmed = prompt.trim()
+            if (trimmed.length > PLACEHOLDER_STUB_MAX_LEN) return false
+            val lower = trimmed.lowercase()
+            return PLACEHOLDER_STUB_PHRASES.any { lower.contains(it) }
+        }
+
+        /**
+         * Build the per-worker (effectivePrompt, description) pairs for a dispatch.
+         *
+         * - `shared_prompt` (when non-blank) is prepended to EVERY branch — the model states a
+         *   large common payload once instead of duplicating it into each prompt_N.
+         * - Read-only agents fan out over `prompt`..`prompt_5`; write-capable agents use only the
+         *   primary `prompt` (parallel writes are unsafe).
+         * - When fanning out (2+ branches), a branch that looks like a placeholder stub referencing
+         *   a sibling prompt is rejected with an actionable hint pointing at `shared_prompt`, rather
+         *   than silently dispatching the literal placeholder to a worker.
+         *
+         * Pure function — no IntelliJ dependencies — so the composition contract is unit-testable.
+         */
+        fun composePromptPairs(params: JsonObject, isReadOnly: Boolean): PromptComposition {
+            val sharedPrompt = params["shared_prompt"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+            val primaryDescription = params["description"]?.jsonPrimitive?.content ?: ""
+            val keysToScan = if (isReadOnly) PROMPT_KEYS else listOf(PROMPT_KEYS.first())
+
+            // Collect present, non-blank prompt fields paired with their (aligned) descriptions.
+            val raw: List<Triple<String, String, String>> = keysToScan.mapIndexedNotNull { i, pKey ->
+                val p = params[pKey]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: return@mapIndexedNotNull null
+                val d = params[DESCRIPTION_KEYS[i]]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: primaryDescription
+                Triple(pKey, p, d)
+            }
+
+            if (raw.isEmpty()) return PromptComposition.Invalid("No valid prompts provided")
+
+            // Placeholder-stub guard only applies when fanning out — a single prompt has no sibling.
+            if (raw.size >= 2) {
+                raw.firstOrNull { looksLikePlaceholderStub(it.second) }?.let { (key, p, _) ->
+                    return PromptComposition.Invalid(
+                        "Sub-agent prompt for '$key' looks like a placeholder referencing another prompt " +
+                        "(\"${excerpt(p, 80)}\"). Each sub-agent starts with a FRESH context and cannot see " +
+                        "your other prompts. Put the shared payload once in the 'shared_prompt' parameter " +
+                        "(it is prepended to every branch) and put only the branch-specific instructions in " +
+                        "each prompt_N."
+                    )
+                }
+            }
+
+            return PromptComposition.Resolved(raw.map { (_, p, d) -> composeBranchPrompt(sharedPrompt, p) to d })
+        }
 
         /**
          * Fixed iteration cap matching the main agent — sub-agents run until

@@ -29,6 +29,7 @@ The actual parameters are:
 
 - `description` (required) — 3-5 word UI label
 - `prompt` (required) — full task brief
+- `shared_prompt` (optional) — common context prepended to EVERY branch (`prompt` + `prompt_2..5`)
 - `prompt_2`, `prompt_3`, `prompt_4`, `prompt_5` (optional) — parallel fan-out
 - `description_2..5` (optional) — per-worker labels
 - `agent_type` (optional) — persona selection
@@ -77,6 +78,27 @@ The `attempt_completion` filter is interesting: any persona's YAML can list
 drops it. The replacement `task_report` is what flows back to the parent's tool
 result. From the parent's perspective, sub-agents never "complete the task" — they
 "file a report".
+
+## Shared context across branches (`shared_prompt`)
+
+Each sub-agent starts with a **fresh, empty context** — it cannot see the parent's
+conversation history or its sibling branches' prompts. To fan N sub-agents over the
+SAME large payload (e.g. analyze one 4000-word spec from different angles), put the
+payload **once** in `shared_prompt` and only the per-agent angle in each `prompt_N`.
+`composePromptPairs` prepends `shared_prompt + "\n\n"` to every branch (and to the
+single-agent `prompt` too — it is composition-only, never parallel-only).
+
+Before `shared_prompt` existed, the model had to duplicate the payload into every
+`prompt_N`, and would sometimes "optimize" by writing a placeholder like
+`[Same prompt as above — …]` into `prompt_2`/`prompt_4`. The dispatcher passed that
+literal string through, so those workers received the placeholder instead of the work.
+
+**Placeholder-stub guard.** When fanning out (2+ branches), `composePromptPairs`
+rejects any branch that looks like a placeholder referencing a sibling prompt (short
+text containing phrases like "as above", "see above", "previous prompt"). The error
+points the model at `shared_prompt` instead of silently dispatching the stub. The
+guard is skipped for single-agent dispatch (no sibling to reference) and for long
+genuine prompts (>200 chars) that merely happen to contain such a phrase.
 
 ## Parallel mode internals
 
@@ -167,7 +189,7 @@ trade-off — but it does mean a single string typo silently picks `general-purp
 
 | Aspect | Cost | Benefit |
 | --- | --- | --- |
-| Schema tokens | ~13 properties (description + prompt + 4×prompt + 4×description + agent_type + model) | Full delegation primitive + 5x parallel fan-out |
+| Schema tokens | ~14 properties (description + prompt + shared_prompt + 4×prompt + 4×description + agent_type + model) | Full delegation primitive + 5x parallel fan-out + shared-context factoring |
 | Persona system | 8 bundled + customs need maintenance, hot-reload threads | Specialization without orchestrator prompt bloat |
 | Hidden-mode complexity | Read-only-vs-write detection is implicit; silent fallback when wrong | One unified entry point — LLM doesn't have to pick `agent_single` vs `agent_parallel` |
 | File ownership | Whole-file granularity is coarse | Prevents corruption from concurrent edits |
