@@ -494,7 +494,7 @@ interface ChatState {
   resolveApproval(decision: 'approve' | 'deny' | 'allowForSession'): void;
   showProcessInput(processId: string, description: string, prompt: string, command: string): void;
   resolveProcessInput(input: string): void;
-  sendMessage(text: string, mentions: Mention[], attachments?: Array<{ sha256: string; mime: string; size: number; originalFilename: string }>): void;
+  sendMessage(text: string, mentions: Mention[], attachments?: Array<{ sha256: string; mime: string; size: number; originalFilename: string; kind?: 'image' | 'file'; path?: string }>): void;
   setDebugLogVisible(visible: boolean): void;
   addDebugLogEntry(entry: DebugLogEntry): void;
   clearDebugLog(): void;
@@ -1629,7 +1629,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  sendMessage(text: string, mentions: Mention[], attachments?: Array<{ sha256: string; mime: string; size: number; originalFilename: string }>) {
+  sendMessage(text: string, mentions: Mention[], attachments?: Array<{ sha256: string; mime: string; size: number; originalFilename: string; kind?: 'image' | 'file'; path?: string }>) {
     // Do NOT add the user message here — Kotlin is authoritative.
     // For first messages: startSession() adds it atomically.
     // For subsequent messages: appendUserMessage() adds it from Kotlin.

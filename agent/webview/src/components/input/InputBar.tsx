@@ -1,5 +1,5 @@
 import { memo, useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { Plus, ArrowUp, Square, ChevronDown, Sparkles, Brain, ListChecks, File, Folder, Hash, SquareKanban, Zap, Image as ImageIcon } from 'lucide-react';
+import { Plus, ArrowUp, Square, ChevronDown, Sparkles, Brain, ListChecks, File, Folder, Hash, SquareKanban, Zap, Paperclip } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
 import { DelegationQuestionBanner } from './DelegationQuestionBanner';
 import type { Mention, MentionSearchResult } from '@/bridge/types';
@@ -416,9 +416,7 @@ interface InputBarContentProps {
   setSkillSelectedIndex: (i: number) => void;
   skillListRef: React.RefObject<HTMLDivElement>;
   // Phase 5: image-attachment props (only those InputBarContent itself uses)
-  onPickImage: () => void;
   onPasteImage: (file: File) => Promise<boolean>;
-  imageEnabled: boolean;
 }
 
 function InputBarContent({
@@ -456,9 +454,7 @@ function InputBarContent({
   skillSelectedIndex,
   setSkillSelectedIndex,
   skillListRef,
-  onPickImage,
   onPasteImage,
-  imageEnabled,
 }: InputBarContentProps) {
   // Focus on trigger from store
   const focusTrigger = useChatStore(s => s.focusInputTrigger);
@@ -605,16 +601,15 @@ function InputBarContent({
                 <span>Skill</span>
                 <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>/</span>
               </DropdownMenuItem>
-              {/* Phase 5: image attachment via file picker. Paste + drag-drop
-                  are wired separately (RichInput.handlePaste + the wrapping
-                  div's onDrop). Hidden when visual support is disabled. */}
-              {imageEnabled && (
-                <DropdownMenuItem onSelect={guardedSelect(onPickImage)}>
-                  <ImageIcon className="size-3.5" style={{ color: 'var(--accent-edit, #f59e0b)' }} />
-                  <span>Image</span>
-                  <span className="ml-auto text-[10px]" style={{ color: 'var(--fg-muted)' }}>file</span>
-                </DropdownMenuItem>
-              )}
+              {/* JVM-native file picker — invoked via _pickAttachment bridge so
+                  the IntelliJ FileChooser opens instead of an HTML input dialog
+                  (JCEF does not bridge HTML file dialogs to the OS). Always
+                  shown regardless of visual-support setting; the JVM side
+                  enforces image-vs-file caps independently. */}
+              <DropdownMenuItem onSelect={guardedSelect(() => (window as any)._pickAttachment?.())}>
+                <Paperclip className="size-3.5" style={{ color: 'var(--accent-edit, #f59e0b)' }} />
+                <span>Attach file…</span>
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -666,7 +661,6 @@ export const InputBar = memo(function InputBar() {
   const busy = useChatStore(s => s.busy);
   const outerCompacting = useChatStore(s => s.compactionState.active);
   const richInputRef = useRef<RichInputHandle>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [hasText, setHasText] = useState(false);
   const [showMentions, setShowMentions] = useState(false);
@@ -739,60 +733,25 @@ export const InputBar = memo(function InputBar() {
     // Trigger an initial pull on mount in case Kotlin already has fresher
     // values than the static defaults the manager was constructed with.
     (window as any).workflowAgent?.refreshImageSettings?.();
-    return () => { delete (window as any).__applyImageSettings; };
-  }, []);
 
-  const handleAttachFile = useCallback(async (file: File | null | undefined) => {
-    console.log('[multimodal:attach] handleAttachFile: file=', file && { name: file.name, type: file.type, size: file.size }, 'managerReady=', !!attachmentManagerRef.current);
-    if (!file || !attachmentManagerRef.current) {
-      console.warn('[multimodal:attach] handleAttachFile: bailing — file or manager missing');
-      return;
-    }
-    const result = await attachmentManagerRef.current.attachFile(file);
-    console.log('[multimodal:attach] handleAttachFile: attachFile returned', result ? `OK (sha256=${result.sha256.slice(0, 12)}…)` : 'NULL (rejected — see prior log line)');
+    // _addAttachmentChip — pushed by Kotlin's AttachmentIngestService after the
+    // JVM stores bytes for a picker/drop attachment. Only metadata crosses the
+    // bridge; bytes live on disk. Dedup is handled by AttachmentManager.
+    (window as any)._addAttachmentChip = (meta: any) => {
+      try {
+        const m = typeof meta === 'string' ? JSON.parse(meta) : meta;
+        attachmentManagerRef.current?.addExternalChip(m);
+      } catch (e) { console.warn('[multimodal:attach] _addAttachmentChip: bad payload', e); }
+    };
+
+    return () => {
+      delete (window as any).__applyImageSettings;
+      delete (window as any)._addAttachmentChip;
+    };
   }, []);
 
   const handleRemoveAttachment = useCallback((sha256: string) => {
     attachmentManagerRef.current?.remove(sha256);
-  }, []);
-
-  const handlePickImage = useCallback(() => {
-    console.log('[multimodal:attach] handlePickImage: triggering file picker, refReady=', !!fileInputRef.current);
-    fileInputRef.current?.click();
-  }, []);
-
-  const handleFilePicked = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    console.log('[multimodal:attach] handleFilePicked: change event fired, files.length=', e.target.files?.length ?? 0, 'first=', file && { name: file.name, type: file.type, size: file.size });
-    await handleAttachFile(file);
-    // Reset value so the same file can be picked again later.
-    e.target.value = '';
-  }, [handleAttachFile]);
-
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    // When visual support is disabled, let all drops fall through to native handlers.
-    if (!imageEnabled) return;
-    if (!e.dataTransfer) return;
-    // Only intercept image drops — let other drops (e.g. text) fall through to
-    // the contenteditable's native handler.
-    const files = Array.from(e.dataTransfer.files ?? []).filter(f =>
-      f.type.startsWith('image/'),
-    );
-    if (files.length === 0) return;
-    e.preventDefault();
-    for (const file of files) {
-      await handleAttachFile(file);
-    }
-  }, [handleAttachFile, imageEnabled]);
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    // When visual support is disabled, do not intercept drag-over events.
-    if (!imageEnabled) return;
-    if (!e.dataTransfer) return;
-    const hasImage = Array.from(e.dataTransfer.items ?? []).some(item =>
-      item.kind === 'file' && item.type.startsWith('image/'),
-    );
-    if (hasImage) e.preventDefault();
   }, []);
 
   const handlePasteImage = useCallback(async (file: File): Promise<boolean> => {
@@ -1024,7 +983,10 @@ export const InputBar = memo(function InputBar() {
     // the chip or switch to a vision-capable model. Server-side will also
     // reject (the routing predicate strips images and the gateway returns a
     // confusing reply), but the toast is faster + clearer.
-    if (pending.length > 0) {
+    // Note: file attachments (kind === 'file') do NOT require vision — they are
+    // read on demand by the agent via read_file/read_document.
+    const imagePending = pending.filter(a => a.kind !== 'file');
+    if (imagePending.length > 0) {
       const activeModelName = state.inputState.model ?? '';
       const activeModel = modelByName(activeModelName);
       // `vision === undefined` (older model-list payloads or unknown model)
@@ -1058,11 +1020,15 @@ export const InputBar = memo(function InputBar() {
     // sha/mime/size/filename to build ContentBlock.ImageRef parts on the user
     // ApiMessage. Without this, BrainRouter sees no image parts and routes
     // through the text-only completions endpoint.
+    // kind/path are included so Kotlin can route images to vision and files
+    // to the read-on-demand path (splitAttachmentsJson in AgentController).
     const attachmentsForTurn = (attachmentManagerRef.current?.list() ?? []).map(a => ({
       sha256: a.sha256,
       mime: a.mime,
       size: a.size,
       originalFilename: a.originalFilename,
+      kind: a.kind,
+      path: a.path,
     }));
     console.log('[multimodal:attach] handleSend: passing', attachmentsForTurn.length, 'attachments to sendMessage');
     useChatStore.getState().sendMessage(text.trim(), mentions, attachmentsForTurn);
@@ -1111,20 +1077,9 @@ export const InputBar = memo(function InputBar() {
         className="relative rounded-xl border p-2 cursor-text"
         style={{ backgroundColor: 'var(--input-bg)', borderColor: 'var(--input-border)' }}
         onClick={() => richInputRef.current?.focus()}
-        onDrop={handleDrop}
-        onDragOver={handleDragOver}
       >
         <DropOverlay active={useChatStore(s => s.dropActive)} />
         <ChipPreview attachments={attachments} onRemove={handleRemoveAttachment} />
-        {/* Hidden picker — opened by the "Image" dropdown item */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp"
-          onChange={handleFilePicked}
-          style={{ display: 'none' }}
-          aria-hidden="true"
-        />
         <InputBarContent
           showMentions={showMentions}
           showSkills={showSkills}
@@ -1160,9 +1115,7 @@ export const InputBar = memo(function InputBar() {
           skillSelectedIndex={skillKbd.selectedIndex}
           setSkillSelectedIndex={skillKbd.setSelectedIndex}
           skillListRef={skillKbd.listRef}
-          onPickImage={handlePickImage}
           onPasteImage={handlePasteImage}
-          imageEnabled={imageEnabled}
         />
       </div>
       {/* Phase 5/v1.1 — oversize-image compression confirmation modal */}

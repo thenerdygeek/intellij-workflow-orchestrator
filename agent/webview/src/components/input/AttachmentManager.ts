@@ -244,6 +244,10 @@ export class AttachmentManager {
   async uploadAll(): Promise<string[]> {
     const results: string[] = [];
     for (const att of this.attachments) {
+      // Skip JVM-stored file attachments (bytes already live on disk; the chip
+      // carries bytes = new Uint8Array(0)) and any zero-byte chip from the JVM
+      // image path. The pasted-image upload path is unaffected (has real bytes).
+      if (att.kind === 'file' || att.bytes.byteLength === 0) { results.push(att.sha256); continue; }
       const existsBridge = window._attachmentExists;
       let needUpload = true;
       if (existsBridge) {
