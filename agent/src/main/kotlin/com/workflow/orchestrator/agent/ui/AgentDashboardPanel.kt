@@ -944,6 +944,13 @@ class AgentDashboardPanel(
         cefPanel?.pushImageSettings()
     }
 
+    // ── File-attachment wiring (Task 8 / Plan 2026-05-27) ──────────────────
+    // Mirror the setImageSettingsProvider / pushImageSettings forwarder pattern.
+
+    fun setOnPickAttachment(fn: () -> Unit) { cefPanel?.onPickAttachment = fn }
+    fun setOnDropTargetReady(fn: (List<java.io.File>) -> Unit) { cefPanel?.onDropTargetReady = fn }
+    fun pushAttachmentChip(json: String) { cefPanel?.pushAttachmentChip(json) }
+
     fun setCefCancelSteeringCallback(onCancel: (String) -> Unit) {
         cefPanel?.onCancelSteering = onCancel
     }

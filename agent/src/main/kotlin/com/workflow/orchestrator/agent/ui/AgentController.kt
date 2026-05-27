@@ -252,6 +252,13 @@ class AgentController(
     private var currentSessionId: String? = null
 
     /**
+     * File-attachment ingest service (Task 8 / Plan 2026-05-27).
+     * Wired once in [init] after [panel] callbacks are set up.
+     * Null until the init block has run (safe: all callers are post-init).
+     */
+    private var attachmentIngest: AttachmentIngestService? = null
+
+    /**
      * True once any session-entry path has started/resumed/forked a session. Replaces the
      * old `contextManager == null` heuristic for deciding whether a user message starts a
      * brand-new chat (which wiped the view). Reset only by [resetForNewChat].
@@ -664,6 +671,71 @@ class AgentController(
             buildImageSettingsJson()
         }
 
+        // ── File-attachment ingest service (Task 8 / Plan 2026-05-27) ────────
+        // Reads bytes off-EDT (controllerScope.launch(Dispatchers.IO)), then
+        // delegates to AttachmentIngestService which stores bytes, emits chip
+        // metadata to the webview, and activates read_document when needed.
+        val ingest = AttachmentIngestService(
+            sessionDirProvider = {
+                // Reuse the same lazy-allocate logic as setCurrentSessionDirProvider above:
+                // return the current session dir Path, pre-creating it if needed.
+                val basePath = project.basePath ?: return@AttachmentIngestService null
+                val sid = synchronized(this) {
+                    currentSessionId ?: java.util.UUID.randomUUID().toString().also {
+                        currentSessionId = it
+                        LOG.info("AgentController: pre-allocated sessionId=$it for file attachment")
+                    }
+                }
+                val dir = java.nio.file.Paths.get(
+                    ProjectIdentifier.agentDir(basePath).absolutePath,
+                    "sessions",
+                    sid,
+                )
+                try {
+                    java.nio.file.Files.createDirectories(dir)
+                } catch (e: Exception) {
+                    LOG.warn("AgentController: failed to create session dir $dir for attachment", e)
+                    return@AttachmentIngestService null
+                }
+                dir
+            },
+            settingsProvider = {
+                val st = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state
+                AttachmentIngestService.Settings(
+                    imageEnabled = st.enableImageInput,
+                    imageMimeWhitelist = st.imageMimeWhitelist.toSet(),   // MutableList<String> → Set<String>
+                    imageMaxBytes = st.imageMaxBytes,
+                    fileMaxBytes = st.fileMaxBytes,
+                    imagesPerTurnCap = st.imagesPerTurnCap,
+                    filesPerTurnCap = st.filesPerTurnCap,
+                )
+            },
+            onChip = { meta ->
+                invokeLater { panel.pushAttachmentChip(chipMetaToJson(meta)) }
+            },
+            onToast = { msg, kind ->
+                invokeLater { dashboard.appendStatus(msg, statusTypeFor(kind)) }
+            },
+            onFilesAttached = {
+                service.activateDeferredTool("read_document")
+            },
+        )
+        this.attachmentIngest = ingest
+
+        panel.setOnPickAttachment {
+            controllerScope.launch(Dispatchers.IO) {
+                val vFiles = AttachmentPicker(project).choose()
+                val jFiles = vFiles.map { java.io.File(it.path) }
+                ingest.ingest(jFiles.map { readIncoming(it) })
+            }
+        }
+        panel.setOnDropTargetReady { osFiles ->
+            controllerScope.launch(Dispatchers.IO) {
+                ingest.ingest(osFiles.map { readIncoming(it) })
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         // ════════════════════════════════════════════════════════════════
         // Bug 2026-05-21 fix — Mirror panels (e.g. the "View in Editor" chat
         // tab via AgentChatEditor) used to only get the small subset of
@@ -925,6 +997,65 @@ class AgentController(
         val mimes = state.imageMimeWhitelist.joinToString(",", "[", "]") { "\"$it\"" }
         return """{"maxBytes":${state.imageMaxBytes},"mimeWhitelist":$mimes,"maxPerTurn":${state.imagesPerTurnCap},"enabled":${state.enableImageInput}}"""
     }
+
+    // ── File-attachment helpers (Task 8 / Plan 2026-05-27) ───────────────────
+
+    /**
+     * Read a java.io.File into an [AttachmentIngestService.IncomingFile].
+     * Must be called off-EDT (file I/O + probeContentType).
+     */
+    private fun readIncoming(f: java.io.File): AttachmentIngestService.IncomingFile {
+        val mime = inferMimeType(f)
+        return AttachmentIngestService.IncomingFile(f.name, mime, f.readBytes())
+    }
+
+    /**
+     * Review fix B6: [java.nio.file.Files.probeContentType] returns null on macOS/JBR
+     * for common types (PNG, JPEG, PDF, …). A null would route an image as a file.
+     * Fall back to extension sniffing so images still reach the vision path.
+     */
+    private fun inferMimeType(f: java.io.File): String {
+        val probed = runCatching { java.nio.file.Files.probeContentType(f.toPath()) }.getOrNull()
+        if (!probed.isNullOrBlank()) return probed
+        return when (f.extension.lowercase()) {
+            "png" -> "image/png"
+            "jpg", "jpeg" -> "image/jpeg"
+            "webp" -> "image/webp"
+            "gif" -> "image/gif"
+            "pdf" -> "application/pdf"
+            "txt", "log" -> "text/plain"
+            "md", "markdown" -> "text/markdown"
+            "json" -> "application/json"
+            "xml" -> "application/xml"
+            "yaml", "yml" -> "application/yaml"
+            "csv" -> "text/csv"
+            "html", "htm" -> "text/html"
+            "rtf" -> "application/rtf"
+            "doc" -> "application/msword"
+            "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            "xls" -> "application/vnd.ms-excel"
+            "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            "ppt" -> "application/vnd.ms-powerpoint"
+            "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            "odt" -> "application/vnd.oasis.opendocument.text"
+            "epub" -> "application/epub+zip"
+            else -> "application/octet-stream"
+        }
+    }
+
+    /** Serialise [AttachmentIngestService.ChipMeta] to a compact JSON string for the webview. */
+    private fun chipMetaToJson(m: AttachmentIngestService.ChipMeta): String {
+        val pathJson = m.path?.let { JsEscape.toJsonString(it) } ?: "null"
+        return """{"sha256":${JsEscape.toJsonString(m.sha256)},"mime":${JsEscape.toJsonString(m.mime)},""" +
+            """"size":${m.size},"originalFilename":${JsEscape.toJsonString(m.originalFilename)},""" +
+            """"kind":${JsEscape.toJsonString(m.kind)},"path":$pathJson}"""
+    }
+
+    /** Map the ingest-service toast kind ("error" / anything else) to a [RichStreamingPanel.StatusType]. */
+    private fun statusTypeFor(kind: String): RichStreamingPanel.StatusType =
+        if (kind == "error") RichStreamingPanel.StatusType.WARNING else RichStreamingPanel.StatusType.INFO
+
+    // ─────────────────────────────────────────────────────────────────────────
 
     /**
      * Multimodal-agent Phase 7 followup F-P5-2 / F-P6-1 — entry point for the
@@ -1661,6 +1792,9 @@ class AgentController(
      */
     private fun executeTaskWithMentions(text: String, mentionsJson: String, attachmentsJson: String? = null) {
         if (text.isBlank() && mentionsJson == "[]" && attachmentsJson.isNullOrBlank()) return
+
+        // Reset per-turn attachment counters now that the user has pressed Send.
+        attachmentIngest?.resetTurn()
 
         val (attachments, files) = splitAttachmentsJson(attachmentsJson)
         val fileMarker = composeFileMarker(files)
@@ -2779,6 +2913,9 @@ class AgentController(
     private fun resetForNewChat() {
         // Reset all service-level state (plan mode, tools, processes, active task)
         service.resetForNewChat()
+
+        // Reset per-turn attachment counters (new session = new turn).
+        attachmentIngest?.resetTurn()
 
         // Reset controller state
         clearActiveLoopState()
