@@ -82,6 +82,16 @@ class DocumentTool(
                     "The response ends with `[... N more characters available; call read_document(offset=X) " +
                     "to continue ...]` whenever there is more content past the slice.",
             ),
+            "page" to ParameterProperty(
+                type = "integer",
+                description = "Optional. Jump to this 1-based page number (PDF/PPTX). Resolved via the " +
+                    "document index; offset remains authoritative. Mutually exclusive with offset/section.",
+            ),
+            "section" to ParameterProperty(
+                type = "string",
+                description = "Optional. Jump to the heading with this text (case-insensitive). Resolved via " +
+                    "the document index. Mutually exclusive with offset/page.",
+            ),
         ),
         required = listOf("path"),
     )
@@ -208,6 +218,44 @@ class DocumentTool(
                 )
                 example("0")
                 example("200000")
+            }
+            optional("page", "integer") {
+                llmSeesIt(
+                    "Optional. Jump to this 1-based page number (PDF/PPTX). Resolved via the document index; " +
+                        "offset remains authoritative. Mutually exclusive with offset/section."
+                )
+                humanReadable(
+                    "A convenience anchor that lets the LLM jump directly to a known page number rather than " +
+                        "computing a character offset. Use page=N when you know which page to read (e.g. page 5 " +
+                        "of a requirements spec). The service resolves the page to a character offset via the " +
+                        "document index and returns a slice starting at that position. Mutually exclusive with " +
+                        "`offset` and `section` — if more than one is supplied, `page` wins over `offset`, " +
+                        "`section` wins over `page`."
+                )
+                whenPresent("The document index resolves the page number to a character offset; extraction starts there.")
+                whenAbsent("Falls back to the `section` param, then `offset`, then 0.")
+                constraint("must be a positive integer (1-based); page 0 or negative is treated as absent")
+                constraint("not all formats expose page boundaries — if the index lacks page data, the tool falls back to offset=0")
+                example("1")
+                example("5")
+            }
+            optional("section", "integer") {
+                llmSeesIt(
+                    "Optional. Jump to the heading with this text (case-insensitive). Resolved via the document " +
+                        "index. Mutually exclusive with offset/page."
+                )
+                humanReadable(
+                    "A convenience anchor that lets the LLM jump directly to a named section (heading) in the " +
+                        "document rather than computing a character offset. Case-insensitive substring match. " +
+                        "Mutually exclusive with `offset` and `page` — `section` takes the highest priority when " +
+                        "multiple cursor params are supplied."
+                )
+                whenPresent("The document index looks up the first heading matching the text and resolves it to a character offset.")
+                whenAbsent("Falls back to the `page` param, then `offset`, then 0.")
+                constraint("heading lookup is case-insensitive and matches on substring; the first match wins")
+                constraint("if no heading matches, the tool falls back to offset=0 rather than returning an error")
+                example("Introduction")
+                example("Functional Requirements")
             }
         }
         verdict {
