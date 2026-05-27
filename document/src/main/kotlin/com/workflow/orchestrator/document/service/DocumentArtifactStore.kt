@@ -50,10 +50,23 @@ class DocumentArtifactStore(
     /**
      * Extracts the full (uncapped) artifact and persists it. Throws on extraction failure so the
      * caller can route the throwable into [writeFailure]. Returns the materialized [DocumentArtifact].
+     *
+     * @param extractTimeoutMs Timeout forwarded to [TikaDocumentExtractor.extractBlocks] via
+     *   [com.workflow.orchestrator.core.model.ExtractOptions.timeoutMs]. Defaults to 600 000 ms
+     *   (10 min) so direct and test callers get a generous cap rather than the extractor's own
+     *   30 s default.
      */
-    suspend fun extractAndPersist(source: Path, artDir: Path, contentHash: String): DocumentArtifact =
+    suspend fun extractAndPersist(
+        source: Path,
+        artDir: Path,
+        contentHash: String,
+        extractTimeoutMs: Long = 600_000L,
+    ): DocumentArtifact =
         withContext(Dispatchers.IO) {
-            val blockResult = extractor.extractBlocks(source)
+            val blockResult = extractor.extractBlocks(
+                source,
+                com.workflow.orchestrator.core.model.ExtractOptions(timeoutMs = extractTimeoutMs),
+            )
             if (blockResult.isError) error(blockResult.summary)
             val be = blockResult.data!!
 

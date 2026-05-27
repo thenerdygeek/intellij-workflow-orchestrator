@@ -47,7 +47,7 @@ class SessionDocumentArtifactService(
         val deferred = inFlight.computeIfAbsent(hash) {
             cs.async(Dispatchers.IO) {
                 val outcome = withTimeoutOrNull(jobBudgetMs) {
-                    runCatching { store.extractAndPersist(path, artDir, hash) }
+                    runCatching { store.extractAndPersist(path, artDir, hash, jobBudgetMs) }
                 } ?: Result.failure(RuntimeException("extraction exceeded ${jobBudgetMs / 1000}s budget"))
                 if (outcome.isFailure) {
                     store.writeFailure(artDir, outcome.exceptionOrNull()?.message ?: "unknown error")

@@ -63,4 +63,30 @@ class DocumentArtifactStorePersistTest {
         assertEquals(a, b)
         assertTrue(a != c)
     }
+
+    /**
+     * Smoke test that the [extractTimeoutMs] parameter is accepted at call sites and that
+     * passing an explicit value compiles and returns a valid artifact.  The precise forwarding
+     * of the value into [com.workflow.orchestrator.core.model.ExtractOptions.timeoutMs] is
+     * verified structurally — [DocumentArtifactStore.extractAndPersist] has no code path that
+     * ignores [extractTimeoutMs]; the only statement that creates an [ExtractOptions] instance
+     * now uses it directly (see the production source).  A MockK-based capture test was
+     * evaluated but skipped: [TikaDocumentExtractor] is a `final` class that also executes
+     * heavyweight Tika initialisation in `init {}`, and the `:document` module intentionally
+     * carries no MockK test-dependency (dependency-lock + verification-metadata would both
+     * need updating just for this one assertion).
+     */
+    @Test
+    fun `extractAndPersist accepts an explicit extractTimeoutMs and produces a valid artifact`() = runBlocking {
+        val src = fixture("spec-with-tables.pdf")
+        val hash = store.hashFile(src)
+        val artDir = cacheRoot.resolve("timeout-test-$hash")
+
+        // Pass a non-default timeout value; the call must complete without throwing
+        // (the real Tika extraction is fast enough on the test fixture).
+        val artifact = store.extractAndPersist(src, artDir, hash, extractTimeoutMs = 300_000L)
+
+        assertEquals(hash, artifact.meta.contentHash)
+        assertTrue(Files.exists(artDir.resolve("meta.json")))
+    }
 }

@@ -40,7 +40,7 @@ class SessionDocumentArtifactServiceTest {
         coEvery { store.hashFile(src) } returns "hash"
         coEvery { store.loadArtifact(any()) } returns null andThen fakeArtifact(cacheRoot.resolve("hash"))
         coEvery { store.loadFailureIfFresh(any(), any(), any()) } returns null
-        coEvery { store.extractAndPersist(any(), any(), any()) } answers {
+        coEvery { store.extractAndPersist(any(), any(), any(), any()) } answers {
             extractCount.incrementAndGet(); fakeArtifact(cacheRoot.resolve("hash"))
         }
         coEvery { store.loadIndex(any()) } returns DocumentIndex(listOf(DocumentIndex.Anchor("1", 0)), emptyList())
@@ -71,7 +71,7 @@ class SessionDocumentArtifactServiceTest {
         coEvery { store.hashFile(src) } returns "hash"
         coEvery { store.loadArtifact(any()) } returns null
         coEvery { store.loadFailureIfFresh(any(), any(), any()) } returns null
-        coEvery { store.extractAndPersist(any(), any(), any()) } coAnswers {
+        coEvery { store.extractAndPersist(any(), any(), any(), any()) } coAnswers {
             gate.await(); fakeArtifact(cacheRoot.resolve("hash"))
         }
 
