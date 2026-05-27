@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.document.assembler
 
 import com.workflow.orchestrator.core.model.DocumentBlock
+import com.workflow.orchestrator.core.model.DocumentIndex
 
 /**
  * Converts a list of [DocumentBlock] values into a Markdown string, enforcing an
@@ -108,6 +109,37 @@ class MarkdownAssembler {
 
         return AssemblerResult(sb.toString(), truncated = false, contentLength = sb.length)
     }
+
+    /**
+     * Like [assemble] but with NO character cap, additionally returning a [DocumentIndex]
+     * of page-marker and heading char offsets. Used to build the persisted artifact: the
+     * caller slices this full markdown itself, so truncation must not happen here.
+     */
+    fun assembleIndexed(blocks: List<DocumentBlock>): IndexedAssemblerResult {
+        val sb = StringBuilder()
+        val pages = mutableListOf<DocumentIndex.Anchor>()
+        val sections = mutableListOf<DocumentIndex.Anchor>()
+        for (block in blocks) {
+            val offsetBefore = sb.length
+            when (block) {
+                is DocumentBlock.PageMarker ->
+                    pages += DocumentIndex.Anchor(block.pageNumber.toString(), offsetBefore)
+                is DocumentBlock.Heading ->
+                    sections += DocumentIndex.Anchor(block.text, offsetBefore)
+                else -> Unit
+            }
+            sb.append(serializeBlock(block))
+        }
+        val markdown = sb.toString()
+        return IndexedAssemblerResult(
+            markdown = markdown,
+            contentLength = markdown.length,
+            index = DocumentIndex(pages = pages, sections = sections),
+        )
+    }
+
+    /** Test-only hook so tests can compute expected offsets without duplicating serialization. */
+    internal fun serializeBlockForTest(block: DocumentBlock): String = serializeBlock(block)
 
     // ── Block serialisation ────────────────────────────────────────────────────
 
@@ -311,3 +343,9 @@ class MarkdownAssembler {
         return blocks.sumOf { serializeBlock(it).length }
     }
 }
+
+data class IndexedAssemblerResult(
+    val markdown: String,
+    val contentLength: Int,
+    val index: DocumentIndex,
+)
