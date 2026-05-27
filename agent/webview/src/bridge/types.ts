@@ -31,6 +31,12 @@ export interface ImageRef {
   mime: string;
   size: number;
   originalFilename?: string;
+  /**
+   * 'image' renders as an inline thumbnail; 'file' (a non-image attachment routed
+   * to read_file/read_document) renders as a file chip in the message bubble.
+   * Absent ⇒ treated as 'image' for backward compatibility with older payloads.
+   */
+  kind?: 'image' | 'file';
 }
 
 export interface ToolCall {

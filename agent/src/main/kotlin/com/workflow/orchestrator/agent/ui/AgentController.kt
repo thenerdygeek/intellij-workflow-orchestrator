@@ -1821,35 +1821,24 @@ class AgentController(
         mentionsJson: String?,
         uiMessageOverride: com.workflow.orchestrator.agent.session.UiMessage? = null,
         attachments: List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef> = emptyList(),
+        files: List<FileAttachment> = emptyList(),
     ) {
         if (uiMessageOverride?.say == UiSay.PLAN_APPROVED) {
             val markdown = uiMessageOverride.planApprovalData?.planMarkdown.orEmpty()
             dashboard.appendPlanApprovedMessage(markdown)
             return
         }
-        val attachmentsJson = if (attachments.isNotEmpty()) attachmentsToJson(attachments) else null
+        // Echo BOTH images (thumbnails) and files (chips) into the bubble so the
+        // sent message reflects what the user attached (file chips were missing
+        // because files were split out for read-on-demand and never echoed).
+        val attachmentsJson = if (attachments.isNotEmpty() || files.isNotEmpty())
+            bubbleAttachmentsJson(attachments, files) else null
         if (mentionsJson != null) {
             dashboard.appendUserMessageWithMentions(text, mentionsJson, attachmentsJson)
         } else {
             dashboard.appendUserMessage(text, attachmentsJson)
         }
     }
-
-    /** Serialize attachments back to wire JSON for the UI bridge. */
-    private fun attachmentsToJson(attachments: List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef>): String =
-        buildString {
-            append("[")
-            attachments.forEachIndexed { i, ref ->
-                if (i > 0) append(",")
-                append("""{"sha256":"${ref.sha256}","mime":"${ref.mime}","size":${ref.size}""")
-                ref.originalFilename?.let {
-                    append(""","originalFilename":""")
-                    append(JsEscape.toJsonString(it))
-                }
-                append("}")
-            }
-            append("]")
-        }
 
     /**
      * Execute a user task with resolved mention context.
@@ -1880,12 +1869,12 @@ class AgentController(
             }
         } catch (e: Exception) {
             LOG.warn("AgentController: failed to parse mentions JSON, falling back to plain text", e)
-            executeTask(text + fileMarker, displayText = text, attachments = attachments)
+            executeTask(text + fileMarker, displayText = text, attachments = attachments, files = files)
             return
         }
 
         if (mentions.isEmpty()) {
-            executeTask(text + fileMarker, displayText = text, attachments = attachments)
+            executeTask(text + fileMarker, displayText = text, attachments = attachments, files = files)
             return
         }
 
@@ -1907,7 +1896,7 @@ class AgentController(
 
             invokeLater {
                 // Display clean text with chips in UI; pass XML-enriched text to LLM
-                executeTask(taskWithContext + fileMarker, displayText = text, displayMentionsJson = mentionsJson, attachments = attachments)
+                executeTask(taskWithContext + fileMarker, displayText = text, displayMentionsJson = mentionsJson, attachments = attachments, files = files)
             }
         }
     }
@@ -1933,10 +1922,11 @@ class AgentController(
         displayMentionsJson: String? = null,
         uiMessageOverride: UiMessage? = null,
         attachments: List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef> = emptyList(),
+        files: List<FileAttachment> = emptyList(),
     ) {
-        if (task.isBlank() && attachments.isEmpty()) return
+        if (task.isBlank() && attachments.isEmpty() && files.isEmpty()) return
 
-        LOG.info("AgentController.executeTask: ${task.take(80)} (attachments=${attachments.size})")
+        LOG.info("AgentController.executeTask: ${task.take(80)} (attachments=${attachments.size}, files=${files.size})")
 
         // Phase 4 Prong A: the body was previously executed inline on the JCEF bridge
         // callback thread (EDT), with `runBlocking` around `hookManager.dispatch` and
@@ -1945,7 +1935,7 @@ class AgentController(
         // `Dispatchers.EDT` preserves the "UI mutations run on EDT" invariant while
         // letting the suspend calls park the coroutine instead of the event thread.
         controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.executeTask")) {
-            executeTaskInternal(task, displayText, displayMentionsJson, uiMessageOverride, attachments)
+            executeTaskInternal(task, displayText, displayMentionsJson, uiMessageOverride, attachments, files)
         }
     }
 
@@ -1955,6 +1945,7 @@ class AgentController(
         displayMentionsJson: String?,
         uiMessageOverride: UiMessage?,
         attachments: List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef> = emptyList(),
+        files: List<FileAttachment> = emptyList(),
     ) {
         // The text shown in the UI — clean text without mention XML
         val uiText = displayText ?: task
@@ -1995,7 +1986,7 @@ class AgentController(
         val isDelegated = sid != null && service.currentSessionState()?.delegated != null
         if (sid != null && isDelegated && inboundService.hasPendingQuestion(sid)) {
             LOG.info("AgentController: IDE-B short-circuit — routing typed input as delegation local answer for session $sid")
-            displayUserMessage(uiText, displayMentionsJson, attachments = attachments)
+            displayUserMessage(uiText, displayMentionsJson, attachments = attachments, files = files)
             controllerScope.launch(Dispatchers.IO + CoroutineName("AgentController.localAnswer")) {
                 val won = inboundService.localAnswer(sid, task)
                 LOG.info("AgentController: localAnswer result for session $sid: won=$won")
@@ -2014,7 +2005,7 @@ class AgentController(
                 // bytes are stored on disk so a follow-up turn could attach them.
                 LOG.warn("AgentController: ${attachments.size} attachment(s) on pending-question reply will not reach the LLM (rendered in bubble only)")
             }
-            displayUserMessage(uiText, displayMentionsJson, attachments = attachments)
+            displayUserMessage(uiText, displayMentionsJson, attachments = attachments, files = files)
             dashboard.setBusy(true)
             dashboard.setSteeringMode(true)
             pending.complete(task)
@@ -2030,7 +2021,7 @@ class AgentController(
                 // is text-only. Bytes remain on disk for a future turn.
                 LOG.warn("AgentController: ${attachments.size} attachment(s) on plan-mode reply will not reach the LLM (rendered in bubble only)")
             }
-            displayUserMessage(uiText, displayMentionsJson, uiMessageOverride, attachments)
+            displayUserMessage(uiText, displayMentionsJson, uiMessageOverride, attachments, files)
             dashboard.setBusy(true)
             dashboard.setSteeringMode(true)
             // Input is NOT locked — user can always type freely (Cline behavior)
@@ -2072,7 +2063,7 @@ class AgentController(
         }
 
         // Show user message in the chat UI
-        displayUserMessage(uiText, displayMentionsJson, uiMessageOverride, attachments)
+        displayUserMessage(uiText, displayMentionsJson, uiMessageOverride, attachments, files)
         LOG.info("executeTask: setting busy=true, steeringMode=true (turn start)")
         dashboard.setBusy(true)
         dashboard.setSteeringMode(true)
@@ -2088,7 +2079,8 @@ class AgentController(
         val isFirstMessage = !sessionActive
         if (isFirstMessage) {
             contextManager = service.newContextManager()
-            val attachmentsJson = if (attachments.isNotEmpty()) attachmentsToJson(attachments) else null
+            val attachmentsJson = if (attachments.isNotEmpty() || files.isNotEmpty())
+                bubbleAttachmentsJson(attachments, files) else null
             if (displayMentionsJson != null) {
                 dashboard.startSessionWithMentions(uiText, displayMentionsJson, attachmentsJson)
             } else {
@@ -4458,6 +4450,30 @@ fun splitAttachmentsJson(
     } catch (e: Exception) {
         emptyList<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef>() to emptyList()
     }
+}
+
+/**
+ * Serialize the user's attachments for the chat-bubble echo. Each entry carries a
+ * `kind` so the webview can render images as thumbnails and files as chips
+ * (AgentMessage branches on `kind`). Used by both the first-message (startSession)
+ * and subsequent-message (appendUserMessage) bubble echoes.
+ */
+fun bubbleAttachmentsJson(
+    images: List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef>,
+    files: List<FileAttachment>,
+): String = buildString {
+    append("[")
+    var first = true
+    val entry = { sha: String, mime: String, size: Long, name: String?, kind: String ->
+        if (!first) append(",")
+        first = false
+        append("""{"sha256":${JsEscape.toJsonString(sha)},"mime":${JsEscape.toJsonString(mime)},"size":$size,"kind":"$kind"""")
+        name?.let { append(""","originalFilename":${JsEscape.toJsonString(it)}""") }
+        append("}")
+    }
+    images.forEach { entry(it.sha256, it.mime, it.size, it.originalFilename, "image") }
+    files.forEach { entry(it.sha256, it.mime, it.size, it.originalFilename, "file") }
+    append("]")
 }
 
 /** Builds the `<attached_files>` marker appended to the user message, or "" if none. */

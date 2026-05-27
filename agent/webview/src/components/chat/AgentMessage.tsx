@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
+import { FileText } from 'lucide-react';
 import type { UiMessage, Mention, Question } from '@/bridge/types';
 import { useChatStore } from '@/stores/chatStore';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
@@ -19,7 +20,10 @@ const mentionChipColors: Record<string, { color: string; bg: string; border: str
   file:   { color: 'var(--accent-read, #3b82f6)', bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.25)' },
   folder: { color: 'var(--accent-read, #3b82f6)', bg: 'rgba(59,130,246,0.08)', border: 'rgba(59,130,246,0.2)' },
   symbol: { color: 'var(--accent-search, #a78bfa)', bg: 'color-mix(in srgb, var(--accent-search, #a78bfa) 10%, transparent)', border: 'color-mix(in srgb, var(--accent-search, #a78bfa) 25%, transparent)' },
-  ticket: { color: 'var(--accent-read, #3b82f6)', bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.25)' },
+  // Tickets sent as mentions are validated references — render them green to
+  // match the validated (valid-status) chip the user saw in the input, rather
+  // than the generic blue used for file/folder mentions.
+  ticket: { color: 'var(--success, #22c55e)', bg: 'rgba(34,197,94,0.1)', border: 'rgba(34,197,94,0.25)' },
 };
 const defaultMentionColor = { color: 'var(--fg-secondary)', bg: 'var(--chip-bg, rgba(255,255,255,0.06))', border: 'var(--chip-border, rgba(255,255,255,0.1))' };
 
@@ -252,14 +256,32 @@ export const AgentMessage = memo(function AgentMessage({
             {message.attachments && message.attachments.length > 0 && (
               <div className="mb-2 flex flex-wrap gap-2">
                 {message.attachments.map(att => (
-                  <img
-                    key={att.sha256}
-                    src={`http://workflow-agent/attachments/${att.sha256}`}
-                    alt={att.originalFilename ?? att.sha256.slice(0, 8)}
-                    title={att.originalFilename ?? `${att.mime} · ${Math.round(att.size / 1024)}KB`}
-                    className="rounded border max-h-40 max-w-full object-contain"
-                    style={{ borderColor: 'var(--input-border, rgba(255,255,255,0.1))' }}
-                  />
+                  att.kind === 'file' ? (
+                    // Non-image attachment (read on demand via read_file/read_document):
+                    // show a file chip with its name, not a broken <img>.
+                    <span
+                      key={att.sha256}
+                      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium max-w-full"
+                      title={`${att.originalFilename ?? att.sha256.slice(0, 8)} · ${att.mime} · ${Math.round(att.size / 1024)}KB`}
+                      style={{
+                        color: 'var(--accent-read, #3b82f6)',
+                        background: 'rgba(59,130,246,0.1)',
+                        border: '1px solid rgba(59,130,246,0.25)',
+                      }}
+                    >
+                      <FileText size={11} className="shrink-0" />
+                      <span className="truncate">{att.originalFilename ?? att.sha256.slice(0, 8)}</span>
+                    </span>
+                  ) : (
+                    <img
+                      key={att.sha256}
+                      src={`http://workflow-agent/attachments/${att.sha256}`}
+                      alt={att.originalFilename ?? att.sha256.slice(0, 8)}
+                      title={att.originalFilename ?? `${att.mime} · ${Math.round(att.size / 1024)}KB`}
+                      className="rounded border max-h-40 max-w-full object-contain"
+                      style={{ borderColor: 'var(--input-border, rgba(255,255,255,0.1))' }}
+                    />
+                  )
                 ))}
               </div>
             )}

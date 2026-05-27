@@ -1,5 +1,8 @@
 package com.workflow.orchestrator.agent.ui
 
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -39,5 +42,32 @@ class AgentControllerFileAttachmentRoutingTest {
 
     @Test fun `composeFileMarker is empty for no files`() {
         assertEquals("", composeFileMarker(emptyList()))
+    }
+
+    @Test fun `bubbleAttachmentsJson emits kind for both images and files`() {
+        val images = listOf(
+            com.workflow.orchestrator.agent.session.ContentBlock.ImageRef("aa", "image/png", 3, "a.png"),
+        )
+        val files = listOf(
+            FileAttachment("bb", "application/pdf", 9, "s.pdf", "/tmp/s.pdf"),
+        )
+        val json = bubbleAttachmentsJson(images, files)
+
+        // Valid JSON array with one image entry and one file entry.
+        val arr = kotlinx.serialization.json.Json.parseToJsonElement(json).jsonArray
+        assertEquals(2, arr.size)
+
+        val byKind = arr.associate { el ->
+            el.jsonObject["kind"]!!.jsonPrimitive.content to el.jsonObject
+        }
+        // Image entry: kind=image, carries its filename.
+        assertEquals("a.png", byKind["image"]!!["originalFilename"]!!.jsonPrimitive.content)
+        // File entry (the one the bubble previously dropped): kind=file + filename.
+        assertEquals("s.pdf", byKind["file"]!!["originalFilename"]!!.jsonPrimitive.content)
+        assertEquals("application/pdf", byKind["file"]!!["mime"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun `bubbleAttachmentsJson is an empty array for no attachments`() {
+        assertEquals("[]", bubbleAttachmentsJson(emptyList(), emptyList()))
     }
 }
