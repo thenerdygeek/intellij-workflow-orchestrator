@@ -6,6 +6,7 @@ import { AttachmentManager, type PendingAttachment } from '@/components/input/At
 import { ThinkingView } from '@/components/agent/ThinkingView';
 import { CommandPreview } from '@/components/agent/CommandPreview';
 import { CopyButton } from '@/components/ui/copy-button';
+import { MessageList } from '@/components/chat/MessageList';
 
 // Copy-button fixtures: a short string and a long multi-line string (~15K chars)
 // so e2e can assert the clipboard receives the FULL content (no truncation),
@@ -244,6 +245,60 @@ function ThinkingBugSection() {
           <ThinkingView key="thinking-branch-b" content={CONTENT} isStreaming={false} durationMs={finalizedAtMs} />
         </div>
       )}
+    </section>
+  );
+}
+
+// ── §8 Virtualized message-list scroll check ─────────────────────────────────
+// Mounts the REAL MessageList (the chat scroller) with many variable-height rows
+// so Playwright can drive it in real Chromium: jsdom has no layout/scroll model,
+// so the scroll *feel* (thumb tracking, reaching the ends, position stability
+// across updates) can only be verified here. Heights vary deliberately so the
+// defaultItemHeight estimate is sometimes high, sometimes low.
+function ScrollCheckSection() {
+  const [rowCount, setRowCount] = useState(60);
+  const rowHeight = (i: number) => 48 + (i % 7) * 44; // 48..312px
+  const renderItem = (i: number) => (
+    <div
+      data-testid={`scroll-row-${i}`}
+      data-row={i}
+      style={{
+        height: rowHeight(i),
+        background: i % 2 === 0 ? 'var(--toolbar-bg, #26282c)' : 'transparent',
+      }}
+      className="flex items-center rounded px-3 text-xs"
+    >
+      Row {i} · {rowHeight(i)}px
+    </div>
+  );
+  const computeItemKey = (i: number) => `row-${i}`;
+
+  return (
+    <section data-testid="section-scroll" className="space-y-3">
+      <h2 className="text-sm font-semibold">§8 MessageList scroll (virtualized, real Chromium)</h2>
+      <div className="flex items-center gap-3 text-xs">
+        <button
+          data-testid="scroll-append"
+          onClick={() => setRowCount(c => c + 1)}
+          className="px-2 py-1 rounded border"
+          style={{ borderColor: 'var(--border, #2c2f33)' }}
+        >
+          Append row
+        </button>
+        <span data-testid="scroll-rowcount">rows: {rowCount}</span>
+      </div>
+      <div
+        data-testid="scroll-viewport"
+        style={{ height: 480, display: 'flex', flexDirection: 'column' }}
+        className="border rounded"
+      >
+        <MessageList
+          count={rowCount}
+          renderItem={renderItem}
+          computeItemKey={computeItemKey}
+          ariaLabel="scroll-check"
+        />
+      </div>
     </section>
   );
 }
@@ -522,6 +577,8 @@ export function HarnessApp() {
       </section>
 
       <ThinkingBugSection />
+
+      <ScrollCheckSection />
 
       {/* ─────────── §6 CommandPreview shell-aware formatting ─────────── */}
       <section data-testid="section-command-preview" className="space-y-4">
