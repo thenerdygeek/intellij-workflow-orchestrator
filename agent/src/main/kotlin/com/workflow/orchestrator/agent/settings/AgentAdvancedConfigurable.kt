@@ -131,6 +131,18 @@ class AgentAdvancedConfigurable(
                                 "agent receives a timeout error. Range: 5 000–600 000 ms. Default: 30 000 ms."
                         )
                 }
+                row("Document extraction job timeout (ms):") {
+                    textField()
+                        .columns(12)
+                        .bindText(
+                            { pluginSettings.state.documentExtractionJobTimeoutMs.toString() },
+                            { pluginSettings.state.documentExtractionJobTimeoutMs = it.toLongOrNull() ?: 300_000L }
+                        )
+                        .comment(
+                            "Background extraction budget for large documents (separate from the per-read timeout). " +
+                                "Default: 300 000 ms."
+                        )
+                }
                 row {
                     checkBox(
                         "Enable Tabula stream-mode fallback " +

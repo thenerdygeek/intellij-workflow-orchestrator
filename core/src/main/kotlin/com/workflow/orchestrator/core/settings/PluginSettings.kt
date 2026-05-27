@@ -214,6 +214,13 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var documentTimeoutMs by property(30_000L)
 
         /**
+         * Wall-clock budget (ms) for a single background document extraction job, INCLUDING time
+         * spent waiting on the extractor's concurrency semaphore. Distinct from [documentTimeoutMs],
+         * which is the per-read serving timeout. Default 300 000 ms (5 min).
+         */
+        var documentExtractionJobTimeoutMs by property(300_000L)
+
+        /**
          * When true, [TikaDocumentExtractor] requests Tabula's stream-mode fallback for
          * PDF table extraction.
          *

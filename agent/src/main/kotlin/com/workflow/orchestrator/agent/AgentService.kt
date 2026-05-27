@@ -1202,7 +1202,7 @@ class AgentService(
         // Task 9: DocumentTool now delegates to DocumentArtifactService (single-flight + background
         // extraction + disk caching). The service is wired here with the project's CoroutineScope
         // (cs) so background extraction jobs survive across individual read calls.
-        // jobBudgetMs is a fixed 300s for now; Task 12 will replace it with a settings field.
+
         val docExtractor = TikaDocumentExtractor(
             maxCharsProvider = {
                 val n = PluginSettings.getInstance(project).state.documentMaxChars
@@ -1215,7 +1215,7 @@ class AgentService(
             cs = cs,
             cacheDirProvider = { com.workflow.orchestrator.agent.tools.integration.SessionDocumentArtifactService.defaultCacheDirProvider() },
             servingBudgetMs = (PluginSettings.getInstance(project).state.documentTimeoutMs - 5_000L).coerceAtLeast(5_000L),
-            jobBudgetMs = 300_000L,
+            jobBudgetMs = PluginSettings.getInstance(project).state.documentExtractionJobTimeoutMs,
         )
         safeRegisterDeferred("File") {
             DocumentTool(artifactService = docArtifactService)
