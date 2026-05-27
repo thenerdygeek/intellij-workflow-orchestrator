@@ -286,6 +286,12 @@ interface ChatState {
    */
   seenPlanSummaries: Set<string>;
   /**
+   * Bug #11 — monotonic source of plan `revision` identity. Bumped by `setPlan`
+   * when the plan content changes; never decremented within a session, so a
+   * revision number is unique for the session even across clearPlan.
+   */
+  planRevisionSeq: number;
+  /**
    * Bug 9 — locked random fallback phrase for the working indicator. Owned by the
    * store rather than re-rolled on every WorkingIndicator remount, so per-iteration
    * busy toggles don't churn the phrase. Set once at session start and rotated on
@@ -577,6 +583,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   handoff: null,
   planCommentCount: 0,
   seenPlanSummaries: new Set<string>(),
+  planRevisionSeq: 0,
   workingFallbackPhrase: null,
   questions: null,
   activeQuestionIndex: 0,
@@ -663,6 +670,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       handoff: null,
       planCompletedPendingClear: false,
       seenPlanSummaries: new Set<string>(),
+      planRevisionSeq: 0,
       workingFallbackPhrase: null,
       questions: null,
       questionSummary: null,
@@ -1293,6 +1301,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       handoff: null,
       planCompletedPendingClear: false,
       seenPlanSummaries: new Set<string>(),
+      planRevisionSeq: 0,
       workingFallbackPhrase: null,
       questions: null,
       questionSummary: null,
@@ -1316,10 +1325,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         plan.summary === current.summary &&
         plan.markdown === current.markdown;
       if (isIdentical) {
-        // Content unchanged — update non-comment fields but keep planCommentCount
-        return { plan };
+        // Content unchanged — keep the existing revision identity + comment count.
+        return { plan: { ...plan, revision: current.revision } };
       }
-      return { plan, planCommentCount: 0 };
+      // New or revised plan → bump the monotonic revision so the card treats it
+      // as a distinct instance (bug #11), even if the title is unchanged.
+      const revision = state.planRevisionSeq + 1;
+      return { plan: { ...plan, revision }, planRevisionSeq: revision, planCommentCount: 0 };
     });
   },
 

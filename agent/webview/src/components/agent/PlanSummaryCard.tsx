@@ -13,6 +13,17 @@ interface PlanSummaryCardProps {
 }
 
 /**
+ * The single identity formula for a plan instance (bug #11). When the store has
+ * assigned a `revision` (the normal path) that monotonic number IS the identity —
+ * so a same-title, still-unapproved revision is correctly distinct. Falls back to
+ * a content hash only for plans rendered outside the store (tests / legacy).
+ */
+function planIdentity(plan: Plan): string {
+  if (plan.revision != null) return `rev:${plan.revision}`;
+  return `${plan.title}::${plan.summary ?? plan.markdown ?? ''}`;
+}
+
+/**
  * Bug 8 — Typewriter that reveals text character-by-character ONCE per plan
  * identity. Subsequent remounts of the card with the same identity render the
  * full text immediately (no animation). The "have I typed this before" state
@@ -70,7 +81,7 @@ function TypewriterReveal({
  */
 function PlanSummaryContent({ plan }: { plan: Plan }) {
   const text = plan.summary ?? (plan.markdown ? plan.markdown.slice(0, 300) + (plan.markdown.length > 300 ? '...' : '') : '');
-  const identity = useMemo(() => `${plan.title}::${text}`, [plan.title, text]);
+  const identity = useMemo(() => planIdentity(plan), [plan]);
   const seenRef = useRef<boolean>(useChatStore.getState().seenPlanSummaries.has(identity));
   const markPlanSummarySeen = useChatStore(s => s.markPlanSummarySeen);
 
@@ -102,12 +113,13 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
   const planCommentCount = useChatStore(s => s.planCommentCount);
 
   // Reset loading state when the plan is replaced (e.g., LLM calls create_plan
-  // again after a ChatMessage or revision). Without this, the Revise/Approve
-  // button stays stuck in loading if the plan resolves via a different path.
-  const planIdentity = `${plan.title}:${plan.approved}`;
+  // again after a ChatMessage or revision). Keyed on the stable plan identity so
+  // a same-title, still-unapproved revision still resets the button (bug #11) —
+  // the old `${title}:${approved}` key didn't change across such revisions.
+  const identity = planIdentity(plan);
   useEffect(() => {
     setPending(null);
-  }, [planIdentity]);
+  }, [identity]);
 
   const hasComments = planCommentCount > 0;
 

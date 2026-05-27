@@ -69,6 +69,14 @@ export interface Plan {
   approved: boolean;
   markdown?: string;
   summary?: string;
+  /**
+   * Stable identity assigned by `chatStore.setPlan`: a monotonic counter bumped
+   * whenever the plan content changes, preserved when an identical plan is
+   * re-pushed. Used as the single identity for the card's reset effect and the
+   * summary typewriter so a same-title revision is correctly treated as new
+   * (bug #11). Absent only for plans rendered outside the store (tests/legacy).
+   */
+  revision?: number;
 }
 
 export interface Handoff {
