@@ -14,7 +14,8 @@ package com.workflow.orchestrator.agent.loop
  */
 class LoopDetector(
     private val softThreshold: Int = SOFT_THRESHOLD_DEFAULT,
-    private val hardThreshold: Int = HARD_THRESHOLD_DEFAULT
+    private val hardThreshold: Int = HARD_THRESHOLD_DEFAULT,
+    private val exemptTools: Set<String> = emptySet(),
 ) {
     private var lastToolName: String? = null
     private var lastSignature: String? = null
@@ -31,6 +32,15 @@ class LoopDetector(
      * @return the current loop status
      */
     fun recordToolCall(toolName: String, arguments: String): LoopStatus {
+        if (toolName in exemptTools) {
+            // Exempt tools (e.g. read_document) legitimately repeat with identical args while a
+            // background extraction is in progress; do not count them and reset the streak.
+            consecutiveCount = 0
+            lastToolName = null
+            lastSignature = null
+            return LoopStatus.OK
+        }
+
         val signature = toolCallSignature(arguments)
 
         if (toolName == lastToolName && signature == lastSignature) {

@@ -519,7 +519,7 @@ class AgentLoop(
     private var totalLinesRemoved = 0
 
     /** Loop detector: tracks repeated identical tool calls (from Cline). */
-    private val loopDetector = LoopDetector()
+    private val loopDetector = LoopDetector(exemptTools = setOf("read_document"))
 
     // ── Feedback flow state ───────────────────────────────────────────────
     // When feedbackEnabled=true: after attempt_completion the loop does NOT
