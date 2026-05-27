@@ -854,9 +854,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // been cancelled. Either way, the live preview should disappear so the user
       // doesn't see two cards rendering the same diff.
       const haveStreamingEdits = Object.keys(state.streamingEdits).length > 0;
+      // Flush a thinking block that never got its closing tag (stream ended
+      // mid-<thinking>) into a REASONING message instead of dropping it. In the
+      // normal flow endThinking already flushed + cleared it, so this is empty.
+      const thinkingFlush: UiMessage[] = (state.streamingThinkingText != null && state.streamingThinkingTs != null)
+        ? [{ ts: state.streamingThinkingTs, type: 'SAY' as const, say: 'REASONING' as const, text: state.streamingThinkingText }]
+        : [];
       if (state.streamingText == null || state.streamingMsgTs == null) {
         return {
           handoff: null,
+          ...(thinkingFlush.length > 0
+            ? {
+                messages: capMessages([...state.messages, ...thinkingFlush]),
+                streamingThinkingText: null,
+                streamingThinkingTs: null,
+              }
+            : {}),
           ...(haveStreamingEdits ? { streamingEdits: {} } : {}),
           ...(shouldClearPlan ? { plan: null, planCompletedPendingClear: false } : {}),
         };
@@ -869,7 +882,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         partial: false,
       };
       return {
-        messages: capMessages([...state.messages, finalized]),
+        messages: capMessages([...state.messages, ...thinkingFlush, finalized]),
         streamingText: null,
         streamingMsgTs: null,
         streamingThinkingText: null,
@@ -2007,8 +2020,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (!m.subagentData || m.subagentData.agentId !== data.agentId) return m;
         const agent = m.subagentData;
         const status: ToolCallStatus = data.isError ? 'ERROR' : 'COMPLETED';
-        // Finalize the tool: move from activeToolChain to messages
-        const matchIdx = agent.activeToolChain.findIndex(tc => tc.name === data.toolName && tc.status === 'RUNNING');
+        // Finalize the tool: move from activeToolChain to messages. Prefer an
+        // exact toolCallId match (the only reliable target when a sub-agent runs
+        // two calls to the SAME tool in parallel); fall back to first-RUNNING-by-
+        // name only for legacy payloads without an id. Mirrors the main agent's
+        // updateToolCall hardening.
+        const idIdx = data.toolCallId
+          ? agent.activeToolChain.findIndex(tc => tc.id === data.toolCallId)
+          : -1;
+        const matchIdx = idIdx >= 0
+          ? idIdx
+          : agent.activeToolChain.findIndex(tc => tc.name === data.toolName && tc.status === 'RUNNING');
         const finalized = matchIdx >= 0 ? agent.activeToolChain[matchIdx]! : null;
         const remaining = matchIdx >= 0
           ? [...agent.activeToolChain.slice(0, matchIdx), ...agent.activeToolChain.slice(matchIdx + 1)]

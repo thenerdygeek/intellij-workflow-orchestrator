@@ -95,8 +95,9 @@ function PlanSummaryContent({ plan }: { plan: Plan }) {
 }
 
 export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
-  if (plan.approved) return null;
-
+  // NOTE: the `plan.approved` early-return lives AFTER all hooks (below) — never
+  // before them — or React's hook order changes when an approved plan is
+  // rendered through this component, crashing with "rendered fewer hooks".
   const [pending, setPending] = useState<'approve' | 'revise' | null>(null);
   const planCommentCount = useChatStore(s => s.planCommentCount);
 
@@ -128,6 +129,9 @@ export function PlanSummaryCard({ plan }: PlanSummaryCardProps) {
   const handleDismiss = useCallback(() => {
     kotlinBridge.dismissPlan();
   }, []);
+
+  // Hooks are all above this line — safe to bail out now.
+  if (plan.approved) return null;
 
   return (
     <Card

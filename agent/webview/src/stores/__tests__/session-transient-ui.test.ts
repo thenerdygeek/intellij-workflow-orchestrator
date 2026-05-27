@@ -45,6 +45,16 @@ describe('completeSession', () => {
   });
 });
 
+describe('endStream', () => {
+  it('#6 flushes a thinking block interrupted mid-stream (no closing tag)', () => {
+    useChatStore.setState({ streamingText: null, streamingMsgTs: null, streamingThinkingText: 'half a thought', streamingThinkingTs: 555 } as never);
+    useChatStore.getState().endStream();
+    const msgs = useChatStore.getState().messages;
+    expect(msgs.some(m => m.say === 'REASONING' && m.text === 'half a thought')).toBe(true);
+    expect(useChatStore.getState().streamingThinkingText).toBeNull();
+  });
+});
+
 describe('hydrateFromUiMessages (resume)', () => {
   it('#12 clears transient UI from the previous live session', () => {
     useChatStore.setState({

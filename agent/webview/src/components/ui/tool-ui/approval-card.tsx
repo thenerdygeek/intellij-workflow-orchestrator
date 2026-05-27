@@ -132,8 +132,15 @@ export function ApprovalCard({
   const resolvedCancelLabel = cancelLabel ?? "Deny";
   const Icon = icon ? getLucideIcon(icon) : null;
 
+  // Latch the first decision: a double-click (common on a laggy JCEF webview)
+  // would otherwise fire the bridge twice — approve+approve, or approve+deny if
+  // the second click lands after pendingApproval was nulled. The card unmounts
+  // when the approval resolves, so this ref resets for the next approval.
+  const decidedRef = React.useRef(false);
   const handleAction = React.useCallback(
     async (actionId: string) => {
+      if (decidedRef.current) return;
+      decidedRef.current = true;
       if (actionId === "confirm") {
         await onConfirm?.();
       } else if (actionId === "cancel") {
