@@ -329,6 +329,12 @@ interface ChatState {
    * response.
    */
   mentionResultsQuery: string;
+  /**
+   * The most-recently *requested* mention query. `receiveMentionResults` drops
+   * any response whose query doesn't match this, so a late out-of-order bridge
+   * response for an older query can't clobber the current results.
+   */
+  pendingMentionQuery: string;
   pendingApproval: PendingApproval | null;
   pendingProcessInput: PendingProcessInput | null;
   focusInputTrigger: number;
@@ -490,6 +496,7 @@ interface ChatState {
   showToast(message: string, type: string, durationMs: number): void;
   dismissToast(id: string): void;
   receiveMentionResults(query: string, results: MentionSearchResult[]): void;
+  setPendingMentionQuery(query: string): void;
   showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval?: boolean, originAgentId?: string | null, originLabel?: string | null): void;
   resolveApproval(decision: 'approve' | 'deny' | 'allowForSession'): void;
   showProcessInput(processId: string, description: string, prompt: string, command: string): void;
@@ -600,6 +607,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   tokenBudget: { used: 0, max: 0 },
   mentionResults: [],
   mentionResultsQuery: '',
+  pendingMentionQuery: '',
   pendingApproval: null,
   pendingProcessInput: null,
   focusInputTrigger: 0,
@@ -1592,7 +1600,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   receiveMentionResults(query: string, results: MentionSearchResult[]) {
+    // Drop stale/out-of-order responses: only accept results for the latest
+    // requested query, so a late response for an older query can't clobber the
+    // current results (which the dropdown would then show as "no results").
+    if (get().pendingMentionQuery !== query) return;
     set({ mentionResults: results, mentionResultsQuery: query });
+  },
+
+  setPendingMentionQuery(query: string) {
+    set({ pendingMentionQuery: query });
   },
 
   showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval: boolean = true, originAgentId?: string | null, originLabel?: string | null) {

@@ -200,6 +200,11 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     const el = editorRef.current;
     if (!el) return;
     const chips = el.querySelectorAll<HTMLElement>(`[data-mention-label="${label}"]`);
+    const hadMention = mentionsRef.current.some(m => m.label === label);
+    // No-op guard: a stale validateTicket timeout (5s) can call this after the
+    // chip is already gone (cleared / restored / sent). Without this guard it
+    // would push a spurious undo snapshot of the unrelated current content.
+    if (chips.length === 0 && !hadMention) return;
     chips.forEach(chip => {
       const textNode = document.createTextNode(`#${label} `);
       chip.parentNode?.replaceChild(textNode, chip);

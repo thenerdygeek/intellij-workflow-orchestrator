@@ -69,15 +69,19 @@ export const MentionDropdown = memo(function MentionDropdown({
 }: MentionDropdownProps) {
   const mentionResults = useChatStore(s => s.mentionResults);
   const mentionResultsQuery = useChatStore(s => s.mentionResultsQuery);
+  const setPendingMentionQuery = useChatStore(s => s.setPendingMentionQuery);
 
   // Request search results from Kotlin
   // Always request `all:` — for empty query, Kotlin returns open editor tabs (active file first)
   useEffect(() => {
     const timer = setTimeout(() => {
+      // Record the query we're requesting so the store drops late, out-of-order
+      // responses for older queries instead of clobbering current results.
+      setPendingMentionQuery(query);
       window._searchMentions?.(`all:${query}`);
     }, 200);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, setPendingMentionQuery]);
 
   const maxPerGroup = query ? 5 : 8;
 

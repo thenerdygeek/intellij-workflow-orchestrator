@@ -45,14 +45,24 @@ export function CopyButton({
 
   const handleCopy = useCallback(() => {
     if (timeoutRef.current != null) clearTimeout(timeoutRef.current);
-    if (isJcefEnvironment()) {
-      kotlinBridge.copyToClipboard(text);
+    const markCopied = () => {
       setCopied(true);
       timeoutRef.current = setTimeout(() => setCopied(false), 2000);
+    };
+    if (isJcefEnvironment()) {
+      // Fire-and-forget bridge call — guard so a disposed panel / bridge error
+      // doesn't throw out of the click handler and wedge the checkmark.
+      try {
+        kotlinBridge.copyToClipboard(text);
+        markCopied();
+      } catch (e) {
+        console.warn('[CopyButton] clipboard bridge copy failed', e);
+      }
     } else {
-      navigator.clipboard.writeText(text).then(() => {
-        setCopied(true);
-        timeoutRef.current = setTimeout(() => setCopied(false), 2000);
+      // navigator.clipboard.writeText rejects on lost focus / denied permission;
+      // a missing .catch leaks an unhandled rejection. Swallow + log instead.
+      navigator.clipboard.writeText(text).then(markCopied).catch(e => {
+        console.warn('[CopyButton] clipboard write failed', e);
       });
     }
   }, [text]);
