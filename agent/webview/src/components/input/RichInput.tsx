@@ -629,6 +629,19 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     }
 
     const range = sel.getRangeAt(0);
+
+    // If the caret sits right after an in-progress "#…" ticket trigger the user
+    // was typing (e.g. they typed "#" or "#PROJ-12" then pasted a ticket), consume
+    // that partial trigger — the pasted chip replaces it. Without this the typed
+    // "#" is orphaned in front of the chip and extractText emits "##PROJ-123".
+    const caretNode = range.startContainer;
+    if (caretNode.nodeType === Node.TEXT_NODE && range.collapsed) {
+      const beforeCaret = (caretNode.textContent ?? '').slice(0, range.startOffset);
+      const trigMatch = beforeCaret.match(/#\S*$/);
+      if (trigMatch) {
+        range.setStart(caretNode, range.startOffset - trigMatch[0].length);
+      }
+    }
     range.deleteContents();
 
     const fragment = document.createDocumentFragment();

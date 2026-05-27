@@ -137,6 +137,21 @@ export function installMockBridge(): void {
     useChatStore.getState().setDropActive(!!active);
   };
 
+  // ── Ticket (#) mention bridges (mock) ───────────────────────────────────────
+  // Real impls hit Jira. Here: search returns nothing (dropdown opens but empty),
+  // and validate always resolves "valid" via the per-key callback contract
+  // (window[callbackKey](JSON.stringify({valid, summary}))).
+  w._searchTickets = (query: string) => {
+    state.calls.push({ method: '_searchTickets', args: [query] });
+  };
+  w._validateTicket = (ticketKey: string, callbackKey: string) => {
+    state.calls.push({ method: '_validateTicket', args: [ticketKey, callbackKey] });
+    const cb = (w as Record<string, unknown>)[callbackKey];
+    if (typeof cb === 'function') {
+      (cb as (json: string) => void)(JSON.stringify({ valid: true, summary: 'mock ticket' }));
+    }
+  };
+
   // ── Harness control surface ────────────────────────────────────────────────
   w.__harness = {
     setContextUsage(used: number, max: number) {
