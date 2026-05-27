@@ -5,6 +5,17 @@ import { ChipPreview } from '@/components/input/ChipPreview';
 import { AttachmentManager, type PendingAttachment } from '@/components/input/AttachmentManager';
 import { ThinkingView } from '@/components/agent/ThinkingView';
 import { CommandPreview } from '@/components/agent/CommandPreview';
+import { CopyButton } from '@/components/ui/copy-button';
+
+// Copy-button fixtures: a short string and a long multi-line string (~15K chars)
+// so e2e can assert the clipboard receives the FULL content (no truncation),
+// for both short and long inputs. Rendered into hidden source elements so the
+// test reads the expected value from the DOM rather than duplicating it.
+const COPY_SHORT = 'short copy text';
+const COPY_LONG = Array.from(
+  { length: 300 },
+  (_, i) => `line ${i}: the quick brown fox jumps over the lazy dog 0123456789`,
+).join('\n');
 
 /**
  * Playwright harness — renders the three Phase 7 / Phase 5 UI components in
@@ -601,6 +612,23 @@ export function HarnessApp() {
               cwd="/home/me/project"
               env={[]}
             />
+          </div>
+        </div>
+      </section>
+
+      {/* ─────────── §7 Copy buttons (short + long strings) ─────────── */}
+      <section data-testid="section-copy" className="space-y-3">
+        <h2 className="text-sm font-semibold">§7 CopyButton — short &amp; long strings</h2>
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2" data-testid="copy-short-host">
+            <span className="text-xs">short:</span>
+            <CopyButton text={COPY_SHORT} label="Copy short" />
+            <pre data-testid="copy-short-source" hidden>{COPY_SHORT}</pre>
+          </div>
+          <div className="flex items-center gap-2" data-testid="copy-long-host">
+            <span className="text-xs">long (~15K):</span>
+            <CopyButton text={COPY_LONG} label="Copy long" />
+            <pre data-testid="copy-long-source" hidden>{COPY_LONG}</pre>
           </div>
         </div>
       </section>
