@@ -24,6 +24,10 @@ export interface PendingAttachment {
   bytes: Uint8Array;
   /** ObjectURL for chip preview — must be revoked on remove(). */
   thumbnailUrl: string;
+  /** "image" routes to vision; "file" is read on demand by the agent. */
+  kind: 'image' | 'file';
+  /** Absolute session path; present only for kind === 'file'. */
+  path?: string;
 }
 
 export interface AttachmentManagerSettings {
@@ -173,11 +177,35 @@ export class AttachmentManager {
       originalFilename: file.name,
       bytes,
       thumbnailUrl,
+      kind: 'image',
     };
     this.attachments.push(att);
     this.onChange();
     console.log('[multimodal:attach] AttachmentManager.attachFile: SUCCESS — added chip, pendingCount=', this.attachments.length);
     return att;
+  }
+
+  /**
+   * Adds a chip for a file already stored on the JVM side (picker/drop). No
+   * byte handling — the bytes live on disk; this only records metadata so the
+   * chip renders and the send payload can carry it. Deduped by sha256.
+   */
+  addExternalChip(meta: {
+    sha256: string; mime: string; size: number; originalFilename: string;
+    kind: 'image' | 'file'; path?: string;
+  }): void {
+    if (this.attachments.some(a => a.sha256 === meta.sha256)) return;
+    this.attachments.push({
+      sha256: meta.sha256,
+      mime: meta.mime,
+      size: meta.size,
+      originalFilename: meta.originalFilename,
+      bytes: new Uint8Array(0),
+      thumbnailUrl: meta.kind === 'image' ? `http://workflow-agent/attachments/${meta.sha256}` : '',
+      kind: meta.kind,
+      path: meta.path,
+    });
+    this.onChange();
   }
 
   /** Remove an attachment from the pending list and revoke its preview URL. */

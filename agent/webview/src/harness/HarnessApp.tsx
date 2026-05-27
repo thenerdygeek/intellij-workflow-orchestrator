@@ -99,6 +99,7 @@ function syntheticAttachments(): PendingAttachment[] {
       originalFilename: 'red-square.png',
       bytes: new Uint8Array(),
       thumbnailUrl: tinyPng,
+      kind: 'image',
     },
     {
       sha256: 'bbb2222222222222222222222222222222222222222222222222222222222222',
@@ -107,6 +108,7 @@ function syntheticAttachments(): PendingAttachment[] {
       originalFilename: 'screenshot-2026-05-03.jpg',
       bytes: new Uint8Array(),
       thumbnailUrl: tinyPng,
+      kind: 'image',
     },
   ];
 }
