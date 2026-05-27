@@ -22,6 +22,13 @@ interface MessageListProps {
   atBottomChange?: (atBottom: boolean) => void;
   /** aria-label for the scrolling region. */
   ariaLabel?: string;
+  /**
+   * Stable identity per item. Without it Virtuoso cannot keep its measured-height
+   * cache across the chat's frequent re-renders (streaming tokens, tool updates),
+   * so it re-estimates total height on every change and the scrollbar thumb drifts
+   * away from the cursor while dragging. Keys MUST be stable per logical item.
+   */
+  computeItemKey?: (index: number) => string | number;
 }
 
 // Per-item wrapper. Restores the `px-4` horizontal gutter and `pb-3` inter-item
@@ -45,7 +52,7 @@ const BASE_COMPONENTS = {
 };
 
 export const MessageList = forwardRef<MessageListHandle, MessageListProps>(function MessageList(
-  { count, renderItem, Footer, atBottomChange, ariaLabel },
+  { count, renderItem, Footer, atBottomChange, ariaLabel, computeItemKey },
   ref,
 ) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -86,6 +93,12 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
       aria-label={ariaLabel ?? 'Agent chat messages'}
       totalCount={count}
       itemContent={renderItem}
+      computeItemKey={computeItemKey}
+      // Closer initial estimate than Virtuoso's default (it would otherwise size
+      // every unmeasured row to the first item's height — tiny for a one-line
+      // status, wildly off for the code/markdown blocks that dominate a chat —
+      // making the thumb overshoot the cursor on the first scroll-through).
+      defaultItemHeight={96}
       followOutput="auto"
       atBottomThreshold={120}
       atBottomStateChange={atBottomChange}

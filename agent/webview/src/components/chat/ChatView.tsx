@@ -240,6 +240,16 @@ export const ChatView = memo(function ChatView() {
     return null;
   }, [renderItems, activeSubAgents]);
 
+  // Stable identity per row so Virtuoso keeps its measured-height cache across
+  // re-renders (keeps the scrollbar thumb tracking the cursor while dragging).
+  // Messages key on their unique ts; a tool group keys on its first tool's ts
+  // (stable — unlike the start index, which shifts as rows are added/removed).
+  const computeItemKey = useCallback((index: number) => {
+    const item = renderItems[index];
+    if (!item) return index;
+    return item.kind === 'message' ? `m-${item.msg.ts}` : `tg-${item.tools[0]!.ts}`;
+  }, [renderItems]);
+
   // Editor-tab mode: bypass Virtuoso so the single block isn't capped at its
   // natural content height. We render every item in a flex column where the
   // last one — the visualization — gets `flex-1` and absorbs all remaining
@@ -268,6 +278,7 @@ export const ChatView = memo(function ChatView() {
           ref={messageListRef}
           count={renderItems.length}
           renderItem={renderItem}
+          computeItemKey={computeItemKey}
           Footer={ChatFooter}
           atBottomChange={setIsAtBottom}
           ariaLabel="Agent chat messages"
