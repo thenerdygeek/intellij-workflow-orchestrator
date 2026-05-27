@@ -252,19 +252,25 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       const el = editorRef.current;
       if (!el) return [...mentionsRef.current];
       const validMentions: Mention[] = [];
-      // Dedup by label: two chips can share a label (e.g. a pasted pending chip
-      // plus a dropdown-selected valid chip for the same ticket), which would
-      // otherwise emit the same mention twice into the send payload.
+      // Identity is the PATH, not the label. Two different files can share a
+      // filename (label) — e.g. src/a/index.ts and src/b/index.ts both labelled
+      // "index.ts" — and BOTH must survive. Deduping by path still collapses the
+      // same entity inserted twice (e.g. a ticket pasted + dropdown-selected,
+      // same path). Falls back to label only when a chip carries no path.
       const seen = new Set<string>();
       const chipEls = el.querySelectorAll<HTMLElement>('[data-mention-label]');
       chipEls.forEach(chip => {
         const status = chip.dataset.chipStatus;
         const label = chip.dataset.mentionLabel;
-        if (status !== 'invalid' && label && !seen.has(label)) {
-          const mention = mentionsRef.current.find(m => m.label === label);
+        const path = chip.dataset.mentionPath;
+        const key = path || label;
+        if (status !== 'invalid' && key && !seen.has(key)) {
+          const mention = path
+            ? mentionsRef.current.find(m => m.path === path)
+            : mentionsRef.current.find(m => m.label === label);
           if (mention) {
             validMentions.push(mention);
-            seen.add(label);
+            seen.add(key);
           }
         }
       });
