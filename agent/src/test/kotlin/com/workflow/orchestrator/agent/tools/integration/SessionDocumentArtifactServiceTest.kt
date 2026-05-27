@@ -92,6 +92,42 @@ class SessionDocumentArtifactServiceTest {
     }
 
     @Test
+    fun `extraction job inherits the SessionDownloadDir context from the caller`() = runBlocking {
+        val src = java.nio.file.Files.createTempFile("doc", ".pdf").also { java.nio.file.Files.writeString(it, "bytes") }
+        val installedDir = cacheRoot.resolve("downloads")
+        val observed = java.util.concurrent.atomic.AtomicReference<java.nio.file.Path?>(null)
+        val seen = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+        val store = io.mockk.mockk<com.workflow.orchestrator.document.service.DocumentArtifactStore>(relaxed = true)
+        io.mockk.coEvery { store.hashFile(src) } returns "hash"
+        io.mockk.coEvery { store.loadArtifact(any()) } returns null
+        io.mockk.coEvery { store.loadFailureIfFresh(any(), any(), any()) } returns null
+        io.mockk.coEvery { store.extractAndPersist(any(), any(), any(), any(), any()) } coAnswers {
+            observed.set(com.workflow.orchestrator.core.services.SessionDownloadDir.current())
+            seen.complete(Unit)
+            fakeArtifact(cacheRoot.resolve("hash"))
+        }
+        io.mockk.coEvery { store.loadIndex(any()) } returns com.workflow.orchestrator.core.model.DocumentIndex(
+            listOf(com.workflow.orchestrator.core.model.DocumentIndex.Anchor("1", 0)), emptyList())
+        io.mockk.coEvery { store.slice(any(), any(), any(), any()) } answers {
+            com.workflow.orchestrator.core.model.DocumentSlice("X", 0, 1, 0, 1, 1)
+        }
+
+        val svc = SessionDocumentArtifactService(
+            store = store,
+            cs = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob()),
+            cacheDirProvider = { cacheRoot },
+            jobBudgetMs = 60_000,
+        )
+
+        kotlinx.coroutines.withContext(com.workflow.orchestrator.core.services.SessionDownloadDir(installedDir)) {
+            svc.read(src, com.workflow.orchestrator.core.model.DocumentCursor.Offset(0), 10)
+        }
+        seen.await()
+        assertEquals(installedDir, observed.get())
+    }
+
+    @Test
     fun `cached failure short-circuits without extracting`() = runBlocking {
         val src = Files.createTempFile("doc", ".pdf").also { Files.writeString(it, "bytes") }
         val store = mockk<DocumentArtifactStore>(relaxed = true)

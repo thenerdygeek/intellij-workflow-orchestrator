@@ -8,6 +8,7 @@ import com.workflow.orchestrator.core.services.DocumentArtifactService
 import com.workflow.orchestrator.core.services.SessionDownloadDir
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.document.service.DocumentArtifactStore
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -46,8 +47,12 @@ class SessionDocumentArtifactService(
             return ToolResult.error("Document extraction failed: $reason")
         }
 
+        val sessionCtx: kotlin.coroutines.CoroutineContext =
+            coroutineContext[SessionDownloadDir]
+                ?: kotlin.coroutines.EmptyCoroutineContext
+
         val job = inFlight.computeIfAbsent(hash) {
-            cs.async(Dispatchers.IO) {
+            cs.async(Dispatchers.IO + sessionCtx) {
                 val outcome = withTimeoutOrNull(jobBudgetMs) {
                     runCatching { store.extractAndPersist(path, artDir, hash, jobBudgetMs, progressSink) }
                 } ?: Result.failure(RuntimeException("extraction exceeded ${jobBudgetMs / 1000}s budget"))
