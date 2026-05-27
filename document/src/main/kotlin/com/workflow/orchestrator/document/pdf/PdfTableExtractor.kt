@@ -71,8 +71,15 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
             while (pageIterator.hasNext()) {
                 val page = pageIterator.next()
 
-                // Lattice first — ruled tables.
-                var tables = SpreadsheetExtractionAlgorithm().extract(page)
+                // Lazy lattice: skip the expensive SpreadsheetExtractionAlgorithm on pages with
+                // no rulings — lattice only finds ruled tables, so a ruling-free page yields
+                // nothing anyway. Bypassed when stream mode is on (borderless tables have no
+                // rulings and must still be reached).
+                var tables: List<Table> = if (enableStreamMode || pageHasRulings(page)) {
+                    SpreadsheetExtractionAlgorithm().extract(page)
+                } else {
+                    emptyList()
+                }
 
                 // Stream fallback — opt-in only (see class KDoc).
                 if (tables.isEmpty() && enableStreamMode) {
@@ -100,6 +107,14 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /**
+     * True when the Tabula [page] has any rulings. Rulings are computed by ObjectExtractor during
+     * page extraction, so reading them here costs nothing extra. A page with no rulings cannot
+     * contain a lattice (ruled) table.
+     */
+    private fun pageHasRulings(page: technology.tabula.Page): Boolean =
+        page.rulings?.isNotEmpty() == true
 
     /**
      * Converts a Tabula [Table] to a [DocumentBlock.Table].
