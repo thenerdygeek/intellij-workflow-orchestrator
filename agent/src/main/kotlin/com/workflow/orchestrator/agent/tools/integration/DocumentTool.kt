@@ -12,10 +12,8 @@ import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
 import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
 import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
-import com.workflow.orchestrator.core.api.DocumentExtractor
 import com.workflow.orchestrator.core.ai.TokenEstimator
-import com.workflow.orchestrator.core.model.ExtractOptions
-import com.workflow.orchestrator.document.service.TikaDocumentExtractor
+import com.workflow.orchestrator.core.services.DocumentArtifactService
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
@@ -23,7 +21,7 @@ import java.nio.file.InvalidPathException
 import java.nio.file.Paths
 
 /**
- * Agent tool that wraps [DocumentExtractor] / [TikaDocumentExtractor] in the deferred tier.
+ * Agent tool that delegates to [DocumentArtifactService] in the deferred tier.
  *
  * Registered as a deferred tool so it is discoverable via `tool_search` but does not burn
  * prompt tokens on every iteration. The LLM uses `read_file` for plain text; this tool
@@ -33,8 +31,7 @@ import java.nio.file.Paths
  * "File" category.
  */
 class DocumentTool(
-    private val extractor: DocumentExtractor = TikaDocumentExtractor(),
-    private val timeoutMsProvider: () -> Long = { 30_000L },
+    private val artifactService: DocumentArtifactService,
 ) : AgentTool {
 
     override val name = "read_document"
@@ -286,127 +283,59 @@ class DocumentTool(
                 B -- no --> X1[Return 'path required' error]
                 B -- yes --> C{Path parseable?}
                 C -- no --> X2[Return InvalidPathException error]
-                C -- yes --> D[Build ExtractOptions with max_chars + timeoutMs]
-                D --> E[TikaDocumentExtractor.extract]
-                E --> F{Scanned image PDF?}
-                F -- yes --> X3[Return 'no embedded text layer' error]
-                F -- no --> G{Extraction succeeds?}
-                G -- no --> X4[Return extractor error summary]
-                G -- yes --> H{Output > max_chars?}
-                H -- yes --> I[Truncate + append truncation marker]
-                H -- no --> J[Return full Markdown]
-                I --> K[ToolResult with Markdown + TokenEstimator]
-                J --> K
+                C -- yes --> D[Resolve cursor: page/section/offset]
+                D --> E[DocumentArtifactService.read]
+                E --> F{Service error?}
+                F -- yes --> X3[Return service error summary]
+                F -- no --> G{remaining > 0?}
+                G -- yes --> H[Append continuation hint with offset + page info]
+                G -- no --> I[Return full slice content]
+                H --> K[ToolResult with Markdown + TokenEstimator]
+                I --> K
             """
         )
     }
 
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         val pathArg = params["path"]?.jsonPrimitive?.content
-            ?: return ToolResult(
-                content = "Error: 'path' parameter is required.",
-                summary = "Error: missing path",
-                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true,
-            )
+            ?: return ToolResult("Error: 'path' parameter is required.", "Error: missing path",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
 
-        val path = try {
-            Paths.get(pathArg)
-        } catch (e: InvalidPathException) {
-            return ToolResult(
-                content = "Error: Invalid path: $pathArg — ${e.reason}",
-                summary = "Error: invalid path",
-                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true,
-            )
+        val path = try { Paths.get(pathArg) } catch (e: InvalidPathException) {
+            return ToolResult("Error: Invalid path: $pathArg — ${e.reason}", "Error: invalid path",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
-        val maxChars: Int? = try {
-            params["max_chars"]?.jsonPrimitive?.int
-        } catch (_: Exception) {
-            null
+        val maxChars: Int? = runCatching { params["max_chars"]?.jsonPrimitive?.int }.getOrNull()
+        val pageArg: Int? = runCatching { params["page"]?.jsonPrimitive?.int }.getOrNull()
+        val sectionArg: String? = params["section"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+        val offsetArg: Int = runCatching { params["offset"]?.jsonPrimitive?.int ?: 0 }.getOrNull() ?: 0
+        if (offsetArg < 0) {
+            return ToolResult("Error: 'offset' must be non-negative (got $offsetArg).", "Error: negative offset",
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
-        val offset: Int = try {
-            params["offset"]?.jsonPrimitive?.int ?: 0
-        } catch (_: Exception) {
-            0
+        val cursor = when {
+            pageArg != null -> com.workflow.orchestrator.core.model.DocumentCursor.Page(pageArg)
+            sectionArg != null -> com.workflow.orchestrator.core.model.DocumentCursor.Section(sectionArg)
+            else -> com.workflow.orchestrator.core.model.DocumentCursor.Offset(offsetArg)
         }
 
-        if (offset < 0) {
-            return ToolResult(
-                content = "Error: 'offset' must be non-negative (got $offset).",
-                summary = "Error: negative offset",
-                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true,
-            )
+        val result = artifactService.read(path, cursor, maxChars)
+        if (result.isError) {
+            return ToolResult("Error: ${result.summary}", result.summary,
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
-
-        val outputBudget = maxChars ?: DEFAULT_MAX_CHARS
-        val extractBudget: Int? = if (offset == 0) {
-            maxChars
-        } else {
-            (offset.toLong() + outputBudget.toLong())
-                .coerceAtMost(Int.MAX_VALUE.toLong())
-                .toInt()
-        }
-
-        val options = ExtractOptions(maxChars = extractBudget, timeoutMs = timeoutMsProvider())
-        val result = extractor.extract(path, options)
-
-        return if (result.isError) {
-            ToolResult(
-                content = "Error: ${result.summary}",
-                summary = result.summary,
-                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                isError = true,
-            )
-        } else {
-            val docContent = result.data!!
-            val fullMarkdown = docContent.markdown
-            if (offset == 0) {
-                val content = if (docContent.truncated) {
-                    val nextOffset = docContent.contentLength ?: outputBudget
-                    "$fullMarkdown\n\n[... more characters available; call read_document(offset=$nextOffset) to continue ...]"
-                } else {
-                    fullMarkdown
-                }
-                ToolResult(
-                    content = content,
-                    summary = result.summary,
-                    tokenEstimate = TokenEstimator.estimate(content),
-                    isError = false,
-                )
-            } else if (offset >= fullMarkdown.length) {
-                val msg = "[offset $offset is at or beyond extracted document length " +
-                    "${fullMarkdown.length}; end of document reached, no more content to read]"
-                ToolResult(
-                    content = msg,
-                    summary = "End of document reached at offset $offset (length ${fullMarkdown.length})",
-                    tokenEstimate = TokenEstimator.estimate(msg),
-                    isError = false,
-                )
-            } else {
-                val slice = fullMarkdown.substring(offset).take(outputBudget)
-                val consumedEnd = offset + slice.length
-                val remaining = fullMarkdown.length - consumedEnd
-                val content = if (remaining > 0) {
-                    "$slice\n\n[... $remaining more characters available; call read_document(offset=$consumedEnd) to continue ...]"
-                } else {
-                    slice
-                }
-                ToolResult(
-                    content = content,
-                    summary = "${result.summary} (offset=$offset, slice=${slice.length} chars, remaining=$remaining)",
-                    tokenEstimate = TokenEstimator.estimate(content),
-                    isError = false,
-                )
+        val slice = result.data!!
+        val body = buildString {
+            append(slice.content)
+            if (slice.remaining > 0) {
+                val pageClause = if (slice.pageOfStart != null && slice.totalPages != null)
+                    " — page ${slice.pageOfStart} of ${slice.totalPages}" else ""
+                append("\n\n[... ${slice.remaining} more characters available; call read_document(offset=${slice.endOffset}) to continue$pageClause ...]")
             }
         }
-    }
-
-    companion object {
-        /** Mirrors `TikaDocumentExtractor.maxCharsProvider` default — the contract the description documents. */
-        private const val DEFAULT_MAX_CHARS = 200_000
+        return ToolResult(content = body, summary = result.summary,
+            tokenEstimate = TokenEstimator.estimate(body), isError = false)
     }
 }

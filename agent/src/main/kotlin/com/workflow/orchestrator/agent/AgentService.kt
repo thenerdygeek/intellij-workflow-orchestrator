@@ -1199,22 +1199,26 @@ class AgentService(
         // Falls in the deferred tier so the full Tika + POI dependency is only paid when
         // the LLM explicitly searches for "document" or "pdf" or "xlsx" tools.
         //
-        // Phase 8: extractor + tool both read from PluginSettings per-call (mirroring
-        // HttpClientFactory.timeoutsFromSettings). documentMaxChars feeds the extractor's
-        // assembler; documentTimeoutMs feeds the per-extraction timeout. documentEnableStreamMode
-        // is stored on settings but Tabula stream-mode is opt-in via PdfTableExtractor's
-        // constructor — threading per-call would require a pipeline refactor (TODO v2).
+        // Task 9: DocumentTool now delegates to DocumentArtifactService (single-flight + background
+        // extraction + disk caching). The service is wired here with the project's CoroutineScope
+        // (cs) so background extraction jobs survive across individual read calls.
+        // jobBudgetMs is a fixed 300s for now; Task 12 will replace it with a settings field.
         val docExtractor = TikaDocumentExtractor(
             maxCharsProvider = {
                 val n = PluginSettings.getInstance(project).state.documentMaxChars
                 if (n <= 0) Int.MAX_VALUE else n
             },
         )
+        val docArtifactStore = com.workflow.orchestrator.document.service.DocumentArtifactStore(docExtractor)
+        val docArtifactService = com.workflow.orchestrator.agent.tools.integration.SessionDocumentArtifactService(
+            store = docArtifactStore,
+            cs = cs,
+            cacheDirProvider = { com.workflow.orchestrator.agent.tools.integration.SessionDocumentArtifactService.defaultCacheDirProvider() },
+            servingBudgetMs = (PluginSettings.getInstance(project).state.documentTimeoutMs - 5_000L).coerceAtLeast(5_000L),
+            jobBudgetMs = 300_000L,
+        )
         safeRegisterDeferred("File") {
-            DocumentTool(
-                extractor = docExtractor,
-                timeoutMsProvider = { PluginSettings.getInstance(project).state.documentTimeoutMs },
-            )
+            DocumentTool(artifactService = docArtifactService)
         }
         // view_image — registered only when visual support is enabled. When the master flag
         // is off the tool never appears in the LLM's tool list, so it cannot be called.
