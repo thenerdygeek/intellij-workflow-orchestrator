@@ -53,6 +53,38 @@ test('typing "#" then pasting "#PROJ-123" does not produce a double-#', async ({
   expect(ticketMentions.length, 'ticket recorded exactly once').toBe(1);
 });
 
+test('a typed but unconfirmed #ticket is still recorded as a mention on send (#2)', async ({ page }) => {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+  // Type a full ticket key WITHOUT a trailing space and WITHOUT selecting from
+  // the dropdown — previously this shipped as literal text, not a mention.
+  await editor.pressSequentially('#PROJ-456');
+
+  const payload = await sendAndGetPayload(page); // clicks Send (blurs editor)
+  expect(payload.text).toContain('#PROJ-456');
+  expect(
+    payload.mentions.filter(m => m.label === 'PROJ-456').length,
+    'typed ticket recorded as a mention',
+  ).toBe(1);
+});
+
+test('Enter sends after type-# then paste — the ticket dropdown is not left stuck open', async ({ page }) => {
+  const editor = page.locator(EDITOR);
+  await editor.click();
+  await editor.pressSequentially('#');
+  await page.evaluate(() => navigator.clipboard.writeText('#PROJ-789'));
+  await editor.press('ControlOrMeta+v');
+  await expect(page.locator(`${HOST} [data-mention-label="PROJ-789"]`)).toHaveCount(1);
+
+  // Dropdown should have closed after the paste → Enter must SEND, not be swallowed.
+  await editor.press('Enter');
+  await expect
+    .poll(async () =>
+      (await getCalls(page)).some(c => c.method === '_sendMessageWithMentions' || c.method === '_sendMessage'),
+    )
+    .toBe(true);
+});
+
 test('pasting "#PROJ-123" into an empty input yields a single clean chip', async ({ page }) => {
   const editor = page.locator(EDITOR);
   await editor.click();

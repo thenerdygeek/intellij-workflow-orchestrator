@@ -971,6 +971,21 @@ export const InputBar = memo(function InputBar() {
     if (!ri) return;
     const text = ri.getText();
     const mentions = ri.getMentions();
+    // #2 fix: a #ticket the user TYPED but never confirmed (no trailing space and
+    // no dropdown selection) was never chipped, so getMentions misses it and it
+    // would ship as literal text. Record it as a ticket mention here. We push the
+    // mention (rather than insertChip) because clicking the Send button blurs the
+    // editor, which would break caret-based chip insertion.
+    const pendingTicketQuery = prevTicketQueryRef.current;
+    prevTicketQueryRef.current = '';
+    if (
+      pendingTicketQuery &&
+      /^[A-Za-z][A-Za-z0-9]+-\d+$/.test(pendingTicketQuery) &&
+      !mentions.some(m => m.label === pendingTicketQuery.toUpperCase())
+    ) {
+      const key = pendingTicketQuery.toUpperCase();
+      mentions.push({ type: 'ticket', label: key, path: key });
+    }
     const pending = attachmentManagerRef.current?.list() ?? [];
     console.log('[Mention] handleSend: text=', JSON.stringify(text.slice(0, 80)), 'mentions=', JSON.stringify(mentions), 'attachments=', pending.length);
     if (!text.trim() && mentions.length === 0 && pending.length === 0) return;

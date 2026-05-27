@@ -252,12 +252,20 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       const el = editorRef.current;
       if (!el) return [...mentionsRef.current];
       const validMentions: Mention[] = [];
+      // Dedup by label: two chips can share a label (e.g. a pasted pending chip
+      // plus a dropdown-selected valid chip for the same ticket), which would
+      // otherwise emit the same mention twice into the send payload.
+      const seen = new Set<string>();
       const chipEls = el.querySelectorAll<HTMLElement>('[data-mention-label]');
       chipEls.forEach(chip => {
         const status = chip.dataset.chipStatus;
-        if (status !== 'invalid') {
-          const mention = mentionsRef.current.find(m => m.label === chip.dataset.mentionLabel);
-          if (mention) validMentions.push(mention);
+        const label = chip.dataset.mentionLabel;
+        if (status !== 'invalid' && label && !seen.has(label)) {
+          const mention = mentionsRef.current.find(m => m.label === label);
+          if (mention) {
+            validMentions.push(mention);
+            seen.add(label);
+          }
         }
       });
       return validMentions;
