@@ -158,6 +158,7 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation(libs.junit5.api)
+    testImplementation(libs.junit5.params)
     testRuntimeOnly(libs.junit5.engine)
     // JUnit Vintage engine bridges JUnit 4 (BasePlatformTestCase) onto the JUnit 5 platform.
     // The IntelliJ Platform classloader wires junit4-style Statement class references even
