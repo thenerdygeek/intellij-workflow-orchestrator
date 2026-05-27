@@ -24,7 +24,6 @@ class SessionDocumentArtifactServiceScenarioTest {
         store = DocumentArtifactStore(TikaDocumentExtractor()),
         cs = scope,
         cacheDirProvider = { cacheRoot },
-        servingBudgetMs = 30_000,
         jobBudgetMs = 300_000,
     )
 

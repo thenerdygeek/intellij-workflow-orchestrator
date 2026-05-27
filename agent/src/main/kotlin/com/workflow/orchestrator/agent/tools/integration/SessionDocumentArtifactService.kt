@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.tools.integration
 
 import com.workflow.orchestrator.core.model.DocumentArtifact
 import com.workflow.orchestrator.core.model.DocumentCursor
+import com.workflow.orchestrator.core.model.DocumentExtractionProgress
 import com.workflow.orchestrator.core.model.DocumentSlice
 import com.workflow.orchestrator.core.services.DocumentArtifactService
 import com.workflow.orchestrator.core.services.SessionDownloadDir
@@ -17,15 +18,16 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Session-scoped [DocumentArtifactService]. Owns the single-flight map and runs extraction as a
- * background coroutine on the injected [cs] (project/service scope), decoupled from any single
- * read's [servingBudgetMs]. A read that times out abandons only its await, never the job.
+ * background coroutine on the injected [cs] (project/service scope). A [read] call blocks until
+ * extraction completes (the background job is self-capped at [jobBudgetMs]); the optional
+ * [progressSink] receives incremental [DocumentExtractionProgress] updates while waiting.
  */
 class SessionDocumentArtifactService(
     private val store: DocumentArtifactStore,
     private val cs: CoroutineScope,
     private val cacheDirProvider: suspend () -> Path?,
-    private val servingBudgetMs: Long,
     private val jobBudgetMs: Long,
+    private val progressSink: ((DocumentExtractionProgress) -> Unit)? = null,
 ) : DocumentArtifactService {
 
     private val inFlight = ConcurrentHashMap<String, Deferred<Result<DocumentArtifact>>>()
@@ -44,10 +46,10 @@ class SessionDocumentArtifactService(
             return ToolResult.error("Document extraction failed: $reason")
         }
 
-        val deferred = inFlight.computeIfAbsent(hash) {
+        val job = inFlight.computeIfAbsent(hash) {
             cs.async(Dispatchers.IO) {
                 val outcome = withTimeoutOrNull(jobBudgetMs) {
-                    runCatching { store.extractAndPersist(path, artDir, hash, jobBudgetMs) }
+                    runCatching { store.extractAndPersist(path, artDir, hash, jobBudgetMs, progressSink) }
                 } ?: Result.failure(RuntimeException("extraction exceeded ${jobBudgetMs / 1000}s budget"))
                 if (outcome.isFailure) {
                     store.writeFailure(artDir, outcome.exceptionOrNull()?.message ?: "unknown error")
@@ -56,12 +58,8 @@ class SessionDocumentArtifactService(
             }.also { d -> d.invokeOnCompletion { inFlight.remove(hash) } }
         }
 
-        val joined = withTimeoutOrNull(servingBudgetMs) { deferred.await() }
-            ?: return ToolResult.success(
-                data = DocumentSlice("", 0, 0, 0, null, null),
-                summary = "Document extraction in progress — call read_document again shortly.",
-            )
-        return joined.fold(
+        val outcome = job.await()   // blocks until extraction completes (deferred self-caps at jobBudgetMs)
+        return outcome.fold(
             onSuccess = { artifact -> serve(artifact, cursor, cap) },
             onFailure = { ToolResult.error("Document extraction failed: ${it.message}") },
         )

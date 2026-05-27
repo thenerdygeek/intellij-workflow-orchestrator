@@ -1214,11 +1214,13 @@ class AgentService(
             store = docArtifactStore,
             cs = cs,
             cacheDirProvider = { com.workflow.orchestrator.agent.tools.integration.SessionDocumentArtifactService.defaultCacheDirProvider() },
-            servingBudgetMs = (PluginSettings.getInstance(project).state.documentTimeoutMs - 5_000L).coerceAtLeast(5_000L),
             jobBudgetMs = PluginSettings.getInstance(project).state.documentExtractionJobTimeoutMs,
         )
         safeRegisterDeferred("File") {
-            DocumentTool(artifactService = docArtifactService)
+            DocumentTool(
+                artifactService = docArtifactService,
+                timeoutMs = PluginSettings.getInstance(project).state.documentExtractionJobTimeoutMs + 60_000L,
+            )
         }
         // view_image — registered only when visual support is enabled. When the master flag
         // is off the tool never appears in the LLM's tool list, so it cannot be called.

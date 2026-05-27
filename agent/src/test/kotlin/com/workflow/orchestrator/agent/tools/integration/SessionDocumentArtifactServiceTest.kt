@@ -8,9 +8,9 @@ import com.workflow.orchestrator.core.model.DocumentSlice
 import com.workflow.orchestrator.document.service.DocumentArtifactStore
 import io.mockk.coEvery
 import io.mockk.mockk
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -40,7 +40,7 @@ class SessionDocumentArtifactServiceTest {
         coEvery { store.hashFile(src) } returns "hash"
         coEvery { store.loadArtifact(any()) } returns null andThen fakeArtifact(cacheRoot.resolve("hash"))
         coEvery { store.loadFailureIfFresh(any(), any(), any()) } returns null
-        coEvery { store.extractAndPersist(any(), any(), any(), any()) } answers {
+        coEvery { store.extractAndPersist(any(), any(), any(), any(), any()) } answers {
             extractCount.incrementAndGet(); fakeArtifact(cacheRoot.resolve("hash"))
         }
         coEvery { store.loadIndex(any()) } returns DocumentIndex(listOf(DocumentIndex.Anchor("1", 0)), emptyList())
@@ -52,7 +52,6 @@ class SessionDocumentArtifactServiceTest {
             store = store,
             cs = CoroutineScope(SupervisorJob()),
             cacheDirProvider = { cacheRoot },
-            servingBudgetMs = 5_000,
             jobBudgetMs = 60_000,
         )
 
@@ -64,29 +63,32 @@ class SessionDocumentArtifactServiceTest {
     }
 
     @Test
-    fun `slow extraction returns non-error in-progress within serving budget`() = runBlocking {
+    fun `read blocks until extraction completes then returns content`() = runBlocking {
         val src = Files.createTempFile("doc", ".pdf").also { Files.writeString(it, "bytes") }
-        val gate = CompletableDeferred<Unit>()
-        val store = mockk<DocumentArtifactStore>(relaxed = true)
-        coEvery { store.hashFile(src) } returns "hash"
-        coEvery { store.loadArtifact(any()) } returns null
-        coEvery { store.loadFailureIfFresh(any(), any(), any()) } returns null
-        coEvery { store.extractAndPersist(any(), any(), any(), any()) } coAnswers {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val store = io.mockk.mockk<com.workflow.orchestrator.document.service.DocumentArtifactStore>(relaxed = true)
+        io.mockk.coEvery { store.hashFile(src) } returns "hash"
+        io.mockk.coEvery { store.loadArtifact(any()) } returns null
+        io.mockk.coEvery { store.loadFailureIfFresh(any(), any(), any()) } returns null
+        io.mockk.coEvery { store.extractAndPersist(any(), any(), any(), any(), any()) } coAnswers {
             gate.await(); fakeArtifact(cacheRoot.resolve("hash"))
         }
-
+        io.mockk.coEvery { store.loadIndex(any()) } returns com.workflow.orchestrator.core.model.DocumentIndex(
+            listOf(com.workflow.orchestrator.core.model.DocumentIndex.Anchor("1", 0)), emptyList())
+        io.mockk.coEvery { store.slice(any(), any(), any(), any()) } answers {
+            com.workflow.orchestrator.core.model.DocumentSlice("X".repeat(100), 0, 100, 400, 1, 5)
+        }
         val svc = SessionDocumentArtifactService(
             store = store,
-            cs = CoroutineScope(SupervisorJob()),
+            cs = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob()),
             cacheDirProvider = { cacheRoot },
-            servingBudgetMs = 50,
             jobBudgetMs = 60_000,
         )
-
-        val r = svc.read(src, DocumentCursor.Offset(0), 100)
-        assertFalse(r.isError)
-        assertTrue(r.summary.contains("in progress", ignoreCase = true))
+        val readJob = async { svc.read(src, com.workflow.orchestrator.core.model.DocumentCursor.Offset(0), 100) }
         gate.complete(Unit)
+        val r = readJob.await()
+        assertFalse(r.isError)
+        assertTrue(r.data!!.content.isNotEmpty())
     }
 
     @Test
@@ -101,7 +103,6 @@ class SessionDocumentArtifactServiceTest {
             store = store,
             cs = CoroutineScope(SupervisorJob()),
             cacheDirProvider = { cacheRoot },
-            servingBudgetMs = 5_000,
             jobBudgetMs = 60_000,
         )
 

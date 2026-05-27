@@ -32,6 +32,14 @@ import java.nio.file.Paths
  */
 class DocumentTool(
     private val artifactService: DocumentArtifactService,
+    /**
+     * Per-call tool timeout forwarded to [AgentLoop]'s `withTimeoutOrNull` gate.
+     * Must exceed the extraction job budget ([SessionDocumentArtifactService.jobBudgetMs])
+     * so AgentLoop does not kill a blocking [read_document] call before extraction finishes.
+     * Defaults to 360 000 ms (6 minutes), which safely brackets the default 300 s job budget
+     * plus any overhead.
+     */
+    override val timeoutMs: Long = 360_000L,
 ) : AgentTool {
 
     override val name = "read_document"
@@ -103,9 +111,6 @@ class DocumentTool(
         WorkerType.ANALYZER,
         WorkerType.TOOLER,
     )
-
-    /** 30 s — generous enough for large PDFs but under the 120 s default tool timeout. */
-    override val timeoutMs = 30_000L
 
     /** Spill to disk when output exceeds 30K chars (matches expected size for big docs). */
     override val outputConfig = ToolOutputConfig(maxChars = ToolOutputConfig.COMMAND_MAX_CHARS)
