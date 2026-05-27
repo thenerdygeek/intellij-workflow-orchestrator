@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { UsageIndicator } from '@/components/input/UsageIndicator';
-import { ModelPickerRow } from '@/components/input/InputBar';
+import { InputBar, ModelPickerRow } from '@/components/input/InputBar';
 import { ChipPreview } from '@/components/input/ChipPreview';
 import { AttachmentManager, type PendingAttachment } from '@/components/input/AttachmentManager';
 import { ThinkingView } from '@/components/agent/ThinkingView';
@@ -272,6 +272,19 @@ export function HarnessApp() {
           Playwright to drive state.
         </p>
       </header>
+
+      {/* ─────────── §0 Full InputBar (file/document attachments) ─────────── */}
+      <section data-testid="section-input-bar" className="space-y-3">
+        <h2 className="text-sm font-semibold">§0 InputBar — file/document attachments</h2>
+        <p className="text-[10px]" style={{ color: 'var(--fg-muted, #9ca3af)' }}>
+          Real InputBar mounted. Plus → "Attach file…" calls <code>_pickAttachment</code>
+          (mock pushes a synthetic file chip). <code>window._setDropActive(true)</code> shows the
+          drop overlay. <code>window._addAttachmentChip(meta)</code> adds a chip.
+        </p>
+        <div data-testid="input-bar-host">
+          <InputBar />
+        </div>
+      </section>
 
       {/* ─────────── §1 UsageIndicator ─────────── */}
       <section data-testid="section-usage-indicator" className="space-y-3">

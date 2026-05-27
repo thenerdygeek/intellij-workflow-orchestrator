@@ -12,6 +12,8 @@
  * bridges later is purely additive.
  */
 
+import { useChatStore } from '../stores/chatStore';
+
 interface ImageSettings {
   maxBytes: number;
   mimeWhitelist: string[];
@@ -111,6 +113,29 @@ export function installMockBridge(): void {
   w._denyToolCall = spy('_denyToolCall');
   w._allowToolForSession = spy('_allowToolForSession');
   w._reportInteractiveRender = spy('_reportInteractiveRender');
+
+  // ── File/document attachment bridges (mock) ─────────────────────────────────
+  // In production these are JVM-backed: _pickAttachment opens a native
+  // FileChooser; the drop target pushes _setDropActive; both ultimately call
+  // _addAttachmentChip (registered by InputBar's mount effect) with metadata.
+  // The harness simulates a "pick" by pushing a synthetic file chip so the
+  // menu→pick→chip flow is exercisable in a real browser.
+  w._pickAttachment = () => {
+    state.calls.push({ method: '_pickAttachment', args: [] });
+    if (typeof w._addAttachmentChip === 'function') {
+      w._addAttachmentChip({
+        sha256: 'harness' + Date.now().toString(16),
+        mime: 'application/pdf',
+        size: 12345,
+        originalFilename: 'harness-spec.pdf',
+        kind: 'file',
+        path: '/tmp/session/attachments/files/harness-spec.pdf',
+      });
+    }
+  };
+  w._setDropActive = (active: boolean) => {
+    useChatStore.getState().setDropActive(!!active);
+  };
 
   // ── Harness control surface ────────────────────────────────────────────────
   w.__harness = {
