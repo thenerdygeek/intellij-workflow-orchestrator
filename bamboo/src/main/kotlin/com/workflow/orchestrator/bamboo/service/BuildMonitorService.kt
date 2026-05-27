@@ -8,7 +8,6 @@ import com.workflow.orchestrator.bamboo.api.dto.BambooResultDto
 import com.workflow.orchestrator.bamboo.model.BuildState
 import com.workflow.orchestrator.bamboo.model.BuildStatus
 import com.workflow.orchestrator.bamboo.model.NewerBuild
-import com.workflow.orchestrator.bamboo.model.StageState
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
@@ -29,7 +28,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import java.time.Instant
+
 
 @Service(Service.Level.PROJECT)
 open class BuildMonitorService {
@@ -187,11 +186,11 @@ open class BuildMonitorService {
 
     suspend fun pollOnce(planKey: String, branch: String) {
         log.info("[Bamboo:Monitor] pollOnce planKey=$planKey, branch=$branch")
-        val result = apiClient.getLatestResult(planKey, branch)
+        val result = apiClient.getLatestResult(planKey)
         log.info("[Bamboo:Monitor] pollOnce result: ${if (result is ApiResult.Success) "SUCCESS" else "FAILED: $result"}")
         if (result is ApiResult.Success) {
             val dto = result.data
-            var buildState = mapToBuildState(dto, planKey, branch)
+            var buildState = BambooBuildStructureMapper.toBuildState(dto, planKey, branch)
 
             // Only check for newer builds when the current build is in a terminal state.
             // While the build is still running, there's no point querying for newer builds —
@@ -323,50 +322,6 @@ open class BuildMonitorService {
             )
             else -> {} // No notification for non-terminal states
         }
-    }
-
-    // Maps from BambooResultDto directly (not via BambooServiceImpl.toBuildStageData):
-    // UI rendering needs `manual` and `lifeCycleState` per stage which BuildStageData
-    // doesn't carry — adding them would be a UI-only requirement bleeding into the
-    // cross-module model. Kept narrow on purpose.
-    private fun mapToBuildState(dto: BambooResultDto, planKey: String, branch: String): BuildState {
-        // Flatten stages into jobs — each job is a StageState with its parent stage name
-        val jobs = mutableListOf<StageState>()
-        for (stage in dto.stages.stage) {
-            val jobResults = stage.results.result
-            if (jobResults.isNotEmpty()) {
-                // Stage has jobs — show individual jobs
-                for (job in jobResults) {
-                    val jobName = job.plan?.shortName ?: job.buildResultKey
-                    jobs.add(StageState(
-                        name = jobName,
-                        status = BuildStatus.fromBambooState(job.state, job.lifeCycleState),
-                        manual = stage.manual,
-                        durationMs = job.buildDurationInSeconds * 1000,
-                        stageName = stage.name,
-                        resultKey = job.buildResultKey
-                    ))
-                }
-            } else {
-                // Stage has no expanded jobs — show stage itself
-                jobs.add(StageState(
-                    name = stage.name,
-                    status = BuildStatus.fromBambooState(stage.state, stage.lifeCycleState),
-                    manual = stage.manual,
-                    durationMs = stage.buildDurationInSeconds * 1000,
-                    stageName = stage.name,
-                    resultKey = ""
-                ))
-            }
-        }
-        return BuildState(
-            planKey = planKey,
-            branch = branch,
-            buildNumber = dto.buildNumber,
-            stages = jobs,
-            overallStatus = BuildStatus.fromBambooState(dto.state, dto.lifeCycleState),
-            lastUpdated = Instant.now()
-        )
     }
 
     /**

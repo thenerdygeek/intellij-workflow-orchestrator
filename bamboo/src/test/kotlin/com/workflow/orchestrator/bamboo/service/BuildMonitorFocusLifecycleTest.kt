@@ -89,7 +89,7 @@ class BuildMonitorFocusLifecycleTest {
     }
 
     private val apiClient: BambooApiClient = mockk<BambooApiClient>().also { client ->
-        coEvery { client.getLatestResult(any(), any()) } returns
+        coEvery { client.getLatestResult(any()) } returns
             ApiResult.Error(ErrorType.NETWORK_ERROR, "lifecycle-test stub")
         coEvery { client.getRunningAndQueuedBuilds(any()) } returns
             ApiResult.Error(ErrorType.NETWORK_ERROR, "lifecycle-test stub")

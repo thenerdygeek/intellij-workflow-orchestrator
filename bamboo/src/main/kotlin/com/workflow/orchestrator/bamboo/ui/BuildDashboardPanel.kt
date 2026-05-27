@@ -884,7 +884,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                             // when the user clicks a stage in the historical build view.
                             // Multi-job stages will only surface the first job's log; a
                             // future change could materialise per-job rows here as the
-                            // live monitor does (BuildMonitorService.mapToBuildState).
+                            // live monitor does (BambooBuildStructureMapper.toBuildState).
                             resultKey = stage.jobs.firstOrNull()?.resultKey.orEmpty(),
                             manual = false
                         )

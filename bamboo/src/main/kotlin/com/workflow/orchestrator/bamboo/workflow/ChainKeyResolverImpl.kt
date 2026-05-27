@@ -2,26 +2,32 @@ package com.workflow.orchestrator.bamboo.workflow
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.bamboo.model.BambooPlanRef
 import com.workflow.orchestrator.bamboo.service.BambooServiceImpl
 import com.workflow.orchestrator.bamboo.service.PlanDetectionService
+import com.workflow.orchestrator.core.settings.RepoContextResolver
+import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import com.workflow.orchestrator.core.workflow.ChainKeyResolver
 
 /**
- * Phase A — `:bamboo` implementation of the [ChainKeyResolver] EP.
+ * `:bamboo` implementation of the [ChainKeyResolver] EP.
  *
- * Delegates to [PlanDetectionService.resolveBranchKeyOrNull] so the matching rule
- * (`apiClient.getPlanBranches(parent)` matched by `shortName`, the field that actually
- * carries the git branch name) stays in a single place. Returns null when:
+ * Calls [PlanDetectionService.resolvePlanRef] with the repo's default branch so that the
+ * master-tracked-branch case (state 2: the current branch IS the master plan's tracked
+ * branch, e.g. `develop`) resolves to the master plan key instead of falling through to the
+ * strict empty state (state 3). Returns null when:
  *
  *  - [BambooServiceImpl] is unavailable (project not initialised yet)
  *  - the lazy [BambooServiceImpl.client] is null (Bamboo not configured)
- *  - [parentPlanKey] looks like a branch chain key already (`PROJ-PLAN-7` shape)
- *  - no branch chain exists for [branchName] under [parentPlanKey]
+ *  - no branch plan exists for [branchName] under [parentPlanKey] and the branch is not the
+ *    repo's default branch (state 3 — strict empty state, no master substitution)
+ *  - the resolved ref is [BambooPlanRef.Master] (would occur only if [branchName] is blank,
+ *    but that is guarded above — included for exhaustiveness)
  *
- * **No master fallback.** Per project directive ("better to see no data than incorrect
- * data"): a missing branch chain is reported as null and the cascade leaves
- * `BuildRef.chainKey` null + `focusBuild = null`, instead of silently substituting the
- * master chain's latest build (the bug this Phase A unblocks).
+ * **No master fallback for a non-matching feature branch.** Per project directive ("better
+ * to see no data than incorrect data"): state 3 surfaces as null so the cascade leaves
+ * `BuildRef.chainKey` null + `focusBuild = null` rather than substituting the master
+ * chain's latest build.
  */
 class ChainKeyResolverImpl : ChainKeyResolver {
     private val log = Logger.getInstance(ChainKeyResolverImpl::class.java)
@@ -34,12 +40,15 @@ class ChainKeyResolverImpl : ChainKeyResolver {
         if (parentPlanKey.isBlank() || branchName.isBlank()) return null
         val bambooService = project.getService(BambooServiceImpl::class.java) ?: return null
         val client = bambooService.client ?: return null
-        // `PluginSettings` is unused on the `resolveBranchKeyOrNull` path (only the auto-detect
-        // T4 deep-scan gate + validation cache reads it), so we don't fetch it here. Avoids
-        // pulling a project-service dependency through tests that don't need one.
         val planDetection = PlanDetectionService(client, null)
         return try {
-            planDetection.resolveBranchKeyOrNull(parentPlanKey, branchName)
+            // Supply the repo's default branch so the master-tracked-branch case (state 2)
+            // resolves to the master plan key instead of the strict empty state (state 3).
+            val defaultBranch = resolveRepoDefaultBranch(project)
+            planDetection.resolvePlanRef(parentPlanKey, branchName, defaultBranch)?.let {
+                // No master substitution for a non-matching feature branch (state 3 → null).
+                if (it is BambooPlanRef.Master) null else it.planKey
+            }
         } catch (t: Throwable) {
             // Defensive: any unexpected failure (parse error, transport hiccup) collapses
             // to null so the cascade doesn't surface a transient failure as "no build" vs
@@ -47,5 +56,14 @@ class ChainKeyResolverImpl : ChainKeyResolver {
             log.warn("[Bamboo:Plan] resolveChainKey($parentPlanKey, '$branchName') failed: ${t.message}")
             null
         }
+    }
+
+    /** Repo default branch (real git data) for the master-tracked-branch detection; null if unavailable. */
+    private suspend fun resolveRepoDefaultBranch(project: Project): String? = try {
+        val repo = RepoContextResolver.getInstance(project).resolvePrimaryGitRepo()
+        repo?.let { DefaultBranchResolver.getInstance(project).resolve(it) }
+    } catch (t: Throwable) {
+        log.warn("[Bamboo:Plan] default-branch resolution failed: ${t.message}")
+        null
     }
 }

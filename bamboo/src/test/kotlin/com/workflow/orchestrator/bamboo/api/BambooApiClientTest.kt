@@ -74,10 +74,10 @@ class BambooApiClientTest {
     }
 
     @Test
-    fun `getLatestResult returns build result with stages`() = runTest {
+    fun `getLatestResult returns build result with stages via single-key URL`() = runTest {
         server.enqueue(MockResponse().setBody(fixture("build-result.json")))
 
-        val result = client.getLatestResult("PROJ-BUILD", "feature/PROJ-123")
+        val result = client.getLatestResult("PROJ-BUILD")
 
         assertTrue(result.isSuccess)
         val build = (result as ApiResult.Success).data
@@ -88,7 +88,8 @@ class BambooApiClientTest {
         assertTrue(build.stages.stage[2].manual)
 
         val recorded = server.takeRequest()
-        assertTrue(recorded.path!!.contains("/rest/api/latest/result/PROJ-BUILD/branch/feature%2FPROJ-123"))
+        assertTrue(recorded.path!!.contains("/rest/api/latest/result/PROJ-BUILD/latest"))
+        assertFalse(recorded.path!!.contains("/branch/"))
     }
 
     /**

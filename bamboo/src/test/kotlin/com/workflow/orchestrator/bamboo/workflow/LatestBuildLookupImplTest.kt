@@ -38,8 +38,8 @@ class LatestBuildLookupImplTest {
 
         every { project.getService(BambooServiceImpl::class.java) } returns bambooService
         every { bambooService.client } returns client
-        // Unbranched form — branch arg defaults to null so the URL is /result/{chainKey}/latest.
-        coEvery { client.getLatestResult("PROJ-PLAN523", null) } returns ApiResult.Success(
+        // Single-key form — always issues /result/{chainKey}/latest.
+        coEvery { client.getLatestResult("PROJ-PLAN523") } returns ApiResult.Success(
             BambooResultDto(buildNumber = 123),
         )
 
@@ -62,7 +62,7 @@ class LatestBuildLookupImplTest {
 
         every { project.getService(BambooServiceImpl::class.java) } returns bambooService
         every { bambooService.client } returns client
-        coEvery { client.getLatestResult(any(), any()) } returns ApiResult.Error(
+        coEvery { client.getLatestResult(any()) } returns ApiResult.Error(
             ErrorType.NOT_FOUND,
             "Bamboo resource not found",
         )
@@ -107,7 +107,7 @@ class LatestBuildLookupImplTest {
         val ref = LatestBuildLookupImpl().fetchLatestBuild(project, "")
 
         assertNull(ref)
-        coVerify(exactly = 0) { client.getLatestResult(any(), any()) }
+        coVerify(exactly = 0) { client.getLatestResult(any()) }
     }
 
     /**

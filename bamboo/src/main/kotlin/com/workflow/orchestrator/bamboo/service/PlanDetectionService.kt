@@ -20,6 +20,7 @@ class PlanDetectionService(
 ) {
 
     private val log = Logger.getInstance(PlanDetectionService::class.java)
+    private val planResolver = BambooPlanResolver(apiClient)
 
     // --- Validation cache ---
     // In-memory caches remain as a fast layer for the current session.
@@ -195,12 +196,20 @@ class PlanDetectionService(
     }
 
     /**
+     * Typed resolution authority. [repoDefaultBranch] enables the MasterTrackedBranch
+     * (state 2) detection; callers without a GitRepository pass null.
+     */
+    internal suspend fun resolvePlanRef(
+        master: String,
+        branchName: String?,
+        repoDefaultBranch: String? = null,
+    ): com.workflow.orchestrator.bamboo.model.BambooPlanRef? =
+        planResolver.resolve(master, branchName, repoDefaultBranch)
+
+    /**
      * After a master plan key is found by any tier, attempt to resolve the branch plan key
      * for the current [branchName]. Falls back to [master] if no branch plan is found or
      * if [branchName] is blank.
-     *
-     * Branch plan keys already look like `PROJ-PLAN-7` (trailing digit segment), so if
-     * [master] already matches that pattern we skip resolution to avoid double-nesting.
      *
      * `internal` (was `private`) so the cross-module
      * [com.workflow.orchestrator.bamboo.workflow.ChainKeyResolverImpl] EP can share the
@@ -211,17 +220,10 @@ class PlanDetectionService(
      */
     internal suspend fun resolveBranchKey(master: String, branchName: String?): String {
         if (branchName.isNullOrBlank()) return master
-        // If the candidate already looks like a branch plan key (e.g. PROJ-PLAN-7), skip resolution
-        if (master.matches(Regex("^.+-.+-\\d+$"))) return master
-        val branches = apiClient.getPlanBranches(master).getOrNull() ?: return master
-        val match = branches.firstOrNull { it.shortName?.equals(branchName, ignoreCase = false) == true }
-        return if (match != null) {
-            log.info("[Bamboo:Plan] Resolved branch plan ${match.key} for branch '$branchName' under master $master")
-            match.key
-        } else {
-            log.info("[Bamboo:Plan] No branch plan found for '$branchName' under $master — falling back to master plan (branch-plan creation may be disabled)")
-            master
-        }
+        // Auto-detect waterfall keeps its fallback-to-master behaviour: a BranchPlan/
+        // MasterTrackedBranch ref yields its planKey; null (no branch plan) falls back to
+        // the master plan key (branch-plan creation may be disabled). No string-shape guard.
+        return planResolver.resolve(master, branchName)?.planKey ?: master
     }
 
     /**
@@ -232,23 +234,16 @@ class PlanDetectionService(
      * "no build for this branch" rather than silently substituting the master chain's
      * latest build (the bug Phase A is unblocking).
      *
-     * Lookup logic mirrors [resolveBranchKey] — `apiClient.getPlanBranches(parentPlanKey)`
-     * matched by `shortName` (case-sensitive) — so chain-key resolution and the
-     * auto-detect waterfall stay in lockstep on the matching rule.
+     * Lookup logic mirrors [resolveBranchKey] — via [BambooPlanResolver] matched by
+     * `shortName` (case-sensitive) — so chain-key resolution and the auto-detect waterfall
+     * stay in lockstep on the matching rule.
      */
     internal suspend fun resolveBranchKeyOrNull(parentPlanKey: String, branchName: String): String? {
         if (branchName.isBlank()) return null
-        // If the parent already looks like a branch plan key, the caller passed the wrong
-        // input — no further resolution possible.
-        if (parentPlanKey.matches(Regex("^.+-.+-\\d+$"))) return null
-        val branches = apiClient.getPlanBranches(parentPlanKey).getOrNull() ?: return null
-        val match = branches.firstOrNull { it.shortName?.equals(branchName, ignoreCase = false) == true }
-        return if (match != null) {
-            log.info("[Bamboo:Plan] Chain-key resolved: ${match.key} for branch '$branchName' under parent $parentPlanKey")
-            match.key
-        } else {
-            log.info("[Bamboo:Plan] No branch chain found for '$branchName' under $parentPlanKey — returning null (no master substitution)")
-            null
+        // Strict: null on no-branch-plan (no master substitution). State-2 (MasterTrackedBranch)
+        // is resolved by the caller (ChainKeyResolverImpl) which supplies the repo default branch.
+        return planResolver.resolve(parentPlanKey, branchName)?.let {
+            if (it is com.workflow.orchestrator.bamboo.model.BambooPlanRef.Master) null else it.planKey
         }
     }
 

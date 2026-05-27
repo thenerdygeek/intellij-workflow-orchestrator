@@ -134,10 +134,14 @@ class ChainKeyResolverImplTest {
     }
 
     @Test
-    fun `returns null when parent already looks like a branch chain key`() = runTest {
+    fun `returns null when no branch plan found for caller-supplied key`() = runTest {
+        // The regex guard (`^.+-.+-\d+$`) that previously short-circuited keys ending in a
+        // digit (e.g. PROJ-BUILD-7) without an API call is deleted — key shape is no longer
+        // inspected. The resolver now always calls getPlanBranches; when no shortName matches,
+        // it returns null (no master substitution). The server response here has no branches.
+        server.enqueue(MockResponse().setBody("""{"branches":{"branch":[]}}"""))
         val project = makeProject(realClient)
 
-        // Parent key like `PROJ-PLAN-7` is itself a branch chain — caller passed wrong input.
         val key = ChainKeyResolverImpl().resolveChainKey(
             project,
             parentPlanKey = "PROJ-BUILD-7",
@@ -145,6 +149,6 @@ class ChainKeyResolverImplTest {
         )
 
         assertNull(key)
-        assertEquals(0, server.requestCount)
+        assertEquals(1, server.requestCount)
     }
 }

@@ -433,13 +433,17 @@ class PlanDetectionServiceTest {
     }
 
     @Test
-    fun `branch resolution is skipped when master already looks like a branch plan key`(@TempDir repoRoot: Path) = runTest {
-        // Simulate T2 returning an already-branch-scoped key (e.g. PROJ-MAIN-7)
+    fun `branch resolution falls back to master key when getPlanBranches returns no shortName match`(@TempDir repoRoot: Path) = runTest {
+        // Simulate T2 returning an already-branch-scoped key (e.g. PROJ-MAIN-7).
+        // The regex guard is deleted — resolver now always calls getPlanBranches.
+        // If no branch plan matches and branch is not the default branch, resolver
+        // returns null → resolveBranchKey falls back to the master key.
         val changesetEntries = listOf(
             BambooChangesetResultEntry(plan = BambooPlanRef(key = "PROJ-MAIN-7"))
         )
         coEvery { apiClient.getResultsByChangeset("sha001") } returns ApiResult.Success(changesetEntries)
         coEvery { apiClient.validatePlan("PROJ-MAIN-7") } returns ApiResult.Success(true)
+        coEvery { apiClient.getPlanBranches("PROJ-MAIN-7", any()) } returns ApiResult.Success(emptyList())
         val svc = PlanDetectionService(apiClient, null).also {
             it.bbClientFactory = { null }
             it.revListRunner = { listOf("sha001") }
@@ -448,9 +452,8 @@ class PlanDetectionServiceTest {
         val result = svc.autoDetect(repoRoot, "https://bitbucket.org/co/repo.git", "feature/something")
 
         assertTrue(result.isSuccess)
-        // No getPlanBranches call expected — key already looks like a branch plan
+        // No branch plan found → falls back to the master key
         assertEquals("PROJ-MAIN-7", (result as ApiResult.Success).data)
-        coVerify(exactly = 0) { apiClient.getPlanBranches(any(), any()) }
     }
 
     @Test
