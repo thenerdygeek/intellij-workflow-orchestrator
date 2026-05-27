@@ -168,8 +168,32 @@ class AgentCefPanel(
     /** Invoked when JS calls window._pickAttachment(); reads files off-EDT and ingests them. */
     var onPickAttachment: (() -> Unit)? = null
 
-    /** Invoked with dropped OS files; reads bytes off-EDT and ingests them. */
+    /** Guards against double-installing the AWT DropTarget (createBrowser vs setter race). */
+    private var dropTargetInstalled = false
+
+    /**
+     * Invoked with dropped OS files; reads bytes off-EDT and ingests them.
+     *
+     * The setter calls [maybeInstallDropTarget] immediately so the DropTarget is
+     * installed even when AgentController assigns this AFTER [createBrowser] has
+     * already returned (the common production path: init{} → createBrowser() eagerly,
+     * then AgentController wires callbacks).  [createBrowser] also calls
+     * [maybeInstallDropTarget] after `browser = b` to cover the rare inverse ordering.
+     * [dropTargetInstalled] prevents double-installation regardless of which path wins.
+     */
     var onDropTargetReady: ((List<java.io.File>) -> Unit)? = null
+        set(value) { field = value; maybeInstallDropTarget() }
+
+    private fun maybeInstallDropTarget() {
+        if (dropTargetInstalled) return
+        val comp = browser?.component ?: return
+        val ready = onDropTargetReady ?: return
+        AttachmentDropTarget(
+            onDropActive = { active -> callJs("if (window._setDropActive) window._setDropActive($active);") },
+            onFilesDropped = { files -> ready(files) },
+        ).installOn(comp)
+        dropTargetInstalled = true
+    }
 
     /**
      * Bridge dispatcher: manages the pageLoaded/pendingCalls state machine.
@@ -942,13 +966,13 @@ class AgentCefPanel(
         browser = b
         add(b.component, BorderLayout.CENTER)
 
-        onDropTargetReady?.let { ready ->
-            val dt = AttachmentDropTarget(
-                onDropActive = { active -> callJs("if (window._setDropActive) window._setDropActive($active);") },
-                onFilesDropped = { files -> ready(files) },
-            )
-            dt.installOn(b.component)
-        }
+        // Install the OS drag-and-drop target.  maybeInstallDropTarget() is
+        // idempotent (dropTargetInstalled flag) and handles both orderings:
+        //   (a) createBrowser finishes BEFORE AgentController sets onDropTargetReady
+        //       → setter fires maybeInstallDropTarget on assignment (common path).
+        //   (b) onDropTargetReady set BEFORE createBrowser finishes (rare)
+        //       → this call installs immediately.
+        maybeInstallDropTarget()
 
         // Load the page LAST — after the load handler is registered.
         // If loadURL is called before addLoadHandler, the page can finish loading

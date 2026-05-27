@@ -120,9 +120,20 @@ class AttachmentStore(val sessionDir: Path) {
         val safeName = sanitizeFilename(originalFilename ?: "file")
         val finalPath = filesDir.resolve("${sha.take(8)}-$safeName")
         if (!Files.exists(finalPath)) {
-            val tmp = filesDir.resolve("${sha.take(8)}-$safeName.tmp.${System.nanoTime()}")
-            Files.write(tmp, bytes, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
-            Files.move(tmp, finalPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            // Mirror storeBlocking: use currentTimeMillis + nanoTime for extra entropy
+            // in the tmp name, and apply owner-only permissions before writing so
+            // document bytes are not world-readable on shared hosts.
+            val tmp = filesDir.resolve("${sha.take(8)}-$safeName.tmp.${System.currentTimeMillis()}.${System.nanoTime()}")
+            try {
+                Files.newOutputStream(tmp, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW).use { out ->
+                    AtomicFileWriter.applyOwnerOnlyPerms(tmp)
+                    out.write(bytes)
+                }
+                Files.move(tmp, finalPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (e: Exception) {
+                runCatching { Files.deleteIfExists(tmp) }
+                throw e
+            }
         }
         return finalPath.toAbsolutePath().normalize()
     }

@@ -675,7 +675,13 @@ class AgentController(
         // Reads bytes off-EDT (controllerScope.launch(Dispatchers.IO)), then
         // delegates to AttachmentIngestService which stores bytes, emits chip
         // metadata to the webview, and activates read_document when needed.
-        val ingest = AttachmentIngestService(
+        //
+        // FIX 2: create the service ONCE — guard with a null-check so mirror
+        // panels (wired via addMirrorPanel → wireSharedDashboardCallbacks) reuse
+        // the primary's instance rather than overwriting this.attachmentIngest
+        // with a fresh one.  resetTurn() and any other calls on this.attachmentIngest
+        // therefore always target the correct (first-created) service.
+        val ingest = this.attachmentIngest ?: AttachmentIngestService(
             sessionDirProvider = {
                 // Reuse the same lazy-allocate logic as setCurrentSessionDirProvider above:
                 // return the current session dir Path, pre-creating it if needed.
@@ -703,7 +709,7 @@ class AgentController(
                 val st = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state
                 AttachmentIngestService.Settings(
                     imageEnabled = st.enableImageInput,
-                    imageMimeWhitelist = st.imageMimeWhitelist.toSet(),   // MutableList<String> → Set<String>
+                    imageMimeWhitelist = st.imageMimeWhitelist.map { it.lowercase() }.toSet(),
                     imageMaxBytes = st.imageMaxBytes,
                     fileMaxBytes = st.fileMaxBytes,
                     imagesPerTurnCap = st.imagesPerTurnCap,
@@ -719,19 +725,32 @@ class AgentController(
             onFilesAttached = {
                 service.activateDeferredTool("read_document")
             },
-        )
-        this.attachmentIngest = ingest
+        ).also { this.attachmentIngest = it }
 
+        // Each panel (primary + mirrors) registers its own pick/drop closures
+        // pointing at the SHARED ingest service so file bytes always reach the
+        // correct single instance.
         panel.setOnPickAttachment {
             controllerScope.launch(Dispatchers.IO) {
+                val st = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state
+                val maxBytes = st.fileMaxBytes
                 val vFiles = AttachmentPicker(project).choose()
-                val jFiles = vFiles.map { java.io.File(it.path) }
-                ingest.ingest(jFiles.map { readIncoming(it) })
+                val (oversized, ok) = vFiles.partition { java.io.File(it.path).length() > maxBytes }
+                oversized.forEach { vf ->
+                    invokeLater { dashboard.appendStatus("File \"${vf.name}\" is too large (limit ${maxBytes / 1_048_576}MB)", RichStreamingPanel.StatusType.WARNING) }
+                }
+                if (ok.isNotEmpty()) ingest.ingest(ok.map { readIncoming(java.io.File(it.path)) })
             }
         }
         panel.setOnDropTargetReady { osFiles ->
             controllerScope.launch(Dispatchers.IO) {
-                ingest.ingest(osFiles.map { readIncoming(it) })
+                val st = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state
+                val maxBytes = st.fileMaxBytes
+                val (oversized, ok) = osFiles.partition { it.length() > maxBytes }
+                oversized.forEach { f ->
+                    invokeLater { dashboard.appendStatus("File \"${f.name}\" is too large (limit ${maxBytes / 1_048_576}MB)", RichStreamingPanel.StatusType.WARNING) }
+                }
+                if (ok.isNotEmpty()) ingest.ingest(ok.map { readIncoming(it) })
             }
         }
         // ─────────────────────────────────────────────────────────────────────
