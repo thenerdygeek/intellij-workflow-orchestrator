@@ -1,12 +1,16 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.readAction
 import com.intellij.openapi.application.writeAction
+import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import com.workflow.orchestrator.core.vfs.PostMutationRefresh
 import java.io.File
@@ -461,11 +465,19 @@ class EditFileTool : AgentTool {
     }
 
     /**
-     * Write via Document API inside a suspend writeAction. Provides undo support and immediate
-     * editor sync. writeAction (com.intellij.openapi.application) is the coroutine-friendly
-     * replacement for invokeAndWaitIfNeeded { WriteCommandAction.runWriteCommandAction { } }:
-     * it suspends the caller, switches to EDT, acquires the write lock, runs the block, and
-     * returns the result — all without blocking the IO thread.
+     * Write via the Document API on the EDT, with two non-negotiable guarantees:
+     *
+     *  - **Undo support.** The mutation runs inside `WriteCommandAction.runWriteCommandAction`
+     *    (a write action wrapped in a `CommandProcessor` command). Only changes made within a
+     *    command are recorded by the IDE `UndoManager`; a bare `writeAction { }` takes only the
+     *    write lock and leaves Ctrl+Z a no-op. This matches every other write tool in the module
+     *    (FormatCodeTool, OptimizeImportsTool, RefactorRenameTool, the project Action files).
+     *  - **Disk flush.** `Document.replaceString` mutates only the in-memory document, so an
+     *    external `git diff` (spawned by run_command) reads stale bytes off disk until the next
+     *    save trigger (Ctrl+S, frame deactivation, build-through-IDE) happens to fire. We call
+     *    `FileDocumentManager.saveDocument(...)` after the edit so the agent's own follow-up
+     *    `git diff` is trustworthy. Saving persists the combined state — any unsaved user edits
+     *    the document already held plus this edit — and keeps the open editor in sync.
      *
      * Returns true if write succeeded via Document.
      */
@@ -480,23 +492,28 @@ class EditFileTool : AgentTool {
     ): Boolean {
         if (vFile == null) return false
         return try {
-            writeAction {
-                val document = FileDocumentManager.getInstance().getDocument(vFile) ?: return@writeAction false
-                if (replaceAll) {
-                    // Replace all occurrences from end to preserve offsets
-                    var text = document.text
-                    var offset = text.lastIndexOf(oldString)
-                    while (offset >= 0) {
-                        document.replaceString(offset, offset + oldString.length, newString)
-                        text = document.text
-                        offset = if (offset > 0) text.lastIndexOf(oldString, offset - 1) else -1
+            withContext(Dispatchers.EDT) {
+                val document = FileDocumentManager.getInstance().getDocument(vFile)
+                    ?: return@withContext false
+                WriteCommandAction.runWriteCommandAction(project, "Agent: Edit File", null, Runnable {
+                    if (replaceAll) {
+                        // Replace all occurrences from end to preserve offsets
+                        var text = document.text
+                        var offset = text.lastIndexOf(oldString)
+                        while (offset >= 0) {
+                            document.replaceString(offset, offset + oldString.length, newString)
+                            text = document.text
+                            offset = if (offset > 0) text.lastIndexOf(oldString, offset - 1) else -1
+                        }
+                    } else {
+                        val offset = document.text.indexOf(oldString)
+                        if (offset >= 0) {
+                            document.replaceString(offset, offset + oldString.length, newString)
+                        }
                     }
-                } else {
-                    val offset = document.text.indexOf(oldString)
-                    if (offset >= 0) {
-                        document.replaceString(offset, offset + oldString.length, newString)
-                    }
-                }
+                })
+                // Flush the in-memory edit to disk so external tooling (git, build) sees it now.
+                FileDocumentManager.getInstance().saveDocument(document)
                 true
             }
         } catch (_: Exception) {

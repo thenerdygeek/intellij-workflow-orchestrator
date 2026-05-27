@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.tools.ide
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -433,6 +434,9 @@ class RefactorRenameTool(
                     processor.setPreviewUsages(false)
                     processor.performRefactoring(usages)
                 })
+                // Rename rewrites usages across multiple files; flush them all to disk so an
+                // external `git diff` / build sees every touched file, not just the open editor.
+                FileDocumentManager.getInstance().saveAllDocuments()
             }
 
             // Module count — distinct non-null modules touched. Library

@@ -186,6 +186,11 @@ class OptimizeImportsTool : AgentTool {
                         result = ToolResult("Cannot parse: $path", "Parse error", 5, isError = true)
                     }
                 })
+                // Flush the in-memory import changes to disk so an external `git diff` / build
+                // sees them now instead of after the next Ctrl+S / frame-deactivation save trigger.
+                FileDocumentManager.getInstance().getDocument(vf)?.let {
+                    FileDocumentManager.getInstance().saveDocument(it)
+                }
             }
             result ?: ToolResult("Import optimization failed", "Error", 5, isError = true)
         } catch (e: Exception) {

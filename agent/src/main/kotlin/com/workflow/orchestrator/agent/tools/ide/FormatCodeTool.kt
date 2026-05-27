@@ -148,6 +148,11 @@ class FormatCodeTool : AgentTool {
                         result = ToolResult("Cannot parse file: $path", "Parse error", 5, isError = true)
                     }
                 })
+                // Flush the in-memory reformat to disk so an external `git diff` / build sees it
+                // immediately instead of after the next Ctrl+S / frame-deactivation save trigger.
+                FileDocumentManager.getInstance().getDocument(vf)?.let {
+                    FileDocumentManager.getInstance().saveDocument(it)
+                }
             }
             result ?: ToolResult("Format failed", "Error", 5, isError = true)
         } catch (e: Exception) {
