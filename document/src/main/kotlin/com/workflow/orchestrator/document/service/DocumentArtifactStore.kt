@@ -2,11 +2,18 @@ package com.workflow.orchestrator.document.service
 
 import com.workflow.orchestrator.core.model.DocumentArtifact
 import com.workflow.orchestrator.core.model.DocumentArtifactMeta
+import com.workflow.orchestrator.core.model.DocumentCursor
 import com.workflow.orchestrator.core.model.DocumentIndex
+import com.workflow.orchestrator.core.model.DocumentSlice
 import com.workflow.orchestrator.document.assembler.MarkdownAssembler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -86,6 +93,58 @@ class DocumentArtifactStore(
 
     suspend fun readContent(artifact: DocumentArtifact): String = withContext(Dispatchers.IO) {
         Files.readString(artifact.contentPath)
+    }
+
+    /** Resolves [cursor] to an absolute offset via [index], then returns the [DocumentSlice]. */
+    suspend fun slice(
+        artifact: DocumentArtifact,
+        index: DocumentIndex,
+        cursor: DocumentCursor,
+        maxChars: Int,
+    ): DocumentSlice {
+        val md = readContent(artifact)
+        val resolved = when (cursor) {
+            is DocumentCursor.Offset -> cursor.value
+            is DocumentCursor.Page -> index.offsetForPage(cursor.number) ?: 0
+            is DocumentCursor.Section -> index.offsetForSection(cursor.heading) ?: 0
+        }.coerceIn(0, md.length)
+
+        val end = (resolved + maxChars).coerceAtMost(md.length)
+        val content = md.substring(resolved, end)
+        return DocumentSlice(
+            content = content,
+            startOffset = resolved,
+            endOffset = end,
+            remaining = md.length - end,
+            pageOfStart = index.pageAt(resolved),
+            totalPages = artifact.meta.pageCount,
+        )
+    }
+
+    suspend fun writeFailure(artDir: Path, reason: String, nowEpochMs: Long = Instant.now().toEpochMilli()): Unit =
+        withContext(Dispatchers.IO) {
+            Files.createDirectories(artDir)
+            val obj = buildJsonObject {
+                put("reason", reason)
+                put("atEpochMs", nowEpochMs)
+            }
+            atomicWriteString(artDir.resolve("failure.json"), obj.toString())
+        }
+
+    /** Returns the failure reason if a non-expired `failure.json` exists, else null. */
+    suspend fun loadFailureIfFresh(
+        artDir: Path,
+        nowEpochMs: Long = Instant.now().toEpochMilli(),
+        ttlMs: Long = 3_600_000L,
+    ): String? = withContext(Dispatchers.IO) {
+        val p = artDir.resolve("failure.json")
+        if (!Files.exists(p)) return@withContext null
+        val obj = runCatching {
+            json.parseToJsonElement(Files.readString(p)).jsonObject
+        }.getOrNull() ?: return@withContext null
+        val markerReason = obj["reason"]?.jsonPrimitive?.content ?: return@withContext null
+        val markerAt = obj["atEpochMs"]?.jsonPrimitive?.long ?: return@withContext null
+        if (nowEpochMs - markerAt <= ttlMs) markerReason else null
     }
 
     private fun atomicWriteString(target: Path, content: String) {
