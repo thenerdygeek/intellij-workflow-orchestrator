@@ -362,17 +362,22 @@ const ToolCallItem = memo(function ToolCallItem({ tc }: { tc: ToolCall }) {
               </span>
             )}
             <span className="flex-1" />
-            {isRunning
-              ? <LiveElapsedTimer timeoutLabel={extractRunCommandTimeoutLabel(tc)} />
-              : tc.durationMs != null && (
-                <span
-                  className="shrink-0 text-[10px] font-mono tabular-nums text-[var(--fg-muted)]"
-                  title={extractRunCommandTimeoutLabel(tc) ? `Limit: ${extractRunCommandTimeoutLabel(tc)}` : undefined}
-                >
-                  {formatDuration(tc.durationMs)}
-                </span>
-              )
-            }
+            {/* Elapsed time / duration. Hidden on row hover so it doesn't sit
+                under the absolutely-positioned hover copy button on the right
+                (they previously overlapped). */}
+            <span data-testid="tool-elapsed" className="shrink-0 group-hover/tool-row:invisible">
+              {isRunning
+                ? <LiveElapsedTimer timeoutLabel={extractRunCommandTimeoutLabel(tc)} />
+                : tc.durationMs != null && (
+                  <span
+                    className="text-[10px] font-mono tabular-nums text-[var(--fg-muted)]"
+                    title={extractRunCommandTimeoutLabel(tc) ? `Limit: ${extractRunCommandTimeoutLabel(tc)}` : undefined}
+                  >
+                    {formatDuration(tc.durationMs)}
+                  </span>
+                )
+              }
+            </span>
           </span>
         </ChainOfThoughtTrigger>
         <ChainOfThoughtContent>

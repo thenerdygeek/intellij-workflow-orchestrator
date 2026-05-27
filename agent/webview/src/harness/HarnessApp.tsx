@@ -7,6 +7,8 @@ import { ThinkingView } from '@/components/agent/ThinkingView';
 import { CommandPreview } from '@/components/agent/CommandPreview';
 import { CopyButton } from '@/components/ui/copy-button';
 import { MessageList } from '@/components/chat/MessageList';
+import { ToolCallChain } from '@/components/agent/ToolCallChain';
+import type { ToolCall } from '@/bridge/types';
 
 // Copy-button fixtures: a short string and a long multi-line string (~15K chars)
 // so e2e can assert the clipboard receives the FULL content (no truncation),
@@ -303,6 +305,30 @@ function ScrollCheckSection() {
   );
 }
 
+// ── §9 Tool UI overlap check ─────────────────────────────────────────────────
+// Mounts the real ToolCallChain so Playwright can verify (in real Chromium, with
+// actual layout) that the hover copy button does not overlap the elapsed-time /
+// duration text on the right of each row.
+const OVERLAP_TOOL_CALLS: ToolCall[] = [
+  { id: 'ov1', name: 'read_file', args: '{"path":"src/components/chat/ChatView.tsx"}', status: 'COMPLETED', result: 'ok', durationMs: 1234 },
+  { id: 'ov2', name: 'run_command', args: '{"command":"npm test"}', status: 'COMPLETED', result: 'ok', durationMs: 45_000 },
+  { id: 'ov3', name: 'search_code', args: '{"pattern":"TODO"}', status: 'COMPLETED', result: 'ok', durationMs: 87 },
+];
+
+function ToolOverlapSection() {
+  return (
+    <section data-testid="section-tool-overlap" className="space-y-3">
+      <h2 className="text-sm font-semibold">§9 ToolCallChain — hover copy vs elapsed time (overlap check)</h2>
+      <p className="text-[11px]" style={{ color: 'var(--fg-muted, #9ca3af)' }}>
+        Hover a row: the copy button (right) must not overlap the duration text.
+      </p>
+      <div data-testid="tool-overlap-host" className="border rounded p-1" style={{ borderColor: 'var(--border, #2c2f33)' }}>
+        <ToolCallChain toolCalls={OVERLAP_TOOL_CALLS} />
+      </div>
+    </section>
+  );
+}
+
 export function HarnessApp() {
   // Section-level controls
   const [usedK, setUsedK] = useState(0);
@@ -579,6 +605,8 @@ export function HarnessApp() {
       <ThinkingBugSection />
 
       <ScrollCheckSection />
+
+      <ToolOverlapSection />
 
       {/* ─────────── §6 CommandPreview shell-aware formatting ─────────── */}
       <section data-testid="section-command-preview" className="space-y-4">
