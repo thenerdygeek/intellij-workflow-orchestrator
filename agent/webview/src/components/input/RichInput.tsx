@@ -44,6 +44,17 @@ function ensureGlowStyle() {
 /** Matches #PROJ-123 style ticket references in pasted text (alphanumeric project keys like TICKET8IN-12345) */
 const PASTED_TICKET_PATTERN = /#([A-Za-z][A-Za-z0-9]+-\d+)/g;
 
+/** Consecutive typing changes within this window collapse into one undo step. */
+const UNDO_COALESCE_MS = 400;
+/** Cap on retained undo snapshots (oldest dropped beyond this). */
+const UNDO_MAX_HISTORY = 100;
+
+/** A point-in-time snapshot of the editor used by the undo/redo stack. */
+interface InputSnapshot {
+  html: string;
+  mentions: Mention[];
+}
+
 export interface RichInputHandle {
   focus: () => void;
   insertTrigger: (char: string) => void;
@@ -107,6 +118,51 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
   const editorRef = useRef<HTMLDivElement>(null);
   const mentionsRef = useRef<Mention[]>([]);
 
+  // ── Undo/redo history ──
+  // Native contentEditable undo is unreliable once we mutate the DOM directly (chips, paste,
+  // setText), so RichInput owns an explicit stack — the same approach Lexical/ProseMirror take.
+  const undoStackRef = useRef<InputSnapshot[]>([]);
+  const redoStackRef = useRef<InputSnapshot[]>([]);
+  const lastRecordRef = useRef<{ time: number; coalescible: boolean }>({ time: 0, coalescible: false });
+
+  const captureSnapshot = useCallback((): InputSnapshot => ({
+    html: editorRef.current?.innerHTML ?? '',
+    mentions: [...mentionsRef.current],
+  }), []);
+
+  /**
+   * Push the current editor state onto the undo stack. `coalesce` (set for plain typing) folds
+   * consecutive changes within [UNDO_COALESCE_MS] into one step by replacing the top entry; any
+   * non-coalescing change (chip, paste, setText) always starts a fresh step. Recording clears the
+   * redo stack — a new edit invalidates the redo future.
+   */
+  const recordHistory = useCallback((coalesce: boolean) => {
+    if (!editorRef.current) return;
+    const now = Date.now();
+    const snap = captureSnapshot();
+    const stack = undoStackRef.current;
+    const canCoalesce =
+      coalesce &&
+      lastRecordRef.current.coalescible &&
+      now - lastRecordRef.current.time < UNDO_COALESCE_MS &&
+      stack.length > 0;
+    if (canCoalesce) {
+      stack[stack.length - 1] = snap;
+    } else {
+      stack.push(snap);
+      if (stack.length > UNDO_MAX_HISTORY) stack.shift();
+    }
+    redoStackRef.current = [];
+    lastRecordRef.current = { time: now, coalescible: coalesce };
+  }, [captureSnapshot]);
+
+  /** Reset history to a single baseline snapshot (used on mount and after clear()). */
+  const resetHistory = useCallback(() => {
+    undoStackRef.current = [captureSnapshot()];
+    redoStackRef.current = [];
+    lastRecordRef.current = { time: 0, coalescible: false };
+  }, [captureSnapshot]);
+
   // ── Public API ──
 
   // ── Update chip visual status (for async validation) ──
@@ -150,7 +206,8 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     });
     // Remove from mentions ref
     mentionsRef.current = mentionsRef.current.filter(m => m.label !== label);
-  }, []);
+    recordHistory(false);
+  }, [recordHistory]);
 
   useImperativeHandle(ref, () => ({
     focus: () => editorRef.current?.focus(),
@@ -168,6 +225,9 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
         editorRef.current.innerHTML = '';
         editorRef.current.dataset.empty = 'true';
         mentionsRef.current = [];
+        // A cleared input (post-submit) is a fresh draft — drop history so Ctrl+Z can't
+        // resurrect the sent message.
+        resetHistory();
       }
     },
     setText: (text: string) => {
@@ -183,6 +243,7 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       range.collapse(false);
       sel?.removeAllRanges();
       sel?.addRange(range);
+      recordHistory(false);
     },
     getText: () => extractText(),
     getMentions: () => {
@@ -329,7 +390,10 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
 
     // Notify parent
     fireChange();
-  }, []);
+    recordHistory(false);
+    // NOTE: fireChange is declared below this callback, so it must not appear in the dep array
+    // (the array is evaluated eagerly at render → TDZ). It's referenced as a stable closure.
+  }, [recordHistory]);
 
   // ── Detect triggers and notify parent ──
 
@@ -388,17 +452,71 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
 
   const handleFocusBlur = updateEmptyState;
 
+  // ── Undo/redo apply + commands ──
+
+  /** Restore a snapshot: content, mentions, and a caret parked at the end (predictable). */
+  const applySnapshot = useCallback((snap: InputSnapshot) => {
+    const el = editorRef.current;
+    if (!el) return;
+    el.innerHTML = snap.html;
+    mentionsRef.current = [...snap.mentions];
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    updateEmptyState();
+    fireChange();
+  }, [updateEmptyState, fireChange]);
+
+  const undo = useCallback((): boolean => {
+    const stack = undoStackRef.current;
+    if (stack.length <= 1) return false; // only the baseline remains — nothing to undo
+    const current = stack.pop()!;
+    redoStackRef.current.push(current);
+    applySnapshot(stack[stack.length - 1]!);
+    lastRecordRef.current = { time: 0, coalescible: false }; // break the coalesce chain
+    return true;
+  }, [applySnapshot]);
+
+  const redo = useCallback((): boolean => {
+    const redoStack = redoStackRef.current;
+    if (redoStack.length === 0) return false;
+    const snap = redoStack.pop()!;
+    undoStackRef.current.push(snap);
+    applySnapshot(snap);
+    lastRecordRef.current = { time: 0, coalescible: false };
+    return true;
+  }, [applySnapshot]);
+
   // ── Event handlers ──
 
   const handleInput = useCallback(() => {
     fireChange();
     updateEmptyState();
-  }, [fireChange, updateEmptyState]);
+    recordHistory(true);
+  }, [fireChange, updateEmptyState, recordHistory]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     // Give the active dropdown first refusal on navigation keys.
     // If it returns true the event is fully consumed — don't submit or escape.
     if (onDropdownKeyDown?.(e)) return;
+
+    // Undo / redo. We own the history because direct DOM mutation (chips, paste, setText)
+    // desyncs the browser's native contentEditable undo. Always preventDefault so the keystroke
+    // never escapes to JCEF / the IDE — even when there is nothing left to (re)do.
+    const isMod = e.ctrlKey || e.metaKey;
+    if (isMod && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault();
+      if (e.shiftKey) redo(); else undo();
+      return;
+    }
+    if (isMod && !e.shiftKey && (e.key === 'y' || e.key === 'Y')) {
+      e.preventDefault();
+      redo();
+      return;
+    }
 
     // Right-arrow accept for the ghost-text hint. Only fires when the input
     // is empty (no text, no chips) and a hint is present; otherwise this is
@@ -422,7 +540,13 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     if (e.key === 'Escape') {
       onEscape?.();
     }
-  }, [onSubmit, onEscape, onDropdownKeyDown, hint, onAcceptHint]);
+  }, [onSubmit, onEscape, onDropdownKeyDown, hint, onAcceptHint, undo, redo]);
+
+  // Seed history with the initial (empty) state so the first edit has a baseline to undo to.
+  useEffect(() => {
+    resetHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     handleFocusBlur();
@@ -455,11 +579,12 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
       if (target.hasAttribute('data-remove')) {
         target.parentElement?.remove();
         fireChange();
+        recordHistory(false);
       }
     };
     el.addEventListener('click', handleClick);
     return () => el.removeEventListener('click', handleClick);
-  }, [fireChange]);
+  }, [fireChange, recordHistory]);
 
   // Prevent pasting rich HTML — paste as plain text, auto-chip any #TICKET-123 patterns
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
@@ -563,12 +688,14 @@ export const RichInput = forwardRef<RichInputHandle, RichInputProps>(function Ri
     sel.addRange(newRange);
 
     fireChange();
+    // Pasting chips mutates the DOM directly (no input event), so record a discrete step.
+    recordHistory(false);
 
     // Notify parent to validate each ticket
     if (ticketKeys.length > 0) {
       onPastedTickets?.(ticketKeys);
     }
-  }, [fireChange, onPastedTickets, onPasteImage]);
+  }, [fireChange, onPastedTickets, onPasteImage, recordHistory]);
 
   // When a hint is present, surface it as the empty-state placeholder. The
   // underlying CSS uses `:empty:before:content-[attr(data-placeholder)]`,
