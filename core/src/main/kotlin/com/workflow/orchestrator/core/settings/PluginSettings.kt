@@ -291,6 +291,20 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
          */
         var imageMimeWhitelist by list<String>()
 
+        /**
+         * Per-attachment maximum size in bytes for NON-image files (documents,
+         * text). Larger than [imageMaxBytes] because file attachments are stored
+         * on disk and read lazily via read_file/read_document, not inlined into
+         * a vision payload. Default: 50 MB.
+         */
+        var fileMaxBytes by property(52_428_800L)
+
+        /**
+         * Maximum number of NON-image file attachments per user turn. Independent
+         * of [imagesPerTurnCap]. Default: 5.
+         */
+        var filesPerTurnCap by property(5)
+
         // ── Handover: Quick Clipboard chips ──────────────────────────────────────
 
         /**

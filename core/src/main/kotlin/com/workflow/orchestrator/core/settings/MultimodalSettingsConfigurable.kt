@@ -87,6 +87,22 @@ class MultimodalSettingsConfigurable(private val project: Project) : SearchableC
                         .also { cell -> masterCell?.let { cell.enabledIf(it.component.selected) } }
                     comment("Mirrors Cody's per-turn cap. Default 2.")
                 }
+                row("Max file attachment size (MB):") {
+                    intTextField(range = 1..1024)
+                        .bindIntText(
+                            { (settings.state.fileMaxBytes / 1_048_576L).toInt() },
+                            { settings.state.fileMaxBytes = it.toLong() * 1_048_576L },
+                        )
+                    comment("Per non-image file (documents, text). Default 50 MB.")
+                }
+                row("Max files per message:") {
+                    intTextField(range = 1..50)
+                        .bindIntText(
+                            { settings.state.filesPerTurnCap },
+                            { settings.state.filesPerTurnCap = it },
+                        )
+                    comment("Non-image file attachments per user turn. Default 5.")
+                }
                 row("Allowed MIME types:") {
                     textField()
                         .bindText(
