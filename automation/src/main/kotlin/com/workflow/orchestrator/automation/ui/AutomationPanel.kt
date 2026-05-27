@@ -37,7 +37,11 @@ import kotlinx.coroutines.flow.map
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.event.FocusAdapter
+import java.awt.event.FocusEvent
 import javax.swing.*
+import javax.swing.event.PopupMenuEvent
+import javax.swing.event.PopupMenuListener
 
 /**
  * Main Automation tab panel.
@@ -173,6 +177,8 @@ class AutomationPanel(
     /** The committed branch selection (null = default/master). Updated only when a selection is accepted. */
     @Volatile private var selectedBranchItem: BranchComboItem? = null
     private var suppressBranchListener = false
+    /** True while a disabled-branch enable prompt/enable call is being handled, so overlapping settle events don't stack a second dialog. */
+    private var branchEnableInFlight = false
 
     // State
     private var currentSuitePlanKey: String = ""
@@ -279,16 +285,41 @@ class AutomationPanel(
         }
 
         // Branch selection listener — persists the chosen branch per suite.
-        // Disabled branches prompt to enable in Bamboo before being committed.
+        //
+        // ComboboxSpeedSearch moves the model selection on EVERY keystroke while the user
+        // type-filters, firing this listener for each transient match. So a disabled branch
+        // must NOT prompt here — doing so popped the "enable?" modal mid-keystroke (the bug).
+        // The enable prompt is deferred to a deliberate commit (dropdown close / focus lost)
+        // via settleBranchSelectionFromUi(). Enabled/default branches still commit immediately:
+        // that is a cheap, idempotent persist and is harmless to fire repeatedly.
         branchCombo.addActionListener {
             if (suppressBranchListener) return@addActionListener
             val item = branchCombo.selectedItem as? BranchComboItem ?: return@addActionListener
-            if (item.branchKey != null && !item.enabled) {
-                onDisabledBranchSelected(item)   // prompt to enable; reverts if declined/failed
-                return@addActionListener
+            if (item.branchKey == null || item.enabled) {
+                commitBranchSelection(item)
             }
-            commitBranchSelection(item)
         }
+
+        // Deliberate-commit settle: re-evaluate the FINAL selection once the user finishes
+        // choosing. popupMenuWillBecomeInvisible fires when the dropdown closes (click/Enter);
+        // focusLost covers type-filtering on a closed combo and tabbing/clicking away. Both
+        // read the live selection at settle time, and resolveBranchSettleAction() suppresses
+        // the prompt while the popup is still open or an enable is already in flight.
+        branchCombo.addPopupMenuListener(object : PopupMenuListener {
+            override fun popupMenuWillBecomeVisible(e: PopupMenuEvent) {}
+            override fun popupMenuCanceled(e: PopupMenuEvent) {}
+            override fun popupMenuWillBecomeInvisible(e: PopupMenuEvent) {
+                // Defer so the combo's selectedItem reflects the just-clicked row.
+                invokeLater { settleBranchSelectionFromUi() }
+            }
+        })
+        branchCombo.addFocusListener(object : FocusAdapter() {
+            override fun focusLost(e: FocusEvent) {
+                // Defer one EDT cycle: opening the dropdown fires focusLost before
+                // isPopupVisible flips true, and settling then would prompt prematurely.
+                invokeLater { settleBranchSelectionFromUi() }
+            }
+        })
 
         // Refresh button: cache-bust for the currently-selected suite
         refreshButton.addActionListener {
@@ -1049,12 +1080,33 @@ class AutomationPanel(
     }
 
     /**
+     * Re-evaluate the branch combo's FINAL selection after a deliberate commit (dropdown
+     * closed or focus left). Only a newly-chosen disabled branch raises the enable prompt;
+     * see [resolveBranchSettleAction] for the full suppression rules (popup still open,
+     * enable already in flight, enabled/default branch, unchanged selection).
+     */
+    private fun settleBranchSelectionFromUi() {
+        val action = resolveBranchSettleAction(
+            selected = branchCombo.selectedItem as? BranchComboItem,
+            committed = selectedBranchItem,
+            popupVisible = branchCombo.isPopupVisible,
+            enableInFlight = branchEnableInFlight,
+        )
+        if (action is BranchSettleAction.PromptEnable) {
+            onDisabledBranchSelected(action.item)
+        }
+    }
+
+    /**
      * Called when the user picks a disabled branch plan. Prompts to enable it in Bamboo.
      * On cancel or failure the combo reverts to the previously-committed selection.
      * On success, re-fetches branches so the branch shows as enabled and stays selected.
      */
     private fun onDisabledBranchSelected(item: BranchComboItem) {
         val branchKey = item.branchKey ?: return
+        // Guard against overlapping settle events (popup-close + focus-lost, or a stray
+        // re-fire during the async enable) stacking a second dialog. Cleared on every exit.
+        branchEnableInFlight = true
         // Capture the suite this action belongs to. The enable call is async, and
         // the user can switch suites while it's in flight; persisting / reloading
         // against `currentSuitePlanKey` read inside the callback would contaminate
@@ -1072,6 +1124,7 @@ class AutomationPanel(
         )
         if (choice != Messages.YES) {
             revertBranchSelectionToCommitted()
+            branchEnableInFlight = false
             return
         }
         statusLabel.text = "Enabling ${item.label}…"
@@ -1079,6 +1132,7 @@ class AutomationPanel(
         scope.launch {
             val result = bambooService.enablePlanBranch(branchKey)
             invokeLater {
+                branchEnableInFlight = false
                 // If the user switched suites while the call was in flight, drop the
                 // result entirely — the combo/status now belong to a different suite.
                 if (currentSuitePlanKey != capturedSuitePlanKey) {
@@ -1124,7 +1178,7 @@ private data class SuiteComboItem(val planKey: String, val displayName: String) 
  * [enabled] mirrors [PlanBranchData.enabled]; disabled branches render greyed
  * and prompt to enable before being committed as the active selection.
  */
-private data class BranchComboItem(val branchKey: String?, val label: String, val enabled: Boolean = true) {
+internal data class BranchComboItem(val branchKey: String?, val label: String, val enabled: Boolean = true) {
     override fun toString() = label
 }
 
