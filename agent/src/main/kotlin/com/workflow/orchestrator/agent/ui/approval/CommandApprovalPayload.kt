@@ -43,7 +43,12 @@ object CommandApprovalPayload {
         } catch (_: Throwable) {
             requestedShell ?: "/bin/sh"
         }
-        val cwd = parsedArgs?.get("cwd")?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+        // The tool schema + execute() use `working_dir` (see RunCommandTool); `cwd`
+        // is accepted only as a legacy fallback. Reading `cwd` alone meant the
+        // approval card always showed the project root, never the directory the
+        // LLM actually targeted.
+        val cwd = (parsedArgs?.get("working_dir") ?: parsedArgs?.get("cwd"))
+            ?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
             ?: project?.basePath
             ?: "."
         val separateStderr = parsedArgs?.get("separate_stderr")?.jsonPrimitive?.booleanOrNull ?: false

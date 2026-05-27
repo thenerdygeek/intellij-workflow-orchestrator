@@ -446,7 +446,7 @@ try {
   - **DefaultCommandFilter** (`security/DefaultCommandFilter.kt`) — Hard-block pre-spawn patterns: fork bombs, `rm -rf /`, `sudo`, `mkfs`, etc. Returns rejection before process is created.
   - **OutputCollector** (`tools/command/OutputCollector.kt`) — 50/50 line-based head/tail truncation, disk spill for large outputs, Unicode sanitization.
   - **ProcessEnvironment** (`tools/command/ProcessEnvironment.kt`) — Strips 35+ sensitive vars (credentials, tokens, keys), blocks 25 vars from the LLM-provided `env` parameter, applies 15 anti-interactive overrides (TERM, PAGER, GIT_TERMINAL_PROMPT, etc.).
-- **RunCommandTool parameters**: `command` (required), `cwd` (optional), `env` (optional JSON object for LLM-provided environment variables, filtered through security blocklist), `separate_stderr` (optional boolean for separate stderr capture).
+- **RunCommandTool parameters**: `command` (required), `working_dir` (optional — the canonical key; `cwd` accepted only as a legacy fallback in `CommandApprovalPayload`), `env` (optional JSON object for LLM-provided environment variables, filtered through security blocklist), `separate_stderr` (optional boolean for separate stderr capture).
 - **Two distinct safety layers for commands**: (1) `DefaultCommandFilter` — hard-block patterns, pre-spawn, in `security/` package; (2) `CommandSafetyAnalyzer` — risk classification for the approval gate, called in `AgentLoop` not in `RunCommandTool`.
 - **CancellationException**: Always re-thrown (never swallowed) so coroutine scope cancellation propagates correctly through the loop.
 - **Registration failures**: Tracked and logged; no more silent swallowing of deferred activation errors.

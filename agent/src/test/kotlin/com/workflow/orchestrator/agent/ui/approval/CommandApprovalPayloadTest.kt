@@ -21,7 +21,7 @@ class CommandApprovalPayloadTest {
 
     @Test
     fun `emits full command, resolved shell, cwd and empty env for minimal args`() {
-        val args = parse("""{"command":"echo hello","cwd":"/tmp"}""")
+        val args = parse("""{"command":"echo hello","working_dir":"/tmp"}""")
 
         val result = CommandApprovalPayload.build(args, project = null)
         val payload = decode(result.commandPreviewJson)
@@ -32,6 +32,29 @@ class CommandApprovalPayloadTest {
         assertEquals(0, payload["env"]!!.jsonArray.size)
         // Shell resolves to a non-blank bash/cmd path on every platform.
         assertTrue(payload["shell"]!!.jsonPrimitive.content.isNotBlank())
+    }
+
+    @Test
+    fun `working_dir flows into the cwd payload field (the key the tool actually sends)`() {
+        // Regression: the tool schema + execute() use `working_dir`; reading only
+        // `cwd` made the approval card always show the project root.
+        val args = parse("""{"command":"mvn test","working_dir":"services/foo"}""")
+        val payload = decode(CommandApprovalPayload.build(args, project = null).commandPreviewJson)
+        assertEquals("services/foo", payload["cwd"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `legacy cwd key is still honored as a fallback`() {
+        val args = parse("""{"command":"ls","cwd":"/legacy/path"}""")
+        val payload = decode(CommandApprovalPayload.build(args, project = null).commandPreviewJson)
+        assertEquals("/legacy/path", payload["cwd"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `working_dir wins over legacy cwd when both are present`() {
+        val args = parse("""{"command":"ls","working_dir":"/new","cwd":"/old"}""")
+        val payload = decode(CommandApprovalPayload.build(args, project = null).commandPreviewJson)
+        assertEquals("/new", payload["cwd"]!!.jsonPrimitive.content)
     }
 
     @Test
