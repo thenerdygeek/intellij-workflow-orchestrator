@@ -794,6 +794,8 @@ Sub-agents build their system prompt via `SubagentSystemPromptBuilder` (in `tool
    - Per-section flags from `AgentConfig.promptSections` (YAML `prompt-sections:`)
 4. Appends `COMPLETING_YOUR_TASK_SECTION` footer (task_report instructions)
 
+**Dialect-drift correction is threaded through this path (do not drop it).** `buildUnifiedSystemPrompt()` is wired as `AgentLoop.systemPromptProvider`, so it is rebuilt before every LLM call. On each rebuild it consumes `messageStateHandler?.consumeDialectDriftFlag()` and passes `dialectDriftDetected` into `SubagentSystemPromptBuilder.build()` → `SystemPrompt.build()`, exactly mirroring the orchestrator's `AgentService.systemPromptBuilder`. This is what injects the one-shot corrective `<system-reminder>` after a sub-agent emits an incompatible tool-call dialect (`<function_calls>`/`<invoke>`/`<tool_call>`). The drift is *detected* in the shared `MessageStateHandler` (which raises the flag), but the *correction* lives in this prompt-assembly path — sub-agents have their own assembly path, so any drift/recovery behavior wired into `AgentService.systemPromptBuilder` must be mirrored here or sub-agents silently miss it (the bug that let sub-agents run away emitting dialect XML; `dialectDriftDetected` defaults to `false` so the snapshots below stay byte-stable).
+
 **IdeContext propagation:** `SpawnAgentTool` passes the parent's `IdeContext` into `SubagentRunner`. A sub-agent running in PyCharm sees "PyCharm" in role and system-info sections; one running in IntelliJ IDEA sees "IntelliJ IDEA". Context is null-safe — omitting it produces IntelliJ-flavored defaults (backward compatible).
 
 **Snapshot tests:** `SubagentSystemPromptSnapshotTest` pins 5 variants to lock in composed output:

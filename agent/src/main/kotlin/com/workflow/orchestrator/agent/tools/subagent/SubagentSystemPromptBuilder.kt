@@ -77,6 +77,7 @@ object SubagentSystemPromptBuilder {
         availableShells: List<String>? = null,
         toolNames: Set<String>? = null,
         completingYourTaskSection: String,
+        dialectDriftDetected: Boolean = false,
     ): String {
         val sections = agentConfig?.promptSections ?: PromptSectionsConfig()
 
@@ -110,6 +111,11 @@ object SubagentSystemPromptBuilder {
             deferredToolCatalog = deferredToolCatalog,
             availableShells = availableShells,
             ideContext = ideContext,
+            // One-shot corrective <system-reminder> when the sub-agent's prior turn emitted
+            // an incompatible tool-call dialect (<function_calls>/<invoke>/<tool_call>). Mirrors
+            // the orchestrator path (AgentService.systemPromptBuilder); without it a sub-agent
+            // that drifts is never told to stop and runs the dialect away (see SubagentRunner).
+            dialectDriftDetected = dialectDriftDetected,
             // ---- sub-agent scoping ----
             agentRoleOverride = personaRole,
             includeTaskManagement = false,

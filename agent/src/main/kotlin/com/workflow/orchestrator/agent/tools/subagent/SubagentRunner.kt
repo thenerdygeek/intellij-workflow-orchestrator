@@ -523,6 +523,16 @@ class SubagentRunner(
         val deferredToolCatalog = registry.getDeferredCatalogGroupedWithDescriptions()
             .takeIf { it.isNotEmpty() }
 
+        // Consume the one-shot dialect-drift flag here — buildUnifiedSystemPrompt is wired as
+        // AgentLoop.systemPromptProvider (called before each LLM call), so this mirrors the
+        // orchestrator's AgentService.systemPromptBuilder consuming it per turn. When the
+        // sub-agent's previous assistant turn used an incompatible tool-call dialect,
+        // MessageStateHandler.addToApiConversationHistory raised the flag; consuming it here
+        // injects the corrective <system-reminder> on the immediately-next call and resets.
+        // The initial buildComposedSystemPrompt() call also lands here, but the flag is false
+        // at session start, so no reminder is emitted then (same as the orchestrator).
+        val dialectDriftDetected = messageStateHandler?.consumeDialectDriftFlag() ?: false
+
         return SubagentSystemPromptBuilder.build(
             personaRole = systemPrompt,
             agentConfig = agentConfig,
@@ -533,6 +543,7 @@ class SubagentRunner(
             deferredToolCatalog = deferredToolCatalog,
             toolNames = registry.allToolNames(),
             completingYourTaskSection = COMPLETING_YOUR_TASK_SECTION,
+            dialectDriftDetected = dialectDriftDetected,
         )
     }
 

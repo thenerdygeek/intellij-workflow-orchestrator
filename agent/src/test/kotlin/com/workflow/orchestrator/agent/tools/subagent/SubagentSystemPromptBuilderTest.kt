@@ -160,6 +160,37 @@ class SubagentSystemPromptBuilderTest {
     }
 
     @Test
+    fun `dialectDriftDetected true injects the corrective tool-call-format system-reminder`() {
+        val prompt = SubagentSystemPromptBuilder.build(
+            personaRole = PERSONA_ROLE,
+            agentConfig = null,
+            ideContext = null,
+            projectName = "TestProject",
+            projectPath = "/tmp/test",
+            osName = "Linux",
+            shell = "/bin/bash",
+            completingYourTaskSection = DUMMY_COMPLETING_SECTION,
+            dialectDriftDetected = true,
+        )
+        assertTrue(
+            prompt.contains("CRITICAL — TOOL-CALL FORMAT CORRECTION"),
+            "When drift is detected, the sub-agent prompt MUST carry the corrective <system-reminder> " +
+                "(the same one the orchestrator gets via AgentService.systemPromptBuilder), otherwise a " +
+                "sub-agent that emits <function_calls>/<invoke> dialect is never told to stop and runs away."
+        )
+    }
+
+    @Test
+    fun `dialectDriftDetected defaults to false so no corrective reminder leaks into a clean prompt`() {
+        val prompt = buildPrompt()
+        assertFalse(
+            prompt.contains("TOOL-CALL FORMAT CORRECTION"),
+            "A clean sub-agent prompt (no drift) must NOT contain the corrective reminder — " +
+                "default false keeps the golden snapshots byte-for-byte stable."
+        )
+    }
+
+    @Test
     fun `agentConfig with capabilities false omits CAPABILITIES section`() {
         val config = AgentConfig(
             name = "test",
