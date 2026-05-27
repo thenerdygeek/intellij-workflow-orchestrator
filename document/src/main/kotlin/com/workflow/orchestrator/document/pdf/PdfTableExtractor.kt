@@ -58,15 +58,23 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
      * [org.apache.pdfbox.io.RandomAccessReadBuffer]-related exceptions for encrypted PDFs —
      * these are intentionally not caught here and bubble up for Phase 6's error catalog.
      *
-     * @param file Absolute path to the PDF file.
+     * @param file   Absolute path to the PDF file.
+     * @param onPage Optional per-page progress callback. Invoked after each page is processed
+     *               with `(pagesDone, pagesTotal)` where `pagesDone` advances 1..total.
+     *               Defaults to null so all existing callers are unaffected.
      * @return List of positioned table blocks in document order (page, then top-to-bottom).
      */
-    fun extract(file: Path): List<PositionedBlock<DocumentBlock.Table>> {
+    fun extract(
+        file: Path,
+        onPage: ((done: Int, total: Int) -> Unit)? = null,
+    ): List<PositionedBlock<DocumentBlock.Table>> {
         val positioned = mutableListOf<PositionedBlock<DocumentBlock.Table>>()
 
         Loader.loadPDF(file.toFile()).use { document ->
+            val total = document.numberOfPages
             val objectExtractor = ObjectExtractor(document)
             val pageIterator = objectExtractor.extract()
+            var processedCount = 0
 
             while (pageIterator.hasNext()) {
                 val page = pageIterator.next()
@@ -100,6 +108,9 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
                         block = block,
                     )
                 }
+
+                processedCount++
+                onPage?.invoke(processedCount, total)
             }
         }
 

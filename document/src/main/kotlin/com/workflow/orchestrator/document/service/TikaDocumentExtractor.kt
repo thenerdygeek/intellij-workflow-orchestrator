@@ -129,6 +129,7 @@ class TikaDocumentExtractor(
     suspend fun extractBlocks(
         path: Path,
         options: ExtractOptions = ExtractOptions(),
+        onPage: ((done: Int, total: Int) -> Unit)? = null,
     ): ToolResult<BlockExtraction> =
         semaphore.withPermit {
             withTimeoutOrNull(options.timeoutMs) {
@@ -136,7 +137,7 @@ class TikaDocumentExtractor(
                     val previousCcl = Thread.currentThread().contextClassLoader
                     try {
                         Thread.currentThread().contextClassLoader = TikaConfig::class.java.classLoader
-                        runCatching { doExtractToBlocks(path, options) }.fold(
+                        runCatching { doExtractToBlocks(path, options, onPage) }.fold(
                             onSuccess = { be ->
                                 ToolResult(
                                     data = be,
@@ -155,13 +156,17 @@ class TikaDocumentExtractor(
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    private suspend fun doExtractToBlocks(path: Path, options: ExtractOptions): BlockExtraction {
+    private suspend fun doExtractToBlocks(
+        path: Path,
+        options: ExtractOptions,
+        onPage: ((done: Int, total: Int) -> Unit)? = null,
+    ): BlockExtraction {
         val mime = mimeDetector.detect(path)
         val downloadsRoot = SessionDownloadDir.current()
         val imageService = ImageExtractionService(downloadsRoot = downloadsRoot)
         val docKey = path.toAbsolutePath().toString()
         val blocks: List<DocumentBlock> = when {
-            mime == "application/pdf" -> pdfPipeline.extract(path, imageService, docKey)
+            mime == "application/pdf" -> pdfPipeline.extract(path, imageService, docKey, onPage)
             mime in OfficePipeline.OFFICE_MIMES -> {
                 Files.newInputStream(path).use { officePipeline.extract(it, mime, imageService, docKey) }
             }

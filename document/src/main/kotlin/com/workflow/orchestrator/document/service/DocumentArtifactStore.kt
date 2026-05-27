@@ -3,6 +3,7 @@ package com.workflow.orchestrator.document.service
 import com.workflow.orchestrator.core.model.DocumentArtifact
 import com.workflow.orchestrator.core.model.DocumentArtifactMeta
 import com.workflow.orchestrator.core.model.DocumentCursor
+import com.workflow.orchestrator.core.model.DocumentExtractionProgress
 import com.workflow.orchestrator.core.model.DocumentIndex
 import com.workflow.orchestrator.core.model.DocumentSlice
 import com.workflow.orchestrator.document.assembler.MarkdownAssembler
@@ -61,11 +62,28 @@ class DocumentArtifactStore(
         artDir: Path,
         contentHash: String,
         extractTimeoutMs: Long = 600_000L,
+        onProgress: ((DocumentExtractionProgress) -> Unit)? = null,
     ): DocumentArtifact =
         withContext(Dispatchers.IO) {
+            val startMs = System.currentTimeMillis()
+
+            val onPage: ((Int, Int) -> Unit)? = onProgress?.let { sink ->
+                { done, total ->
+                    sink(
+                        DocumentExtractionProgress(
+                            stage = "tables",
+                            pagesDone = done,
+                            pagesTotal = total,
+                            elapsedMs = System.currentTimeMillis() - startMs,
+                        )
+                    )
+                }
+            }
+
             val blockResult = extractor.extractBlocks(
                 source,
                 com.workflow.orchestrator.core.model.ExtractOptions(timeoutMs = extractTimeoutMs),
+                onPage,
             )
             if (blockResult.isError) error(blockResult.summary)
             val be = blockResult.data!!
@@ -77,6 +95,15 @@ class DocumentArtifactStore(
                 contentLength = assembled.contentLength,
                 pageCount = be.pageCount,
                 createdAtEpochMs = Instant.now().toEpochMilli(),
+            )
+
+            onProgress?.invoke(
+                DocumentExtractionProgress(
+                    stage = "finalizing",
+                    pagesDone = 0,
+                    pagesTotal = be.pageCount,
+                    elapsedMs = System.currentTimeMillis() - startMs,
+                )
             )
 
             Files.createDirectories(artDir)

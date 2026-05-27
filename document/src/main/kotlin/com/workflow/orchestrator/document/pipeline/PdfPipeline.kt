@@ -83,8 +83,9 @@ class PdfPipeline(
         file: Path,
         imageService: ImageExtractionService? = null,
         docKey: String = "anonymous",
+        onPage: ((done: Int, total: Int) -> Unit)? = null,
     ): List<DocumentBlock> {
-        val tables: List<PositionedBlock<DocumentBlock.Table>> = tableExtractor.extract(file)
+        val tables: List<PositionedBlock<DocumentBlock.Table>> = tableExtractor.extract(file, onPage)
         val prose: List<PositionedBlock<DocumentBlock>> = proseExtractor.extract(file)
         val metadata: List<PositionedBlock<DocumentBlock>> =
             PdfMetadataExtractor(imageService = imageService, docKey = docKey).extract(file)
