@@ -150,6 +150,28 @@ open class BuildMonitorService {
     private var lastLogFetchedForBuild: Int? = null
     private var poller: SmartPoller? = null
 
+    // Canonical per-stage job order (stageName -> ordered job shortNames) from the plan
+    // DEFINITION, cached per plan key. The result endpoint returns jobs in an unstable order;
+    // this restores the plan-defined (website) order for the Build-tab job list. Cached only
+    // on success, so a transient fetch failure simply retries on the next poll (and the mapper
+    // falls back to the API order in the meantime).
+    private var jobOrderCache: Pair<String, Map<String, List<String>>>? = null
+
+    private suspend fun jobOrderFor(planKey: String): Map<String, List<String>> {
+        jobOrderCache?.let { (cachedKey, order) -> if (cachedKey == planKey) return order }
+        return when (val r = apiClient.getPlanStructure(planKey)) {
+            is ApiResult.Success -> {
+                val order = com.workflow.orchestrator.bamboo.service.BambooPlanJobOrder.fromConfig(r.data)
+                jobOrderCache = planKey to order
+                order
+            }
+            is ApiResult.Error -> {
+                log.warn("[Bamboo:Monitor] getPlanStructure($planKey) failed: ${r.message} — keeping API job order")
+                emptyMap()
+            }
+        }
+    }
+
     open fun startPolling(planKey: String, branch: String, intervalMs: Long = 30_000) {
         log.info("[Bamboo:Monitor] Starting polling for planKey=$planKey, branch=$branch, intervalMs=$intervalMs")
         stopPolling()
@@ -190,7 +212,7 @@ open class BuildMonitorService {
         log.info("[Bamboo:Monitor] pollOnce result: ${if (result is ApiResult.Success) "SUCCESS" else "FAILED: $result"}")
         if (result is ApiResult.Success) {
             val dto = result.data
-            var buildState = BambooBuildStructureMapper.toBuildState(dto, planKey, branch)
+            var buildState = BambooBuildStructureMapper.toBuildState(dto, planKey, branch, jobOrderFor(planKey))
 
             // Only check for newer builds when the current build is in a terminal state.
             // While the build is still running, there's no point querying for newer builds —

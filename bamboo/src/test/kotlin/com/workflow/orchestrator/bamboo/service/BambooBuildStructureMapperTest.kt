@@ -50,4 +50,58 @@ class BambooBuildStructureMapperTest {
             BambooResultDto(buildNumber = 1, state = "Unknown"), "PROJ-PLAN138", "feature/x")
         assertTrue(state.stages.isEmpty())
     }
+
+    private fun job(short: String) = BambooJobResultDto(
+        buildResultKey = "PROJ-PLAN138-$short-42", state = "Successful", lifeCycleState = "Finished",
+        buildDurationInSeconds = 1, plan = BambooPlanDto(key = "PROJ-PLAN138-$short", name = short, shortName = short),
+    )
+
+    @Test fun `jobs are reordered to the plan-defined order when a job order map is supplied`() {
+        // Result returns jobs in Bamboo's unstable order: SonarQube, Build Artifacts, OSS.
+        val dto = BambooResultDto(
+            buildNumber = 42, state = "Successful", lifeCycleState = "Finished",
+            stages = BambooStageCollection(stage = listOf(
+                BambooStageDto(name = "Build Stage", state = "Successful", manual = false,
+                    results = BambooJobResultCollection(result = listOf(
+                        job("SonarQube Analysis"), job("Build Artifacts"), job("OSS Analysis"),
+                    )))
+            ))
+        )
+        val order = mapOf("Build Stage" to listOf("Build Artifacts", "OSS Analysis", "SonarQube Analysis"))
+        val state = BambooBuildStructureMapper.toBuildState(dto, "PROJ-PLAN138", "feature/x", order)
+        assertEquals(
+            listOf("Build Artifacts", "OSS Analysis", "SonarQube Analysis"),
+            state.stages.map { it.name },
+        )
+    }
+
+    @Test fun `unmatched jobs keep their relative order at the end (stable sort)`() {
+        val dto = BambooResultDto(
+            buildNumber = 42, state = "Successful", lifeCycleState = "Finished",
+            stages = BambooStageCollection(stage = listOf(
+                BambooStageDto(name = "Build Stage", state = "Successful", manual = false,
+                    results = BambooJobResultCollection(result = listOf(
+                        job("Mystery A"), job("Build Artifacts"), job("Mystery B"),
+                    )))
+            ))
+        )
+        // Only "Build Artifacts" is in the defined order; the two unknowns keep A-before-B.
+        val order = mapOf("Build Stage" to listOf("Build Artifacts"))
+        val state = BambooBuildStructureMapper.toBuildState(dto, "PROJ-PLAN138", "feature/x", order)
+        assertEquals(listOf("Build Artifacts", "Mystery A", "Mystery B"), state.stages.map { it.name })
+    }
+
+    @Test fun `no order map preserves the result's job order`() {
+        val dto = BambooResultDto(
+            buildNumber = 42, state = "Successful", lifeCycleState = "Finished",
+            stages = BambooStageCollection(stage = listOf(
+                BambooStageDto(name = "Build Stage", state = "Successful", manual = false,
+                    results = BambooJobResultCollection(result = listOf(
+                        job("SonarQube Analysis"), job("Build Artifacts"),
+                    )))
+            ))
+        )
+        val state = BambooBuildStructureMapper.toBuildState(dto, "PROJ-PLAN138", "feature/x")
+        assertEquals(listOf("SonarQube Analysis", "Build Artifacts"), state.stages.map { it.name })
+    }
 }

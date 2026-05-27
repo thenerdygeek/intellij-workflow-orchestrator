@@ -161,6 +161,22 @@ class BambooApiClient(
     }
 
     /**
+     * Plan DEFINITION with stages and their jobs, in plan-defined (website) order.
+     *
+     * The build-result endpoint ([getLatestResult]) returns a stage's jobs in an UNSTABLE
+     * order with no order field; this config endpoint returns `stages.stage[].plans.plan[]`
+     * in the order the plan defines them, so it is the canonical source for ordering the
+     * Build-tab job list. Pass the build's own (branch) plan key so the job `shortName`s
+     * line up with the build's jobs. Validated shape against the user's Bamboo (the job is
+     * a nested `plan` of `type="job"` under each `stage`).
+     */
+    suspend fun getPlanStructure(planKey: String): ApiResult<com.workflow.orchestrator.bamboo.api.dto.BambooPlanConfigResponse> {
+        val path = "/rest/api/latest/plan/$planKey?expand=stages.stage.plans.plan"
+        log.info("[Bamboo:API] getPlanStructure: GET $path")
+        return get(path)
+    }
+
+    /**
      * Queue a build for a Bamboo plan with optional stage selection.
      *
      * This is the single Bamboo trigger primitive. All callers must route through here.

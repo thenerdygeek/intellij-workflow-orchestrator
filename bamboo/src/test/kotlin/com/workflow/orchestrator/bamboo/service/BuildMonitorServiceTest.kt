@@ -12,11 +12,13 @@ import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.services.BuildLogCache
+import com.workflow.orchestrator.bamboo.api.dto.BambooPlanConfigResponse
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -25,6 +27,13 @@ class BuildMonitorServiceTest {
     private val apiClient = mockk<BambooApiClient>()
     private val eventBus = EventBus()
     private val buildLogCache = BuildLogCache()
+
+    @BeforeEach
+    fun stubPlanStructure() {
+        // pollOnce now fetches the plan definition to order jobs. These tests don't assert on
+        // ordering, so return an empty config → the mapper keeps the result's job order.
+        coEvery { apiClient.getPlanStructure(any()) } returns ApiResult.Success(BambooPlanConfigResponse())
+    }
 
     private fun makeResult(state: String, lifeCycle: String, buildNumber: Int = 42): BambooResultDto {
         return BambooResultDto(

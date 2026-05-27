@@ -450,3 +450,40 @@ data class BambooPlanBranch(
     val shortName: String? = null,
     val enabled: Boolean = true
 )
+
+// --- Plan-definition (config) DTOs: GET /plan/{key}?expand=stages.stage.plans.plan ---
+// Distinct from the build-RESULT stage DTOs above. The result endpoint returns jobs in an
+// UNSTABLE order; this config endpoint returns them in the plan-defined (website) order, so
+// it is the canonical source for ordering the Build-tab job list. Job match key: shortName.
+
+@Serializable
+data class BambooPlanConfigResponse(
+    val key: String = "",
+    val stages: BambooConfigStageCollection = BambooConfigStageCollection()
+)
+
+@Serializable
+data class BambooConfigStageCollection(
+    val size: Int = 0,
+    val stage: List<BambooConfigStageDto> = emptyList()
+)
+
+@Serializable
+data class BambooConfigStageDto(
+    val name: String = "",
+    val plans: BambooConfigPlanCollection = BambooConfigPlanCollection()
+)
+
+@Serializable
+data class BambooConfigPlanCollection(
+    val size: Int = 0,
+    val plan: List<BambooConfigPlanDto> = emptyList()
+)
+
+@Serializable
+data class BambooConfigPlanDto(
+    val key: String = "",
+    val shortName: String = "",
+    val buildName: String = "",
+    val enabled: Boolean = true
+)
