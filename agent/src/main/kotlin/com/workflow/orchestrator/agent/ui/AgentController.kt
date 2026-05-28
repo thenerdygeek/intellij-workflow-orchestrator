@@ -62,6 +62,16 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
+ * Outcome of routing an accepted inbound cross-IDE delegation into IDE-B's agent tab.
+ *
+ * - [STARTED] — a foreground session is running now (idle tab) or was started by the human
+ *   clicking Start within the busy-case accept window.
+ * - [DECLINED_TIMEOUT] — the tab was busy and the human did not click Start within the
+ *   accept window, so the delegation was declined (no background execution).
+ */
+enum class DelegatedStartOutcome { STARTED, DECLINED_TIMEOUT }
+
+/**
  * Bridges the JCEF chat dashboard to [AgentService].
  *
  * Responsibilities:
@@ -76,6 +86,15 @@ class AgentController(
 ) : Disposable {
     companion object {
         private val LOG = Logger.getInstance(AgentController::class.java)
+
+        /**
+         * How long IDE-B waits for the human to click Start on a busy-tab incoming delegation
+         * before declining it. MUST stay <= IDE-A's `DelegationClient.connectAndAwaitAccept`
+         * `acceptTimeoutMillis` (60_000L) so IDE-A's accept-await is still open when IDE-B
+         * replies; if this exceeds that, IDE-A times out first and IDE-B's reply lands on a
+         * dead channel.
+         */
+        const val ACCEPT_WINDOW_MS = 60_000L
 
         /**
          * Test-only seam — constructs a minimal controller from a mocked
@@ -340,14 +359,15 @@ class AgentController(
     private val controllerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /**
-     * Queued inbound delegations whose tab was busy when they arrived (no background
-     * execution: a delegated session runs only while it is the focused session). Keyed
-     * by the delegator's session id; the value is a starter that runs the foreground
-     * session when the human opens it. A LATER task wires the notification/open UI that
-     * calls a `runIncomingDelegation` helper to drain this map.
+     * Pending busy-case incoming delegations awaiting a human Start click. Keyed by the
+     * delegation `key` (delegator session id). The [CompletableDeferred] is completed with
+     * `true` by [startIncomingDelegation] when the user clicks Start within the accept
+     * window, or left to time out (handled by `withTimeoutOrNull` in [startDelegatedSession]).
+     * No background execution — a delegated session runs only while it is the focused session,
+     * so a busy tab must surface a top-bar prompt and wait for the human rather than auto-run.
      */
-    private val pendingIncomingDelegations =
-        java.util.concurrent.ConcurrentHashMap<String, () -> Unit>()
+    private val pendingIncomingStarts =
+        java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
 
     /** Coalesces rapid-fire stream chunks into ~16ms batched bridge dispatches. */
     private val streamBatcher = StreamBatcher(
@@ -983,6 +1003,9 @@ class AgentController(
                 LOG.warn("AgentController: subagent $agentId not found in running agents")
             }
         }
+
+        // Busy-case incoming-delegation "Start" click (cross-IDE delegation)
+        panel.setCefStartIncomingDelegationCallback { key -> startIncomingDelegation(key) }
 
         // Session history callbacks
         panel.setCefHistoryCallbacks(
@@ -2984,7 +3007,8 @@ class AgentController(
     }
 
     /**
-     * Entry point for an accepted inbound cross-IDE delegation (Plan 2 Task 4).
+     * Entry point for an accepted inbound cross-IDE delegation (Plan 2 Task 4 + busy-case
+     * follow-up).
      *
      * Routes the delegation through the IDE-B agent tab so it runs as a NORMAL FOREGROUND
      * session — full agent (tools + IDE-B approval gate + streaming), NOT a headless loop.
@@ -2992,44 +3016,112 @@ class AgentController(
      * focused session.
      *
      * Surfacing decision (via [DelegatedSessionSurface.decide]):
-     *  - idle tab → run now ([runDelegatedNow]).
-     *  - busy tab → store a starter as a queued "incoming" delegation; a LATER task wires
-     *    the notification/open UI that runs it.
+     *  - idle tab ([DelegatedSurface.RUN_NOW]) → run now ([runDelegatedNow]); outcome [STARTED].
+     *  - busy tab ([DelegatedSurface.QUEUE_INCOMING]) → push an "incoming delegation" prompt to
+     *    the webview top bar (`{key, delegatorRepo, deadlineEpochMs}`) and suspend on a
+     *    [CompletableDeferred] bounded by [ACCEPT_WINDOW_MS]. If the human clicks Start within
+     *    the window ([startIncomingDelegation] completes the deferred `true`) → [runDelegatedNow]
+     *    AS A NEW CHAT; outcome [STARTED]. If the window elapses → clear the prompt; outcome
+     *    [DECLINED_TIMEOUT].
      *
-     * Called by [DelegationInboundService.handleConnect] OFF the EDT (socket coroutine);
-     * the dashboard/UI touches inside [runDelegatedNow] hop onto the EDT themselves.
+     * Called by [DelegationInboundService.handleConnect] OFF the EDT (socket coroutine). This is
+     * a `suspend fun` so the busy-case wait happens on the socket coroutine; the dashboard/UI
+     * touches inside [runDelegatedNow] and the push helpers hop onto the EDT themselves.
      *
      * [onSessionStarted] fires (off the EDT, from the service) once the local session id is
-     * known — `handleConnect` uses it to resolve the sid for the inbound read-loop. It is NOT
-     * invoked on the QUEUE_INCOMING path: the queued starter only fires the session (and thus
-     * `onSessionStarted`) when the human later opens it.
-     *
-     * @return `true` if the session is starting NOW (RUN_NOW), `false` if it was queued
-     *   because the tab is busy (QUEUE_INCOMING). The caller uses this to avoid awaiting a
-     *   session id that will never arrive on the queued path.
+     * known — `handleConnect` uses it to resolve the sid for the inbound read-loop. It is only
+     * invoked once a session actually starts (idle tab, or Start clicked); never on a
+     * [DECLINED_TIMEOUT] outcome.
      */
-    fun startDelegatedSession(
+    suspend fun startDelegatedSession(
         request: String,
         metadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
         replyWith: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage) -> Unit,
         onResult: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit,
         onSessionStarted: ((String) -> Unit)? = null,
-    ): Boolean {
+    ): DelegatedStartOutcome {
         val busy = currentJob?.isActive == true || currentSessionId != null
         return when (com.workflow.orchestrator.agent.delegation.DelegatedSessionSurface.decide(busy)) {
             com.workflow.orchestrator.agent.delegation.DelegatedSurface.RUN_NOW -> {
                 runDelegatedNow(request, metadata, replyWith, onResult, onSessionStarted)
-                true
+                DelegatedStartOutcome.STARTED
             }
             com.workflow.orchestrator.agent.delegation.DelegatedSurface.QUEUE_INCOMING -> {
-                // No background execution: store a starter to run when the human opens it
-                // (a LATER task wires the notification/open UI that drains this map).
+                // No background execution: surface a top-bar prompt and wait for the human to
+                // click Start within ACCEPT_WINDOW_MS. The deferred is completed by
+                // startIncomingDelegation(key); the window is bounded by withTimeoutOrNull.
                 val key = metadata.delegatorSessionId
-                pendingIncomingDelegations[key] =
-                    { runDelegatedNow(request, metadata, replyWith, onResult, onSessionStarted) }
-                LOG.info("Queued incoming delegation from ${metadata.delegatorRepo} (waiting for user to open it)")
-                false
+                val deadlineEpochMs = System.currentTimeMillis() + ACCEPT_WINDOW_MS
+                val startGate = CompletableDeferred<Boolean>()
+                pendingIncomingStarts[key] = startGate
+                LOG.info(
+                    "Incoming delegation from ${metadata.delegatorRepo} arrived while busy — " +
+                        "surfacing top-bar prompt (key=$key, ${ACCEPT_WINDOW_MS}ms window)"
+                )
+                pushIncomingDelegation(key, metadata.delegatorRepo, deadlineEpochMs)
+                try {
+                    val started = kotlinx.coroutines.withTimeoutOrNull(ACCEPT_WINDOW_MS) {
+                        startGate.await()
+                    }
+                    if (started == true) {
+                        runDelegatedNow(request, metadata, replyWith, onResult, onSessionStarted)
+                        DelegatedStartOutcome.STARTED
+                    } else {
+                        LOG.info("Incoming delegation key=$key declined (accept window elapsed)")
+                        DelegatedStartOutcome.DECLINED_TIMEOUT
+                    }
+                } finally {
+                    pendingIncomingStarts.remove(key)
+                    pushIncomingDelegationCleared(key)
+                }
             }
+        }
+    }
+
+    /**
+     * Complete the pending Start gate for a busy-case incoming delegation. Called from the
+     * `_startIncomingDelegation` JS bridge when the human clicks Start on the top-bar prompt.
+     * No-op if no delegation is pending for [key] (already started, already declined/expired,
+     * or a stale/duplicate click).
+     */
+    fun startIncomingDelegation(key: String) {
+        val gate = pendingIncomingStarts[key]
+        if (gate == null) {
+            LOG.info("startIncomingDelegation: no pending incoming delegation for key=$key (expired or duplicate)")
+            return
+        }
+        // complete() is idempotent — returns false on a second call. The waiter in
+        // startDelegatedSession removes the entry + clears the prompt in its finally block.
+        gate.complete(true)
+    }
+
+    /**
+     * Push the busy-case "incoming delegation" prompt to the webview top bar. The React
+     * component (top-bar button + countdown) is wired in a later task; the `if (window._x)`
+     * guard makes this a safe no-op until then.
+     */
+    private fun pushIncomingDelegation(key: String, delegatorRepo: String, deadlineEpochMs: Long) {
+        controllerScope.launch(Dispatchers.EDT) {
+            val payload = buildString {
+                append("{\"key\":")
+                append(historyJson.encodeToString(key))
+                append(",\"delegatorRepo\":")
+                append(historyJson.encodeToString(delegatorRepo))
+                append(",\"deadlineEpochMs\":")
+                append(deadlineEpochMs)
+                append("}")
+            }
+            dashboard.callJs("if (window._incomingDelegation) window._incomingDelegation($payload)")
+        }
+    }
+
+    /** Clear the busy-case incoming-delegation prompt for [key] (started or timed out). */
+    private fun pushIncomingDelegationCleared(key: String) {
+        controllerScope.launch(Dispatchers.EDT) {
+            dashboard.callJs(
+                "if (window._incomingDelegationCleared) " +
+                    "window._incomingDelegationCleared(${historyJson.encodeToString(key)})"
+            )
         }
     }
 

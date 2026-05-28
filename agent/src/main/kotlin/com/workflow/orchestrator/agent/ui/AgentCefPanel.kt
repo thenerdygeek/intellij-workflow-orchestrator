@@ -107,6 +107,7 @@ class AgentCefPanel(
     private var rejectDiffHunkQuery: JBCefJSQuery? = null
     private var killToolCallQuery: JBCefJSQuery? = null
     private var killSubAgentQuery: JBCefJSQuery? = null
+    private var startIncomingDelegationQuery: JBCefJSQuery? = null
     private var revertToUserMessageQuery: JBCefJSQuery? = null
     private var revertFileToBaselineQuery: JBCefJSQuery? = null
     private var revertAllQuery: JBCefJSQuery? = null
@@ -300,6 +301,8 @@ class AgentCefPanel(
     var onKillToolCall: ((String) -> Unit)? = null
     /** Callback when user clicks the kill button on a running sub-agent boundary card. Param: agentId. */
     var onKillSubAgent: ((String) -> Unit)? = null
+    /** Callback when user clicks Start on a busy-case incoming cross-IDE delegation top-bar prompt. Param: delegation key. */
+    var onStartIncomingDelegation: ((String) -> Unit)? = null
     /** Callback when user submits process input from the ProcessInputView. Param: input string. */
     var onProcessInputResolved: ((String) -> Unit)? = null
     /** Callback when user clicks the time-travel button on a user message. Param: messageTs. */
@@ -641,6 +644,7 @@ class AgentCefPanel(
         }
         killToolCallQuery = registerQuery(b) { toolCallId -> onKillToolCall?.invoke(toolCallId); JBCefJSQuery.Response("ok") }
         killSubAgentQuery = registerQuery(b) { agentId -> onKillSubAgent?.invoke(agentId); JBCefJSQuery.Response("ok") }
+        startIncomingDelegationQuery = registerQuery(b) { key -> onStartIncomingDelegation?.invoke(key); JBCefJSQuery.Response("ok") }
         revertToUserMessageQuery = registerQuery(b) { tsStr ->
             val ts = tsStr.toLongOrNull(); if (ts != null) onRevertToUserMessage?.invoke(ts)
             JBCefJSQuery.Response("ok")
@@ -848,6 +852,7 @@ class AgentCefPanel(
                     injectBridge("_rejectDiffHunk") { rejectDiffHunkQuery?.let { q -> js("window._rejectDiffHunk = function(fp,hi) { ${q.inject("JSON.stringify({filePath:fp,hunkIndex:hi})")} }") } }
                     injectBridge("_killToolCall") { killToolCallQuery?.let { q -> js("window._killToolCall = function(toolCallId) { ${q.inject("toolCallId")} }") } }
                     injectBridge("_killSubAgent") { killSubAgentQuery?.let { q -> js("window._killSubAgent = function(agentId) { ${q.inject("agentId")} }") } }
+                    injectBridge("_startIncomingDelegation") { startIncomingDelegationQuery?.let { q -> js("window._startIncomingDelegation = function(key) { ${q.inject("key")} }") } }
                     injectBridge("_resolveProcessInput") { processInputQuery?.let { q -> js("window._resolveProcessInput = function(input) { ${q.inject("input")} }") } }
                     injectBridge("_revertToUserMessage") { revertToUserMessageQuery?.let { q -> js("window._revertToUserMessage = function(ts) { ${q.inject("String(ts)")} }") } }
                     injectBridge("_revertFileToBaseline") { revertFileToBaselineQuery?.let { q -> js("window._revertFileToBaseline = function(p) { ${q.inject("p")} }") } }

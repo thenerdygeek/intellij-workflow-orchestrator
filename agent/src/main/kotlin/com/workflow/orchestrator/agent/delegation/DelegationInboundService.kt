@@ -235,7 +235,11 @@ class DelegationInboundService(
         // for both the AcceptResult bSessionId and the inbound read-loop.
         val sessionIdHolder = java.util.concurrent.atomic.AtomicReference<String>()
         val sessionIdReady = CompletableDeferred<String>()
-        val runningNow = controller.startDelegatedSession(
+        // startDelegatedSession is a suspend fun: for an idle tab it returns STARTED promptly;
+        // for a busy tab it surfaces a top-bar prompt and SUSPENDS HERE for up to
+        // AgentController.ACCEPT_WINDOW_MS (<= IDE-A's connectAndAwaitAccept timeout) waiting for
+        // the human to click Start. The socket coroutine simply waits — no background execution.
+        val outcome = controller.startDelegatedSession(
             request = connect.request,
             metadata = metadata,
             replyWith = replyWith,
@@ -249,24 +253,16 @@ class DelegationInboundService(
                 sessionIdReady.complete(sid)
             },
         )
-        if (!runningNow) {
-            // QUEUE_INCOMING: the IDE-B tab is busy, so there is no foreground session to run
-            // (no background execution allowed). The starter is stored controller-side; a LATER
-            // task wires the notification/open UI that lets the user run it. For now fail this
-            // connection cleanly so IDE-A's accept-await does not hang on a session that will
-            // never start on THIS channel. Do NOT await sessionIdReady — onSessionStarted never
-            // fires on the queued path.
-            replyWith(
-                DelegationMessage.Result(
-                    status = DelegationMessage.ResultStatus.FAILED,
-                    reason = "ide_b_busy",
-                )
-            )
+        if (outcome == com.workflow.orchestrator.agent.ui.DelegatedStartOutcome.DECLINED_TIMEOUT) {
+            // Busy tab, human did not click Start within the accept window. Decline cleanly so
+            // IDE-A's accept-await resolves (rather than hanging on a session that never starts).
+            // onSessionStarted never fired, so do NOT await sessionIdReady.
+            replyWith(DelegationMessage.AcceptResult(accepted = false, reason = "declined_timeout"))
             closeChannel()
             return
         }
-        // RUN_NOW: await the sid before the read-loop runs. The agent loop launches promptly,
-        // so this resolves quickly; the surrounding socket coroutine simply waits.
+        // STARTED (idle tab, or Start clicked within the window): await the sid before the
+        // read-loop runs. onSessionStarted fired (or fires promptly), so this resolves quickly.
         val localSessionId = sessionIdReady.await()
         // Plan 4: include bSessionId so IDE-A can persist the link for CHANNEL_RESUME.
         replyWith(DelegationMessage.AcceptResult(accepted = true, bSessionId = localSessionId))

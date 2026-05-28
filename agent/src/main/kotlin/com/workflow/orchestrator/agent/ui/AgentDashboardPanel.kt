@@ -764,6 +764,10 @@ class AgentDashboardPanel(
         cefPanel?.onKillSubAgent = onKill
     }
 
+    fun setCefStartIncomingDelegationCallback(onStart: (String) -> Unit) {
+        cefPanel?.onStartIncomingDelegation = onStart
+    }
+
     // ── Edit stats delegation ──
 
     fun updateEditStats(added: Int, removed: Int, files: Int) {
