@@ -67,7 +67,7 @@ questions route to IDE-A and (b) a **verbose** final result is sent home to IDE-
 | Component | Change |
 |---|---|
 | `AgentService.startDelegatedSession` | The current UI-stripped execution path is **removed**. `AgentController` owns UI wiring (see below), so this method is either deleted outright or reduced to a thin shim only if a caller still needs a non-UI entry (none is expected — verify and delete if orphaned). No parallel headless run survives. |
-| `AgentController` | New `startDelegatedSession(briefing, delegationMetadata, replyWith, onResult)` mirroring `startHandoffSession`: calls `service.executeTask` with the full bundle (`onStreamChunk`/`onToolCall`/`approvalGate`/`sessionApprovalStore`/`onComplete`), registers the session, runs it as an **independent job** (not clobbering the human's `currentJob`), and decides surfacing (auto-open if idle, else incoming badge). Provides a **non-cancelling** "open a delegated session for viewing" path (today's `showSession` calls `cancelCurrentTask` — must not cancel a still-running delegated session). |
+| `AgentController` | New `startDelegatedSession(...)` mirroring `startHandoffSession`: runs the delegated session via `service.startDelegatedSession` with the full callback bundle (`onStreamChunk`/`onToolCall`/`approvalGate`/`sessionApprovalStore`/`onSessionStarted`). It decides surfacing via `DelegatedSessionSurface.decide(tabBusy)`: **idle** → run now (foreground, becomes the active session); **busy** → top-bar incoming-delegation button + countdown (see the Busy-case section), runs on Start. A delegated session is a normal **foreground** session and runs only while focused; per "no background execution", switching away to another session cancels it exactly like any other running session (there is intentionally NO "keep running while you view another session" / non-cancelling-open behavior — that would be background execution). |
 | `DelegationInboundService.handleConnect` | On accept (or preauth), activate IDE-B's Workflow/Agent tool window (initializing the controller via the `AgentChatRedirectImpl` pattern) and route the session start through `AgentController.startDelegatedSession` instead of the headless `AgentService` path. Keep `registerSessionChannel` (question routing) and the terminal-result send. |
 | Result mapping | Map `LoopResult.Completed` → `Result(summary = <full attempt_completion text>, filesChanged = SessionCheckpointStore.aggregateDiff(), …)`. Remove the `.take(200)` truncation on the handoff branch. |
 | Webview / session list | Render the `delegated`/"incoming" marker on the session entry; show a "needs approval" sub-state when the session's approval gate is waiting and the session is not focused. |
@@ -144,11 +144,11 @@ parallel and persist live. Focus is a view concern, not an execution concern.
   `approvalGate` + `sessionApprovalStore` (today it passes none) — pin so writes can't silently
   auto-execute in a delegated session.
 - **Question routing preserved** (existing tests): `routeQuestion` / pending-token behavior unchanged.
-- **Surfacing decision** (unit): idle → auto-open (controller has no active session) vs busy → badge,
-  driven by a testable predicate on `currentSessionId`/`currentJob`.
-- **Non-cancelling open** (source-contract/unit): opening a running delegated session for viewing does
-  NOT call `cancelCurrentTask` on it.
-- Headless/EDT-dependent UI (tool-window activation, badge render) pinned by source-contract tests in
+- **Surfacing decision** (unit): idle → run now vs busy → queue/top-bar, driven by a testable predicate
+  (`DelegatedSessionSurface.decide(tabBusy)`).
+- **Busy → Start** (behavioral, coroutine-level via the controller seam): the busy path suspends on the
+  accept-window deferred, `startIncomingDelegation(key)` resumes it → STARTED; window elapse → DECLINED_TIMEOUT.
+- Headless/EDT-dependent UI (tool-window activation, top-bar render) pinned by source-contract tests in
   the established codebase style where unit coverage isn't feasible.
 - **No-dead-code verification** (Requirement 5): a source-contract test asserts the headless
   delegated-execution path is gone (e.g., `DelegationInboundService` no longer calls the stripped
@@ -174,8 +174,10 @@ are a prerequisite — a delegation must actually be accepted for any session to
 - KEEP (still used): question-routing (`routeQuestion`/pending-token/`AnswerCanceled`), heartbeat,
   `ChannelResume`/resume, doorbell + consent. Do not remove these.
 
-## Open items for the implementation plan
+## Resolved / notes
 
-- The "open a running session for viewing without cancelling it" capability — likely a variant of
-  `showSession` guarded to skip `cancelCurrentTask` when the target is a live delegated session.
-- Where the "incoming delegation" badge lives in the session-list webview component.
+- **Cancel-on-switch is intended.** A delegated session is foreground-only; navigating to another
+  session cancels it (standard single-active-session behavior) — this is REQUIRED by "no background
+  execution", not a defect. There is no non-cancelling-open path.
+- The incoming-delegation surface is a **top-bar button with a countdown** (`IncomingDelegationBar` in
+  the webview `TopBar`), not a History badge.
