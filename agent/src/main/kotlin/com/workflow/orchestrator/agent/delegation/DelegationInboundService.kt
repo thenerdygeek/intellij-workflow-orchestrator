@@ -16,6 +16,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import com.workflow.orchestrator.agent.ui.DelegatedStartOutcome
 import java.nio.file.Files
 import java.nio.file.Path
@@ -277,22 +278,40 @@ class DelegationInboundService(
         val sessionIdReady = CompletableDeferred<String>()
         // startDelegatedSession is a suspend fun: for an idle tab it returns STARTED promptly;
         // for a busy tab it surfaces a top-bar prompt and SUSPENDS HERE for up to
-        // AgentController.ACCEPT_WINDOW_MS (<= IDE-A's connectAndAwaitAccept timeout) waiting for
+        // AgentController.ACCEPT_WINDOW_MS (< IDE-A's connectAndAwaitAccept timeout) waiting for
         // the human to click Start. The socket coroutine simply waits — no background execution.
-        val outcome = starter.start(
-            request = connect.request,
-            metadata = metadata,
-            replyWith = replyWith,
-            onResult = { result ->
-                stopHeartbeatForSession(sessionIdHolder.get() ?: "")
-                replyWith(result)
-                closeChannel()
-            },
-            onSessionStarted = { sid ->
-                sessionIdHolder.set(sid)
-                sessionIdReady.complete(sid)
-            },
-        )
+        // I5: guard against a non-cancellation throw from the starter. Without this an uncaught
+        // throw bubbles to DelegationServer's connection handler, which only closes the socket —
+        // IDE-A then sees a generic EOF instead of a clean FAILED. CancellationException is
+        // re-thrown so coroutine cancellation still propagates.
+        val outcome = try {
+            starter.start(
+                request = connect.request,
+                metadata = metadata,
+                replyWith = replyWith,
+                onResult = { result ->
+                    stopHeartbeatForSession(sessionIdHolder.get() ?: "")
+                    replyWith(result)
+                    closeChannel()
+                },
+                onSessionStarted = { sid ->
+                    sessionIdHolder.set(sid)
+                    sessionIdReady.complete(sid)
+                },
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            LOG.warn("handleConnect: delegated-session starter threw for project ${project.name}", e)
+            replyWith(
+                DelegationMessage.Result(
+                    status = DelegationMessage.ResultStatus.FAILED,
+                    reason = "delegated_start_error: ${e.message ?: e::class.simpleName}",
+                )
+            )
+            closeChannel()
+            return
+        }
         if (outcome == DelegatedStartOutcome.DECLINED_TIMEOUT) {
             // Busy tab, human did not click Start within the accept window. Decline cleanly so
             // IDE-A's accept-await resolves (rather than hanging on a session that never starts).
@@ -302,8 +321,26 @@ class DelegationInboundService(
             return
         }
         // STARTED (idle tab, or Start clicked within the window): await the sid before the
-        // read-loop runs. onSessionStarted fired (or fires promptly), so this resolves quickly.
-        val localSessionId = sessionIdReady.await()
+        // read-loop runs. onSessionStarted fires promptly on the happy path. C1: bound the await
+        // so a failed EDT launch (runDelegatedNow throwing before onSessionStarted, or the scope
+        // cancelled on project close) can't hang this socket coroutine forever holding IDE-A's
+        // channel open — on timeout, reply a clean FAILED and close.
+        val localSessionId = withTimeoutOrNull(
+            com.workflow.orchestrator.agent.ui.AgentController.SESSION_START_TIMEOUT_MS
+        ) { sessionIdReady.await() }
+        if (localSessionId == null) {
+            LOG.warn("handleConnect: delegated session id not delivered within " +
+                "${com.workflow.orchestrator.agent.ui.AgentController.SESSION_START_TIMEOUT_MS}ms " +
+                "for project ${project.name}; failing")
+            replyWith(
+                DelegationMessage.Result(
+                    status = DelegationMessage.ResultStatus.FAILED,
+                    reason = "session_start_timeout",
+                )
+            )
+            closeChannel()
+            return
+        }
         // Plan 4: include bSessionId so IDE-A can persist the link for CHANNEL_RESUME.
         replyWith(DelegationMessage.AcceptResult(accepted = true, bSessionId = localSessionId))
 

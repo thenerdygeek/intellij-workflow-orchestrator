@@ -72,6 +72,19 @@ import kotlinx.serialization.json.jsonPrimitive
 enum class DelegatedStartOutcome { STARTED, DECLINED_TIMEOUT }
 
 /**
+ * Busy-path accept-window wait, factored out of [AgentController.startDelegatedSession] so the
+ * timing core is unit-testable headless (review finding I4) — no Project/Application/EDT, and
+ * kotlinx-coroutines-test virtual time advances [windowMs] deterministically.
+ *
+ * Suspends until [gate] completes (the human clicked Start → true) or [windowMs] elapses
+ * (→ false, declined-by-timeout). Returns the gate's value when it wins the race, else false.
+ */
+internal suspend fun awaitIncomingStart(
+    gate: kotlinx.coroutines.CompletableDeferred<Boolean>,
+    windowMs: Long,
+): Boolean = kotlinx.coroutines.withTimeoutOrNull(windowMs) { gate.await() } == true
+
+/**
  * Bridges the JCEF chat dashboard to [AgentService].
  *
  * Responsibilities:
@@ -89,12 +102,25 @@ class AgentController(
 
         /**
          * How long IDE-B waits for the human to click Start on a busy-tab incoming delegation
-         * before declining it. MUST stay <= IDE-A's `DelegationClient.connectAndAwaitAccept`
-         * `acceptTimeoutMillis` (60_000L) so IDE-A's accept-await is still open when IDE-B
-         * replies; if this exceeds that, IDE-A times out first and IDE-B's reply lands on a
-         * dead channel.
+         * before declining it. MUST stay STRICTLY LESS than IDE-A's
+         * `DelegationClient.connectAndAwaitAccept` `acceptTimeoutMillis` (60_000L): on a Start
+         * clicked near the deadline, IDE-B still has to launch the session and send its
+         * AcceptResult, and that round-trip must land before IDE-A gives up. The 5s gap
+         * (55_000L vs 60_000L) is the framing/scheduling buffer; if equal, a late Start could
+         * make IDE-B's reply land on an already-dead channel.
          */
-        const val ACCEPT_WINDOW_MS = 60_000L
+        const val ACCEPT_WINDOW_MS = 55_000L
+
+        /**
+         * Upper bound on awaiting the started session id (review finding C1). `runDelegatedNow`
+         * launches the session fire-and-forget on `controllerScope.launch(Dispatchers.EDT)`; if
+         * that EDT coroutine throws before `onSessionStarted` fires (e.g. `resetForNewChat()`
+         * throws, or the scope is cancelled on project close), the sid deferred never completes.
+         * `handleConnect` bounds its await with this so the socket coroutine can't hang forever
+         * holding IDE-A's channel open. Session start is near-instant on the idle path, so 15s is
+         * generous.
+         */
+        const val SESSION_START_TIMEOUT_MS = 15_000L
 
         /**
          * Test-only seam — constructs a minimal controller from a mocked
@@ -3060,10 +3086,9 @@ class AgentController(
                 )
                 pushIncomingDelegation(key, metadata.delegatorRepo, deadlineEpochMs)
                 try {
-                    val started = kotlinx.coroutines.withTimeoutOrNull(ACCEPT_WINDOW_MS) {
-                        startGate.await()
-                    }
-                    if (started == true) {
+                    // I4: timing core lives in the pure, unit-tested awaitIncomingStart helper.
+                    val started = awaitIncomingStart(startGate, ACCEPT_WINDOW_MS)
+                    if (started) {
                         runDelegatedNow(request, metadata, replyWith, onResult, onSessionStarted)
                         DelegatedStartOutcome.STARTED
                     } else {
@@ -3144,25 +3169,38 @@ class AgentController(
         // Reset on the EDT (dashboard touch), then start the foreground session. The service
         // launches the agent loop on IO; we capture the Job + session id via callbacks.
         controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.startDelegatedSession")) {
-            resetForNewChat()
-            service.startDelegatedSession(
-                request = request,
-                delegationMetadata = metadata,
-                replyWith = replyWith,
-                onResult = onResult,
-                onStreamChunk = ::onStreamChunk,
-                onToolCall = ::onToolCall,
-                approvalGate = ::approvalGate,
-                sessionApprovalStore = sessionApprovalStore,
-                onSessionStarted = { sid ->
-                    currentSessionId = sid
-                    sessionActive = true
-                    // Forward the sid to the caller (handleConnect) so the inbound read-loop
-                    // can run with the correct session id.
-                    onSessionStarted?.invoke(sid)
-                },
-                onJobCreated = { job -> currentJob = job },
-            )
+            // C1: if this fire-and-forget EDT launch throws before onSessionStarted fires
+            // (resetForNewChat / startDelegatedSession blowing up, or scope cancelled on project
+            // close), the sid deferred in handleConnect never completes. Make the failure
+            // OBSERVABLE here (log) — handleConnect's bounded await (SESSION_START_TIMEOUT_MS)
+            // then fires the clean session_start_timeout FAILED rather than hanging forever.
+            // Re-throw CancellationException so coroutine cancellation still propagates.
+            try {
+                resetForNewChat()
+                service.startDelegatedSession(
+                    request = request,
+                    delegationMetadata = metadata,
+                    replyWith = replyWith,
+                    onResult = onResult,
+                    onStreamChunk = ::onStreamChunk,
+                    onToolCall = ::onToolCall,
+                    approvalGate = ::approvalGate,
+                    sessionApprovalStore = sessionApprovalStore,
+                    onSessionStarted = { sid ->
+                        currentSessionId = sid
+                        sessionActive = true
+                        // Forward the sid to the caller (handleConnect) so the inbound read-loop
+                        // can run with the correct session id.
+                        onSessionStarted?.invoke(sid)
+                    },
+                    onJobCreated = { job -> currentJob = job },
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                LOG.error("runDelegatedNow: delegated session start failed on EDT — " +
+                    "handleConnect's sid await will time out and reply FAILED", e)
+            }
         }
     }
 
