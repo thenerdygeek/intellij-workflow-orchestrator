@@ -30,10 +30,18 @@ class DelegationInboundConsentDialog(
     private val knock: DelegationMessage.Knock,
     // MODELESS: this dialog can pop unsolicited while IDE-B is already in use. An app-modal
     // popup would hijack the user's current work; modeless lets them finish and respond at will.
+    //
+    // Because MODELESS show() is NON-BLOCKING, the caller CANNOT read [choice] synchronously after
+    // show() — it would observe the default CANCEL before the user clicks (Bug B). Instead the
+    // dialog reports the user's real selection through [onChoice], fired exactly once when the
+    // dialog closes by any path (an action button, Cancel, the window X, or Esc).
+    private val onChoice: (ConsentChoice) -> Unit,
 ) : DialogWrapper(project, true, IdeModalityType.MODELESS) {
 
     var choice: ConsentChoice = ConsentChoice.CANCEL
         private set
+
+    private val reported = java.util.concurrent.atomic.AtomicBoolean(false)
 
     init {
         title = "Cross-IDE Delegation Request"
@@ -69,5 +77,15 @@ class DelegationInboundConsentDialog(
         }
         // Cancel uses the default cancel action; choice stays CANCEL.
         return arrayOf(once, always, cancelAction)
+    }
+
+    /**
+     * Fires [onChoice] exactly once when the dialog closes — by an action button (which has set
+     * [choice]) or by Cancel / window-X / Esc (which leave [choice] as the default CANCEL). dispose()
+     * is the single funnel for every close path, so the caller's awaited result is always delivered.
+     */
+    override fun dispose() {
+        if (reported.compareAndSet(false, true)) onChoice(choice)
+        super.dispose()
     }
 }

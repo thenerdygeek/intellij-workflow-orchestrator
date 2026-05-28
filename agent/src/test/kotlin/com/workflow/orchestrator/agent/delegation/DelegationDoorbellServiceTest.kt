@@ -74,6 +74,26 @@ class DelegationDoorbellServiceTest {
     }
 
     @Test
+    fun `ALLOW_ONCE records the preauth nonce BEFORE binding the socket`(@TempDir tmp: Path) {
+        // Bug D: once the socket is bound, IDE-A's poll can detect it and fire its Connect
+        // immediately. If recordPreauth hasn't run yet, consumePreauth returns false and IDE-B
+        // falls to the redundant Accept dialog. The nonce must be recorded before the bind so the
+        // window where a bound-but-not-yet-authorized socket exists is never observable.
+        val project = mockk<Project>(relaxed = true)
+        val service = DelegationDoorbellService(project, CoroutineScope(SupervisorJob()))
+        val inbound = mockk<DelegationInboundService>(relaxed = true)
+        val store = PendingDelegationStore(tmp)
+        val knock = knock(nonce = "n2b", delegator = "sess-Yb")
+
+        service.applyConsent(knock, ConsentChoice.ALLOW_ONCE, store, inbound)
+
+        io.mockk.verifyOrder {
+            inbound.recordPreauth("n2b")
+            inbound.startTransient()
+        }
+    }
+
+    @Test
     fun `CANCEL writes the declined marker and does not bind or preauth`(@TempDir tmp: Path) {
         val project = mockk<Project>(relaxed = true)
         val service = DelegationDoorbellService(project, CoroutineScope(SupervisorJob()))

@@ -63,8 +63,10 @@ class DelegationTool(
      *
      * @property projectPath  Absolute path to the project root.
      * @property repoName     Display name (from RecentProjectsManager or directory base name).
-     * @property status       One of: "running" (IDE reachable), "closed" (in recents, not running),
-     *                        "discovered" (socket-glob only), "missing" (path doesn't exist on disk).
+     * @property status       One of: "running" (delegation socket bound — accepting now),
+     *                        "available" (IDE open but inbound off — a send rings the doorbell for
+     *                        consent), "closed" (in recents, not running), "discovered" (socket-glob
+     *                        only), "missing" (path doesn't exist on disk).
      * @property lastOpened   Epoch millis if known from recents; null otherwise.
      */
     data class RecentEntry(
@@ -387,9 +389,9 @@ class DelegationTool(
             action("list_targets") {
                 description {
                     technical(
-                        "Read-only union of recents (RecentProjectsManagerBase.getRecentPaths, each UDS-socket-probed for running/closed, " +
-                            "missing if the path is gone) and socket-glob discovery (reachable sockets not in recents). Never opens UI; never throws — " +
-                            "provider failures degrade to an empty list."
+                        "Read-only union of recents (RecentProjectsManagerBase.getRecentPaths, each UDS-socket-probed: delegation socket → running, " +
+                            "else doorbell socket → available (open but inbound off), else closed; missing if the path is gone) and socket-glob discovery " +
+                            "(reachable sockets not in recents). Never opens UI; never throws — provider failures degrade to an empty list."
                     )
                     plain(
                         "List the IDE windows you could delegate to and whether each is currently running — the same list the picker shows, " +
@@ -397,7 +399,8 @@ class DelegationTool(
                     )
                 }
                 whenLLMUses("To check what's reachable before a send, or to answer 'which repos/agents are available?' without popping the picker.")
-                onSuccess("Returns `{\"targets\":[{repoName, projectPath, status, lastOpened}]}` where status ∈ running | closed | discovered | missing.")
+                onSuccess("Returns `{\"targets\":[{repoName, projectPath, status, lastOpened}]}` where status ∈ running | available | closed | discovered | missing. " +
+                    "`available` means the IDE is open with inbound delegation off — a send will ring its doorbell and prompt the user for consent.")
                 example("enumerate available targets") {
                     param("action", "list_targets")
                     outcome("Returns the JSON target list; no UI opens. Pick a repoName to pass as suggested_repo on a subsequent send.")
@@ -793,6 +796,28 @@ class DelegationTool(
             '"' + s.replace("\\", "\\\\").replace("\"", "\\\"") + '"'
 
         /**
+         * Resolve a recent target's status from socket reachability (Bug A).
+         *
+         * - `missing`   — path no longer exists on disk.
+         * - `running`   — delegation socket bound (inbound ON / already accepting); a send connects
+         *                 directly.
+         * - `available` — delegation socket NOT bound but the always-on doorbell IS: the IDE is open
+         *                 with inbound delegation off. A send rings the doorbell and prompts the user
+         *                 for consent. (Previously mislabeled `closed`, indistinguishable from dead.)
+         * - `closed`    — neither socket bound: the IDE is not running this project.
+         */
+        internal fun resolveTargetStatus(
+            exists: Boolean,
+            delegationReachable: Boolean,
+            doorbellReachable: Boolean,
+        ): String = when {
+            !exists -> "missing"
+            delegationReachable -> "running"
+            doorbellReachable -> "available"
+            else -> "closed"
+        }
+
+        /**
          * Production recents provider.
          *
          * Reads [RecentProjectsManagerBase.getRecentPaths], probes each path's UDS socket
@@ -816,11 +841,15 @@ class DelegationTool(
                         } catch (_: Exception) { null }
                             ?: path.fileName?.toString()
                             ?: pathStr
-                        val status = when {
-                            !Files.exists(path) -> "missing"
-                            DelegationClient.ping(DelegationPaths.socketFor(path)) != null -> "running"
-                            else -> "closed"
-                        }
+                        val exists = Files.exists(path)
+                        // Probe the delegation socket first; only ring the doorbell when the
+                        // delegation door is shut, so we can tell "running, inbound off" (doorbell
+                        // bound → "available") from a genuinely closed IDE.
+                        val delegationReachable =
+                            exists && DelegationClient.ping(DelegationPaths.socketFor(path)) != null
+                        val doorbellReachable = exists && !delegationReachable &&
+                            DelegationClient.ping(DelegationPaths.doorbellSocketFor(path)) != null
+                        val status = resolveTargetStatus(exists, delegationReachable, doorbellReachable)
                         RecentEntry(
                             projectPath = pathStr,
                             repoName = name,

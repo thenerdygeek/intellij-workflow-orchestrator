@@ -47,6 +47,29 @@ object DelegationPaths {
     fun ipcDir(): Path = Path.of(System.getProperty("user.home"), IPC_DIR)
 
     /**
+     * Canonical, system-independent (forward-slash) key for a project path, used to derive the
+     * cross-IDE agent dir consistently from BOTH sides of a delegation.
+     *
+     * Bug C: `ProjectIdentifier.compute()` hashes the raw string. IDE-A derives the target agent
+     * dir from `picked.path.toString()` (backslashes on Windows) while IDE-B uses `project.basePath`
+     * (forward slashes), so on Windows the two sides hashed different strings and the
+     * `pending-delegation/` + `.declined` markers landed in different dirs. Normalizing both sides
+     * to IntelliJ's system-independent form here (without touching `ProjectIdentifier`, which would
+     * orphan existing on-disk session data) makes the keys identical on every platform.
+     */
+    fun projectKey(rawProjectPath: String): String =
+        com.intellij.openapi.util.io.FileUtil.toSystemIndependentName(rawProjectPath)
+
+    /**
+     * Single chokepoint for the per-project agent dir used by cross-IDE delegation's file-based
+     * pending/declined markers. Both the delegator (IDE-A, from `picked.path.toString()`) and the
+     * receiver (IDE-B, from `project.basePath`) MUST derive this dir through here so a Windows
+     * separator difference can't split them across two directories (Bug C).
+     */
+    fun agentDirForDelegation(rawProjectPath: String): Path =
+        com.workflow.orchestrator.core.util.ProjectIdentifier.agentDir(projectKey(rawProjectPath)).toPath()
+
+    /**
      * Ensures the IPC directory exists with restrictive permissions (0700 on POSIX).
      * Call before binding a socket.
      */

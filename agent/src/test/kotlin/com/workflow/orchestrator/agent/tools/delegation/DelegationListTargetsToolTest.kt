@@ -31,6 +31,31 @@ class DelegationListTargetsToolTest {
 
     @AfterEach fun tearDown() { unmockkAll() }
 
+    // ── resolveTargetStatus: doorbell-aware status (Bug A) ─────────────────────
+
+    @Test
+    fun `status is missing when the path does not exist`() {
+        assertEquals("missing", DelegationTool.resolveTargetStatus(exists = false, delegationReachable = false, doorbellReachable = false))
+    }
+
+    @Test
+    fun `status is running when the delegation socket is reachable`() {
+        assertEquals("running", DelegationTool.resolveTargetStatus(exists = true, delegationReachable = true, doorbellReachable = false))
+    }
+
+    @Test
+    fun `status is available when only the doorbell is reachable (running, inbound off)`() {
+        // The reported bug: an open IDE with inbound delegation OFF has its delegation socket
+        // unbound but its doorbell always bound. It must NOT be reported as "closed" (= dead) —
+        // a send can ring the doorbell and prompt the user for consent.
+        assertEquals("available", DelegationTool.resolveTargetStatus(exists = true, delegationReachable = false, doorbellReachable = true))
+    }
+
+    @Test
+    fun `status is closed when neither socket is reachable but the path exists`() {
+        assertEquals("closed", DelegationTool.resolveTargetStatus(exists = true, delegationReachable = false, doorbellReachable = false))
+    }
+
     private fun listTargetsParams(): JsonObject = buildJsonObject {
         put("action", JsonPrimitive("list_targets"))
     }

@@ -12,7 +12,7 @@ import com.workflow.orchestrator.core.delegation.DelegationPaths
 import com.workflow.orchestrator.core.delegation.KnockOutcome
 import com.workflow.orchestrator.core.settings.CrossIdeDelegationSettingsListener
 import com.workflow.orchestrator.core.settings.PluginSettings
-import com.workflow.orchestrator.core.util.ProjectIdentifier
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -220,12 +220,17 @@ class DelegationDoorbellService(
      */
     private suspend fun showDialogAndApply(knock: DelegationMessage.Knock) {
         try {
-            val choice = withContext(Dispatchers.EDT) {
-                val dlg = DelegationInboundConsentDialog(project, knock)
-                dlg.show()
-                dlg.choice
+            // Bug B: the consent dialog is MODELESS, so show() is non-blocking — reading the dialog's
+            // choice field right after show() returns the default CANCEL before the user clicks. Await
+            // the dialog's reported selection via a CompletableDeferred the dialog completes on close.
+            val choiceResult = CompletableDeferred<ConsentChoice>()
+            withContext(Dispatchers.EDT) {
+                DelegationInboundConsentDialog(project, knock) { chosen ->
+                    choiceResult.complete(chosen)
+                }.show()
             }
-            val store = PendingDelegationStore(ProjectIdentifier.agentDir(project.basePath ?: ".").toPath())
+            val choice = choiceResult.await()
+            val store = PendingDelegationStore(DelegationPaths.agentDirForDelegation(project.basePath ?: "."))
             val inbound = project.getService(DelegationInboundService::class.java)
             applyConsent(knock, choice, store, inbound)
         } catch (e: Exception) {
@@ -275,8 +280,12 @@ class DelegationDoorbellService(
                 inbound.recordPreauth(knock.nonce)
             }
             ConsentChoice.ALLOW_ONCE -> {
-                inbound.startTransient()
+                // Bug D: record the preauth nonce BEFORE binding the socket. Once startTransient()
+                // binds, IDE-A's poll can detect the live socket and fire its Connect within
+                // milliseconds; if the nonce weren't recorded yet, consumePreauth would miss and
+                // IDE-B would pop a redundant Accept dialog. Recording first closes that window.
                 inbound.recordPreauth(knock.nonce)
+                inbound.startTransient()
             }
             ConsentChoice.CANCEL -> {
                 store.markDeclined(knock.nonce)
@@ -294,7 +303,7 @@ class DelegationDoorbellService(
      */
     fun replayPendingRequests() {
         val basePath = project.basePath ?: return
-        val store = PendingDelegationStore(ProjectIdentifier.agentDir(basePath).toPath())
+        val store = PendingDelegationStore(DelegationPaths.agentDirForDelegation(basePath))
         val fresh = try {
             store.readFresh(ttlMillis = REPLAY_TTL_MS)
         } catch (e: Exception) {

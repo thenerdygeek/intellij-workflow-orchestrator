@@ -131,21 +131,48 @@ class DialogModalityContractTest {
         )
     }
 
-    // ── Test 3 — positive contract for the known-good MODELESS dialog ─────────
+    // ── Test 3 — corrected contract for the MODELESS consent dialog (Bug B) ───
 
     @Test
-    fun `DelegationInboundConsentDialog stays MODELESS and is shown via show not showAndGet`() {
-        // The consent dialog is intentionally MODELESS (it must not block the doorbell EDT while the
-        // delegator's open-project request is dispatched via invokeLater(NON_MODAL)). It correctly
-        // uses show(); this pins the good pattern so a "simplification" to showAndGet can't sneak in.
+    fun `consent dialog stays MODELESS and reports the user's actual choice asynchronously`() {
+        // The consent dialog is intentionally MODELESS (it must not hijack the user's work in IDE-B).
+        // BUT modeless show() is NON-BLOCKING: it returns immediately, so reading `dlg.choice` right
+        // after show() yields the default CANCEL before the user clicks (Bug B — "Allow once does
+        // nothing"). The fix keeps it modeless and reports the user's real selection via a callback
+        // the doorbell AWAITS. This test pins that contract so the synchronous read can't return.
         val consent = source("com/workflow/orchestrator/agent/delegation/ui/DelegationInboundConsentDialog.kt")
+        val doorbell = source("com/workflow/orchestrator/agent/delegation/DelegationDoorbellService.kt")
+
+        // (1) Still MODELESS — must not block/hijack the user.
         assertTrue(
             Regex(""":\s*DialogWrapper\([^)]*MODELESS""").containsMatchIn(consent),
-            "DelegationInboundConsentDialog is expected to remain IdeModalityType.MODELESS.",
+            "DelegationInboundConsentDialog must remain IdeModalityType.MODELESS.",
         )
         assertTrue(
             "DelegationInboundConsentDialog" in modelessDialogClassNames(),
             "Scanner should classify DelegationInboundConsentDialog as MODELESS.",
+        )
+
+        // (2) The dialog reports the user's choice via a callback (the only way to know a modeless
+        //     dialog's outcome — its show() does not block).
+        assertTrue(
+            consent.contains("onChoice"),
+            "DelegationInboundConsentDialog must take an `onChoice` callback to report the user's " +
+                "real selection. Reading .choice synchronously after a modeless show() returns the " +
+                "default CANCEL before the user clicks (Bug B).",
+        )
+
+        // (3) The doorbell AWAITS the choice and never reads `.choice` synchronously after show().
+        assertTrue(
+            doorbell.contains("CompletableDeferred") && doorbell.contains(".await()"),
+            "DelegationDoorbellService must await the consent choice (CompletableDeferred + await) " +
+                "rather than read it right after a non-blocking modeless show().",
+        )
+        assertFalse(
+            doorbell.contains(".choice"),
+            "DelegationDoorbellService must NOT read dlg.choice synchronously — for a MODELESS dialog " +
+                "show() returns immediately, so .choice is still the default CANCEL. Await the " +
+                "onChoice callback instead (Bug B).",
         )
     }
 }

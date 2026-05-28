@@ -276,7 +276,10 @@ class DelegationOutboundService(
         delegatorSessionId: String,
     ): DelegationMessage.Connect {
         val nonce = UUID.randomUUID().toString()
-        val targetAgentDir = ProjectIdentifier.agentDir(picked.path.toString()).toPath()
+        // Bug C: derive the target's agent dir through the shared system-independent chokepoint so
+        // it matches what IDE-B (the receiver) uses from project.basePath. picked.path.toString()
+        // renders with backslashes on Windows; agentDirForDelegation normalizes that away.
+        val targetAgentDir = DelegationPaths.agentDirForDelegation(picked.path.toString())
         val store = PendingDelegationStore(targetAgentDir)
         val preview = baseConnect.request.take(REQUEST_PREVIEW_CHARS)
 
