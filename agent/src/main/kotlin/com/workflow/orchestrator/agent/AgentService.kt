@@ -3154,29 +3154,7 @@ class AgentService(
                 val loopResult = loopResultDeferred.await()
                 val durationSeconds = (System.currentTimeMillis() - startTime) / 1000
 
-                val delegationResult = when (loopResult) {
-                    is LoopResult.Completed -> com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
-                        status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.COMPLETED,
-                        summary = loopResult.summary,
-                        filesChanged = emptyList(), // TODO: derive from SessionCheckpointStore.aggregateDiff() in Task 12
-                        durationSeconds = durationSeconds,
-                    )
-                    is LoopResult.Cancelled -> com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
-                        status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.CANCELED,
-                        reason = "Session cancelled",
-                        durationSeconds = durationSeconds,
-                    )
-                    is LoopResult.SessionHandoff -> com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
-                        status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.COMPLETED,
-                        summary = loopResult.context.take(200),
-                        durationSeconds = durationSeconds,
-                    )
-                    is LoopResult.Failed -> com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
-                        status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.FAILED,
-                        reason = loopResult.error,
-                        durationSeconds = durationSeconds,
-                    )
-                }
+                val delegationResult = mapLoopResultToDelegationResult(loopResult, durationSeconds)
                 log.info("[Agent] Delegated session $sid finished: status=${delegationResult.status}, duration=${durationSeconds}s")
                 onResult(delegationResult)
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -3407,5 +3385,41 @@ class AgentService(
     companion object {
         fun getInstance(project: Project): AgentService =
             project.service<AgentService>()
+
+        /**
+         * Pure mapping from a [LoopResult] produced by IDE-B's agent loop to the
+         * [DelegationMessage.Result] that is sent back to IDE-A.
+         *
+         * Extracted from [startDelegatedSession] so it can be tested without
+         * standing up a full agent context.  The full [LoopResult.Completed.summary]
+         * and [LoopResult.SessionHandoff.context] are forwarded verbatim — no
+         * truncation — so IDE-A's agent receives a complete answer.
+         */
+        fun mapLoopResultToDelegationResult(
+            loopResult: LoopResult,
+            durationSeconds: Long,
+        ): com.workflow.orchestrator.core.delegation.DelegationMessage.Result =
+            when (loopResult) {
+                is LoopResult.Completed -> com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                    status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.COMPLETED,
+                    summary = loopResult.summary,
+                    durationSeconds = durationSeconds,
+                )
+                is LoopResult.SessionHandoff -> com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                    status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.COMPLETED,
+                    summary = loopResult.context,
+                    durationSeconds = durationSeconds,
+                )
+                is LoopResult.Cancelled -> com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                    status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.CANCELED,
+                    reason = "Session cancelled",
+                    durationSeconds = durationSeconds,
+                )
+                is LoopResult.Failed -> com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                    status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.FAILED,
+                    reason = loopResult.error,
+                    durationSeconds = durationSeconds,
+                )
+            }
     }
 }
