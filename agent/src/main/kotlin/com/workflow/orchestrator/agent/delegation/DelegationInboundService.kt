@@ -16,10 +16,32 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.workflow.orchestrator.agent.ui.DelegatedStartOutcome
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * Test-seam abstraction over [com.workflow.orchestrator.agent.ui.AgentController.startDelegatedSession].
+ *
+ * Production wires this to the live [com.workflow.orchestrator.agent.ui.AgentController]; headless
+ * JUnit tests inject a fake (via [DelegationInboundService.testDelegatedSessionStarter]) because the
+ * real controller is a UI service that isn't constructed without a live Application/EDT. The signature
+ * mirrors the controller method exactly so [DelegationInboundService.handleConnect] consumes both paths
+ * identically: it returns a [DelegatedStartOutcome], delivers the started session id through
+ * [onSessionStarted], replies on the channel via [replyWith], and drives the terminal result via
+ * [onResult].
+ */
+fun interface DelegatedSessionStarter {
+    suspend fun start(
+        request: String,
+        metadata: DelegationMetadata,
+        replyWith: suspend (DelegationMessage) -> Unit,
+        onResult: suspend (DelegationMessage.Result) -> Unit,
+        onSessionStarted: ((String) -> Unit)?,
+    ): DelegatedStartOutcome
+}
 
 /**
  * Per-project service. Manages the lifecycle of [DelegationServer] for this
@@ -169,6 +191,15 @@ class DelegationInboundService(
         }
     }
 
+    /**
+     * Visible-for-tests delegated-session starter. Production code resolves the live
+     * [com.workflow.orchestrator.agent.ui.AgentController] from [com.workflow.orchestrator.agent.ui.AgentControllerRegistry]
+     * (see [handleConnect]); headless tests inject a fake here so they can drive the
+     * controller-routed accept path without a live UI service. When null, production
+     * behavior is unchanged.
+     */
+    internal var testDelegatedSessionStarter: DelegatedSessionStarter? = null
+
     private suspend fun handleConnect(
         connect: DelegationMessage.Connect,
         replyWith: suspend (DelegationMessage) -> Unit,
@@ -200,18 +231,27 @@ class DelegationInboundService(
 
         // Task 4: route the accepted delegation through the IDE-B AgentController so it runs
         // as a NORMAL FOREGROUND session (full agent: tools + IDE-B approval gate + streaming),
-        // NOT the old headless AgentService loop. Activate the Workflow▸Agent tool window and
-        // obtain the controller on the EDT (handleConnect runs off-EDT on the socket coroutine).
-        val controller = withContext(Dispatchers.EDT) {
-            com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
-                .getToolWindow("Workflow")?.activate {
-                    val cm = com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
-                        .getToolWindow("Workflow")?.contentManager
-                    cm?.contents?.find { it.displayName == "Agent" }?.let { cm.setSelectedContent(it) }
+        // NOT the old headless AgentService loop. The starter is the controller in production;
+        // headless tests inject a fake via [testDelegatedSessionStarter]. When the seam is null
+        // (production), activate the Workflow▸Agent tool window + resolve the controller on the
+        // EDT (handleConnect runs off-EDT on the socket coroutine) and adapt it to the seam type.
+        val starter: DelegatedSessionStarter? = testDelegatedSessionStarter ?: run {
+            val controller = withContext(Dispatchers.EDT) {
+                com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
+                    .getToolWindow("Workflow")?.activate {
+                        val cm = com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
+                            .getToolWindow("Workflow")?.contentManager
+                        cm?.contents?.find { it.displayName == "Agent" }?.let { cm.setSelectedContent(it) }
+                    }
+                com.workflow.orchestrator.agent.ui.AgentControllerRegistry.getInstance(project).controller
+            }
+            controller?.let { c ->
+                DelegatedSessionStarter { request, md, reply, onResult, onStarted ->
+                    c.startDelegatedSession(request, md, reply, onResult, onStarted)
                 }
-            com.workflow.orchestrator.agent.ui.AgentControllerRegistry.getInstance(project).controller
+            }
         }
-        if (controller == null) {
+        if (starter == null) {
             // The Agent tab has never been opened in this IDE window, so there is no controller
             // to drive a foreground session. Fail the delegation cleanly rather than silently
             // dropping it.
@@ -239,7 +279,7 @@ class DelegationInboundService(
         // for a busy tab it surfaces a top-bar prompt and SUSPENDS HERE for up to
         // AgentController.ACCEPT_WINDOW_MS (<= IDE-A's connectAndAwaitAccept timeout) waiting for
         // the human to click Start. The socket coroutine simply waits — no background execution.
-        val outcome = controller.startDelegatedSession(
+        val outcome = starter.start(
             request = connect.request,
             metadata = metadata,
             replyWith = replyWith,
@@ -253,7 +293,7 @@ class DelegationInboundService(
                 sessionIdReady.complete(sid)
             },
         )
-        if (outcome == com.workflow.orchestrator.agent.ui.DelegatedStartOutcome.DECLINED_TIMEOUT) {
+        if (outcome == DelegatedStartOutcome.DECLINED_TIMEOUT) {
             // Busy tab, human did not click Start within the accept window. Decline cleanly so
             // IDE-A's accept-await resolves (rather than hanging on a session that never starts).
             // onSessionStarted never fired, so do NOT await sessionIdReady.

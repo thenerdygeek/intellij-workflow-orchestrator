@@ -1,7 +1,6 @@
 package com.workflow.orchestrator.agent.delegation
 
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.delegation.ui.ConsentChoice
 import com.workflow.orchestrator.agent.delegation.ui.PickerEntry
 import com.workflow.orchestrator.core.delegation.DelegationClient
@@ -242,16 +241,16 @@ class DelegationE2ETest {
      * [DelegationInboundService.startTransient] (which binds the REAL delegation
      * socket via the real [DelegationServer]) + [recordPreauth].
      *
-     * Faked leg: ONLY the delegated agent loop. The real [DelegationInboundService.handleConnect]
+     * Faked leg: ONLY the delegated agent session. The real [DelegationInboundService.handleConnect]
      * runs (real preauth gate, real read-loop try/finally, real AcceptResult/Result
-     * write path) — it routes into [AgentService.startDelegatedSession], which would
-     * otherwise spin up the full ReAct loop (LLM brain, settings, …) out of reach in a
-     * service-less test. We stub that ONE method on a mocked [AgentService] to invoke
-     * the supplied terminal callback with a canned COMPLETED Result and to mirror Task 8's
-     * teardown wiring (`stopIfTransientAndIdle` on session end) — exactly as the existing
-     * E2E cases above fake the loop with a canned Result. Everything else — sockets,
-     * doorbell, consent application, preauth registry, the transient bind + the real
-     * teardown gate — is production code.
+     * write path) — it routes through [DelegationInboundService.testDelegatedSessionStarter],
+     * the test seam over [com.workflow.orchestrator.agent.ui.AgentController.startDelegatedSession]
+     * (the controller is a UI service unavailable in a headless test). The fake starter delivers a
+     * session id through `onSessionStarted` (so handleConnect emits `AcceptResult(accepted=true,
+     * bSessionId=sid)`), fires the terminal `onResult` with a VERBOSE COMPLETED Result, returns
+     * `STARTED`, and mirrors Task 8's teardown wiring (`stopIfTransientAndIdle` on session end).
+     * Everything else — sockets, doorbell, consent application, preauth registry, the transient
+     * bind + the real teardown gate — is production code.
      *
      * Proves:
      *  (a) the Connect IDE B accepted carried the preauth nonce and SKIPPED the Accept
@@ -278,36 +277,43 @@ class DelegationE2ETest {
 
         val activeSessions = AtomicInteger(0)
 
-        // Mock AgentService: stubs ONLY the agent-loop leg (startDelegatedSession). It fakes
-        // the loop by invoking the terminal callback with a canned COMPLETED Result, and
-        // mirrors Task 8's teardown wiring (stopIfTransientAndIdle on session end). The
-        // inbound service the mock returns from getService is filled in below.
-        val agentServiceB = mockk<AgentService>(relaxed = true)
-
         val projectB = mockk<Project>(relaxed = true).also {
             every { it.basePath } returns ideBRoot.toString()
             every { it.getService(PluginSettings::class.java) } returns settingsB
-            every { it.getService(AgentService::class.java) } returns agentServiceB
         }
         val scopeB = CoroutineScope(Job())
         val inbound = DelegationInboundService(projectB, scopeB)
         val doorbell = DelegationDoorbellService(projectB, scopeB)
 
-        // Stub the loop: reply a COMPLETED Result via the terminal onResult callback that
-        // the real handleConnect supplies, then run Task 8's real teardown gate so the
-        // transient door is torn down. Returns a session id (as the real method does).
-        io.mockk.coEvery {
-            agentServiceB.startDelegatedSession(any(), any(), any(), any())
-        } answers {
+        // Verbose completion text — the delegated session may produce a long, multi-line
+        // summary, and IDE-A must receive it byte-for-byte (no truncation on the wire).
+        val verboseSummary = buildString {
+            appendLine("Implemented the createUser endpoint as requested.")
+            appendLine()
+            appendLine("Changes:")
+            repeat(40) { i -> appendLine("  - step ${i + 1}: refactored handler logic and added validation guard #$i") }
+            appendLine()
+            append("All ${"integration ".repeat(20)}tests pass.")
+        }
+        val deliveredSid = "b-sess-1"
+        val capturedRequest = AtomicReference<String?>(null)
+
+        // Drive the NEW controller-routed accept path via the test seam (the headless
+        // AgentService.startDelegatedSession leg no longer exists; handleConnect routes through
+        // AgentController.startDelegatedSession in production). The seam mirrors the controller:
+        // capture the request, deliver the session id through onSessionStarted (so handleConnect
+        // sends AcceptResult(accepted=true, bSessionId=sid)), then fire the terminal onResult with
+        // the verbose COMPLETED Result and run Task 8's real teardown gate. Returns STARTED.
+        inbound.testDelegatedSessionStarter = DelegatedSessionStarter { request, _md, _reply, onResult, onSessionStarted ->
+            capturedRequest.set(request)
             activeSessions.incrementAndGet()
-            @Suppress("UNCHECKED_CAST")
-            val onResult = arg<suspend (DelegationMessage.Result) -> Unit>(3)
+            onSessionStarted?.invoke(deliveredSid)
             scopeB.launch {
                 delay(30) // simulate the delegated work
                 onResult(
                     DelegationMessage.Result(
                         status = DelegationMessage.ResultStatus.COMPLETED,
-                        summary = "Implemented the delegated task.",
+                        summary = verboseSummary,
                         filesChanged = listOf("src/Created.kt"),
                         durationSeconds = 1,
                     ),
@@ -315,7 +321,7 @@ class DelegationE2ETest {
                 // Task 8 teardown wiring (lives in the real AgentService terminal callback).
                 inbound.stopIfTransientAndIdle(activeSessions.decrementAndGet())
             }
-            "b-sess-1"
+            com.workflow.orchestrator.agent.ui.DelegatedStartOutcome.STARTED
         }
 
         // Swap the consent seam (Task 5 exposed dialogLauncher) to apply ALLOW_ONCE through
@@ -366,16 +372,21 @@ class DelegationE2ETest {
             val result = resultRef.get()
             assertNotNull(result, "IDE A must receive a terminal Result")
             assertEquals(DelegationMessage.ResultStatus.COMPLETED, result!!.status)
-            assertEquals("Implemented the delegated task.", result.summary)
+            // Verbose-result requirement: the full multi-line summary round-trips untruncated.
+            assertEquals(verboseSummary, result.summary, "verbose summary must survive the wire intact")
 
-            // (a) Connect skipped the Accept dialog via preauth. The real handleConnect only
-            // reaches startDelegatedSession when accepted == true. The non-preauth branch
-            // builds + shows an AcceptDelegationDialog on Dispatchers.EDT — with no live
-            // Application/EDT in this test that path would throw, never reaching the loop.
-            // The delegated session DID run (startDelegatedSession invoked exactly once and
-            // a COMPLETED Result arrived), so the preApproved branch (consumePreauth of the
-            // carried nonce) must have been taken — i.e. the Accept dialog was skipped.
-            io.mockk.coVerify(exactly = 1) { agentServiceB.startDelegatedSession(any(), any(), any(), any()) }
+            // (a) Connect skipped the Accept dialog via preauth AND the controller-routed path
+            // ran. The real handleConnect only reaches the delegated-session starter when
+            // accepted == true. The non-preauth branch builds + shows an AcceptDelegationDialog on
+            // Dispatchers.EDT — with no live Application/EDT in this test that path would throw,
+            // never reaching the starter. The delegated session DID run (the seam captured the
+            // request exactly once and a COMPLETED Result arrived), so the preApproved branch
+            // (consumePreauth of the carried nonce) must have been taken — the Accept dialog was
+            // skipped. handle being returned ALSO proves IDE-A received AcceptResult(accepted=true,
+            // bSessionId != null) — outbound.send throws Rejected on accepted=false and
+            // TargetNotReachable on a null bSessionId before returning a handle.
+            assertEquals("Add a createUser endpoint", capturedRequest.get(),
+                "the controller seam must have been driven with the delegated request")
             assertEquals(0, launchCount.get(), "doorbell answered → no launcher spawn")
 
             // (b) transient teardown unbound IDE B's delegation socket.
