@@ -68,4 +68,88 @@ class DocumentIndexTest {
         assertEquals(2, index.pageAt(5001))
         assertEquals(3, index.pageAt(99999))
     }
+
+    // ── B: normalized matching (case-fold + strip leading number + alphanumeric-only) ──
+
+    @Test
+    fun `offsetForSection strips a leading section number to match the bare title`() {
+        // The LLM passes the human title ("Digital Identity Model"); the indexed heading
+        // carries the section number ("4 Digital Identity Model"). Neither exact nor substring
+        // matches (the needle is longer-by-prefix on the index side), so the number-stripped
+        // normalized comparison must bridge them.
+        val idx = DocumentIndex(
+            pages = emptyList(),
+            sections = listOf(
+                DocumentIndex.Anchor("4 Digital Identity Model", 4200),
+                DocumentIndex.Anchor("5 Authentication", 8800),
+            ),
+        )
+        assertEquals(4200, idx.offsetForSection("Digital Identity Model"))
+        assertEquals(8800, idx.offsetForSection("authentication"))
+    }
+
+    @Test
+    fun `offsetForSection matches across punctuation and separators via alphanumeric reduction`() {
+        // The model guesses a slugified label ("fetch-product-metadata") that must resolve to
+        // the human-spaced heading "Fetch Product Metadata" — reducing both sides to
+        // alphanumeric-only makes them equal.
+        val idx = DocumentIndex(
+            pages = emptyList(),
+            sections = listOf(
+                DocumentIndex.Anchor("Fetch Product Metadata", 1500),
+                DocumentIndex.Anchor("Overview", 0),
+            ),
+        )
+        assertEquals(1500, idx.offsetForSection("fetch-product-metadata"))
+    }
+
+    @Test
+    fun `offsetForSection strips a dotted section number with trailing dot`() {
+        val idx = DocumentIndex(
+            pages = emptyList(),
+            sections = listOf(
+                DocumentIndex.Anchor("1.1. Requirements Notation", 600),
+            ),
+        )
+        assertEquals(600, idx.offsetForSection("Requirements Notation"))
+    }
+
+    @Test
+    fun `offsetForSection precedence — exact wins over number-stripped wins over substring`() {
+        // "Introduction" must hit the EXACT "Introduction" (offset 50), not the earlier
+        // "1 Introduction" (number-stripped, offset 10) nor a substring container.
+        val idx = DocumentIndex(
+            pages = emptyList(),
+            sections = listOf(
+                DocumentIndex.Anchor("1 Introduction", 10),
+                DocumentIndex.Anchor("Introduction", 50),
+                DocumentIndex.Anchor("Introduction and Scope", 90),
+            ),
+        )
+        assertEquals(50, idx.offsetForSection("Introduction"))
+    }
+
+    @Test
+    fun `offsetForSection number-stripped match wins over a substring-only match`() {
+        // Needle "Scope". Index has "2 Scope" (number-stripped equal, offset 200) appearing
+        // AFTER "Project Scope and Goals" (substring, offset 100). Number-stripped/normalized
+        // equality must beat substring, regardless of order.
+        val idx = DocumentIndex(
+            pages = emptyList(),
+            sections = listOf(
+                DocumentIndex.Anchor("Project Scope and Goals", 100),
+                DocumentIndex.Anchor("2 Scope", 200),
+            ),
+        )
+        assertEquals(200, idx.offsetForSection("Scope"))
+    }
+
+    @Test
+    fun `offsetForSection still returns null when nothing matches`() {
+        val idx = DocumentIndex(
+            pages = emptyList(),
+            sections = listOf(DocumentIndex.Anchor("1 Introduction", 0)),
+        )
+        assertNull(idx.offsetForSection("Glossary"))
+    }
 }

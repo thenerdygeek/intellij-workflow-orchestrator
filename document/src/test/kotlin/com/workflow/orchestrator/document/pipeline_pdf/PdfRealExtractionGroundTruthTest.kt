@@ -139,4 +139,37 @@ class PdfRealExtractionGroundTruthTest {
             "Executive Summary first sentence matches the PDF; got: $exec",
         )
     }
+
+    // ── ietf-rfc7230.pdf (real-world, standalone headings — the bug fixture) ──
+
+    @Test
+    fun `rfc7230 — standalone headings now produce resolvable section anchors`() {
+        // Before the standalone-heading fix, RFC 7230 produced ZERO heading anchors: every
+        // section title ("Abstract", "1. Introduction", "2.1. Client/Server Messaging") arrives
+        // as its OWN paragraph with no glued body, so tryEmitNumberedHeadingSplit never fired
+        // and unnumbered titles got nothing. This pins the real-world coverage that the synthetic
+        // NIST fixture (headings glued to body) could not exercise.
+        val e = extract("ietf-rfc7230.pdf")
+        val headings = e.blocks.filterIsInstance<DocumentBlock.Heading>().map { it.text }
+        assertTrue(headings.isNotEmpty(), "RFC 7230 must now yield section anchors; got none")
+
+        // Unnumbered standalone headings.
+        assertTrue(headings.any { it.equals("Abstract", ignoreCase = true) }, "got: $headings")
+        assertTrue(headings.any { it.contains("Copyright Notice", ignoreCase = true) }, "got: $headings")
+
+        // Standalone numbered headings (no glued body).
+        assertTrue(headings.any { it.contains("Introduction", ignoreCase = true) }, "got: $headings")
+        assertTrue(
+            headings.any { it.contains("Requirements Notation", ignoreCase = true) },
+            "a dotted standalone heading must resolve; got: $headings",
+        )
+
+        // The documented section-navigation contract works end-to-end on a real spec.
+        val abstract = sliceAtSection(e, "Abstract")
+        assertTrue(abstract.startsWith("# Abstract"), "navigates to Abstract; got: $abstract")
+        assertTrue(
+            abstract.contains("Hypertext Transfer Protocol", ignoreCase = true),
+            "content under Abstract matches the PDF; got: $abstract",
+        )
+    }
 }

@@ -406,6 +406,12 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
         // section number, (b) a Title-Cased word, AND (c) a CapitalLowercase boundary.
         if (tryEmitNumberedHeadingSplit(text)) return
 
+        // Section headings also appear on their OWN line with no glued body — real spec
+        // PDFs (RFC 7230, NIST) emit "1. Introduction", "Abstract", "Appendix A: …" as
+        // standalone paragraphs. Detect those so they get a section anchor too. Conservative
+        // (single-line, short, no terminal sentence punctuation, numbered OR Title-Case/ALL-CAPS).
+        if (tryEmitStandaloneHeading(text)) return
+
         // Only attempt CSV/TSV detection when the pipeline has confirmed via MIME
         // that the source is delimited text. Otherwise prose with commas would be
         // misclassified as tables (phantom-table failure mode per plan-review Q2).
@@ -464,6 +470,130 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
         )
         _blocks += DocumentBlock.Paragraph(body)
         return true
+    }
+
+    /**
+     * Attempts to emit a [DocumentBlock.Heading] for a paragraph that IS a heading standing
+     * on its own line, with no glued body — the dominant real-world case that
+     * [tryEmitNumberedHeadingSplit] misses (it requires a glued body).
+     *
+     * Two flavours are recognised, both gated on a SINGLE line of text:
+     *
+     * 1. **Standalone numbered heading** — a leading section number ("1", "1.1", "1.1.")
+     *    followed by a Title-Cased word and (optionally) more title words, e.g.
+     *    `"3 Definitions and Abbreviations"`, `"1.1 Overview of the Framework"`,
+     *    `"1.1.  Requirements Notation"` (RFC double-space after the number). The heading
+     *    level is the dot-depth of the number (matching the glued-split convention).
+     *
+     * 2. **Standalone unnumbered heading** — a short Title-Case or ALL-CAPS line with no
+     *    terminal sentence punctuation, e.g. `"Abstract"`, `"Executive Summary"`,
+     *    `"Acknowledgements"`, `"Appendix A: Framework Core"`. Emitted at level 1.
+     *
+     * ## Conservatism
+     *
+     * Ordinary prose must never be promoted. The guards (rejected ⇒ NOT a heading):
+     * - multi-line text (a real heading is a single line);
+     * - ends in sentence punctuation `.`, `;`, `,`, `!`, `?` (a heading does not);
+     * - more than [MAX_HEADING_WORDS] words (a heading is terse);
+     * - longer than [MAX_HEADING_CHARS] characters;
+     * - starts like a numbered/bulleted LIST item (`"1) …"`, `"a. …"`) rather than a
+     *   section number — distinguished because list markers use `)` or single lowercase
+     *   letters and carry sentence-shaped bodies;
+     * - is not Title-Case (each significant word capitalised) nor ALL-CAPS — a lowercase
+     *   fragment ("see section 4 below") is prose.
+     *
+     * A colon is allowed (so "Appendix A: Framework Core" passes) as long as it is not a
+     * trailing colon on an otherwise sentence-like run.
+     *
+     * @return `true` (and emits a Heading) on a confident match, else `false`.
+     */
+    private fun tryEmitStandaloneHeading(text: String): Boolean {
+        // Headings are a single line; a multi-line block is prose (or already-split content).
+        if (text.contains('\n')) return false
+        val line = text.trim()
+        if (line.isEmpty() || line.length > MAX_HEADING_CHARS) return false
+        // A heading does not end in sentence punctuation.
+        if (line.last() in HEADING_TERMINAL_REJECT) return false
+
+        // Flavour 1: standalone numbered heading ("3 Definitions", "1.1 Overview", "1.1.  Notation").
+        STANDALONE_NUMBERED_HEADING.matchEntire(line)?.let { m ->
+            val sectionNumber = m.groupValues[1]
+            val level = sectionNumber.trimEnd('.').count { it == '.' } + 1
+            _blocks += DocumentBlock.Heading(level.coerceIn(1, 6), line)
+            return true
+        }
+
+        // Reject list-item shapes ("1) …", "a. …", "i. …") so they stay prose.
+        if (LIST_ITEM_PREFIX.containsMatchIn(line)) return false
+
+        // Flavour 2: standalone unnumbered heading — must be terse and Title-Case or ALL-CAPS.
+        val words = line.split(WHITESPACE_SPLIT).filter { it.isNotEmpty() }
+        if (words.isEmpty() || words.size > MAX_HEADING_WORDS) return false
+        // Reject lines containing alphanumeric data tokens (codes, versions, dates) — these are
+        // table rows / title-page metadata that Tika leaks as prose, not section headings:
+        // "BUG-001 MEDIUM RESOLVED", "Specificationv1.0 — 2026-04-30", "v1.0". A heading is made
+        // of clean words (letters, optional trailing colon, optional single appendix letter).
+        if (words.any { !isCleanHeadingWord(it) }) return false
+        if (!isTitleCaseOrAllCaps(words)) return false
+
+        _blocks += DocumentBlock.Heading(1, line)
+        return true
+    }
+
+    /**
+     * True when [word] is a "clean" heading token: alphabetic (with optional trailing `:` for
+     * "Appendix A:" style labels, an internal hyphen for compound words like "Self-Assessing",
+     * and a leading-uppercase-then-lowercase or ALL-CAPS shape). REJECTS:
+     * - tokens mixing letters and digits ("BUG-001", "v1.0", "Specificationv1.0") — data codes;
+     * - camelCase interior capitals ("ReqId", "itemOptions") — schema/column identifiers;
+     * - bare numeric/symbol tokens ("2026-04-30", "—", "v1.0").
+     * A single trailing appendix letter ("A", "B:") and roman numerals are allowed.
+     */
+    private fun isCleanHeadingWord(word: String): Boolean {
+        val core = word.trimEnd(':', '.', ')')
+        if (core.isEmpty()) return false
+        // No digits anywhere in the core token — codes/versions/dates are data, not headings.
+        if (core.any { it.isDigit() }) return false
+        val cased = core.filter { it.isLetter() }
+        if (cased.isEmpty()) return false
+        // ALL-CAPS token (e.g. "ACKNOWLEDGEMENTS", "MUST") — accept.
+        if (cased.all { it.isUpperCase() }) return true
+        // Otherwise require a leading capital and NO interior capitals (rejects camelCase
+        // identifiers like "ReqId" / "itemOptions"). Hyphenated compounds are checked per segment.
+        return core.split('-').all { seg ->
+            val letters = seg.filter { it.isLetter() }
+            if (letters.isEmpty()) return@all true
+            val first = seg.first { it.isLetter() }
+            // First letter capital OR all-lowercase minor word; no interior uppercase.
+            val interiorHasUpper = letters.drop(1).any { it.isUpperCase() }
+            !interiorHasUpper && (first.isUpperCase() || seg.lowercase() in TITLE_CASE_MINOR_WORDS)
+        }
+    }
+
+    /**
+     * True when [words] read as a heading: either every alphabetic-leading word is capitalised
+     * (Title Case, ignoring short connective words like "and"/"of"/"the"/"to"/"a"), or the whole
+     * line is ALL-CAPS. The first word must always start with an uppercase letter.
+     */
+    private fun isTitleCaseOrAllCaps(words: List<String>): Boolean {
+        val joined = words.joinToString(" ")
+        val letters = joined.filter { it.isLetter() }
+        if (letters.isEmpty()) return false
+        // ALL-CAPS: every cased letter is uppercase (allows digits, punctuation, spaces).
+        if (letters.all { it.isUpperCase() }) return true
+
+        // Title-Case: the first word starts uppercase, and no significant word starts lowercase.
+        val first = words.first()
+        if (!first.first().isUpperCase()) return false
+        return words.all { w ->
+            val c = w.first()
+            when {
+                !c.isLetter() -> true                                  // digits / punctuation (e.g. "A:")
+                w.lowercase() in TITLE_CASE_MINOR_WORDS -> true        // "and", "of", "the", …
+                c.isUpperCase() -> true
+                else -> false                                          // a significant lowercase word ⇒ prose
+            }
+        }
     }
 
     /**
@@ -632,6 +762,45 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
         val NUMBERED_HEADING_BODY = Regex(
             "^(\\d+(?:\\.\\d+)*\\.?)\\s+([A-Z][A-Za-z\\s'\\-]*?[a-z])(?=[A-Z][a-z])(.+)$",
             RegexOption.DOT_MATCHES_ALL,
+        )
+
+        /**
+         * A standalone numbered heading on its own line: a section number ("3", "1.1", "1.1.")
+         * followed by whitespace and a Title-Cased word that opens the title. No glued body —
+         * the whole remainder is the title. Group 1 is the section number (level = dot-depth).
+         * Allows the RFC double-space after the number ("1.1.  Requirements Notation").
+         */
+        val STANDALONE_NUMBERED_HEADING =
+            Regex("^(\\d+(?:\\.\\d+)*\\.?)\\s+[A-Z].*$")
+
+        /**
+         * Matches list/enumeration prefixes that must NOT be promoted to headings:
+         * "1) ", "1. " when followed by a lowercase sentence, "a. ", "a) ", "i. ", "i) ".
+         * Numbered SECTION headings ("1. Introduction") are NOT caught because their title
+         * starts with an uppercase word and is handled by [STANDALONE_NUMBERED_HEADING] first;
+         * this guard only fires for the leftover list-item shapes.
+         */
+        val LIST_ITEM_PREFIX = Regex("^(\\d+\\)|[a-zA-Z]\\.|[a-zA-Z]\\)|[ivx]+[.)])\\s")
+
+        /** Characters that, at the end of a line, mark prose (a heading never ends in these). */
+        val HEADING_TERMINAL_REJECT = setOf('.', ';', ',', '!', '?')
+
+        /** Whitespace splitter for word counting / Title-Case analysis. */
+        val WHITESPACE_SPLIT = Regex("\\s+")
+
+        /** Upper bound on an unnumbered heading's word count — headings are terse. */
+        const val MAX_HEADING_WORDS = 9
+
+        /** Upper bound on a heading's character length. */
+        const val MAX_HEADING_CHARS = 80
+
+        /**
+         * Minor connective words that may appear lowercase inside a Title-Case heading
+         * ("Overview of the Framework", "How to Use the Framework") without disqualifying it.
+         */
+        val TITLE_CASE_MINOR_WORDS = setOf(
+            "a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "nor",
+            "of", "on", "or", "per", "the", "to", "via", "vs", "with",
         )
 
         /**

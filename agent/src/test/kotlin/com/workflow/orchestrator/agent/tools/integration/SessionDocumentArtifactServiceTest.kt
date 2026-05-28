@@ -188,6 +188,34 @@ class SessionDocumentArtifactServiceTest {
     }
 
     @Test
+    fun `serve propagates the section-miss signal and available sections from the slice`() = runBlocking {
+        // The service is a thin pass-through: the explicit-miss flag and the available-section
+        // list computed by the store must reach the tool unchanged (DocumentTool renders them).
+        val src = Files.createTempFile("doc", ".pdf").also { Files.writeString(it, "bytes") }
+        val store = mockk<DocumentArtifactStore>(relaxed = true)
+        coEvery { store.hashFile(src) } returns "hash"
+        coEvery { store.loadArtifact(any()) } returns fakeArtifact(cacheRoot.resolve("hash"))
+        coEvery { store.loadIndex(any()) } returns DocumentIndex(emptyList(), emptyList())
+        coEvery { store.slice(any(), any(), any(), any()) } answers {
+            DocumentSlice(
+                content = "TOP", startOffset = 0, endOffset = 3, remaining = 0,
+                pageOfStart = 1, totalPages = 2,
+                availableSections = listOf("Intro", "Body"), sectionMatched = false,
+            )
+        }
+        val svc = SessionDocumentArtifactService(
+            store = store,
+            cs = CoroutineScope(SupervisorJob()),
+            cacheDirProvider = { cacheRoot },
+            jobBudgetMs = 60_000,
+        )
+        val r = svc.read(src, DocumentCursor.Section("missing"), 100)
+        assertFalse(r.isError)
+        assertEquals(false, r.data!!.sectionMatched)
+        assertEquals(listOf("Intro", "Body"), r.data!!.availableSections)
+    }
+
+    @Test
     fun `cached failure short-circuits without extracting`() = runBlocking {
         val src = Files.createTempFile("doc", ".pdf").also { Files.writeString(it, "bytes") }
         val store = mockk<DocumentArtifactStore>(relaxed = true)

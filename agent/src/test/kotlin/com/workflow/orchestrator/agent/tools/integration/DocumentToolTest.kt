@@ -1,7 +1,10 @@
 package com.workflow.orchestrator.agent.tools.integration
 
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.core.model.DocumentSlice
 import com.workflow.orchestrator.core.services.DocumentArtifactService
+import com.workflow.orchestrator.core.services.ToolResult
+import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
@@ -144,5 +147,111 @@ class DocumentToolTest {
             result.content.contains("offset", ignoreCase = true),
             "error must mention 'offset' so LLM knows which param to fix; got: ${result.content}",
         )
+    }
+
+    // ── Requirement C: explicit section miss + discoverability ─────────────────
+
+    private fun sectionSlice(matched: Boolean?, available: List<String>, content: String = "BODY") =
+        DocumentSlice(
+            content = content,
+            startOffset = 0,
+            endOffset = content.length,
+            remaining = 0,
+            pageOfStart = 1,
+            totalPages = 3,
+            availableSections = available,
+            sectionMatched = matched,
+        )
+
+    @Test
+    fun `section miss surfaces a clear not-found message and lists available sections`() = runTest {
+        val svc = mockk<DocumentArtifactService>()
+        coEvery { svc.read(any(), any(), any()) } returns ToolResult.success(
+            data = sectionSlice(matched = false, available = listOf("Introduction", "Results", "Conclusion")),
+            summary = "Read 4 chars (offset=0, remaining=0).",
+        )
+        val params = buildJsonObject {
+            put("path", "/tmp/spec.pdf")
+            put("section", "nonexistent-section")
+        }
+        val result = DocumentTool(artifactService = svc).execute(params, project)
+        assertTrue(
+            result.content.contains("nonexistent-section"),
+            "miss message must echo the requested section so the LLM knows what failed; got: ${result.content}",
+        )
+        assertTrue(
+            result.content.contains("not found", ignoreCase = true) ||
+                result.content.contains("no section", ignoreCase = true) ||
+                result.content.contains("did not match", ignoreCase = true),
+            "must explicitly say the section was not found; got: ${result.content}",
+        )
+        assertTrue(result.content.contains("Introduction"), "must list a valid section; got: ${result.content}")
+        assertTrue(result.content.contains("Results"), "must list valid sections; got: ${result.content}")
+    }
+
+    @Test
+    fun `section miss with no anchors at all tells the LLM to navigate by page`() = runTest {
+        val svc = mockk<DocumentArtifactService>()
+        coEvery { svc.read(any(), any(), any()) } returns ToolResult.success(
+            data = sectionSlice(matched = false, available = emptyList()),
+            summary = "Read 4 chars (offset=0, remaining=0).",
+        )
+        val params = buildJsonObject {
+            put("path", "/tmp/spec.pdf")
+            put("section", "Whatever")
+        }
+        val result = DocumentTool(artifactService = svc).execute(params, project)
+        assertTrue(
+            result.content.contains("page=", ignoreCase = true) ||
+                result.content.contains("no reliable section", ignoreCase = true),
+            "with zero anchors, must steer the LLM to page navigation; got: ${result.content}",
+        )
+        assertTrue(result.content.contains("3"), "should mention the page count; got: ${result.content}")
+    }
+
+    @Test
+    fun `section hit does NOT emit a miss warning`() = runTest {
+        val svc = mockk<DocumentArtifactService>()
+        coEvery { svc.read(any(), any(), any()) } returns ToolResult.success(
+            data = sectionSlice(matched = true, available = listOf("Introduction"), content = "Intro body"),
+            summary = "Read 10 chars (offset=0, remaining=0).",
+        )
+        val params = buildJsonObject {
+            put("path", "/tmp/spec.pdf")
+            put("section", "Introduction")
+        }
+        val result = DocumentTool(artifactService = svc).execute(params, project)
+        assertFalse(result.isError)
+        assertFalse(
+            result.content.contains("not found", ignoreCase = true),
+            "a successful section hit must not warn about a miss; got: ${result.content}",
+        )
+        assertTrue(result.content.contains("Intro body"), "must serve the section content; got: ${result.content}")
+    }
+
+    @Test
+    fun `normal read appends a compact Sections hint when content remains`() = runTest {
+        val svc = mockk<DocumentArtifactService>()
+        coEvery { svc.read(any(), any(), any()) } returns ToolResult.success(
+            data = DocumentSlice(
+                content = "PAGE ONE CONTENT",
+                startOffset = 0,
+                endOffset = 16,
+                remaining = 5000,
+                pageOfStart = 1,
+                totalPages = 10,
+                availableSections = listOf("Overview", "Design", "Testing"),
+                sectionMatched = null,
+            ),
+            summary = "Read 16 chars (offset=0, remaining=5000).",
+        )
+        val params = buildJsonObject { put("path", "/tmp/spec.pdf") }
+        val result = DocumentTool(artifactService = svc).execute(params, project)
+        assertTrue(
+            result.content.contains("Sections:", ignoreCase = true),
+            "a normal read should surface valid section names for discoverability; got: ${result.content}",
+        )
+        assertTrue(result.content.contains("Overview"), "got: ${result.content}")
+        assertTrue(result.content.contains("Design"), "got: ${result.content}")
     }
 }

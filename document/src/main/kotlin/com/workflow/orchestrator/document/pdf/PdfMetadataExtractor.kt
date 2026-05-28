@@ -296,18 +296,34 @@ class PdfMetadataExtractor(
                 ?.takeIf { it.isNotBlank() } ?: "application/octet-stream"
             val size = try { embedded.size.toLong() } catch (_: Exception) { -1L }
 
-            val path: String? = if (imageService != null && size in 0..maxBytesPerImage) {
+            // For embedded file attachments (non-image formats like PDF, ZIP, etc.),
+            // we call save() directly rather than saveImage() because:
+            // - Dimension filtering must not suppress non-image attachments.
+            // - MIME sniffing is still useful here but attachment MIME comes from PDComplexFileSpecification
+            //   which is already format-declared; sniffing is applied via ImageExtractionService.sniffImageMime
+            //   so the effective MIME on the EmbeddedFileRef is correct.
+            val savedPath: String?
+            val effectiveMime: String
+            if (imageService != null && size in 0..maxBytesPerImage) {
                 val bytes = try { embedded.toByteArray() } catch (_: Exception) { null }
                 if (bytes != null && bytes.isNotEmpty()) {
-                    try { imageService.save(bytes, docKey, displayName, mime).toString() } catch (_: Exception) { null }
-                } else null
-            } else null
+                    val sniffed = ImageExtractionService.sniffImageMime(bytes)
+                    effectiveMime = sniffed ?: mime
+                    savedPath = try { imageService.save(bytes, docKey, displayName, effectiveMime).toString() } catch (_: Exception) { null }
+                } else {
+                    effectiveMime = mime
+                    savedPath = null
+                }
+            } else {
+                effectiveMime = mime
+                savedPath = null
+            }
 
             results += PositionedBlock(
                 page = doc.numberOfPages.coerceAtLeast(1),
                 top = Double.MAX_VALUE - 100.0 - results.size,
                 bottom = Double.MAX_VALUE - 100.0 - results.size + 1.0,
-                block = DocumentBlock.EmbeddedFileRef(name = displayName, mimeType = mime, path = path),
+                block = DocumentBlock.EmbeddedFileRef(name = displayName, mimeType = effectiveMime, path = savedPath),
             )
         }
         return results
@@ -381,10 +397,29 @@ class PdfMetadataExtractor(
                     continue
                 }
 
-                val saved = try { service.save(bytes, docKey, name, mime) } catch (_: Exception) { null }
+                // saveImage sniffs the true MIME from the rendered PNG bytes (fixes the probe
+                // finding where all 8 .jpg files contained PNG bytes) and drops fragment images
+                // below 32px in either dimension. Returns null for fragments (skip entirely);
+                // throws IOException for disk write failures (emit placeholder).
+                val saveResult = try {
+                    service.saveImage(bytes, docKey, name, mime)
+                } catch (_: Exception) {
+                    // Disk write failed — emit path=null placeholder so the LLM sees the image existed.
+                    results += PositionedBlock(
+                        page = pageNumber, top = 0.5, bottom = 0.6,
+                        block = DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null),
+                    )
+                    continue
+                }
+                // null return = fragment filter fired — drop the block entirely.
+                saveResult ?: continue
                 results += PositionedBlock(
                     page = pageNumber, top = 0.5, bottom = 0.6,
-                    block = DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = saved?.toString()),
+                    block = DocumentBlock.EmbeddedFileRef(
+                        name = name,
+                        mimeType = saveResult.mimeType,
+                        path = saveResult.path.toString(),
+                    ),
                 )
             }
         }

@@ -55,11 +55,15 @@ import java.nio.file.Path
  * Tabula mutates page state during extraction, which could corrupt the other parsers if they ran
  * on the same open document. The performance cost (three OS-level file opens) is acceptable for v1.
  *
- * @param tableExtractor  Source of lattice/stream Tabula tables. Default: lattice-only.
+ * @param tableExtractor  Source of lattice/stream Tabula tables. Default: lattice with a
+ *                        per-page stream fallback enabled, so borderless (whitespace-aligned)
+ *                        tables — the norm in spec PDFs — are captured. Stream candidates pass
+ *                        a strict phantom guard so multi-column prose pages don't sprout
+ *                        phantom tables (see [PdfTableExtractor]).
  * @param proseExtractor  Source of Tika XHTML prose blocks. Default: [PdfProseExtractor].
  */
 class PdfPipeline(
-    private val tableExtractor: PdfTableExtractor = PdfTableExtractor(),
+    private val tableExtractor: PdfTableExtractor = PdfTableExtractor(enableStreamMode = true),
     private val proseExtractor: PdfProseExtractor = PdfProseExtractor(),
 ) {
 
@@ -106,14 +110,23 @@ class PdfPipeline(
     }
 
     /**
-     * Drops prose [DocumentBlock.Paragraph] blocks whose entire content is also present
-     * as cells in any extracted [DocumentBlock.Table].
+     * Drops prose [DocumentBlock.Paragraph] AND [DocumentBlock.Heading] blocks whose entire
+     * content is also present as cells in any extracted [DocumentBlock.Table].
      *
      * ## Why
      * Tika's PDFParser emits PDF text content (including ruled-table cells) as flat
      * paragraphs. Tabula independently extracts the same cells as a `Table`. Without
      * deduplication, the user sees every value twice — once as a flat row of words,
      * once as a Markdown table.
+     *
+     * ## Why Headings are also considered
+     * [com.workflow.orchestrator.document.sax.DocumentBlockHandler] promotes clean Title-Case
+     * lines to [DocumentBlock.Heading] for section-anchor coverage. A flat table-header row that
+     * Tika leaks as prose (e.g. "Metric Bound Measured", "Test Expected Actual") is shaped exactly
+     * like a short heading and gets promoted too — but it is really table content, not a section
+     * heading. Folding Headings into the same token-containment check drops those false anchors so
+     * they never pollute the section index, while real section headings (which carry words NOT in
+     * the table) are preserved.
      *
      * ## Why the token set is global, not per-page
      * Multi-page tables are merged by [PdfTableExtractor.mergeContinuations] into a
@@ -124,9 +137,9 @@ class PdfPipeline(
      * is enough safety on its own to prevent false-positive drops.
      *
      * ## Heuristic
-     * A prose paragraph is considered duplicate if **all** of these hold:
+     * A prose paragraph / heading is considered duplicate if **all** of these hold:
      * 1. Its length is short (< 200 chars) — long prose mentioning a cell value is preserved.
-     * 2. Every whitespace-split token in the paragraph is found in the global cell+header set.
+     * 2. Every whitespace-split token is found in the global cell+header set.
      *
      * Token comparison is case-insensitive and trims punctuation. Empty tokens are skipped.
      */
@@ -147,16 +160,19 @@ class PdfPipeline(
             .toSet()
 
         return prose.filter { pb ->
-            val block = pb.block
-            if (block !is DocumentBlock.Paragraph) return@filter true
-            if (block.text.length >= MAX_PROSE_LEN_FOR_DEDUP) return@filter true
+            val text = when (val block = pb.block) {
+                is DocumentBlock.Paragraph -> block.text
+                is DocumentBlock.Heading -> block.text
+                else -> return@filter true
+            }
+            if (text.length >= MAX_PROSE_LEN_FOR_DEDUP) return@filter true
 
-            val proseTokens = block.text.split(WORD_SPLIT)
+            val tokens = text.split(WORD_SPLIT)
                 .map { it.normalizeForDedup() }
                 .filter { it.isNotEmpty() }
-            if (proseTokens.isEmpty()) return@filter true
+            if (tokens.isEmpty()) return@filter true
 
-            !proseTokens.all { it in allTableTokens }
+            !tokens.all { it in allTableTokens }
         }
     }
 

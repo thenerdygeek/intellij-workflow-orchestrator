@@ -81,14 +81,20 @@ class ImageExtractionVisitor(
                 return@mapNotNull null
             }
             if (bytes.isEmpty()) return@mapNotNull null
-            val saved = try {
-                imageService.save(bytes, docKey, name, mime)
+            // saveImage sniffs the real MIME from magic bytes (fixes MIME mismatch where POI
+            // declares image/jpeg but the embedded bytes are PNG) and filters out fragment
+            // glyphs whose decoded dimensions are below the 32px threshold. Returns null for
+            // fragments — skip the block entirely so the LLM doesn't see meaningless slivers.
+            val saveResult = try {
+                imageService.saveImage(bytes, docKey, name, mime)
             } catch (_: Exception) {
                 // Disk write failed (rare); fall back to no-path placeholder so the LLM still
                 // sees that an image existed at this point in the document.
                 return@mapNotNull DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null)
             }
-            DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = saved.toString())
+            // null from saveImage = fragment filter — drop entirely.
+            saveResult ?: return@mapNotNull null
+            DocumentBlock.EmbeddedFileRef(name = name, mimeType = saveResult.mimeType, path = saveResult.path.toString())
         }
     }
 

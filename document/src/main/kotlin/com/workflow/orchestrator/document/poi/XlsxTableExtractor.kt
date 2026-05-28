@@ -318,12 +318,17 @@ class XlsxTableExtractor(
                 return@mapNotNull DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null)
             }
 
-            val saved = try {
-                service.save(bytes, docKey, name, mime)
+            // saveImage sniffs the real MIME from magic bytes and drops fragment images below
+            // 32px in either dimension. Returns null for fragments — skip the block entirely.
+            val saveResult = try {
+                service.saveImage(bytes, docKey, name, mime)
             } catch (_: Exception) {
+                // Disk write failed — emit placeholder so the LLM still sees the image existed.
                 return@mapNotNull DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null)
             }
-            DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = saved.toString())
+            // null return = fragment filter fired — drop the block entirely.
+            saveResult ?: return@mapNotNull null
+            DocumentBlock.EmbeddedFileRef(name = name, mimeType = saveResult.mimeType, path = saveResult.path.toString())
         }
     }
 

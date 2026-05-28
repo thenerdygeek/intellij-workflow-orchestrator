@@ -97,8 +97,11 @@ class DocumentTool(
             ),
             "section" to ParameterProperty(
                 type = "string",
-                description = "Optional. Jump to the heading with this text (case-insensitive). Resolved via " +
-                    "the document index. Mutually exclusive with offset/page.",
+                description = "Optional. Jump to the heading with this text. Matching is case-insensitive and " +
+                    "tolerant: a leading section number is ignored ('Digital Identity Model' matches " +
+                    "'4 Digital Identity Model') and punctuation/casing is normalized ('fetch-product-metadata' " +
+                    "matches 'Fetch Product Metadata'). If no heading matches, the tool says so and lists the " +
+                    "available section names. Mutually exclusive with offset/page.",
             ),
         ),
         required = listOf("path"),
@@ -246,19 +249,27 @@ class DocumentTool(
             }
             optional("section", "string") {
                 llmSeesIt(
-                    "Optional. Jump to the heading with this text (case-insensitive). Resolved via the document " +
-                        "index. Mutually exclusive with offset/page."
+                    "Optional. Jump to the heading with this text. Matching is case-insensitive and tolerant: a " +
+                        "leading section number is ignored ('Digital Identity Model' matches '4 Digital Identity " +
+                        "Model') and punctuation/casing is normalized ('fetch-product-metadata' matches 'Fetch " +
+                        "Product Metadata'). If no heading matches, the tool says so and lists the available " +
+                        "section names. Mutually exclusive with offset/page."
                 )
                 humanReadable(
                     "A convenience anchor that lets the LLM jump directly to a named section (heading) in the " +
-                        "document rather than computing a character offset. Case-insensitive substring match. " +
+                        "document rather than computing a character offset. Matching precedence: exact " +
+                        "(case-insensitive) → number-stripped/normalized-equal → substring; the first match wins. " +
                         "Mutually exclusive with `offset` and `page` — `section` takes the highest priority when " +
                         "multiple cursor params are supplied."
                 )
-                whenPresent("The document index looks up the first heading matching the text and resolves it to a character offset.")
+                whenPresent("The document index resolves the first matching heading to a character offset.")
                 whenAbsent("Falls back to the `page` param, then `offset`, then 0.")
-                constraint("heading lookup is case-insensitive and matches on substring; the first match wins")
-                constraint("if no heading matches, the tool falls back to offset=0 rather than returning an error")
+                constraint("matching precedence is exact → number-stripped/normalized → substring; first match wins")
+                constraint(
+                    "if no heading matches, the tool does NOT silently serve offset 0 — it returns the document " +
+                        "start prefixed with a 'Section not found' notice that lists the available section names " +
+                        "(or, when the document has no reliable anchors, advises navigating by page=N)"
+                )
                 example("Introduction")
                 example("Functional Requirements")
             }
@@ -385,19 +396,53 @@ class DocumentTool(
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
         val slice = result.data!!
+
+        // Requirement C: a section= that resolved to nothing must NOT be served as a silent
+        // top-of-document read. Surface an explicit miss with the valid navigation targets so the
+        // LLM can correct itself instead of silently reasoning over the wrong content.
+        val sectionMissBanner: String? = if (slice.sectionMatched == false) {
+            if (slice.availableSections.isEmpty()) {
+                val pages = slice.totalPages
+                val pageHint = if (pages != null) "navigate with page=N ($pages pages)" else "navigate with offset=N"
+                "[Section '$sectionArg' not found — no reliable section anchors in this document; $pageHint. " +
+                    "Showing the document start below.]"
+            } else {
+                "[Section '$sectionArg' not found. Available sections: ${renderSectionList(slice.availableSections)}. " +
+                    "Re-call with section=<one of these> (or page=N). Showing the document start below.]"
+            }
+        } else null
+
         val body = if (slice.content.isEmpty()) {
             // No content to show (extraction in progress, end-of-document, or empty result).
             // The LLM is fed `content`, not `summary`, so the explanation/instruction must go here.
-            result.summary
+            if (sectionMissBanner != null) "$sectionMissBanner\n\n${result.summary}" else result.summary
         } else buildString {
+            if (sectionMissBanner != null) append(sectionMissBanner).append("\n\n")
             append(slice.content)
             if (slice.remaining > 0) {
                 val pageClause = if (slice.pageOfStart != null && slice.totalPages != null)
                     " — page ${slice.pageOfStart} of ${slice.totalPages}" else ""
                 append("\n\n[... ${slice.remaining} more characters available; call read_document(offset=${slice.endOffset}) to continue$pageClause ...]")
             }
+            // Discoverability: surface valid section names on a normal (non-miss) read when there
+            // is more to read, so the LLM learns it can jump with section=. Token-frugal one-liner.
+            if (sectionMissBanner == null && slice.remaining > 0 && slice.availableSections.isNotEmpty()) {
+                append("\n\n[Sections: ${renderSectionList(slice.availableSections)}]")
+            }
         }
         return ToolResult(content = body, summary = result.summary,
             tokenEstimate = TokenEstimator.estimate(body), isError = false)
+    }
+
+    /** Joins section labels into a compact pipe-separated hint, capped to keep the output frugal. */
+    private fun renderSectionList(sections: List<String>): String {
+        val shown = sections.take(MAX_SECTIONS_IN_HINT)
+        val suffix = if (sections.size > shown.size) " | …" else ""
+        return shown.joinToString(" | ") + suffix
+    }
+
+    private companion object {
+        /** Cap on the number of section labels rendered inline in a hint/miss message. */
+        const val MAX_SECTIONS_IN_HINT = 30
     }
 }

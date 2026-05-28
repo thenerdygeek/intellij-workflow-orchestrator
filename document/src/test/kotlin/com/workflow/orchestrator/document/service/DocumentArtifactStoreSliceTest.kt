@@ -7,6 +7,7 @@ import com.workflow.orchestrator.core.model.DocumentIndex
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
@@ -80,16 +81,57 @@ class DocumentArtifactStoreSliceTest {
     }
 
     @Test
-    fun `cursor Section with no matching heading falls back to offset 0`() = runTest {
+    fun `cursor Section with no matching heading is an explicit miss exposing available sections`() = runTest {
+        // Requirement C: a section miss must NOT be served as a silent offset-0 read. The slice
+        // still defaults to offset 0 for content, but signals sectionMatched=false and exposes
+        // the valid anchor names so the tool can tell the LLM what it CAN navigate to.
         val md = "A".repeat(50) + "B".repeat(50)
         val index = DocumentIndex(
             pages = emptyList(),
-            sections = listOf(DocumentIndex.Anchor("Introduction", 0)),
+            sections = listOf(DocumentIndex.Anchor("Introduction", 0), DocumentIndex.Anchor("Results", 50)),
         )
         val art = materialize(md, index)
         val slice = store.slice(art, index, DocumentCursor.Section("nonexistent"), maxChars = 5)
-        assertEquals("A".repeat(5), slice.content)
-        assertEquals(0, slice.startOffset)
+        assertEquals(0, slice.startOffset, "content still defaults to offset 0")
+        assertEquals(false, slice.sectionMatched, "a miss must be flagged, not silently served")
+        assertEquals(listOf("Introduction", "Results"), slice.availableSections)
+    }
+
+    @Test
+    fun `cursor Section that matches reports sectionMatched true and lists sections`() = runTest {
+        val md = "A".repeat(50) + "B".repeat(50)
+        val index = DocumentIndex(
+            pages = emptyList(),
+            sections = listOf(DocumentIndex.Anchor("Introduction", 0), DocumentIndex.Anchor("Results", 50)),
+        )
+        val art = materialize(md, index)
+        val slice = store.slice(art, index, DocumentCursor.Section("results"), maxChars = 5)
+        assertEquals(50, slice.startOffset)
+        assertEquals(true, slice.sectionMatched)
+        assertEquals(listOf("Introduction", "Results"), slice.availableSections)
+    }
+
+    @Test
+    fun `non-section read still exposes available sections but leaves sectionMatched null`() = runTest {
+        val md = "A".repeat(50) + "B".repeat(50)
+        val index = DocumentIndex(
+            pages = emptyList(),
+            sections = listOf(DocumentIndex.Anchor("Introduction", 0), DocumentIndex.Anchor("Results", 50)),
+        )
+        val art = materialize(md, index)
+        val slice = store.slice(art, index, DocumentCursor.Offset(0), maxChars = 5)
+        assertNull(slice.sectionMatched, "a plain offset read is not a section lookup")
+        assertEquals(listOf("Introduction", "Results"), slice.availableSections)
+    }
+
+    @Test
+    fun `available sections list is capped to keep the hint token-frugal`() = runTest {
+        val md = "x".repeat(10)
+        val many = (1..50).map { DocumentIndex.Anchor("Section $it", 0) }
+        val index = DocumentIndex(pages = emptyList(), sections = many)
+        val art = materialize(md, index)
+        val slice = store.slice(art, index, DocumentCursor.Offset(0), maxChars = 5)
+        assertEquals(DocumentArtifactStore.MAX_AVAILABLE_SECTIONS, slice.availableSections.size)
     }
 
     @Test

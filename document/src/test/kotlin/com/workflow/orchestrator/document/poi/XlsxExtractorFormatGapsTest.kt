@@ -549,8 +549,13 @@ class XlsxExtractorFormatGapsTest {
         }
     }
 
+    /**
+     * Small opaque PNG at 32×32 — the minimum dimension that passes the fragment filter
+     * in [ImageExtractionService.saveImage]. Previously 16×16 which is now below the
+     * 32px floor introduced in Task 3 (MIME sniff + fragment filter).
+     */
     private fun tinyPng(): ByteArray {
-        val img = java.awt.image.BufferedImage(16, 16, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        val img = java.awt.image.BufferedImage(32, 32, java.awt.image.BufferedImage.TYPE_INT_RGB)
         val out = ByteArrayOutputStream()
         javax.imageio.ImageIO.write(img, "PNG", out)
         return out.toByteArray()

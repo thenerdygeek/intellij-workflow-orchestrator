@@ -310,12 +310,17 @@ class PptxExtractor(
         }
         if (bytes.isEmpty()) return null  // empty stream — skip entirely
 
-        val saved = try {
-            service.save(bytes, docKey, name, mime)
+        // saveImage sniffs the real MIME from magic bytes and drops fragment images below
+        // 32px in either dimension. Returns null for fragments — skip the block entirely.
+        val saveResult = try {
+            service.saveImage(bytes, docKey, name, mime)
         } catch (_: Exception) {
+            // Disk write failed — emit placeholder so the LLM still sees the image existed.
             return DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null)
         }
-        return DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = saved.toString())
+        // null return = fragment filter fired — return null to suppress the block entirely.
+        saveResult ?: return null
+        return DocumentBlock.EmbeddedFileRef(name = name, mimeType = saveResult.mimeType, path = saveResult.path.toString())
     }
 
     /**

@@ -10,7 +10,16 @@ sealed interface DocumentCursor {
     data class Section(val heading: String) : DocumentCursor
 }
 
-/** A served slice of the artifact plus navigation breadcrumbs for the continuation hint. */
+/**
+ * A served slice of the artifact plus navigation breadcrumbs for the continuation hint.
+ *
+ * @param availableSections Section-anchor labels present in the document (capped by the store),
+ *   so the caller can render a discoverability hint and a section-miss can list valid targets.
+ *   Empty when the document has no reliable section anchors.
+ * @param sectionMatched For a `section=` request: `true` if the label resolved to an anchor,
+ *   `false` if it did NOT (the slice fell back to offset 0 — an explicit miss, NOT a real
+ *   heading legitimately at offset 0). `null` when the request was not a section lookup.
+ */
 data class DocumentSlice(
     val content: String,
     val startOffset: Int,
@@ -18,6 +27,8 @@ data class DocumentSlice(
     val remaining: Int,
     val pageOfStart: Int?,
     val totalPages: Int?,
+    val availableSections: List<String> = emptyList(),
+    val sectionMatched: Boolean? = null,
 )
 
 /** Persisted structural index: page-number -> char offset, heading -> char offset. Serialized as `index.json`. */
@@ -32,23 +43,55 @@ data class DocumentIndex(
     fun offsetForPage(page: Int): Int? = pages.firstOrNull { it.key == page.toString() }?.offset
 
     /**
-     * Resolves a heading label to its char offset. Prefers an exact (case-insensitive) heading
-     * match, then falls back to a case-insensitive substring match — so a caller can pass a
-     * partial label ("Revision history") and still hit a richer indexed heading
-     * ("1.3 Revision History (v2.0)"). First match wins. Matches the documented `section`
-     * contract in `DocumentTool` (case-insensitive substring), which the prior exact-only
-     * `equals` quietly violated, silently falling back to offset 0.
+     * Resolves a heading label to its char offset. Match precedence (first hit wins within each
+     * tier; tiers tried in order):
+     *
+     * 1. **Exact** — case-insensitive equality on the raw label.
+     * 2. **Normalized-equal** — both sides are (a) case-folded, (b) stripped of a leading section
+     *    number (`^\d+(\.\d+)*\.?\s+`), and (c) reduced to alphanumeric-only, then compared for
+     *    equality. This bridges `"Digital Identity Model"` → `"4 Digital Identity Model"` and the
+     *    slug `"fetch-product-metadata"` → `"Fetch Product Metadata"`.
+     * 3. **Substring** — case-insensitive substring match (legacy behaviour): `"Revision history"`
+     *    → `"1.3 Revision History (v2.0)"`.
+     *
+     * Returns null when nothing matches — the caller (`DocumentArtifactStore.slice`) treats null
+     * as an explicit miss (surfacing available sections) rather than silently serving offset 0.
      */
     fun offsetForSection(heading: String): Int? {
         val needle = heading.trim()
-        return sections.firstOrNull { it.key.equals(needle, ignoreCase = true) }?.offset
-            ?: sections.firstOrNull { it.key.contains(needle, ignoreCase = true) }?.offset
+        if (needle.isEmpty()) return null
+        // Tier 1: exact (case-insensitive).
+        sections.firstOrNull { it.key.equals(needle, ignoreCase = true) }?.let { return it.offset }
+        // Tier 2: number-stripped + alphanumeric-only equality.
+        val needleNorm = normalizeSectionKey(needle)
+        if (needleNorm.isNotEmpty()) {
+            sections.firstOrNull { normalizeSectionKey(it.key) == needleNorm }?.let { return it.offset }
+        }
+        // Tier 3: case-insensitive substring.
+        return sections.firstOrNull { it.key.contains(needle, ignoreCase = true) }?.offset
     }
 
     /** Page whose recorded offset is the greatest value not exceeding [offset]; null if no page anchors. */
     fun pageAt(offset: Int): Int? =
         pages.lastOrNull { it.offset <= offset }?.key?.toIntOrNull()
 }
+
+/** Leading section number with optional trailing dot and following whitespace: "4 ", "1.2. ". */
+private val LEADING_SECTION_NUMBER = Regex("^\\d+(?:\\.\\d+)*\\.?\\s+")
+
+/**
+ * Case-folds, drops a leading section number, then reduces to alphanumeric-only so that
+ * "4 Digital Identity Model", "Digital Identity Model", and "digital-identity-model" all
+ * normalize to "digitalidentitymodel". Returns "" for keys that are pure number/punctuation.
+ *
+ * Used by [DocumentIndex.offsetForSection]'s tier-2 normalized-equality match. Kept as a
+ * file-private top-level helper (not a companion) so the `@Serializable`-generated
+ * `DocumentIndex.Companion.serializer()` stays accessible to the persistence layer.
+ */
+private fun normalizeSectionKey(key: String): String =
+    key.replaceFirst(LEADING_SECTION_NUMBER, "")
+        .lowercase()
+        .filter { it.isLetterOrDigit() }
 
 /** Persisted descriptor written last as the commit sentinel (`meta.json`). */
 @Serializable

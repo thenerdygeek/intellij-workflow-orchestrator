@@ -18,10 +18,12 @@ import java.nio.file.Path
  * - **Lattice mode** (default, always tried first): [SpreadsheetExtractionAlgorithm].
  *   Detects ruled tables (cells bounded by visible lines). False-positive rate for
  *   spec PDFs is essentially zero.
- * - **Stream mode** (opt-in only): [BasicExtractionAlgorithm]. Detects whitespace-aligned
- *   tables. Disabled by default because it routinely produces phantom tables on multi-column
- *   prose pages. Enable via `enableStreamMode = true` only for documents known to contain
- *   whitespace-aligned tables.
+ * - **Stream mode** ([BasicExtractionAlgorithm]): detects whitespace-aligned (borderless)
+ *   tables — the norm in spec PDFs (e.g. NIST 800-63B Table 4-1). Tried as a **per-page
+ *   fallback only on pages where lattice found nothing**, so ruled tables are never
+ *   double-emitted. Stream candidates pass a stricter phantom guard ([isStreamPhantomTable])
+ *   because whitespace-clustering routinely invents tables out of multi-column prose. Gated by
+ *   `enableStreamMode`; [PdfPipeline] enables it by default.
  *
  * ## Per-call instantiation
  *
@@ -38,8 +40,10 @@ import java.nio.file.Path
  * top of that page (top < 100 PDF units), and either shares the same headers as the
  * previous block or has no header row (repeated `repeatRows=1` scenario).
  *
- * @param enableStreamMode When `true`, stream mode is tried as a fallback on pages where
- *                         lattice extraction finds no tables. Default: `false`.
+ * @param enableStreamMode When `true`, stream mode is tried as a per-page fallback on pages
+ *                         where lattice extraction finds no tables, with the strict
+ *                         [isStreamPhantomTable] guard applied to its output. Default: `false`
+ *                         (this constructor); [PdfPipeline] constructs with `true`.
  */
 class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
 
@@ -49,6 +53,24 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
 
         /** Tables with fewer than this many distinct non-empty cell values are phantom. */
         const val PHANTOM_MIN_UNIQUE_VALUES = 3
+
+        /**
+         * Minimum fraction of filled (non-blank) cells a STREAM-mode table must have.
+         *
+         * Stream mode (whitespace-clustering) is far more prone than lattice to inventing a
+         * "table" out of a multi-column prose page where the columns are ragged. A genuine
+         * grid is densely filled; a phantom from prose has scattered fills. This floor — applied
+         * ONLY to stream-mode candidates — rejects the sparse ragged phantoms while keeping the
+         * lattice phantom guards unchanged. Lower than [PHANTOM_EMPTY_FRACTION]'s complement so a
+         * real table with a couple of empty cells survives.
+         */
+        const val STREAM_MIN_FILLED_RATIO = 0.7
+
+        /** A real table needs at least this many columns (a single column is a prose list). */
+        const val MIN_COLUMNS = 2
+
+        /** A real table needs at least this many DATA rows beneath the header row. */
+        const val MIN_DATA_ROWS = 2
     }
 
     /**
@@ -89,15 +111,21 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
                     emptyList()
                 }
 
-                // Stream fallback — opt-in only (see class KDoc).
-                if (tables.isEmpty() && enableStreamMode) {
-                    tables = BasicExtractionAlgorithm().extract(page)
-                }
-
-                // Filter out phantom detections — Tabula's lattice algorithm mistakes
+                // Filter out lattice phantom detections — Tabula's lattice algorithm mistakes
                 // chart gridlines / sparse bbox grids for tables, producing N overlapping
                 // near-empty tables on a single chart page. See [isLikelyPhantomTable].
                 tables = tables.filterNot { isLikelyPhantomTable(it) }
+
+                // Stream fallback — opt-in only (see class KDoc). Tried per page ONLY when
+                // lattice found nothing on that page, so borderless (ruling-free) tables are
+                // still captured without double-emitting ruled tables. Stream candidates run a
+                // STRICTER guard ([isStreamPhantomTable]) because whitespace-clustering routinely
+                // invents tables out of multi-column prose.
+                if (tables.isEmpty() && enableStreamMode) {
+                    tables = BasicExtractionAlgorithm().extract(page)
+                        .filterNot { isLikelyPhantomTable(it) }
+                        .filterNot { isStreamPhantomTable(it) }
+                }
 
                 for (t in tables) {
                     val block = tabulaTableToDocumentBlock(t) ?: continue
@@ -176,6 +204,58 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
         val uniqueValues = cells.mapTo(HashSet()) { it.text.trim() }
         uniqueValues.remove("")
         return uniqueValues.size < PHANTOM_MIN_UNIQUE_VALUES
+    }
+
+    /**
+     * Stricter phantom guard applied ONLY to stream-mode (whitespace-clustered) candidates.
+     *
+     * Stream mode is the documented source of phantom tables: on a multi-column PROSE page it
+     * clusters runs of text into a "grid" that is really just narrative laid out in columns.
+     * A genuine borderless table, by contrast, is rectangular and densely filled. Four cheap
+     * structural signals separate the two; a candidate failing ANY of them is a phantom:
+     *
+     * 1. **≥ [MIN_COLUMNS] columns** — a single column is a bulleted/numbered prose list, not a table.
+     * 2. **≥ [MIN_DATA_ROWS] data rows** (rows beyond the header) — one row is a caption or a stray line.
+     * 3. **Rectangular** — every Tabula row reports the same cell count as the header. (Tabula
+     *    always pads to a rectangle, so a mismatch means something pathological.)
+     * 4. **Not ragged** — every row must fill at least `ceil(colCount * STREAM_MIN_FILLED_RATIO)`
+     *    of its cells. A real grid populates (nearly) every cell on every row; a multi-column
+     *    PROSE phantom has a ragged tail where the later columns run out of text (e.g. a 6-col
+     *    numeric layout whose last rows fill only 3 cells). This per-row floor is the signal
+     *    that separates a genuine borderless grid from prose mis-clustered into columns.
+     * 5. **Filled-cell ratio ≥ [STREAM_MIN_FILLED_RATIO]** — global density backstop.
+     *
+     * Returns `true` when the candidate is a phantom and must be dropped.
+     */
+    private fun isStreamPhantomTable(t: Table): Boolean {
+        val rows = t.getRows()
+        if (rows.isEmpty()) return true
+
+        // 1. Column count — use the header (first) row's cell count as the table width.
+        val colCount = rows[0].size
+        if (colCount < MIN_COLUMNS) return true
+
+        // 2. Data-row count (rows beyond the header).
+        val dataRowCount = rows.size - 1
+        if (dataRowCount < MIN_DATA_ROWS) return true
+
+        // 3. Rectangular — every row must match the header width.
+        if (rows.any { it.size != colCount }) return true
+
+        // 4. Raggedness — reject when any row fills fewer than the per-row floor. Catches the
+        //    ragged tail of a multi-column prose layout (e.g. perRowFilled=[6,6,…,6,3,3,3,3]).
+        val perRowFloor = Math.ceil(colCount * STREAM_MIN_FILLED_RATIO).toInt().coerceAtLeast(MIN_COLUMNS)
+        val filledPerRow = rows.map { row -> row.count { it.text.isNotBlank() } }
+        if (filledPerRow.any { it < perRowFloor }) return true
+
+        // 5. Global filled-cell ratio backstop.
+        val cells = rows.flatten()
+        if (cells.isEmpty()) return true
+        val filled = cells.count { it.text.isNotBlank() }
+        val filledRatio = filled.toDouble() / cells.size
+        if (filledRatio < STREAM_MIN_FILLED_RATIO) return true
+
+        return false
     }
 
     /**

@@ -135,7 +135,14 @@ class DocumentArtifactStore(
         Files.readString(artifact.contentPath)
     }
 
-    /** Resolves [cursor] to an absolute offset via [index], then returns the [DocumentSlice]. */
+    /**
+     * Resolves [cursor] to an absolute offset via [index], then returns the [DocumentSlice].
+     *
+     * A [DocumentCursor.Section] that resolves to nothing is reported as an explicit miss
+     * ([DocumentSlice.sectionMatched] = `false`) rather than silently serving offset 0, and the
+     * available section anchors are always surfaced ([DocumentSlice.availableSections], capped at
+     * [MAX_AVAILABLE_SECTIONS]) so the caller can guide the LLM toward valid navigation targets.
+     */
     suspend fun slice(
         artifact: DocumentArtifact,
         index: DocumentIndex,
@@ -143,10 +150,18 @@ class DocumentArtifactStore(
         maxChars: Int,
     ): DocumentSlice {
         val md = readContent(artifact)
+
+        // For a section cursor, distinguish a real hit from a miss so the caller never confuses a
+        // fallback-to-0 with a heading legitimately at offset 0.
+        var sectionMatched: Boolean? = null
         val resolved = when (cursor) {
             is DocumentCursor.Offset -> cursor.value
             is DocumentCursor.Page -> index.offsetForPage(cursor.number) ?: 0
-            is DocumentCursor.Section -> index.offsetForSection(cursor.heading) ?: 0
+            is DocumentCursor.Section -> {
+                val hit = index.offsetForSection(cursor.heading)
+                sectionMatched = hit != null
+                hit ?: 0
+            }
         }.coerceIn(0, md.length)
 
         val end = (resolved + maxChars).coerceAtMost(md.length)
@@ -158,6 +173,8 @@ class DocumentArtifactStore(
             remaining = md.length - end,
             pageOfStart = index.pageAt(resolved),
             totalPages = artifact.meta.pageCount,
+            availableSections = index.sections.take(MAX_AVAILABLE_SECTIONS).map { it.key },
+            sectionMatched = sectionMatched,
         )
     }
 
@@ -195,5 +212,13 @@ class DocumentArtifactStore(
         } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
             Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING)
         }
+    }
+
+    companion object {
+        /**
+         * Upper bound on the number of section labels surfaced in [DocumentSlice.availableSections].
+         * Keeps the discoverability hint token-frugal on documents with hundreds of headings.
+         */
+        const val MAX_AVAILABLE_SECTIONS = 30
     }
 }

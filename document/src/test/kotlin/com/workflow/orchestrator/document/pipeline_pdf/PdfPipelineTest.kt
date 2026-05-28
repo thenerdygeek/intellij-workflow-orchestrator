@@ -25,6 +25,25 @@ class PdfPipelineTest {
     private fun fixture(name: String) =
         Paths.get(javaClass.classLoader.getResource("fixtures/$name")!!.toURI())
 
+    // ── 9z. table-header rows must not survive as Heading anchors ─────────────
+
+    @Test
+    fun `table-header rows promoted to headings by DBH are dropped by table dedup`() {
+        // The broadened standalone-heading detection in DocumentBlockHandler promotes any clean
+        // Title-Case line — which includes flat table-header rows Tika leaks as prose (e.g.
+        // "Metric Bound Measured", "Test Expected Actual"). These are NOT section headings; they
+        // duplicate a real Tabula table's header row. The pipeline's table-dedup pass must drop
+        // such Heading blocks just as it drops the equivalent prose paragraphs, so they never
+        // pollute the section index.
+        val blocks = pipeline.extract(fixture("spec-with-tables.pdf"))
+        val headings = blocks.filterIsInstance<DocumentBlock.Heading>().map { it.text }
+        assertEquals(
+            listOf("1. Introduction", "2. Functional Requirements", "3. Non-functional Requirements", "4. Acceptance"),
+            headings,
+            "only the 4 real section headings survive — table-header rows are deduped out; got: $headings",
+        )
+    }
+
     // ── 9. spec-with-tables: heading separated from body (Bug #13) ────────────
 
     @Test
@@ -489,12 +508,12 @@ class PdfPipelineTest {
     // ── P4T2: PDF image XObjects and embedded file attachments ────────────────
 
     /**
-     * Builds a minimal one-page PDF with a 16×16 image XObject drawn on the page via
+     * Builds a minimal one-page PDF with a 32×32 image XObject drawn on the page via
      * [LosslessFactory] + [PDPageContentStream.drawImage]. When [ImageExtractionService] is
      * wired into [PdfPipeline.extract], the extractor must:
      * 1. Walk `PDResources.xObjectNames` and find the [PDImageXObject].
      * 2. Render it via `PDImageXObject.image` + `ImageIO.write(…, "PNG", …)`.
-     * 3. Save bytes via [ImageExtractionService.save].
+     * 3. Save bytes via [ImageExtractionService.saveImage] (Task 3: sniff + fragment filter).
      * 4. Emit a [DocumentBlock.EmbeddedFileRef] with a non-null `path` pointing to the
      *    saved file.
      *
@@ -502,6 +521,9 @@ class PdfPipelineTest {
      * XObject, so `PDImageXObject.suffix` returns null; the extractor defaults to `"image/png"`
      * and renders via `BufferedImage` → PNG. This is the expected behaviour for JBIG2/CCITT
      * inline images as well.
+     *
+     * The image fixture is 32×32 (bumped from 16×16 in Task 3) — the 32px minimum that passes
+     * the fragment filter in [ImageExtractionService.saveImage].
      */
     @Test
     fun `pdf with image XObject emits EmbeddedFileRef when ImageExtractionService is wired`(
@@ -619,14 +641,19 @@ class PdfPipelineTest {
 
     // ── P4T2 helpers ──────────────────────────────────────────────────────────
 
-    /** Builds a one-page PDF containing a single 16×16 RGB image XObject. */
+    /**
+     * Builds a one-page PDF containing a single 32×32 RGB image XObject.
+     *
+     * Previously 16×16, bumped to 32×32 in Task 3 so the image survives the fragment filter
+     * in [ImageExtractionService.saveImage] (images below 32px in either axis are dropped).
+     */
     private fun buildPdfWithImageXObject(): ByteArray {
         val doc = org.apache.pdfbox.pdmodel.PDDocument()
         val page = org.apache.pdfbox.pdmodel.PDPage()
         doc.addPage(page)
         val img = org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory.createFromImage(
             doc,
-            java.awt.image.BufferedImage(16, 16, java.awt.image.BufferedImage.TYPE_INT_RGB),
+            java.awt.image.BufferedImage(32, 32, java.awt.image.BufferedImage.TYPE_INT_RGB),
         )
         val cs = org.apache.pdfbox.pdmodel.PDPageContentStream(doc, page)
         cs.drawImage(img, 100f, 700f, 50f, 50f)
