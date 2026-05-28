@@ -191,31 +191,83 @@ class DelegationInboundService(
             closeChannel()
             return
         }
-        // Reserve the local session ID by starting the delegated session first (synchronous
-        // registration; the agent loop launches asynchronously inside startDelegatedSession).
-        val agentService = project.getService(AgentService::class.java)
         val metadata = DelegationMetadata(
             delegatorIde = connect.delegatorIde,
             delegatorRepo = connect.delegatorRepo,
             delegatorSessionId = connect.delegatorSessionId,
             startedAt = System.currentTimeMillis(),
         )
+
+        // Task 4: route the accepted delegation through the IDE-B AgentController so it runs
+        // as a NORMAL FOREGROUND session (full agent: tools + IDE-B approval gate + streaming),
+        // NOT the old headless AgentService loop. Activate the Workflow▸Agent tool window and
+        // obtain the controller on the EDT (handleConnect runs off-EDT on the socket coroutine).
+        val controller = withContext(Dispatchers.EDT) {
+            com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
+                .getToolWindow("Workflow")?.activate {
+                    val cm = com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
+                        .getToolWindow("Workflow")?.contentManager
+                    cm?.contents?.find { it.displayName == "Agent" }?.let { cm.setSelectedContent(it) }
+                }
+            com.workflow.orchestrator.agent.ui.AgentControllerRegistry.getInstance(project).controller
+        }
+        if (controller == null) {
+            // The Agent tab has never been opened in this IDE window, so there is no controller
+            // to drive a foreground session. Fail the delegation cleanly rather than silently
+            // dropping it.
+            LOG.warn("handleConnect: AgentController unavailable for project ${project.name}; failing delegation")
+            replyWith(
+                DelegationMessage.Result(
+                    status = DelegationMessage.ResultStatus.FAILED,
+                    reason = "ide_b_agent_unavailable",
+                )
+            )
+            closeChannel()
+            return
+        }
+
         // F1: close the socket channel after writing the terminal Result so the FD is
         // released immediately rather than leaking until JVM exit.
-        // The sessionIdHolder indirection is needed because onResult is passed before
-        // startDelegatedSession returns the session ID (forward-reference workaround).
+        // The sessionIdHolder indirection is needed because onResult is wired before the
+        // local session id is known. With the controller path, startDelegatedSession no longer
+        // returns the sid synchronously — the agent loop launches asynchronously on the EDT/IO,
+        // so we await the sid via an onSessionStarted callback (CompletableDeferred) and use it
+        // for both the AcceptResult bSessionId and the inbound read-loop.
         val sessionIdHolder = java.util.concurrent.atomic.AtomicReference<String>()
-        val localSessionId = agentService.startDelegatedSession(
+        val sessionIdReady = CompletableDeferred<String>()
+        val runningNow = controller.startDelegatedSession(
             request = connect.request,
-            delegationMetadata = metadata,
+            metadata = metadata,
             replyWith = replyWith,
             onResult = { result ->
                 stopHeartbeatForSession(sessionIdHolder.get() ?: "")
                 replyWith(result)
                 closeChannel()
             },
+            onSessionStarted = { sid ->
+                sessionIdHolder.set(sid)
+                sessionIdReady.complete(sid)
+            },
         )
-        sessionIdHolder.set(localSessionId)
+        if (!runningNow) {
+            // QUEUE_INCOMING: the IDE-B tab is busy, so there is no foreground session to run
+            // (no background execution allowed). The starter is stored controller-side; a LATER
+            // task wires the notification/open UI that lets the user run it. For now fail this
+            // connection cleanly so IDE-A's accept-await does not hang on a session that will
+            // never start on THIS channel. Do NOT await sessionIdReady — onSessionStarted never
+            // fires on the queued path.
+            replyWith(
+                DelegationMessage.Result(
+                    status = DelegationMessage.ResultStatus.FAILED,
+                    reason = "ide_b_busy",
+                )
+            )
+            closeChannel()
+            return
+        }
+        // RUN_NOW: await the sid before the read-loop runs. The agent loop launches promptly,
+        // so this resolves quickly; the surrounding socket coroutine simply waits.
+        val localSessionId = sessionIdReady.await()
         // Plan 4: include bSessionId so IDE-A can persist the link for CHANNEL_RESUME.
         replyWith(DelegationMessage.AcceptResult(accepted = true, bSessionId = localSessionId))
 

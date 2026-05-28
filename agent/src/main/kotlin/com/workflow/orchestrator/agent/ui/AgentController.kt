@@ -339,6 +339,16 @@ class AgentController(
      */
     private val controllerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /**
+     * Queued inbound delegations whose tab was busy when they arrived (no background
+     * execution: a delegated session runs only while it is the focused session). Keyed
+     * by the delegator's session id; the value is a starter that runs the foreground
+     * session when the human opens it. A LATER task wires the notification/open UI that
+     * calls a `runIncomingDelegation` helper to drain this map.
+     */
+    private val pendingIncomingDelegations =
+        java.util.concurrent.ConcurrentHashMap<String, () -> Unit>()
+
     /** Coalesces rapid-fire stream chunks into ~16ms batched bridge dispatches. */
     private val streamBatcher = StreamBatcher(
         onFlush = { batched -> dashboard.appendStreamToken(batched) }
@@ -2971,6 +2981,97 @@ class AgentController(
             task = initialMessage,
             displayText = "Running AI review… (session tag: $sessionTag)",
         )
+    }
+
+    /**
+     * Entry point for an accepted inbound cross-IDE delegation (Plan 2 Task 4).
+     *
+     * Routes the delegation through the IDE-B agent tab so it runs as a NORMAL FOREGROUND
+     * session — full agent (tools + IDE-B approval gate + streaming), NOT a headless loop.
+     * There is NO background execution: a delegated session runs only while it is the
+     * focused session.
+     *
+     * Surfacing decision (via [DelegatedSessionSurface.decide]):
+     *  - idle tab → run now ([runDelegatedNow]).
+     *  - busy tab → store a starter as a queued "incoming" delegation; a LATER task wires
+     *    the notification/open UI that runs it.
+     *
+     * Called by [DelegationInboundService.handleConnect] OFF the EDT (socket coroutine);
+     * the dashboard/UI touches inside [runDelegatedNow] hop onto the EDT themselves.
+     *
+     * [onSessionStarted] fires (off the EDT, from the service) once the local session id is
+     * known — `handleConnect` uses it to resolve the sid for the inbound read-loop. It is NOT
+     * invoked on the QUEUE_INCOMING path: the queued starter only fires the session (and thus
+     * `onSessionStarted`) when the human later opens it.
+     *
+     * @return `true` if the session is starting NOW (RUN_NOW), `false` if it was queued
+     *   because the tab is busy (QUEUE_INCOMING). The caller uses this to avoid awaiting a
+     *   session id that will never arrive on the queued path.
+     */
+    fun startDelegatedSession(
+        request: String,
+        metadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
+        replyWith: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage) -> Unit,
+        onResult: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit,
+        onSessionStarted: ((String) -> Unit)? = null,
+    ): Boolean {
+        val busy = currentJob?.isActive == true || currentSessionId != null
+        return when (com.workflow.orchestrator.agent.delegation.DelegatedSessionSurface.decide(busy)) {
+            com.workflow.orchestrator.agent.delegation.DelegatedSurface.RUN_NOW -> {
+                runDelegatedNow(request, metadata, replyWith, onResult, onSessionStarted)
+                true
+            }
+            com.workflow.orchestrator.agent.delegation.DelegatedSurface.QUEUE_INCOMING -> {
+                // No background execution: store a starter to run when the human opens it
+                // (a LATER task wires the notification/open UI that drains this map).
+                val key = metadata.delegatorSessionId
+                pendingIncomingDelegations[key] =
+                    { runDelegatedNow(request, metadata, replyWith, onResult, onSessionStarted) }
+                LOG.info("Queued incoming delegation from ${metadata.delegatorRepo} (waiting for user to open it)")
+                false
+            }
+        }
+    }
+
+    /**
+     * Run an accepted delegation as a foreground session. Mirrors the controller-driven
+     * [LoopResult.SessionHandoff] / [startHandoffSession] wiring: reset the dashboard on the
+     * EDT, then start the session via [AgentService.startDelegatedSession] (which launches
+     * the ReAct loop on IO). [currentJob] is captured via `onJobCreated`; `currentSessionId`
+     * + `sessionActive` are set in `onSessionStarted` so steering/short-circuit paths see a
+     * live session, and so the inbound read-loop's sid (set on the service side via the same
+     * `onSessionStarted`) is consistent with the controller's view.
+     */
+    private fun runDelegatedNow(
+        request: String,
+        metadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
+        replyWith: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage) -> Unit,
+        onResult: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit,
+        onSessionStarted: ((String) -> Unit)? = null,
+    ) {
+        // Reset on the EDT (dashboard touch), then start the foreground session. The service
+        // launches the agent loop on IO; we capture the Job + session id via callbacks.
+        controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.startDelegatedSession")) {
+            resetForNewChat()
+            service.startDelegatedSession(
+                request = request,
+                delegationMetadata = metadata,
+                replyWith = replyWith,
+                onResult = onResult,
+                onStreamChunk = ::onStreamChunk,
+                onToolCall = ::onToolCall,
+                approvalGate = ::approvalGate,
+                sessionApprovalStore = sessionApprovalStore,
+                onSessionStarted = { sid ->
+                    currentSessionId = sid
+                    sessionActive = true
+                    // Forward the sid to the caller (handleConnect) so the inbound read-loop
+                    // can run with the correct session id.
+                    onSessionStarted?.invoke(sid)
+                },
+                onJobCreated = { job -> currentJob = job },
+            )
+        }
     }
 
     /**
