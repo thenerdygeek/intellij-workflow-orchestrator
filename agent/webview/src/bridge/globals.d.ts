@@ -113,6 +113,18 @@ declare global {
      */
     _setDelegationQuestionPending?: (json: string) => void;
     /**
+     * Plan 6 §incoming-delegation-topbar — pushed by Kotlin's AgentController when
+     * IDE-B (currently busy) receives a delegation knock and needs the human to
+     * click Start within 60 s.
+     * JSON shape: { key: string; delegatorRepo: string; deadlineEpochMs: number }
+     */
+    _incomingDelegation?: (jsonString: string) => void;
+    /**
+     * Plan 6 §incoming-delegation-topbar — pushed by Kotlin when a pending
+     * incoming delegation is started by the human or expired on the Kotlin side.
+     */
+    _incomingDelegationCleared?: (key: string) => void;
+    /**
      * Task 11 — drop-zone overlay driven by the JVM Swing DropTarget.
      * Pushed by Kotlin's AttachmentDropTarget via AgentCefPanel.callJs()
      * when an OS file drag enters (true) or exits (false) the JCEF component.

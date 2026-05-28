@@ -5,6 +5,7 @@ import type { UiMessage } from '@/bridge/types';
 import { SessionStatsChips } from './SessionStatsChips';
 import { SessionTitle } from './SessionTitle';
 import { BackgroundIndicator } from './BackgroundIndicator';
+import { IncomingDelegationBar } from './IncomingDelegationBar';
 
 /**
  * Top bar for the agent chat — shows token budget indicator and new chat button.
@@ -199,6 +200,9 @@ export const TopBar = memo(function TopBar() {
 
         {/* Background process chip (Phase 7, Task 7.3) */}
         <BackgroundIndicator />
+
+        {/* Incoming delegation pills (Plan 6 §incoming-delegation-topbar) */}
+        <IncomingDelegationBar />
       </div>
 
       {/* Center: Session title — flex-1 so it takes whatever space is left

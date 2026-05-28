@@ -738,6 +738,7 @@ export const kotlinBridge = {
     callKotlin('_sendMessageWithMentions', JSON.stringify(payload));
   },
   retryLastTask(): void { callKotlin('_retryLastTask'); },
+  startIncomingDelegation(key: string): void { callKotlin('_startIncomingDelegation', key); },
 
   // ── History view actions ──
   showSession(sessionId: string) {
@@ -1069,5 +1070,29 @@ export function initBridge(storeAccessors: StoreAccessors): void {
   // CSS :drag-over for OS drags, so the JVM side drives feedback explicitly.
   (window as any)._setDropActive = function (active: boolean): void {
     stores?.getChatStore().setDropActive(!!active);
+  };
+
+  // ── Incoming delegation top-bar (Plan 6 §incoming-delegation-topbar) ──
+  // Pushed by Kotlin's AgentController when IDE-B receives a delegation knock
+  // while busy. The human has up to 60 s to click Start before it auto-expires.
+  window._incomingDelegation = (jsonString: string) => {
+    try {
+      const payload = JSON.parse(jsonString) as {
+        key: string;
+        delegatorRepo: string;
+        deadlineEpochMs: number;
+      };
+      stores?.getChatStore().upsertIncomingDelegation(
+        payload.key,
+        payload.delegatorRepo,
+        payload.deadlineEpochMs,
+      );
+    } catch (e) {
+      console.error('[bridge] _incomingDelegation: bad payload', e);
+    }
+  };
+
+  window._incomingDelegationCleared = (key: string) => {
+    stores?.getChatStore().clearIncomingDelegation(key);
   };
 }

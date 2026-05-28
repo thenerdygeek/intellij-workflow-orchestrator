@@ -422,6 +422,12 @@ interface ChatState {
   // is hovering over the JCEF component. Driven by window._setDropActive(true/false).
   dropActive: boolean;
 
+  // Incoming delegations — keyed by `key` from the Kotlin push. Each entry
+  // represents a pending delegation from another IDE instance waiting (up to
+  // 60 s) for the human in THIS IDE to click Start.
+  // Plan 6 §incoming-delegation-topbar.
+  incomingDelegations: Record<string, { delegatorRepo: string; deadlineEpochMs: number }>;
+
   // Actions
   startSession(task: string, mentions?: Mention[], attachments?: ImageRef[]): void;
   completeSession(info: SessionInfo): void;
@@ -587,6 +593,10 @@ interface ChatState {
 
   // Drop-zone overlay
   setDropActive(active: boolean): void;
+
+  // Incoming delegations (Plan 6 §incoming-delegation-topbar)
+  upsertIncomingDelegation(key: string, delegatorRepo: string, deadlineEpochMs: number): void;
+  clearIncomingDelegation(key: string): void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -663,6 +673,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   editorTabMode: false,
   delegationQuestionPending: { active: false },
   dropActive: false,
+  incomingDelegations: {},
 
   // Actions
   startSession(task: string, mentions?: Mention[], attachments?: ImageRef[]) {
@@ -2528,6 +2539,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // ── Drop-zone overlay (OS file drag feedback via JVM Swing DropTarget) ──
   setDropActive: (active) => set({ dropActive: active }),
+
+  // ── Incoming delegations (Plan 6 §incoming-delegation-topbar) ──
+  upsertIncomingDelegation: (key, delegatorRepo, deadlineEpochMs) =>
+    set((s) => ({
+      incomingDelegations: {
+        ...s.incomingDelegations,
+        [key]: { delegatorRepo, deadlineEpochMs },
+      },
+    })),
+  clearIncomingDelegation: (key) =>
+    set((s) => {
+      const next = { ...s.incomingDelegations };
+      delete next[key];
+      return { incomingDelegations: next };
+    }),
 }));
 
 /**
