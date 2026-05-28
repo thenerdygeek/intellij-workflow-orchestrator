@@ -58,6 +58,11 @@ const IncomingDelegationPill = memo(function IncomingDelegationPill({
     }, 1000);
 
     return () => clearInterval(id);
+    // Deps intentionally limited to [key, deadline] so the 1s interval is created ONCE per
+    // delegation (adding the handlers would reset the interval every render and restart the
+    // countdown). Stale-closure-safe by invariant: the captured `onExpire` closes only over the
+    // stable zustand `clearIncomingDelegation` action and the immutable `entry.key`, so a stale
+    // reference still performs the correct clear. See IncomingDelegationBar container.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entry.key, entry.deadlineEpochMs]);
 
