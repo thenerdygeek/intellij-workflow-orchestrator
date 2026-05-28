@@ -60,6 +60,8 @@ AI agents fail at TDD in specific, predictable ways. These rules prevent the mos
 
 5. **Unit tests in the agent loop, integration tests at the end.** Fast unit tests give immediate RED-GREEN feedback. Run integration tests after all unit tests pass.
 
+6. **Verify the failure REASON, not just the failure.** Seeing red is not enough. Read the actual test output/logs every time and confirm it failed *because the behavior is missing*, with your assertion firing on the expected outcome — NOT because of a compile error, setup crash, wrong import, or typo. A red caused by anything other than the absent behavior is a fake pass of the RED step and will let broken code through GREEN.
+
 ## Outside-In TDD for REST Endpoints
 
 For creating or modifying REST endpoints, use outside-in (double-loop) TDD:
@@ -203,6 +205,7 @@ Vague name, tests mock not code
 - One behavior
 - Clear name
 - Real code (no mocks unless unavoidable)
+- **Assert on the behavior, not the mechanics.** The assertion must check the observable outcome the requirement promises — the return value, state change, thrown exception, or emitted event — never just that a method ran or a mock was called. If the assertion could still pass when the behavior is wrong, it is the wrong assertion.
 
 ### Verify RED — Watch It Fail
 
@@ -218,14 +221,18 @@ Or via shell if `runtime_exec` is not available:
 run_command(command="./gradlew :module:test --tests '*.RetryTest.retries failed operations 3 times'")
 ```
 
+**Read the actual failure output — never trust the red/green status alone.** Open the logs/stack trace every time and confirm the test failed *for the reason you intended*. A test can go red for a dozen reasons that have nothing to do with the behavior being absent.
+
 Confirm:
-- Test fails (not errors)
-- Failure message is expected
-- Fails because feature missing (not typos)
+- Test **fails**, does not **error** — a compile error, NPE in setup, missing import, wrong fixture, or bad test data is a FAKE red: the behavior was never exercised
+- The failure is **your assertion firing** on the missing behavior (e.g. `expected: 3 but was: 0`, `expected "success" but was null`), not an unrelated exception, timeout, or stack trace
+- The reported line/message points at the **behavior under test** — not at setup, configuration, a typo, or an environment problem
+
+If you cannot explain — from the output — exactly why it failed and why that proves the behavior is absent, you have NOT verified RED. Re-run and read the logs until you can.
 
 **Test passes?** You're testing existing behavior. Fix test.
 
-**Test errors?** Fix error, re-run until it fails correctly.
+**Test errors?** That's a fake red — the behavior was never reached. Fix the error, re-run, and confirm it now fails for the right reason before writing any production code.
 
 ### GREEN — Minimal Code
 
@@ -451,7 +458,8 @@ The "waste" is keeping code you can't trust.
 - Code before test
 - Test after implementation
 - Test passes immediately
-- Can't explain why test failed
+- Can't explain why test failed (or never read the output to find out)
+- Accepted a red without confirming it failed for the intended reason
 - Tests added "later"
 - Rationalizing "just this once"
 - "Keep as reference" or "adapt existing code"
