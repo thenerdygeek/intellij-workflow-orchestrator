@@ -3095,6 +3095,12 @@ class AgentService(
         delegationMetadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
         replyWith: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage) -> Unit,
         onResult: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit,
+        onStreamChunk: (String) -> Unit = {},
+        onToolCall: (ToolCallProgress) -> Unit = {},
+        approvalGate: (suspend (String, String, String, Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
+        sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
+        onSessionStarted: ((String) -> Unit)? = null,
+        onJobCreated: ((kotlinx.coroutines.Job) -> Unit)? = null,
     ): String {
         val sid = UUID.randomUUID().toString()
         val startTime = System.currentTimeMillis()
@@ -3136,6 +3142,11 @@ class AgentService(
                     say = com.workflow.orchestrator.agent.session.UiSay.USER_MESSAGE,
                     text = "[$title]\n\n$request",
                 ),
+                onStreamChunk = onStreamChunk,
+                onToolCall = onToolCall,
+                approvalGate = approvalGate,
+                sessionApprovalStore = sessionApprovalStore,
+                onSessionStarted = onSessionStarted,
                 onComplete = { result -> loopResultDeferred.complete(result) },
             )
         } catch (e: Throwable) {
@@ -3147,6 +3158,7 @@ class AgentService(
             inbound.stopIfTransientAndIdle(activeDelegatedSessions.decrementAndGet())
             throw e
         }
+        onJobCreated?.invoke(job)
 
         cs.launch(Dispatchers.IO) {
             try {
