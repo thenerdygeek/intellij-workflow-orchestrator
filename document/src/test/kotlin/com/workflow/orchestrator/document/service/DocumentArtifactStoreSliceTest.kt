@@ -58,6 +58,41 @@ class DocumentArtifactStoreSliceTest {
     }
 
     @Test
+    fun `cursor Section resolves a partial heading via substring to its offset`() = runTest {
+        // End-to-end proof that read_document(section="...") navigates: the slice path must
+        // resolve a partial, lower-cased label ("revision history") to the richer indexed
+        // heading ("1.3 Revision History (v2.0)") and return content from THAT offset — not
+        // fall back to offset 0. Guards the offsetForSection substring fix through slice().
+        val md = "A".repeat(100) + "B".repeat(100) + "C".repeat(100)
+        val index = DocumentIndex(
+            pages = emptyList(),
+            sections = listOf(
+                DocumentIndex.Anchor("Introduction", 0),
+                DocumentIndex.Anchor("1.3 Revision History (v2.0)", 100),
+                DocumentIndex.Anchor("itemOptions schema", 200),
+            ),
+        )
+        val art = materialize(md, index)
+
+        val slice = store.slice(art, index, DocumentCursor.Section("revision history"), maxChars = 10)
+        assertEquals("B".repeat(10), slice.content)
+        assertEquals(100, slice.startOffset)
+    }
+
+    @Test
+    fun `cursor Section with no matching heading falls back to offset 0`() = runTest {
+        val md = "A".repeat(50) + "B".repeat(50)
+        val index = DocumentIndex(
+            pages = emptyList(),
+            sections = listOf(DocumentIndex.Anchor("Introduction", 0)),
+        )
+        val art = materialize(md, index)
+        val slice = store.slice(art, index, DocumentCursor.Section("nonexistent"), maxChars = 5)
+        assertEquals("A".repeat(5), slice.content)
+        assertEquals(0, slice.startOffset)
+    }
+
+    @Test
     fun `offset at or beyond length yields empty content and zero remaining`() = runTest {
         val md = "hello"
         val index = DocumentIndex(emptyList(), emptyList())
