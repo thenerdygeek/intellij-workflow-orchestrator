@@ -90,6 +90,27 @@ IDE-A delegation(send) ──IPC Connect──▶ IDE-B DelegationInboundService
         on LoopResult.Completed → onResult(verbose Result) ──IPC Result──▶ IDE-A nudge
 ```
 
+### Busy case — incoming-delegation top-bar button (Phase 1, user-specified 2026-05-28)
+
+There is NO background execution. When a delegation arrives and the IDE-B agent tab is **idle**, it
+auto-opens and runs (foreground). When the tab is **busy** (the human is in their own session), IDE-B
+does NOT run it in the background and does NOT hijack the tab. Instead:
+
+1. `handleConnect` (busy) pushes an **incoming-delegation** state to the webview — `{ key, delegatorRepo,
+   deadlineEpochMs }` — and suspends on a `CompletableDeferred<Boolean>` bounded by `withTimeoutOrNull`
+   over the accept window (IDE-A's `connectAndAwaitAccept` timeout; the connection is NOT held open
+   indefinitely).
+2. The webview shows a **small button in the agent top bar**: "Incoming delegation from `<repo>`" with a
+   live **countdown timer** to `deadlineEpochMs`.
+3. The human clicks it → clicks **Start** → the bridge (`_startIncomingDelegation(key)`) completes the
+   deferred → IDE-B runs the delegation **as a new chat** (reset + foreground run via the same path as
+   the idle case) → result flows home over the channel.
+4. If the countdown expires first → IDE-B replies `AcceptResult(accepted=false, reason="declined_timeout")`
+   (→ IDE-A surfaces a clear "not started in time" decline) and clears the top-bar state.
+
+This honors "no background execution", "don't hijack", "same approvals/interaction" (it runs as a
+normal focused new chat), and "verbose result home", while keeping the IPC handshake bounded.
+
 ### Approvals (Phase 1)
 
 The delegated session uses IDE-B's normal `approvalGate` + per-tool auto-approve settings.
