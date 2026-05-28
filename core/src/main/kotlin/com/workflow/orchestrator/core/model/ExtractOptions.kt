@@ -19,6 +19,11 @@ package com.workflow.orchestrator.core.model
  * @param timeoutMs         Wall-clock timeout for the entire extraction operation in
  *                          milliseconds. When exceeded, `ToolResult.Failure` is returned
  *                          with a timeout message. Must be positive. Default: 30 000 ms.
+ *                          NOTE: this conservative default is for direct/test callers only.
+ *                          The production agent path overrides it — `SessionDocumentArtifactService`
+ *                          passes `jobBudgetMs` (from `PluginSettings.documentExtractionJobTimeoutMs`,
+ *                          default 300 000 ms) down through `DocumentArtifactStore.extractAndPersist`.
+ *                          Do not cite 30 s as the agent-facing timeout.
  * @param includeEmbedded   When `true`, the pipeline attempts to enumerate embedded files
  *                          (images, OLE attachments) and emit [DocumentBlock.EmbeddedFileRef]
  *                          blocks for them. `false` in v1 (no embedded content is extracted).

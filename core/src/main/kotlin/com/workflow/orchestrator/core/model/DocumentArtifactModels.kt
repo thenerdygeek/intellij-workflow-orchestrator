@@ -31,8 +31,19 @@ data class DocumentIndex(
 
     fun offsetForPage(page: Int): Int? = pages.firstOrNull { it.key == page.toString() }?.offset
 
-    fun offsetForSection(heading: String): Int? =
-        sections.firstOrNull { it.key.equals(heading, ignoreCase = true) }?.offset
+    /**
+     * Resolves a heading label to its char offset. Prefers an exact (case-insensitive) heading
+     * match, then falls back to a case-insensitive substring match — so a caller can pass a
+     * partial label ("Revision history") and still hit a richer indexed heading
+     * ("1.3 Revision History (v2.0)"). First match wins. Matches the documented `section`
+     * contract in `DocumentTool` (case-insensitive substring), which the prior exact-only
+     * `equals` quietly violated, silently falling back to offset 0.
+     */
+    fun offsetForSection(heading: String): Int? {
+        val needle = heading.trim()
+        return sections.firstOrNull { it.key.equals(needle, ignoreCase = true) }?.offset
+            ?: sections.firstOrNull { it.key.contains(needle, ignoreCase = true) }?.offset
+    }
 
     /** Page whose recorded offset is the greatest value not exceeding [offset]; null if no page anchors. */
     fun pageAt(offset: Int): Int? =

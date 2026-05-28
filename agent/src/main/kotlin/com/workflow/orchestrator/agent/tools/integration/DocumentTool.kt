@@ -315,8 +315,13 @@ class DocumentTool(
                 "instead of an identical prefix."
         )
         downside(
-            "30 s per-call timeout is generous but not infinite — a 500-page PDF with dense Tabula lattice extraction " +
-                "can approach or exceed it on a slow JVM. The LLM sees a timeout error and should retry with a lower max_chars."
+            "Extraction runs under a configurable wall-clock budget (PluginSettings.documentExtractionJobTimeoutMs, " +
+                "default 5 minutes / 300 s) — a several-hundred-page PDF with dense Tabula lattice extraction can " +
+                "approach or exceed it on a slow JVM. NOTE: lowering max_chars does NOT speed extraction up — the whole " +
+                "document is always extracted before slicing, so max_chars only bounds the returned window. A genuine " +
+                "timeout means the document is too large/complex for the budget; raise documentExtractionJobTimeoutMs in " +
+                "Settings (Tools > Workflow Orchestrator > AI Agent) rather than retrying with a smaller max_chars. " +
+                "A timeout is cached for ~1 hour, so an immediate identical retry returns the cached failure without re-extracting."
         )
         observation(
             "read_document is registered in the deferred tier (loaded via tool_search), which is correct — " +

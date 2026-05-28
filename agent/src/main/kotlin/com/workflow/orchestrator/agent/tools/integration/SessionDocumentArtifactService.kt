@@ -80,7 +80,19 @@ class SessionDocumentArtifactService(
         }
 
         val hash = runCatching { store.hashFile(effectivePath) }.getOrElse {
-            return ToolResult.error("Cannot read '$effectivePath': ${it.message}")
+            // Distinguish the common failure modes so the LLM can act, instead of a bare
+            // "Cannot read". Temp-dir documents (Jira/Bamboo attachments) can be reaped by the
+            // OS mid-session — surface that explicitly with recovery guidance.
+            val msg = when (it) {
+                is java.nio.file.NoSuchFileException, is java.io.FileNotFoundException ->
+                    "'$effectivePath' no longer exists — temp/attachment files can be cleaned up " +
+                        "mid-session. Re-download the attachment (the download tool re-fetches it), " +
+                        "then call read_document again."
+                is java.nio.file.AccessDeniedException ->
+                    "Permission denied reading '$effectivePath'. Check the file's permissions."
+                else -> "Cannot read '$effectivePath': ${it.message ?: it::class.simpleName}"
+            }
+            return ToolResult.error(msg)
         }
         val artDir = cacheRoot.resolve(hash)
         val cap = (maxChars ?: DEFAULT_SERVE_CHARS).coerceAtLeast(1)
@@ -90,9 +102,16 @@ class SessionDocumentArtifactService(
             return ToolResult.error("Document extraction failed: $reason")
         }
 
+        // The background extraction job runs in a fresh coroutine on [cs]; it must carry a
+        // SessionDownloadDir so TikaDocumentExtractor lands embedded images under the session
+        // tree (where view_image can read them) instead of java.io.tmpdir. Prefer the caller's
+        // element; when absent (sub-agent, resume, or an in-flight job first triggered outside
+        // AgentLoopAttachmentScope) derive it from the cache dir — downloads/ is the sibling of
+        // document-cache/, the exact inverse of defaultCacheDirProvider(). This decouples
+        // image-path correctness from whether the caller happened to install the context element.
         val sessionCtx: kotlin.coroutines.CoroutineContext =
             coroutineContext[SessionDownloadDir]
-                ?: kotlin.coroutines.EmptyCoroutineContext
+                ?: SessionDownloadDir((cacheRoot.parent ?: cacheRoot).resolve("downloads"))
 
         val job = inFlight.computeIfAbsent(hash) {
             cs.async(Dispatchers.IO + sessionCtx) {
