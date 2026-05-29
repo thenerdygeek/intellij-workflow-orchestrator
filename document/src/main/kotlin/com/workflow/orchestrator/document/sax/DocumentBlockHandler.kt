@@ -420,7 +420,31 @@ class DocumentBlockHandler(
         // Only fires for PDFs whose generators emit bullet characters in the text stream;
         // PDFs that draw bullets as vector graphics (e.g. NIST CSF) keep no glyph in the
         // extracted text and are unaffected — that case is a documented v1.x limitation.
-        val text = normaliseBulletMarkers(urlFixed)
+        // SF-4 also folds the U+FFFD replacement-char bullet here (see BULLET_PREFIX).
+        val bulleted = normaliseBulletMarkers(urlFixed)
+
+        // SF-10: rejoin a word split across an INTERIOR line-wrap hyphen within this single
+        // buffered block ("assis-\ntance" → "assistance"). Cross-paragraph rejoin (the dominant
+        // fed-scf case, where each visual line is its OWN <p>) is handled at the PdfPipeline
+        // stream level. PDF-only: the byte stream for HTML/text is faithful, so we never inject
+        // joins there (gate reuses restoreUrlBoundaries, which marks a PDF source).
+        val deHyphenated = if (restoreUrlBoundaries) rejoinLineWrapHyphens(bulleted) else bulleted
+
+        // SF-4: repair inter-word spacing lost at a style/link boundary, but ONLY where a
+        // closed-class function word ("the", "of", "and", …) is glued as a WHOLE token to a
+        // following Capitalised word ("theUnited" → "the United"). Restricting the left side to
+        // a small function-word list keeps the repair from touching camelCase identifiers,
+        // hyphenated compounds, or any ordinary glued token. PDF-only for the same reason.
+        val text = if (restoreUrlBoundaries) repairGluedFunctionWords(deHyphenated) else deHyphenated
+
+        // SF-3: a table-of-contents entry arrives as "Title <dot-leader run> <page-number>"
+        // ("2.2 Considerations … ........... 5"). Collapse the dot-leader run, and split a page
+        // number fused to the next entry onto its own line. Gated on a real dot-leader run so
+        // ordinary prose (and a 3-dot ellipsis) is never reshaped.
+        if (DOT_LEADER_RUN.containsMatchIn(text)) {
+            _blocks += DocumentBlock.Paragraph(cleanTocEntry(text))
+            return
+        }
 
         // Tika's PDFParser does not emit <h1>…<h6> for PDFs from generators that lack
         // semantic heading info (the common case for reportlab / LaTeX / many spec docs).
@@ -462,6 +486,72 @@ class DocumentBlockHandler(
             val rewritten = BULLET_PREFIX.replaceFirst(trimmed, "- ")
             if (rewritten == trimmed) line else rewritten
         }
+    }
+
+    /**
+     * SF-4 — repairs inter-word spacing lost at a style/link boundary, conservatively.
+     *
+     * Tika's PDFParser drops the space around a run/style boundary when the generator draws the
+     * two runs as separate text objects with no intervening space glyph. The common visible
+     * symptom is a closed-class function word glued to the following capitalised word
+     * (`"Accounts of theUnited States"`, `"by theFederal Reserve"`, `"andStatistical Measures"`).
+     *
+     * The repair fires ONLY when a [GLUE_FUNCTION_WORDS] token appears as a WHOLE word (preceded
+     * by a space or string start) immediately followed by an uppercase letter that opens a
+     * lowercase continuation (`[A-Z][a-z]`). This triple guard is what keeps the heuristic from
+     * corrupting good text:
+     * - whole-word left side ⇒ "theory"/"often"/"android" (function-word *prefixes* of a single
+     *   word) are NOT split;
+     * - uppercase-then-lowercase right side ⇒ camelCase identifiers ("ourRepo") and ALL-CAPS
+     *   runs are NOT split;
+     * - function-word allow-list ⇒ no arbitrary `[a-z][A-Z]` boundary (which would shred real
+     *   glued tokens / proper-noun compounds) is touched.
+     */
+    private fun repairGluedFunctionWords(text: String): String {
+        if ('A' !in text && text.none { it.isUpperCase() }) return text
+        return GLUE_BOUNDARY.replace(text) { m ->
+            // m groups: (1) leading boundary char or empty, (2) function word, (3) the capital
+            val word = m.groupValues[2]
+            if (word.lowercase() in GLUE_FUNCTION_WORDS) {
+                "${m.groupValues[1]}$word ${m.groupValues[3]}"
+            } else {
+                m.value
+            }
+        }
+    }
+
+    /**
+     * SF-10 — rejoins a word split across an INTERIOR soft line-wrap hyphen inside one block:
+     * `"assis-\ntance"` → `"assistance"`. Only a lowercase-letter, then `-`, then optional
+     * trailing spaces, a newline, optional leading spaces, then a lowercase letter is treated as
+     * a soft wrap. A hyphen before a DIGIT or an UPPERCASE letter is a real compound / range
+     * (`"30-\n40"`, `"Loan-\nTo-Value"`): the newline collapses to a space but the hyphen stays.
+     */
+    private fun rejoinLineWrapHyphens(text: String): String {
+        if (!text.contains('\n') || '-' !in text) return text
+        // Soft wrap: [a-z]- <newline> [a-z]  → join with NO hyphen and NO space.
+        val joined = SOFT_WRAP_HYPHEN.replace(text) { m -> m.groupValues[1] + m.groupValues[2] }
+        // Any remaining hyphen-at-end-of-line (before digit/uppercase/etc.) keeps its hyphen but
+        // the newline becomes a space so the two tokens don't fuse.
+        return joined.replace(HARD_HYPHEN_WRAP) { m -> "${m.groupValues[1]}- ${m.groupValues[2]}" }
+    }
+
+    /**
+     * SF-3 — cleans a detected table-of-contents entry: collapses the dot-leader run to a single
+     * space, and splits a page number that has fused to the start of the NEXT entry onto its own
+     * line (`"… Flexibilities ..... 52.3 A Few Limitations"` → `"… Flexibilities 5\n2.3 A Few
+     * Limitations"`). Called only when [DOT_LEADER_RUN] matched, so ordinary prose is unaffected.
+     */
+    private fun cleanTocEntry(text: String): String {
+        // Collapse every dot-leader run (with its surrounding spaces) to a single space.
+        var cleaned = DOT_LEADER_RUN.replace(text, " ")
+        // Split a fused "<pageDigits><nextSectionNumber>" where the next section starts a new
+        // entry, e.g. "5" + "2.3 A Few Limitations". The next entry begins with a digit-dot-digit
+        // section number followed by a capitalised word.
+        cleaned = FUSED_PAGE_THEN_ENTRY.replace(cleaned) { m ->
+            "${m.groupValues[1]}\n${m.groupValues[2]}"
+        }
+        return cleaned.trim()
     }
 
     /**
@@ -966,10 +1056,56 @@ class DocumentBlockHandler(
          * Common Unicode bullet glyphs we accept at the start of a line. Anything not in
          * this set is treated as prose. Excludes ASCII `*` and `-` because they collide
          * with prose punctuation and emphasis markup.
+         *
+         * SF-4: `�` (the Unicode REPLACEMENT CHARACTER) is included because some PDF
+         * generators draw the list bullet with a glyph that has no Unicode mapping; Tika then
+         * decodes it to `�`. We treat `�` as a bullet glyph ONLY at line start (where
+         * a real bullet sits); a mid-line `�` is a genuine decode artifact and is left alone
+         * (see [BULLET_PREFIX] anchoring + [normaliseBulletMarkers] per-line trimStart gate).
          */
-        val BULLET_GLYPH_QUICK_CHECK = setOf('•', '●', '◦')
+        val BULLET_GLYPH_QUICK_CHECK = setOf('•', '●', '◦', '�')
 
         /** Bullet glyph + at-least-one-whitespace at start-of-line. */
-        val BULLET_PREFIX = Regex("^[\\u2022\\u25CF\\u25E6]\\s+")
+        val BULLET_PREFIX = Regex("^[\\u2022\\u25CF\\u25E6\\uFFFD]\\s+")
+
+        /**
+         * SF-4 — closed-class function words that, when glued as a whole token to a following
+         * Capitalised word, signal a dropped inter-word space. Deliberately small: every entry
+         * is a word that, in real prose, is almost always followed by a separate word — so a
+         * glued `Capitalised` continuation is overwhelmingly a lost space, not a real token.
+         */
+        val GLUE_FUNCTION_WORDS = setOf(
+            "the", "of", "and", "in", "to", "for", "on", "at", "by", "with",
+            "from", "as", "or", "an", "a", "into", "per", "via",
+        )
+
+        /**
+         * SF-4 — a function-word token glued to a Capital+lowercase continuation.
+         * Group 1: the boundary on the left (a single space or empty at string start).
+         * Group 2: the candidate function word (vetted against [GLUE_FUNCTION_WORDS]).
+         * Group 3: the capital letter that opens the next word.
+         * The `(?=[a-z])` lookahead requires a lowercase continuation so ALL-CAPS runs and
+         * single-capital glyphs are never split.
+         */
+        val GLUE_BOUNDARY = Regex("(^|\\s)([A-Za-z]{1,4})([A-Z])(?=[a-z])")
+
+        /** SF-10 — soft line-wrap hyphen: lowercase, hyphen, newline, lowercase. */
+        val SOFT_WRAP_HYPHEN = Regex("([a-z])-[ \\t]*\\n[ \\t]*([a-z])")
+
+        /** SF-10 — a hyphen at a line wrap before a non-lowercase continuation (keep the hyphen). */
+        val HARD_HYPHEN_WRAP = Regex("([A-Za-z0-9])-[ \\t]*\\n[ \\t]*(\\S)")
+
+        /**
+         * SF-3 — a dot-leader run: at least four dots, optionally space-separated, surrounded by
+         * optional whitespace. Four is well above a 3-dot ellipsis so prose is never matched.
+         */
+        val DOT_LEADER_RUN = Regex("\\s*\\.(?:\\s*\\.){3,}\\s*")
+
+        /**
+         * SF-3 — a page number fused to the next TOC entry's section number: trailing digits of
+         * the page number, then a `digit(.digit)+` section number opening a Capitalised word.
+         * Group 1 = page-number digits, Group 2 = the next section number + title.
+         */
+        val FUSED_PAGE_THEN_ENTRY = Regex("(\\d)(\\d+(?:\\.\\d+)+\\s+[A-Z].*)$")
     }
 }

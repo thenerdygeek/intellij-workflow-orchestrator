@@ -48,6 +48,24 @@ import java.nio.file.Path
  *    tables in Tika's parse order and receive smaller `top` values. Phase 6 can improve
  *    accuracy by extracting real text-block bboxes from PDFBox's `PDFTextStripper`.
  *
+ *    **G-9 DEFERRED (need position data — NOT done here):**
+ *    - **SF-1** two-column reading-order interleave (left column's lines fused with the right
+ *      column's on the same visual row) and **SF-8** masthead two-column fusion share this exact
+ *      root: Tika emits prose in stream order with no x-coordinate, so columns cannot be
+ *      separated. The fix is a PDFTextStripper position-based prose path replacing the Tika prose
+ *      stage — a large architectural rewrite that deserves its own focused effort.
+ *    - **SF-2** preformatted/monospace fidelity (ABNF, pseudo-code, display equations) is only
+ *      partially position-independent: by the time a block reaches this pipeline the original
+ *      newlines are already collapsed onto one line (e.g. rfc7230's `HTTP-version = …  HTTP-name
+ *      = …`), so there is no reliable in-stream signal to fence a code block without the same
+ *      position data SF-1 needs. Deferred with SF-1.
+ *
+ *    The CONTAINED G-9 cleanups that DID land (no position data required): SF-5 repeating
+ *    header/footer band stripping ([stripRepeatedPageChrome] / [normalisePageNumber]), SF-10
+ *    cross-paragraph soft-hyphen rejoin ([rejoinHyphenatedParagraphs]); plus SF-4 glued
+ *    function-word repair + U+FFFD bullets and SF-3 TOC dot-leader cleanup in
+ *    [com.workflow.orchestrator.document.sax.DocumentBlockHandler].
+ *
  * 5. **Overlap suppression** — [suppressOverlaps] drops Tabula table blocks that spatially
  *    overlap already-emitted prose paragraphs by > 70% vertically. In lattice-only mode
  *    this guard almost never fires (ruled tables are correctly bounded); it is defence in
@@ -127,7 +145,12 @@ class PdfPipeline(
                 .sortedWith(compareBy({ it.page }, { it.top }))
 
         val deChromed = stripRepeatedPageChrome(merged)
-        return suppressOverlaps(deChromed).map { it.block }
+        // SF-10: rejoin paragraphs split by a soft line-wrap hyphen across the visual-line breaks
+        // that Tika emits as separate <p> blocks ("… Board of Gov-" + "ernors, …"). Done after
+        // chrome stripping so a footer band can't be merged into body, and before overlap
+        // suppression so the rejoined paragraph carries the first fragment's bbox.
+        val rejoined = rejoinHyphenatedParagraphs(deChromed)
+        return suppressOverlaps(rejoined).map { it.block }
     }
 
     /**
@@ -345,10 +368,13 @@ class PdfPipeline(
      *
      * 1. **Exact match** — short paragraph (≤ [MAX_CHROME_LEN]) appearing literally `> pages/2`
      *    times. Catches static chrome like running titles.
-     * 2. **Trailing-page-number normalisation** — same rule, but with arabic digits or short
-     *    roman-numeral suffixes (e.g. " 16", " vii") stripped before counting. Catches
-     *    chrome where each page emits the same prefix with its own page number appended,
-     *    which the exact-match pass would treat as N distinct strings.
+     * 2. **Page-number normalisation** — same rule, but with the page number neutralised before
+     *    counting so the per-page variants of one chrome band collapse to a single key. Catches:
+     *    - a trailing arabic/roman suffix (`" 16"`, `" vii"`) — the original case;
+     *    - a bracketed `[Page N]` token anywhere in the line (RFC 7230 footers
+     *      `"Fielding & Reschke … Standards Track [Page 7]"` — SF-5); and
+     *    - a bare `Page N` band token (running headers that carry the page number between two
+     *      static title halves rather than at the trailing edge — SF-5).
      *
      * False-positive risk is bounded by the page-count floor and the per-page threshold:
      * for the heuristic to fire on legitimate body prose, the same short paragraph would
@@ -370,7 +396,7 @@ class PdfPipeline(
         for (pb in blocks) {
             val text = (pb.block as? DocumentBlock.Paragraph)?.text ?: continue
             if (text.length > MAX_CHROME_LEN_WITH_PAGE_NUM) continue
-            normalisedCounts.merge(stripTrailingPageNumber(text), 1, Int::plus)
+            normalisedCounts.merge(normalisePageNumber(text), 1, Int::plus)
             if (text.length <= MAX_CHROME_LEN) {
                 exactCounts.merge(text, 1, Int::plus)
             }
@@ -384,12 +410,88 @@ class PdfPipeline(
             val text = (pb.block as? DocumentBlock.Paragraph)?.text ?: return@filter true
             if (text in exactNoise) return@filter false
             if (text.length > MAX_CHROME_LEN_WITH_PAGE_NUM) return@filter true
-            stripTrailingPageNumber(text) !in normalisedNoise
+            normalisePageNumber(text) !in normalisedNoise
         }
     }
 
-    private fun stripTrailingPageNumber(text: String): String =
-        text.trimEnd().replace(TRAILING_PAGE_NUMBER, "").trimEnd()
+    /**
+     * Neutralises the page-number component of a chrome line so its per-page variants collapse to
+     * one key (SF-5). Order matters: bracketed `[Page N]` and bare `Page N` band tokens are
+     * blanked first (they may sit anywhere in the line), then any remaining bare trailing
+     * arabic/roman page number is stripped. Pure-prose lines without a page number are returned
+     * unchanged apart from trailing-whitespace trimming.
+     */
+    private fun normalisePageNumber(text: String): String =
+        text
+            .replace(PAGE_BAND, "")
+            .trimEnd()
+            .replace(TRAILING_PAGE_NUMBER, "")
+            .trimEnd()
+
+    /**
+     * SF-10 — merges a [DocumentBlock.Paragraph] that ends in a soft line-wrap hyphen with the
+     * immediately-following paragraph, de-hyphenating the wrapped word.
+     *
+     * Tika emits each visual line of a PDF as its own `<p>`, so a word hyphenated at a line break
+     * arrives as two paragraphs: `"… Board of Gov-"` then `"ernors, the Federal …"`. We join them
+     * when:
+     * - the first paragraph ends in `<lowercase>-` (a soft wrap, not a dangling em-dash); and
+     * - the next block is also a Paragraph.
+     *
+     * The de-hyphenation rule mirrors the in-block one in
+     * [com.workflow.orchestrator.document.sax.DocumentBlockHandler]:
+     * - a lowercase continuation ⇒ drop the hyphen and concatenate (`"Gov-" + "ernors"` →
+     *   `"Governors"`);
+     * - a non-lowercase continuation (digit / uppercase — a numeric range or compound) ⇒ keep the
+     *   hyphen and insert a space, so the two tokens don't fuse.
+     *
+     * Conservative by construction: a paragraph NOT ending in `<lowercase>-` is never merged, and
+     * a trailing hyphen paragraph with no following paragraph is left untouched.
+     */
+    private fun rejoinHyphenatedParagraphs(
+        blocks: List<PositionedBlock<DocumentBlock>>,
+    ): List<PositionedBlock<DocumentBlock>> {
+        if (blocks.size < 2) return blocks
+        val result = mutableListOf<PositionedBlock<DocumentBlock>>()
+        var i = 0
+        while (i < blocks.size) {
+            val pb = blocks[i]
+            val para = pb.block as? DocumentBlock.Paragraph
+            val next = blocks.getOrNull(i + 1)
+            val nextPara = next?.block as? DocumentBlock.Paragraph
+            if (para != null && nextPara != null && SOFT_HYPHEN_TAIL.containsMatchIn(para.text)) {
+                val left = para.text.trimEnd()
+                val right = nextPara.text.trimStart()
+                val firstRight = right.firstOrNull()
+                val mergedText = if (firstRight != null && firstRight.isLowerCase()) {
+                    // Soft wrap: drop the trailing hyphen and concatenate directly.
+                    left.dropLast(1) + right
+                } else {
+                    // Hard hyphen (range/compound): keep the hyphen, separate with a space.
+                    "$left $right"
+                }
+                // Carry the FIRST fragment's position so reading order is preserved.
+                result += PositionedBlock(pb.page, pb.top, next.bottom, DocumentBlock.Paragraph(mergedText))
+                i += 2
+            } else {
+                result += pb
+                i += 1
+            }
+        }
+        return result
+    }
+
+    // ── Test hooks (mirror the guessImageMimeFromSrc internal-test precedent) ──
+
+    /** Test-only access to [stripRepeatedPageChrome] (SF-5). */
+    internal fun stripRepeatedPageChromeForTest(
+        blocks: List<PositionedBlock<DocumentBlock>>,
+    ): List<PositionedBlock<DocumentBlock>> = stripRepeatedPageChrome(blocks)
+
+    /** Test-only access to [rejoinHyphenatedParagraphs] (SF-10). */
+    internal fun rejoinHyphenatedParagraphsForTest(
+        blocks: List<PositionedBlock<DocumentBlock>>,
+    ): List<PositionedBlock<DocumentBlock>> = rejoinHyphenatedParagraphs(blocks)
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
@@ -498,5 +600,17 @@ class PdfPipeline(
          * Anchored at end-of-string so only the page-number suffix is stripped.
          */
         val TRAILING_PAGE_NUMBER = Regex("\\s+([0-9]{1,4}|[ivxlcdmIVXLCDM]{1,5})$")
+
+        /**
+         * SF-5 — a page-number band token that may sit ANYWHERE in a chrome line: a bracketed
+         * `[Page 7]` (RFC footers) or a bare `Page 7` run. Case-insensitive. Replaced with the
+         * empty string so the static chrome on either side collapses to one normalised key.
+         * Includes surrounding whitespace so removing an interior band doesn't leave a double
+         * space that would defeat the equality grouping.
+         */
+        val PAGE_BAND = Regex("\\s*\\[?\\s*Page\\s+[0-9ivxlcdmIVXLCDM]{1,6}\\s*\\]?\\s*", RegexOption.IGNORE_CASE)
+
+        /** SF-10 — a paragraph ending in a soft line-wrap hyphen: `<lowercase>-` at end of text. */
+        val SOFT_HYPHEN_TAIL = Regex("[a-z]-$")
     }
 }
