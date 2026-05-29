@@ -179,6 +179,91 @@ class PptxExtractorFormatGapsTest {
             "Extractor never invents Markdown/HTML markup for bold/italic")
     }
 
+    // ── Hyperlink harvesting on text runs (HX-1 PPTX variant) ─────────────────
+
+    @Test
+    fun `text-run hyperlinks render inline as markdown links once with no duplication or empty brackets`() {
+        // A single text box with three hyperlinked runs (external URL, mailto, slide-jump) plus
+        // a plain trailing run. POI's XSLFTextRun.createHyperlink() resolves each link to the
+        // proper CTHyperlink (URL/email get a TargetMode=External relationship; the slide-jump
+        // gets a relationship to the target slide + action="ppaction://hlinksldjump").
+        val bytes = buildPptx { ppt ->
+            val target = ppt.createSlide()           // slide 1 — the slide-jump destination
+            target.createTextBox().apply {
+                anchor = Rectangle(50, 50, 500, 50)
+                setText("Destination slide")
+            }
+            val slide = ppt.createSlide()            // slide 2 — carries the links
+            val box = slide.createTextBox().apply { anchor = Rectangle(50, 50, 500, 200) }
+            val p = box.addNewTextParagraph()
+            p.addNewTextRun().apply { setText("Web Page"); createHyperlink().linkToUrl("http://poi.apache.org/") }
+            p.addNewTextRun().setText(" | ")
+            p.addNewTextRun().apply { setText("Email"); createHyperlink().linkToEmail("dev@poi.apache.org") }
+            p.addNewTextRun().setText(" | ")
+            p.addNewTextRun().apply { setText("Jump"); createHyperlink().linkToSlide(target) }
+            p.addNewTextRun().setText(" end")
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val text = blocks.filterIsInstance<DocumentBlock.Paragraph>().joinToString("\n") { it.text }
+
+        // External URL → [text](url)
+        assertTrue(text.contains("[Web Page](http://poi.apache.org/)"),
+            "External hyperlink should render as a markdown link, was: $text")
+        // mailto: POI stores email links with a mailto: scheme on the address.
+        assertTrue(text.contains("[Email](mailto:dev@poi.apache.org)"),
+            "Email hyperlink should render as a mailto markdown link, was: $text")
+        // Slide-jump → #slide-1 (the target was the first slide created).
+        assertTrue(text.contains("[Jump](#slide-1)"),
+            "Slide-jump hyperlink should resolve to #slide-N, was: $text")
+        // Plain runs survive untouched.
+        assertTrue(text.contains(" | ") && text.contains(" end"),
+            "Plain runs must remain in the text, was: $text")
+
+        // No duplication: each display text appears exactly once.
+        assertEquals(1, countOccurrences(text, "Web Page"), "Web Page text must appear once, was: $text")
+        assertEquals(1, countOccurrences(text, "Email"), "Email text must appear once, was: $text")
+        assertEquals(1, countOccurrences(text, "Jump"), "Jump text must appear once, was: $text")
+        // No empty brackets.
+        assertFalse(text.contains("[]"), "No empty link display text, was: $text")
+        assertFalse(text.contains("()"), "No empty link target, was: $text")
+    }
+
+    @Test
+    fun `hyperlinks inside table cells render inline as markdown links`() {
+        // Mirrors the corpus pptx-poi-links.pptx layout: a 2-column table whose first-column
+        // cells carry the hyperlinks. XSLFTableCell extends XSLFTextShape, so the same run-walk
+        // applies to table cells and the link must survive into the rendered cell text.
+        val bytes = buildPptx { ppt ->
+            val slide = ppt.createSlide()
+            val table = slide.createTable(1, 2)
+            val cell = table.getCell(0, 0)
+            val run = cell.addNewTextParagraph().addNewTextRun()
+            run.setText("Web Page")
+            run.createHyperlink().linkToUrl("http://poi.apache.org/")
+            table.getCell(0, 1).setText("http://poi.apache.org/")
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val tableBlock = blocks.filterIsInstance<DocumentBlock.Table>().single()
+        val firstCell = tableBlock.rows.flatten().firstOrNull { it.contains("Web Page") } ?: tableBlock.headers[0]
+
+        assertTrue(firstCell.contains("[Web Page](http://poi.apache.org/)"),
+            "Hyperlink in a table cell should render as a markdown link, was: $firstCell")
+        assertEquals(1, countOccurrences(firstCell, "Web Page"),
+            "Cell display text must appear once, was: $firstCell")
+    }
+
+    private fun countOccurrences(haystack: String, needle: String): Int {
+        var count = 0
+        var idx = haystack.indexOf(needle)
+        while (idx >= 0) {
+            count++
+            idx = haystack.indexOf(needle, idx + needle.length)
+        }
+        return count
+    }
+
     // ── Slide-level review comments ───────────────────────────────────────────
 
     @Test

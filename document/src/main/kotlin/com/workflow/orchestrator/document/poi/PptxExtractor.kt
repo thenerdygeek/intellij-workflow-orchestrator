@@ -2,6 +2,7 @@ package com.workflow.orchestrator.document.poi
 
 import com.workflow.orchestrator.core.model.DocumentBlock
 import com.workflow.orchestrator.document.service.ImageExtractionService
+import org.apache.poi.common.usermodel.HyperlinkType
 import org.apache.poi.xslf.usermodel.XSLFComment
 import org.apache.poi.xslf.usermodel.XSLFGraphicFrame
 import org.apache.poi.xslf.usermodel.XSLFGroupShape
@@ -11,6 +12,7 @@ import org.apache.poi.xslf.usermodel.XSLFPictureShape
 import org.apache.poi.xslf.usermodel.XSLFShape
 import org.apache.poi.xslf.usermodel.XSLFSlide
 import org.apache.poi.xslf.usermodel.XSLFTable
+import org.apache.poi.xslf.usermodel.XSLFTextRun
 import org.apache.poi.xslf.usermodel.XSLFTextShape
 import org.apache.poi.xslf.usermodel.XMLSlideShow
 import java.io.InputStream
@@ -144,7 +146,7 @@ class PptxExtractor(
                 listOf(tableBlock)
             }
             is XSLFTextShape -> {
-                val text = shape.text?.trim() ?: return emptyList()
+                val text = hyperlinkAwareText(shape).trim()
                 if (text.isNotEmpty()) listOf(DocumentBlock.Paragraph(text)) else emptyList()
             }
             is XSLFPictureShape -> {
@@ -206,6 +208,101 @@ class PptxExtractor(
         }
     }
 
+    // ── Hyperlink-aware text (HX-1 PPTX variant) ──────────────────────────────
+
+    /**
+     * Builds the visible text of a [shape] (a text box, placeholder, or table cell — all
+     * [XSLFTextShape] subtypes), rewriting hyperlinked runs INLINE as Markdown links using the
+     * G-6 convention `[display text](target)`. Identical output to `shape.getText()` for any
+     * shape with no hyperlinks.
+     *
+     * In PPTX a hyperlink is carried by the `<a:hlinkClick>` element on a text *run*
+     * ([XSLFTextRun]); the run's text is the link's display text. We therefore harvest at the
+     * run level — the display text appears exactly once (no hoisting, no duplication), in its
+     * original reading-order position. Paragraphs are joined with `\n`, runs are concatenated
+     * with no separator (matching POI's `getText()`).
+     *
+     * Targets mirror [linkTarget]:
+     * - external URL → `[text](url)`
+     * - email → `[text](mailto:…)`
+     * - slide-jump → `[text](#slide-N)` (or the `#slide` placeholder when the relationship
+     *   cannot be resolved to a concrete slide number).
+     *
+     * Conservative fallbacks (never corrupt text): a run is left un-linked (its raw text is
+     * emitted) when its display text is blank, already contains any of `[]()`, or its target
+     * cannot be resolved to a non-blank string.
+     */
+    private fun hyperlinkAwareText(shape: XSLFTextShape): String {
+        val paragraphs = try { shape.textParagraphs } catch (_: Exception) { null }
+            ?: return shape.text ?: ""
+        return paragraphs.joinToString("\n") { paragraph ->
+            val runs = try { paragraph.textRuns } catch (_: Exception) { null }
+            if (runs == null) return@joinToString try { paragraph.text ?: "" } catch (_: Exception) { "" }
+            buildString {
+                for (run in runs) {
+                    val raw = try { run.rawText ?: "" } catch (_: Exception) { "" }
+                    val target = linkTarget(run, shape)
+                    if (target != null && raw.isNotBlank() && raw.none { it in "[]()" }) {
+                        append('[').append(raw).append("](").append(target).append(')')
+                    } else {
+                        append(raw)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Resolves the hyperlink target on a single [run] to the inline-link target string, or
+     * `null` when the run carries no usable hyperlink.
+     *
+     * - [HyperlinkType.URL] / [HyperlinkType.FILE] → the raw address (e.g. `http://…`).
+     * - [HyperlinkType.EMAIL] → `mailto:` prefixed; POI already stores the address with the
+     *   `mailto:` scheme, so we normalise to exactly one prefix.
+     * - [HyperlinkType.DOCUMENT] → an internal slide-jump. We resolve the `<a:hlinkClick r:id>`
+     *   relationship on the owning slide's sheet to the destination [XSLFSlide] and emit
+     *   `#slide-N` (1-based via [XSLFSlide.getSlideNumber]). When the relationship cannot be
+     *   cheaply resolved to a slide we fall back to the recoverable `#slide` placeholder.
+     */
+    private fun linkTarget(run: XSLFTextRun, shape: XSLFTextShape): String? {
+        val hyperlink = try { run.hyperlink } catch (_: Exception) { null } ?: return null
+        val type = try { hyperlink.type } catch (_: Exception) { null } ?: return null
+        return when (type) {
+            HyperlinkType.URL, HyperlinkType.FILE -> {
+                try { hyperlink.address } catch (_: Exception) { null }?.takeIf { it.isNotBlank() }
+            }
+            HyperlinkType.EMAIL -> {
+                val addr = try { hyperlink.address } catch (_: Exception) { null }?.takeIf { it.isNotBlank() }
+                    ?: return null
+                if (addr.startsWith("mailto:", ignoreCase = true)) addr else "mailto:$addr"
+            }
+            HyperlinkType.DOCUMENT -> resolveSlideJump(hyperlink, shape)
+            HyperlinkType.NONE -> null
+        }
+    }
+
+    /**
+     * Resolves an internal slide-jump hyperlink to `#slide-N`, or the `#slide` placeholder when
+     * the destination cannot be resolved cheaply.
+     *
+     * The `<a:hlinkClick>` carries the relationship id (`r:id`) of the destination slide on its
+     * [org.openxmlformats.schemas.drawingml.x2006.main.CTHyperlink]. We look that relationship up
+     * on the owning sheet ([XSLFTextShape.getSheet] → [org.apache.poi.ooxml.POIXMLDocumentPart.getRelationById])
+     * and, when it resolves to an [XSLFSlide], read its 1-based [XSLFSlide.getSlideNumber].
+     */
+    private fun resolveSlideJump(
+        hyperlink: org.apache.poi.xslf.usermodel.XSLFHyperlink,
+        shape: XSLFTextShape,
+    ): String {
+        val placeholder = "#slide"
+        val relId = try { hyperlink.xmlObject?.id } catch (_: Exception) { null }
+            ?.takeIf { it.isNotBlank() } ?: return placeholder
+        val sheet = try { shape.sheet } catch (_: Exception) { null } ?: return placeholder
+        val target = try { sheet.getRelationById(relId) } catch (_: Exception) { null }
+        val number = (target as? XSLFSlide)?.let { try { it.slideNumber } catch (_: Exception) { null } }
+        return if (number != null && number > 0) "#slide-$number" else placeholder
+    }
+
     // ── Table conversion ───────────────────────────────────────────────────────
 
     private fun tableToBlock(table: XSLFTable): DocumentBlock? {
@@ -215,9 +312,10 @@ class PptxExtractor(
         val colCount = table.numberOfColumns
         if (colCount == 0) return null
 
-        // First row → headers
+        // First row → headers. XSLFTableCell extends XSLFTextShape, so cell text goes through
+        // the same hyperlink-aware run walk as standalone text shapes (HX-1 PPTX variant).
         val headers = (0 until colCount).map { col ->
-            table.getCell(0, col)?.text?.trim() ?: ""
+            table.getCell(0, col)?.let { hyperlinkAwareText(it).trim() } ?: ""
         }
 
         if (headers.all { it.isEmpty() }) return null
@@ -225,7 +323,7 @@ class PptxExtractor(
         // Subsequent rows → data rows
         val dataRows = (1 until rowCount).map { row ->
             (0 until colCount).map { col ->
-                table.getCell(row, col)?.text?.trim() ?: ""
+                table.getCell(row, col)?.let { hyperlinkAwareText(it).trim() } ?: ""
             }
         }
 
