@@ -270,7 +270,15 @@ class DocumentBlockHandler(
                     val anchorText = currentAnchorTextBuffer.toString()
                     val href = currentAnchorHref
                     // Append "visible text (url)" to the appropriate active buffer.
-                    val assembled = if (!href.isNullOrBlank()) "$anchorText ($href)" else anchorText
+                    //
+                    // HX-2: an intra-page FRAGMENT ref (`href="#cite_note-1"`, `"#cite_ref-3"`,
+                    // any `#…`) has no resolvable target in the extracted Markdown — the reader
+                    // does not preserve in-page anchor ids — so appending "(#cite_note-1)" reads
+                    // as a broken link (the Wikipedia GDP corpus had 56 such dead tokens). Drop
+                    // the parenthetical and keep only the visible text. Real external links
+                    // (http(s)://, mailto:, relative paths) are still appended verbatim.
+                    val isDeadFragment = href != null && href.startsWith("#")
+                    val assembled = if (!href.isNullOrBlank() && !isDeadFragment) "$anchorText ($href)" else anchorText
                     when {
                         inTable && inCell -> currentCell.append(assembled)
                         headingLevel > 0 -> currentBuffer.append(assembled)
@@ -892,6 +900,17 @@ class DocumentBlockHandler(
         val src = attrs.getValue("src")?.trim().orEmpty()
         val alt = attrs.getValue("alt")?.trim().orEmpty()
 
+        // IMG-5: suppress a decorative inline icon. A Wikipedia "40px-Flag_*" thumbnail (and its
+        // kind) declares small pixel dimensions (e.g. width="23" height="12") and carries NO alt.
+        // Hundreds of them rendered as a contiguous wall of bare image markers before a data table,
+        // with no row context — pure noise to the LLM. Conservative gate: drop ONLY when the image
+        // has an empty alt AND both declared dimensions are below the decorative threshold. An icon
+        // that carries a real alt ("Warning") is content and is kept; an image with no/large
+        // declared dimensions is kept (we cannot fetch HTML <img> bytes to measure, so absent
+        // dimensions are treated as "unknown — keep"). This mirrors the ImageExtractionService
+        // 32px fragment floor used for byte-backed images.
+        if (alt.isEmpty() && isDecorativeIconBySize(attrs)) return
+
         // Determine the display name — prefer alt for human readability, fall back to a
         // sanitised src (last URL path segment) or "image" if both empty.
         // Note: Tika's HtmlParser truncates data: URIs to just "data:" in the src attribute,
@@ -918,6 +937,27 @@ class DocumentBlockHandler(
             path = null,
             altText = alt.takeIf { it.isNotEmpty() },
         )
+    }
+
+    /**
+     * IMG-5 — true when an `<img>`'s DECLARED `width`/`height` attributes both fall below the
+     * decorative threshold ([DECORATIVE_ICON_MAX_PX]).
+     *
+     * Only fires when BOTH dimensions are present and parse as positive integers below the
+     * threshold — the conservative case for a thumbnail icon (Wikipedia flag thumbs are
+     * ~23×12 / 23×15). When either dimension is absent or non-numeric we return `false`
+     * ("unknown size — keep"), because the HTML reader does not fetch the image bytes and so
+     * cannot measure the real pixels; treating unknown as decorative would risk dropping real
+     * content images authored without dimension attributes.
+     *
+     * Callers gate this on an EMPTY `alt` (an alt-bearing icon is content), so this method
+     * concerns itself purely with size.
+     */
+    private fun isDecorativeIconBySize(attrs: Attributes): Boolean {
+        val w = attrs.getValue("width")?.trim()?.toIntOrNull() ?: return false
+        val h = attrs.getValue("height")?.trim()?.toIntOrNull() ?: return false
+        if (w <= 0 || h <= 0) return false
+        return w < DECORATIVE_ICON_MAX_PX && h < DECORATIVE_ICON_MAX_PX
     }
 
     /**
@@ -995,6 +1035,16 @@ class DocumentBlockHandler(
          * not surface as paragraphs.
          */
         val METADATA_LEAK_LINES = setOf("(anonymous)", "(unknown)", "(unspecified)")
+
+        /**
+         * IMG-5 — upper bound (exclusive) on a decorative inline-icon's declared `width`/`height`
+         * in CSS pixels. An `<img>` with an empty alt and BOTH declared dimensions below this is
+         * treated as a decorative thumbnail (e.g. a 23×12 flag icon) and suppressed. Aligned with
+         * [com.workflow.orchestrator.document.service.ImageExtractionService.MIN_IMAGE_DIMENSION_PX]
+         * (32px), the byte-backed fragment floor, so the HTML and binary paths agree on what "too
+         * small to matter" means.
+         */
+        const val DECORATIVE_ICON_MAX_PX = 32
 
         /**
          * Generator/tool-artifact document titles that PDF producers stamp into `/Title` and that

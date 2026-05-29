@@ -6,6 +6,7 @@ import org.apache.tika.config.TikaConfig
 import org.apache.tika.metadata.Metadata
 import org.apache.tika.parser.AutoDetectParser
 import org.apache.tika.parser.ParseContext
+import org.apache.tika.parser.html.HtmlMapper
 import org.apache.tika.parser.pdf.PDFParserConfig
 import java.io.InputStream
 
@@ -73,6 +74,14 @@ class TikaXhtmlPipeline {
 
         val context = ParseContext().apply {
             set(PDFParserConfig::class.java, hardenedPdfConfig())
+            // NAV-3: for HTML, discard navigation/header/footer/aside chrome subtrees so their
+            // boilerplate text never leaks into the body and gets promoted to section anchors.
+            // Tika's DefaultHtmlMapper otherwise drops these tags but keeps their orphaned text.
+            // Inert for non-HTML formats (only the HtmlParser consults HtmlMapper) but gated on
+            // the MIME hint anyway to keep the behaviour explicit. See ChromeStrippingHtmlMapper.
+            if (mime in HTML_LIKE_MIMES) {
+                set(HtmlMapper::class.java, ChromeStrippingHtmlMapper())
+            }
         }
 
         // CSV detection in the SAX handler is opt-in based on the MIME hint, never
@@ -99,6 +108,12 @@ class TikaXhtmlPipeline {
          * [DocumentBlockHandler] should be enabled.
          */
         val CSV_LIKE_MIMES = setOf("text/csv", "text/tab-separated-values")
+
+        /**
+         * MIME types for which the NAV-3 chrome-stripping [HtmlMapper] is installed. XHTML is
+         * included because Tika routes it through the same HtmlParser.
+         */
+        val HTML_LIKE_MIMES = setOf("text/html", "application/xhtml+xml")
 
         /** MIME for which the PDF-only URL-boundary restoration workaround is enabled. */
         const val PDF_MIME = "application/pdf"
