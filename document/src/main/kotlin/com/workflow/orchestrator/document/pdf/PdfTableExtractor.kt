@@ -72,6 +72,25 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
 
         /** A real table needs at least this many DATA rows beneath the header row. */
         const val MIN_DATA_ROWS = 2
+
+        /**
+         * Minimum table width to consider a two-row grouped header (see [detectGroupedHeader]).
+         * A 2-column table cannot carry a meaningful spanning group.
+         */
+        const val GROUPED_MIN_COLUMNS = 3
+
+        /**
+         * Minimum fraction of columns the LEAF row of a grouped header must fill. A genuine leaf
+         * row names (nearly) every sub-column; a sparse stray row is not a leaf row.
+         */
+        const val GROUPED_LEAF_MIN_FILLED_RATIO = 0.6
+
+        /**
+         * A cell that is purely numeric (integer/decimal, optional sign/grouping). Used to reject
+         * a first DATA row masquerading as the leaf-header row in [detectGroupedHeader]: leaf
+         * headers are labels, never bare numbers.
+         */
+        val NUMERIC_CELL = Regex("[-+]?[\\d,]+(?:\\.\\d+)?")
     }
 
     /**
@@ -208,6 +227,19 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
      * recovered with their real header and body intact.
      *
      * Returns `null` if the table has no rows or has no non-blank row to use as a header.
+     *
+     * ## Grouped (two-row spanning) header (T-1 grouped sub-case)
+     *
+     * Some ruled tables carry a TWO-ROW header: a top **group** row whose label spans several
+     * sub-columns (a non-empty label followed by empty continuation cells) and a second **leaf**
+     * row that names each sub-column (arxiv "Attention Is All You Need" Table 2: `BLEU` /
+     * `Training Cost (FLOPs)` spanning `EN-DE | EN-FR`; Fed SCF `Median income` / `Mean income`
+     * spanning `2019 | 2022 | Percent change`). Treating only the first content row as the header
+     * leaves the leaf labels on a separate row that then misaligns with the data. When
+     * [detectGroupedHeader] recognises this CONTAINED pattern, we flatten the two header rows to a
+     * single row of **composite leaf headers** (`<group> <leaf>`, forward-filling the group label
+     * across its span). The conservative guard in [detectGroupedHeader] leaves every ambiguous or
+     * normal single-row-header table on the row-0 path unchanged.
      */
     private fun tabulaTableToDocumentBlock(t: Table, pageText: List<TextElement>): DocumentBlock.Table? {
         val rawRows = t.getRows()
@@ -222,14 +254,117 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
         val firstContentIdx = repaired.indexOfFirst { row -> row.any { it.isNotEmpty() } }
         if (firstContentIdx < 0) return null
 
-        val headers = repaired[firstContentIdx]
+        // Two-row grouped/spanning header → composite leaf headers (see KDoc). Conservative:
+        // returns null unless the group/leaf pattern is unambiguous, in which case we keep the
+        // existing row-0 behaviour.
+        val groupRow = repaired[firstContentIdx]
+        val leafRow = repaired.getOrNull(firstContentIdx + 1)
+        val composite = if (leafRow != null) detectGroupedHeader(groupRow, leafRow) else null
 
-        val dataRows = repaired.drop(firstContentIdx + 1)
+        val headers: List<String>
+        val bodyStartIdx: Int
+        if (composite != null) {
+            headers = composite
+            bodyStartIdx = firstContentIdx + 2
+        } else {
+            headers = groupRow
+            bodyStartIdx = firstContentIdx + 1
+        }
+
+        val dataRows = repaired.drop(bodyStartIdx)
             // Drop fully-blank interior spacer rows (header-band padding between header and body).
             .filter { row -> row.any { it.isNotEmpty() } }
             .map { row -> normaliseRow(row, headers.size) }
 
         return DocumentBlock.Table(headers = headers, rows = dataRows, caption = null)
+    }
+
+    /**
+     * Detects a CONTAINED two-row (grouped/spanning) header and returns the flattened composite
+     * leaf headers, or `null` when the pattern is absent or ambiguous (leaving the caller on the
+     * unchanged row-0 path).
+     *
+     * [groupRow] is the candidate top row (group labels spanning sub-columns); [leafRow] is the
+     * candidate row beneath it (leaf labels naming each sub-column). Both are already
+     * cell-text-repaired and trimmed, and Tabula pads every row to the same width.
+     *
+     * ## Detection signals (ALL required — conservative bias)
+     *
+     * A wrong composite header is worse than a flat one, so we only flatten when the structure is
+     * unmistakably a spanning group header and never when it could be a normal `header + first
+     * data row`:
+     *
+     * 1. **Width ≥ 3.** A 2-column table cannot meaningfully carry a spanning group.
+     * 2. **The group row has a spanning gap** — at least one EMPTY cell that follows a non-empty
+     *    cell (a label `BLEU` then a blank continuation column). A normal single-row header is
+     *    fully filled and has no such interior gap, so this alone rejects the common case.
+     * 3. **The leaf row is strictly denser than the group row** — it fills more cells. A real leaf
+     *    row names (nearly) every sub-column; a data row mistaken for a leaf row would not be
+     *    *more* filled than a complete header above it.
+     * 4. **The leaf row is well filled** (≥ [GROUPED_LEAF_MIN_FILLED_RATIO] of columns). Guards
+     *    against treating a sparse stray row as leaf headers.
+     * 5. **Forward-fill yields a genuine grouping** — after carrying each group label rightward
+     *    across its span, at least one column has BOTH a group label and a leaf label (the
+     *    `BLEU`+`EN-DE` composite). Without an actual overlap there is no group to flatten.
+     * 6. **The leaf row carries no purely-numeric cell** — leaf headers are labels, not data. A
+     *    first data row (which a grouped-header misfire would consume) almost always contains a
+     *    bare number; rejecting numeric leaf cells is a strong anti-data-row guard.
+     *
+     * ## Composite rule
+     *
+     * For each column the group label is the nearest non-empty group-row cell at index ≤ the
+     * column (forward-fill). The composite header is `"<group> <leaf>"` when both are present,
+     * the group label alone when the leaf cell is empty (the row-label column under a group
+     * heading, e.g. `Model`), and the leaf label alone when no group label has appeared yet.
+     */
+    private fun detectGroupedHeader(groupRow: List<String>, leafRow: List<String>): List<String>? {
+        val width = groupRow.size
+        if (width < GROUPED_MIN_COLUMNS || leafRow.size != width) return null
+
+        // 2. Group row must have a spanning gap: an empty cell following a non-empty cell.
+        var sawGroupLabel = false
+        var hasSpanGap = false
+        for (cell in groupRow) {
+            if (cell.isNotEmpty()) {
+                sawGroupLabel = true
+            } else if (sawGroupLabel) {
+                hasSpanGap = true
+            }
+        }
+        if (!hasSpanGap) return null
+
+        // 3 + 4. Leaf row must be strictly denser than the group row AND well filled.
+        val groupFilled = groupRow.count { it.isNotEmpty() }
+        val leafFilled = leafRow.count { it.isNotEmpty() }
+        if (leafFilled <= groupFilled) return null
+        if (leafFilled.toDouble() / width < GROUPED_LEAF_MIN_FILLED_RATIO) return null
+
+        // 6. Leaf cells must be labels, not data — reject a purely-numeric leaf cell.
+        if (leafRow.any { it.isNotEmpty() && it.matches(NUMERIC_CELL) }) return null
+
+        // Forward-fill the group label across its span, then compose.
+        var activeGroup = ""
+        var sawOverlap = false
+        val composite = ArrayList<String>(width)
+        for (i in 0 until width) {
+            if (groupRow[i].isNotEmpty()) activeGroup = groupRow[i]
+            val leaf = leafRow[i]
+            val cell = when {
+                activeGroup.isNotEmpty() && leaf.isNotEmpty() -> {
+                    sawOverlap = true
+                    "$activeGroup $leaf"
+                }
+                leaf.isNotEmpty() -> leaf
+                activeGroup.isNotEmpty() -> activeGroup
+                else -> ""
+            }
+            composite += cell
+        }
+
+        // 5. A genuine grouping must produce at least one group+leaf composite.
+        if (!sawOverlap) return null
+
+        return composite
     }
 
     /**
