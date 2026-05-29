@@ -67,7 +67,15 @@ class TikaXhtmlPipeline {
         // When mime is null, Tika auto-detects; we use the detection result from
         // the metadata after parse to retroactively classify (handled in Phase 6).
         val csvDetection = mime in CSV_LIKE_MIMES
-        val handler = DocumentBlockHandler(csvDetectionEnabled = csvDetection)
+        // URL-boundary restoration is a PDF-only workaround for Tika eating spaces around
+        // link annotations. Enabling it for non-PDF (HTML/CSV/JSON/text) would silently
+        // inject leading spaces into URL values inside JSON/markdown — see
+        // DocumentBlockHandler.restoreUrlBoundaries docs.
+        val isPdf = mime == PDF_MIME
+        val handler = DocumentBlockHandler(
+            csvDetectionEnabled = csvDetection,
+            restoreUrlBoundaries = isPdf,
+        )
         parser.parse(stream, handler, metadata, context)
         return handler.blocks
     }
@@ -78,5 +86,8 @@ class TikaXhtmlPipeline {
          * [DocumentBlockHandler] should be enabled.
          */
         val CSV_LIKE_MIMES = setOf("text/csv", "text/tab-separated-values")
+
+        /** MIME for which the PDF-only URL-boundary restoration workaround is enabled. */
+        const val PDF_MIME = "application/pdf"
     }
 }

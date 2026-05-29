@@ -56,9 +56,27 @@ import org.xml.sax.helpers.DefaultHandler
  * gate, prose paragraphs containing commas (extremely common) would be
  * misclassified as tables.
  *
+ * ## URL-boundary restoration (PDF-only)
+ *
+ * Tika's PDFParser does not insert spaces around link annotations when the underlying
+ * PDF text stream lacks them, so URLs end up glued to the preceding word
+ * (`"found at:https://…"`) or chained together. The [restoreUrlBoundaries] workaround
+ * re-inserts a separating space. It is gated behind a flag because it is **only correct
+ * for PDF byte streams** — for HTML/CSV/JSON/plain-text the byte stream is faithful and
+ * a URL legitimately follows a string delimiter or markup opener (`"`, `` ` ``, `**`, `[`).
+ * Running the workaround there silently injects a leading space into URL values (e.g.
+ * `"url":" https://…"`), which is invisible to a JSON syntax check yet corrupts the URL.
+ * Callers therefore set this `true` **only** for PDF prose extraction.
+ *
  * @param csvDetectionEnabled Set to `true` only when the source MIME is CSV/TSV.
+ * @param restoreUrlBoundaries Set to `true` **only** for PDF prose extraction, where
+ *   Tika eats spaces around link annotations. Defaults to `false` so non-PDF content
+ *   (HTML/CSV/JSON/text) is emitted verbatim.
  */
-class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : DefaultHandler() {
+class DocumentBlockHandler(
+    private val csvDetectionEnabled: Boolean = false,
+    private val restoreUrlBoundaries: Boolean = false,
+) : DefaultHandler() {
 
     private val _blocks = mutableListOf<DocumentBlock>()
 
@@ -386,7 +404,13 @@ class DocumentBlockHandler(private val csvDetectionEnabled: Boolean = false) : D
         // spaces around link annotations when the underlying PDF text stream lacks them
         // — generators that draw the link as a separate text object typically omit the
         // surrounding space. Catches "found at:https://" and chained-URL run-ons.
-        val urlFixed = if ("http" in rawText) {
+        //
+        // PDF-ONLY: for HTML/CSV/JSON/plain-text the byte stream is faithful, and a URL
+        // legitimately follows a string delimiter or markup opener (`"`, `` ` ``, `**`,
+        // `[`). Applying this there silently injects a leading space into URL values
+        // (e.g. `"url":" https://…"`) that the JSON syntax check cannot catch. So the
+        // workaround only runs when the caller flags a PDF source.
+        val urlFixed = if (restoreUrlBoundaries && "http" in rawText) {
             rawText.replace(URL_BOUNDARY) { match -> "${match.groupValues[1]} ${match.groupValues[2]}" }
         } else {
             rawText

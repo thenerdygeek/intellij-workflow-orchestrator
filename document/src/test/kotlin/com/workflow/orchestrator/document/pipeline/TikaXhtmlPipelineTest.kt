@@ -312,7 +312,7 @@ class TikaXhtmlPipelineTest {
 
     @Test
     fun `paragraph with word-glued-to-URL gets a space inserted`() {
-        val handler = DocumentBlockHandler(csvDetectionEnabled = false)
+        val handler = DocumentBlockHandler(csvDetectionEnabled = false, restoreUrlBoundaries = true)
         handler.startDocument()
         handler.startElement(null, "p", "p", AttributesImpl())
         val text = "More information found at:https://example.com/foo and also there."
@@ -329,7 +329,7 @@ class TikaXhtmlPipelineTest {
 
     @Test
     fun `consecutive URLs get separated with a space`() {
-        val handler = DocumentBlockHandler(csvDetectionEnabled = false)
+        val handler = DocumentBlockHandler(csvDetectionEnabled = false, restoreUrlBoundaries = true)
         handler.startDocument()
         handler.startElement(null, "p", "p", AttributesImpl())
         val text = "https://nist.gov/onehttps://nist.gov/twohttps://nist.gov/three"
@@ -343,6 +343,69 @@ class TikaXhtmlPipelineTest {
         assertEquals(3, urlCount, "Should still have 3 URLs")
         val spaceBeforeHttps = " https://".toRegex().findAll(paragraph.text).count()
         assertEquals(2, spaceBeforeHttps, "2 of 3 URLs should be space-prefixed; got '${paragraph.text}'")
+    }
+
+    // ── 10b. URL-boundary restoration is PDF-only; verbatim otherwise (G-2/JC-1/HX-4) ──
+
+    /**
+     * Non-PDF content (HTML/CSV/JSON/text) has a faithful byte stream — Tika does NOT
+     * eat spaces around link annotations there. The PDF-specific URL-boundary workaround
+     * must NOT run on it, or it silently injects a leading space into URL values that
+     * legitimately follow a string delimiter / markup opener (`"`, `` ` ``, `**`, `[`).
+     * The JSON still parses, so the corruption is invisible to a syntax check.
+     */
+    @Test
+    fun `JSON url value is emitted verbatim with no injected leading space`() {
+        val handler = DocumentBlockHandler(csvDetectionEnabled = false, restoreUrlBoundaries = false)
+        handler.startDocument()
+        handler.startElement(null, "p", "p", AttributesImpl())
+        val text = """{"url":"https://example.com/x","authorizationUrl":"https://petstore.swagger.io/oauth/authorize"}"""
+        handler.characters(text.toCharArray(), 0, text.length)
+        handler.endElement(null, "p", "p")
+        handler.endDocument()
+
+        val paragraph = handler.blocks.filterIsInstance<DocumentBlock.Paragraph>().single()
+        assertFalse(
+            paragraph.text.contains("\" https"),
+            "JSON URL value must be verbatim — no space injected after the opening quote; got '${paragraph.text}'",
+        )
+        assertEquals(text, paragraph.text, "JSON content must be emitted byte-for-byte verbatim")
+    }
+
+    @Test
+    fun `markdown autolink bold and backtick URLs are emitted verbatim`() {
+        val handler = DocumentBlockHandler(csvDetectionEnabled = false, restoreUrlBoundaries = false)
+        handler.startDocument()
+        handler.startElement(null, "p", "p", AttributesImpl())
+        val text = "Hosted at **https://mcp.schemastore.org** — point your client at `https://mcp.schemastore.org/` " +
+            "or see [https://swagger.io](http://swagger.io)."
+        handler.characters(text.toCharArray(), 0, text.length)
+        handler.endElement(null, "p", "p")
+        handler.endDocument()
+
+        val paragraph = handler.blocks.filterIsInstance<DocumentBlock.Paragraph>().single()
+        assertFalse(paragraph.text.contains("** https"), "No space after ** before URL; got '${paragraph.text}'")
+        assertFalse(paragraph.text.contains("` https"), "No space after backtick before URL; got '${paragraph.text}'")
+        assertFalse(paragraph.text.contains("[ https"), "No space after [ before URL; got '${paragraph.text}'")
+        assertEquals(text, paragraph.text, "Markdown content must be emitted verbatim")
+    }
+
+    /** The legitimate PDF workaround (Bug #21) must still fire when restoreUrlBoundaries = true. */
+    @Test
+    fun `pdf word-glued-to-URL still gets a space when restoreUrlBoundaries is true`() {
+        val handler = DocumentBlockHandler(csvDetectionEnabled = false, restoreUrlBoundaries = true)
+        handler.startDocument()
+        handler.startElement(null, "p", "p", AttributesImpl())
+        val text = "More information found at:https://example.com/foo and also there."
+        handler.characters(text.toCharArray(), 0, text.length)
+        handler.endElement(null, "p", "p")
+        handler.endDocument()
+
+        val paragraph = handler.blocks.filterIsInstance<DocumentBlock.Paragraph>().single()
+        assertTrue(
+            paragraph.text.contains("at: https://example.com/foo"),
+            "PDF boundary restoration must still insert the space; got '${paragraph.text}'",
+        )
     }
 
     // ── 8. Tika metadata-leak strings are filtered out (Bug #14) ──────────────
