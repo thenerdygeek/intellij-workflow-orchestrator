@@ -388,6 +388,137 @@ class DocxExtractorFormatGapsTest {
         assertEquals("Direct Access Storage 1", obj.name)
     }
 
+    // ── mc:AlternateContent shapes (IMG-3 remainder) ──────────────────────────
+
+    /**
+     * A `<w:drawing>` wrapped in `<mc:AlternateContent><mc:Choice>` (Word's forward-compat
+     * wrapper for newer DrawingML such as `wps:` text-box shapes) is NOT a child of the run
+     * via POI's `getDrawingList()`, so the direct-child scan in [ImageExtractionVisitor]
+     * never sees it and the shape is dropped entirely. The corpus repro is the
+     * "Direct Access Storage 1" shape in `docx-doxx-images.docx`.
+     *
+     * The visitor must additionally walk the run XML for `mc:AlternateContent` drawings and
+     * emit the same `[Shape: <name>]` / `[SmartArt: <name>]` placeholder so the shape's
+     * presence is visible.
+     */
+    @Test
+    fun `a wordprocessingShape inside mc AlternateContent Choice emits a Shape placeholder`(
+        @org.junit.jupiter.api.io.TempDir downloads: java.nio.file.Path,
+    ) {
+        IOUtils.setByteArrayMaxOverride(200_000_000)
+        val bytes = try {
+            buildDocx { doc ->
+                val run = doc.createParagraph().createRun()
+                run.setText("Shape paragraph.")
+                injectAlternateContentShape(run, name = "Direct Access Storage 1")
+            }
+        } finally {
+            IOUtils.setByteArrayMaxOverride(50_000_000)
+        }
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        val blocks = DocxTableExtractor(imageService = imageService, docKey = "alt.docx")
+            .extract(ByteArrayInputStream(bytes))
+        val obj = blocks.filterIsInstance<DocumentBlock.EmbeddedObjectRef>().single()
+        assertEquals(DocumentBlock.EmbeddedObjectRef.Kind.SHAPE, obj.kind)
+        assertEquals("Direct Access Storage 1", obj.name)
+    }
+
+    /** Guard: a normal inline picture (no mc:AlternateContent) must NOT gain a spurious Shape placeholder. */
+    @Test
+    fun `a plain inline picture does not produce an mc AlternateContent Shape placeholder`(
+        @org.junit.jupiter.api.io.TempDir downloads: java.nio.file.Path,
+    ) {
+        IOUtils.setByteArrayMaxOverride(200_000_000)
+        val pngBytes = tinyPng()
+        val bytes = try {
+            buildDocx { doc ->
+                val run = doc.createParagraph().createRun()
+                run.addPicture(
+                    ByteArrayInputStream(pngBytes),
+                    XWPFDocument.PICTURE_TYPE_PNG, "pic.png",
+                    Units.toEMU(40.0), Units.toEMU(40.0),
+                )
+            }
+        } finally {
+            IOUtils.setByteArrayMaxOverride(50_000_000)
+        }
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        val blocks = DocxTableExtractor(imageService = imageService, docKey = "pic.docx")
+            .extract(ByteArrayInputStream(bytes))
+        assertTrue(blocks.none { it is DocumentBlock.EmbeddedObjectRef },
+            "Plain picture should not yield any EmbeddedObjectRef placeholder")
+    }
+
+    // ── Footnote / endnote reference markers (SF-7 / HX-2) ────────────────────
+
+    /**
+     * POI's `XWPFRun.text()` renders `<w:footnoteReference w:id="N"/>` as the literal
+     * string `[footnoteRef:N]` and `<w:endnoteReference w:id="N"/>` as `[endnoteRef:N]`.
+     * These raw OOXML tokens leaked verbatim into body prose (the calibre-demo corpus repro:
+     * "Footnotes[footnoteRef:2] and endnotes[endnoteRef:2] …").
+     *
+     * The visitor must replace them with clean, namespaced GFM footnote references so:
+     *   1. No raw `footnoteRef:` / `endnoteRef:` token survives.
+     *   2. A footnote ref and an endnote ref with the SAME numeric id do not collide on the
+     *      same `[^N]` label (footnotes → `[^fnN]`, endnotes → `[^enN]`).
+     */
+    @Test
+    fun `footnote and endnote references render as namespaced markers, not raw OOXML tokens`() {
+        val bytes = buildDocx { doc ->
+            val p = doc.createParagraph()
+            p.createRun().setText("Footnotes")
+            injectNoteReference(p.createRun(), footnote = true, id = 2)
+            p.createRun().setText(" and endnotes")
+            injectNoteReference(p.createRun(), footnote = false, id = 2)
+            p.createRun().setText(" are recognized.")
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val body = blocks.filterIsInstance<DocumentBlock.Paragraph>().joinToString("\n") { it.text }
+
+        assertFalse(body.contains("footnoteRef:"), "Raw footnoteRef OOXML token leaked: $body")
+        assertFalse(body.contains("endnoteRef:"), "Raw endnoteRef OOXML token leaked: $body")
+        // Footnote and endnote ref with the same numeric id must not collide on [^2].
+        assertTrue(body.contains("[^fn2]"), "Footnote ref should be namespaced as [^fn2]; got: $body")
+        assertTrue(body.contains("[^en2]"), "Endnote ref should be namespaced as [^en2]; got: $body")
+        assertTrue(body.contains("Footnotes[^fn2] and endnotes[^en2] are recognized."),
+            "Surrounding prose + inline refs should be intact; got: $body")
+    }
+
+    /**
+     * The trailing [DocumentBlock.Footnote] definitions must use the SAME namespaced markers
+     * (`fnN` / `enN`) as the inline references, so a footnote id=2 and an endnote id=2 produce
+     * two distinct, non-colliding definition lines (`[^fn2]:` and `[^en2]:`) that link back to
+     * their respective inline references.
+     */
+    @Test
+    fun `footnote and endnote definitions get namespaced non-colliding markers`() {
+        val bytes = buildDocx { doc ->
+            doc.createParagraph().createRun().setText("body")
+
+            val footnotes = doc.createFootnotes()
+            val fn = footnotes.createFootnote()
+            fn.ctFtnEdn.id = java.math.BigInteger.valueOf(2)
+            fn.createParagraph().createRun().setText("This is the footnote body.")
+
+            val endnotes = doc.createEndnotes()
+            val en = endnotes.createEndnote()
+            en.ctFtnEdn.id = java.math.BigInteger.valueOf(2)
+            en.createParagraph().createRun().setText("This is the endnote body.")
+        }
+
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val notes = blocks.filterIsInstance<DocumentBlock.Footnote>()
+        val markers = notes.map { it.marker }.toSet()
+
+        assertTrue("fn2" in markers, "Footnote definition should be namespaced fn2; got: $markers")
+        assertTrue("en2" in markers, "Endnote definition should be namespaced en2; got: $markers")
+        assertFalse("2" in markers, "Bare numeric marker '2' collides footnote with endnote; got: $markers")
+        assertEquals(2, notes.size, "Both note definitions should survive")
+        assertEquals("This is the footnote body.", notes.first { it.marker == "fn2" }.text)
+        assertEquals("This is the endnote body.", notes.first { it.marker == "en2" }.text)
+    }
+
     // ── Custom heading styles (positive coverage after Phase 3) ───────────────
 
     @Test
@@ -935,7 +1066,9 @@ class DocxExtractorFormatGapsTest {
         val footnoteBlocks = blocks.filterIsInstance<DocumentBlock.Footnote>()
 
         assertEquals(1, footnoteBlocks.size, "Expected one Footnote block")
-        assertEquals("1", footnoteBlocks.single().marker)
+        // SF-7 / HX-2: footnote markers are namespaced with the "fn" prefix to avoid colliding
+        // with endnotes that share the same numeric id.
+        assertEquals("fn1", footnoteBlocks.single().marker)
         assertEquals("First footnote text.", footnoteBlocks.single().text)
 
         // Footnote should appear AFTER body content.
@@ -969,8 +1102,8 @@ class DocxExtractorFormatGapsTest {
         val footnotes = blocks.filterIsInstance<DocumentBlock.Footnote>()
         assertEquals(3, footnotes.size)
         // POI iterates the list in document-insertion order. We accept either insertion-order or id-order
-        // — what matters is all three are present. Tighten if a sort guarantee is needed in the impl.
-        assertTrue(setOf("1", "2", "3") == footnotes.map { it.marker }.toSet())
+        // — what matters is all three are present. Markers are "fn"-namespaced (SF-7 / HX-2).
+        assertTrue(setOf("fn1", "fn2", "fn3") == footnotes.map { it.marker }.toSet())
     }
 
     // ── Header / Footer (positive coverage after Phase 3 T4) ──────────────────
@@ -1208,6 +1341,76 @@ class DocxExtractorFormatGapsTest {
             return out.toByteArray()
         } finally {
             doc.close()
+        }
+    }
+
+    /**
+     * Injects a `<w:footnoteReference w:id="N"/>` (or `<w:endnoteReference>`) child into [run]'s
+     * `<w:r>` element via an XmlCursor, mirroring how Word authors an inline note reference.
+     * POI's high-level API has no setter for these, so we splice the raw element under the run.
+     * `XWPFRun.text()` then renders it as the literal `[footnoteRef:N]` / `[endnoteRef:N]` token
+     * — exactly the leak this fixture pins.
+     */
+    private fun injectNoteReference(
+        run: org.apache.poi.xwpf.usermodel.XWPFRun,
+        footnote: Boolean,
+        id: Int,
+    ) {
+        val wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        val local = if (footnote) "footnoteReference" else "endnoteReference"
+        val cursor = run.ctr.newCursor()
+        try {
+            // Position at the end of the <w:r> children, then add the reference element.
+            cursor.toEndToken()
+            cursor.beginElement(local, wNs)
+            cursor.insertAttributeWithValue(
+                javax.xml.namespace.QName(wNs, "id", "w"), id.toString(),
+            )
+        } finally {
+            cursor.dispose()
+        }
+    }
+
+    /**
+     * Injects a `<mc:AlternateContent><mc:Choice Requires="wps"><w:drawing>…<wps shape>…` block
+     * into [run]'s `<w:r>` via an XmlCursor. This mirrors how Word stores newer DrawingML shapes
+     * (e.g. text boxes / callouts): the `<w:drawing>` is NOT a child of the run that POI's
+     * `getDrawingList()` returns, so the shape is invisible to the direct-child scan and must be
+     * recovered by the visitor's mc:-namespace walk.
+     */
+    private fun injectAlternateContentShape(
+        run: org.apache.poi.xwpf.usermodel.XWPFRun,
+        name: String,
+    ) {
+        val mcNs = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+        val wNs = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        val wpNs = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+        val aNs = "http://schemas.openxmlformats.org/drawingml/2006/main"
+        val wpsNs = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+        val xml = """
+            <mc:AlternateContent xmlns:mc="$mcNs" xmlns:w="$wNs" xmlns:wp="$wpNs" xmlns:a="$aNs">
+              <mc:Choice Requires="wps">
+                <w:drawing>
+                  <wp:anchor>
+                    <wp:docPr id="42" name="$name"/>
+                    <a:graphic>
+                      <a:graphicData uri="$wpsNs"/>
+                    </a:graphic>
+                  </wp:anchor>
+                </w:drawing>
+              </mc:Choice>
+            </mc:AlternateContent>
+        """.trimIndent()
+        val fragment = org.apache.xmlbeans.XmlObject.Factory.parse(xml)
+        val cursor = run.ctr.newCursor()
+        val src = fragment.newCursor()
+        try {
+            cursor.toEndToken()
+            src.toNextToken() // move onto the <mc:AlternateContent> start element
+            src.copyXml(cursor)
+        } finally {
+            cursor.dispose()
+            src.dispose()
         }
     }
 

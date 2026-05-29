@@ -67,7 +67,12 @@ class DefaultHeadingParagraphVisitor : ParagraphVisitor {
     private fun buildHyperlinkAwareText(paragraph: XWPFParagraph, doc: XWPFDocument): String {
         val sb = StringBuilder()
         for (run in paragraph.runs) {
-            val runText = run.text() ?: ""
+            // SF-7 / HX-2: POI's XWPFRun.text() renders <w:footnoteReference w:id="N"/> as the
+            // literal "[footnoteRef:N]" and <w:endnoteReference> as "[endnoteRef:N]", leaking raw
+            // OOXML tokens into prose AND colliding when a footnote and endnote share id N.
+            // Rewrite the run's text to namespaced GFM footnote references ([^fnN] / [^enN])
+            // that link to the namespaced definitions emitted by FootnoteExtractionVisitor.
+            val runText = rewriteNoteReferences(run.text() ?: "")
             if (run is XWPFHyperlinkRun) {
                 val url = try {
                     run.getHyperlink(doc)?.url
@@ -223,9 +228,36 @@ class DefaultHeadingParagraphVisitor : ParagraphVisitor {
         return sb.toString().trim()
     }
 
+    /**
+     * Rewrites POI's leaked footnote/endnote reference tokens to namespaced GFM footnote
+     * references (SF-7 / HX-2):
+     * - `[footnoteRef:N]` → `[^fnN]`
+     * - `[endnoteRef:N]`  → `[^enN]`
+     *
+     * POI's `XWPFRun.text()` synthesizes these `[footnoteRef:N]` / `[endnoteRef:N]` strings for
+     * `<w:footnoteReference>` / `<w:endnoteReference>` run children — there is no other text to
+     * intercept (the elements carry no text node), so a string rewrite on the run text is the
+     * faithful, lossless transform. The `fn`/`en` namespace prefix keeps a footnote and an
+     * endnote that share the same numeric id from colliding on a single `[^N]` label, and the
+     * markers match the definitions emitted by
+     * [com.workflow.orchestrator.document.poi.visitor.FootnoteExtractionVisitor].
+     */
+    private fun rewriteNoteReferences(text: String): String {
+        if (!text.contains("footnoteRef:") && !text.contains("endnoteRef:")) return text
+        return text
+            .replace(FOOTNOTE_REF_TOKEN) { "[^${NoteMarkers.FOOTNOTE_PREFIX}${it.groupValues[1]}]" }
+            .replace(ENDNOTE_REF_TOKEN) { "[^${NoteMarkers.ENDNOTE_PREFIX}${it.groupValues[1]}]" }
+    }
+
     private companion object {
         /** OMML namespace URI for `<m:t>` text elements. */
         const val OMML_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+
+        /** POI's synthesized footnote-reference token: `[footnoteRef:N]`. */
+        val FOOTNOTE_REF_TOKEN = Regex("""\[footnoteRef:(\d+)]""")
+
+        /** POI's synthesized endnote-reference token: `[endnoteRef:N]`. */
+        val ENDNOTE_REF_TOKEN = Regex("""\[endnoteRef:(\d+)]""")
     }
 
     private fun headingLevel(paragraph: XWPFParagraph): Int? {

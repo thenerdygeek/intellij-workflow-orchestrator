@@ -138,12 +138,11 @@ class ImageExtractionVisitor(
      * - diagram URI → emit a `[SmartArt: <name>]` placeholder (IMG-3).
      * - wordprocessingShape / wordprocessingCanvas URI → emit a `[Shape: <name>]` placeholder.
      *
-     * Known limitation: shapes authored inside `<mc:AlternateContent><mc:Choice>` (Word's
-     * forward-compat wrapper for newer DrawingML, e.g. some text-box shapes) are NOT children
-     * of the run via POI's `getDrawingList()`, so they are not surfaced here. Covering them
-     * would require an `mc:`-namespace XML cursor walk; deferred as a documented edge case
-     * since SmartArt diagrams and inline/anchored pictures (the dominant IMG-1/IMG-3 repros)
-     * are handled by the direct-child scan.
+     * IMG-3 remainder: shapes authored inside `<mc:AlternateContent><mc:Choice>` (Word's
+     * forward-compat wrapper for newer DrawingML, e.g. text-box / callout shapes) are NOT
+     * children of the run via POI's `getDrawingList()`, so the direct-child scan above misses
+     * them. [collectAlternateContentPlaceholders] recovers them with an `mc:`-namespace XmlCursor
+     * walk over the run XML and emits the same `[Shape: …]` / `[SmartArt: …]` placeholders.
      */
     private fun collectDrawingInfo(paragraph: XWPFParagraph): DrawingInfo {
         val altTexts = mutableListOf<String?>()
@@ -165,8 +164,92 @@ class ImageExtractionVisitor(
                     classifyGraphic(uri, docPr, altTexts, placeholders)
                 }
             }
+            // IMG-3 remainder: mc:AlternateContent-wrapped drawings POI's drawingList never returns.
+            placeholders += collectAlternateContentPlaceholders(ctr)
         }
         return DrawingInfo(altTexts, placeholders)
+    }
+
+    /**
+     * Walks the run's `<w:r>` XML for `<mc:AlternateContent>` blocks and emits a `[Shape: …]` /
+     * `[SmartArt: …]` placeholder for each drawing found inside their `<mc:Choice>` (the
+     * preferred newer-DrawingML branch). These drawings are siblings under `mc:Choice` rather
+     * than direct run children, so POI's `getDrawingList()` does not return them.
+     *
+     * For each `<wp:docPr>` (the drawing-level non-visual props carrying the shape name) we look
+     * forward to the nearest `<a:graphicData @uri>` within the same AlternateContent block to
+     * classify the object via [classifyGraphic]; a missing/unknown uri is treated as a generic
+     * shape so a named drawing is never silently dropped. We only descend `<mc:Choice>` (never
+     * `<mc:Fallback>`) to avoid double-counting the legacy VML rendering of the same shape.
+     *
+     * Uses XmlBeans' [org.apache.xmlbeans.XmlCursor] (same pattern as [TrackedChangeVisitor]);
+     * any parse/navigation failure degrades to no placeholder rather than throwing.
+     */
+    private fun collectAlternateContentPlaceholders(
+        ctr: org.openxmlformats.schemas.wordprocessingml.x2006.main.CTR,
+    ): List<DocumentBlock> {
+        val placeholders = mutableListOf<DocumentBlock>()
+        val cursor = try { ctr.newCursor() } catch (_: Exception) { return emptyList() }
+        try {
+            // Fast-path: only walk when an AlternateContent element is present in the run XML.
+            if (!cursor.xmlText().contains("AlternateContent")) return emptyList()
+
+            var inChoiceDepth = 0          // >0 while inside an <mc:Choice> subtree.
+            var pendingDocPrName: String? = null   // docPr name awaiting its graphicData uri.
+            var pendingUri: String? = null
+
+            while (cursor.hasNextToken()) {
+                cursor.toNextToken()
+                if (cursor.isStart) {
+                    val name = cursor.name ?: continue
+                    val local = name.localPart
+                    val ns = name.namespaceURI
+                    when {
+                        local == "Choice" && ns == MC_NS -> inChoiceDepth++
+                        inChoiceDepth > 0 && local == "docPr" -> {
+                            // Flush any prior pending docPr (no uri found) as a generic shape.
+                            flushPending(pendingDocPrName, pendingUri, placeholders)
+                            pendingDocPrName = cursor.getAttributeText(NAME_QNAME)?.trim()?.takeIf { it.isNotEmpty() }
+                            pendingUri = null
+                        }
+                        inChoiceDepth > 0 && local == "graphicData" -> {
+                            pendingUri = cursor.getAttributeText(URI_QNAME)?.trim()
+                        }
+                    }
+                } else if (cursor.isEnd) {
+                    val name = cursor.name
+                    if (name?.localPart == "Choice" && name.namespaceURI == MC_NS && inChoiceDepth > 0) {
+                        inChoiceDepth--
+                        if (inChoiceDepth == 0) {
+                            flushPending(pendingDocPrName, pendingUri, placeholders)
+                            pendingDocPrName = null
+                            pendingUri = null
+                        }
+                    }
+                }
+            }
+            flushPending(pendingDocPrName, pendingUri, placeholders)
+        } catch (_: Exception) {
+            // Cursor walk failed — return whatever was collected.
+        } finally {
+            cursor.dispose()
+        }
+        return placeholders
+    }
+
+    /**
+     * Emits one placeholder for a buffered AlternateContent drawing: a diagram uri → SmartArt,
+     * anything else (shape uri, missing, or unknown) → a generic shape. Skips when no docPr name
+     * was captured (an unnamed drawing carries no useful identity to surface).
+     */
+    private fun flushPending(name: String?, uri: String?, out: MutableList<DocumentBlock>) {
+        if (name == null) return
+        val kind = if (uri == DIAGRAM_URI) {
+            DocumentBlock.EmbeddedObjectRef.Kind.SMARTART
+        } else {
+            DocumentBlock.EmbeddedObjectRef.Kind.SHAPE
+        }
+        out += DocumentBlock.EmbeddedObjectRef(kind = kind, name = name)
     }
 
     /**
@@ -253,5 +336,13 @@ class ImageExtractionVisitor(
         const val DIAGRAM_URI = "http://schemas.openxmlformats.org/drawingml/2006/diagram"
         const val WPS_SHAPE_URI = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
         const val WPC_CANVAS_URI = "http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
+
+        // Markup-compatibility namespace (mc:AlternateContent / mc:Choice / mc:Fallback).
+        const val MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+
+        // Unqualified attributes read off elements during the mc: cursor walk. wp:docPr@name and
+        // a:graphicData@uri are both in the no-namespace attribute form.
+        val NAME_QNAME: javax.xml.namespace.QName = javax.xml.namespace.QName("name")
+        val URI_QNAME: javax.xml.namespace.QName = javax.xml.namespace.QName("uri")
     }
 }
