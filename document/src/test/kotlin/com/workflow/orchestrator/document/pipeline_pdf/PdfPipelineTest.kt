@@ -521,7 +521,7 @@ class PdfPipelineTest {
     // ── P4T2: PDF image XObjects and embedded file attachments ────────────────
 
     /**
-     * Builds a minimal one-page PDF with a 32×32 image XObject drawn on the page via
+     * Builds a minimal one-page PDF with a 120×120 image XObject drawn on the page via
      * [LosslessFactory] + [PDPageContentStream.drawImage]. When [ImageExtractionService] is
      * wired into [PdfPipeline.extract], the extractor must:
      * 1. Walk `PDResources.xObjectNames` and find the [PDImageXObject].
@@ -535,8 +535,9 @@ class PdfPipelineTest {
      * and renders via `BufferedImage` → PNG. This is the expected behaviour for JBIG2/CCITT
      * inline images as well.
      *
-     * The image fixture is 32×32 (bumped from 16×16 in Task 3) — the 32px minimum that passes
-     * the fragment filter in [ImageExtractionService.saveImage].
+     * The image fixture is 120×120 (16×16 → 32×32 in Task 3 → 120×120 for IMG-6) — large enough
+     * to clear both the [ImageExtractionService] 32px fragment floor AND the IMG-6 glyph-fragment
+     * gate ([PdfMetadataExtractor.GLYPH_FRAGMENT_MAX_SMALLER_DIM_PX] = 80) without a caption.
      */
     @Test
     fun `pdf with image XObject emits EmbeddedFileRef when ImageExtractionService is wired`(
@@ -655,10 +656,14 @@ class PdfPipelineTest {
     // ── P4T2 helpers ──────────────────────────────────────────────────────────
 
     /**
-     * Builds a one-page PDF containing a single 32×32 RGB image XObject.
+     * Builds a one-page PDF containing a single 120×120 RGB image XObject (no caption).
      *
-     * Previously 16×16, bumped to 32×32 in Task 3 so the image survives the fragment filter
-     * in [ImageExtractionService.saveImage] (images below 32px in either axis are dropped).
+     * History: 16×16 → 32×32 in Task 3 (to clear the [ImageExtractionService] 32 px fragment
+     * floor) → 120×120 for IMG-6. The IMG-6 glyph-fragment gate
+     * ([PdfMetadataExtractor.GLYPH_FRAGMENT_MAX_SMALLER_DIM_PX] = 80) suppresses a caption-less
+     * image whose SMALLER dimension is below 80 px; a 32×32 image now reads as glyph noise. This
+     * fixture exercises the "real, caption-less image emits a marker" path, so it must be large in
+     * both axes — 120×120 (smaller dim 120 ≥ 80) keeps the marker without needing a caption.
      */
     private fun buildPdfWithImageXObject(): ByteArray {
         val doc = org.apache.pdfbox.pdmodel.PDDocument()
@@ -666,10 +671,10 @@ class PdfPipelineTest {
         doc.addPage(page)
         val img = org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory.createFromImage(
             doc,
-            java.awt.image.BufferedImage(32, 32, java.awt.image.BufferedImage.TYPE_INT_RGB),
+            java.awt.image.BufferedImage(120, 120, java.awt.image.BufferedImage.TYPE_INT_RGB),
         )
         val cs = org.apache.pdfbox.pdmodel.PDPageContentStream(doc, page)
-        cs.drawImage(img, 100f, 700f, 50f, 50f)
+        cs.drawImage(img, 100f, 600f, 120f, 120f)
         cs.close()
         val out = java.io.ByteArrayOutputStream()
         doc.save(out); doc.close()

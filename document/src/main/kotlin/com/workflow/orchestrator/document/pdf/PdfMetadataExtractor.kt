@@ -140,6 +140,29 @@ class PdfMetadataExtractor(
             """^\s*(?:figure|fig\.?|table)\s+\d+""",
             RegexOption.IGNORE_CASE,
         )
+
+        /**
+         * IMG-6: glyph-fragment suppression threshold (pixels). A PDF image XObject is suppressed
+         * — emitted as NO `[image:` marker at all — when its **smaller** decoded pixel dimension is
+         * below this value AND it has no associated `Figure/Table N:` caption (the IMG-2 band lookup
+         * returned null). This is the principled discriminator: a real figure has a caption; a
+         * rasterised glyph / section-number fragment does not.
+         *
+         * Why "smaller dimension < 80" cleanly separates noise from content (corpus evidence,
+         * `nist-800-63b.pdf`):
+         * - The ~56 caption-less glyph fragments are 60–95 px wide but 38–41 px tall — their
+         *   *smaller* dimension is always ≤ 41 px, comfortably below 80.
+         * - Every real (even small) figure across the whole corpus has a smaller dimension ≥ 155 px
+         *   (800-63b's real images are 301×301, 988×155, 490×225; nist-csf Figs 1/2/3 are
+         *   ≥ 505 px; arxiv Fig 1 + the two uncaptioned arxiv figures are ≥ 445 px). 41 ≪ 80 ≪ 155
+         *   leaves a wide safety margin on both sides.
+         *
+         * This sits ABOVE [ImageExtractionService.MIN_IMAGE_DIMENSION_PX] (32 px, the unconditional
+         * fragment floor that drops glyphs even when captioned). Between 32 and 80 px an image
+         * survives ONLY if it carries a caption — the conservative middle band where caption is the
+         * tie-breaker. Caption present → always kept; smaller dim ≥ 80 → always kept.
+         */
+        const val GLYPH_FRAGMENT_MAX_SMALLER_DIM_PX = 80
     }
 
     /**
@@ -620,12 +643,32 @@ class PdfMetadataExtractor(
                 val name = "image-${objectName.name}.$ext"
 
                 // Render to PNG via BufferedImage — reliable across all compression schemes.
+                // Capture the decoded pixel dimensions while we have the BufferedImage; they feed
+                // the IMG-6 glyph-fragment gate below.
+                var imgWidth = -1
+                var imgHeight = -1
                 val bytes = try {
                     val img = xobject.image
+                    imgWidth = img.width
+                    imgHeight = img.height
                     val out = java.io.ByteArrayOutputStream()
                     javax.imageio.ImageIO.write(img, "PNG", out)
                     out.toByteArray()
                 } catch (_: Exception) { null }
+
+                // IMG-6: suppress decorative glyph / section-number fragments. An image is dropped
+                // (no marker at all) only when it is small (its SMALLER pixel dimension is below
+                // GLYPH_FRAGMENT_MAX_SMALLER_DIM_PX) AND has no associated Figure/Table caption
+                // (altText == null, the IMG-2 signal). The smaller dimension is the discriminator
+                // because glyph fragments are wide-but-short (e.g. 95×41 — width passes 80 but the
+                // 41 px height betrays it), whereas real figures are large in BOTH axes. A captioned
+                // figure is always kept regardless of size; a large image is always kept regardless
+                // of caption — keep if uncertain. Decode-failure (dims stay -1) does NOT trigger the
+                // gate, so non-raster or unreadable content is never silently lost.
+                val smallerDim = if (imgWidth in 1..imgHeight) imgWidth else imgHeight
+                if (altText == null && smallerDim in 1 until GLYPH_FRAGMENT_MAX_SMALLER_DIM_PX) {
+                    continue
+                }
 
                 if (bytes == null || bytes.size.toLong() > maxBytesPerImage) {
                     results += PositionedBlock(
