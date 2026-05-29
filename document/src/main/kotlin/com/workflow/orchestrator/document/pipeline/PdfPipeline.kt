@@ -25,9 +25,13 @@ import java.nio.file.Path
  * 3. **Annotation extraction** — [PdfMetadataExtractor] walks each page's annotation
  *    array via PDFBox and emits [DocumentBlock.Comment] blocks with
  *    [DocumentBlock.Comment.Kind.PDF_ANNOTATION]. Each block receives real PDF coordinates
- *    translated to reading-order Y (smaller = closer to top of page). Tika's
- *    `isExtractAnnotationText` flag remains `true` in Phase 1; the old untyped Paragraph
- *    leakage and the new typed Comment blocks coexist until Phase 4b dedupes them.
+ *    translated to reading-order Y (smaller = closer to top of page). [PdfMetadataExtractor]
+ *    is the **sole** annotation source: Tika's `isExtractAnnotationText` flag is `false`
+ *    (flipped in Phase 4b), so no untyped Paragraph annotation leakage coexists with the typed
+ *    Comment blocks. `isExtractMarkedContent` is also `false` (NAV-1 / G-1 + HX-1) — see
+ *    [hardenedPdfConfig]. Note: [PdfMetadataExtractor] only walks `PDAnnotationMarkup` (sticky
+ *    notes, highlights); harvesting `/Link` + `/URI` annotations into Markdown links is a
+ *    deferred P1 feature.
  *
  * 4. **Merge** — Table, prose, and annotation blocks are combined and sorted by `(page, top)`.
  *    Because Tabula table bboxes are real PDF units and prose bboxes are synthetic
