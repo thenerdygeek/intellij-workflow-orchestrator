@@ -77,8 +77,10 @@ class XlsxTableExtractorTest {
         // Find the row where first cell is "CRITICAL"
         val criticalRow = countsTable.rows.firstOrNull { it[0] == "CRITICAL" }
         assertNotNull(criticalRow, "Expected a row with Severity=CRITICAL in Counts sheet")
-        assertEquals("1", criticalRow!![1],
-            "COUNTIF formula for CRITICAL should evaluate to 1 (one BUG with CRITICAL severity)")
+        // P-1: the formula TEXT is surfaced alongside the evaluated value. The empty <v></v>
+        // recompute marker falls through the P-2 gate to live evaluation (one CRITICAL bug ⇒ 1).
+        assertEquals("=COUNTIF(Bugs!B:B,\"CRITICAL\") (1)", criticalRow!![1],
+            "COUNTIF formula text + evaluated value (1) should both be shown")
     }
 
     // ── 4. Notes sheet: merged value lives ONLY in the anchor cell (P-3) ──────
@@ -88,13 +90,22 @@ class XlsxTableExtractorTest {
         val blocks = loadFixture("bug-tracker.xlsx").use { extractor.extract(it) }
         val notesTable = notesTable(blocks)
 
-        // The Notes sheet has merged cells A2:A3 with value "Q1". Per the OOXML model the value
-        // belongs to the anchor (A2) only; A3 is genuinely blank. The extractor must NOT
-        // fabricate "Q1" into A3 (audit finding P-3).
-        assertTrue(notesTable.rows.size >= 2, "Notes table should have at least 2 rows")
-        assertEquals("Q1", notesTable.rows[0][0], "A2 (anchor, first data row) should be Q1")
-        assertEquals("", notesTable.rows[1][0],
-            "A3 (spanned, second data row) must be blank — the anchor value must not be duplicated")
+        // The Notes sheet is ENTIRELY textual (Section/Note header over Q1/Q2 labels). With no
+        // type break / styling / defined-table evidence, P-5 declines to promote row 1 to a
+        // header and uses positional column headers instead — so the original "Section"/"Note"
+        // row survives as the first DATA row and the A1-cell values shift down by one.
+        assertEquals(listOf("Col A", "Col B"), notesTable.headers,
+            "All-text Notes sheet has no header evidence ⇒ positional headers (P-5)")
+        assertEquals(listOf("Section", "Note"), notesTable.rows[0],
+            "The former 'header' row is now the first data row")
+
+        // The merged region A2:A3 (value "Q1") sits at table rows[1] (A2 anchor) / rows[2] (A3
+        // spanned). Per OOXML the value belongs to the anchor only; the spanned cell is blank
+        // and must NOT be fabricated (audit finding P-3).
+        assertTrue(notesTable.rows.size >= 3, "Notes table should have at least 3 rows")
+        assertEquals("Q1", notesTable.rows[1][0], "A2 (anchor) should be Q1")
+        assertEquals("", notesTable.rows[2][0],
+            "A3 (spanned) must be blank — the anchor value must not be duplicated")
     }
 
     @Test

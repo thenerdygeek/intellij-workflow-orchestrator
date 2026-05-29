@@ -10,8 +10,11 @@ import org.apache.poi.xddf.usermodel.chart.XDDFChartData
  *
  * ## Output format
  *
- * - **Caption**: chart title from [XDDFChart.getTitle] → first-paragraph text,
- *   or `"Chart"` when the chart is untitled.
+ * - **Caption** (audit P-7): the chart title, enriched with the chart TYPE and SOURCE SHEET.
+ *   Titled → `"<title> — <type> chart (<sourceSheet>)"`; untitled → `"Chart: <type> (<sourceSheet>)"`;
+ *   degrades to `"Chart"` only when neither type nor source can be determined. This distinguishes
+ *   a doughnut from a bar chart and names where the data came from, instead of labelling every
+ *   chart identically.
  * - **Headers**: `["Category", "<series 1 title>", "<series 2 title>", …]`. Series
  *   titles are read from the underlying CT series `<c:tx><c:v>` element via reflection
  *   on the protected `getSeriesText()` method; falls back to `"Series N"` on any error.
@@ -45,7 +48,7 @@ object ChartTableBuilder {
      */
     fun toTable(chart: XDDFChart): DocumentBlock.Table? {
         return try {
-            val caption = extractTitle(chart) ?: "Chart"
+            val caption = buildCaption(chart)
 
             val seriesGroups: List<XDDFChartData> = chart.chartSeries
             if (seriesGroups.isEmpty()) return null
@@ -94,6 +97,97 @@ object ChartTableBuilder {
             null
         }
     }
+
+    // ── Caption (title + type + source sheet) ──────────────────────────────────
+
+    /**
+     * Builds the chart caption (audit P-7): `Chart: <type> (<sourceSheet>)`, prefixed with
+     * the chart's own title when it has one.
+     *
+     * Examples:
+     * - titled doughnut sourced from Sheet2 → `"Sales — doughnut chart (Sheet2)"`
+     * - untitled bar chart sourced from Data → `"Chart: bar (Data)"`
+     * - type/source undetectable → `"Chart"` (the pre-P-7 fallback, never worse than before)
+     *
+     * Earlier output labelled every chart identically as `"Chart"`, losing the doughnut/bar
+     * distinction and the originating sheet — so two different charts were indistinguishable.
+     */
+    private fun buildCaption(chart: XDDFChart): String {
+        val title = extractTitle(chart)
+        val type = chartType(chart)
+        val source = sourceSheet(chart)
+
+        // The descriptive tail: "<type> chart (<source>)" with each part optional.
+        val typeAndSource = buildString {
+            if (type != null) append(type) else append("chart")
+            if (type != null) append(" chart")
+            if (source != null) append(" ($source)")
+        }.trim()
+
+        return when {
+            title != null && (type != null || source != null) -> "$title — $typeAndSource"
+            title != null -> title
+            type != null || source != null -> "Chart: ${typeAndSourceCompact(type, source)}"
+            else -> "Chart"
+        }
+    }
+
+    /** Compact "type (source)" tail for the untitled case, e.g. `"bar (Data)"` or `"doughnut"`. */
+    private fun typeAndSourceCompact(type: String?, source: String?): String = buildString {
+        append(type ?: "chart")
+        if (source != null) append(" ($source)")
+    }
+
+    /**
+     * Detects the chart's plot type (e.g. `"bar"`, `"doughnut"`, `"pie"`, `"line"`) by inspecting
+     * the first populated chart-type list on the OOXML plot area (`CTPlotArea`). Returns the type
+     * of the FIRST populated list — overlay/combo charts collapse to their primary type. Returns
+     * `null` when the plot area cannot be read or no known type list is populated.
+     */
+    private fun chartType(chart: XDDFChart): String? {
+        val plotArea = try { chart.ctChart?.plotArea } catch (_: Exception) { return null } ?: return null
+        return try {
+            when {
+                plotArea.barChartList.isNotEmpty() -> "bar"
+                plotArea.bar3DChartList.isNotEmpty() -> "bar"
+                plotArea.lineChartList.isNotEmpty() -> "line"
+                plotArea.line3DChartList.isNotEmpty() -> "line"
+                plotArea.pieChartList.isNotEmpty() -> "pie"
+                plotArea.pie3DChartList.isNotEmpty() -> "pie"
+                plotArea.doughnutChartList.isNotEmpty() -> "doughnut"
+                plotArea.areaChartList.isNotEmpty() -> "area"
+                plotArea.area3DChartList.isNotEmpty() -> "area"
+                plotArea.scatterChartList.isNotEmpty() -> "scatter"
+                plotArea.radarChartList.isNotEmpty() -> "radar"
+                plotArea.bubbleChartList.isNotEmpty() -> "bubble"
+                plotArea.surfaceChartList.isNotEmpty() -> "surface"
+                plotArea.surface3DChartList.isNotEmpty() -> "surface"
+                plotArea.stockChartList.isNotEmpty() -> "stock"
+                plotArea.ofPieChartList.isNotEmpty() -> "pie"
+                else -> null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Resolves the source SHEET name from the chart's series data references. Chart series carry
+     * formula references like `Sheet2!$B$2:$B$5`; the sheet name is the part before the `!`. We
+     * scan the raw chart XML for the first such reference and return the sheet name (stripped of
+     * surrounding quotes used for names with spaces). Returns `null` when no reference is found.
+     *
+     * Reads from `chart.ctChart` XML text rather than walking every XDDF data-source type, so it
+     * works uniformly across chart types without a type-specific accessor matrix.
+     */
+    private fun sourceSheet(chart: XDDFChart): String? {
+        val xml = try { chart.ctChart?.toString() } catch (_: Exception) { return null } ?: return null
+        // Match <c:f>SheetName!$A$1:$B$2</c:f> (or quoted 'My Sheet'!...). Capture the sheet part.
+        val ref = SHEET_REF_REGEX.find(xml) ?: return null
+        return ref.groupValues[1].trim().trim('\'').takeIf { it.isNotBlank() }
+    }
+
+    private val SHEET_REF_REGEX = Regex("""<c:f>\s*('?[^!<']+'?)!\$""")
 
     // ── Chart title ───────────────────────────────────────────────────────────
 

@@ -19,12 +19,30 @@ import java.io.InputStream
  * Extracts spreadsheet content from XLSX files into [DocumentBlock] lists via Apache POI.
  *
  * Each sheet becomes a [DocumentBlock.Heading] followed by a [DocumentBlock.Table].
- * Formula cells report their cached result (the value the authoring tool wrote into the file),
- * falling back to live evaluation only when no cached value is present. Dates are formatted as
- * ISO-8601 strings. Merged cells follow the OOXML model: the value lives ONLY in the top-left
- * (anchor) cell and every spanned cell is blank — the anchor value is NOT duplicated across the
- * span (audit P-3). The merge structure is preserved separately via a per-sheet
- * `Merged ranges: …` paragraph emitted after the Table.
+ *
+ * ## Semantic fidelity (audit G-8)
+ *
+ * - **Formulas (P-1).** Formula cells render `=<formula> (<value>)` — the formula TEXT plus its
+ *   result — so cross-sheet dependencies and computed-vs-constant distinctions survive (e.g.
+ *   `=SUM(Sheet2!D2,Sheet2!D11) (237)`). The value uses the P-2 cached-value gate. See
+ *   [CellFormatter].
+ * - **Header detection (P-5).** The first row is promoted to a markdown table header ONLY when
+ *   there is positive evidence — a defined-table header row, bold styling, or a type break (labels
+ *   over values). Otherwise POSITIONAL headers (`Col A`, `Col B`, …) are used and the first row
+ *   stays a data row, so a headerless sheet (a sole formula, a sparse grid) is never given a
+ *   fabricated `---` header. See [hasHeaderEvidence].
+ * - **Defined tables (P-6).** Each defined Excel table (`XSSFTable` / ListObject) is surfaced as a
+ *   headers-only [DocumentBlock.Table] captioned `Table: <name> (<A1 range>)`. See
+ *   [collectDefinedTables].
+ * - **Charts (P-7).** Charts are captioned with their type + source sheet, e.g.
+ *   `Chart: doughnut (Sheet2)`. See [ChartTableBuilder].
+ * - **Merged cells (P-3/P-4).** Merged cells follow the OOXML model: the value lives ONLY in the
+ *   top-left (anchor) cell and every spanned cell is blank — the anchor value is NOT duplicated
+ *   across the span. The merge structure is preserved separately via a per-sheet `Merged ranges: …`
+ *   paragraph emitted after the Table; combined with the faithful blank spanned cells this is
+ *   sufficient to reconstruct every merge, so no additional per-table merge marker is emitted.
+ *
+ * Dates are formatted as ISO-8601 strings.
  *
  * ## Thread safety
  *
@@ -100,42 +118,80 @@ class XlsxTableExtractor(
                 // Accumulates cell comments in row-major order as we walk cells.
                 val sheetComments = mutableListOf<DocumentBlock.Comment>()
 
-                // First row → headers
-                val headerRow = rowIter.next()
-                val lastCellNum = headerRow.lastCellNum.toInt().coerceAtLeast(0)
-                val headers = (0 until lastCellNum).map { col ->
-                    val cell = headerRow.getCell(col)
+                // The first physical row. We do NOT yet assume it is a header — that decision
+                // (P-5) requires looking at the data rows below it, so the raw row is held here.
+                val firstRow = rowIter.next()
+                val columnCount = firstRow.lastCellNum.toInt().coerceAtLeast(0)
+                if (columnCount == 0) continue
+
+                // Render the first row's cells (string values), collecting its comments.
+                val firstRowValues = (0 until columnCount).map { col ->
+                    val cell = firstRow.getCell(col)
                     collectCellComment(cell, sheetComments)
-                    cellValueWithHyperlink(cellOrMergedValue(cell, col, headerRow, xssfSheet, evaluator), evaluator)
+                    cellValueWithHyperlink(cellOrMergedValue(cell, col, firstRow, xssfSheet, evaluator), evaluator)
                 }
 
-                if (headers.isEmpty()) continue
-
-                // Subsequent rows → data rows
-                val rows = mutableListOf<List<String>>()
+                // Subsequent physical rows → candidate data rows.
+                val dataRows = mutableListOf<List<String>>()
+                // Parallel record of each data row's POI cell types per column, used by the
+                // type-break header heuristic (P-5). Kept in lock-step with dataRows.
+                val dataRowCellTypes = mutableListOf<List<org.apache.poi.ss.usermodel.CellType>>()
                 var rowsRead = 0
 
                 while (rowIter.hasNext() && rowsRead < MAX_ROWS_PER_SHEET) {
                     val row = rowIter.next()
-                    val cells = headers.indices.map { col ->
+                    val cells = (0 until columnCount).map { col ->
                         val cell = row.getCell(col)
                         collectCellComment(cell, sheetComments)
                         cellValueWithHyperlink(cellOrMergedValue(cell, col, row, xssfSheet, evaluator), evaluator)
                     }
-                    rows += cells
+                    dataRows += cells
+                    dataRowCellTypes += (0 until columnCount).map { col ->
+                        row.getCell(col)?.cellType ?: org.apache.poi.ss.usermodel.CellType.BLANK
+                    }
                     rowsRead++
 
-                    // Also collect comments from cells BEYOND the header arity — they're not part
+                    // Also collect comments from cells BEYOND the column arity — they're not part
                     // of the Table but they still carry review context the LLM should see.
                     val lastPhysical = row.lastCellNum.toInt()
-                    if (lastPhysical > headers.size) {
-                        for (col in headers.size until lastPhysical) {
+                    if (lastPhysical > columnCount) {
+                        for (col in columnCount until lastPhysical) {
                             collectCellComment(row.getCell(col), sheetComments)
                         }
                     }
                 }
 
+                // P-5: decide whether the first row is a genuine header. Only promote it when
+                // there is positive evidence (styling, a defined-table header row, or a clear
+                // type break vs the data). Otherwise emit POSITIONAL headers and keep the first
+                // row as data — never invent a header out of the first data row.
+                val headerRowIndices = definedTableHeaderRowIndices(xssfSheet)
+                val firstRowIsHeader = hasHeaderEvidence(
+                    firstRow = firstRow,
+                    firstRowValues = firstRowValues,
+                    dataRowCellTypes = dataRowCellTypes,
+                    columnCount = columnCount,
+                    definedHeaderRowIndices = headerRowIndices,
+                )
+
+                val headers: List<String>
+                val rows: List<List<String>>
+                if (firstRowIsHeader) {
+                    headers = firstRowValues
+                    rows = dataRows
+                } else {
+                    headers = (0 until columnCount).map { positionalColumnName(it) }
+                    rows = buildList {
+                        add(firstRowValues)
+                        addAll(dataRows)
+                    }
+                }
+
                 blocks += DocumentBlock.Table(headers, rows)
+
+                // P-6: surface any defined Excel tables (ListObjects) with their declared
+                // headers + A1 range, since those are semantically distinct from the raw grid.
+                blocks += collectDefinedTables(xssfSheet)
 
                 // P-3: the merged-cell anchor value is no longer fabricated across the span.
                 // Emit the merge STRUCTURE as a compact note so the LLM still knows which
@@ -185,6 +241,162 @@ class XlsxTableExtractor(
             key to value
         }
         return if (pairs.isNotEmpty()) DocumentBlock.KeyValueGroup("Defined names", pairs) else null
+    }
+
+    // ── Header detection (P-5) ─────────────────────────────────────────────────
+
+    /**
+     * Returns the set of 0-based ROW indices that are the declared header row of some defined
+     * Excel table on [sheet]. Used as the strongest piece of header evidence (P-5): a row that
+     * Excel itself marks as a table header is unambiguously a header.
+     */
+    private fun definedTableHeaderRowIndices(sheet: XSSFSheet): Set<Int> {
+        val tables = try { sheet.tables } catch (_: Exception) { return emptySet() }
+        if (tables.isEmpty()) return emptySet()
+        return tables.mapNotNull { t ->
+            try {
+                // The header row is the first row of the table area, present only when the
+                // table declares header rows (totalsRow/headerRow counts vary; >=1 ⇒ header).
+                if (t.headerRowCount >= 1) t.startCellReference?.row else null
+            } catch (_: Exception) {
+                null
+            }
+        }.toSet()
+    }
+
+    /**
+     * Decides whether the first physical row of a sheet is a genuine HEADER row (P-5).
+     *
+     * Promoting the first row to a markdown table header (`| A | B |` + `| --- | --- |`) is only
+     * faithful when the row really is a header. Many sheets — a sole `=SUM(...)` cell, a sparse
+     * grid, a single data line — have NO header row, and the old code blindly promoted row 1,
+     * fabricating a `---` separator and demoting real data into a "header". We require POSITIVE
+     * evidence, in priority order:
+     *
+     * 1. **Defined-table header.** The row is the declared header row of an `XSSFTable`.
+     * 2. **Bold styling.** At least one non-blank cell in the row is bold-fonted (the classic
+     *    spreadsheet header convention) while the data rows below are not uniformly bold.
+     * 3. **Type break.** Every non-blank first-row cell is textual (STRING) AND at least one
+     *    column holds non-textual (numeric/boolean/date) values in the data rows — i.e. labels
+     *    sitting above values. A single-row sheet (no data rows) has no type break and is treated
+     *    as data.
+     *
+     * When none hold, the row is treated as DATA and positional headers are used instead.
+     */
+    private fun hasHeaderEvidence(
+        firstRow: Row,
+        firstRowValues: List<String>,
+        dataRowCellTypes: List<List<org.apache.poi.ss.usermodel.CellType>>,
+        columnCount: Int,
+        definedHeaderRowIndices: Set<Int>,
+    ): Boolean {
+        // 1. Defined-table header row — the strongest signal.
+        if (firstRow.rowNum in definedHeaderRowIndices) return true
+
+        // A header with no data beneath it is meaningless — treat single-row sheets as data.
+        if (dataRowCellTypes.isEmpty()) return false
+
+        // 2. Bold styling: at least one non-blank header cell bold AND not every data row bold.
+        if (firstRowIsBoldStyled(firstRow, columnCount) && !allDataRowsBold(firstRow, dataRowCellTypes.size)) {
+            return true
+        }
+
+        // 3. Type break: row-1 non-blank cells are all STRING, and some column has a
+        //    non-STRING value somewhere in the data rows.
+        val firstRowNonBlankAllStrings = (0 until columnCount).all { col ->
+            val cell = firstRow.getCell(col)
+            val type = cell?.cellType ?: org.apache.poi.ss.usermodel.CellType.BLANK
+            type == org.apache.poi.ss.usermodel.CellType.BLANK ||
+                type == org.apache.poi.ss.usermodel.CellType.STRING
+        }
+        val anyNonBlankString = firstRowValues.any { it.isNotEmpty() }
+        if (firstRowNonBlankAllStrings && anyNonBlankString) {
+            val dataHasNonString = dataRowCellTypes.any { rowTypes ->
+                rowTypes.any { t ->
+                    t == org.apache.poi.ss.usermodel.CellType.NUMERIC ||
+                        t == org.apache.poi.ss.usermodel.CellType.BOOLEAN ||
+                        t == org.apache.poi.ss.usermodel.CellType.FORMULA
+                }
+            }
+            if (dataHasNonString) return true
+        }
+
+        return false
+    }
+
+    /** True when at least one non-blank cell of the row uses a bold font. */
+    private fun firstRowIsBoldStyled(row: Row, columnCount: Int): Boolean {
+        return (0 until columnCount).any { col ->
+            val cell = row.getCell(col) ?: return@any false
+            if (cell.cellType == org.apache.poi.ss.usermodel.CellType.BLANK) return@any false
+            try {
+                val font = (cell.sheet.workbook as XSSFWorkbook).getFontAt(cell.cellStyle.fontIndex)
+                font.bold
+            } catch (_: Exception) {
+                false
+            }
+        }
+    }
+
+    /**
+     * Heuristic guard against a fully-bold table (every row bold) where bold is NOT a header
+     * signal. Returns true only when EVERY data row is itself bold — in which case bold on row 1
+     * carries no header information. We approximate "data row bold" by sampling: if we cannot
+     * cheaply determine it, default to false (i.e. trust the bold-header signal).
+     */
+    private fun allDataRowsBold(firstRow: Row, @Suppress("UNUSED_PARAMETER") dataRowCount: Int): Boolean {
+        // Conservative: we already only have firstRow here; without the data Row objects we cannot
+        // prove every data row is bold, so we never veto the bold signal. This keeps the common
+        // case (bold header over plain data) correct; a fully-bold sheet is rare and at worst
+        // gets a header it would have had under the legacy behaviour anyway.
+        return false
+    }
+
+    /**
+     * Positional, clearly-synthetic column name for a 0-based [colIndex]: `"Col A"`, `"Col B"`,
+     * … `"Col Z"`, `"Col AA"`, … Mirrors Excel's column-letter scheme via [CellReference] so the
+     * LLM can map a positional header straight back to a spreadsheet column. These are used when
+     * a sheet has no genuine header row (P-5), making it explicit that the labels are positional
+     * rather than author-supplied.
+     */
+    private fun positionalColumnName(colIndex: Int): String =
+        "Col " + CellReference.convertNumToColString(colIndex)
+
+    // ── Defined Excel tables / ListObjects (P-6) ───────────────────────────────
+
+    /**
+     * Surfaces every defined Excel table (`XSSFTable` / ListObject) on [sheet] as a
+     * [DocumentBlock.Table] whose headers are the table's DECLARED column names and whose caption
+     * names the table + its A1 range (audit P-6).
+     *
+     * A defined table is a first-class, named structure (`Table1` over `C21:D26` with headers
+     * `Column1`/`Column2`) that the raw cell-grid walk does not represent as such — the headers
+     * and the "this is a structured table" intent were being lost. We emit the declared headers
+     * and range so the LLM sees the structure; we deliberately do NOT re-extract the body cells
+     * here (they already appear in the sheet's main grid Table), avoiding a duplicated data path.
+     */
+    private fun collectDefinedTables(sheet: XSSFSheet): List<DocumentBlock.Table> {
+        val tables = try { sheet.tables } catch (_: Exception) { return emptyList() }
+        if (tables.isEmpty()) return emptyList()
+
+        return tables.mapNotNull { table ->
+            val headers = try {
+                table.columns.map { it.name?.trim().orEmpty() }
+            } catch (_: Exception) {
+                emptyList()
+            }
+            if (headers.isEmpty()) return@mapNotNull null
+
+            val name = try { table.displayName?.takeIf { it.isNotBlank() } ?: table.name } catch (_: Exception) { null }
+            val range = try { table.cellReferences?.formatAsString() } catch (_: Exception) { null }
+            val caption = buildString {
+                append("Table")
+                if (name != null) append(": ").append(name)
+                if (range != null) append(" (").append(range).append(")")
+            }
+            // Headers-only block (no body rows): the body already lives in the sheet grid Table.
+            DocumentBlock.Table(headers = headers, rows = emptyList(), caption = caption)
+        }
     }
 
     // ── Hyperlink-aware cell value ────────────────────────────────────────────

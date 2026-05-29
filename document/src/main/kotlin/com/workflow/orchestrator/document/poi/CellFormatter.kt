@@ -21,7 +21,7 @@ import java.time.ZoneId
  * | `NUMERIC`, date-formatted | ISO-8601 date (`yyyy-MM-dd`) for whole-day values; ISO-8601 datetime for values with a non-zero time component |
  * | `NUMERIC`, plain | Integer string if the value is mathematically integral (e.g. `92` not `92.0`); otherwise `Double.toString()` |
  * | `BOOLEAN` | `"true"` or `"false"` |
- * | `FORMULA` | Evaluates via [FormulaEvaluator]; falls back to `cell.cellFormula` on error |
+ * | `FORMULA` | `=<formula> (<value>)` — formula TEXT plus result (P-1). Value uses the P-2 cached-value gate, else live [FormulaEvaluator]; degrades to `=<formula>` when no value is available |
  * | `BLANK` / `ERROR` | `""` |
  *
  * Trailing whitespace is trimmed from every result.
@@ -72,17 +72,49 @@ object CellFormatter {
         }
     }
 
+    /**
+     * Renders a formula cell as `=<formula> (<value>)` — the formula TEXT plus its result.
+     *
+     * ## Why surface the formula text (audit P-1)
+     *
+     * Reporting only the cached/evaluated number drops every cross-sheet dependency and makes a
+     * computed total (`=SUM(Sheet2!D2,Sheet2!D11)` → `237`) indistinguishable from a hand-entered
+     * constant `237`. The LLM then cannot tell which figures are derived nor trace where they come
+     * from. Emitting the formula alongside the value (`=SUM(Sheet2!D2,Sheet2!D11) (237)`) preserves
+     * the dependency graph while still showing the realised number.
+     *
+     * The VALUE component reuses the P-2 cached-value gate ([cachedFormulaResult]) so the
+     * authoring tool's `<v>` is honoured over POI's re-evaluation; only when there is no usable
+     * cached value do we fall back to live evaluation. When the value is empty/unavailable we emit
+     * just `=<formula>` (no trailing `( )`).
+     */
     private fun formulaToString(cell: Cell, evaluator: FormulaEvaluator?): String {
-        // P-2 [data fidelity]: prefer the cached formula result the authoring tool wrote into
-        // the file (`<v>…</v>`) over POI's own re-evaluation. Re-evaluating diverges from the
-        // source whenever the workbook references cells/sheets the writer did not materialise
-        // (e.g. excelize emits `=SUM(C1:D1)` with cached `1` even when C1/D1 are absent — POI
-        // would recompute `0` and silently corrupt the value). The cached value is the ground
-        // truth a spreadsheet reader sees on open, so report it faithfully.
+        val formulaText = try { cell.cellFormula.trim() } catch (_: Exception) { "" }
+        val prefix = if (formulaText.isNotEmpty()) "=$formulaText" else ""
+
+        val value = formulaValue(cell, evaluator)
+        return when {
+            prefix.isEmpty() -> value
+            value.isEmpty() -> prefix
+            else -> "$prefix ($value)"
+        }
+    }
+
+    /**
+     * Resolves the result of a formula [cell] as a plain string (no formula text).
+     *
+     * P-2 [data fidelity]: prefer the cached formula result the authoring tool wrote into
+     * the file (`<v>…</v>`) over POI's own re-evaluation. Re-evaluating diverges from the
+     * source whenever the workbook references cells/sheets the writer did not materialise
+     * (e.g. excelize emits `=SUM(C1:D1)` with cached `1` even when C1/D1 are absent — POI
+     * would recompute `0` and silently corrupt the value). The cached value is the ground
+     * truth a spreadsheet reader sees on open, so report it faithfully.
+     */
+    private fun formulaValue(cell: Cell, evaluator: FormulaEvaluator?): String {
         cachedFormulaResult(cell)?.let { return it }
 
         // No usable cached result on the cell — fall back to evaluation.
-        if (evaluator == null) return cell.cellFormula
+        if (evaluator == null) return ""
 
         return try {
             val result = evaluator.evaluate(cell) ?: return ""
@@ -93,10 +125,10 @@ object CellFormatter {
                 CellType.BLANK, CellType.ERROR -> ""
                 else -> ""
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // Formula evaluation failed (e.g. circular reference, missing function).
-            // Fall back to the raw formula string so the caller still gets something useful.
-            cell.cellFormula
+            // The formula text alone is still useful, so the value is empty here.
+            ""
         }
     }
 

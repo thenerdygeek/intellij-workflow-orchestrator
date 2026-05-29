@@ -36,12 +36,15 @@ class XlsxDataFidelityTest {
         //   merged block A2:C4 (anchor A2="ANCHOR")
         //   surrounding data so the span is unambiguous.
         val bytes = buildXlsx { wb ->
+            // Bold the header so P-5 recognises it as a real header (this test isolates P-3
+            // merged-cell semantics; it must not be entangled with header detection).
+            val headerStyle = wb.createCellStyle().apply { setFont(wb.createFont().apply { bold = true }) }
             val sheet = wb.createSheet("Sheet1")
             val h = sheet.createRow(0)
-            h.createCell(0).setCellValue("A")
-            h.createCell(1).setCellValue("B")
-            h.createCell(2).setCellValue("C")
-            h.createCell(3).setCellValue("D")
+            h.createCell(0).apply { setCellValue("A"); cellStyle = headerStyle }
+            h.createCell(1).apply { setCellValue("B"); cellStyle = headerStyle }
+            h.createCell(2).apply { setCellValue("C"); cellStyle = headerStyle }
+            h.createCell(3).apply { setCellValue("D"); cellStyle = headerStyle }
 
             // Rows 1..3 (0-indexed) form the merged block rows.
             val r1 = sheet.createRow(1)
@@ -118,15 +121,18 @@ class XlsxDataFidelityTest {
         val blocks = extractor.extract(ByteArrayInputStream(bytes))
         val table = blocks.filterIsInstance<DocumentBlock.Table>().first()
 
-        // The cell holding the cached value of 1 must render "1", not "0".
+        // The formula cell must render its formula text WITH the faithful cached value "1"
+        // (P-1 + P-2) — never the stale re-evaluation "0".
         val flat = table.rows.flatten()
+        val formulaCell = flat.firstOrNull { it.startsWith("=SUM(") }
+        assertNotNull(formulaCell, "Expected a formula cell; got: $flat")
         assertTrue(
-            flat.contains("1"),
-            "Expected the cached formula value '1' to be reported faithfully; got cells: $flat"
+            formulaCell!!.endsWith("(1)"),
+            "Cached formula value '1' must be reported faithfully (not stale '0'); got: '$formulaCell'"
         )
         assertTrue(
-            flat.none { it == "0" } || flat.count { it == "1" } >= 1,
-            "The cell with cached <v>1</v> must not be reported as 0; cells: $flat"
+            !formulaCell.contains("(0)"),
+            "The cell with cached <v>1</v> must not be reported as 0; got: '$formulaCell'"
         )
     }
 
@@ -144,9 +150,10 @@ class XlsxDataFidelityTest {
 
         val blocks = extractor.extract(ByteArrayInputStream(bytes))
         val flat = blocks.filterIsInstance<DocumentBlock.Table>().first().rows.flatten()
+        // P-1: formula text + cached string value, e.g. =CONCATENATE("foo","bar") (CACHED_STR).
         assertTrue(
-            flat.contains("CACHED_STR"),
-            "Cached string formula result must be reported; got: $flat"
+            flat.any { it.contains("CACHED_STR") && it.startsWith("=CONCATENATE") },
+            "Cached string formula result must be reported with formula text; got: $flat"
         )
     }
 

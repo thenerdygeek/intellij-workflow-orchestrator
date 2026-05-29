@@ -311,7 +311,7 @@ class XlsxExtractorFormatGapsTest {
     // ── Formulas ──────────────────────────────────────────────────────────────
 
     @Test
-    fun `formula text is intentionally dropped — only the evaluated value is extracted`() {
+    fun `formula text is emitted alongside the evaluated value (P-1)`() {
         val bytes = buildXlsx { wb ->
             val sheet = wb.createSheet("Sheet1")
             sheet.createRow(0).createCell(0).setCellValue("X")
@@ -319,9 +319,14 @@ class XlsxExtractorFormatGapsTest {
         }
 
         val blocks = extractor.extract(ByteArrayInputStream(bytes))
-        val cell = blocks.filterIsInstance<DocumentBlock.Table>().first().rows[0][0]
+        val flat = blocks.filterIsInstance<DocumentBlock.Table>().first().rows.flatten()
 
-        assertEquals("6", cell, "Formula is evaluated; the LLM sees the answer, not the recipe")
+        // P-1 reversed the prior "drop the formula text" decision: the LLM now sees BOTH the
+        // recipe and the answer so computed cells are distinguishable from hand-entered constants.
+        assertTrue(
+            flat.any { it == "=1+2+3 (6)" },
+            "Expected '=1+2+3 (6)' (formula text + evaluated value); got: $flat",
+        )
     }
 
     // ── Hidden sheets ─────────────────────────────────────────────────────────
@@ -359,8 +364,11 @@ class XlsxExtractorFormatGapsTest {
     @Test
     fun `gap rich text bold and color formatting is dropped on output`() {
         val bytes = buildXlsx { wb ->
+            // Bold the header so P-5 treats row 1 as a header (this test isolates rich-text
+            // flattening, not header detection).
+            val headerStyle = wb.createCellStyle().apply { setFont(wb.createFont().apply { bold = true }) }
             val sheet = wb.createSheet("Sheet1")
-            sheet.createRow(0).createCell(0).setCellValue("Status")
+            sheet.createRow(0).createCell(0).apply { setCellValue("Status"); cellStyle = headerStyle }
             val cell = sheet.createRow(1).createCell(0)
             val rich = wb.creationHelper.createRichTextString("CRITICAL")
             // POI rich-text font application — only verifying the value path drops it.
@@ -498,10 +506,13 @@ class XlsxExtractorFormatGapsTest {
             "Expected at least 2 Table blocks (sheet data + chart); got ${tables.size}. " +
                 "All blocks: ${blocks.map { it::class.simpleName }}")
 
-        // The chart table has caption "Monthly Metrics" — find it.
-        val chartTable = tables.firstOrNull { it.caption == "Monthly Metrics" }
+        // The chart table caption begins with the chart title "Monthly Metrics" and (P-7) is
+        // enriched with the chart type + source sheet, e.g. "Monthly Metrics — bar chart (Sheet1)".
+        val chartTable = tables.firstOrNull { it.caption?.startsWith("Monthly Metrics") == true }
         assertNotNull(chartTable,
-            "Expected a Table with caption='Monthly Metrics'; found captions: ${tables.map { it.caption }}")
+            "Expected a Table whose caption starts with 'Monthly Metrics'; found captions: ${tables.map { it.caption }}")
+        assertTrue(chartTable!!.caption!!.contains("bar", ignoreCase = true),
+            "P-7: chart caption should name the type (bar); caption='${chartTable.caption}'")
 
         checkNotNull(chartTable)
         assertEquals(listOf("Category", "Sales", "Returns"), chartTable.headers,
