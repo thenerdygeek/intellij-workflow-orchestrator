@@ -54,6 +54,19 @@ class TikaXhtmlPipeline {
 
         val metadata = Metadata().apply {
             if (mime != null) {
+                // Pass the bare MIME (no charset). The encoding detector chain in
+                // tika-config.xml owns charset resolution:
+                //   1. StandardHtmlEncodingDetector — WHATWG pre-scan: BOM → in-document
+                //      `<meta charset>` / Content-Type → null for HTML with no declaration,
+                //      and null for non-HTML.
+                //   2. HtmlDefaultUtf8EncodingDetector — for HTML only, defaults to UTF-8 when
+                //      (1) found nothing declared (SF-6: never let the statistical detector
+                //      mis-guess undeclared HTML as windows-1252).
+                //   3. UniversalEncodingDetector — statistical fallback for non-HTML formats.
+                // We must NOT stuff `charset=…` into the Content-Type here: doing so would let
+                // the passed value override a legitimately declared in-document `<meta charset>`
+                // (verified — StandardHtmlEncodingDetector trusts a Content-Type charset over a
+                // conflicting meta in some buffer layouts), corrupting genuinely non-UTF-8 pages.
                 set(Metadata.CONTENT_TYPE, mime)
             }
         }

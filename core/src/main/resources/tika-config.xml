@@ -13,6 +13,34 @@
     </parsers>
     <service-loader dynamic="false" loadErrorHandler="THROW"/>
     <encodingDetectors>
+        <!-- ORDER MATTERS. Tika tries detectors in declaration order; the first non-null
+             charset wins (CompositeEncodingDetector).
+
+             SF-6 fix: StandardHtmlEncodingDetector MUST run first for HTML. It implements the
+             WHATWG HTML "encoding sniffing" pre-scan (BOM → declared `<meta charset>` /
+             `Content-Type`). The previous config listed ONLY the statistical
+             UniversalEncodingDetector (juniversalchardet), which samples a prefix of the
+             stream; for HTML whose multibyte glyphs sit deep in the body (e.g. a long
+             Wikipedia page where language/place names like `Español`/`Türkçe`/`São Tomé`
+             appear after ~20 KB of ASCII), the prefix looks pure-ASCII and it defaulted to
+             windows-1252, mis-decoding every UTF-8 multibyte sequence into mojibake
+             (`Español` → `EspaÃ±ol`, `–` → `â€"`). Honoring the declared charset first fixes
+             this and makes a declared non-UTF-8 charset authoritative.
+
+             StandardHtmlEncodingDetector returns null for non-HTML and for HTML that declares
+             nothing.
+
+             Class lives in tika-parser-html-module (a :document dependency, kept — see
+             document/build.gradle.kts); resolvable at TikaConfig load time under the
+             :document classloader, so it is compatible with loadErrorHandler="THROW".
+             :core never constructs TikaConfig, so this adds no requirement on :core. -->
+        <encodingDetector class="org.apache.tika.parser.html.charsetdetector.StandardHtmlEncodingDetector"/>
+        <!-- HTML-only UTF-8 default (SF-6). Reached only when (1) found nothing declared for an
+             HTML resource; returns UTF-8 for HTML and null for everything else so the
+             statistical detector below still governs non-HTML. Lives in :document
+             (resolvable at TikaConfig load time under the :document classloader). -->
+        <encodingDetector class="com.workflow.orchestrator.document.tika.HtmlDefaultUtf8EncodingDetector"/>
+        <!-- Statistical fallback for non-HTML formats (CSV / plain text / RTF / …). -->
         <encodingDetector class="org.apache.tika.parser.txt.UniversalEncodingDetector"/>
     </encodingDetectors>
 </properties>
