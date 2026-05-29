@@ -127,11 +127,14 @@ class DocumentArtifactStoreSliceTest {
     @Test
     fun `available sections list is capped to keep the hint token-frugal`() = runTest {
         val md = "x".repeat(10)
-        val many = (1..50).map { DocumentIndex.Anchor("Section $it", 0) }
+        val total = DocumentArtifactStore.MAX_AVAILABLE_SECTIONS + 25
+        val many = (1..total).map { DocumentIndex.Anchor("Section $it", 0) }
         val index = DocumentIndex(pages = emptyList(), sections = many)
         val art = materialize(md, index)
         val slice = store.slice(art, index, DocumentCursor.Offset(0), maxChars = 5)
         assertEquals(DocumentArtifactStore.MAX_AVAILABLE_SECTIONS, slice.availableSections.size)
+        // Truncation must be explicit — the true total is reported, not silently dropped.
+        assertEquals(total, slice.totalSectionCount)
     }
 
     // ── Table-caption anchors: availableTables (capped) + section= resolves a table ──

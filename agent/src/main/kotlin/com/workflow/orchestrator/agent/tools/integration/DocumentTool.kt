@@ -484,7 +484,8 @@ class DocumentTool(
                         "Re-call with section=<one of these> (or page=N). Showing the document start below.]"
                 }
             } else {
-                "[Section '$sectionArg' not found. Available sections: ${renderSectionList(slice.availableSections)}.$tablesClause " +
+                "[Section '$sectionArg' not found. Available sections${truncationNote(slice)}: " +
+                    "${renderSectionList(slice.availableSections)}.$tablesClause " +
                     "Re-call with section=<one of these> (or page=N). Showing the document start below.]"
             }
         } else null
@@ -504,7 +505,7 @@ class DocumentTool(
             // Discoverability: surface valid section names on a normal (non-miss) read when there
             // is more to read, so the LLM learns it can jump with section=. Token-frugal one-liner.
             if (sectionMissBanner == null && slice.remaining > 0 && slice.availableSections.isNotEmpty()) {
-                append("\n\n[Sections: ${renderSectionList(slice.availableSections)}]")
+                append("\n\n[Sections${truncationNote(slice)}: ${renderSectionList(slice.availableSections)}]")
             }
             // Tables get their OWN line (kept separate from sections) so the LLM can jump to a
             // table by caption/number via section=. Surfaced on both miss and normal-read paths.
@@ -555,6 +556,17 @@ class DocumentTool(
             tokenEstimate = TokenEstimator.estimate(body), isError = false)
     }
 
+    /**
+     * Explicit-truncation note for a section list — `" (showing 200 of 214)"` when the surfaced
+     * window is smaller than the document's true section count, else empty. Makes truncation
+     * visible so the LLM knows deep subsections may exist beyond the listed ones (and that a
+     * section= it doesn't see may still resolve), rather than concluding the list is exhaustive.
+     */
+    private fun truncationNote(slice: com.workflow.orchestrator.core.model.DocumentSlice): String =
+        if (slice.totalSectionCount > slice.availableSections.size)
+            " (showing ${slice.availableSections.size} of ${slice.totalSectionCount})"
+        else ""
+
     /** Joins section labels into a compact pipe-separated hint, capped to keep the output frugal. */
     private fun renderSectionList(sections: List<String>): String {
         val shown = sections.take(MAX_SECTIONS_IN_HINT)
@@ -563,7 +575,13 @@ class DocumentTool(
     }
 
     private companion object {
-        /** Cap on the number of section labels rendered inline in a hint/miss message. */
-        const val MAX_SECTIONS_IN_HINT = 30
+        /**
+         * Cap on the number of section labels rendered inline in a hint/miss message. Aligned with
+         * `DocumentArtifactStore.MAX_AVAILABLE_SECTIONS` (200) so the tool renders the FULL window
+         * the store surfaced — deep subsections past the old 30 are now visible, and the explicit
+         * `truncationNote` ("showing N of M") reports any store-level truncation rather than this
+         * renderer silently dropping a second time.
+         */
+        const val MAX_SECTIONS_IN_HINT = 200
     }
 }

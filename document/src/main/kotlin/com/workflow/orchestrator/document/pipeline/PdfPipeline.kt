@@ -195,8 +195,9 @@ class PdfPipeline(
         // so the heading text still appears in the body (it is real on-page content). The outline
         // Headings remain the sole section-anchor source. When there is no outline this is a no-op
         // and the heuristic headings flow through unchanged (rfc7230 / nist-csf path).
-        val outlineSeeded = metadata.any { it.block is DocumentBlock.Heading }
-        val proseForMerge = if (outlineSeeded) demoteProseHeadings(prose) else prose
+        val outlineHeadings = metadata.mapNotNull { (it.block as? DocumentBlock.Heading) }
+        val outlineSeeded = outlineHeadings.isNotEmpty()
+        val proseForMerge = if (outlineSeeded) demoteProseHeadings(prose, outlineHeadings) else prose
 
         // Dedup pass: when Tabula extracted a Table, the same cell content also appears in
         // Tika's prose stream as flat whitespace-separated lines. Drop the prose paragraphs
@@ -637,16 +638,56 @@ class PdfPipeline(
      * index with inverted levels and over-promoted body lines. We DEMOTE (not delete) so the
      * line's text — which is genuine on-page content — survives in the body markdown; it simply
      * stops being a section anchor.
+     *
+     * ## Additive keep for uncovered deep subsections
+     *
+     * A real spec's outline can be SHALLOW (stops at `2.4.4`) while the body carries DEEPER
+     * numbered headings (`2.4.4.1 Request Context`). Blanket demotion would drop those deeper
+     * headings → they never anchor → `section="2.4.4.1"` can't resolve (the agent must fall back
+     * to `page=`). So demotion is ADDITIVE: a heuristic heading is KEPT (left as a Heading anchor)
+     * when BOTH hold:
+     *  1. its text begins with a WELL-FORMED dotted section number (`^\d+(\.\d+){1,4}\s+\S`) — a
+     *     conservative gate that admits real numbered subsections (`2.4.4.1`, `9.1.1.1.5`) but not
+     *     arbitrary prose, acronyms, or chrome (which is exactly the NAV-3 noise G-5 removed); AND
+     *  2. that number is NOT already covered by any outline anchor at ANY depth — the outline
+     *     remains the canonical source; this only SUPPLEMENTS it with the deeper labels it lacks.
+     *
+     * Everything else — non-numbered heuristic headings (the NAV-3 noise: chrome, acronym rows,
+     * sentence fragments) and any numbered heading the outline already covers — is still demoted,
+     * so no double-anchoring and no re-introduction of the noise the outline-seeding fix removed.
      */
     private fun demoteProseHeadings(
         prose: List<PositionedBlock<DocumentBlock>>,
-    ): List<PositionedBlock<DocumentBlock>> =
-        prose.map { pb ->
+        outlineHeadings: List<DocumentBlock.Heading>,
+    ): List<PositionedBlock<DocumentBlock>> {
+        val outlineNumbers: Set<String> = outlineHeadings
+            .mapNotNull { leadingSectionNumber(it.text) }
+            .toSet()
+        return prose.map { pb ->
             when (val b = pb.block) {
-                is DocumentBlock.Heading -> PositionedBlock(pb.page, pb.top, pb.bottom, DocumentBlock.Paragraph(b.text))
+                is DocumentBlock.Heading -> {
+                    val number = leadingSectionNumber(b.text)
+                    val keepAsSupplementalAnchor = number != null && number !in outlineNumbers
+                    if (keepAsSupplementalAnchor) {
+                        pb // KEEP: a well-formed numbered subsection the outline doesn't cover.
+                    } else {
+                        PositionedBlock(pb.page, pb.top, pb.bottom, DocumentBlock.Paragraph(b.text))
+                    }
+                }
                 else -> pb
             }
         }
+    }
+
+    /**
+     * Returns the leading dotted section number of a heading label normalised WITHOUT any trailing
+     * dot ("2.4.4.1" from "2.4.4.1 Request Context", "2.4.4" from "2.4.4. Common Parameters"), or
+     * null when the label is not a well-formed numbered heading. Conservative: requires 2–5 numeric
+     * segments AND a following non-space token, so a bare integer, a date, or arbitrary prose never
+     * qualifies. Used both to test outline coverage and to gate the additive-keep above.
+     */
+    private fun leadingSectionNumber(text: String): String? =
+        NUMBERED_HEADING_LABEL.find(text.trim())?.groupValues?.get(1)?.trimEnd('.')
 
     private fun String.normalizeForDedup(): String =
         lowercase().trim { it in PUNCT_TRIM }
@@ -910,5 +951,16 @@ class PdfPipeline(
 
         /** SF-10 — a paragraph ending in a soft line-wrap hyphen: `<lowercase>-` at end of text. */
         val SOFT_HYPHEN_TAIL = Regex("[a-z]-$")
+
+        /**
+         * A well-formed numbered-heading label: a leading dotted section number with 2–5 numeric
+         * segments (`2.4.4.1`, `9.1.1.1.5`), an optional trailing dot, then whitespace and a
+         * non-space token (the title). Group 1 is the dotted number. Used by the additive-keep in
+         * [demoteProseHeadings] to (a) record outline coverage and (b) gate which uncovered
+         * heuristic subsections survive demotion. Conservative — 2+ segments excludes bare integers
+         * (list enumerators / chart axes), and the trailing-title requirement excludes a dangling
+         * number. Mirrors the depth that `DocumentBlockHandler`'s numbered-heading detectors accept.
+         */
+        val NUMBERED_HEADING_LABEL = Regex("^(\\d+(?:\\.\\d+){1,4}\\.?)\\s+\\S")
     }
 }

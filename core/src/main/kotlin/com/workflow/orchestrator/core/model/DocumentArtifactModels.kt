@@ -15,7 +15,13 @@ sealed interface DocumentCursor {
  *
  * @param availableSections Section-anchor labels present in the document (capped by the store),
  *   so the caller can render a discoverability hint and a section-miss can list valid targets.
- *   Empty when the document has no reliable section anchors.
+ *   Empty when the document has no reliable section anchors. On a section= MISS the store biases
+ *   this window toward the query's number-prefix neighborhood (e.g. query `2.4.4.1` surfaces the
+ *   `2.4.x` family first) so the relevant subsections are visible even past the cap.
+ * @param totalSectionCount The TRUE number of section anchors in the document, BEFORE the
+ *   [availableSections] cap. When this exceeds `availableSections.size` the list is truncated, and
+ *   the caller must say so explicitly ("showing N of M") rather than letting the truncation be
+ *   silent. Equals `availableSections.size` when nothing was dropped.
  * @param sectionMatched For a `section=` request: `true` if the label resolved to an anchor,
  *   `false` if it did NOT (the slice fell back to offset 0 — an explicit miss, NOT a real
  *   heading legitimately at offset 0). `null` when the request was not a section lookup.
@@ -33,6 +39,7 @@ data class DocumentSlice(
     val pageOfStart: Int?,
     val totalPages: Int?,
     val availableSections: List<String> = emptyList(),
+    val totalSectionCount: Int = 0,
     val sectionMatched: Boolean? = null,
     val availableTables: List<String> = emptyList(),
 )

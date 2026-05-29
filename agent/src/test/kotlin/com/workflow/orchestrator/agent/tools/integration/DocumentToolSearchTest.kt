@@ -174,7 +174,7 @@ class DocumentToolSearchTest {
     fun `blank search falls through to slice path`() = runTest {
         val svc = mockk<DocumentArtifactService>()
         coEvery { svc.read(any(), any(), any()) } returns ToolResult.success(
-            data = DocumentSlice("BODY", 0, 4, 0, 1, 1, emptyList(), null),
+            data = DocumentSlice("BODY", 0, 4, 0, 1, 1, emptyList(), sectionMatched = null),
             summary = "Read 4 chars (offset=0, remaining=0).",
         )
         val params = buildJsonObject {

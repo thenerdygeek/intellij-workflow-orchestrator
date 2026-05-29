@@ -144,6 +144,13 @@ class DocumentArtifactStore(
      * ([DocumentSlice.sectionMatched] = `false`) rather than silently serving offset 0, and the
      * available section anchors are always surfaced ([DocumentSlice.availableSections], capped at
      * [MAX_AVAILABLE_SECTIONS]) so the caller can guide the LLM toward valid navigation targets.
+     *
+     * Discoverability (fix a): the surfaced section window is capped but the TRUE count is reported
+     * in [DocumentSlice.totalSectionCount] so the caller can render an explicit "showing N of M"
+     * truncation note instead of letting deep subsections silently fall off the end. On a section=
+     * MISS the window is BIASED toward the query's number-prefix neighborhood (a query `2.4.4.1`
+     * surfaces the `2.4.x` family first) via [biasSectionsTowardQuery], so the relevant subsection
+     * family is visible even on a spec with hundreds of headings.
      */
     suspend fun slice(
         artifact: DocumentArtifact,
@@ -168,6 +175,18 @@ class DocumentArtifactStore(
 
         val end = (resolved + maxChars).coerceAtMost(md.length)
         val content = md.substring(resolved, end)
+
+        // On a section= MISS, bias the surfaced window toward the query's number-prefix
+        // neighborhood so the family the LLM was reaching for (e.g. the 2.4.x subsections) is
+        // visible even past the cap; otherwise surface the natural document-order prefix.
+        val sectionKeys = index.sections.map { it.key }
+        val surfacedSections =
+            if (sectionMatched == false && cursor is DocumentCursor.Section) {
+                biasSectionsTowardQuery(sectionKeys, cursor.heading).take(MAX_AVAILABLE_SECTIONS)
+            } else {
+                sectionKeys.take(MAX_AVAILABLE_SECTIONS)
+            }
+
         return DocumentSlice(
             content = content,
             startOffset = resolved,
@@ -175,11 +194,38 @@ class DocumentArtifactStore(
             remaining = md.length - end,
             pageOfStart = index.pageAt(resolved),
             totalPages = artifact.meta.pageCount,
-            availableSections = index.sections.take(MAX_AVAILABLE_SECTIONS).map { it.key },
+            availableSections = surfacedSections,
+            totalSectionCount = sectionKeys.size,
             sectionMatched = sectionMatched,
             availableTables = index.tables.take(MAX_AVAILABLE_TABLES).map { it.key },
         )
     }
+
+    /**
+     * Reorders [sections] so the entries sharing the longest leading number-prefix with [query]
+     * come first (document order preserved within each tier), then everything else in document
+     * order. So a miss on `"2.4.4.1"` surfaces the `2.4.4.x` siblings, then the `2.4.x` family,
+     * before unrelated sections — making the relevant neighborhood visible even when it would
+     * otherwise fall past the cap. A query with no leading number returns [sections] unchanged.
+     */
+    private fun biasSectionsTowardQuery(sections: List<String>, query: String): List<String> {
+        val queryNumber = leadingDottedNumber(query.trim()) ?: return sections
+        // Score by the number of shared leading dotted segments (e.g. "2.4.4" shares 3 with
+        // "2.4.4.2"; "2.4" shares 2). Higher score = closer neighbor. Stable sort keeps document
+        // order within a score tier and leaves score-0 entries trailing in their original order.
+        val querySegs = queryNumber.split('.')
+        return sections.sortedByDescending { key ->
+            val keyNumber = leadingDottedNumber(key) ?: return@sortedByDescending 0
+            val keySegs = keyNumber.split('.')
+            var shared = 0
+            while (shared < querySegs.size && shared < keySegs.size && querySegs[shared] == keySegs[shared]) shared++
+            shared
+        }
+    }
+
+    /** Extracts a leading dotted number ("2.4.4.1") from a section label, or null if none. */
+    private fun leadingDottedNumber(label: String): String? =
+        LEADING_DOTTED_NUMBER.find(label)?.value
 
     /**
      * Full-text search over the persisted content (G-10). Returns ranked matching snippets, each
@@ -259,9 +305,16 @@ class DocumentArtifactStore(
     companion object {
         /**
          * Upper bound on the number of section labels surfaced in [DocumentSlice.availableSections].
-         * Keeps the discoverability hint token-frugal on documents with hundreds of headings.
+         * Raised from 30 (fix a): a 30-cap on a big spec only ever showed the first 30 (top-level,
+         * early) sections, so deep subsections looked absent even when anchored. 200 covers the
+         * section count of all but the largest specs while staying token-bounded; when it DOES
+         * truncate, [DocumentSlice.totalSectionCount] reports the true total so the caller renders
+         * an explicit "showing N of M" note (truncation is never silent).
          */
-        const val MAX_AVAILABLE_SECTIONS = 30
+        const val MAX_AVAILABLE_SECTIONS = 200
+
+        /** Leading dotted section number ("2", "2.4", "2.4.4.1") used for miss-neighborhood biasing. */
+        private val LEADING_DOTTED_NUMBER = Regex("^\\d+(?:\\.\\d+)*")
 
         /**
          * Upper bound on the number of table-caption labels surfaced in [DocumentSlice.availableTables].
