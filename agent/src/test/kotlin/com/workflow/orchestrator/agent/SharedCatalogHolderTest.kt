@@ -5,10 +5,10 @@ import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.advanceUntilIdle
-import kotlinx.coroutines.test.runTest
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -85,31 +85,38 @@ class SharedCatalogHolderTest {
     }
 
     @Test
-    fun `warm-up coroutine survives a getCatalog throw without propagating`() = runTest {
+    fun `warm-up coroutine survives a getCatalog throw without propagating`() {
+        val warmUpRan = CountDownLatch(1)
         val warmUpExceptions = java.util.concurrent.atomic.AtomicInteger(0)
         val factory: (String, () -> String?) -> ModelCatalogService = { _, _ ->
             mockk<ModelCatalogService>(relaxed = true)
         }
-        val testDispatcher = StandardTestDispatcher(testScheduler)
-        val testScope = CoroutineScope(SupervisorJob() + testDispatcher)
+        // SharedCatalogHolder.get() launches the warm-up on Dispatchers.IO (correct for prod —
+        // warm-up performs network I/O). A StandardTestDispatcher + advanceUntilIdle therefore
+        // CANNOT drive it: the coroutine runs on a real IO thread, so asserting on
+        // warmUpExceptions right after advanceUntilIdle raced the thread and flaked under load.
+        // Synchronize on a latch the warm-up counts down so the assertion is deterministic.
+        val testScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         val holder = SharedCatalogHolder(
             scope = testScope,
             factory = factory,
             warmUp = {
                 warmUpExceptions.incrementAndGet()
+                warmUpRan.countDown()
                 throw RuntimeException("simulated catalog fetch failure")
             },
         )
 
         // Calling get() must not throw even though the warm-up will throw.
         val instance = holder.get("https://sg.example.com") { "tok" }
-        advanceUntilIdle()
 
         assertNotNull(instance)
+        assertTrue(warmUpRan.await(10, TimeUnit.SECONDS), "warm-up coroutine should have run")
         assertEquals(1, warmUpExceptions.get(), "warm-up was invoked")
-        // Scope must still be active — runCatching MUST swallow.
-        assertTrue(testScope.coroutineContext[kotlinx.coroutines.Job]!!.isActive,
+        // Scope must still be active — runCatching swallows the throw and the scope is a
+        // SupervisorJob, so a warm-up failure can never cancel the holder scope.
+        assertTrue(testScope.coroutineContext[Job]!!.isActive,
             "warm-up exception must not cancel the holder scope")
         testScope.cancel()
     }
