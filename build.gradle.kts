@@ -27,7 +27,9 @@ repositories {
 
 // Exclude SLF4J from all dependencies — IntelliJ provides its own.
 // Bundling a second SLF4J causes LinkageError due to plugin classloader isolation.
-configurations.all {
+// `configureEach` (not `all`) applies the exclude lazily per-configuration as each is realized,
+// avoiding eager realization/resolution of every configuration at configuration time.
+configurations.configureEach {
     exclude(group = "org.slf4j")
 }
 
@@ -162,7 +164,17 @@ intellijPlatform {
     // Verify against recommended IDE versions
     pluginVerification {
         ides {
-            recommended()
+            // Pinned to the EXACT build target (IDEA Ultimate @ platformVersion) instead of
+            // recommended(). recommended() resolves the JetBrains-recommended IDE set across the
+            // 251..253.* range, downloading + EXTRACTING extra IDE versions (e.g. 2025.2) into the
+            // Gradle artifact-transforms cache — a full extra ~3GB extraction per IDE. Pinning to the
+            // build target reuses the SAME content-addressed extracted IDE that buildPlugin already
+            // produced, so verification adds zero extra extraction. For a full pre-release
+            // compatibility sweep across 251..253, temporarily swap this line back to `recommended()`.
+            create(
+                org.jetbrains.intellij.platform.gradle.IntelliJPlatformType.IntellijIdeaUltimate,
+                providers.gradleProperty("platformVersion"),
+            )
         }
         // Standard compatibility gate (the plugin's default set) PLUS @OverrideOnly.
         // COMPATIBILITY_PROBLEMS and NON_EXTENDABLE_API_USAGES are the load-bearing checks
@@ -202,7 +214,11 @@ kover {
 
 tasks {
     wrapper {
-        gradleVersion = "9.0"
+        // Exact version so `./gradlew wrapper` never drifts the wrapper and spawns a separate
+        // per-version transforms cache. Standardized on 9.4.0 (the version installed on dev
+        // machines) so IDE + CLI share ONE ~/.gradle/caches/9.4.0/transforms tree.
+        // Keep this aligned with gradle/wrapper/gradle-wrapper.properties.
+        gradleVersion = "9.4.0"
     }
 }
 
