@@ -36,10 +36,14 @@ import java.nio.file.Path
  *
  * ## Continuation detection
  *
- * After all pages are processed, [mergeContinuations] joins table fragments that span page
- * boundaries. A fragment is detected when: the next block is on page N+1, starts near the
- * top of that page (top < 100 PDF units), and either shares the same headers as the
- * previous block or has no header row (repeated `repeatRows=1` scenario).
+ * After all pages are processed, [mergeContinuations] JOINS table fragments that span page
+ * boundaries into ONE whole table (all rows concatenated in order, any repeated header dropped).
+ * A fragment continues the running table when it sits on the next page after the LAST page already
+ * absorbed (so a table spanning N>2 pages chains into one block, not pairwise), starts near the
+ * page top, has the same column count, and matches a continuation signal: a literal
+ * "(continued)" caption naming the same table number, an exactly-repeated header row, or a
+ * blank-dominant continuation header (the silent-split signal). A fully-populated header that
+ * differs from the running table's header is treated as a NEW table and never fused.
  *
  * @param enableStreamMode When `true`, stream mode is tried as a per-page fallback on pages
  *                         where lattice extraction finds no tables, with the strict
@@ -91,6 +95,23 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
          * headers are labels, never bare numbers.
          */
         val NUMERIC_CELL = Regex("[-+]?[\\d,]+(?:\\.\\d+)?")
+
+        /**
+         * A continuation fragment must begin within this many PDF user-space points of the page
+         * top. A table that continues onto the next page resumes at the top margin; anything lower
+         * is a separate table later on the page.
+         */
+        const val TOP_OF_PAGE_THRESHOLD = 100.0
+
+        /** Matches a "(continued)" / "…continued" marker in a table caption (case-insensitive). */
+        val CONTINUED_MARKER = Regex("""\bcontinued\b""", RegexOption.IGNORE_CASE)
+
+        /**
+         * Extracts the table NUMBER from a caption such as "Table 45. …", "TABLE 1-2: …", or
+         * "Table 45 (continued)". Group 1 is the number token (e.g. `45`, `1-2`), used to confirm
+         * a continuation names the SAME table as its parent.
+         */
+        val TABLE_NUMBER = Regex("""\btable\s+([\d][\w.\-]*)""", RegexOption.IGNORE_CASE)
     }
 
     /**
@@ -114,9 +135,10 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
     /**
      * Per-page table extraction WITHOUT continuation-merge — every table keeps its own page.
      *
-     * [extract] post-processes this with [mergeContinuations], which collapses a multi-page table
-     * onto its FIRST page (losing the continuation pages). Callers that need the true set of pages a
-     * table occupies — e.g. the SF-1 Tabula-presence gate in
+     * [extract] post-processes this with [mergeContinuations], which joins a multi-page table's
+     * fragments into a single block keyed on its FIRST page (the per-page rows are concatenated, not
+     * lost). Callers that need the true set of pages a table occupies — e.g. the SF-1
+     * Tabula-presence gate in
      * [com.workflow.orchestrator.document.pipeline.PdfPipeline], which must never column-split ANY
      * page of a multi-page table such as nist-csf's Framework Core — use this pre-merge view.
      *
@@ -141,8 +163,17 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
                 // no rulings — lattice only finds ruled tables, so a ruling-free page yields
                 // nothing anyway. Bypassed when stream mode is on (borderless tables have no
                 // rulings and must still be reached).
+                //
+                // Per-page isolation: Tabula's SpreadsheetExtractionAlgorithm throws
+                // IllegalArgumentException("lines must be orthogonal, vertical and horizontal")
+                // when a page carries skewed/diagonal rulings (common in datasheet figures, e.g.
+                // microchip PIC18F). An unguarded throw here aborts the WHOLE document's table
+                // extraction — dropping every legitimate ruled table on every other page. We
+                // isolate the failure to the offending page and continue, so one bad figure page
+                // never costs the document its tables.
                 var tables: List<Table> = if (enableStreamMode || pageHasRulings(page)) {
-                    SpreadsheetExtractionAlgorithm().extract(page)
+                    runCatching { SpreadsheetExtractionAlgorithm().extract(page) }
+                        .getOrDefault(emptyList())
                 } else {
                     emptyList()
                 }
@@ -156,11 +187,14 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
                 // lattice found nothing on that page, so borderless (ruling-free) tables are
                 // still captured without double-emitting ruled tables. Stream candidates run a
                 // STRICTER guard ([isStreamPhantomTable]) because whitespace-clustering routinely
-                // invents tables out of multi-column prose.
+                // invents tables out of multi-column prose. Isolated per-page (see above) so a
+                // pathological page cannot abort the document.
                 if (tables.isEmpty() && enableStreamMode) {
-                    tables = BasicExtractionAlgorithm().extract(page)
-                        .filterNot { isLikelyPhantomTable(it) }
-                        .filterNot { isStreamPhantomTable(it) }
+                    tables = runCatching {
+                        BasicExtractionAlgorithm().extract(page)
+                            .filterNot { isLikelyPhantomTable(it) }
+                            .filterNot { isStreamPhantomTable(it) }
+                    }.getOrDefault(emptyList())
                 }
 
                 // Collect every text glyph on the page ONCE. Used to re-populate cell text by
@@ -480,18 +514,38 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
     }
 
     /**
-     * Merges adjacent table blocks that represent a single logical table split across pages.
+     * Joins table fragments that represent ONE logical table split across page boundaries into a
+     * single whole table — all rows concatenated in order, any repeated header dropped.
      *
-     * Detection criteria for a continuation at index `i+1`:
-     * - `blocks[i+1].page == blocks[i].page + 1` (immediately next page)
-     * - `blocks[i+1].top < 100.0` (starts near top of that page — in PDF user-space points)
-     * - Headers match exactly (repeated header row, e.g. `repeatRows=1`), OR the continuation
-     *   block's header row looks like a data row (all non-blank values that don't match the
-     *   parent headers — i.e., a headerless continuation).
+     * ## The page-chaining invariant
      *
-     * When merged, the result keeps the parent's headers and concatenates all data rows.
-     * The merged block spans `blocks[i].page` through `blocks[i+1].page`, with
-     * `bottom = blocks[i+1].bottom`.
+     * A table can span more than two pages (e.g. microchip PIC18F TABLE 1-2 occupies four pages,
+     * TABLE 1-3 six). Adjacency is therefore tested against the **last page already absorbed into
+     * the running fragment** ([currentLastPage]), not the running fragment's *start* page — so a
+     * 4-page table chains 14→15→16→17 into one block rather than collapsing into 14+15 / 16+17
+     * pairs. (This pairwise collapse was the original defect: it compared against `current.page`,
+     * which never advanced past the first fragment.)
+     *
+     * ## Continuation signals (see [isContinuation])
+     *
+     * 1. **Literal "(continued)" caption** — the next fragment's caption names the SAME table
+     *    number as the current fragment and is marked "(continued)"/"…continued".
+     * 2. **Repeated header** — the next fragment's header row equals the current header exactly
+     *    (the `repeatRows=1` layout used by datasheets that re-print the header on every page).
+     * 3. **Silent split (blank-dominant continuation header)** — same column count, next fragment
+     *    at the top of the following page, and its detected "header" row is blank-dominant (a
+     *    continuation page's first Tabula row, never a fresh table's fully-populated header).
+     *
+     * ## Anti-fusion guard
+     *
+     * A continuation whose first row is a *fully-populated header that differs* from the current
+     * header is treated as a NEW table, never fused — this is structurally indistinguishable from
+     * a genuine same-column-count table beginning on the next page, so the conservative choice is
+     * to keep them separate. (Fully-populated headerless data continuations are the deferred
+     * subset; see [isContinuation].)
+     *
+     * The merged block keeps the parent's headers/caption and start page, and extends `bottom` to
+     * the last absorbed fragment's bottom.
      */
     internal fun mergeContinuations(
         blocks: List<PositionedBlock<DocumentBlock.Table>>,
@@ -500,10 +554,13 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
 
         val result = mutableListOf<PositionedBlock<DocumentBlock.Table>>()
         var current = blocks[0]
+        // The last page absorbed into `current` — adjacency chains against THIS, not current.page,
+        // so a table spanning N>2 pages merges as one block instead of pairwise.
+        var currentLastPage = blocks[0].page
 
         for (i in 1 until blocks.size) {
             val next = blocks[i]
-            if (isContinuation(current, next)) {
+            if (isContinuation(current, currentLastPage, next)) {
                 // Merge next into current.
                 val mergedRows = mergeContinuationRows(current.block, next.block)
                 val mergedBlock = DocumentBlock.Table(
@@ -517,9 +574,11 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
                     bottom = next.bottom,
                     block = mergedBlock,
                 )
+                currentLastPage = next.page
             } else {
                 result += current
                 current = next
+                currentLastPage = next.page
             }
         }
         result += current
@@ -527,39 +586,81 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
     }
 
     /**
-     * Returns `true` when [next] is a continuation of [current] across a page boundary.
+     * Returns `true` when [next] is a continuation of the running fragment [current] (whose last
+     * absorbed page is [currentLastPage]) across a page boundary.
+     *
+     * Adjacency: [next] must sit on `currentLastPage + 1` and start near the top of that page
+     * ([TOP_OF_PAGE_THRESHOLD], PDF user-space points). Then one of three signals must hold —
+     * see [mergeContinuations] for the rationale and the anti-fusion guard.
      */
     private fun isContinuation(
         current: PositionedBlock<DocumentBlock.Table>,
+        currentLastPage: Int,
         next: PositionedBlock<DocumentBlock.Table>,
     ): Boolean {
-        if (next.page != current.page + 1) return false
-        if (next.top >= 100.0) return false
+        if (next.page != currentLastPage + 1) return false
+        if (next.top >= TOP_OF_PAGE_THRESHOLD) return false
 
         val currentHeaders = current.block.headers
         val nextHeaders = next.block.headers
 
-        // Case 1: repeated header row (repeatRows=1 scenario).
+        // Signal 1: literal "(continued)" caption naming the same table number. Captions are not
+        // populated by the Tabula converter today (they live in the prose stream), so this is a
+        // forward-compatible path; it never fires for null captions.
+        if (isContinuedCaption(current.block.caption, next.block.caption)) return true
+
+        // Same column count is required for every structural (caption-less) signal: a continuation
+        // never changes the grid width.
+        if (nextHeaders.size != currentHeaders.size) return false
+
+        // Signal 2: repeated header row (repeatRows=1 layout) — the strongest structural signal.
         if (currentHeaders == nextHeaders) return true
 
-        // Case 2: headerless continuation — the "header" row of the next fragment is
-        // actually a data row (no match with parent headers). We accept this continuation
-        // when the next block has at least one data row OR its header row values are all
-        // non-empty (a data row masquerading as headers).
-        val nextLooksLikeData = nextHeaders.none { it.isEmpty() } &&
-            nextHeaders != currentHeaders
-        if (nextLooksLikeData && nextHeaders.size == currentHeaders.size) return true
+        // Signal 3: silent split — the next fragment's detected "header" is blank-dominant, i.e.
+        // a continuation page's first Tabula row (which has empty leading cells), NOT a fresh
+        // table's fully-populated header. This is the real signal in spec PDFs that repeat NO
+        // header and print NO "continued" marker (e.g. DICOM PS3.18 multi-page tables).
+        //
+        // Anti-fusion guard: a fully-populated header that DIFFERS from the current header is a
+        // distinct table beginning on the next page (it is structurally indistinguishable from a
+        // genuine new same-width table), so we conservatively keep them separate.
+        if (isBlankDominant(nextHeaders)) return true
 
         return false
     }
 
     /**
+     * True when [next]'s caption marks it a literal continuation of [current]'s captioned table —
+     * i.e. it carries a "(continued)"/"…continued" marker AND names the same `Table <N>` number.
+     * Conservative: both captions must be present and the table numbers must match.
+     */
+    private fun isContinuedCaption(current: String?, next: String?): Boolean {
+        if (current.isNullOrBlank() || next.isNullOrBlank()) return false
+        if (!CONTINUED_MARKER.containsMatchIn(next)) return false
+        val currentNum = TABLE_NUMBER.find(current)?.groupValues?.getOrNull(1) ?: return false
+        val nextNum = TABLE_NUMBER.find(next)?.groupValues?.getOrNull(1) ?: return false
+        return currentNum.equals(nextNum, ignoreCase = true)
+    }
+
+    /**
+     * True when at least half of [header]'s cells are blank — the structural signature of a
+     * continuation page's first Tabula row, as opposed to a fresh table's well-populated header.
+     */
+    private fun isBlankDominant(header: List<String>): Boolean {
+        if (header.isEmpty()) return false
+        val blank = header.count { it.isBlank() }
+        return blank * 2 >= header.size
+    }
+
+    /**
      * Produces the combined data rows when merging [parent] and [continuation].
      *
-     * If the continuation's headers match the parent's (repeated header row), the
-     * continuation's header row is discarded and only its data rows are appended.
-     * Otherwise the continuation's "header row" is treated as a data row and prepended
-     * before its data rows, all normalised to `parent.headers.size`.
+     * - **Repeated header** (`parent.headers == continuation.headers`): the continuation's header
+     *   row is a re-print and is discarded; only its data rows are appended.
+     * - **Headerless / silent continuation**: the continuation's detected "header" row is really a
+     *   data row, so it is prepended as a data row before the continuation's own rows — UNLESS it
+     *   is fully blank (a spacer band), in which case it is dropped. All rows are normalised to
+     *   `parent.headers.size`.
      */
     private fun mergeContinuationRows(
         parent: DocumentBlock.Table,
@@ -567,11 +668,17 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
     ): List<List<String>> {
         val extraRows = if (parent.headers == continuation.headers) {
             // Repeated header row — skip it.
-            continuation.rows
+            continuation.rows.map { normaliseRow(it, parent.headers.size) }
         } else {
-            // Headerless continuation — treat the "header" as first data row.
-            val headerAsRow = normaliseRow(continuation.headers, parent.headers.size)
-            listOf(headerAsRow) + continuation.rows.map { normaliseRow(it, parent.headers.size) }
+            // Silent/headerless continuation — the "header" row is data. Keep it unless fully
+            // blank (a header-band spacer carries no information).
+            val headerRow = continuation.headers
+            val prefix = if (headerRow.any { it.isNotBlank() }) {
+                listOf(normaliseRow(headerRow, parent.headers.size))
+            } else {
+                emptyList()
+            }
+            prefix + continuation.rows.map { normaliseRow(it, parent.headers.size) }
         }
         return parent.rows + extraRows
     }
