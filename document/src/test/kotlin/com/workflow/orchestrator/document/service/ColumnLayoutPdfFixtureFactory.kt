@@ -93,6 +93,48 @@ object ColumnLayoutPdfFixtureFactory {
         return target
     }
 
+    /**
+     * Builds a single-page PDF that mixes a HELVETICA prose paragraph (full-width, justified-ish —
+     * the lines reach the right margin) with a COURIER preformatted block (an ABNF grammar whose
+     * lines are short and do NOT fill the column) — the SF-2 shape. Returned page is LETTER-size.
+     *
+     * The prose paragraph is several proportional-font lines that run nearly to the right margin
+     * (x ≈ 72 → ~520). The code block is monospace lines that stop well short of the right margin
+     * (the longest is ~300pt wide), so the SF-2 detector's "consecutive monospace, column-non-filling"
+     * signal fires on the grammar lines and never on the prose.
+     *
+     * Markers: prose contains "PROSEALPHA"/"PROSEOMEGA"; the code block contains the ABNF lines
+     * "HTTP-version" and "chunk-size" so the test can assert they emerge inside a fenced block with
+     * their line structure preserved (not reflowed onto one line).
+     */
+    fun createMonospaceCodeBlock(target: Path): Path {
+        PDDocument().use { doc ->
+            val helv = PDType1Font(Standard14Fonts.FontName.HELVETICA)
+            val courier = PDType1Font(Standard14Fonts.FontName.COURIER)
+            val page = PDPage(PDRectangle.LETTER)
+            doc.addPage(page)
+            PDPageContentStream(doc, page).use { cs ->
+                // Prose paragraph: proportional font, lines fill nearly to the right margin (~520).
+                val prose = listOf(
+                    "PROSEALPHA the version of an HTTP message is indicated by an HTTP-version",
+                    "field in the first line of the message and HTTP-version is case sensitive in",
+                    "every conforming implementation across the entire protocol stack PROSEOMEGA.",
+                )
+                writeColumn(cs, helv, prose, x = 72f, topY = 720f, fontSize = 11f, leading = 16f)
+                // Monospace ABNF grammar block: short lines that do NOT reach the right margin.
+                val code = listOf(
+                    "HTTP-version  = HTTP-name \"/\" DIGIT \".\" DIGIT",
+                    "HTTP-name     = %x48.54.54.50 ; \"HTTP\"",
+                    "chunk-size    = 1*HEXDIG",
+                    "chunked-body  = *chunk last-chunk trailer-part CRLF",
+                )
+                writeColumn(cs, courier, code, x = 72f, topY = 640f, fontSize = 11f, leading = 14f)
+            }
+            doc.save(target.toFile())
+        }
+        return target
+    }
+
     private fun writeColumn(
         cs: PDPageContentStream,
         font: PDType1Font,

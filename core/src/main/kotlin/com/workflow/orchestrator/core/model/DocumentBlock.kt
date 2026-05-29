@@ -40,6 +40,31 @@ sealed class DocumentBlock {
     data class Paragraph(val text: String) : DocumentBlock()
 
     /**
+     * A preformatted / monospace region whose internal line structure is meaningful and must
+     * survive verbatim — ABNF grammar productions, source/pseudo-code, ASCII diagrams, and other
+     * fixed-pitch blocks in specification PDFs (SF-2).
+     *
+     * Unlike a [Paragraph] (whose text is a single logical run that the assembler terminates with a
+     * blank line and which renderers are free to reflow), a [CodeBlock]'s [lines] are emitted INSIDE
+     * a fenced code block (```), one source line per output line, so the original wrapping — which
+     * carries the meaning for grammar/code/diagrams — is preserved exactly.
+     *
+     * Detected by `PdfPreformattedDetector`, which clusters consecutive monospace, column-non-filling
+     * lines on a PDF page (a conservative signal that false-negatives a borderline block rather than
+     * fencing genuine prose). A single inline monospace span inside prose is NOT a [CodeBlock].
+     *
+     * @param lines   The verbatim source lines, in reading order, with leading indentation preserved.
+     *                Non-empty for a valid block.
+     */
+    data class CodeBlock(
+        val lines: List<String>,
+    ) : DocumentBlock() {
+        init {
+            require(lines.isNotEmpty()) { "CodeBlock must have at least one line" }
+        }
+    }
+
+    /**
      * A tabular structure with named columns and zero or more data rows.
      *
      * Every row in [rows] must contain exactly [headers].size cells; the `init` block

@@ -3,6 +3,7 @@ package com.workflow.orchestrator.document.assembler
 import com.workflow.orchestrator.core.model.DocumentBlock
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -39,6 +40,37 @@ class MarkdownAssemblerNewVariantsTest {
         assertEquals(false, unordered.ordered)
         assertEquals(listOf("a", "b"), unordered.items)
         assertEquals(true, ordered.ordered)
+    }
+
+    @Test
+    fun `CodeBlock has non-empty lines and rejects empty`() {
+        val cb = DocumentBlock.CodeBlock(lines = listOf("a = b", "c = d"))
+        assertEquals(listOf("a = b", "c = d"), cb.lines)
+        assertThrows(IllegalArgumentException::class.java) { DocumentBlock.CodeBlock(emptyList()) }
+    }
+
+    @Test
+    fun `CodeBlock renders as a fenced code block with line breaks preserved`() {
+        val cb = DocumentBlock.CodeBlock(
+            lines = listOf(
+                "HTTP-version  = HTTP-name \"/\" DIGIT \".\" DIGIT",
+                "HTTP-name     = %x48.54.54.50",
+            ),
+        )
+        val (md, _) = assembler.assemble(listOf(cb), maxChars = 10_000)
+        // Fences on their own lines, each source line preserved verbatim (leading indent kept).
+        assertEquals(
+            "```\nHTTP-version  = HTTP-name \"/\" DIGIT \".\" DIGIT\nHTTP-name     = %x48.54.54.50\n```\n\n",
+            md,
+        )
+    }
+
+    @Test
+    fun `CodeBlock preserves leading indentation and trims trailing whitespace`() {
+        val cb = DocumentBlock.CodeBlock(lines = listOf("    while (x > 0) {   ", "        do_thing()"))
+        val (md, _) = assembler.assemble(listOf(cb), maxChars = 10_000)
+        assertTrue(md.contains("\n    while (x > 0) {\n"), "leading indent lost or trailing ws kept: $md")
+        assertTrue(md.contains("\n        do_thing()\n"), "second indented line wrong: $md")
     }
 
     @Test

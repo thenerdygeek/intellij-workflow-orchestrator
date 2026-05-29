@@ -5,6 +5,7 @@ import com.workflow.orchestrator.document.pdf.PdfColumnDetector
 import com.workflow.orchestrator.document.pdf.PdfColumnProseExtractor
 import com.workflow.orchestrator.document.pdf.PdfLink
 import com.workflow.orchestrator.document.pdf.PdfMetadataExtractor
+import com.workflow.orchestrator.document.pdf.PdfPreformattedDetector
 import com.workflow.orchestrator.document.pdf.PdfProseExtractor
 import com.workflow.orchestrator.document.pdf.PdfTableExtractor
 import com.workflow.orchestrator.document.pdf.PositionedBlock
@@ -65,14 +66,24 @@ import java.nio.file.Path
  *    Core TABLE is never column-split. Conservative by design — see [PdfColumnDetector]. Disable
  *    via [enableColumnReorder]=false (the regression-guard control).
  *
- *    **G-9 DEFERRED (need position data — NOT done here):**
+ *    **SF-2 preformatted/monospace fidelity — SHIPPED (hybrid, position-gated):**
+ *    [substitutePreformattedPages] runs a PDFBox [PdfPreformattedDetector] per page (a fresh text
+ *    pass that, unlike the prose path, carries per-line FONT + geometry). It clusters consecutive
+ *    MONOSPACE, column-non-filling lines — the strong signal for ABNF grammar / pseudo-code / ASCII
+ *    diagrams in specs — into preformatted regions, then replaces IN PLACE the Tika paragraph(s)
+ *    that collapsed each region with a fenced [DocumentBlock.CodeBlock] whose original line breaks
+ *    are preserved. Every other prose block is kept verbatim (no paragraph fragmentation). The
+ *    monospace gate makes this a no-op on proportional-font specs (arXiv / NIST / fed-scf — they
+ *    have no monospace lines), and the column-fill + paragraph-gap discriminators keep monospace
+ *    PROSE (RFC 7230's all-Courier body text) out. Conservative — a borderline block is left as
+ *    prose rather than wrongly fenced (false-negative bias). Disable via [enablePreformatted]=false.
+ *    Runs BEFORE the SF-1 column reorder (a rebuilt page is excluded from column-splitting).
+ *
+ *    **G-9 DEFERRED (need glyph-level 2D reconstruction — NOT done here):**
+ *    - **arXiv display-equation reconstruction** (`# QKT`, `softmax(…)V (1)dk`) needs super/sub-script
+ *      + radical layout reassembly — a separate hard problem from line-preserving fencing. Deferred.
  *    - **SF-8** masthead two-column fusion shares SF-1's root (the masthead may fall out of the
  *      same detector when it triggers on the first page; not separately forced).
- *    - **SF-2** preformatted/monospace fidelity (ABNF, pseudo-code, display equations) is only
- *      partially position-independent: by the time a block reaches this pipeline the original
- *      newlines are already collapsed onto one line (e.g. rfc7230's `HTTP-version = …  HTTP-name
- *      = …`), so there is no reliable in-stream signal to fence a code block without the same
- *      position data SF-1 needs. Deferred with SF-1.
  *
  *    The CONTAINED G-9 cleanups that DID land (no position data required): SF-5 repeating
  *    header/footer band stripping ([stripRepeatedPageChrome] / [normalisePageNumber]), SF-10
@@ -103,6 +114,10 @@ import java.nio.file.Path
  * @param enableColumnReorder  When `true` (default) SF-1 two-column substitution is active. Set
  *                             `false` to force the pure single-column Tika path — used by the
  *                             regression guard to prove single-column docs are byte-identical.
+ * @param preformattedDetector SF-2 monospace/preformatted region detector (font + column-fill).
+ * @param enablePreformatted   When `true` (default) SF-2 fenced-code substitution is active. Set
+ *                             `false` to force the pure prose path — used by the regression guard
+ *                             to prove proportional-font docs are byte-identical.
  */
 class PdfPipeline(
     private val tableExtractor: PdfTableExtractor = PdfTableExtractor(enableStreamMode = true),
@@ -110,6 +125,8 @@ class PdfPipeline(
     private val columnDetector: PdfColumnDetector = PdfColumnDetector(),
     private val columnProseExtractor: PdfColumnProseExtractor = PdfColumnProseExtractor(),
     private val enableColumnReorder: Boolean = true,
+    private val preformattedDetector: PdfPreformattedDetector = PdfPreformattedDetector(),
+    private val enablePreformatted: Boolean = true,
 ) {
 
     /**
@@ -142,14 +159,27 @@ class PdfPipeline(
         val metadataExtractor = PdfMetadataExtractor(imageService = imageService, docKey = docKey)
         val metadata: List<PositionedBlock<DocumentBlock>> = metadataExtractor.extract(file)
 
-        // SF-1: on genuine two-column pages (not claimed by Tabula as a table) substitute the
-        // interleaved Tika prose with column-ordered prose. Single-column pages are untouched.
-        // Done BEFORE link-splice so links splice into the correctly-ordered column text.
         val tablePages: Set<Int> = tablesRaw.map { it.page }.toSet()
-        val proseRaw = if (enableColumnReorder) {
-            substituteTwoColumnPages(file, proseTika, tablePages)
+
+        // SF-2: on pages carrying a monospace ABNF/code/diagram region (not a Tabula table page),
+        // rebuild the page's prose as fenced CodeBlock(s) interleaved with prose, preserving the
+        // original line breaks. Pages with no preformatted region are returned untouched. Done
+        // BEFORE the SF-1 column reorder so a rebuilt page is not also column-split, and BEFORE
+        // link-splice so links splice into the rebuilt prose.
+        val (proseAfterPre, preformattedPages) = if (enablePreformatted) {
+            substitutePreformattedPages(file, proseTika, tablePages)
         } else {
-            proseTika
+            proseTika to emptySet()
+        }
+
+        // SF-1: on genuine two-column pages (not claimed by Tabula as a table, and not already
+        // rebuilt by SF-2) substitute the interleaved Tika prose with column-ordered prose.
+        // Single-column pages are untouched. Done BEFORE link-splice so links splice into the
+        // correctly-ordered column text.
+        val proseRaw = if (enableColumnReorder) {
+            substituteTwoColumnPages(file, proseAfterPre, tablePages + preformattedPages)
+        } else {
+            proseAfterPre
         }
 
         // G-6 / HX-1 harvest: splice link annotations INLINE into prose so their target survives
@@ -187,6 +217,125 @@ class PdfPipeline(
         val rejoined = rejoinHyphenatedParagraphs(deChromed)
         return suppressOverlaps(rejoined).map { it.block }
     }
+
+    /**
+     * SF-2 — replaces, IN PLACE, each Tika prose paragraph that is really a monospace preformatted
+     * region (ABNF grammar, pseudo-code, ASCII diagram) with a fenced [DocumentBlock.CodeBlock] whose
+     * original line breaks are preserved. Every OTHER prose block on the page is kept verbatim, so a
+     * page that mixes one ABNF block with ordinary prose keeps that prose exactly as the Tika path
+     * produced it (no paragraph fragmentation).
+     *
+     * ## How regions are matched to Tika paragraphs
+     *
+     * The detector reports per-page code regions as ordered verbatim lines; Tika reflows the same
+     * region onto one (or, when a region carries a paragraph-sized internal gap, a few) collapsed
+     * paragraph(s). We match a region to the contiguous run of same-page Tika paragraphs whose
+     * whitespace-normalised concatenation equals the region's whitespace-normalised text, and swap
+     * that run for a single CodeBlock. The match is exact-on-normalised-text, so a region that does
+     * not line up cleanly with Tika's paragraph boundaries is simply left as prose — the conservative
+     * degradation (the reading text is never corrupted; we just don't fence that one block).
+     *
+     * ## Gating (conservative, table-safe)
+     *
+     * Regions are harvested only from pages Tabula did NOT claim as a table ([tablePages]) — table
+     * pages belong to Tabula. Pages with no preformatted region (the overwhelming majority — and
+     * EVERY page of a proportional-font spec, which has no monospace lines at all) are returned
+     * byte-identical.
+     *
+     * @return The prose stream with matched regions fenced, plus the set of pages where at least one
+     *         region was fenced (so the SF-1 column reorder skips them).
+     */
+    private fun substitutePreformattedPages(
+        file: Path,
+        proseTika: List<PositionedBlock<DocumentBlock>>,
+        tablePages: Set<Int>,
+    ): Pair<List<PositionedBlock<DocumentBlock>>, Set<Int>> {
+        val regionsByPage: Map<Int, List<PdfPreformattedDetector.Region>> = try {
+            Loader.loadPDF(file.toFile()).use { doc ->
+                val out = HashMap<Int, List<PdfPreformattedDetector.Region>>()
+                doc.pages.forEachIndexed { idx, page ->
+                    val pageNumber = idx + 1
+                    if (pageNumber in tablePages) return@forEachIndexed
+                    val regions = try { preformattedDetector.detectRegions(page) } catch (_: Exception) { emptyList() }
+                    if (regions.isNotEmpty()) out[pageNumber] = regions
+                }
+                out
+            }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+        if (regionsByPage.isEmpty()) return proseTika to emptySet()
+
+        val result = mutableListOf<PositionedBlock<DocumentBlock>>()
+        val fencedPages = mutableSetOf<Int>()
+        var i = 0
+        while (i < proseTika.size) {
+            val pb = proseTika[i]
+            val regions = regionsByPage[pb.page]
+            val para = pb.block as? DocumentBlock.Paragraph
+            if (regions == null || para == null) {
+                result += pb
+                i++
+                continue
+            }
+            // Try to match a region starting at this paragraph: greedily extend over the run of
+            // same-page paragraphs whose normalised concatenation reaches the region's normalised
+            // text. On a match, splice ONE CodeBlock (carrying the first matched paragraph's bbox)
+            // and skip the consumed paragraphs.
+            val match = matchRegionAt(proseTika, i, regions)
+            if (match != null) {
+                val (region, consumed) = match
+                result += PositionedBlock(pb.page, pb.top, pb.bottom, DocumentBlock.CodeBlock(region.lines))
+                fencedPages += pb.page
+                i += consumed
+            } else {
+                result += pb
+                i++
+            }
+        }
+        return result to fencedPages
+    }
+
+    /**
+     * Attempts to match a [PdfPreformattedDetector.Region] whose collapsed text begins at the
+     * paragraph at [start]. Returns the matched region and the number of consecutive same-page
+     * Tika paragraphs it consumes, or `null` when no region's normalised text aligns with the
+     * paragraph run starting here.
+     */
+    private fun matchRegionAt(
+        prose: List<PositionedBlock<DocumentBlock>>,
+        start: Int,
+        regions: List<PdfPreformattedDetector.Region>,
+    ): Pair<PdfPreformattedDetector.Region, Int>? {
+        val page = prose[start].page
+        for (region in regions) {
+            val target = normaliseForMatch(region.lines.joinToString(""))
+            if (target.isEmpty()) continue
+            val sb = StringBuilder()
+            var consumed = 0
+            var k = start
+            while (k < prose.size && prose[k].page == page) {
+                val p = prose[k].block as? DocumentBlock.Paragraph ?: break
+                sb.append(normaliseForMatch(p.text))
+                consumed++
+                val acc = sb.toString()
+                if (acc == target) return region to consumed
+                if (!target.startsWith(acc)) break // diverged — this region doesn't start here
+                k++
+            }
+        }
+        return null
+    }
+
+    /**
+     * Strips ALL whitespace for region↔paragraph matching. Whitespace is removed entirely (not just
+     * collapsed) because Tika concatenates a preformatted block's visual lines inconsistently —
+     * sometimes with a separating space, sometimes none (`…DIGIT" DIGIT` becomes `…DIGITHTTP-name`).
+     * Comparing the whitespace-free forms makes the match independent of that quirk; the comparison
+     * is still exact equality on the remaining glyphs, so an unrelated paragraph never matches.
+     */
+    private fun normaliseForMatch(text: String): String =
+        text.filterNot { it.isWhitespace() }
 
     /**
      * SF-1 — replaces the Tika prose for every genuine two-column page with column-ordered prose.

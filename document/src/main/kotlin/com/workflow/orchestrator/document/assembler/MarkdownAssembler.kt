@@ -147,6 +147,7 @@ class MarkdownAssembler {
     private fun serializeBlock(block: DocumentBlock): String = when (block) {
         is DocumentBlock.Heading -> serializeHeading(block)
         is DocumentBlock.Paragraph -> serializeParagraph(block)
+        is DocumentBlock.CodeBlock -> serializeCodeBlock(block)
         is DocumentBlock.Table -> serializeTable(block)
         is DocumentBlock.PageMarker -> serializePageMarker(block)
         is DocumentBlock.EmbeddedFileRef -> serializeEmbeddedFileRef(block)
@@ -164,6 +165,26 @@ class MarkdownAssembler {
 
     private fun serializeParagraph(block: DocumentBlock.Paragraph): String {
         return "${block.text}\n\n"
+    }
+
+    /**
+     * Serialises a [DocumentBlock.CodeBlock] as a fenced Markdown code block (SF-2). Each source
+     * line is emitted verbatim on its own output line between ``` fences, so the original wrapping —
+     * the meaning of an ABNF grammar / pseudo-code / ASCII diagram — is preserved. A trailing blank
+     * line separates the block from following content, matching the other block serializers.
+     *
+     * Trailing whitespace is stripped per line (it carries no meaning and would otherwise pollute
+     * diffs), but leading indentation is preserved since it is significant for code/diagrams.
+     */
+    private fun serializeCodeBlock(block: DocumentBlock.CodeBlock): String {
+        val sb = StringBuilder()
+        sb.append("```\n")
+        for (line in block.lines) {
+            sb.append(line.trimEnd())
+            sb.append("\n")
+        }
+        sb.append("```\n\n")
+        return sb.toString()
     }
 
     private fun serializePageMarker(block: DocumentBlock.PageMarker): String {
