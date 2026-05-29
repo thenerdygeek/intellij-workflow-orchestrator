@@ -792,7 +792,16 @@ class DocumentBlockHandler(
 
         val mime = guessImageMimeFromSrc(src)
 
-        _blocks += DocumentBlock.EmbeddedFileRef(name = displayName, mimeType = mime, path = null)
+        // IMG-1: carry the <img alt> as the figure's alt-text so the marker leads with the
+        // description. IMG-4: an image-mime EmbeddedFileRef (even with path=null) serialises
+        // with the `[image:` token, so the corpus probe's imageMarkers count is consistent
+        // with the body for HTML too (previously rendered `[embedded:]`, contradicting the metric).
+        _blocks += DocumentBlock.EmbeddedFileRef(
+            name = displayName,
+            mimeType = mime,
+            path = null,
+            altText = alt.takeIf { it.isNotEmpty() },
+        )
     }
 
     /**

@@ -252,6 +252,142 @@ class DocxExtractorFormatGapsTest {
             "Without ImageExtractionService, ImageExtractionVisitor is not in the chain → no image emission")
     }
 
+    // ── Image alt-text (IMG-1) ────────────────────────────────────────────────
+
+    @Test
+    fun `inline image carries docPr descr as the EmbeddedFileRef altText (IMG-1)`(
+        @org.junit.jupiter.api.io.TempDir downloads: java.nio.file.Path,
+    ) {
+        IOUtils.setByteArrayMaxOverride(200_000_000)
+        val pngBytes = tinyPng()
+        val bytes = try {
+            buildDocx { doc ->
+                val p = doc.createParagraph()
+                val run = p.createRun()
+                val pic = run.addPicture(
+                    ByteArrayInputStream(pngBytes),
+                    XWPFDocument.PICTURE_TYPE_PNG,
+                    "abacus.png",
+                    Units.toEMU(40.0),
+                    Units.toEMU(40.0),
+                )
+                check(pic != null)
+                // Set the drawing-level wp:docPr descr — this is where Word stores alt-text.
+                val inline = run.ctr.drawingArray.first().inlineArray.first()
+                inline.docPr.descr = "Abacus with solid fill"
+            }
+        } finally {
+            IOUtils.setByteArrayMaxOverride(50_000_000)
+        }
+
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        val blocks = DocxTableExtractor(imageService = imageService, docKey = "alt.docx")
+            .extract(ByteArrayInputStream(bytes))
+        val ref = blocks.filterIsInstance<DocumentBlock.EmbeddedFileRef>().single()
+        assertEquals("Abacus with solid fill", ref.altText,
+            "docPr descr must surface as the figure's alt-text")
+    }
+
+    @Test
+    fun `docPr title is preferred over descr for altText`(
+        @org.junit.jupiter.api.io.TempDir downloads: java.nio.file.Path,
+    ) {
+        IOUtils.setByteArrayMaxOverride(200_000_000)
+        val pngBytes = tinyPng()
+        val bytes = try {
+            buildDocx { doc ->
+                val run = doc.createParagraph().createRun()
+                run.addPicture(
+                    ByteArrayInputStream(pngBytes),
+                    XWPFDocument.PICTURE_TYPE_PNG, "boulders.png",
+                    Units.toEMU(40.0), Units.toEMU(40.0),
+                )
+                val inline = run.ctr.drawingArray.first().inlineArray.first()
+                inline.docPr.title = "Photo of boulders on beach in bright sunshine"
+                inline.docPr.descr = "fallback descr that should be ignored"
+            }
+        } finally {
+            IOUtils.setByteArrayMaxOverride(50_000_000)
+        }
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        val ref = DocxTableExtractor(imageService = imageService, docKey = "title.docx")
+            .extract(ByteArrayInputStream(bytes))
+            .filterIsInstance<DocumentBlock.EmbeddedFileRef>().single()
+        assertEquals("Photo of boulders on beach in bright sunshine", ref.altText)
+    }
+
+    // ── SmartArt / shape placeholders (IMG-3) ─────────────────────────────────
+
+    @Test
+    fun `a non-picture drawing object with the diagram graphicData URI emits a SmartArt placeholder`(
+        @org.junit.jupiter.api.io.TempDir downloads: java.nio.file.Path,
+    ) {
+        IOUtils.setByteArrayMaxOverride(200_000_000)
+        val pngBytes = tinyPng()
+        // Build a valid inline drawing via POI, then re-point its graphicData URI to the
+        // SmartArt diagram namespace — POI never returns this as an embeddedPicture, so the
+        // visitor must detect it via the URI scan and emit a presence placeholder.
+        val bytes = try {
+            buildDocx { doc ->
+                val run = doc.createParagraph().createRun()
+                run.addPicture(
+                    ByteArrayInputStream(pngBytes),
+                    XWPFDocument.PICTURE_TYPE_PNG, "diagram.png",
+                    Units.toEMU(40.0), Units.toEMU(40.0),
+                )
+                val inline = run.ctr.drawingArray.first().inlineArray.first()
+                inline.docPr.name = "Diagram 2"
+                // POI's addPicture auto-fills docPr@descr with the filename; the real corpus
+                // SmartArt frame had no descr, so clear it to mirror that (name is the identity).
+                if (inline.docPr.isSetDescr) inline.docPr.unsetDescr()
+                inline.graphic.graphicData.uri =
+                    "http://schemas.openxmlformats.org/drawingml/2006/diagram"
+            }
+        } finally {
+            IOUtils.setByteArrayMaxOverride(50_000_000)
+        }
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        val blocks = DocxTableExtractor(imageService = imageService, docKey = "smart.docx")
+            .extract(ByteArrayInputStream(bytes))
+        val obj = blocks.filterIsInstance<DocumentBlock.EmbeddedObjectRef>().single()
+        assertEquals(DocumentBlock.EmbeddedObjectRef.Kind.SMARTART, obj.kind)
+        assertEquals("Diagram 2", obj.name)
+        // NB: real-world SmartArt is never returned by POI's embeddedPictures, so it only
+        // surfaces via the diagram-URI scan above. (This synthetic fixture re-points a real
+        // picture, so POI still also yields it as an image — not asserted here.)
+    }
+
+    @Test
+    fun `a wordprocessingShape drawing emits a Shape placeholder named from docPr`(
+        @org.junit.jupiter.api.io.TempDir downloads: java.nio.file.Path,
+    ) {
+        IOUtils.setByteArrayMaxOverride(200_000_000)
+        val pngBytes = tinyPng()
+        val bytes = try {
+            buildDocx { doc ->
+                val run = doc.createParagraph().createRun()
+                run.addPicture(
+                    ByteArrayInputStream(pngBytes),
+                    XWPFDocument.PICTURE_TYPE_PNG, "shape.png",
+                    Units.toEMU(40.0), Units.toEMU(40.0),
+                )
+                val inline = run.ctr.drawingArray.first().inlineArray.first()
+                inline.docPr.name = "Direct Access Storage 1"
+                if (inline.docPr.isSetDescr) inline.docPr.unsetDescr()
+                inline.graphic.graphicData.uri =
+                    "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+            }
+        } finally {
+            IOUtils.setByteArrayMaxOverride(50_000_000)
+        }
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        val obj = DocxTableExtractor(imageService = imageService, docKey = "shape.docx")
+            .extract(ByteArrayInputStream(bytes))
+            .filterIsInstance<DocumentBlock.EmbeddedObjectRef>().single()
+        assertEquals(DocumentBlock.EmbeddedObjectRef.Kind.SHAPE, obj.kind)
+        assertEquals("Direct Access Storage 1", obj.name)
+    }
+
     // ── Custom heading styles (positive coverage after Phase 3) ───────────────
 
     @Test

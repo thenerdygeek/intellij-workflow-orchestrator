@@ -19,7 +19,8 @@ import com.workflow.orchestrator.core.model.DocumentIndex
  * | `Paragraph(text)`  | text + `\n\n`                                        |
  * | `Table(...)`       | Optional caption line, then standard pipe table      |
  * | `PageMarker(n)`    | `<!-- page: n -->\n`                                 |
- * | `EmbeddedFileRef`  | `[embedded: name (mime)]\n\n`                        |
+ * | `EmbeddedFileRef`  | image mime → `[image: alt — path] (mime)`; else `[embedded: name (mime)]` |
+ * | `EmbeddedObjectRef`| `[SmartArt: name]` / `[Shape: name]` / `[Embedded object: name]` |
  *
  * ## Truncation policy
  *
@@ -149,6 +150,7 @@ class MarkdownAssembler {
         is DocumentBlock.Table -> serializeTable(block)
         is DocumentBlock.PageMarker -> serializePageMarker(block)
         is DocumentBlock.EmbeddedFileRef -> serializeEmbeddedFileRef(block)
+        is DocumentBlock.EmbeddedObjectRef -> serializeEmbeddedObjectRef(block)
         is DocumentBlock.Comment -> serializeComment(block)
         is DocumentBlock.ListBlock -> serializeListBlock(block)
         is DocumentBlock.Footnote -> serializeFootnote(block)
@@ -169,18 +171,56 @@ class MarkdownAssembler {
     }
 
     /**
-     * Serialises a [DocumentBlock.EmbeddedFileRef]. When [block.path] is non-null (the
-     * image was extracted to disk by `ImageExtractionService` in Phase 2+), renders as
-     * `[image: <path>] (<mime>)` so the LLM has an actionable file path for the
-     * `view_image` tool. When [block.path] is null, falls back to the original "not
-     * extracted" form so legacy callers and HTML `<img src=…>` paths still render.
+     * Serialises a [DocumentBlock.EmbeddedFileRef].
+     *
+     * Marker vocabulary (G-7 reconciliation):
+     * - Any block whose [DocumentBlock.EmbeddedFileRef.mimeType] is an image type uses the
+     *   `[image: …]` token regardless of whether bytes were extracted to disk. This makes the
+     *   corpus probe's `imageMarkers` count (which matches `[image:`) consistent with the body
+     *   for every format — HTML `<img>` (path=null) no longer renders `[embedded:]` and so no
+     *   longer contradicts the metric (IMG-4).
+     * - The `[embedded: …]` token is reserved for genuine NON-image attachments (OLE blobs,
+     *   PDF file attachments) that the vision path cannot render.
+     *
+     * Within the `[image: …]` token:
+     * - The marker leads with [DocumentBlock.EmbeddedFileRef.altText] (the figure's
+     *   human-authored description) when present, so the LLM sees "Photo of boulders…"
+     *   instead of only an opaque temp path (IMG-1).
+     * - When the bytes were extracted to disk ([block.path] non-null), the actionable file
+     *   path follows so `view_image` can open it: `[image: <alt> — <path>] (<mime>)`.
+     * - When there is no on-disk path (HTML `<img>`, oversize skip), the marker carries the
+     *   alt-text or filename only: `[image: <alt-or-name>] (<mime>)`.
      */
     private fun serializeEmbeddedFileRef(block: DocumentBlock.EmbeddedFileRef): String {
-        return if (block.path != null) {
-            "[image: ${block.path}] (${block.mimeType})\n\n"
-        } else {
-            "[embedded: ${block.name} (${block.mimeType})]\n\n"
+        val isImage = block.mimeType.startsWith("image/", ignoreCase = true)
+        if (!isImage && block.path == null) {
+            // Genuine non-image attachment with no extracted bytes — keep the embedded token.
+            return "[embedded: ${block.name} (${block.mimeType})]\n\n"
         }
+        val alt = block.altText?.trim()?.takeIf { it.isNotEmpty() }
+        val inner = when {
+            block.path != null && alt != null -> "$alt — ${block.path}"
+            block.path != null -> block.path
+            alt != null -> alt
+            else -> block.name
+        }
+        return "[image: $inner] (${block.mimeType})\n\n"
+    }
+
+    /**
+     * Serialises a [DocumentBlock.EmbeddedObjectRef] placeholder (IMG-3). The bytes are not
+     * viewable, so the marker only records the object's presence and identity:
+     * `[SmartArt: <name>]`, `[Shape: <name>]`, `[Embedded object: <name>]`. A blank name
+     * degrades to the bare label (e.g. `[Embedded object]`).
+     */
+    private fun serializeEmbeddedObjectRef(block: DocumentBlock.EmbeddedObjectRef): String {
+        val label = when (block.kind) {
+            DocumentBlock.EmbeddedObjectRef.Kind.SMARTART -> "SmartArt"
+            DocumentBlock.EmbeddedObjectRef.Kind.SHAPE -> "Shape"
+            DocumentBlock.EmbeddedObjectRef.Kind.OLE -> "Embedded object"
+        }
+        val name = block.name?.trim()?.takeIf { it.isNotEmpty() }
+        return if (name != null) "[$label: $name]\n\n" else "[$label]\n\n"
     }
 
     /**

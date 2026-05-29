@@ -5,6 +5,7 @@ import com.workflow.orchestrator.document.service.ImageExtractionService
 import org.apache.poi.xslf.usermodel.XSLFComment
 import org.apache.poi.xslf.usermodel.XSLFGraphicFrame
 import org.apache.poi.xslf.usermodel.XSLFGroupShape
+import org.apache.poi.xslf.usermodel.XSLFObjectShape
 import org.apache.poi.xslf.usermodel.XSLFPictureData
 import org.apache.poi.xslf.usermodel.XSLFPictureShape
 import org.apache.poi.xslf.usermodel.XSLFShape
@@ -150,6 +151,15 @@ class PptxExtractor(
                 if (imageService != null) extractPictureBlock(shape)?.let { listOf(it) } ?: emptyList()
                 else emptyList()
             }
+            // IMG-3: an OLE/embedded object (a linked spreadsheet, a PowerPoint.Slide object,
+            // …) is an XSLFObjectShape — a subtype of XSLFGraphicFrame. Match it BEFORE the
+            // generic graphicFrame branch and emit a presence placeholder so a slide dominated
+            // by a full-canvas OLE object no longer renders empty.
+            is XSLFObjectShape -> {
+                val progId = try { shape.progId?.takeIf { it.isNotBlank() } } catch (_: Exception) { null }
+                val name = progId ?: try { shape.shapeName?.takeIf { it.isNotBlank() } } catch (_: Exception) { null }
+                listOf(DocumentBlock.EmbeddedObjectRef(kind = DocumentBlock.EmbeddedObjectRef.Kind.OLE, name = name))
+            }
             is XSLFGraphicFrame -> {
                 // P5a-3: chart extraction. PPTX charts are wrapped in XSLFGraphicFrame shapes;
                 // XSLFGraphicFrame.hasChart() detects them, getChart() returns the XSLFChart.
@@ -161,6 +171,12 @@ class PptxExtractor(
                     } catch (_: Exception) {
                         emptyList()
                     }
+                } else if (frameHasDiagram(shape)) {
+                    // IMG-3: SmartArt diagram. The diagram TEXT still surfaces via
+                    // SmartArtExtractor (appended after all slides); this placeholder marks the
+                    // diagram's on-slide position/identity so it isn't invisible.
+                    val name = try { shape.shapeName?.takeIf { it.isNotBlank() } } catch (_: Exception) { null }
+                    listOf(DocumentBlock.EmbeddedObjectRef(kind = DocumentBlock.EmbeddedObjectRef.Kind.SMARTART, name = name))
                 } else {
                     emptyList()
                 }
@@ -294,6 +310,7 @@ class PptxExtractor(
         val mime = pictureMime(pictureData)
         val name = pictureData.fileName?.takeIf { it.isNotBlank() }
             ?: "image.${pictureData.suggestFileExtension()?.lowercase() ?: "bin"}"
+        val altText = pictureAltText(shape)
 
         // Use streaming getInputStream + readNBytes(cap+1) to honour the size cap without
         // ever loading more than `cap+1` bytes into memory.
@@ -301,12 +318,12 @@ class PptxExtractor(
         val bytes = try {
             pictureData.inputStream.use { it.readNBytes(limit) }
         } catch (_: Exception) {
-            return DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null)
+            return DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null, altText = altText)
         }
 
         if (bytes.size > maxBytesPerImage) {
             // Oversize — emit placeholder so the LLM still sees an image existed.
-            return DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null)
+            return DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null, altText = altText)
         }
         if (bytes.isEmpty()) return null  // empty stream — skip entirely
 
@@ -316,11 +333,33 @@ class PptxExtractor(
             service.saveImage(bytes, docKey, name, mime)
         } catch (_: Exception) {
             // Disk write failed — emit placeholder so the LLM still sees the image existed.
-            return DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null)
+            return DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null, altText = altText)
         }
         // null return = fragment filter fired — return null to suppress the block entirely.
         saveResult ?: return null
-        return DocumentBlock.EmbeddedFileRef(name = name, mimeType = saveResult.mimeType, path = saveResult.path.toString())
+        return DocumentBlock.EmbeddedFileRef(name = name, mimeType = saveResult.mimeType, path = saveResult.path.toString(), altText = altText)
+    }
+
+    /**
+     * Reads a picture shape's `p:cNvPr` title/descr as alt-text (IMG-1). PPTX images carry
+     * the same human-authored figure description DOCX does; threading it onto the marker gives
+     * the LLM the only machine-readable caption the figure has. Returns null when absent.
+     */
+    private fun pictureAltText(shape: XSLFPictureShape): String? {
+        val cNvPr = try {
+            (shape.xmlObject as? org.openxmlformats.schemas.presentationml.x2006.main.CTPicture)
+                ?.nvPicPr?.cNvPr
+        } catch (_: Exception) { null } ?: return null
+        return (cNvPr.title?.trim()?.takeIf { it.isNotEmpty() }
+            ?: cNvPr.descr?.trim()?.takeIf { it.isNotEmpty() })
+    }
+
+    /**
+     * True when [frame] wraps a SmartArt diagram. `XSLFGraphicFrame.hasDiagram()` exists in
+     * POI 5.4.1; guarded for safety against any future signature drift.
+     */
+    private fun frameHasDiagram(frame: XSLFGraphicFrame): Boolean {
+        return try { frame.hasDiagram() } catch (_: Throwable) { false }
     }
 
     /**

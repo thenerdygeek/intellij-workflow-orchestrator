@@ -86,12 +86,44 @@ sealed class DocumentBlock {
      *                  the bytes were extracted to disk by `ImageExtractionService`
      *                  (Phase 2+). Null when bytes were not extracted (size cap exceeded,
      *                  HTML `<img src=…>` references with no fetchable body, etc.).
+     * @param altText   Machine-readable figure description carried by the source format
+     *                  (DOCX `wp:docPr`/`title|descr`, PPTX `p:cNvPr`/`title|descr`, HTML
+     *                  `<img alt>`). Null when the source provided no description. The
+     *                  assembler leads the image marker with this text so the LLM has the
+     *                  only human-authored caption the figure carries (G-7 / IMG-1).
      */
     data class EmbeddedFileRef(
         val name: String,
         val mimeType: String,
         val path: String? = null,
+        val altText: String? = null,
     ) : DocumentBlock()
+
+    /**
+     * A reference to a non-rasterised embedded object whose bytes are NOT extracted to a
+     * viewable image: SmartArt diagrams, drawing shapes (text boxes, callouts), and OLE /
+     * embedded objects (a linked spreadsheet, a `PowerPoint.Slide` object, …).
+     *
+     * These previously vanished from the output entirely — a slide dominated by a SmartArt
+     * diagram or an OLE object rendered near-empty (G-7 / IMG-3). Emitting a placeholder
+     * marker keeps the object's *presence* visible to the LLM even though its pixels are not
+     * available, e.g. `[SmartArt: AlternatingHexagons]`, `[Shape: Direct Access Storage 1]`,
+     * `[Embedded object: PowerPoint.Slide.8]`.
+     *
+     * SmartArt *text* (when present) is still emitted separately as a [ListBlock] by
+     * `SmartArtExtractor`; this block marks the diagram's position/identity, not its text.
+     *
+     * @param kind  Object category, drives the marker label prefix.
+     * @param name  Best available human-readable identifier: the shape/diagram name
+     *              (`docPr`/`cNvPr` name), the OLE `progId`, or a layout/category name.
+     *              Blank names degrade to a generic marker (e.g. `[Embedded object]`).
+     */
+    data class EmbeddedObjectRef(
+        val kind: Kind,
+        val name: String?,
+    ) : DocumentBlock() {
+        enum class Kind { SMARTART, SHAPE, OLE }
+    }
 
     /**
      * A review comment, tracked change, or PDF annotation. Emitted by extractors that

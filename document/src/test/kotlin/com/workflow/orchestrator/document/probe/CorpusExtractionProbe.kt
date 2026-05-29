@@ -55,8 +55,8 @@ class CorpusExtractionProbe {
         val report = StringBuilder()
         report.appendLine("# read_document corpus extraction probe")
         report.appendLine()
-        report.appendLine("| file | ext | bytes | pages | #sectionAnchors | #pageAnchors | tableRows | imageMarkers | urlRefs | chars | status |")
-        report.appendLine("|---|---|--:|--:|--:|--:|--:|--:|--:|--:|---|")
+        report.appendLine("| file | ext | bytes | pages | #sectionAnchors | #pageAnchors | tableRows | imageMarkers | embeddedObjs | urlRefs | chars | status |")
+        report.appendLine("|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|")
 
         for (file in files) {
             val name = file.fileName.toString()
@@ -82,6 +82,9 @@ class CorpusExtractionProbe {
 
                     val tableRows = md.lineSequence().count { pipeRowRegex.matches(it) }
                     val imageMarkers = Regex("""\[image:""").findAll(md).count()
+                    // G-7 / IMG-3: SmartArt / shape / OLE presence placeholders. Counted
+                    // separately from imageMarkers — these are non-viewable objects, not images.
+                    val embeddedObjs = Regex("""\[(SmartArt|Shape|Embedded object)\b""").findAll(md).count()
                     val urlRefs = urlRegex.findAll(md).count()
 
                     val summary = buildString {
@@ -93,6 +96,7 @@ class CorpusExtractionProbe {
                         appendLine("pageAnchors: ${index.pages.size}")
                         appendLine("pipeTableRows: $tableRows")
                         appendLine("imageMarkers: $imageMarkers")
+                        appendLine("embeddedObjects: $embeddedObjs")
                         appendLine("urlOccurrences: $urlRefs")
                         appendLine("contentChars: ${md.length}")
                         appendLine("firstSectionAnchors: ${index.sections.take(8).joinToString(" | ") { it.key }}")
@@ -101,7 +105,7 @@ class CorpusExtractionProbe {
 
                     report.appendLine(
                         "| $name | $ext | $bytes | ${artifact.meta.pageCount ?: "-"} | ${index.sections.size} | " +
-                            "${index.pages.size} | $tableRows | $imageMarkers | $urlRefs | ${md.length} | ok |"
+                            "${index.pages.size} | $tableRows | $imageMarkers | $embeddedObjs | $urlRefs | ${md.length} | ok |"
                     )
                     println("[corpus-probe] $name: ${index.sections.size} sections, ${index.pages.size} pages, " +
                         "$tableRows tableRows, $imageMarkers images, $urlRefs urls, ${md.length} chars")
@@ -109,7 +113,7 @@ class CorpusExtractionProbe {
             } catch (e: Throwable) {
                 Files.createDirectories(artDir)
                 Files.writeString(artDir.resolve("ERROR.txt"), "${e::class.simpleName}: ${e.message}\n")
-                report.appendLine("| $name | $ext | $bytes | - | - | - | - | - | - | - | ERROR: ${e.message?.take(50)} |")
+                report.appendLine("| $name | $ext | $bytes | - | - | - | - | - | - | - | - | ERROR: ${e.message?.take(50)} |")
                 println("[corpus-probe] $name FAILED: ${e::class.simpleName}: ${e.message}")
             }
         }

@@ -266,15 +266,16 @@ class TikaXhtmlFormatGapsTest {
     // ── Model boundary ────────────────────────────────────────────────────────
 
     @Test
-    fun `the entire DocumentBlock sealed hierarchy has 9 variants — that is the expressivity ceiling`() {
+    fun `the entire DocumentBlock sealed hierarchy has 10 variants — that is the expressivity ceiling`() {
         val variants = DocumentBlock::class.sealedSubclasses.map { it.simpleName }.toSet()
         assertEquals(
             setOf(
                 "Heading", "Paragraph", "Table", "PageMarker", "EmbeddedFileRef",
+                "EmbeddedObjectRef",
                 "Comment", "ListBlock", "Footnote", "KeyValueGroup",
             ),
             variants,
-            "Any feature that doesn't fit one of these 9 variants is invisible to the LLM. " +
+            "Any feature that doesn't fit one of these 10 variants is invisible to the LLM. " +
                 "Adding new structural concepts requires extending this hierarchy AND the MarkdownAssembler."
         )
     }

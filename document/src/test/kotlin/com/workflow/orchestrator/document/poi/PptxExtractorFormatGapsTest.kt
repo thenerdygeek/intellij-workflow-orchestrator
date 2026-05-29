@@ -268,6 +268,66 @@ class PptxExtractorFormatGapsTest {
             "All SmartArt text items should appear; got items: $items")
     }
 
+    // ── SmartArt / OLE placeholders + image alt-text (IMG-1 / IMG-3) ──────────
+
+    @Test
+    fun `a slide graphicFrame with the SmartArt diagram URI emits a SmartArt placeholder (IMG-3)`() {
+        val bytes = buildPptxWithGraphicFrame(
+            graphicDataUri = "http://schemas.openxmlformats.org/drawingml/2006/diagram",
+            shapeName = "AlternatingHexagons",
+            innerXml = """<dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" """ +
+                """xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" """ +
+                """r:dm="rId1" r:lo="rId2" r:qs="rId3" r:cs="rId4"/>""",
+        )
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val obj = blocks.filterIsInstance<DocumentBlock.EmbeddedObjectRef>()
+            .singleOrNull { it.kind == DocumentBlock.EmbeddedObjectRef.Kind.SMARTART }
+        assertNotNull(obj, "Expected a SmartArt placeholder; got: ${blocks.map { it::class.simpleName }}")
+        assertEquals("AlternatingHexagons", obj!!.name)
+    }
+
+    @Test
+    fun `a slide graphicFrame with the OLE URI emits an Embedded object placeholder carrying the progId (IMG-3)`() {
+        val bytes = buildPptxWithGraphicFrame(
+            graphicDataUri = "http://schemas.openxmlformats.org/presentationml/2006/ole",
+            shapeName = "Object 5",
+            innerXml = """<p:oleObj xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" """ +
+                """xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" """ +
+                """spid="_x0000_s584709" name="Slide" r:id="rId4" imgW="100" imgH="100" progId="PowerPoint.Slide.8">""" +
+                """<p:embed/></p:oleObj>""",
+        )
+        val blocks = extractor.extract(ByteArrayInputStream(bytes))
+        val obj = blocks.filterIsInstance<DocumentBlock.EmbeddedObjectRef>()
+            .singleOrNull { it.kind == DocumentBlock.EmbeddedObjectRef.Kind.OLE }
+        assertNotNull(obj, "Expected an OLE placeholder; got: ${blocks.map { it::class.simpleName }}")
+        assertEquals("PowerPoint.Slide.8", obj!!.name,
+            "OLE placeholder should carry the progId as its identifier")
+    }
+
+    @Test
+    fun `picture shape carries its cNvPr descr as altText (IMG-1)`(
+        @TempDir downloads: java.nio.file.Path,
+    ) {
+        IOUtils.setByteArrayMaxOverride(200_000_000)
+        val bytes = try {
+            buildPptx { ppt ->
+                val slide = ppt.createSlide()
+                val picData = ppt.addPicture(tinyPng(), PictureData.PictureType.PNG)
+                val pic = slide.createPicture(picData).apply { anchor = Rectangle(100, 100, 200, 200) }
+                // Set the picture's p:cNvPr descr (PPTX alt-text).
+                val ct = pic.xmlObject as org.openxmlformats.schemas.presentationml.x2006.main.CTPicture
+                ct.nvPicPr.cNvPr.descr = "Milky way galaxy, under mostly clear night skies"
+            }
+        } finally {
+            IOUtils.setByteArrayMaxOverride(50_000_000)
+        }
+        val imageService = com.workflow.orchestrator.document.service.ImageExtractionService(downloadsRoot = downloads)
+        val ref = PptxExtractor(imageService = imageService, docKey = "alt.pptx")
+            .extract(ByteArrayInputStream(bytes))
+            .filterIsInstance<DocumentBlock.EmbeddedFileRef>().single()
+        assertEquals("Milky way galaxy, under mostly clear night skies", ref.altText)
+    }
+
     @Test
     fun `PPTX with no SmartArt emits no ListBlocks`() {
         val bytes = buildPptx { ppt ->
@@ -311,6 +371,60 @@ class PptxExtractorFormatGapsTest {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Builds a single-slide PPTX whose slide1.xml spTree contains one `<p:graphicFrame>` with
+     * the given [graphicDataUri] (e.g. the SmartArt diagram URI or the OLE URI) and [innerXml]
+     * payload. POI's `XMLSlideShow` dispatches the frame to `XSLFGraphicFrame` (diagram) or
+     * `XSLFObjectShape` (ole) by that URI, exercising the IMG-3 placeholder paths.
+     *
+     * Strategy mirrors [buildPptxWithComment]: build a base PPTX via POI, then string-inject
+     * the graphicFrame before `</p:spTree>` in slide1.xml. No extra relationships/parts are
+     * needed — the extractor classifies purely by the graphicData URI.
+     */
+    private fun buildPptxWithGraphicFrame(
+        graphicDataUri: String,
+        shapeName: String,
+        innerXml: String,
+    ): ByteArray {
+        val baseBytes = buildPptx { ppt ->
+            ppt.createSlide().createTextBox().apply {
+                anchor = Rectangle(50, 30, 500, 50)
+                setText("Slide with an embedded object")
+            }
+        }
+        val frameXml =
+            """<p:graphicFrame xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" """ +
+                """xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">""" +
+                """<p:nvGraphicFramePr><p:cNvPr id="99" name="$shapeName"/>""" +
+                """<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>""" +
+                """<p:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="100"/></p:xfrm>""" +
+                """<a:graphic><a:graphicData uri="$graphicDataUri">$innerXml</a:graphicData></a:graphic>""" +
+                """</p:graphicFrame>"""
+
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out).use { zout ->
+            ZipInputStream(ByteArrayInputStream(baseBytes)).use { zin ->
+                var entry = zin.nextEntry
+                while (entry != null) {
+                    val name = entry.name
+                    val bytes = zin.readBytes()
+                    if (name == "ppt/slides/slide1.xml") {
+                        val updated = String(bytes, Charsets.UTF_8)
+                            .replace("</p:spTree>", "$frameXml</p:spTree>")
+                        zout.putNextEntry(ZipEntry(name))
+                        zout.write(updated.toByteArray(Charsets.UTF_8))
+                    } else {
+                        zout.putNextEntry(ZipEntry(name))
+                        zout.write(bytes)
+                    }
+                    zout.closeEntry()
+                    entry = zin.nextEntry
+                }
+            }
+        }
+        return out.toByteArray()
+    }
 
     private fun buildPptx(build: (XMLSlideShow) -> Unit): ByteArray {
         val ppt = XMLSlideShow()

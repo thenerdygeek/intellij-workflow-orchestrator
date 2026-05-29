@@ -72,13 +72,15 @@ class EmbeddedFileRefUnreachableTest {
     // ── DocumentBlock model surface (sentinel) ────────────────────────────────
 
     @Test
-    fun `DocumentBlock sealed hierarchy has exactly 9 variants after Phase 0`() {
+    fun `DocumentBlock sealed hierarchy has exactly 10 variants`() {
         // Phase 0 added: Comment, ListBlock, Footnote, KeyValueGroup.
+        // G-7 / IMG-3 added: EmbeddedObjectRef (SmartArt / shape / OLE placeholders).
         // If this set changes again, review every Format-Gaps test for new positive coverage.
         val variants = DocumentBlock::class.sealedSubclasses.map { it.simpleName }.toSet()
         assertEquals(
             setOf(
                 "Heading", "Paragraph", "Table", "PageMarker", "EmbeddedFileRef",
+                "EmbeddedObjectRef",
                 "Comment", "ListBlock", "Footnote", "KeyValueGroup",
             ),
             variants,

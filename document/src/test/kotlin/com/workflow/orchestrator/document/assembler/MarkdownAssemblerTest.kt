@@ -210,10 +210,20 @@ class MarkdownAssemblerTest {
     // ── 12. EmbeddedFileRef ───────────────────────────────────────────────────
 
     @Test
-    fun `EmbeddedFileRef renders as bracketed placeholder`() {
+    fun `image-mime EmbeddedFileRef renders with the image token (IMG-4 reconciliation)`() {
+        // An image-mime ref always uses `[image:` so the imageMarkers metric stays consistent
+        // with the body, even when no bytes were extracted to disk (path=null).
         val ref = DocumentBlock.EmbeddedFileRef(name = "diagram.png", mimeType = "image/png")
         val (md, truncated) = assembler.assemble(listOf(ref), maxChars = 10_000)
-        assertEquals("[embedded: diagram.png (image/png)]\n\n", md)
+        assertEquals("[image: diagram.png] (image/png)\n\n", md)
+        assertFalse(truncated)
+    }
+
+    @Test
+    fun `non-image EmbeddedFileRef renders as the bracketed embedded placeholder`() {
+        val ref = DocumentBlock.EmbeddedFileRef(name = "macro.bin", mimeType = "application/octet-stream")
+        val (md, truncated) = assembler.assemble(listOf(ref), maxChars = 10_000)
+        assertEquals("[embedded: macro.bin (application/octet-stream)]\n\n", md)
         assertFalse(truncated)
     }
 

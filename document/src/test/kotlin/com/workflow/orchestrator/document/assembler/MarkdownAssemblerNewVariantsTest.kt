@@ -263,11 +263,67 @@ class MarkdownAssemblerNewVariantsTest {
     }
 
     @Test
-    fun `EmbeddedFileRef with null path keeps existing not-extracted format`() {
+    fun `image-mime EmbeddedFileRef with null path uses image token so the imageMarkers metric is consistent`() {
         val block = DocumentBlock.EmbeddedFileRef(name = "screenshot.png", mimeType = "image/png")
         val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
-        // Existing format from MarkdownAssembler.serializeEmbeddedFileRef — unchanged.
-        assertEquals("[embedded: screenshot.png (image/png)]\n\n", md)
+        // IMG-4: image-mime refs always use the `[image:` token (even with no on-disk path)
+        // so the corpus probe's `imageMarkers` count matches the body for every format.
+        assertEquals("[image: screenshot.png] (image/png)\n\n", md)
+    }
+
+    @Test
+    fun `non-image EmbeddedFileRef with null path keeps the embedded token`() {
+        val block = DocumentBlock.EmbeddedFileRef(name = "data.bin", mimeType = "application/octet-stream")
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        // `[embedded:` is reserved for genuine non-image attachments the vision path can't render.
+        assertEquals("[embedded: data.bin (application/octet-stream)]\n\n", md)
+    }
+
+    @Test
+    fun `image-mime EmbeddedFileRef with null path but altText leads with the alt text`() {
+        val block = DocumentBlock.EmbeddedFileRef(
+            name = "img1.png",
+            mimeType = "image/png",
+            altText = "Milky way galaxy, under mostly clear night skies",
+        )
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals("[image: Milky way galaxy, under mostly clear night skies] (image/png)\n\n", md)
+    }
+
+    @Test
+    fun `EmbeddedFileRef with path and altText leads with alt text then path (IMG-1)`() {
+        val block = DocumentBlock.EmbeddedFileRef(
+            name = "figure-1.png",
+            mimeType = "image/png",
+            path = "/session/abc/downloads/document-xyz/image-0-def.png",
+            altText = "Photo of boulders on beach in bright sunshine",
+        )
+        val (md, _) = assembler.assemble(listOf(block), maxChars = 10_000)
+        assertEquals(
+            "[image: Photo of boulders on beach in bright sunshine — " +
+                "/session/abc/downloads/document-xyz/image-0-def.png] (image/png)\n\n",
+            md,
+        )
+    }
+
+    @Test
+    fun `EmbeddedObjectRef renders kind-specific placeholder markers (IMG-3)`() {
+        val smart = DocumentBlock.EmbeddedObjectRef(
+            kind = DocumentBlock.EmbeddedObjectRef.Kind.SMARTART, name = "AlternatingHexagons",
+        )
+        val shape = DocumentBlock.EmbeddedObjectRef(
+            kind = DocumentBlock.EmbeddedObjectRef.Kind.SHAPE, name = "Direct Access Storage 1",
+        )
+        val ole = DocumentBlock.EmbeddedObjectRef(
+            kind = DocumentBlock.EmbeddedObjectRef.Kind.OLE, name = "PowerPoint.Slide.8",
+        )
+        val oleNoName = DocumentBlock.EmbeddedObjectRef(
+            kind = DocumentBlock.EmbeddedObjectRef.Kind.OLE, name = null,
+        )
+        assertEquals("[SmartArt: AlternatingHexagons]\n\n", assembler.assemble(listOf(smart), 10_000).markdown)
+        assertEquals("[Shape: Direct Access Storage 1]\n\n", assembler.assemble(listOf(shape), 10_000).markdown)
+        assertEquals("[Embedded object: PowerPoint.Slide.8]\n\n", assembler.assemble(listOf(ole), 10_000).markdown)
+        assertEquals("[Embedded object]\n\n", assembler.assemble(listOf(oleNoName), 10_000).markdown)
     }
 
     @Test
