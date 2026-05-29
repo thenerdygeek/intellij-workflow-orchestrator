@@ -6,6 +6,7 @@ import org.apache.pdfbox.Loader
 import technology.tabula.ObjectExtractor
 import technology.tabula.RectangularTextContainer
 import technology.tabula.Table
+import technology.tabula.TextElement
 import technology.tabula.extractors.BasicExtractionAlgorithm
 import technology.tabula.extractors.SpreadsheetExtractionAlgorithm
 import java.nio.file.Path
@@ -127,8 +128,13 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
                         .filterNot { isStreamPhantomTable(it) }
                 }
 
+                // Collect every text glyph on the page ONCE. Used to re-populate cell text by
+                // center-point containment (see [tabulaTableToDocumentBlock]) so glyphs straddling
+                // a column ruling are not dropped by Tabula's full-containment cell assignment.
+                val pageText: List<TextElement> = if (tables.isNotEmpty()) page.text else emptyList()
+
                 for (t in tables) {
-                    val block = tabulaTableToDocumentBlock(t) ?: continue
+                    val block = tabulaTableToDocumentBlock(t, pageText) ?: continue
                     positioned += PositionedBlock(
                         page = page.pageNumber,
                         top = t.top.toDouble(),
@@ -161,20 +167,84 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
      * The first row is treated as headers. Subsequent rows are normalised to
      * `headers.size` cells (padded with empty string or truncated).
      *
-     * Returns `null` if the table has no rows or the header row is entirely blank.
+     * ## Glyph-clip repair (T-2 / T-4)
+     *
+     * Tabula populates each ruled cell via `Page.getText(cellRect)`, which uses
+     * `java.awt.geom.Rectangle2D.contains()` — a **full-containment** test. A glyph whose
+     * bounding box straddles a column ruling is contained in *neither* adjacent cell and is
+     * silently dropped (e.g. the trailing `0` of a right-aligned `4,558,150` → `4,558,15`, or
+     * the leading `W` of a left-aligned `Withdrawn` → `ithdrawn`). This factually corrupts the
+     * data. To repair it, when [pageText] is available we re-derive each cell's text by
+     * **center-point containment**: every glyph is assigned to the single cell whose rectangle
+     * contains the glyph's center, so a straddling glyph always lands in exactly one cell and is
+     * never lost. Tabula's own [TextElement.mergeWords] reassembles the assigned glyphs into the
+     * cell's text in reading order, preserving word/space joining. When [pageText] is empty
+     * (defensive fallback) the original Tabula cell text is used unchanged.
+     *
+     * ## Leading blank spacer row (T-1)
+     *
+     * A fully-ruled table whose header sits in a tall header band (e.g. NIST 800-63B Table 4-1,
+     * "AAL Summary of Requirements") yields a leading **all-blank** Tabula row for the empty space
+     * above the header text; the real header row is the *second* row. Treating row 0 as the header
+     * found it entirely blank and returned `null`, silently discarding the whole table (it then
+     * leaked as unstructured prose). We therefore skip leading all-blank rows when choosing the
+     * header row, and drop fully-blank interior spacer rows from the body, so such tables are
+     * recovered with their real header and body intact.
+     *
+     * Returns `null` if the table has no rows or has no non-blank row to use as a header.
      */
-    private fun tabulaTableToDocumentBlock(t: Table): DocumentBlock.Table? {
+    private fun tabulaTableToDocumentBlock(t: Table, pageText: List<TextElement>): DocumentBlock.Table? {
         val rawRows = t.getRows()
         if (rawRows.isEmpty()) return null
 
-        val headers = rawRows[0].map { it.text.trim() }
-        if (headers.all { it.isEmpty() }) return null
-
-        val dataRows = rawRows.drop(1).map { row ->
-            normaliseRow(row.map { it.text.trim() }, headers.size)
+        val repaired: List<List<String>> = rawRows.map { row ->
+            row.map { cell -> cellText(cell, pageText).trim() }
         }
 
+        // Skip leading all-blank spacer rows so the real header row (not an empty band above it)
+        // is used as the header.
+        val firstContentIdx = repaired.indexOfFirst { row -> row.any { it.isNotEmpty() } }
+        if (firstContentIdx < 0) return null
+
+        val headers = repaired[firstContentIdx]
+
+        val dataRows = repaired.drop(firstContentIdx + 1)
+            // Drop fully-blank interior spacer rows (header-band padding between header and body).
+            .filter { row -> row.any { it.isNotEmpty() } }
+            .map { row -> normaliseRow(row, headers.size) }
+
         return DocumentBlock.Table(headers = headers, rows = dataRows, caption = null)
+    }
+
+    /**
+     * Returns the text of a single Tabula [cell], repairing the boundary-glyph clip.
+     *
+     * When [pageText] is non-empty and the cell has a positive-area rectangle, the text is
+     * re-derived by center-point containment (see [tabulaTableToDocumentBlock]); otherwise the
+     * cell's original Tabula text is returned unchanged. Re-derivation falls back to the original
+     * text when no glyph centers land inside the cell — that means Tabula's own assignment (which
+     * may have used overlap rather than strict containment for that cell) found content our
+     * stricter center test would discard, so we never lose text relative to the baseline.
+     */
+    private fun cellText(cell: RectangularTextContainer<*>, pageText: List<TextElement>): String {
+        val original = cell.text
+        if (pageText.isEmpty()) return original
+
+        val left = cell.left
+        val right = cell.right
+        val top = cell.top
+        val bottom = cell.bottom
+        // Zero/negative-area cells (Tabula's `[0-0]` padding columns) can hold no glyphs.
+        if (right - left <= 0f || bottom - top <= 0f) return original
+
+        val inCell = pageText.filter { e ->
+            val cx = e.centerX.toFloat()
+            val cy = e.centerY.toFloat()
+            cx >= left && cx < right && cy >= top && cy < bottom
+        }
+        if (inCell.isEmpty()) return original
+
+        return TextElement.mergeWords(inCell).joinToString(" ") { it.text }.trim()
     }
 
     /**
