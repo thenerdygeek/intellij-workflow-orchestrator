@@ -5,6 +5,8 @@ import com.workflow.orchestrator.core.model.DocumentArtifactMeta
 import com.workflow.orchestrator.core.model.DocumentCursor
 import com.workflow.orchestrator.core.model.DocumentExtractionProgress
 import com.workflow.orchestrator.core.model.DocumentIndex
+import com.workflow.orchestrator.core.model.DocumentSearchMatch
+import com.workflow.orchestrator.core.model.DocumentSearchResult
 import com.workflow.orchestrator.core.model.DocumentSlice
 import com.workflow.orchestrator.document.assembler.MarkdownAssembler
 import kotlinx.coroutines.Dispatchers
@@ -178,6 +180,45 @@ class DocumentArtifactStore(
         )
     }
 
+    /**
+     * Full-text search over the persisted content (G-10). Returns ranked matching snippets, each
+     * carrying the navigation breadcrumbs ([DocumentSearchMatch.offset]/page/section) so the LLM
+     * can read more at the hit via `read_document(offset=/page=/section=)`.
+     *
+     * Semantics:
+     *  - **Case-insensitive.**
+     *  - **All-terms default.** [query] is split on whitespace; a candidate window must contain
+     *    EVERY term. A single-token query degenerates to a plain substring match.
+     *  - **Ranking.** Phrase hits (all terms adjacent in order) outrank scattered all-terms hits;
+     *    among the latter, the tighter span (term density) wins; document order is the final tiebreak.
+     *  - **Cap.** At most [resultCap] matches are returned; [DocumentSearchResult.totalHits] reports
+     *    the true pre-cap count so truncation is never silent.
+     *  - **Snippet.** A context window of ~[contextChars] chars on each side of the match, trimmed to
+     *    word boundaries, with the matched region delimited by `«…»` and elided edges marked `…`.
+     *  - **No match.** Returns empty matches plus [DocumentSearchResult.availableSections] (capped at
+     *    [MAX_AVAILABLE_SECTIONS]) so the caller can guide navigation, mirroring the slice-path miss banner.
+     *
+     * Match → page is [DocumentIndex.pageAt]; match → section is [DocumentIndex.sectionAt].
+     */
+    suspend fun search(
+        artifact: DocumentArtifact,
+        index: DocumentIndex,
+        query: String,
+        contextChars: Int = DEFAULT_SNIPPET_CONTEXT,
+        resultCap: Int = DEFAULT_RESULT_CAP,
+    ): DocumentSearchResult = withContext(Dispatchers.IO) {
+        val md = readContent(artifact)
+        DocumentSearchEngine.run(
+            content = md,
+            query = query,
+            contextChars = contextChars.coerceAtLeast(8),
+            resultCap = resultCap.coerceAtLeast(1),
+            pageAt = index::pageAt,
+            sectionAt = index::sectionAt,
+            availableSections = index.sections.take(MAX_AVAILABLE_SECTIONS).map { it.key },
+        )
+    }
+
     suspend fun writeFailure(artDir: Path, reason: String, nowEpochMs: Long = Instant.now().toEpochMilli()): Unit =
         withContext(Dispatchers.IO) {
             Files.createDirectories(artDir)
@@ -220,5 +261,11 @@ class DocumentArtifactStore(
          * Keeps the discoverability hint token-frugal on documents with hundreds of headings.
          */
         const val MAX_AVAILABLE_SECTIONS = 30
+
+        /** Default chars of context on each side of a search hit in the rendered snippet. */
+        const val DEFAULT_SNIPPET_CONTEXT = 75
+
+        /** Default cap on the number of ranked search matches returned (true total still reported). */
+        const val DEFAULT_RESULT_CAP = 15
     }
 }

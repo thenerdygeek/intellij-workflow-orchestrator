@@ -70,6 +70,11 @@ class DocumentTool(
 
         Embedded images surface as `[image: <path>] (<mime>)` markers in the output.
         To load any image into your vision context, call `view_image(path)`.
+
+        To FIND content instead of reading sequentially, pass `search="your query"`. The tool then
+        returns ranked matching snippets — each with its page, section, and character offset — instead
+        of a content slice. Use the reported offset/page/section to read more there with a follow-up
+        offset=/page=/section= call. `search` is its own mode: it overrides offset/page/section.
     """.trimIndent()
 
     override val parameters = FunctionParameters(
@@ -102,6 +107,15 @@ class DocumentTool(
                     "'4 Digital Identity Model') and punctuation/casing is normalized ('fetch-product-metadata' " +
                     "matches 'Fetch Product Metadata'). If no heading matches, the tool says so and lists the " +
                     "available section names. Mutually exclusive with offset/page.",
+            ),
+            "search" to ParameterProperty(
+                type = "string",
+                description = "Optional. FIND content instead of reading a slice. Returns ranked matching " +
+                    "snippets — each with its page, section, and character offset — instead of a content " +
+                    "window. Case-insensitive; all whitespace-separated terms must appear (a single term is a " +
+                    "plain substring search); a phrase (terms adjacent, in order) ranks highest. Capped at the " +
+                    "top ~15 hits with the true total reported. SEARCH IS ITS OWN MODE: when present it overrides " +
+                    "offset/page/section. Use the offset/page/section from a hit to then read more there.",
             ),
         ),
         required = listOf("path"),
@@ -273,6 +287,46 @@ class DocumentTool(
                 example("Introduction")
                 example("Functional Requirements")
             }
+            optional("search", "string") {
+                llmSeesIt(
+                    "Optional. FIND content instead of reading a slice. Returns ranked matching snippets — " +
+                        "each with its page, section, and character offset — instead of a content window. " +
+                        "Case-insensitive; all whitespace-separated terms must appear (a single term is a plain " +
+                        "substring search); a phrase (terms adjacent, in order) ranks highest. Capped at the top " +
+                        "~15 hits with the true total reported. SEARCH IS ITS OWN MODE: when present it overrides " +
+                        "offset/page/section. Use the offset/page/section from a hit to then read more there."
+                )
+                humanReadable(
+                    "Full-text search across the extracted document. Instead of a content slice you get back a " +
+                        "ranked list of snippets, each annotated with `[page N · §Section · offset X]` so you can " +
+                        "immediately re-call read_document with that offset/page/section to read the surrounding " +
+                        "passage. Think of it as Ctrl-F over the whole document with relevance ranking and " +
+                        "navigation breadcrumbs baked in. Matching default: case-insensitive, every space-separated " +
+                        "term must be present in a snippet window; an exact adjacent phrase ranks above scattered " +
+                        "hits; ties break by document order."
+                )
+                whenPresent(
+                    "The tool searches the extracted Markdown and returns up to ~15 ranked matches (with the true " +
+                        "total hit count) — NOT a content slice. offset/page/section are ignored for this call."
+                )
+                whenAbsent("The tool reads a content slice as usual (offset/page/section/max_chars apply).")
+                constraint(
+                    "search is mutually exclusive with the slice cursors — when search is non-blank it WINS and " +
+                        "offset/page/section/max_chars are ignored"
+                )
+                constraint("blank/whitespace-only search is treated as absent (the slice path runs instead)")
+                constraint(
+                    "plain text, not regex — special characters are matched literally; multiple words are an " +
+                        "all-terms-must-appear query, not a regex alternation"
+                )
+                constraint(
+                    "if there are zero matches the tool says so (NOT an error) and lists the available section " +
+                        "names so you can navigate by section= instead"
+                )
+                example("AAL2 reauthentication")
+                example("error budget")
+                example("itemOptions")
+            }
         }
         verdict {
             keep(
@@ -375,6 +429,13 @@ class DocumentTool(
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
 
+        // Search is its own MODE: when a non-blank `search` is present it WINS over offset/page/section
+        // and returns ranked matching snippets instead of a content slice (G-10).
+        val searchArg: String? = params["search"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+        if (searchArg != null) {
+            return executeSearch(path, searchArg)
+        }
+
         val maxChars: Int? = runCatching { params["max_chars"]?.jsonPrimitive?.int }.getOrNull()
         val pageArg: Int? = runCatching { params["page"]?.jsonPrimitive?.int }.getOrNull()
         val sectionArg: String? = params["section"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
@@ -428,6 +489,45 @@ class DocumentTool(
             // is more to read, so the LLM learns it can jump with section=. Token-frugal one-liner.
             if (sectionMissBanner == null && slice.remaining > 0 && slice.availableSections.isNotEmpty()) {
                 append("\n\n[Sections: ${renderSectionList(slice.availableSections)}]")
+            }
+        }
+        return ToolResult(content = body, summary = result.summary,
+            tokenEstimate = TokenEstimator.estimate(body), isError = false)
+    }
+
+    /**
+     * Search mode (G-10): delegate to [DocumentArtifactService.search] and render the ranked match
+     * list. A no-match search is a non-error result that surfaces the available section names so the
+     * LLM can fall back to section navigation, mirroring the slice-path miss banner.
+     */
+    private suspend fun executeSearch(path: java.nio.file.Path, query: String): ToolResult {
+        val result = artifactService.search(path, query, contextChars = null, resultCap = null)
+        if (result.isError) {
+            return ToolResult("Error: ${result.summary}", result.summary,
+                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
+        }
+        val data = result.data!!
+        val body = buildString {
+            if (data.matches.isEmpty()) {
+                append("No matches for \"${data.query}\".")
+                if (data.availableSections.isNotEmpty()) {
+                    append(" Available sections: ${renderSectionList(data.availableSections)}. ")
+                    append("Try search= with different terms, or navigate by section=<one of these>.")
+                } else {
+                    append(" Try search= with different or fewer terms.")
+                }
+            } else {
+                val shown = data.matches.size
+                val header = if (data.totalHits > shown)
+                    "$shown of ${data.totalHits} matches for \"${data.query}\" (ranked; capped at ${data.resultCap}):"
+                else
+                    "$shown match${if (shown == 1) "" else "es"} for \"${data.query}\":"
+                append(header)
+                data.matches.forEachIndexed { i, m ->
+                    val page = m.page?.let { "page $it" } ?: "page ?"
+                    val section = m.section?.let { " · §$it" } ?: ""
+                    append("\n${i + 1}. [$page$section · offset ${m.offset}] ${m.snippet}")
+                }
             }
         }
         return ToolResult(content = body, summary = result.summary,

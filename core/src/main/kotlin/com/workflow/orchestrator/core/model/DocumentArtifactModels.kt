@@ -31,6 +31,43 @@ data class DocumentSlice(
     val sectionMatched: Boolean? = null,
 )
 
+/**
+ * One ranked hit returned by a `read_document(search=…)` call. Carries the navigation
+ * breadcrumbs the LLM needs to read more at the hit: the char [offset] (authoritative — pass it
+ * back as `offset=`), the [page] number, and the nearest preceding [section] heading. [snippet] is
+ * a context window around the match with the matched region delimited by `«…»`.
+ *
+ * @param offset absolute char offset of the match start in the extracted Markdown.
+ * @param page 1-based page number containing the match, or null when the document has no page anchors.
+ * @param section nearest preceding section-anchor label (`offset <= matchOffset`), or null when none precede it.
+ * @param snippet the trimmed context window with the match delimited by `«…»`.
+ */
+data class DocumentSearchMatch(
+    val offset: Int,
+    val page: Int?,
+    val section: String?,
+    val snippet: String,
+)
+
+/**
+ * Result of a `read_document(search=…)` call. A search is its own MODE — mutually exclusive with
+ * the slice path — so it gets its own typed result rather than overloading [DocumentSlice].
+ *
+ * @param query the (trimmed) query as searched.
+ * @param matches the ranked, capped hits (most relevant first; capped at [resultCap]).
+ * @param totalHits the total number of hits found BEFORE the cap — so truncation is never silent.
+ * @param resultCap the cap that was applied (matches.size <= resultCap).
+ * @param availableSections section-anchor labels (capped by the store) so a no-match search can
+ *   still guide the LLM toward valid navigation, mirroring the slice-path miss banner.
+ */
+data class DocumentSearchResult(
+    val query: String,
+    val matches: List<DocumentSearchMatch>,
+    val totalHits: Int,
+    val resultCap: Int,
+    val availableSections: List<String> = emptyList(),
+)
+
 /** Persisted structural index: page-number -> char offset, heading -> char offset. Serialized as `index.json`. */
 @Serializable
 data class DocumentIndex(
@@ -74,6 +111,19 @@ data class DocumentIndex(
     /** Page whose recorded offset is the greatest value not exceeding [offset]; null if no page anchors. */
     fun pageAt(offset: Int): Int? =
         pages.lastOrNull { it.offset <= offset }?.key?.toIntOrNull()
+
+    /**
+     * Nearest preceding section-anchor label: the heading whose recorded offset is the greatest
+     * value not exceeding [offset]; null when no section anchor precedes it (e.g. a match before the
+     * first heading, or a document with no section anchors). The inverse of [offsetForSection] —
+     * given a char offset, name the section that contains it. Used by the `read_document(search=…)`
+     * path to attribute each match to its enclosing section.
+     *
+     * Relies on section anchors being recorded in ascending offset order (the assembler emits them
+     * in document order); does not re-sort.
+     */
+    fun sectionAt(offset: Int): String? =
+        sections.lastOrNull { it.offset <= offset }?.key
 }
 
 /** Leading section number with optional trailing dot and following whitespace: "4 ", "1.2. ". */

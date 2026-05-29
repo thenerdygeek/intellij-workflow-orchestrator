@@ -152,4 +152,31 @@ class DocumentIndexTest {
         )
         assertNull(idx.offsetForSection("Glossary"))
     }
+
+    // ── sectionAt: inverse of offsetForSection — given a char offset, name the enclosing section ──
+
+    @Test
+    fun `sectionAt returns the nearest preceding section anchor`() {
+        // Introduction @0, Results @8000.
+        assertEquals("Introduction", index.sectionAt(0))
+        assertEquals("Introduction", index.sectionAt(7999))
+        assertEquals("Results", index.sectionAt(8000))
+        assertEquals("Results", index.sectionAt(99999))
+    }
+
+    @Test
+    fun `sectionAt returns null when the offset precedes the first anchor`() {
+        val idx = DocumentIndex(
+            pages = emptyList(),
+            sections = listOf(DocumentIndex.Anchor("Body", 500)),
+        )
+        assertNull(idx.sectionAt(0), "no section anchor precedes offset 0")
+        assertEquals("Body", idx.sectionAt(500))
+    }
+
+    @Test
+    fun `sectionAt returns null when there are no section anchors`() {
+        val idx = DocumentIndex(pages = listOf(DocumentIndex.Anchor("1", 0)), sections = emptyList())
+        assertNull(idx.sectionAt(123))
+    }
 }

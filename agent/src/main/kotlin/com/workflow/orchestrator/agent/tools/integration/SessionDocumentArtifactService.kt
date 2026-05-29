@@ -4,6 +4,7 @@ import com.workflow.orchestrator.agent.session.DocumentManifestScanner
 import com.workflow.orchestrator.core.model.DocumentArtifact
 import com.workflow.orchestrator.core.model.DocumentCursor
 import com.workflow.orchestrator.core.model.DocumentExtractionProgress
+import com.workflow.orchestrator.core.model.DocumentSearchResult
 import com.workflow.orchestrator.core.model.DocumentSlice
 import com.workflow.orchestrator.core.services.DocumentArtifactService
 import com.workflow.orchestrator.core.services.SessionDownloadDir
@@ -65,14 +66,63 @@ class SessionDocumentArtifactService(
     }
 
     override suspend fun read(path: Path, cursor: DocumentCursor, maxChars: Int?): ToolResult<DocumentSlice> {
+        val cap = (maxChars ?: DEFAULT_SERVE_CHARS).coerceAtLeast(1)
+        return when (val r = resolveArtifact(path)) {
+            is ArtifactResolution.Failed -> ToolResult.error(r.reason)
+            is ArtifactResolution.Ready -> serve(r.artifact, cursor, cap, r.note)
+        }
+    }
+
+    override suspend fun search(
+        path: Path,
+        query: String,
+        contextChars: Int?,
+        resultCap: Int?,
+    ): ToolResult<DocumentSearchResult> {
+        return when (val r = resolveArtifact(path)) {
+            is ArtifactResolution.Failed -> ToolResult.error(r.reason)
+            is ArtifactResolution.Ready -> {
+                val index = store.loadIndex(r.artifact)
+                val result = store.search(
+                    artifact = r.artifact,
+                    index = index,
+                    query = query,
+                    contextChars = contextChars ?: DEFAULT_SNIPPET_CONTEXT,
+                    resultCap = resultCap ?: DEFAULT_RESULT_CAP,
+                )
+                val summary = if (result.totalHits == 0) {
+                    "No matches for \"${result.query}\"."
+                } else if (result.totalHits > result.matches.size) {
+                    "${result.totalHits} matches for \"${result.query}\" (showing first ${result.matches.size})."
+                } else {
+                    "${result.totalHits} matches for \"${result.query}\"."
+                }
+                ToolResult.success(data = result, summary = summary)
+            }
+        }
+    }
+
+    /** Outcome of resolving a path to a materialized artifact: either a typed failure or a ready artifact. */
+    private sealed interface ArtifactResolution {
+        data class Ready(val artifact: DocumentArtifact, val note: String?) : ArtifactResolution
+        data class Failed(val reason: String) : ArtifactResolution
+    }
+
+    /**
+     * Shared extraction orchestration for [read] and [search]: resolve the path (basename fallback),
+     * hash, serve the persisted artifact if present, honor the fresh-failure negative cache, else run
+     * the single-flight background extraction job and block on it. Never throws — returns a typed
+     * [ArtifactResolution].
+     */
+    private suspend fun resolveArtifact(path: Path): ArtifactResolution {
         val cacheRoot = cacheDirProvider()
-            ?: return ToolResult.error("Document cache unavailable in this context.")
+            ?: return ArtifactResolution.Failed("Document cache unavailable in this context.")
 
         val resolution = resolvePath(path, cacheRoot)
         val effectivePath: java.nio.file.Path
         val resolutionNote: String?
         when (resolution) {
-            is PathResolution.Ambiguous -> return ToolResult.error(
+            is PathResolution.Ambiguous -> return ArtifactResolution.Failed(
                 "Multiple documents match '${path.fileName}'. Pass the full path. Candidates:\n" +
                     resolution.candidates.joinToString("\n") { "- $it" }
             )
@@ -92,14 +142,13 @@ class SessionDocumentArtifactService(
                     "Permission denied reading '$effectivePath'. Check the file's permissions."
                 else -> "Cannot read '$effectivePath': ${it.message ?: it::class.simpleName}"
             }
-            return ToolResult.error(msg)
+            return ArtifactResolution.Failed(msg)
         }
         val artDir = cacheRoot.resolve(hash)
-        val cap = (maxChars ?: DEFAULT_SERVE_CHARS).coerceAtLeast(1)
 
-        store.loadArtifact(artDir)?.let { artifact -> return serve(artifact, cursor, cap, resolutionNote) }
+        store.loadArtifact(artDir)?.let { artifact -> return ArtifactResolution.Ready(artifact, resolutionNote) }
         store.loadFailureIfFresh(artDir)?.let { reason ->
-            return ToolResult.error("Document extraction failed: $reason")
+            return ArtifactResolution.Failed("Document extraction failed: $reason")
         }
 
         // The background extraction job runs in a fresh coroutine on [cs]; it must carry a
@@ -127,8 +176,8 @@ class SessionDocumentArtifactService(
 
         val outcome = job.await()   // blocks until extraction completes (deferred self-caps at jobBudgetMs)
         return outcome.fold(
-            onSuccess = { artifact -> serve(artifact, cursor, cap, resolutionNote) },
-            onFailure = { ToolResult.error("Document extraction failed: ${it.message}") },
+            onSuccess = { artifact -> ArtifactResolution.Ready(artifact, resolutionNote) },
+            onFailure = { ArtifactResolution.Failed("Document extraction failed: ${it.message}") },
         )
     }
 
@@ -145,6 +194,12 @@ class SessionDocumentArtifactService(
 
     companion object {
         const val DEFAULT_SERVE_CHARS = 200_000
+
+        /** Default chars of context on each side of a search hit (mirrors the store default). */
+        const val DEFAULT_SNIPPET_CONTEXT = DocumentArtifactStore.DEFAULT_SNIPPET_CONTEXT
+
+        /** Default cap on returned search matches (mirrors the store default). */
+        const val DEFAULT_RESULT_CAP = DocumentArtifactStore.DEFAULT_RESULT_CAP
 
         /** Default cache-dir resolver: `{sessionDir}/document-cache/`, derived from the downloads dir. */
         suspend fun defaultCacheDirProvider(): Path? =
