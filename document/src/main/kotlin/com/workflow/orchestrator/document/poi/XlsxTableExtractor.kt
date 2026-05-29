@@ -19,9 +19,12 @@ import java.io.InputStream
  * Extracts spreadsheet content from XLSX files into [DocumentBlock] lists via Apache POI.
  *
  * Each sheet becomes a [DocumentBlock.Heading] followed by a [DocumentBlock.Table].
- * Formulas are evaluated. Dates are formatted as ISO-8601 strings. Merged cells have the
- * merged value repeated across all cells in the merge range (row direction only — the spec
- * calls for left-to-right repetition within a row).
+ * Formula cells report their cached result (the value the authoring tool wrote into the file),
+ * falling back to live evaluation only when no cached value is present. Dates are formatted as
+ * ISO-8601 strings. Merged cells follow the OOXML model: the value lives ONLY in the top-left
+ * (anchor) cell and every spanned cell is blank — the anchor value is NOT duplicated across the
+ * span (audit P-3). The merge structure is preserved separately via a per-sheet
+ * `Merged ranges: …` paragraph emitted after the Table.
  *
  * ## Thread safety
  *
@@ -134,6 +137,13 @@ class XlsxTableExtractor(
 
                 blocks += DocumentBlock.Table(headers, rows)
 
+                // P-3: the merged-cell anchor value is no longer fabricated across the span.
+                // Emit the merge STRUCTURE as a compact note so the LLM still knows which
+                // ranges were merged (without inventing repeated data points).
+                mergedRangesNote(xssfSheet)?.let { note ->
+                    blocks += DocumentBlock.Paragraph("Merged ranges: $note")
+                }
+
                 // Drain per-sheet comments AFTER the Table so the LLM sees them
                 // immediately following the data they annotate, in row-major order.
                 blocks += sheetComments
@@ -200,17 +210,26 @@ class XlsxTableExtractor(
     /**
      * Returns the [Cell] whose value should be used for column [col] in [row].
      *
-     * When the cell at ([row].rowNum, [col]) falls inside a merged region, returns the
-     * top-left cell of that region so downstream code reads the actual value. This handles
-     * horizontal merges (A2:C2 → all three columns show the same value) and the top row of
-     * vertical merges (A2:A3 → both rows show A2's value).
+     * ## Merged-region handling (audit finding P-3)
+     *
+     * In the OOXML model a merged region stores its value ONLY in the top-left (anchor) cell;
+     * every spanned cell is genuinely blank. We mirror that exactly:
+     *
+     * - The **anchor** cell of a merged region carries the value (returned as-is).
+     * - Every **spanned** (non-anchor) cell of the region is reported as **blank** (`null`).
+     *
+     * An earlier implementation copied the anchor value into every spanned cell, fabricating
+     * data points that do not exist in the source (e.g. a 3×4 merge turned one value into
+     * twelve). That corrupted cardinality, sums, and "which cells contain data". The merge
+     * STRUCTURE is preserved separately via the per-sheet "Merged ranges" note (see [extract]),
+     * so no information is lost — we simply stop inventing values.
      *
      * @param cell     The raw cell at [col] (may be `null` for blank cells inside a merged region).
      * @param col      Zero-based column index within the row.
      * @param row      The POI [Row] that [cell] belongs to.
      * @param sheet    The containing [XSSFSheet] (provides the merged region list).
      * @param evaluator Formula evaluator (passed through for type consistency; not used here).
-     * @return The cell whose value should be displayed at ([row].rowNum, [col]).
+     * @return The cell whose value should be displayed at ([row].rowNum, [col]); `null` ⇒ blank.
      */
     private fun cellOrMergedValue(
         cell: Cell?,
@@ -220,22 +239,33 @@ class XlsxTableExtractor(
         @Suppress("UNUSED_PARAMETER") evaluator: FormulaEvaluator,
     ): Cell? {
         // Fast path: cell exists and is not blank — no need to check merged regions.
+        // (A non-blank cell is, by OOXML construction, the anchor of any region it belongs to.)
         if (cell != null && cell.cellType != org.apache.poi.ss.usermodel.CellType.BLANK) {
             return cell
         }
 
-        // Check whether (rowNum, col) falls inside a merged region whose top-left cell
-        // holds the actual value.
-        val rowNum = row.rowNum
-        for (region: CellRangeAddress in sheet.mergedRegions) {
-            if (region.isInRange(rowNum, col)) {
-                // Return the top-left cell of the merged region.
-                val firstRow = sheet.getRow(region.firstRow) ?: return cell
-                return firstRow.getCell(region.firstColumn) ?: cell
-            }
-        }
-
+        // The cell is blank/absent. If it is a SPANNED (non-anchor) cell of a merged region it
+        // must stay blank — do NOT borrow the anchor's value (that fabricates data). If it is
+        // not inside any merged region it is simply an ordinary empty cell. Either way: blank.
         return cell
+    }
+
+    /**
+     * Builds a compact A1-notation list of every merged region on [sheet], e.g.
+     * `"A1:B1, A2:A3, A4:B5, A7:C10"`, or `null` when the sheet has no merged regions.
+     *
+     * This preserves the merge STRUCTURE that [cellOrMergedValue] deliberately drops from the
+     * table body (P-3): the LLM can still tell that a block was merged without the anchor value
+     * being duplicated across the span.
+     */
+    private fun mergedRangesNote(sheet: XSSFSheet): String? {
+        val regions: List<CellRangeAddress> = try {
+            sheet.mergedRegions
+        } catch (_: Exception) {
+            return null
+        }
+        if (regions.isEmpty()) return null
+        return regions.joinToString(", ") { it.formatAsString() }
     }
 
     // ── Cell comment collection ────────────────────────────────────────────────

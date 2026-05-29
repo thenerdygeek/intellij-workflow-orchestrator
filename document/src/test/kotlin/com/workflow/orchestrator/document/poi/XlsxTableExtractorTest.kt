@@ -81,18 +81,31 @@ class XlsxTableExtractorTest {
             "COUNTIF formula for CRITICAL should evaluate to 1 (one BUG with CRITICAL severity)")
     }
 
-    // ── 4. Notes sheet: merged cells repeat value ─────────────────────────────
+    // ── 4. Notes sheet: merged value lives ONLY in the anchor cell (P-3) ──────
 
     @Test
-    fun `Notes sheet A2 and A3 both contain merged value Q1`() {
+    fun `Notes sheet merged value Q1 appears only in the anchor cell, spanned cell is blank`() {
         val blocks = loadFixture("bug-tracker.xlsx").use { extractor.extract(it) }
         val notesTable = notesTable(blocks)
 
-        // The Notes sheet has merged cells A2:A3 with value "Q1".
-        // Both data rows should have "Q1" in the first column.
+        // The Notes sheet has merged cells A2:A3 with value "Q1". Per the OOXML model the value
+        // belongs to the anchor (A2) only; A3 is genuinely blank. The extractor must NOT
+        // fabricate "Q1" into A3 (audit finding P-3).
         assertTrue(notesTable.rows.size >= 2, "Notes table should have at least 2 rows")
-        assertEquals("Q1", notesTable.rows[0][0], "A2 (first data row, first col) should be Q1")
-        assertEquals("Q1", notesTable.rows[1][0], "A3 (second data row, first col) should be Q1")
+        assertEquals("Q1", notesTable.rows[0][0], "A2 (anchor, first data row) should be Q1")
+        assertEquals("", notesTable.rows[1][0],
+            "A3 (spanned, second data row) must be blank — the anchor value must not be duplicated")
+    }
+
+    @Test
+    fun `Notes sheet emits a Merged ranges note so the merge structure is preserved`() {
+        val blocks = loadFixture("bug-tracker.xlsx").use { extractor.extract(it) }
+        // After dropping the duplicated anchor value, the merge structure is preserved as a note.
+        val noteTexts = blocks.filterIsInstance<DocumentBlock.Paragraph>().map { it.text }
+        assertTrue(
+            noteTexts.any { it.startsWith("Merged ranges:") && it.contains("A2:A3") },
+            "Expected a 'Merged ranges: … A2:A3 …' note; got paragraphs: $noteTexts"
+        )
     }
 
     // ── 5. Per-call instantiation: two sequential calls work ─────────────────

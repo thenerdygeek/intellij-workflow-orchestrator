@@ -4,6 +4,7 @@ import org.apache.poi.ss.usermodel.Cell
 import org.apache.poi.ss.usermodel.CellType
 import org.apache.poi.ss.usermodel.DateUtil
 import org.apache.poi.ss.usermodel.FormulaEvaluator
+import org.apache.poi.xssf.usermodel.XSSFCell
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -54,13 +55,7 @@ object CellFormatter {
         return if (DateUtil.isCellDateFormatted(cell)) {
             dateToString(cell)
         } else {
-            val value = cell.numericCellValue
-            // Render as integer when the value has no fractional component.
-            if (value == kotlin.math.floor(value) && !value.isInfinite()) {
-                value.toLong().toString()
-            } else {
-                value.toString()
-            }
+            numericValueToString(cell.numericCellValue)
         }
     }
 
@@ -78,20 +73,22 @@ object CellFormatter {
     }
 
     private fun formulaToString(cell: Cell, evaluator: FormulaEvaluator?): String {
+        // P-2 [data fidelity]: prefer the cached formula result the authoring tool wrote into
+        // the file (`<v>…</v>`) over POI's own re-evaluation. Re-evaluating diverges from the
+        // source whenever the workbook references cells/sheets the writer did not materialise
+        // (e.g. excelize emits `=SUM(C1:D1)` with cached `1` even when C1/D1 are absent — POI
+        // would recompute `0` and silently corrupt the value). The cached value is the ground
+        // truth a spreadsheet reader sees on open, so report it faithfully.
+        cachedFormulaResult(cell)?.let { return it }
+
+        // No usable cached result on the cell — fall back to evaluation.
         if (evaluator == null) return cell.cellFormula
 
         return try {
             val result = evaluator.evaluate(cell) ?: return ""
             when (result.cellType) {
                 CellType.STRING -> result.stringValue.trimEnd()
-                CellType.NUMERIC -> {
-                    val value = result.numberValue
-                    if (value == kotlin.math.floor(value) && !value.isInfinite()) {
-                        value.toLong().toString()
-                    } else {
-                        value.toString()
-                    }
-                }
+                CellType.NUMERIC -> numericValueToString(result.numberValue)
                 CellType.BOOLEAN -> if (result.booleanValue) "true" else "false"
                 CellType.BLANK, CellType.ERROR -> ""
                 else -> ""
@@ -102,4 +99,59 @@ object CellFormatter {
             cell.cellFormula
         }
     }
+
+    /**
+     * Reads the cached result the authoring tool stored in the FILE for a formula [cell],
+     * WITHOUT triggering re-evaluation. Returns `null` when the cell has no genuine cached
+     * value, so the caller falls back to live evaluation.
+     *
+     * ## Why gate on a real `<v>` element
+     *
+     * POI synthesises a placeholder cached result (numeric `0`) for any formula set
+     * programmatically via `setCellFormula(...)` that was never evaluated — but such a cell has
+     * NO `<v>` element in its XML. A file authored with `fullCalcOnLoad`/recompute-on-open
+     * (e.g. some LibreOffice / generator output) instead writes an EMPTY `<v></v>`, signalling
+     * "recompute me". In both cases the cached value is meaningless and `numericCellValue` would
+     * read `0`. We therefore only honour the cached value when the `<v>` element is both present
+     * AND non-blank. That is precisely the calcchain corruption (P-2): the file stores a real
+     * `<v>1</v>` but POI's re-evaluation of `=SUM(C1:D1)` (C1/D1 absent) yields `0` — so we report
+     * the faithful `1`. A `<v></v>` recompute marker (e.g. the COUNTIF fixture) still evaluates.
+     *
+     * Mirrors the type dispatch of [toCellString], sourcing each value from the cached accessors
+     * (`numericCellValue` / `stringCellValue` / `booleanCellValue` return the cached result for
+     * formula cells in POI).
+     */
+    private fun cachedFormulaResult(cell: Cell): String? {
+        // Only trust the cached value when the source XML genuinely carries a NON-BLANK `<v>`.
+        // A missing `<v>` (POI-synthesised formula) or an empty `<v></v>` (recompute-on-open
+        // marker) both mean "no real cached value" — fall through to live evaluation.
+        val ctCell = (cell as? XSSFCell)?.ctCell ?: return null
+        if (!ctCell.isSetV || ctCell.v.isNullOrBlank()) return null
+
+        return try {
+            when (cell.cachedFormulaResultType) {
+                CellType.STRING -> cell.stringCellValue.trimEnd()
+                CellType.NUMERIC -> {
+                    if (DateUtil.isCellDateFormatted(cell)) {
+                        dateToString(cell)
+                    } else {
+                        numericValueToString(cell.numericCellValue)
+                    }
+                }
+                CellType.BOOLEAN -> if (cell.booleanCellValue) "true" else "false"
+                // No cached value of a reportable type — let the caller re-evaluate.
+                else -> null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Renders a numeric value as an integer string when integral, else `Double.toString()`. */
+    private fun numericValueToString(value: Double): String =
+        if (value == kotlin.math.floor(value) && !value.isInfinite()) {
+            value.toLong().toString()
+        } else {
+            value.toString()
+        }
 }
