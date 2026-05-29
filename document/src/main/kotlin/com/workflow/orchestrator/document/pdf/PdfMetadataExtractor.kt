@@ -5,8 +5,16 @@ import com.workflow.orchestrator.document.service.ImageExtractionService
 import org.apache.pdfbox.Loader
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject
+import org.apache.pdfbox.pdmodel.interactive.action.PDActionGoTo
+import org.apache.pdfbox.pdmodel.interactive.action.PDActionURI
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationMarkup
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDDestination
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDNamedDestination
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageDestination
 import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem
+import org.apache.pdfbox.text.PDFTextStripperByArea
+import java.awt.geom.Rectangle2D
 import java.nio.file.Path
 
 /**
@@ -88,6 +96,13 @@ class PdfMetadataExtractor(
 
         /** Per-bookmark `top` step on the same page (keeps outline order; ~900 bookmarks/page). */
         const val OUTLINE_HEADING_TOP_STEP = 0.001
+
+        /**
+         * Points inset on every edge of a link annotation rect before the area-text query.
+         * Link rects are routinely drawn 1–2 pt larger than the glyph run; without the inset
+         * [PDFTextStripperByArea] bleeds adjacent words into the captured display text.
+         */
+        const val LINK_RECT_INSET = 1.0f
 
         /**
          * Generator/tool-artifact `/Title` values (lower-cased). When the title matches one of
@@ -187,10 +202,145 @@ class PdfMetadataExtractor(
             // 5. P4T2: embedded file attachments (requires imageService).
             result += extractEmbeddedFiles(doc)
 
+            // (Link annotations are NOT emitted as blocks — they are harvested separately by
+            //  [extractLinks] and merged INLINE into prose by PdfPipeline. See that method.)
+
             // 6. P4T2: image XObjects per page (requires imageService).
             result += extractImageXObjects(doc)
         }
         return result
+    }
+
+    /**
+     * Harvests every page's `PDAnnotationLink` into a flat list of [PdfLink] records (G-6 / HX-1
+     * harvest). Unlike markup annotations (sticky notes / highlights → typed Comment blocks), link
+     * annotations carry no body text of their own: their meaning is the *display text they overlay*
+     * plus a *target*. We therefore emit link records — NOT [DocumentBlock]s — so that [PdfPipeline]
+     * can splice them INLINE into the existing prose stream (`[display text](target)`), keeping
+     * reading order intact and the visible text appearing exactly once. Emitting them as separate
+     * floating blocks would either duplicate the display text or hoist it out of order (the HX-1
+     * failure mode), so we deliberately do not.
+     *
+     * ## How display text is recovered
+     *
+     * The annotation's `getRectangle()` is in PDF user space (origin bottom-left). We feed each
+     * rect to a per-page [PDFTextStripperByArea], which returns the text the rect overlays — that
+     * is the link's display text. Rects are inset by [LINK_RECT_INSET] points on every edge before
+     * the area query: link rects are routinely drawn 1–2 pt larger than the glyph run, and an
+     * un-inset rect bleeds adjacent words into the captured text. When the captured text is blank
+     * (image link, vector-drawn anchor, off-text rect) the record is dropped — we never emit an
+     * empty `[]`.
+     *
+     * ## Targets
+     *
+     * - [PDActionURI] → the raw URI (external link).
+     * - [PDActionGoTo] (and the document-catalog's named-destination tree) → resolved to the
+     *   destination's 1-based page number. The page number alone is always recoverable; mapping it
+     *   to the nearest section anchor is left to [PdfPipeline], which holds the outline headings.
+     *
+     * Links whose action is neither URI nor GoTo (Launch, JavaScript, …) are skipped — they are
+     * not navigable references for an LLM reading the prose.
+     *
+     * @return Link records in (page, then rect reading-order) order. Empty when the PDF has no
+     *         resolvable link annotations.
+     */
+    fun extractLinks(file: Path): List<PdfLink> {
+        val result = mutableListOf<PdfLink>()
+        Loader.loadPDF(file.toFile()).use { doc ->
+            doc.pages.forEachIndexed { pageIdx, page ->
+                val pageNumber = pageIdx + 1
+                val annotations = try { page.annotations } catch (_: Exception) { return@forEachIndexed }
+                val links = annotations.filterIsInstance<PDAnnotationLink>()
+                if (links.isEmpty()) return@forEachIndexed
+
+                // One stripper per page; register every link rect as a named region, then extract
+                // once. Cheaper and more robust than re-stripping the page per annotation.
+                val stripper = PDFTextStripperByArea()
+                val regionNames = mutableListOf<Pair<String, PdfLink.PartialTarget>>()
+                links.forEachIndexed { i, link ->
+                    val rect = link.rectangle ?: return@forEachIndexed
+                    val target = resolveLinkTarget(link, doc) ?: return@forEachIndexed
+                    val regionName = "link_$i"
+                    // PDFTextStripperByArea expects an AWT Rectangle in *device* (top-down) space
+                    // matching how PDFBox lays out the page. The library's own examples build it
+                    // from the rect's lowerLeftX / (pageHeight - upperRightY). We inset to avoid
+                    // capturing neighbouring glyphs.
+                    val mediaBox = page.mediaBox
+                    val pageHeight = mediaBox.height
+                    val llx = rect.lowerLeftX + LINK_RECT_INSET
+                    val w = (rect.width - 2 * LINK_RECT_INSET).coerceAtLeast(1f)
+                    val h = (rect.height - 2 * LINK_RECT_INSET).coerceAtLeast(1f)
+                    // top-down y of the rect's upper edge
+                    val topY = pageHeight - rect.upperRightY + LINK_RECT_INSET
+                    stripper.addRegion(regionName, Rectangle2D.Float(llx, topY, w, h))
+                    regionNames += regionName to target
+                }
+                if (regionNames.isEmpty()) return@forEachIndexed
+
+                try {
+                    stripper.extractRegions(page)
+                } catch (_: Exception) {
+                    return@forEachIndexed
+                }
+
+                for ((regionName, target) in regionNames) {
+                    val display = try {
+                        stripper.getTextForRegion(regionName)?.trim().orEmpty()
+                    } catch (_: Exception) { "" }
+                    // Collapse internal whitespace runs (the stripper can keep line breaks).
+                    val displayText = display.replace(Regex("\\s+"), " ").trim()
+                    if (displayText.isEmpty()) continue
+                    result += PdfLink(page = pageNumber, displayText = displayText, target = target)
+                }
+            }
+        }
+        return result
+    }
+
+    /**
+     * Resolves a link annotation's action into a [PdfLink.PartialTarget]:
+     * `Uri` for [PDActionURI]; `InternalPage` (1-based) for [PDActionGoTo] / named destinations.
+     * Returns null for unsupported actions or unresolvable destinations.
+     */
+    private fun resolveLinkTarget(link: PDAnnotationLink, doc: PDDocument): PdfLink.PartialTarget? {
+        val action = try { link.action } catch (_: Exception) { null }
+        when (action) {
+            is PDActionURI -> {
+                val uri = try { action.uri } catch (_: Exception) { null }
+                    ?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+                return PdfLink.PartialTarget.Uri(uri)
+            }
+            is PDActionGoTo -> {
+                val dest = try { action.destination } catch (_: Exception) { null } ?: return null
+                return resolveDestinationPage(dest, doc)?.let { PdfLink.PartialTarget.InternalPage(it) }
+            }
+        }
+        // Some PDFs put the destination directly on the annotation (`/Dest`) instead of an action.
+        val dest = try { link.destination } catch (_: Exception) { null }
+        if (dest != null) {
+            return resolveDestinationPage(dest, doc)?.let { PdfLink.PartialTarget.InternalPage(it) }
+        }
+        return null
+    }
+
+    /**
+     * Resolves a [PDDestination] (explicit page destination OR named destination) to a 1-based
+     * page number. Named destinations are looked up in the document catalog's dests name tree.
+     * Returns null when the page cannot be resolved.
+     */
+    private fun resolveDestinationPage(dest: PDDestination, doc: PDDocument): Int? {
+        val pageDest = when (dest) {
+            is PDPageDestination -> dest
+            is PDNamedDestination -> try { doc.documentCatalog?.findNamedDestinationPage(dest) } catch (_: Exception) { null }
+            else -> null
+        } ?: return null
+        // PDPageDestination.retrievePageNumber() is 0-based (and -1 when the page ref is missing).
+        val zeroBased = try { pageDest.retrievePageNumber() } catch (_: Exception) { -1 }
+        if (zeroBased >= 0) return zeroBased + 1
+        // Fall back to identity lookup against the page list.
+        val page = try { pageDest.page } catch (_: Exception) { null } ?: return null
+        val idx = try { doc.pages.indexOf(page) } catch (_: Exception) { -1 }
+        return if (idx >= 0) idx + 1 else null
     }
 
     /**
@@ -470,5 +620,31 @@ class PdfMetadataExtractor(
             }
         }
         return results
+    }
+}
+
+/**
+ * A harvested PDF link annotation: the display text it overlays plus its (partly-resolved) target.
+ *
+ * "Partial" because the URI/page is resolved here, but the final Markdown URL — in particular the
+ * choice between a section anchor and a bare `#page-N` for internal links — needs the outline
+ * heading set, which lives in [com.workflow.orchestrator.document.pipeline.PdfPipeline]. The
+ * pipeline calls [PartialTarget] → final URL there.
+ *
+ * @param page        1-based page the link annotation sits on.
+ * @param displayText The text the link rectangle overlays (the visible anchor text).
+ * @param target      Where the link points.
+ */
+data class PdfLink(
+    val page: Int,
+    val displayText: String,
+    val target: PartialTarget,
+) {
+    sealed interface PartialTarget {
+        /** External hyperlink. */
+        data class Uri(val uri: String) : PartialTarget
+
+        /** Internal GoTo / named destination, resolved to a 1-based page number. */
+        data class InternalPage(val page: Int) : PartialTarget
     }
 }

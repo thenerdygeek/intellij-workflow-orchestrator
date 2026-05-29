@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.document.pipeline
 
 import com.workflow.orchestrator.core.model.DocumentBlock
+import com.workflow.orchestrator.document.pdf.PdfLink
 import com.workflow.orchestrator.document.pdf.PdfMetadataExtractor
 import com.workflow.orchestrator.document.pdf.PdfProseExtractor
 import com.workflow.orchestrator.document.pdf.PdfTableExtractor
@@ -94,9 +95,15 @@ class PdfPipeline(
         onPage: ((done: Int, total: Int) -> Unit)? = null,
     ): List<DocumentBlock> {
         val tables: List<PositionedBlock<DocumentBlock.Table>> = tableExtractor.extract(file, onPage)
-        val prose: List<PositionedBlock<DocumentBlock>> = proseExtractor.extract(file)
-        val metadata: List<PositionedBlock<DocumentBlock>> =
-            PdfMetadataExtractor(imageService = imageService, docKey = docKey).extract(file)
+        val proseRaw: List<PositionedBlock<DocumentBlock>> = proseExtractor.extract(file)
+        val metadataExtractor = PdfMetadataExtractor(imageService = imageService, docKey = docKey)
+        val metadata: List<PositionedBlock<DocumentBlock>> = metadataExtractor.extract(file)
+
+        // G-6 / HX-1 harvest: splice link annotations INLINE into prose so their target survives
+        // as Markdown without duplicating or hoisting the visible display text. Done before any
+        // dedup/merge so the link markup travels with the paragraph through the rest of the pipeline.
+        val links: List<PdfLink> = try { metadataExtractor.extractLinks(file) } catch (_: Exception) { emptyList() }
+        val prose = if (links.isEmpty()) proseRaw else spliceLinksIntoProse(proseRaw, links)
 
         // NAV-4/NAV-6: when PdfMetadataExtractor harvested the PDF outline into authoritative
         // Heading blocks, the prose heuristic's promoted Headings (which both invert the
@@ -122,6 +129,115 @@ class PdfPipeline(
         val deChromed = stripRepeatedPageChrome(merged)
         return suppressOverlaps(deChromed).map { it.block }
     }
+
+    /**
+     * Splices harvested [PdfLink]s INLINE into the prose stream (G-6 / HX-1 harvest).
+     *
+     * ## Strategy — disjoint, single-pass replacement
+     *
+     * Per paragraph we locate each link's display text, expand the hit to whole-word boundaries
+     * (so a rect that captured a fragment like "urRepo" links the full "OurRepo"), then keep only
+     * a set of **non-overlapping** spans and rewrite the paragraph once, right-to-left, so the
+     * visible text:
+     * - appears exactly once (no duplication — the HX-1 hoist failure mode),
+     * - stays in its original reading-order position (no floating link block, no hoist),
+     * - never produces an empty `[]`/`()` (blank display text was dropped in
+     *   [PdfMetadataExtractor.extractLinks]),
+     * - never produces NESTED brackets — real PDFs carry several overlapping `/Link` rects over the
+     *   same/adjacent glyphs (e.g. a citation `[13]` split into two annotations, or a URL drawn as
+     *   two halves). We bind only the FIRST link per overlapping span and skip the rest, so we never
+     *   splice inside an already-claimed range.
+     *
+     * ## Target URL
+     *
+     * - [PdfLink.PartialTarget.Uri] → the raw URI, verbatim.
+     * - [PdfLink.PartialTarget.InternalPage] → `#page-N`. We deliberately do NOT map to a section
+     *   slug: a page→nearest-preceding-heading guess is wrong far too often (arxiv citation links
+     *   that all point into the bibliography would mis-resolve to whatever the last seen heading
+     *   was). `#page-N` is exact and recoverable, which is what the spec requires at minimum.
+     *
+     * ## Reliability fallback (rect→text correlation)
+     *
+     * The area-stripper and Tika's stripper are the same PDFBox text layer, so the captured display
+     * text is normally a verbatim substring. When it is NOT a clean match — the hit would split a
+     * dotted/dashed number (`3` out of `3.2`), the display/anchor contains Markdown control chars,
+     * or the text simply isn't found on the page — the link is left **un-linked**: the reading text
+     * is never corrupted, the target is just not surfaced for that one annotation. This is the
+     * documented graceful degradation for imprecise rects.
+     */
+    private fun spliceLinksIntoProse(
+        prose: List<PositionedBlock<DocumentBlock>>,
+        links: List<PdfLink>,
+    ): List<PositionedBlock<DocumentBlock>> {
+        // Group links by page; preserve emission order so earlier links bind first.
+        val linksByPage: Map<Int, List<PdfLink>> = links
+            .filter { it.displayText.none { c -> c in "[]()" } }
+            .groupBy { it.page }
+        if (linksByPage.isEmpty()) return prose
+
+        // A link binds to at most one paragraph (the first same-page paragraph containing its
+        // display text). Track consumed links across paragraphs on the same page.
+        val pending: MutableMap<Int, MutableList<PdfLink>> =
+            linksByPage.mapValues { (_, v) -> v.toMutableList() }.toMutableMap()
+
+        return prose.map { pb ->
+            val para = pb.block as? DocumentBlock.Paragraph ?: return@map pb
+            val pageLinks = pending[pb.page]?.takeIf { it.isNotEmpty() } ?: return@map pb
+
+            val text = para.text
+            // Collect non-overlapping (start, end, url) spans. Greedy by link emission order.
+            val claimed = mutableListOf<IntRange>()
+            val spans = mutableListOf<Triple<Int, Int, String>>()
+            val bound = mutableListOf<PdfLink>()
+
+            for (link in pageLinks) {
+                val idx = text.indexOf(link.displayText)
+                if (idx < 0) continue
+
+                // Expand the matched span to whole-word boundaries so a fragment-capture
+                // ("urRepo" of "OurRepo") links the full word.
+                var start = idx
+                var end = idx + link.displayText.length
+                while (start > 0 && text[start - 1].isLetterOrDigit() && text[start].isLetterOrDigit()) start--
+                while (end < text.length && text[end].isLetterOrDigit() && text[end - 1].isLetterOrDigit()) end++
+
+                // Reject mid-number boundary (rect under-covered a dotted/dashed token like "3.2").
+                val splitsNumberRight = end < text.length - 1 &&
+                    text[end] in ".-" && text[end + 1].isDigit() && text[end - 1].isDigit()
+                val splitsNumberLeft = start > 1 &&
+                    text[start - 1] in ".-" && text[start - 2].isDigit() && text[start].isDigit()
+                if (splitsNumberRight || splitsNumberLeft) continue
+
+                // Skip overlap with an already-claimed span (overlapping annotations).
+                val span = start until end
+                if (claimed.any { it.first < span.last + 1 && span.first < it.last + 1 }) continue
+
+                claimed += span
+                spans += Triple(start, end, finalUrl(link))
+                bound += link
+            }
+            pageLinks.removeAll(bound)
+            if (spans.isEmpty()) return@map pb
+
+            // Apply right-to-left so earlier offsets stay valid.
+            val sb = StringBuilder(text)
+            for ((start, end, url) in spans.sortedByDescending { it.first }) {
+                val anchor = sb.substring(start, end)
+                sb.replace(start, end, "[$anchor]($url)")
+            }
+            PositionedBlock(pb.page, pb.top, pb.bottom, DocumentBlock.Paragraph(sb.toString()))
+        }
+    }
+
+    /**
+     * Builds the final Markdown URL for a [PdfLink]. URIs pass through verbatim; internal page
+     * targets render as `#page-N` (exact + recoverable).
+     */
+    private fun finalUrl(link: PdfLink): String =
+        when (val t = link.target) {
+            is PdfLink.PartialTarget.Uri -> t.uri
+            is PdfLink.PartialTarget.InternalPage -> "#page-${t.page}"
+        }
 
     /**
      * Drops prose [DocumentBlock.Paragraph] AND [DocumentBlock.Heading] blocks whose entire
