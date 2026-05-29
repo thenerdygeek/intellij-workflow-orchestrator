@@ -151,7 +151,12 @@ class DocumentToolTest {
 
     // ── Requirement C: explicit section miss + discoverability ─────────────────
 
-    private fun sectionSlice(matched: Boolean?, available: List<String>, content: String = "BODY") =
+    private fun sectionSlice(
+        matched: Boolean?,
+        available: List<String>,
+        content: String = "BODY",
+        availableTables: List<String> = emptyList(),
+    ) =
         DocumentSlice(
             content = content,
             startOffset = 0,
@@ -161,6 +166,7 @@ class DocumentToolTest {
             totalPages = 3,
             availableSections = available,
             sectionMatched = matched,
+            availableTables = availableTables,
         )
 
     @Test
@@ -227,6 +233,91 @@ class DocumentToolTest {
             "a successful section hit must not warn about a miss; got: ${result.content}",
         )
         assertTrue(result.content.contains("Intro body"), "must serve the section content; got: ${result.content}")
+    }
+
+    // ── Table navigation (section="Table N") + table discoverability ───────────
+
+    @Test
+    fun `section equals a table number renders the table region`() = runTest {
+        val svc = mockk<DocumentArtifactService>()
+        coEvery { svc.read(any(), any(), any()) } returns ToolResult.success(
+            data = sectionSlice(
+                matched = true,
+                available = listOf("Pin Diagrams"),
+                content = "PIN | DESCRIPTION rows here",
+                availableTables = listOf("TABLE 1-2: PINOUT I/O DESCRIPTIONS"),
+            ),
+            summary = "Read 27 chars (offset=0, remaining=0).",
+        )
+        val params = buildJsonObject {
+            put("path", "/tmp/datasheet.pdf")
+            put("section", "Table 1-2")
+        }
+        val result = DocumentTool(artifactService = svc).execute(params, project)
+        assertFalse(result.isError)
+        assertTrue(result.content.contains("PIN | DESCRIPTION"), "must render the resolved table region; got: ${result.content}")
+        assertFalse(result.content.contains("not found", ignoreCase = true), "a table hit must not warn; got: ${result.content}")
+    }
+
+    @Test
+    fun `section miss lists available TABLES separately from sections`() = runTest {
+        val svc = mockk<DocumentArtifactService>()
+        coEvery { svc.read(any(), any(), any()) } returns ToolResult.success(
+            data = sectionSlice(
+                matched = false,
+                available = listOf("Pin Diagrams", "Overview"),
+                availableTables = listOf("Table 1-2. Pinout", "Table 1-3. Features"),
+            ),
+            summary = "Read 4 chars (offset=0, remaining=0).",
+        )
+        val params = buildJsonObject {
+            put("path", "/tmp/datasheet.pdf")
+            put("section", "Table 99")
+        }
+        val result = DocumentTool(artifactService = svc).execute(params, project)
+        assertTrue(result.content.contains("Table 99"), "must echo the requested section; got: ${result.content}")
+        assertTrue(
+            result.content.contains("Available tables", ignoreCase = true),
+            "miss banner must surface available tables; got: ${result.content}",
+        )
+        assertTrue(result.content.contains("Table 1-2"), "must list a real table; got: ${result.content}")
+        assertTrue(result.content.contains("Table 1-3"), "must list real tables; got: ${result.content}")
+    }
+
+    @Test
+    fun `normal read surfaces available tables hint when content remains`() = runTest {
+        val svc = mockk<DocumentArtifactService>()
+        coEvery { svc.read(any(), any(), any()) } returns ToolResult.success(
+            data = DocumentSlice(
+                content = "PAGE ONE",
+                startOffset = 0,
+                endOffset = 8,
+                remaining = 5000,
+                pageOfStart = 1,
+                totalPages = 10,
+                availableSections = listOf("Overview"),
+                sectionMatched = null,
+                availableTables = listOf("Table 1-2. Pinout", "Table 1-3. Features"),
+            ),
+            summary = "Read 8 chars (offset=0, remaining=5000).",
+        )
+        val params = buildJsonObject { put("path", "/tmp/spec.pdf") }
+        val result = DocumentTool(artifactService = svc).execute(params, project)
+        assertTrue(
+            result.content.contains("Tables:", ignoreCase = true),
+            "a normal read should surface available table captions for discoverability; got: ${result.content}",
+        )
+        assertTrue(result.content.contains("Table 1-2"), "got: ${result.content}")
+    }
+
+    @Test
+    fun `section param description mentions table and figure captions`() {
+        val sectionProp = tool().parameters.properties["section"]!!
+        val text = sectionProp.description.lowercase()
+        assertTrue(
+            text.contains("table"),
+            "section param description must state it also matches table captions; got: ${sectionProp.description}",
+        )
     }
 
     @Test

@@ -134,6 +134,54 @@ class DocumentArtifactStoreSliceTest {
         assertEquals(DocumentArtifactStore.MAX_AVAILABLE_SECTIONS, slice.availableSections.size)
     }
 
+    // ── Table-caption anchors: availableTables (capped) + section= resolves a table ──
+
+    @Test
+    fun `slice exposes availableTables separately from availableSections`() = runTest {
+        val md = "A".repeat(50) + "B".repeat(50)
+        val index = DocumentIndex(
+            pages = emptyList(),
+            sections = listOf(DocumentIndex.Anchor("Introduction", 0)),
+            tables = listOf(
+                DocumentIndex.Anchor("Table 1-2. Pinout", 10),
+                DocumentIndex.Anchor("Table 1-3. Features", 50),
+            ),
+        )
+        val art = materialize(md, index)
+        val slice = store.slice(art, index, DocumentCursor.Offset(0), maxChars = 5)
+        // Tables in their OWN list — must NOT bloat the sections list.
+        assertEquals(listOf("Introduction"), slice.availableSections)
+        assertEquals(listOf("Table 1-2. Pinout", "Table 1-3. Features"), slice.availableTables)
+    }
+
+    @Test
+    fun `cursor Section resolves a TABLE caption by number, full caption, and title`() = runTest {
+        val md = "A".repeat(50) + "B".repeat(50)
+        val index = DocumentIndex(
+            pages = emptyList(),
+            sections = listOf(DocumentIndex.Anchor("Overview", 0)),
+            tables = listOf(DocumentIndex.Anchor("Table 5.2-1. Request Header Fields", 50)),
+        )
+        val art = materialize(md, index)
+
+        for (label in listOf("Table 5.2-1", "Table 5.2-1. Request Header Fields", "Request Header Fields")) {
+            val slice = store.slice(art, index, DocumentCursor.Section(label), maxChars = 5)
+            assertEquals(50, slice.startOffset, "section='$label' must resolve to the table offset")
+            assertEquals(true, slice.sectionMatched, "section='$label' must be a hit")
+            assertEquals("B".repeat(5), slice.content)
+        }
+    }
+
+    @Test
+    fun `available tables list is capped to keep the hint token-frugal`() = runTest {
+        val md = "x".repeat(10)
+        val manyTables = (1..50).map { DocumentIndex.Anchor("Table $it. Cap", 0) }
+        val index = DocumentIndex(pages = emptyList(), sections = emptyList(), tables = manyTables)
+        val art = materialize(md, index)
+        val slice = store.slice(art, index, DocumentCursor.Offset(0), maxChars = 5)
+        assertEquals(DocumentArtifactStore.MAX_AVAILABLE_TABLES, slice.availableTables.size)
+    }
+
     @Test
     fun `offset at or beyond length yields empty content and zero remaining`() = runTest {
         val md = "hello"

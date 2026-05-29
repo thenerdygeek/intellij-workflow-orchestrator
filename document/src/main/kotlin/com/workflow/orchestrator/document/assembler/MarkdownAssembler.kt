@@ -120,13 +120,23 @@ class MarkdownAssembler {
         val sb = StringBuilder()
         val pages = mutableListOf<DocumentIndex.Anchor>()
         val sections = mutableListOf<DocumentIndex.Anchor>()
+        val tables = mutableListOf<DocumentIndex.Anchor>()
         for (block in blocks) {
             val offsetBefore = sb.length
             when (block) {
                 is DocumentBlock.PageMarker ->
                     pages += DocumentIndex.Anchor(block.pageNumber.toString(), offsetBefore)
-                is DocumentBlock.Heading ->
+                is DocumentBlock.Heading -> {
                     sections += DocumentIndex.Anchor(block.text, offsetBefore)
+                    // A heading is sometimes the table caption itself (the PDF path can promote
+                    // "TABLE 1-1: Device Features" to a heading). Index it as a table anchor too so
+                    // `section="Table 1-1"` resolves regardless of which block carried the caption.
+                    tableCaption(block.text)?.let { tables += DocumentIndex.Anchor(it, offsetBefore) }
+                }
+                is DocumentBlock.Paragraph ->
+                    // The Table BLOCK's own `caption` is null on the PDF path; the visible caption
+                    // is a nearby paragraph. Detect it from the block text, not the block caption.
+                    tableCaption(block.text)?.let { tables += DocumentIndex.Anchor(it, offsetBefore) }
                 else -> Unit
             }
             sb.append(serializeBlock(block))
@@ -135,8 +145,27 @@ class MarkdownAssembler {
         return IndexedAssemblerResult(
             markdown = markdown,
             contentLength = markdown.length,
-            index = DocumentIndex(pages = pages, sections = sections),
+            index = DocumentIndex(pages = pages, sections = sections, tables = tables),
         )
+    }
+
+    /**
+     * Returns the table-caption text if [text] begins with a table caption, else null.
+     *
+     * A caption is the `Table`/`TABLE` keyword + a number token (digits, dots, dashes, optional
+     * letter suffix — covers `45`, `1-2`, `8.3.2-1`, `8-1a`, `B.2-1`) + a `.` or `:` separator +
+     * a non-empty title. The separator-after-number requirement is what distinguishes a caption
+     * from a prose reference like "Table 8 specifies the default…" (number followed by a space and
+     * lowercase prose, no separator).
+     *
+     * The matched key is the FIRST line of [text] only (trimmed) — some PDF extractions glue the
+     * caption to the following row text on one line; keying on the leading caption line keeps the
+     * anchor label clean while the offset still points at the caption's position in the content.
+     */
+    private fun tableCaption(text: String): String? {
+        val firstLine = text.trim().lineSequence().firstOrNull()?.trim().orEmpty()
+        if (firstLine.isEmpty()) return null
+        return if (TABLE_CAPTION.containsMatchIn(firstLine)) firstLine else null
     }
 
     /** Test-only hook so tests can compute expected offsets without duplicating serialization. */
@@ -402,6 +431,20 @@ class MarkdownAssembler {
      */
     private fun computeFullLength(blocks: List<DocumentBlock>): Int {
         return blocks.sumOf { serializeBlock(it).length }
+    }
+
+    private companion object {
+        /**
+         * Matches a leading table caption: `Table`/`TABLE` keyword + lazy number token (digits,
+         * dots, dashes, optional letter suffix) + a `.`/`:` separator that is followed by
+         * whitespace and a non-space title character. The lazy number token + separator-followed-
+         * by-title anchor is what stops the number from swallowing the trailing separator and what
+         * rejects prose references ("Table 8 specifies …" — number followed by space, no separator).
+         *
+         * Covers: `Table 45. …`, `TABLE 1-2: …`, `Table 8.3.2-1. …`, `Table 8-1a. …`,
+         * `Table B.2-1. …`.
+         */
+        val TABLE_CAPTION = Regex("^[Tt][Aa][Bb][Ll][Ee]\\s+[A-Za-z0-9][A-Za-z0-9.\\-]*?[.:]\\s+\\S")
     }
 }
 

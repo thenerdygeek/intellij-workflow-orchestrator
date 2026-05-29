@@ -102,11 +102,13 @@ class DocumentTool(
             ),
             "section" to ParameterProperty(
                 type = "string",
-                description = "Optional. Jump to the heading with this text. Matching is case-insensitive and " +
-                    "tolerant: a leading section number is ignored ('Digital Identity Model' matches " +
-                    "'4 Digital Identity Model') and punctuation/casing is normalized ('fetch-product-metadata' " +
-                    "matches 'Fetch Product Metadata'). If no heading matches, the tool says so and lists the " +
-                    "available section names. Mutually exclusive with offset/page.",
+                description = "Optional. Jump to a heading OR a table/figure caption with this text. Matching is " +
+                    "case-insensitive and tolerant: a leading section number is ignored ('Digital Identity Model' " +
+                    "matches '4 Digital Identity Model') and punctuation/casing is normalized ('fetch-product-metadata' " +
+                    "matches 'Fetch Product Metadata'). Headings are matched first, then table captions — so a table can " +
+                    "be addressed by its number ('Table 1-2'), full caption ('Table 1-2. Pinout Descriptions'), or " +
+                    "title alone ('Pinout Descriptions'). If nothing matches, the tool says so and lists the available " +
+                    "section AND table names. Mutually exclusive with offset/page.",
             ),
             "search" to ParameterProperty(
                 type = "string",
@@ -263,29 +265,36 @@ class DocumentTool(
             }
             optional("section", "string") {
                 llmSeesIt(
-                    "Optional. Jump to the heading with this text. Matching is case-insensitive and tolerant: a " +
-                        "leading section number is ignored ('Digital Identity Model' matches '4 Digital Identity " +
-                        "Model') and punctuation/casing is normalized ('fetch-product-metadata' matches 'Fetch " +
-                        "Product Metadata'). If no heading matches, the tool says so and lists the available " +
-                        "section names. Mutually exclusive with offset/page."
+                    "Optional. Jump to a heading OR a table/figure caption with this text. Matching is " +
+                        "case-insensitive and tolerant: a leading section number is ignored ('Digital Identity " +
+                        "Model' matches '4 Digital Identity Model') and punctuation/casing is normalized " +
+                        "('fetch-product-metadata' matches 'Fetch Product Metadata'). Headings are matched first, " +
+                        "then table captions — so a table can be addressed by its number ('Table 1-2'), full " +
+                        "caption ('Table 1-2. Pinout Descriptions'), or title alone ('Pinout Descriptions'). If " +
+                        "nothing matches, the tool says so and lists the available section AND table names. " +
+                        "Mutually exclusive with offset/page."
                 )
                 humanReadable(
-                    "A convenience anchor that lets the LLM jump directly to a named section (heading) in the " +
-                        "document rather than computing a character offset. Matching precedence: exact " +
-                        "(case-insensitive) → number-stripped/normalized-equal → substring; the first match wins. " +
-                        "Mutually exclusive with `offset` and `page` — `section` takes the highest priority when " +
-                        "multiple cursor params are supplied."
+                    "A convenience anchor that lets the LLM jump directly to a named section (heading) OR a table " +
+                        "caption in the document rather than computing a character offset. Resolution tries headings " +
+                        "first, then table-caption anchors, each with the same precedence: exact (case-insensitive) → " +
+                        "number-stripped/normalized-equal → substring; the first match wins. This is what lets " +
+                        "section='Table 46', section='Table 46. Fare Parameters', and section='Fare Parameters' all " +
+                        "resolve to the same table. Mutually exclusive with `offset` and `page` — `section` takes the " +
+                        "highest priority when multiple cursor params are supplied."
                 )
-                whenPresent("The document index resolves the first matching heading to a character offset.")
+                whenPresent("The document index resolves the first matching heading (or, failing that, table caption) to a character offset.")
                 whenAbsent("Falls back to the `page` param, then `offset`, then 0.")
-                constraint("matching precedence is exact → number-stripped/normalized → substring; first match wins")
+                constraint("matching precedence is exact → number-stripped/normalized → substring; headings are tried before tables; first match wins")
                 constraint(
-                    "if no heading matches, the tool does NOT silently serve offset 0 — it returns the document " +
-                        "start prefixed with a 'Section not found' notice that lists the available section names " +
-                        "(or, when the document has no reliable anchors, advises navigating by page=N)"
+                    "if nothing matches, the tool does NOT silently serve offset 0 — it returns the document " +
+                        "start prefixed with a 'Section not found' notice that lists the available section AND table " +
+                        "names (or, when the document has no reliable anchors, advises navigating by page=N)"
                 )
                 example("Introduction")
                 example("Functional Requirements")
+                example("Table 1-2")
+                example("Request Header Fields")
             }
             optional("search", "string") {
                 llmSeesIt(
@@ -462,13 +471,20 @@ class DocumentTool(
         // top-of-document read. Surface an explicit miss with the valid navigation targets so the
         // LLM can correct itself instead of silently reasoning over the wrong content.
         val sectionMissBanner: String? = if (slice.sectionMatched == false) {
+            val tablesClause = if (slice.availableTables.isNotEmpty())
+                " Available tables: ${renderSectionList(slice.availableTables)}." else ""
             if (slice.availableSections.isEmpty()) {
-                val pages = slice.totalPages
-                val pageHint = if (pages != null) "navigate with page=N ($pages pages)" else "navigate with offset=N"
-                "[Section '$sectionArg' not found — no reliable section anchors in this document; $pageHint. " +
-                    "Showing the document start below.]"
+                if (slice.availableTables.isEmpty()) {
+                    val pages = slice.totalPages
+                    val pageHint = if (pages != null) "navigate with page=N ($pages pages)" else "navigate with offset=N"
+                    "[Section '$sectionArg' not found — no reliable section anchors in this document; $pageHint. " +
+                        "Showing the document start below.]"
+                } else {
+                    "[Section '$sectionArg' not found.$tablesClause " +
+                        "Re-call with section=<one of these> (or page=N). Showing the document start below.]"
+                }
             } else {
-                "[Section '$sectionArg' not found. Available sections: ${renderSectionList(slice.availableSections)}. " +
+                "[Section '$sectionArg' not found. Available sections: ${renderSectionList(slice.availableSections)}.$tablesClause " +
                     "Re-call with section=<one of these> (or page=N). Showing the document start below.]"
             }
         } else null
@@ -489,6 +505,11 @@ class DocumentTool(
             // is more to read, so the LLM learns it can jump with section=. Token-frugal one-liner.
             if (sectionMissBanner == null && slice.remaining > 0 && slice.availableSections.isNotEmpty()) {
                 append("\n\n[Sections: ${renderSectionList(slice.availableSections)}]")
+            }
+            // Tables get their OWN line (kept separate from sections) so the LLM can jump to a
+            // table by caption/number via section=. Surfaced on both miss and normal-read paths.
+            if (slice.remaining > 0 && slice.availableTables.isNotEmpty()) {
+                append("\n\n[Tables: ${renderSectionList(slice.availableTables)}]")
             }
         }
         return ToolResult(content = body, summary = result.summary,

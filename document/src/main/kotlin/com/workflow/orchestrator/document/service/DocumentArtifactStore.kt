@@ -177,6 +177,7 @@ class DocumentArtifactStore(
             totalPages = artifact.meta.pageCount,
             availableSections = index.sections.take(MAX_AVAILABLE_SECTIONS).map { it.key },
             sectionMatched = sectionMatched,
+            availableTables = index.tables.take(MAX_AVAILABLE_TABLES).map { it.key },
         )
     }
 
@@ -261,6 +262,13 @@ class DocumentArtifactStore(
          * Keeps the discoverability hint token-frugal on documents with hundreds of headings.
          */
         const val MAX_AVAILABLE_SECTIONS = 30
+
+        /**
+         * Upper bound on the number of table-caption labels surfaced in [DocumentSlice.availableTables].
+         * Tables get their OWN cap (separate from [MAX_AVAILABLE_SECTIONS]) so a table-dense document
+         * doesn't crowd out the section hint, and vice versa.
+         */
+        const val MAX_AVAILABLE_TABLES = 30
 
         /** Default chars of context on each side of a search hit in the rendered snippet. */
         const val DEFAULT_SNIPPET_CONTEXT = 75
