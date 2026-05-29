@@ -536,19 +536,38 @@ class DocumentBlockHandler(
         if (text.contains('\n')) return false
         val line = text.trim()
         if (line.isEmpty() || line.length > MAX_HEADING_CHARS) return false
-        // A heading does not end in sentence punctuation.
-        if (line.last() in HEADING_TERMINAL_REJECT) return false
+        // SF-9: a generator/tool artifact title ("Enscript Output") that Tika leaks as the first
+        // prose line must never become the document's H1 — it would demote the real title.
+        if (line.lowercase() in GENERATOR_TITLE_ARTIFACTS) return false
+        // A heading does not end in sentence punctuation. NAV-3: a TRAILING colon is also a
+        // reject — "Control Enhancements:", "Cookies:" are list/value lead-ins, not sections.
+        // An INTERIOR colon is fine ("Appendix A: Framework Core") and is handled below.
+        if (line.last() in HEADING_TERMINAL_REJECT || line.last() == ':') return false
 
         // Flavour 1: standalone numbered heading ("3 Definitions", "1.1 Overview", "1.1.  Notation").
+        // NAV-3: only when the numbered remainder is a real Title-Case/ALL-CAPS section title,
+        // not an enumerated list item ("2. Group and role membership; and") or a chart-axis
+        // fragment ("100 Percent"). isNumberedHeadingTitle vets the remainder words.
         STANDALONE_NUMBERED_HEADING.matchEntire(line)?.let { m ->
             val sectionNumber = m.groupValues[1]
-            val level = sectionNumber.trimEnd('.').count { it == '.' } + 1
-            _blocks += DocumentBlock.Heading(level.coerceIn(1, 6), line)
-            return true
+            val remainder = line.removePrefix(sectionNumber).trim()
+            if (isNumberedHeadingRemainderClean(sectionNumber, remainder)) {
+                val level = sectionNumber.trimEnd('.').count { it == '.' } + 1
+                _blocks += DocumentBlock.Heading(level.coerceIn(1, 6), line)
+                return true
+            }
+            // Falls through: a numbered line whose remainder is sentence-shaped / list-shaped
+            // is prose, not a heading.
+            return false
         }
 
         // Reject list-item shapes ("1) …", "a. …", "i. …") so they stay prose.
         if (LIST_ITEM_PREFIX.containsMatchIn(line)) return false
+
+        // NAV-3: equation-glyph / symbol-heavy fragments ("QKT", "<EOS> <EOS>", "QK V") are not
+        // headings. Reject lines that contain markup-angle brackets or whose letters are
+        // dominated by isolated single-capital tokens (matrix/vector glyphs) rather than words.
+        if (isSymbolOrGlyphFragment(line)) return false
 
         // Flavour 2: standalone unnumbered heading — must be terse and Title-Case or ALL-CAPS.
         val words = line.split(WHITESPACE_SPLIT).filter { it.isNotEmpty() }
@@ -559,6 +578,10 @@ class DocumentBlockHandler(
         // of clean words (letters, optional trailing colon, optional single appendix letter).
         if (words.any { !isCleanHeadingWord(it) }) return false
         if (!isTitleCaseOrAllCaps(words)) return false
+        // NAV-3: glossary rows — a leading ALL-CAPS acronym followed by a Title-Case expansion
+        // ("ANSI American National Standards Institute"). These are key/value rows in an acronym
+        // appendix, not section headings.
+        if (isAcronymExpansionRow(words)) return false
 
         _blocks += DocumentBlock.Heading(1, line)
         return true
@@ -618,6 +641,85 @@ class DocumentBlockHandler(
                 else -> false                                          // a significant lowercase word ⇒ prose
             }
         }
+    }
+
+    /**
+     * Vets the title remainder of a standalone numbered line so only real section headings
+     * (`"4.0 Self-Assessing Cybersecurity Risk"`) are promoted, while enumerated list items
+     * (`"2. Group and role membership; and"`) and chart-axis fragments (`"100 Percent"`) are
+     * rejected. NAV-3.
+     *
+     * Rejections:
+     * - empty remainder;
+     * - a single-DIGIT enumerator (`"2."`/`"2"`) whose remainder reads as a sentence/clause —
+     *   detected by an interior `;`, a trailing connective ("and"/"or"), or a lowercase
+     *   significant word. Real single-segment SECTION numbers ("4.0", "1") are distinguished
+     *   because their remainder is a clean Title-Case/ALL-CAPS phrase.
+     * - a chart-axis fragment: a bare integer (no dot) followed by exactly one word
+     *   (`"100 Percent"`).
+     */
+    private fun isNumberedHeadingRemainderClean(sectionNumber: String, remainder: String): Boolean {
+        if (remainder.isEmpty()) return false
+        if (remainder.last() in HEADING_TERMINAL_REJECT || remainder.last() == ':') return false
+
+        val words = remainder.split(WHITESPACE_SPLIT).filter { it.isNotEmpty() }
+
+        // Chart-axis fragment: a bare integer with NO trailing dot followed by exactly one word
+        // ("100 Percent"). A genuine single-word section number carries a trailing dot
+        // ("1.  Introduction") or at least one dot-segment, so it is NOT caught here.
+        val hasNoDot = '.' !in sectionNumber
+        if (hasNoDot && words.size == 1) return false
+
+        // Enumerated-list shape: ";" anywhere, or a trailing bare connective.
+        if (';' in remainder) return false
+        if (words.lastOrNull()?.lowercase()?.trimEnd(',', '.') in LIST_TAIL_CONNECTIVES) return false
+
+        // The remainder must read as a heading: clean words, Title-Case or ALL-CAPS.
+        if (words.any { !isCleanHeadingWord(it) }) return false
+        return isTitleCaseOrAllCaps(words)
+    }
+
+    /**
+     * True for equation-glyph / symbol-heavy fragments that Tika leaks from formulae and figure
+     * axes — `"QKT"`, `"<EOS> <EOS>"`, `"QK V"`. NAV-3.
+     *
+     * Signals:
+     * - contains an angle-bracket markup token (`<EOS>`) — never a section heading;
+     * - the line is dominated by isolated single-letter capital tokens (matrix/vector symbols
+     *   like `Q`, `K`, `V`) or short ALL-CAPS glyph runs with no real multi-letter words.
+     */
+    private fun isSymbolOrGlyphFragment(line: String): Boolean {
+        if ('<' in line && '>' in line) return true
+        val words = line.split(WHITESPACE_SPLIT).filter { it.isNotEmpty() }
+        if (words.isEmpty()) return false
+        // A "real word" has ≥3 letters and is not entirely a glyph run. If NONE of the words is a
+        // real word, the line is a symbol/glyph fragment ("QKT", "QK V").
+        val hasRealWord = words.any { w ->
+            val letters = w.filter { it.isLetter() }
+            letters.length >= 3 && !(letters.all { it.isUpperCase() } && letters.length <= 4)
+        }
+        return !hasRealWord
+    }
+
+    /**
+     * True for acronym-glossary rows: a leading ALL-CAPS acronym (≥2 letters) followed by a
+     * mixed-case Title-Case expansion of ≥2 words — e.g. `"ANSI American National Standards
+     * Institute"`, `"NIST National Institute of Standards and Technology"`. NAV-3.
+     *
+     * Distinguished from a genuine ALL-CAPS heading ("CHAPTER THREE", "INTRODUCTION") because
+     * those are wholly ALL-CAPS, whereas a glossary row mixes an ALL-CAPS head with lowercase
+     * expansion words.
+     */
+    private fun isAcronymExpansionRow(words: List<String>): Boolean {
+        if (words.size < 3) return false
+        val head = words.first().trimEnd(':', '.', ')')
+        val headLetters = head.filter { it.isLetter() }
+        val headIsAcronym = headLetters.length in 2..6 && headLetters.all { it.isUpperCase() }
+        if (!headIsAcronym) return false
+        // The expansion must contain at least one lowercase letter (mixed-case), i.e. it is NOT a
+        // fully ALL-CAPS heading.
+        val expansion = words.drop(1).joinToString(" ")
+        return expansion.any { it.isLowerCase() }
     }
 
     /**
@@ -770,6 +872,13 @@ class DocumentBlockHandler(
         val METADATA_LEAK_LINES = setOf("(anonymous)", "(unknown)", "(unspecified)")
 
         /**
+         * Generator/tool-artifact document titles that PDF producers stamp into `/Title` and that
+         * Tika then leaks as the first prose line. These are NOT real section headings — promoting
+         * one would demote the document's real title (SF-9). Lower-cased for comparison.
+         */
+        val GENERATOR_TITLE_ARTIFACTS = setOf("enscript output", "untitled", "untitled document")
+
+        /**
          * Splits paragraphs of the form `"<num> <Title…><Body…>"` into a heading and a body.
          *
          * Group 1: section number (`1`, `1.2`, `1.2.3`), with optional trailing dot.
@@ -808,6 +917,12 @@ class DocumentBlockHandler(
 
         /** Characters that, at the end of a line, mark prose (a heading never ends in these). */
         val HEADING_TERMINAL_REJECT = setOf('.', ';', ',', '!', '?')
+
+        /**
+         * Bare connectives that, as the LAST word of a numbered line, mark an enumerated list
+         * item rather than a section heading ("2. Group and role membership; and").
+         */
+        val LIST_TAIL_CONNECTIVES = setOf("and", "or", "nor")
 
         /** Whitespace splitter for word counting / Title-Case analysis. */
         val WHITESPACE_SPLIT = Regex("\\s+")

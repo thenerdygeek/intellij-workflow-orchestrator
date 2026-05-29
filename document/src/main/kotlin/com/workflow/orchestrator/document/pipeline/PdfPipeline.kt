@@ -98,11 +98,21 @@ class PdfPipeline(
         val metadata: List<PositionedBlock<DocumentBlock>> =
             PdfMetadataExtractor(imageService = imageService, docKey = docKey).extract(file)
 
+        // NAV-4/NAV-6: when PdfMetadataExtractor harvested the PDF outline into authoritative
+        // Heading blocks, the prose heuristic's promoted Headings (which both invert the
+        // hierarchy and over-promote body lines) must NOT compete. Drop heuristic-promoted
+        // Headings from the prose stream — but DEMOTE them to paragraphs rather than deleting,
+        // so the heading text still appears in the body (it is real on-page content). The outline
+        // Headings remain the sole section-anchor source. When there is no outline this is a no-op
+        // and the heuristic headings flow through unchanged (rfc7230 / nist-csf path).
+        val outlineSeeded = metadata.any { it.block is DocumentBlock.Heading }
+        val proseForMerge = if (outlineSeeded) demoteProseHeadings(prose) else prose
+
         // Dedup pass: when Tabula extracted a Table, the same cell content also appears in
         // Tika's prose stream as flat whitespace-separated lines. Drop the prose paragraphs
         // whose tokens are entirely contained in the table's cell+header set.
         // This avoids the LLM seeing every cell value twice (once as prose, once as table).
-        val dedupedProse = removeProseDuplicatedByTables(prose, tables)
+        val dedupedProse = removeProseDuplicatedByTables(proseForMerge, tables)
 
         @Suppress("UNCHECKED_CAST")
         val merged: List<PositionedBlock<DocumentBlock>> =
@@ -179,6 +189,27 @@ class PdfPipeline(
             !tokens.all { it in allTableTokens }
         }
     }
+
+    /**
+     * Demotes prose-stream [DocumentBlock.Heading] blocks (promoted by the
+     * [com.workflow.orchestrator.document.sax.DocumentBlockHandler] heuristic) back to
+     * [DocumentBlock.Paragraph]. NAV-4/NAV-6.
+     *
+     * Called only when [PdfMetadataExtractor] produced authoritative outline Headings. The
+     * outline is the section-anchor source; the heuristic Headings would otherwise pollute the
+     * index with inverted levels and over-promoted body lines. We DEMOTE (not delete) so the
+     * line's text — which is genuine on-page content — survives in the body markdown; it simply
+     * stops being a section anchor.
+     */
+    private fun demoteProseHeadings(
+        prose: List<PositionedBlock<DocumentBlock>>,
+    ): List<PositionedBlock<DocumentBlock>> =
+        prose.map { pb ->
+            when (val b = pb.block) {
+                is DocumentBlock.Heading -> PositionedBlock(pb.page, pb.top, pb.bottom, DocumentBlock.Paragraph(b.text))
+                else -> pb
+            }
+        }
 
     private fun String.normalizeForDedup(): String =
         lowercase().trim { it in PUNCT_TRIM }

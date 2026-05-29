@@ -414,7 +414,12 @@ class PdfPipelineTest {
     }
 
     @Test
-    fun `pdf with bookmarks emits a Bookmarks KeyValueGroup mapping titles to page labels`() {
+    fun `pdf with an outline seeds authoritative section Heading anchors (NAV-4 NAV-6)`() {
+        // BEHAVIOR CHANGE (NAV-4/NAV-6): the PDF outline is now the AUTHORITATIVE section-anchor
+        // source. Instead of a passive "Bookmarks" KeyValueGroup, each outline node becomes a
+        // DocumentBlock.Heading whose level is its outline depth and whose page is its
+        // destination, so the section index recovers numbered sections and keeps the real
+        // hierarchy. (When a PDF has NO outline the old Bookmarks KVG fallback still applies.)
         val pdfBytes = run {
             val doc = org.apache.pdfbox.pdmodel.PDDocument()
             val page1 = org.apache.pdfbox.pdmodel.PDPage(); doc.addPage(page1)
@@ -446,16 +451,24 @@ class PdfPipelineTest {
             doc.save(out); doc.close()
             out.toByteArray()
         }
-        val tempFile = java.nio.file.Files.createTempFile("p4t1-bookmarks-", ".pdf")
+        val tempFile = java.nio.file.Files.createTempFile("p4t1-outline-", ".pdf")
         java.nio.file.Files.write(tempFile, pdfBytes)
         try {
             val blocks = PdfPipeline().extract(tempFile)
-            val kvg = blocks.filterIsInstance<DocumentBlock.KeyValueGroup>()
-                .firstOrNull { it.title == "Bookmarks" }
-            assertNotNull(kvg, "Expected Bookmarks KeyValueGroup")
-            val pairsMap = kvg!!.pairs.toMap()
-            assertEquals("p.1", pairsMap["Introduction"])
-            assertEquals("p.2", pairsMap["Details"])
+            val headings = blocks.filterIsInstance<DocumentBlock.Heading>()
+            assertTrue(
+                headings.any { it.text == "Introduction" && it.level == 1 },
+                "outline top-level node → H1 anchor; got: $headings",
+            )
+            assertTrue(
+                headings.any { it.text == "Details" && it.level == 1 },
+                "outline top-level node → H1 anchor; got: $headings",
+            )
+            // No passive Bookmarks KVG when the outline has been promoted to Headings.
+            assertTrue(
+                blocks.filterIsInstance<DocumentBlock.KeyValueGroup>().none { it.title == "Bookmarks" },
+                "outline is promoted to Headings, not a Bookmarks KVG; got: $blocks",
+            )
         } finally {
             java.nio.file.Files.deleteIfExists(tempFile)
         }

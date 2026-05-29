@@ -16,8 +16,11 @@ import java.nio.file.Path
  * Also extracts three additional metadata channels as [DocumentBlock.KeyValueGroup] blocks:
  * - **Document properties** (`PDDocumentInformation`: title, author, subject, etc.) — emitted at
  *   page 1, top=-2.0 so it sorts first in the merge stream.
- * - **Bookmarks** (PDF outline via `PDDocumentOutline`) — recursive walk with depth-indented
- *   titles and `p.<num>` page labels; emitted at page 1, top=-1.0 (just after doc properties).
+ * - **Outline / bookmarks** (PDF outline via `PDDocumentOutline`) — recursively harvested into one
+ *   [DocumentBlock.Heading] per node (NAV-4/NAV-6). The outline depth maps to the heading level
+ *   (depth 0 → H1, …) and each heading is positioned at its destination page, making the outline
+ *   the authoritative section-anchor set. When there is no outline, this contributes nothing and
+ *   the prose heuristic supplies anchors.
  * - **AcroForm fields** — fully-qualified field name → string value; emitted at the last page,
  *   top=MAX so it lands after all body content.
  *
@@ -79,10 +82,27 @@ class PdfMetadataExtractor(
         }
     }
 
+    private companion object {
+        /** Base `top` for outline-seeded headings: after the page marker (0.0), before prose (1.0). */
+        const val OUTLINE_HEADING_TOP_BASE = 0.1
+
+        /** Per-bookmark `top` step on the same page (keeps outline order; ~900 bookmarks/page). */
+        const val OUTLINE_HEADING_TOP_STEP = 0.001
+
+        /**
+         * Generator/tool-artifact `/Title` values (lower-cased). When the title matches one of
+         * these AND the producing tool's name appears in Creator/Producer, the title is dropped
+         * from document properties (SF-9). Kept in sync with the same set in
+         * [com.workflow.orchestrator.document.sax.DocumentBlockHandler].
+         */
+        val GENERATOR_TITLE_ARTIFACTS = setOf("enscript output", "untitled", "untitled document")
+    }
+
     /**
      * Returns positioned [DocumentBlock] entries for the PDF:
      * - One [DocumentBlock.KeyValueGroup] for document properties (when present), at page 1, top=-2.0.
-     * - One [DocumentBlock.KeyValueGroup] for bookmarks (when present), at page 1, top=-1.0.
+     * - One [DocumentBlock.Heading] per PDF outline node (when present), positioned at its
+     *   destination page with a depth-derived level (NAV-4/NAV-6).
      * - One [DocumentBlock.Comment] per markup annotation across all pages.
      * - One [DocumentBlock.KeyValueGroup] for AcroForm fields (when present), at last page, top=MAX.
      * - When [imageService] is wired: [DocumentBlock.EmbeddedFileRef] for embedded attachments and
@@ -101,10 +121,14 @@ class PdfMetadataExtractor(
                 result += PositionedBlock(page = 1, top = -2.0, bottom = -1.0, block = kvg)
             }
 
-            // 2. Bookmarks — emitted at page 1, top=-1.0 (just after doc properties).
-            extractBookmarks(doc)?.let { kvg ->
-                result += PositionedBlock(page = 1, top = -1.0, bottom = 0.0, block = kvg)
-            }
+            // 2. Outline → authoritative section anchors. The PDF outline tree is the
+            //    AUTHORITATIVE section-anchor set (NAV-4/NAV-6): its nesting depth encodes the real
+            //    heading hierarchy, so we seed one DocumentBlock.Heading per node at its
+            //    destination page (depth → level). This recovers numbered sections the prose
+            //    heuristic drops and fixes the inverted hierarchy. When there is NO outline this is
+            //    empty and the prose heuristic in DocumentBlockHandler supplies the anchors instead
+            //    (rfc7230 / nist-csf path).
+            result += extractOutlineHeadings(doc)
 
             // 3. Annotations — one Comment block per markup annotation across all pages.
             doc.pages.forEachIndexed { pageIdx, page ->
@@ -178,8 +202,18 @@ class PdfMetadataExtractor(
      */
     private fun extractDocumentProperties(doc: PDDocument): DocumentBlock.KeyValueGroup? {
         val info = try { doc.documentInformation } catch (_: Exception) { null } ?: return null
+        // SF-9: some generators stamp a tool artifact (e.g. "Enscript Output") into /Title. Drop a
+        // title that is a known artifact AND corroborated by the producing tool's name in
+        // Creator/Producer, so the bogus title is not surfaced as a document property.
+        val creatorProducer = listOfNotNull(info.creator, info.producer).joinToString(" ").lowercase()
+        val title = info.title?.takeIf { it.isNotBlank() }?.takeUnless { t ->
+            val lower = t.trim().lowercase()
+            GENERATOR_TITLE_ARTIFACTS.any { artifact ->
+                lower == artifact && artifact.substringBefore(' ') in creatorProducer
+            }
+        }
         val pairs = buildList {
-            info.title?.takeIf { it.isNotBlank() }?.let { add("Title" to it) }
+            title?.let { add("Title" to it) }
             info.author?.takeIf { it.isNotBlank() }?.let { add("Author" to it) }
             info.subject?.takeIf { it.isNotBlank() }?.let { add("Subject" to it) }
             info.keywords?.takeIf { it.isNotBlank() }?.let { add("Keywords" to it) }
@@ -192,52 +226,64 @@ class PdfMetadataExtractor(
     }
 
     /**
-     * Walks the PDF document outline (bookmarks) via [PDDocument.documentCatalog.documentOutline]
-     * and emits a [DocumentBlock.KeyValueGroup] whose pairs map indented bookmark titles to
-     * `p.<num>` page labels.
+     * Harvests the PDF outline (bookmarks) tree into one [DocumentBlock.Heading] per node,
+     * positioned at the node's destination page. NAV-4/NAV-6.
      *
-     * The outline is traversed depth-first via [PDOutlineItem.firstChild] / [PDOutlineItem.nextSibling].
-     * [PDOutlineItem.findDestinationPage] resolves named destinations and GoTo actions alike —
-     * it returns null for external links or when the destination cannot be resolved, in which
-     * case we emit `p.?`.
+     * The outline nesting depth maps directly onto the heading level (depth 0 → H1, depth 1 → H2,
+     * …, clamped to 1..6), so a tagged spec PDF recovers its real section hierarchy:
+     * `INTRODUCTION` (H1) → `1.1 PURPOSE` (H2) → `AC-1 …` (H3). This is the authoritative anchor
+     * set; [PdfPipeline] suppresses the prose heuristic's promoted headings when these exist so
+     * the noisy/inverted heuristic anchors do not compete.
      *
-     * Returns null if there is no outline or all bookmark titles are blank.
+     * Each heading is positioned at its destination page with a small fractional `top` (just after
+     * the page marker at 0.0, before the first prose block at 1.0) and a monotonically increasing
+     * sub-offset so multiple bookmarks landing on the same page keep their outline order. Nodes
+     * whose destination cannot be resolved are anchored to page 1 (top of document) so the section
+     * still appears in the index rather than being silently dropped.
+     *
+     * Returns an empty list when the document has no outline or every title is blank — the caller
+     * then falls back to the Bookmarks key/value group + prose heuristic.
      */
-    private fun extractBookmarks(doc: PDDocument): DocumentBlock.KeyValueGroup? {
-        val outline = try { doc.documentCatalog?.documentOutline } catch (_: Exception) { null } ?: return null
-        val pairs = mutableListOf<Pair<String, String>>()
-        walkOutline(outline.firstChild, doc, pairs, depth = 0)
-        return if (pairs.isNotEmpty()) DocumentBlock.KeyValueGroup("Bookmarks", pairs) else null
+    private fun extractOutlineHeadings(doc: PDDocument): List<PositionedBlock<DocumentBlock>> {
+        val outline = try { doc.documentCatalog?.documentOutline } catch (_: Exception) { null }
+            ?: return emptyList()
+        val sink = mutableListOf<PositionedBlock<DocumentBlock>>()
+        // Per-page running sub-offset so same-page bookmarks keep outline order and sort before
+        // the first prose block (top=1.0). Capped well under 1.0.
+        val perPageOrder = HashMap<Int, Int>()
+        walkOutlineHeadings(outline.firstChild, doc, sink, depth = 0, perPageOrder = perPageOrder)
+        return sink
     }
 
-    /**
-     * Depth-first traversal of the outline tree.
-     *
-     * [PDOutlineItem.firstChild] descends; [PDOutlineItem.nextSibling] advances the current level.
-     * Both can throw (corrupt or encrypted PDFs), so each access is wrapped.
-     */
-    private fun walkOutline(
+    private fun walkOutlineHeadings(
         node: PDOutlineItem?,
         doc: PDDocument,
-        sink: MutableList<Pair<String, String>>,
+        sink: MutableList<PositionedBlock<DocumentBlock>>,
         depth: Int,
+        perPageOrder: HashMap<Int, Int>,
     ) {
         var n = node
         while (n != null) {
             val title = n.title?.trim().orEmpty()
             if (title.isNotEmpty()) {
-                val indent = "  ".repeat(depth.coerceAtLeast(0))
-                val pageLabel = try {
-                    val targetPage = n.findDestinationPage(doc)
-                    if (targetPage != null) "p.${doc.pages.indexOf(targetPage) + 1}" else "p.?"
-                } catch (_: Exception) {
-                    "p.?"
-                }
-                sink += "$indent$title" to pageLabel
+                val targetPage = try {
+                    n.findDestinationPage(doc)?.let { doc.pages.indexOf(it) + 1 }
+                } catch (_: Exception) { null }
+                val page = targetPage?.takeIf { it >= 1 } ?: 1
+                val level = (depth + 1).coerceIn(1, 6)
+                val order = perPageOrder.merge(page, 1, Int::plus)!!
+                // top in (0.0, 1.0): after the page marker (0.0), before the first prose (1.0),
+                // preserving same-page outline order. 0.001 step supports ~900 bookmarks/page.
+                val top = OUTLINE_HEADING_TOP_BASE + order * OUTLINE_HEADING_TOP_STEP
+                sink += PositionedBlock(
+                    page = page,
+                    top = top,
+                    bottom = top + OUTLINE_HEADING_TOP_STEP,
+                    block = DocumentBlock.Heading(level, title),
+                )
             }
-            // Recurse into children before advancing to the next sibling.
             val firstChild = try { n.firstChild } catch (_: Exception) { null }
-            walkOutline(firstChild, doc, sink, depth + 1)
+            walkOutlineHeadings(firstChild, doc, sink, depth + 1, perPageOrder)
             n = try { n.nextSibling } catch (_: Exception) { null }
         }
     }

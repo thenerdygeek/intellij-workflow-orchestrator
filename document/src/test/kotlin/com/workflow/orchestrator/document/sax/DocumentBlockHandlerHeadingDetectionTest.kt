@@ -151,4 +151,114 @@ class DocumentBlockHandlerHeadingDetectionTest {
         val blocks = emitParagraph("1) Describe their current cybersecurity posture;")
         assertTrue(blocks.none { it is DocumentBlock.Heading }, "list item → prose; got: $blocks")
     }
+
+    // ── NAV-3: tightened promotion guards (false anchors must stay paragraphs) ──
+
+    @Test
+    fun `line ending in a trailing colon is NOT a heading`() {
+        // nist-800-53r5 leaks "Control Enhancements:" + nist-800-63b "Cookies:" as anchors.
+        // A trailing colon on a label-like run is a lead-in to a list/value, not a section.
+        for (label in listOf("Control Enhancements:", "Cookies:")) {
+            val blocks = emitParagraph(label)
+            assertTrue(
+                blocks.none { it is DocumentBlock.Heading },
+                "trailing-colon label '$label' → prose; got: $blocks",
+            )
+        }
+    }
+
+    @Test
+    fun `appendix-style colon heading is still allowed (interior colon)`() {
+        // The colon guard must reject ONLY a trailing colon, not an interior one.
+        val blocks = emitParagraph("Appendix A: Framework Core")
+        assertEquals(1, blocks.filterIsInstance<DocumentBlock.Heading>().size, "got: $blocks")
+    }
+
+    @Test
+    fun `bare acronym-plus-expansion line is NOT a heading`() {
+        // nist-csf Appendix C emits "ANSI American National Standards Institute",
+        // "CIS Center for Internet Security", … — a leading ALL-CAPS acronym then its
+        // expansion. These are glossary rows, not section headings.
+        for (line in listOf(
+            "ANSI American National Standards Institute",
+            "CIS Center for Internet Security",
+            "NIST National Institute of Standards and Technology",
+            "ISO International Organization for Standardization",
+        )) {
+            val blocks = emitParagraph(line)
+            assertTrue(
+                blocks.none { it is DocumentBlock.Heading },
+                "acronym-expansion glossary row '$line' → prose; got: $blocks",
+            )
+        }
+    }
+
+    @Test
+    fun `equation-glyph or symbol-heavy line is NOT a heading`() {
+        // arxiv "QKT" (equation numerator) and "<EOS> <EOS>" (heatmap axis labels).
+        for (line in listOf("QKT", "<EOS> <EOS>", "QK V")) {
+            val blocks = emitParagraph(line)
+            assertTrue(
+                blocks.none { it is DocumentBlock.Heading },
+                "equation/symbol fragment '$line' → prose; got: $blocks",
+            )
+        }
+    }
+
+    @Test
+    fun `numbered list item with terminal semicolon clause is NOT a heading`() {
+        // nist-800-53r5 "2. Group and role membership; and" — an enumerated list item
+        // (period after a single digit, sentence-shaped body) wrongly promoted as an anchor.
+        for (line in listOf(
+            "2. Group and role membership; and",
+            "2. Intended system usage; and",
+        )) {
+            val blocks = emitParagraph(line)
+            assertTrue(
+                blocks.none { it is DocumentBlock.Heading },
+                "enumerated list item '$line' → prose; got: $blocks",
+            )
+        }
+    }
+
+    @Test
+    fun `chart-axis fragment with leading number is NOT a heading`() {
+        // fed-scf chart axis "100 Percent" — a number glued to a single word axis label.
+        val blocks = emitParagraph("100 Percent")
+        assertTrue(blocks.none { it is DocumentBlock.Heading }, "axis fragment → prose; got: $blocks")
+    }
+
+    @Test
+    fun `real numbered section heading still survives the tightened guards`() {
+        // Regression guard: the new rejections must not eat legitimate numbered headings.
+        for (line in listOf("4.0 Self-Assessing Cybersecurity Risk", "5.1 Authenticator Assurance Levels")) {
+            val blocks = emitParagraph(line)
+            assertEquals(
+                1, blocks.filterIsInstance<DocumentBlock.Heading>().size,
+                "real numbered heading '$line' must stay a Heading; got: $blocks",
+            )
+        }
+    }
+
+    @Test
+    fun `known generator tool-artifact title is NOT a heading`() {
+        // SF-9: rfc7230's PDF /Title is "Enscript Output" (a GNU enscript tool artifact), which
+        // the heuristic would promote to the document's first H1, demoting the real RFC title.
+        val blocks = emitParagraph("Enscript Output")
+        assertTrue(
+            blocks.none { it is DocumentBlock.Heading },
+            "tool-artifact title 'Enscript Output' → prose, not a heading; got: $blocks",
+        )
+    }
+
+    @Test
+    fun `real unnumbered section heading still survives the tightened guards`() {
+        for (line in listOf("Executive Summary", "Purpose", "Abstract")) {
+            val blocks = emitParagraph(line)
+            assertEquals(
+                1, blocks.filterIsInstance<DocumentBlock.Heading>().size,
+                "real heading '$line' must stay a Heading; got: $blocks",
+            )
+        }
+    }
 }
