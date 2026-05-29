@@ -1,12 +1,16 @@
 package com.workflow.orchestrator.document.pipeline
 
 import com.workflow.orchestrator.core.model.DocumentBlock
+import com.workflow.orchestrator.document.pdf.PdfColumnDetector
+import com.workflow.orchestrator.document.pdf.PdfColumnProseExtractor
 import com.workflow.orchestrator.document.pdf.PdfLink
 import com.workflow.orchestrator.document.pdf.PdfMetadataExtractor
 import com.workflow.orchestrator.document.pdf.PdfProseExtractor
 import com.workflow.orchestrator.document.pdf.PdfTableExtractor
 import com.workflow.orchestrator.document.pdf.PositionedBlock
+import com.workflow.orchestrator.document.sax.DocumentBlockHandler
 import com.workflow.orchestrator.document.service.ImageExtractionService
+import org.apache.pdfbox.Loader
 import java.nio.file.Path
 
 /**
@@ -48,12 +52,22 @@ import java.nio.file.Path
  *    tables in Tika's parse order and receive smaller `top` values. Phase 6 can improve
  *    accuracy by extracting real text-block bboxes from PDFBox's `PDFTextStripper`.
  *
+ *    **SF-1 two-column reading-order — SHIPPED (hybrid, position-gated):**
+ *    [substituteTwoColumnPages] runs a PDFBox [PdfColumnDetector] per page and, on pages it
+ *    classifies as genuine two-column AND that Tabula did NOT claim as a table, replaces that
+ *    page's Tika prose with column-ordered prose from [PdfColumnProseExtractor]
+ *    (`PDFTextStripperByArea`, left-column-fully-then-right-column). Single-column pages — the
+ *    overwhelming majority — flow through the UNCHANGED Tika path byte-for-byte, so G-1/G-5/G-6/G-9
+ *    carry zero regression risk there. The substituted paragraphs are run through the SAME
+ *    [DocumentBlockHandler.processProseLine] cleanup/classification chain as the SAX path, so
+ *    heading detection / glued-token repair / TOC cleanup apply identically (no behaviour fork).
+ *    Gated by the Tabula-table-presence check ([tablePages]) so the nist-csf 4-column Framework
+ *    Core TABLE is never column-split. Conservative by design — see [PdfColumnDetector]. Disable
+ *    via [enableColumnReorder]=false (the regression-guard control).
+ *
  *    **G-9 DEFERRED (need position data — NOT done here):**
- *    - **SF-1** two-column reading-order interleave (left column's lines fused with the right
- *      column's on the same visual row) and **SF-8** masthead two-column fusion share this exact
- *      root: Tika emits prose in stream order with no x-coordinate, so columns cannot be
- *      separated. The fix is a PDFTextStripper position-based prose path replacing the Tika prose
- *      stage — a large architectural rewrite that deserves its own focused effort.
+ *    - **SF-8** masthead two-column fusion shares SF-1's root (the masthead may fall out of the
+ *      same detector when it triggers on the first page; not separately forced).
  *    - **SF-2** preformatted/monospace fidelity (ABNF, pseudo-code, display equations) is only
  *      partially position-independent: by the time a block reaches this pipeline the original
  *      newlines are already collapsed onto one line (e.g. rfc7230's `HTTP-version = …  HTTP-name
@@ -84,10 +98,18 @@ import java.nio.file.Path
  *                        a strict phantom guard so multi-column prose pages don't sprout
  *                        phantom tables (see [PdfTableExtractor]).
  * @param proseExtractor  Source of Tika XHTML prose blocks. Default: [PdfProseExtractor].
+ * @param columnDetector  SF-1 two-column page classifier (whitespace-valley histogram).
+ * @param columnProseExtractor SF-1 per-page left-then-right column re-extractor.
+ * @param enableColumnReorder  When `true` (default) SF-1 two-column substitution is active. Set
+ *                             `false` to force the pure single-column Tika path — used by the
+ *                             regression guard to prove single-column docs are byte-identical.
  */
 class PdfPipeline(
     private val tableExtractor: PdfTableExtractor = PdfTableExtractor(enableStreamMode = true),
     private val proseExtractor: PdfProseExtractor = PdfProseExtractor(),
+    private val columnDetector: PdfColumnDetector = PdfColumnDetector(),
+    private val columnProseExtractor: PdfColumnProseExtractor = PdfColumnProseExtractor(),
+    private val enableColumnReorder: Boolean = true,
 ) {
 
     /**
@@ -112,10 +134,23 @@ class PdfPipeline(
         docKey: String = "anonymous",
         onPage: ((done: Int, total: Int) -> Unit)? = null,
     ): List<DocumentBlock> {
-        val tables: List<PositionedBlock<DocumentBlock.Table>> = tableExtractor.extract(file, onPage)
-        val proseRaw: List<PositionedBlock<DocumentBlock>> = proseExtractor.extract(file)
+        // Raw (pre-merge) tables keep every table's true page; the SF-1 gate needs ALL pages a
+        // multi-page table occupies (continuation-merge would collapse them onto the first page).
+        val tablesRaw: List<PositionedBlock<DocumentBlock.Table>> = tableExtractor.extractRaw(file, onPage)
+        val tables: List<PositionedBlock<DocumentBlock.Table>> = tableExtractor.mergeContinuations(tablesRaw)
+        val proseTika: List<PositionedBlock<DocumentBlock>> = proseExtractor.extract(file)
         val metadataExtractor = PdfMetadataExtractor(imageService = imageService, docKey = docKey)
         val metadata: List<PositionedBlock<DocumentBlock>> = metadataExtractor.extract(file)
+
+        // SF-1: on genuine two-column pages (not claimed by Tabula as a table) substitute the
+        // interleaved Tika prose with column-ordered prose. Single-column pages are untouched.
+        // Done BEFORE link-splice so links splice into the correctly-ordered column text.
+        val tablePages: Set<Int> = tablesRaw.map { it.page }.toSet()
+        val proseRaw = if (enableColumnReorder) {
+            substituteTwoColumnPages(file, proseTika, tablePages)
+        } else {
+            proseTika
+        }
 
         // G-6 / HX-1 harvest: splice link annotations INLINE into prose so their target survives
         // as Markdown without duplicating or hoisting the visible display text. Done before any
@@ -152,6 +187,120 @@ class PdfPipeline(
         val rejoined = rejoinHyphenatedParagraphs(deChromed)
         return suppressOverlaps(rejoined).map { it.block }
     }
+
+    /**
+     * SF-1 — replaces the Tika prose for every genuine two-column page with column-ordered prose.
+     *
+     * ## Gating (conservative, table-safe)
+     *
+     * A page is substituted only when BOTH hold:
+     * 1. [PdfColumnDetector.detectGutter] returns a gutter x (the page is geometrically two-column);
+     * 2. Tabula did NOT extract a table that starts on that page ([tablePages]). This is the
+     *    non-negotiable guardrail: the nist-csf "2-column" Framework Core is really a 4-column
+     *    TABLE, and column-splitting it would corrupt it. Tabula owns table pages.
+     *
+     * On a substituted page, [PdfColumnProseExtractor] reads the left column fully then the right
+     * column; the result is split into paragraph-sized chunks (blank-line separated) and each chunk
+     * is run through the SAME [DocumentBlockHandler.processProseLine] cleanup/classification chain
+     * the SAX path uses, so heading detection / glued-token repair / TOC cleanup behave identically
+     * (no fork, no duplication). The substituted blocks carry the same synthetic per-page Y scheme
+     * as [PdfProseExtractor] (PageMarker at top=0.0, prose at 1.0, 2.0, …) so the merge/chrome/dedup/
+     * overlap stages downstream are unaffected.
+     *
+     * Single-column pages (and any page the detector declines, or any table page) keep their
+     * original Tika blocks verbatim — proven byte-identical by the regression guard.
+     *
+     * @param file        The PDF being extracted.
+     * @param proseTika   The unmodified Tika prose (PageMarker + Paragraph/Heading) per page.
+     * @param tablePages  1-based page numbers Tabula claimed as tables (substitution is skipped).
+     * @return The prose stream with two-column pages re-ordered; all other pages identical to input.
+     */
+    private fun substituteTwoColumnPages(
+        file: Path,
+        proseTika: List<PositionedBlock<DocumentBlock>>,
+        tablePages: Set<Int>,
+    ): List<PositionedBlock<DocumentBlock>> {
+        // Detect the two-column, non-table pages and harvest their column-ordered text in one open.
+        val columnTextByPage: Map<Int, String> = try {
+            Loader.loadPDF(file.toFile()).use { doc ->
+                val out = HashMap<Int, String>()
+                doc.pages.forEachIndexed { idx, page ->
+                    val pageNumber = idx + 1
+                    if (pageNumber in tablePages) return@forEachIndexed
+                    val gutter = try { columnDetector.detectGutter(page) } catch (_: Exception) { null }
+                        ?: return@forEachIndexed
+                    val text = columnProseExtractor.extractColumns(page, gutter)
+                    if (text.isNotBlank()) out[pageNumber] = text
+                }
+                out
+            }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+        if (columnTextByPage.isEmpty()) return proseTika
+
+        // A fresh handler instance to reuse the SAX path's exact paragraph cleanup/classification.
+        // restoreUrlBoundaries=true because this is a PDF source (matches PdfProseExtractor's Tika
+        // config); csvDetectionEnabled=false (PDF, not delimited text).
+        val handler = DocumentBlockHandler(csvDetectionEnabled = false, restoreUrlBoundaries = true)
+
+        val result = mutableListOf<PositionedBlock<DocumentBlock>>()
+        var i = 0
+        while (i < proseTika.size) {
+            val pb = proseTika[i]
+            val columnText = columnTextByPage[pb.page]
+            if (columnText == null) {
+                // Untouched page — verbatim Tika block.
+                result += pb
+                i++
+                continue
+            }
+            // This is a substituted page. Walk the contiguous run of blocks for this page; keep the
+            // PageMarker(s) (top=0.0) but DROP the interleaved Tika prose, then emit column-ordered
+            // prose with the synthetic per-page Y scheme.
+            val page = pb.page
+            var emittedColumnsForPage = false
+            var pageCounter = 1.0
+            while (i < proseTika.size && proseTika[i].page == page) {
+                val cur = proseTika[i]
+                if (cur.block is DocumentBlock.PageMarker) {
+                    // Preserve page markers verbatim (they head the page in the merge).
+                    result += cur
+                    i++
+                    continue
+                }
+                // First non-marker block on this page → emit the column-ordered prose ONCE in its
+                // place, then skip every remaining interleaved Tika prose block for this page.
+                if (!emittedColumnsForPage) {
+                    for (chunk in splitColumnTextIntoParagraphs(columnText)) {
+                        for (block in handler.processProseLine(chunk)) {
+                            result += PositionedBlock(page, pageCounter, pageCounter + 10.0, block)
+                            pageCounter += 1.0
+                        }
+                    }
+                    emittedColumnsForPage = true
+                }
+                i++ // drop this interleaved Tika prose block
+            }
+        }
+        return result
+    }
+
+    /**
+     * Splits one page's column-ordered text (left column, `\n`, right column — each column with its
+     * own internal line breaks) into paragraph-sized chunks for [DocumentBlockHandler.processProseLine].
+     *
+     * Tika emits each visual line of a PDF as its own `<p>`, so to keep the same downstream behaviour
+     * (per-line chrome stripping, cross-paragraph hyphen rejoin) we mirror that granularity: one
+     * chunk per non-blank line. Blank lines are dropped. This keeps SF-5 chrome stripping and SF-10
+     * hyphen rejoin (which both run at the [PdfPipeline] stream level) working exactly as they do for
+     * the single-column path.
+     */
+    private fun splitColumnTextIntoParagraphs(columnText: String): List<String> =
+        columnText.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toList()
 
     /**
      * Splices harvested [PdfLink]s INLINE into the prose stream (G-6 / HX-1 harvest).

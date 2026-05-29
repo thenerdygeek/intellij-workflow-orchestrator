@@ -90,6 +90,22 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
     fun extract(
         file: Path,
         onPage: ((done: Int, total: Int) -> Unit)? = null,
+    ): List<PositionedBlock<DocumentBlock.Table>> = mergeContinuations(extractRaw(file, onPage))
+
+    /**
+     * Per-page table extraction WITHOUT continuation-merge — every table keeps its own page.
+     *
+     * [extract] post-processes this with [mergeContinuations], which collapses a multi-page table
+     * onto its FIRST page (losing the continuation pages). Callers that need the true set of pages a
+     * table occupies — e.g. the SF-1 Tabula-presence gate in
+     * [com.workflow.orchestrator.document.pipeline.PdfPipeline], which must never column-split ANY
+     * page of a multi-page table such as nist-csf's Framework Core — use this pre-merge view.
+     *
+     * @return Raw positioned table blocks, one per Tabula detection, in (page, top) order.
+     */
+    fun extractRaw(
+        file: Path,
+        onPage: ((done: Int, total: Int) -> Unit)? = null,
     ): List<PositionedBlock<DocumentBlock.Table>> {
         val positioned = mutableListOf<PositionedBlock<DocumentBlock.Table>>()
 
@@ -148,7 +164,7 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
             }
         }
 
-        return mergeContinuations(positioned)
+        return positioned
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -342,7 +358,7 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
      * The merged block spans `blocks[i].page` through `blocks[i+1].page`, with
      * `bottom = blocks[i+1].bottom`.
      */
-    private fun mergeContinuations(
+    internal fun mergeContinuations(
         blocks: List<PositionedBlock<DocumentBlock.Table>>,
     ): List<PositionedBlock<DocumentBlock.Table>> {
         if (blocks.size < 2) return blocks

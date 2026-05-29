@@ -394,11 +394,36 @@ class DocumentBlockHandler(
     private fun flushBufferAsParagraph() {
         val rawText = currentBuffer.toString().trim()
         currentBuffer.clear()
-        if (rawText.isEmpty()) return
+        _blocks += processProseLine(rawText)
+    }
+
+    /**
+     * SF-1 reuse seam — runs the FULL per-paragraph cleanup + classification chain on one raw
+     * buffered prose block and returns the resulting [DocumentBlock]s.
+     *
+     * This is the single source of truth for the prose-block pipeline:
+     * metadata-leak drop → URL-boundary restore → bullet normalise → soft-hyphen rejoin → SF-4
+     * glued-function-word repair → SF-3 TOC clean → numbered-heading split → standalone-heading
+     * detection → CSV-table parse → plain Paragraph. [flushBufferAsParagraph] (the SAX path) and
+     * the SF-1 column-prose re-segmenter in [com.workflow.orchestrator.document.pipeline.PdfPipeline]
+     * BOTH call this, so a two-column page's column-ordered text gets byte-identical heading /
+     * glued-token / TOC handling to the single-column Tika path — no behaviour fork, no duplication.
+     *
+     * All gating flags ([restoreUrlBoundaries], [csvDetectionEnabled]) are honoured exactly as in
+     * the SAX path, because this IS the SAX path's body.
+     *
+     * @param rawText The trimmed text of one prose block (a `<p>` for SAX; one column paragraph
+     *                for the SF-1 re-segmenter).
+     * @return Zero or more blocks (empty when the line was a metadata-leak placeholder).
+     */
+    fun processProseLine(rawText: String): List<DocumentBlock> {
+        if (rawText.isEmpty()) return emptyList()
         // Tika's PDFParser emits unset XMP metadata fields (Author, Title, …) as
         // body text containing literal placeholders like "(anonymous)". Drop these
         // before they reach the LLM as bogus paragraph content.
-        if (rawText.lowercase() in METADATA_LEAK_LINES) return
+        if (rawText.lowercase() in METADATA_LEAK_LINES) return emptyList()
+
+        val out = mutableListOf<DocumentBlock>()
 
         // Restore lost whitespace around hyperlinks. Tika's PDFParser does not insert
         // spaces around link annotations when the underlying PDF text stream lacks them
@@ -442,8 +467,8 @@ class DocumentBlockHandler(
         // number fused to the next entry onto its own line. Gated on a real dot-leader run so
         // ordinary prose (and a 3-dot ellipsis) is never reshaped.
         if (DOT_LEADER_RUN.containsMatchIn(text)) {
-            _blocks += DocumentBlock.Paragraph(cleanTocEntry(text))
-            return
+            out += DocumentBlock.Paragraph(cleanTocEntry(text))
+            return out
         }
 
         // Tika's PDFParser does not emit <h1>…<h6> for PDFs from generators that lack
@@ -452,23 +477,24 @@ class DocumentBlockHandler(
         // numbered-section paragraphs into Heading + Paragraph here so the structure
         // survives. The pattern is conservative — false positives need (a) a leading
         // section number, (b) a Title-Cased word, AND (c) a CapitalLowercase boundary.
-        if (tryEmitNumberedHeadingSplit(text)) return
+        if (tryEmitNumberedHeadingSplit(text, out)) return out
 
         // Section headings also appear on their OWN line with no glued body — real spec
         // PDFs (RFC 7230, NIST) emit "1. Introduction", "Abstract", "Appendix A: …" as
         // standalone paragraphs. Detect those so they get a section anchor too. Conservative
         // (single-line, short, no terminal sentence punctuation, numbered OR Title-Case/ALL-CAPS).
-        if (tryEmitStandaloneHeading(text)) return
+        if (tryEmitStandaloneHeading(text, out)) return out
 
         // Only attempt CSV/TSV detection when the pipeline has confirmed via MIME
         // that the source is delimited text. Otherwise prose with commas would be
         // misclassified as tables (phantom-table failure mode per plan-review Q2).
         val tableBlock = if (csvDetectionEnabled) tryParseAsTable(text) else null
         if (tableBlock != null) {
-            _blocks += tableBlock
+            out += tableBlock
         } else {
-            _blocks += DocumentBlock.Paragraph(text)
+            out += DocumentBlock.Paragraph(text)
         }
+        return out
     }
 
     /**
@@ -569,7 +595,7 @@ class DocumentBlockHandler(
      * can short-circuit. On no match, returns `false` and the caller emits the
      * paragraph normally.
      */
-    private fun tryEmitNumberedHeadingSplit(text: String): Boolean {
+    private fun tryEmitNumberedHeadingSplit(text: String, out: MutableList<DocumentBlock>): Boolean {
         if (text.firstOrNull()?.isDigit() != true) return false
         val match = NUMBERED_HEADING_BODY.matchEntire(text) ?: return false
         val sectionNumber = match.groupValues[1]
@@ -578,11 +604,11 @@ class DocumentBlockHandler(
         if (titleSegment.isEmpty() || body.isEmpty()) return false
 
         val level = sectionNumber.trimEnd('.').count { it == '.' } + 1
-        _blocks += DocumentBlock.Heading(
+        out += DocumentBlock.Heading(
             level.coerceIn(1, 6),
             "$sectionNumber $titleSegment",
         )
-        _blocks += DocumentBlock.Paragraph(body)
+        out += DocumentBlock.Paragraph(body)
         return true
     }
 
@@ -621,7 +647,7 @@ class DocumentBlockHandler(
      *
      * @return `true` (and emits a Heading) on a confident match, else `false`.
      */
-    private fun tryEmitStandaloneHeading(text: String): Boolean {
+    private fun tryEmitStandaloneHeading(text: String, out: MutableList<DocumentBlock>): Boolean {
         // Headings are a single line; a multi-line block is prose (or already-split content).
         if (text.contains('\n')) return false
         val line = text.trim()
@@ -643,7 +669,7 @@ class DocumentBlockHandler(
             val remainder = line.removePrefix(sectionNumber).trim()
             if (isNumberedHeadingRemainderClean(sectionNumber, remainder)) {
                 val level = sectionNumber.trimEnd('.').count { it == '.' } + 1
-                _blocks += DocumentBlock.Heading(level.coerceIn(1, 6), line)
+                out += DocumentBlock.Heading(level.coerceIn(1, 6), line)
                 return true
             }
             // Falls through: a numbered line whose remainder is sentence-shaped / list-shaped
@@ -673,7 +699,7 @@ class DocumentBlockHandler(
         // appendix, not section headings.
         if (isAcronymExpansionRow(words)) return false
 
-        _blocks += DocumentBlock.Heading(1, line)
+        out += DocumentBlock.Heading(1, line)
         return true
     }
 
