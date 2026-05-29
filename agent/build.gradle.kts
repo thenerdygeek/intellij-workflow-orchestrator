@@ -64,10 +64,17 @@ dependencies {
     testImplementation(libs.turbine)
 }
 
+intellijPlatform {
+    // Isolate this module's test sandbox into its own build dir so the aggregate `./gradlew test`
+    // doesn't have several modules writing the shared root sandbox — Gradle 9.x then fails on the
+    // resulting undeclared cross-task dependency. Matches :bamboo/:sonar/:pullrequest/:handover.
+    sandboxContainer = layout.buildDirectory.dir("idea-sandbox")
+}
+
 tasks.test {
     useJUnitPlatform()
-    // :document's sandbox must be prepared before :agent tests run because :agent now
-    // depends on :document and the IntelliJ Platform test runner shares the sandbox directory.
+    // Retained as a harmless explicit ordering; with the isolated sandbox above this module no
+    // longer reads :document's sandbox, but over-declaring a dependency is always safe.
     dependsOn(":document:prepareTestSandbox")
 }
 
