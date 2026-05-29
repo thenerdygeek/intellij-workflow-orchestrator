@@ -3,7 +3,11 @@ package com.workflow.orchestrator.document.pdf
 import com.workflow.orchestrator.core.model.DocumentBlock
 import com.workflow.orchestrator.document.service.ImageExtractionService
 import org.apache.pdfbox.Loader
+import org.apache.pdfbox.contentstream.PDFGraphicsStreamEngine
+import org.apache.pdfbox.cos.COSBase
 import org.apache.pdfbox.pdmodel.PDDocument
+import org.apache.pdfbox.pdmodel.PDPage
+import org.apache.pdfbox.pdmodel.graphics.image.PDImage
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject
 import org.apache.pdfbox.pdmodel.interactive.action.PDActionGoTo
 import org.apache.pdfbox.pdmodel.interactive.action.PDActionURI
@@ -14,6 +18,7 @@ import org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDNa
 import org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageDestination
 import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem
 import org.apache.pdfbox.text.PDFTextStripperByArea
+import java.awt.geom.Point2D
 import java.awt.geom.Rectangle2D
 import java.nio.file.Path
 
@@ -111,6 +116,30 @@ class PdfMetadataExtractor(
          * [com.workflow.orchestrator.document.sax.DocumentBlockHandler].
          */
         val GENERATOR_TITLE_ARTIFACTS = setOf("enscript output", "untitled", "untitled document")
+
+        /**
+         * Vertical band height (PDF points) searched ABOVE and BELOW an image's placement
+         * rectangle for a "Figure N: …" caption (IMG-2). ~96 pt ≈ 1.3 in ≈ 6–8 text lines —
+         * wide enough to catch a caption with a blank line or sub-figure row between it and the
+         * image, narrow enough that a distant unrelated caption on the same page is not pulled
+         * in. The band is also widened horizontally by [CAPTION_BAND_X_PAD] because captions are
+         * routinely set wider (centred) than the figure they describe.
+         */
+        const val CAPTION_BAND_HEIGHT = 96f
+
+        /** Horizontal padding (points) added to each side of the image rect for the caption band. */
+        const val CAPTION_BAND_X_PAD = 36f
+
+        /**
+         * Matches a caption lead-in at the START of a line: `Figure 1`, `Fig. 2`, `Table 3`
+         * (case-insensitive), optionally followed by `:`/`.`/`—`/`-` and the caption body. The
+         * number is required so prose like "Figure shows…" or a bare "Figures" heading is not
+         * mistaken for a caption. Whitespace-tolerant between the keyword and the number.
+         */
+        val CAPTION_PATTERN = Regex(
+            """^\s*(?:figure|fig\.?|table)\s+\d+""",
+            RegexOption.IGNORE_CASE,
+        )
     }
 
     /**
@@ -559,9 +588,22 @@ class PdfMetadataExtractor(
             val resources = try { page.resources } catch (_: Exception) { null } ?: return@forEachIndexed
             val xobjectNames = try { resources.xObjectNames } catch (_: Exception) { return@forEachIndexed }
 
+            // IMG-2: walk the page content stream ONCE to capture every image's placement
+            // rectangle (the resource dictionary alone has no geometry). The rectangles key the
+            // caption search below. Cheap and resilient — a parse failure leaves the map empty
+            // and images simply fall back to caption-less markers (current behaviour).
+            val placements = captureImagePlacements(page)
+
             for (objectName in xobjectNames) {
                 val xobject = try { resources.getXObject(objectName) } catch (_: Exception) { continue }
                 if (xobject !is PDImageXObject) continue
+
+                // Resolve the placement rect by COS-object identity (the same COS dictionary the
+                // engine saw when it drew the image), then mine the band for a caption.
+                val altText = try {
+                    val rect = placements[xobject.cosObject]
+                    if (rect != null) findCaptionInBand(page, rect) else null
+                } catch (_: Exception) { null }
 
                 val mime = try {
                     when (xobject.suffix?.lowercase()) {
@@ -588,7 +630,7 @@ class PdfMetadataExtractor(
                 if (bytes == null || bytes.size.toLong() > maxBytesPerImage) {
                     results += PositionedBlock(
                         page = pageNumber, top = 0.5, bottom = 0.6,
-                        block = DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null),
+                        block = DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null, altText = altText),
                     )
                     continue
                 }
@@ -603,7 +645,7 @@ class PdfMetadataExtractor(
                     // Disk write failed — emit path=null placeholder so the LLM sees the image existed.
                     results += PositionedBlock(
                         page = pageNumber, top = 0.5, bottom = 0.6,
-                        block = DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null),
+                        block = DocumentBlock.EmbeddedFileRef(name = name, mimeType = mime, path = null, altText = altText),
                     )
                     continue
                 }
@@ -615,12 +657,147 @@ class PdfMetadataExtractor(
                         name = name,
                         mimeType = saveResult.mimeType,
                         path = saveResult.path.toString(),
+                        altText = altText,
                     ),
                 )
             }
         }
         return results
     }
+
+    // ── IMG-2: figure ↔ caption association ───────────────────────────────────
+
+    /**
+     * Walks [page]'s content stream once with an [ImagePlacementEngine] and returns a map from
+     * each drawn image's COS object identity to its placement rectangle in PDF user space
+     * (`Rectangle2D` with the origin at the page's coordinate origin, y increasing upward).
+     *
+     * PDF resource dictionaries carry no geometry — an image's on-page position lives only in the
+     * content stream's current transformation matrix (CTM) at the `Do` operator. The engine
+     * captures `CTM · unitSquare`, which is exactly the rectangle the image is painted into. The
+     * COS object is the stable join key back to the [PDImageXObject] enumerated from the resource
+     * dictionary (the same underlying COS dictionary), so multi-image pages associate correctly.
+     *
+     * Returns an empty map on any parse failure — image markers then degrade to caption-less
+     * (the prior behaviour), never throwing out of the extractor.
+     */
+    private fun captureImagePlacements(page: PDPage): Map<COSBase, Rectangle2D> {
+        val engine = ImagePlacementEngine(page)
+        return try {
+            engine.run()
+            engine.placements
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    /**
+     * Searches a vertical band directly BELOW (preferred) then ABOVE [imageRect] for a line that
+     * starts with a [CAPTION_PATTERN] lead-in (`Figure N` / `Fig. N` / `Table N`), and returns
+     * that caption line as the image's alt-text. Returns null when no caption pattern is found in
+     * either band — the conservative guard against fabricating or misattributing a description.
+     *
+     * Mirrors the G-6 link harvester: a per-page [PDFTextStripperByArea] over a device-space
+     * (top-down) rectangle derived from the image's user-space rect. PDF captions sit directly
+     * *below* the figure far more often than above, so the below-band wins ties. The band is
+     * padded horizontally ([CAPTION_BAND_X_PAD]) because captions are routinely centred wider
+     * than the figure.
+     *
+     * @param imageRect Placement rect in PDF user space (origin bottom-left, y up).
+     */
+    private fun findCaptionInBand(page: PDPage, imageRect: Rectangle2D): String? {
+        val mediaBox = page.mediaBox
+        val pageHeight = mediaBox.height
+        val bandX = (imageRect.minX - CAPTION_BAND_X_PAD).toFloat().coerceAtLeast(0f)
+        val bandW = (imageRect.width + 2 * CAPTION_BAND_X_PAD).toFloat().coerceAtLeast(1f)
+
+        // Image edges in PDF user space (y up).
+        val imgTopUser = imageRect.maxY
+        val imgBottomUser = imageRect.minY
+
+        // Below-band: from the image's bottom edge downward. In device space (y down) its top edge
+        // is `pageHeight - imgBottomUser`. Above-band: from the image's top edge upward.
+        val belowTopDevice = (pageHeight - imgBottomUser).toFloat()
+        val aboveTopDevice = (pageHeight - imgTopUser - CAPTION_BAND_HEIGHT).toFloat().coerceAtLeast(0f)
+
+        // Prefer the caption directly below the figure; fall back to above.
+        for (bandTopDevice in listOf(belowTopDevice, aboveTopDevice)) {
+            val caption = captionInRegion(page, Rectangle2D.Float(bandX, bandTopDevice, bandW, CAPTION_BAND_HEIGHT))
+            if (caption != null) return caption
+        }
+        return null
+    }
+
+    /**
+     * Extracts text from a single [region] (device space, top-down) and returns the first line
+     * matching [CAPTION_PATTERN], normalised to single spaces. Null when the region is blank or
+     * holds no caption-pattern line.
+     */
+    private fun captionInRegion(page: PDPage, region: Rectangle2D): String? {
+        val stripper = PDFTextStripperByArea()
+        stripper.addRegion("band", region)
+        try {
+            stripper.extractRegions(page)
+        } catch (_: Exception) {
+            return null
+        }
+        val text = try { stripper.getTextForRegion("band") } catch (_: Exception) { null } ?: return null
+        // The stripper emits the band line-by-line; find the caption lead-in line and keep it
+        // through the end of that visual line (captions are a single line in the band).
+        for (rawLine in text.lineSequence()) {
+            val line = rawLine.replace(Regex("\\s+"), " ").trim()
+            if (line.isNotEmpty() && CAPTION_PATTERN.containsMatchIn(line)) {
+                return line
+            }
+        }
+        return null
+    }
+}
+
+/**
+ * Minimal [PDFGraphicsStreamEngine] that records the placement rectangle of every image painted
+ * by a `Do` operator (IMG-2). All path/clip/shading callbacks are no-ops — we only need image
+ * geometry. The rectangle is `CTM · unitSquare` in PDF user space (origin bottom-left, y up).
+ *
+ * The map is keyed by the image's COS object so the caller can join it back to the
+ * [PDImageXObject] enumerated from the page resource dictionary. When the same image is drawn
+ * more than once on a page, the LAST placement wins; that is acceptable here because the caption
+ * search is best-effort and a duplicate-placement page is rare for figures.
+ */
+private class ImagePlacementEngine(page: PDPage) : PDFGraphicsStreamEngine(page) {
+
+    val placements = LinkedHashMap<COSBase, Rectangle2D>()
+
+    fun run() {
+        processPage(page)
+    }
+
+    override fun drawImage(pdImage: PDImage) {
+        val ctm = graphicsState.currentTransformationMatrix
+        // The image is painted into the unit square [0,1]×[0,1] transformed by the CTM. The CTM's
+        // translation is the lower-left corner; the scaling factors are the painted width/height.
+        val x = ctm.translateX.toDouble()
+        val y = ctm.translateY.toDouble()
+        val w = Math.abs(ctm.scalingFactorX).toDouble()
+        val h = Math.abs(ctm.scalingFactorY).toDouble()
+        if (w <= 0.0 || h <= 0.0) return
+        val cos: COSBase = (pdImage as? PDImageXObject)?.cosObject ?: return
+        placements[cos] = Rectangle2D.Double(x, y, w, h)
+    }
+
+    // ── no-op geometry callbacks (we only care about images) ──────────────────
+    override fun appendRectangle(p0: Point2D, p1: Point2D, p2: Point2D, p3: Point2D) {}
+    override fun clip(windingRule: Int) {}
+    override fun moveTo(x: Float, y: Float) {}
+    override fun lineTo(x: Float, y: Float) {}
+    override fun curveTo(x1: Float, y1: Float, x2: Float, y2: Float, x3: Float, y3: Float) {}
+    override fun getCurrentPoint(): Point2D = Point2D.Float(0f, 0f)
+    override fun closePath() {}
+    override fun endPath() {}
+    override fun strokePath() {}
+    override fun fillPath(windingRule: Int) {}
+    override fun fillAndStrokePath(windingRule: Int) {}
+    override fun shadingFill(shadingName: org.apache.pdfbox.cos.COSName) {}
 }
 
 /**
