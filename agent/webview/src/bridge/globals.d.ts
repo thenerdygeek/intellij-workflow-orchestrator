@@ -125,6 +125,13 @@ declare global {
      */
     _incomingDelegationCleared?: (key: string) => void;
     /**
+     * Cross-IDE Plan 2/6 — pushed by Kotlin's AgentController when IDE-B starts
+     * (or switches to) a session delegated from another IDE, so the
+     * DelegationBanner reflects the LIVE session. Payload is the JSON of
+     * DelegationMetadata, or the literal `null` to clear the banner.
+     */
+    _setActiveSessionDelegated?: (json: string) => void;
+    /**
      * Task 11 — drop-zone overlay driven by the JVM Swing DropTarget.
      * Pushed by Kotlin's AttachmentDropTarget via AgentCefPanel.callJs()
      * when an OS file drag enters (true) or exits (false) the JCEF component.

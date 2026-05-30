@@ -1283,6 +1283,27 @@ class AgentController(
         }
     }
 
+    /**
+     * Push the active session's cross-IDE delegation metadata to IDE-B's webview so the
+     * `DelegationBanner` (rendered under the top bar) lights up for the LIVE session —
+     * "Delegated by {IDE} from {repo}". Without this, the banner only populated when a
+     * delegated session was later reopened from history (the webview `HistoryView` path).
+     *
+     * Pass `null` to clear the banner (new chat / switching to a non-delegated session).
+     */
+    fun pushActiveSessionDelegated(metadata: com.workflow.orchestrator.agent.session.DelegationMetadata?) {
+        controllerScope.launch(Dispatchers.EDT) {
+            // Inner payload: the metadata JSON, or the literal `null` token. Then encode
+            // that string again so it arrives as a single parseable JS string argument
+            // (mirrors pushDelegationQuestionPending's double-encode).
+            val payload = if (metadata == null) "null" else historyJson.encodeToString(metadata)
+            dashboard.callJs(
+                "if (window._setActiveSessionDelegated) " +
+                "window._setActiveSessionDelegated(${historyJson.encodeToString(payload)})"
+            )
+        }
+    }
+
     fun pushImageSettingsToWebview() {
         dashboard.pushImageSettings()
         // Also re-evaluate the view_image registration so the master kill switch
@@ -3189,6 +3210,9 @@ class AgentController(
                     onSessionStarted = { sid ->
                         currentSessionId = sid
                         sessionActive = true
+                        // Light up the top-bar DelegationBanner for this LIVE delegated session
+                        // so the human on IDE-B sees "Delegated by {IDE} from {repo}" immediately.
+                        pushActiveSessionDelegated(metadata)
                         // Forward the sid to the caller (handleConnect) so the inbound read-loop
                         // can run with the correct session id.
                         onSessionStarted?.invoke(sid)
@@ -3259,6 +3283,7 @@ class AgentController(
         dashboard.updateProgress("", 0, 0)                    // Reset token budget bar
         dashboard.setSmartWorkingPhrase("")                         // Clear working phrase
         dashboard.setSessionTitle("")                               // Clear conversation title
+        pushActiveSessionDelegated(null)                            // Clear delegated-session banner (was stale)
         dashboard.finalizeToolChain()                               // Collapse any open tool chain
         dashboard.setTasks("[]")                                   // Clear task list (prevent stale state leak)
         dashboard.focusInput()                                      // Focus the input bar

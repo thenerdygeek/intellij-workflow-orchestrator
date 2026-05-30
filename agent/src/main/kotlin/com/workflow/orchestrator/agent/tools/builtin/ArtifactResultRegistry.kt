@@ -98,8 +98,17 @@ class ArtifactResultRegistry : Disposable {
     }
 
     companion object {
-        /** Default wall-clock budget for a single sandbox render round-trip. */
-        const val DEFAULT_TIMEOUT_MS: Long = 30_000L
+        /**
+         * Default wall-clock budget for a single sandbox render round-trip. Used by
+         * headless/test paths; the live tool overrides this from
+         * [com.workflow.orchestrator.core.settings.PluginSettings.State.artifactRenderTimeoutSeconds].
+         * Raised 30 s → 60 s (2026-05-30) after data-heavy components were timing out.
+         */
+        const val DEFAULT_TIMEOUT_MS: Long = 60_000L
+
+        /** Clamp bounds for the configurable render timeout (seconds). */
+        const val MIN_TIMEOUT_SECONDS: Int = 5
+        const val MAX_TIMEOUT_SECONDS: Int = 300
 
         fun getInstance(project: Project): ArtifactResultRegistry =
             project.getService(ArtifactResultRegistry::class.java)

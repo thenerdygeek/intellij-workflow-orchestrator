@@ -87,6 +87,15 @@ class AgentAdvancedConfigurable(
                                 "in the current iteration."
                         )
                 }
+                row("Artifact render timeout (seconds):") {
+                    intTextField(5..300)
+                        .bindIntText(pluginSettings.state::artifactRenderTimeoutSeconds)
+                        .comment(
+                            "How long <code>render_artifact</code> waits for the sandbox to finish " +
+                                "drawing before returning a timeout. Raise this for data-heavy " +
+                                "components (deep nesting, large inline datasets). Range: 5–300 s. Default: 60 s."
+                        )
+                }
             }
 
             group("Network") {

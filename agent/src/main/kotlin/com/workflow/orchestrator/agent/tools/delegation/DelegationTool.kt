@@ -10,6 +10,7 @@ import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.delegation.DelegationException
 import com.workflow.orchestrator.agent.delegation.DelegationOutboundService
+import com.workflow.orchestrator.agent.delegation.DelegationStatusResult
 import com.workflow.orchestrator.agent.delegation.FetchTranscriptResult
 import com.workflow.orchestrator.agent.delegation.ui.DelegationAnswerConfirmDialog
 import com.workflow.orchestrator.agent.delegation.ui.SocketGlobDiscovery
@@ -42,7 +43,10 @@ import java.nio.file.Path
  * - `close` — close an active delegation channel by handle (idempotent).
  * - `answer` — reply to a clarifying question raised by a delegated session.
  * - `fetch_transcript` — retrieve the full message history of a delegated session
- *   (returns a path on IDE-B's filesystem plus a head preview).
+ *   (returns a local path plus a head preview). Works after completion too — the
+ *   transcript is retained for a grace period after the channel closes.
+ * - `status` — cheap liveness check of a handle (active / closed / unknown) without a
+ *   transcript round-trip.
  * - `list_targets` — read-only enumeration of potential delegation targets.
  *
  * The settings gate ([PluginSettings.enableOutboundCrossIdeDelegation]) is checked once
@@ -93,8 +97,13 @@ class DelegationTool(
         - answer(handle, question_id, answer) → Reply to a clarifying Question nudge from
           a delegated session. When auto-approve is off, a confirmation dialog opens.
         - fetch_transcript(handle) → Retrieve the full message history of a delegated
-          session. Returns a path to transcript-export.json on IDE-B's filesystem plus
-          a 2 KiB head preview; use read_file on the path for full content.
+          session. Returns a local transcript path plus a 2 KiB head preview; use
+          read_file on the path for full content. Still works AFTER the delegation
+          completes — the transcript is retained for ~30 min after the channel closes.
+        - status(handle) → Cheap liveness check: returns active (with last-seen state),
+          closed (with last-seen state), or a not-found error once the retention window
+          elapses. Use this instead of fetch_transcript when you only need to know whether
+          the delegation is still running. Do NOT poll in a tight loop.
         - list_targets() → Read-only enumeration of potential delegation targets (same
           list the picker shows: running / closed / discovered / missing). No UI opens.
 
@@ -112,7 +121,7 @@ class DelegationTool(
             "action" to ParameterProperty(
                 type = "string",
                 description = "Operation to perform",
-                enumValues = listOf("send", "close", "answer", "fetch_transcript", "list_targets"),
+                enumValues = listOf("send", "close", "answer", "fetch_transcript", "status", "list_targets"),
             ),
             "request" to ParameterProperty(
                 type = "string",
@@ -127,7 +136,7 @@ class DelegationTool(
             "handle" to ParameterProperty(
                 type = "string",
                 description = "Channel handle returned by a prior delegation send — required for " +
-                    "action=close/answer/fetch_transcript; optional for action=send (continuation: " +
+                    "action=close/answer/fetch_transcript/status; optional for action=send (continuation: " +
                     "skips the picker and Accept dialog, sends a new user turn on the existing channel)",
             ),
             "question_id" to ParameterProperty(
@@ -151,10 +160,11 @@ class DelegationTool(
     override fun documentation(): ToolDocumentation = toolDoc("delegation") {
         summary {
             technical(
-                "Single-tool dispatcher for the cross-IDE delegation surface: five actions over a local " +
+                "Single-tool dispatcher for the cross-IDE delegation surface: six actions over a local " +
                     "Unix-domain-socket IPC channel to another running IntelliJ instance on the same machine — " +
                     "send (fresh delegation via picker, or handle-keyed continuation), close (idempotent), " +
-                    "answer (forward a clarifying-question reply), fetch_transcript (path + 2 KiB head preview), " +
+                    "answer (forward a clarifying-question reply), fetch_transcript (path + 2 KiB head preview; " +
+                    "retained ~30 min post-completion), status (cheap active/closed liveness check), " +
                     "and list_targets (read-only recents+discovery enumeration). Gated behind " +
                     "PluginSettings.enableOutboundCrossIdeDelegation; results return asynchronously as loop nudges, never inline."
             )
@@ -444,10 +454,11 @@ class DelegationTool(
             "close" -> handleClose(params, project)
             "answer" -> handleAnswer(params, project)
             "fetch_transcript" -> handleFetchTranscript(params, project)
+            "status" -> handleStatus(params, project)
             "list_targets" -> handleListTargets(params, project)
             else -> ToolResult.error(
                 "delegation: unknown action '$action' — must be one of " +
-                    "send|close|answer|fetch_transcript|list_targets"
+                    "send|close|answer|fetch_transcript|status|list_targets"
             )
         }
     }
@@ -683,6 +694,40 @@ class DelegationTool(
             ToolResult.error(
                 "DelegationWriteFailed: channel for $handleId rejected the write. " +
                     "The channel may be shutting down; try again or use delegation with action=send to start a new session."
+            )
+        }
+    }
+
+    // ── Action: status ───────────────────────────────────────────────────────
+
+    private fun handleStatus(params: JsonObject, project: Project): ToolResult {
+        val handleId = params["handle"]?.jsonPrimitive?.content
+            ?: return ToolResult.error("delegation: 'handle' is required")
+        val outbound = project.getService(DelegationOutboundService::class.java)
+            ?: return ToolResult.error("delegation: DelegationOutboundService unavailable")
+        val shortId = handleId.take(8)
+        return when (val status = outbound.statusOf(handleId)) {
+            is DelegationStatusResult.Active -> {
+                val repo = status.repoName ?: "(unknown)"
+                ToolResult(
+                    content = """{"handle":"$handleId","status":"active","state":"${status.state}","repo":"$repo"}""",
+                    summary = "Delegation $shortId ($repo): active — ${status.state}",
+                    tokenEstimate = 20,
+                )
+            }
+            is DelegationStatusResult.Closed -> {
+                val repo = status.repoName ?: "(unknown)"
+                ToolResult(
+                    content = """{"handle":"$handleId","status":"closed","last_state":"${status.lastState}","repo":"$repo"}""" +
+                        "\n\nThe delegated session has ended. Use delegation(action=\"fetch_transcript\", " +
+                        "handle=\"$handleId\") to read its full conversation while it is still retained.",
+                    summary = "Delegation $shortId ($repo): closed — last state ${status.lastState}",
+                    tokenEstimate = 30,
+                )
+            }
+            DelegationStatusResult.Unknown -> ToolResult.error(
+                "DelegationHandleNotFound: $handleId — unknown handle, or its retention window has elapsed. " +
+                    "Use delegation with action=send to start a new delegation."
             )
         }
     }

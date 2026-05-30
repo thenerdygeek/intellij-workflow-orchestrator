@@ -416,6 +416,14 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
          */
         var delegationIdleTimeoutMinutes by property(30)
 
+        /**
+         * How long (seconds) the `render_artifact` tool waits for the sandbox iframe to
+         * report a render outcome before returning a Timeout. Data-heavy components (deep
+         * nesting, large inline datasets, many stat computations) can legitimately exceed
+         * the original 30 s. Range clamped to 5–300 s at read time. Default: 60 s.
+         */
+        var artifactRenderTimeoutSeconds by property(60)
+
         init {
             // Populate default whitelist on first instantiation. Persisted lists
             // round-trip independently — if the user clears the list it stays

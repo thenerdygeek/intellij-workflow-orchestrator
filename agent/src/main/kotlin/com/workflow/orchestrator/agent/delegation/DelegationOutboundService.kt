@@ -93,6 +93,31 @@ class DelegationOutboundService(
         java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.CompletableDeferred<DelegationMessage.FetchTranscriptReply>>()
 
     /**
+     * Snapshot of a handle's metadata, retained AFTER [close] so `fetch_transcript`
+     * and `status` keep working post-completion. Cross-IDE delegation runs over Unix
+     * domain sockets, so both IDEs share a filesystem — once we know IDE-B's session id
+     * and project path we can read its transcript directly off disk without any IPC
+     * round-trip (which is impossible after completion: IDE-B closes its channel the
+     * instant it sends the terminal Result). Pruned by [TRANSCRIPT_RETENTION_MILLIS].
+     */
+    private data class RetainedHandle(
+        val bSessionId: String,
+        val targetProjectPath: String,
+        val repoName: String,
+        val lastState: String,
+        val capturedAt: Long,
+    )
+    private val retainedHandles = java.util.concurrent.ConcurrentHashMap<String, RetainedHandle>()
+
+    /**
+     * Test seams (mirror [testSessionDirResolver] / [testResumeProbe] style) so the
+     * direct shared-FS transcript read can run hermetically against @TempDir fixtures
+     * instead of the real `~/.workflow-orchestrator` tree. Null in production.
+     */
+    internal var testRemoteAgentDirResolver: ((String) -> java.nio.file.Path)? = null
+    internal var testLocalCacheDir: java.nio.file.Path? = null
+
+    /**
      * F5: Serializes concurrent [send] calls so the 5-channel cap is atomic.
      *
      * Without this mutex two concurrent calls could both read [openChannelCount] == 4
@@ -388,11 +413,13 @@ class DelegationOutboundService(
                         // No further action needed at this point in the loop.
                     }
                     is DelegationMessage.FetchTranscriptReply -> {
+                        // Dormant since the 2026-05-30 rework: fetchTranscript now reads IDE-B's
+                        // history directly off the shared filesystem and no longer sends a
+                        // FetchTranscript frame, so pendingFetches is normally empty. Retained so
+                        // a late/legacy reply is drained cleanly rather than tripping the
+                        // unknown-message counter below.
                         pendingFetches.remove(msg.requestId)?.complete(msg)
-                            ?: LOG.debug(
-                                "FetchTranscriptReply for unknown requestId ${msg.requestId} " +
-                                    "(reply arrived after the 30s timeout — benign, deferred already cancelled)"
-                            )
+                            ?: LOG.debug("FetchTranscriptReply for unknown requestId ${msg.requestId} (dormant path)")
                     }
                     is DelegationMessage.Result -> {
                         onResult(handle, msg)
@@ -437,6 +464,20 @@ class DelegationOutboundService(
     fun close(handleId: String): Boolean {
         val sessionId: String? = handleToSessionId[handleId]
         val wasFound: Boolean = synchronized(this) {
+            // Retain the metadata needed to serve a post-completion fetch_transcript / status
+            // BEFORE we clear the live maps. Requires IDE-B's session id + project path.
+            val bSid = handleToBSessionId[handleId]
+            val tPath = handleToTargetPath[handleId]
+            if (bSid != null && tPath != null) {
+                retainedHandles[handleId] = RetainedHandle(
+                    bSessionId = bSid,
+                    targetProjectPath = tPath,
+                    repoName = handleToRepoName[handleId] ?: handleId.take(8),
+                    lastState = handleToLastSeenState[handleId] ?: "closed",
+                    capturedAt = System.currentTimeMillis(),
+                )
+            }
+            pruneRetainedHandles()
             idleTimers.remove(handleId)?.stop()
             handleToSessionId.remove(handleId)
             handleToRepoName.remove(handleId)
@@ -901,45 +942,98 @@ class DelegationOutboundService(
     fun hasOpenChannel(handleId: String): Boolean = activeChannels.containsKey(handleId)
 
     /**
-     * Send a [DelegationMessage.FetchTranscript] over [handleId] and suspend until
-     * the matching [DelegationMessage.FetchTranscriptReply] arrives or 30 s elapses.
-     * Returns a [FetchTranscriptResult].
+     * Return IDE-B's full conversation history for [handleId] as a local file path.
      *
-     * Plan 3 spec §5.7.
+     * Cross-IDE delegation is same-host (Unix domain sockets), so instead of an IPC
+     * round-trip — which is impossible after completion, because IDE-B closes its
+     * channel the moment it sends the terminal Result — we read IDE-B's
+     * `api_conversation_history.json` directly off the shared filesystem and copy it
+     * into THIS project's agent dir so the orchestrator's path-scoped `read_file` can
+     * open it. Works both mid-session (atomic write-then-rename gives a consistent
+     * snapshot) and post-completion (via the [retainedHandles] snapshot taken in [close]).
+     *
+     * Plan 3 spec §5.7 (re-implemented 2026-05-30: direct shared-FS read; fixes the
+     * session-id mismatch that returned "no conversation history on disk" and the
+     * post-completion "handle_not_found").
      */
     suspend fun fetchTranscript(handleId: String): FetchTranscriptResult {
-        val channel = activeChannels[handleId]
-            ?: return FetchTranscriptResult.NotFound("handle_not_found")
-        val sessionId = handleToSessionId[handleId]
-            ?: return FetchTranscriptResult.NotFound("handle_not_in_session_map")
-        val requestId = java.util.UUID.randomUUID().toString()
-        val deferred = kotlinx.coroutines.CompletableDeferred<DelegationMessage.FetchTranscriptReply>()
-        pendingFetches[requestId] = deferred
+        // Prefer the live maps; fall back to the post-close retained snapshot.
+        pruneRetainedHandles()
+        val retained = retainedHandles[handleId]
+        val bSessionId = handleToBSessionId[handleId] ?: retained?.bSessionId
+        val targetPath = handleToTargetPath[handleId] ?: retained?.targetProjectPath
+        if (bSessionId == null || targetPath == null) {
+            return FetchTranscriptResult.NotFound("handle_not_found")
+        }
+        return readRemoteTranscript(handleId, bSessionId, targetPath)
+    }
+
+    private suspend fun readRemoteTranscript(
+        handleId: String,
+        bSessionId: String,
+        targetProjectPath: String,
+    ): FetchTranscriptResult = withContext(Dispatchers.IO) {
         try {
-            withContext(Dispatchers.IO) {
-                DelegationFraming.writeFramed(
-                    channel,
-                    DelegationMessage.FetchTranscript(sessionId = sessionId, requestId = requestId),
-                    json,
+            val remoteAgentDir = testRemoteAgentDirResolver?.invoke(targetProjectPath)
+                ?: DelegationPaths.agentDirForDelegation(targetProjectPath)
+            val historyFile = remoteAgentDir.resolve("sessions/$bSessionId/api_conversation_history.json")
+            if (!java.nio.file.Files.exists(historyFile)) {
+                return@withContext FetchTranscriptResult.NotFound(
+                    "no conversation history on disk for session $bSessionId"
                 )
             }
+            // Copy into IDE-A's reachable storage (tier 3) so read_file can open the full file.
+            val cacheDir = localTranscriptCacheDir()
+            java.nio.file.Files.createDirectories(cacheDir)
+            val dest = cacheDir.resolve("delegation-transcript-$handleId.json")
+            java.nio.file.Files.copy(
+                historyFile, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            )
+            FetchTranscriptResult.Ok(dest.toAbsolutePath().toString())
         } catch (e: Exception) {
-            pendingFetches.remove(requestId)
-            return FetchTranscriptResult.NotFound("write_failed: ${e.message}")
+            LOG.warn("readRemoteTranscript failed for $handleId", e)
+            FetchTranscriptResult.NotFound("io_error: ${e.message}")
         }
-        val reply = try {
-            kotlinx.coroutines.withTimeoutOrNull(30_000L) { deferred.await() }
-        } catch (e: Exception) {
-            null
-        } finally {
-            pendingFetches.remove(requestId)
+    }
+
+    /** IDE-A's own agent dir subfolder where fetched delegated transcripts are cached. */
+    private fun localTranscriptCacheDir(): java.nio.file.Path {
+        testLocalCacheDir?.let { return it }
+        val basePath = project.basePath ?: System.getProperty("user.home")
+        return java.io.File(
+            com.workflow.orchestrator.core.util.ProjectIdentifier.agentDir(basePath),
+            "delegation-transcripts"
+        ).toPath()
+    }
+
+    /**
+     * Lightweight status of a delegation handle WITHOUT a transcript round-trip —
+     * answers the agent's "is it still running / did it finish?" question cheaply.
+     * Open handles report their last-seen remote state; closed handles report the
+     * retained snapshot; unknown handles report [DelegationStatusResult.Unknown].
+     */
+    fun statusOf(handleId: String): DelegationStatusResult {
+        if (activeChannels.containsKey(handleId)) {
+            return DelegationStatusResult.Active(
+                state = handleToLastSeenState[handleId] ?: "RUNNING",
+                repoName = handleToRepoName[handleId],
+            )
         }
-        return when {
-            reply == null -> FetchTranscriptResult.NotFound("timeout")
-            reply.status == "ok" && reply.transcriptPath != null ->
-                FetchTranscriptResult.Ok(reply.transcriptPath!!)
-            else -> FetchTranscriptResult.NotFound(reply?.error ?: reply?.status ?: "unknown")
+        pruneRetainedHandles()
+        retainedHandles[handleId]?.let {
+            return DelegationStatusResult.Closed(
+                lastState = it.lastState,
+                repoName = it.repoName,
+                closedAtMillis = it.capturedAt,
+            )
         }
+        return DelegationStatusResult.Unknown
+    }
+
+    /** Drop retained snapshots older than [TRANSCRIPT_RETENTION_MILLIS]. */
+    private fun pruneRetainedHandles() {
+        val cutoff = System.currentTimeMillis() - TRANSCRIPT_RETENTION_MILLIS
+        retainedHandles.entries.removeIf { it.value.capturedAt < cutoff }
     }
 
     companion object {
@@ -956,7 +1050,26 @@ class DelegationOutboundService(
         const val CONSENT_POLL_INTERVAL_MILLIS = 500L
         /** Plan 6: max chars of the request to surface in the knock/pending preview. */
         const val REQUEST_PREVIEW_CHARS = 280
+
+        /**
+         * How long a completed handle's metadata (and thus its fetch_transcript / status
+         * answer) is retained after [close]. 30 min comfortably covers an agent following up
+         * on a delegation result later in the same turn (the reported failure was ~83 s out).
+         */
+        const val TRANSCRIPT_RETENTION_MILLIS = 30L * 60_000L
     }
+}
+
+/**
+ * Result type for [DelegationOutboundService.statusOf].
+ */
+sealed class DelegationStatusResult {
+    /** Handle is open; [state] is the last-seen remote state ("RUNNING", "AWAITING_ANSWER", …). */
+    data class Active(val state: String, val repoName: String?) : DelegationStatusResult()
+    /** Handle has closed; metadata retained from the last-seen snapshot. */
+    data class Closed(val lastState: String, val repoName: String?, val closedAtMillis: Long) : DelegationStatusResult()
+    /** Handle is unknown or its retention window has elapsed. */
+    object Unknown : DelegationStatusResult()
 }
 
 /**

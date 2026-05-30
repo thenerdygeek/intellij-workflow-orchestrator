@@ -400,8 +400,13 @@ class DelegationInboundService(
                         }
                     }
                     is DelegationMessage.FetchTranscript -> {
+                        // Use THIS channel's own session id, not the remote-supplied
+                        // msg.sessionId: the delegator (IDE-A) puts ITS session id on the wire,
+                        // which would resolve to a non-existent dir here and return "no
+                        // conversation history on disk". The channel already knows which local
+                        // session it serves; that is authoritative.
                         handleFetchTranscript(
-                            sessionId = msg.sessionId,
+                            sessionId = localSessionId,
                             requestId = msg.requestId,
                             replyWith = replyWith,
                         )

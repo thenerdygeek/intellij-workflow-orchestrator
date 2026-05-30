@@ -973,6 +973,14 @@ Plan 6 adds a consent path for inbound-OFF targets. Two sockets per project:
 
 **Tests** — `PendingDelegationStoreTest`, `DelegationPreauthConnectTest`, `DelegationDoorbellServiceTest`, `DelegationKnockFlowTest`, `DelegationE2ETest` (inbound-off → consent → work happy path).
 
+### Live delegated-session banner (IDE-B top bar, 2026-05-30)
+
+When IDE-B starts a delegated session, `AgentController.pushActiveSessionDelegated(metadata)` (in `runDelegatedNow.onSessionStarted`) drives the `_setActiveSessionDelegated` JCEF bridge → `chatStore.activeSessionDelegated` → the top-bar `DelegationBanner` ("Delegated by {IDE} from {repo}"). Cleared (`null`) in `resetForNewChat`. Previously the banner only populated when a delegated session was reopened from history. Tests: `delegation-banner-bridge.test.tsx`.
+
+### Transcript retrieval + status (2026-05-30 rework)
+
+`fetch_transcript` now reads IDE-B's `api_conversation_history.json` **directly off the shared filesystem** (Unix sockets ⇒ same host) instead of an IPC round-trip — fixing two live-reported bugs: the old path sent IDE-A's session id to IDE-B ("no conversation history on disk"), and the handle was torn down the instant the result arrived ("handle_not_found" ~83 s post-completion). `DelegationOutboundService.close()` now snapshots a `RetainedHandle` (bSessionId, targetPath, repoName, lastState) kept for `TRANSCRIPT_RETENTION_MILLIS` (30 min), so post-completion fetch + the new `status` action both work. Inbound `runInboundReadLoop` uses the channel's own `localSessionId` (authoritative), not the remote-supplied `msg.sessionId`. New `delegation(action="status")` returns active/closed/unknown without a transcript round-trip. Tests: `DelegationTranscriptRetentionTest`, `DelegationStatusActionTest`.
+
 ---
 
 ## Testing

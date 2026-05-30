@@ -81,7 +81,7 @@ Before calling render_artifact, load the frontend-design skill via use_skill("fr
                     "agent/webview/src/sandbox-main.ts) and SUSPENDS the agent loop until the iframe " +
                     "reports the actual outcome via JCEF bridge → ArtifactResultRegistry. Returns " +
                     "Success(heightPx) / RenderError(phase, message, missingSymbols, line) / " +
-                    "Timeout(30s) / Skipped(headless). Self-repair loop: extractMissingSymbols parses " +
+                    "Timeout(configurable, default 60s) / Skipped(headless). Self-repair loop: extractMissingSymbols parses " +
                     "ReferenceError/TypeError phrasings so the LLM gets back a structured list of " +
                     "missing identifiers + the canonical SCOPE_HINT and can self-correct on the next " +
                     "iteration. Sandbox scope: React hooks, shadcn/Radix UI primitives, Recharts, " +
@@ -261,10 +261,12 @@ Before calling render_artifact, load the frontend-design skill via use_skill("fr
                 "gets the 'simplify' rejection."
         )
         downside(
-            "30-second render timeout. Components that hit infinite loops (uncontrolled " +
-                "useEffect, while-true), make blocking calls, or render before the webview is " +
+            "Render timeout (configurable, default 60s — Settings → AI Agent → Advanced → Tool Calling). " +
+                "Components that hit infinite loops (uncontrolled " +
+                "useEffect, while-true), make blocking calls, render a very heavy data set in one pass, " +
+                "or render before the webview is " +
                 "visible time out and surface as `Timeout`. The error message instructs the LLM to " +
-                "remove heavy computations and async-effects-that-never-resolve, but the underlying " +
+                "split the component or remove heavy computations, but the underlying " +
                 "cause is occasionally just a hidden webview at the moment of render."
         )
         downside(
@@ -368,7 +370,19 @@ Before calling render_artifact, load the frontend-design skill via use_skill("fr
         // feedback loop: the LLM now sees whether the render actually succeeded and can
         // self-correct on missing symbols / runtime errors instead of assuming success.
         val registry = ArtifactResultRegistry.getInstance(project)
-        val renderResult = registry.renderAndAwait(payload)
+        // Configurable render budget (Settings → AI Agent → Advanced → Tool Calling), clamped
+        // to a sane range. Data-heavy components can legitimately exceed the old 30s default.
+        // Defensive: fall back to the default budget if PluginSettings is unavailable
+        // (headless / tests) rather than failing the render.
+        val timeoutMillis = try {
+            com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
+                .state.artifactRenderTimeoutSeconds
+                .coerceIn(ArtifactResultRegistry.MIN_TIMEOUT_SECONDS, ArtifactResultRegistry.MAX_TIMEOUT_SECONDS)
+                .toLong() * 1000L
+        } catch (e: Exception) {
+            ArtifactResultRegistry.DEFAULT_TIMEOUT_MS
+        }
+        val renderResult = registry.renderAndAwait(payload, timeoutMillis = timeoutMillis)
 
         return when (renderResult) {
             is ArtifactRenderResult.Success -> ToolResult(
@@ -403,10 +417,15 @@ Before calling render_artifact, load the frontend-design skill via use_skill("fr
 
             is ArtifactRenderResult.Timeout -> ToolResult(
                 content = "Artifact render timed out after ${renderResult.timeoutMillis / 1000}s. " +
-                    "The sandbox iframe did not report a render outcome. This usually means the " +
-                    "component entered an infinite loop, made a blocking call, or the webview is " +
-                    "not currently visible. Simplify the component (remove heavy computations, " +
-                    "async effects that never resolve) and try again.",
+                    "The sandbox iframe did not report a render outcome. Likely causes: " +
+                    "(1) too much work for one render — deep nesting, large inline datasets, or many " +
+                    "per-render stat computations (as a rule of thumb, keep it under ~10 nested data " +
+                    "structures / a few dozen fields and precompute stats once with useMemo); " +
+                    "(2) an infinite loop or an async effect that never resolves; " +
+                    "(3) the webview is not currently visible. " +
+                    "Either split the component into smaller artifacts (render the heaviest section " +
+                    "separately) and try again, or raise the budget in " +
+                    "Settings → AI Agent → Advanced → Tool Calling → 'Artifact render timeout'.",
                 summary = "Artifact render timed out (${renderResult.timeoutMillis / 1000}s)",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true,

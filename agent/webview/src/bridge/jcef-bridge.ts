@@ -1095,4 +1095,19 @@ export function initBridge(storeAccessors: StoreAccessors): void {
   window._incomingDelegationCleared = (key: string) => {
     stores?.getChatStore().clearIncomingDelegation(key);
   };
+
+  // ── Active-session delegation banner (cross-IDE Plan 2/6) ──
+  // Pushed by Kotlin's AgentController.pushActiveSessionDelegated when IDE-B
+  // starts (or switches to) a session that was delegated from another IDE — so
+  // the DelegationBanner lights up for the LIVE session, not only when the
+  // session is later reopened from history (HistoryView's own path). The payload
+  // is the JSON of DelegationMetadata, or the literal `null` to clear the banner.
+  window._setActiveSessionDelegated = (json: string) => {
+    try {
+      const delegated = JSON.parse(json) as import('./types').DelegationMetadata | null;
+      stores?.getChatStore().setActiveSessionDelegated(delegated);
+    } catch (e) {
+      console.error('[bridge] _setActiveSessionDelegated: bad payload', e);
+    }
+  };
 }
