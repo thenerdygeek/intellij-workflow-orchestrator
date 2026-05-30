@@ -167,12 +167,17 @@ internal class DelegationPickerCellRenderer : ListCellRenderer<PickerEntry> {
 
     private fun colorFor(status: PickerEntry.Status): JBColor = when (status) {
         PickerEntry.Status.RUNNING -> StatusColors.SUCCESS
+        // AVAILABLE = IDE running, inbound off — amber/warning distinguishes it from green RUNNING
+        // and grey CLOSED, and signals "action needed" (consent) without being alarming.
+        PickerEntry.Status.AVAILABLE -> StatusColors.WARNING
         PickerEntry.Status.CLOSED -> StatusColors.SECONDARY_TEXT
         PickerEntry.Status.MISSING -> StatusColors.ERROR
     }
 
     private fun labelFor(status: PickerEntry.Status): String = when (status) {
         PickerEntry.Status.RUNNING -> "running"
+        // "available · inbound off" tells the user exactly why this IDE needs a consent step.
+        PickerEntry.Status.AVAILABLE -> "available · inbound off"
         PickerEntry.Status.CLOSED -> "closed"
         PickerEntry.Status.MISSING -> "missing"
     }

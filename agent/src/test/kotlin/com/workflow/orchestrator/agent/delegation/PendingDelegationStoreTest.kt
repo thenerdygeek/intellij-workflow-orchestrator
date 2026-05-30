@@ -30,4 +30,33 @@ class PendingDelegationStoreTest {
         store.clear("n1")
         assertFalse(store.isDeclined("n1"))
     }
+
+    @Test fun `entry older than 5 min but younger than the replay TTL is still returned`(@TempDir dir: Path) {
+        // Fix D — the 5-min REPLAY_TTL_MS was shorter than large-repo cold-start indexing, so a
+        // surviving pending file (PRIMARY fix) could still be discarded as stale before the consent
+        // dialog appeared. With the raised TTL, an entry stamped 10 min ago — older than the OLD
+        // 5-min window but well within the new TTL — must still be returned by readFresh.
+        val store = PendingDelegationStore(dir)
+        val tenMinAgo = System.currentTimeMillis() - 10L * 60 * 1000
+        val req = PendingDelegationRequest("ide1", "backend", "s1", "do X", "n1", tenMinAgo)
+        store.write(req)
+        assertEquals(
+            listOf(req),
+            store.readFresh(ttlMillis = DelegationDoorbellService.REPLAY_TTL_MS),
+            "an entry 10 min old must survive the raised replay TTL",
+        )
+    }
+
+    @Test fun `entry older than the replay TTL is dropped`(@TempDir dir: Path) {
+        // Genuinely stale entries (older than the new TTL) are still GC'd by readFresh.
+        val store = PendingDelegationStore(dir)
+        val pastTtl = System.currentTimeMillis() - (DelegationDoorbellService.REPLAY_TTL_MS + 60_000L)
+        store.write(PendingDelegationRequest("ide1", "backend", "s1", "x", "n1", pastTtl))
+        assertTrue(
+            store.readFresh(ttlMillis = DelegationDoorbellService.REPLAY_TTL_MS).isEmpty(),
+            "an entry beyond the replay TTL must be dropped",
+        )
+        // confirms the stale file was deleted as a side effect
+        assertTrue(store.readFresh(ttlMillis = DelegationDoorbellService.REPLAY_TTL_MS).isEmpty())
+    }
 }

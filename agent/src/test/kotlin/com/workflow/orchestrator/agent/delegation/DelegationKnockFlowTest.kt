@@ -155,6 +155,66 @@ class DelegationKnockFlowTest {
     }
 
     @Test
+    fun `cold-launch bind-timeout LEAVES the pending file for the receiver to replay`(@TempDir tmp: Path) = runTest {
+        // Fix D — the cross-service lifetime race. IDE-A delegates to a target whose IDE is
+        // CLOSED: doorbell unreachable → launcher spawned, but the freshly-launched IDE cannot
+        // boot + index + bind its delegation socket within CONSENT_WAIT_TIMEOUT_MILLIS. The
+        // sender's 90s in-memory wait elapses → TargetNotReachable. The pending file MUST survive
+        // that timeout so the cold IDE's replayPendingRequests() can consume it minutes later;
+        // before the fix, knockAndWaitForBind's `finally { store.clear(nonce) }` deleted it on the
+        // timeout path and the consent dialog never appeared.
+        val targetRoot = Files.createDirectory(tmp.resolve("targetCold"))
+        val (svc, _) = newService(targetRoot)
+        val store = PendingDelegationStore(ProjectIdentifier.agentDir(targetRoot.toString()).toPath())
+
+        svc.pingFn = { null } // cold IDE: door never binds within the wait
+        svc.knockFn = { _, _ -> null } // doorbell not bound → IDE-B isn't running yet
+        var launchCount = 0
+        svc.launchFn = { launchCount++; SpawnResult.Started() }
+        svc.connectFn = { _, _ -> fakeChannel() to DelegationMessage.AcceptResult(accepted = true) }
+
+        // Call send() directly inside runTest so the 90s consent wait elapses in VIRTUAL time
+        // (the poll-loop delay() uses runTest's TestCoroutineScheduler). On the timeout path no
+        // connect/reader-loop is reached, so no background coroutine is left dangling.
+        var thrown: Throwable? = null
+        try {
+            svc.send("do the thing", null, "aSess") { _, _ -> }
+        } catch (e: DelegationException.TargetNotReachable) {
+            thrown = e
+        }
+        assertTrue(thrown is DelegationException.TargetNotReachable, "cold-launch wait must time out → TargetNotReachable")
+        // sanity: it was the cold-launch path (launcher spawned) that timed out
+        assertEquals(1, launchCount, "null KnockAck must spawn the launcher")
+        // The pending file SURVIVES the sender's timeout/finally.
+        val survivors = store.readFresh(DelegationDoorbellService.REPLAY_TTL_MS)
+        assertEquals(1, survivors.size, "pending file must survive the cold-launch bind timeout")
+        assertEquals("do the thing", survivors.single().requestPreview)
+        val nonce = survivors.single().nonce
+        // No decline happened — the marker must NOT exist.
+        assertFalse(store.isDeclined(nonce), "no .declined marker on a bare timeout")
+
+        // After the cold IDE finishes indexing, the receiver-side replay surface still consumes
+        // it: handleKnock (the exact call replayPendingRequests() makes per fresh entry) returns
+        // RINGING — i.e. the consent dialog would be raised. We use a no-op dialogLauncher so the
+        // gate logic runs without an Application/EDT.
+        val replayKnock = DelegationMessage.Knock(
+            delegatorIde = survivors.single().delegatorIde,
+            delegatorRepo = survivors.single().delegatorRepo,
+            delegatorSessionId = survivors.single().delegatorSessionId,
+            requestPreview = survivors.single().requestPreview,
+            nonce = nonce,
+        )
+        val doorbell = DelegationDoorbellService(project, CoroutineScope(Job()))
+        doorbell.dialogLauncher = { /* no-op: avoid EDT/Application in unit test */ }
+        val outcome = doorbell.handleKnock(replayKnock)
+        assertEquals(
+            com.workflow.orchestrator.core.delegation.KnockOutcome.RINGING,
+            outcome,
+            "post-indexing replay must raise the consent dialog (RINGING)",
+        )
+    }
+
+    @Test
     fun `declined marker during wait throws Rejected inbound_consent_declined`(@TempDir tmp: Path) = runTest {
         val targetRoot = Files.createDirectory(tmp.resolve("targetD"))
         val (svc, _) = newService(targetRoot)

@@ -577,10 +577,14 @@ In each user message, the environment_details will specify the current mode. The
         // the LLM from calling tools it cannot access ("Unknown tool" errors).
         if (delegationOutboundEnabled) {
             appendLine("| Modify a repo open in a different IDE window | delegation with action=\"send\", `request` + optional `suggested_repo` | Switching repos manually or rejecting the task |")
-            appendLine("| Follow up on a previous delegation without re-opening the picker | delegation with action=\"send\", `handle` from a prior call | Starting a fresh delegation (re-opens the picker, re-prompts Accept) |")
+            appendLine("| Follow up on a previous delegation without re-opening the picker | delegation with action=\"send\", `handle` from a prior call (continuation — works even after that session COMPLETED, within ~30 min) | Starting a fresh delegation (re-opens the picker, re-prompts Accept, loses prior context) |")
+            appendLine("| Block until a delegation finishes and get its result inline | delegation with action=\"wait\", `handle` (+ optional `timeout_seconds`, default 300, 5-1800) | Calling fetch_transcript or status in a loop to poll |")
+            appendLine("| Check whether a delegation is still running or has finished | delegation with action=\"status\", `handle` | Fetching the whole transcript just to see if it's done |")
             appendLine("| Inspect a delegated session's full message history | delegation with action=\"fetch_transcript\" | Reading the result summary only |")
             appendLine()
             appendLine("**Cross-IDE delegation UX:** `delegation(action=\"send\")` does not enumerate available IDEs for you. The picker dialog (modal in the requesting IDE) is the trust + discovery gate — the human selects the actual target IDE/repo. Specify your intent via `request`; pass `suggested_repo` as a hint for pre-selection. To pre-flight what's available without opening the picker, call `delegation(action=\"list_targets\")`.")
+            appendLine()
+            appendLine("After a `send`, the result is delivered asynchronously as a `[DELEGATION RESULT …]` nudge — do NOT poll. If the next step depends on the outcome and there's nothing else to do, ATTACH with `delegation(action=\"wait\", handle=…)` to get it inline (a timeout just means \"still running\", not a failure — the async result still auto-delivers); use `delegation(action=\"status\", handle=…)` for a cheap one-off liveness check. To send a follow-up turn, reuse the handle with `action=\"send\"` (continuation) — this resumes the SAME remote session even if it already completed (the remote IDE resurrects it within a ~30 min retention window), so don't open a fresh delegation for follow-ups.")
 
             // Render the snapshot of available targets so the LLM doesn't invent close-sounding
             // repo names. Truncated at MAX_DELEGATION_TARGETS_IN_PROMPT to bound token cost.
@@ -595,7 +599,7 @@ In each user message, the environment_details will specify the current mode. The
                     appendLine("- … and ${delegationTargets.size - capped.size} more (use `delegation(action=\"list_targets\")` to enumerate)")
                 }
                 appendLine()
-                appendLine("Status meanings: `running` = IDE has the project open and is reachable; `closed` = in recents, IDE not running (the picker offers Launch & delegate); `discovered` = found via socket-glob, likely a different Toolbox slot; `missing` = path no longer exists. Pass the matching repoName as `suggested_repo` to pre-select it in the picker.")
+                appendLine("Status meanings: `running` = IDE has the project open with inbound delegation accepting (reachable now); `available` = IDE open but inbound delegation OFF — a send rings its doorbell and the user is asked to consent; `closed` = in recents, IDE not running (the picker offers Launch & delegate; cold launch works once it boots + indexes, the consent dialog then appears); `discovered` = found via socket-glob, likely a different Toolbox slot; `missing` = path no longer exists. Pass the matching repoName as `suggested_repo` to pre-select it in the picker.")
             }
         }
     }.trimEnd()

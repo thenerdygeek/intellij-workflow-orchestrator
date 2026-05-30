@@ -108,6 +108,55 @@ class DelegationDoorbellServiceTest {
         verify(exactly = 0) { inbound.recordPreauth(any()) }
     }
 
+    // ── Fix D: receiver consumes the pending file so it is not replayed / does not accumulate ──
+
+    @Test
+    fun `ALLOW_ALWAYS clears the consumed pending file so it is not replayed later`(@TempDir tmp: Path) {
+        // Fix D — cold-launch path: the SENDER's 90s wait may have already timed out before the
+        // user consented, so the sender will NOT clear the pending .json. The RECEIVER must drop it
+        // on consent, or a later IDE restart would replay the same request and re-pop the dialog.
+        val settings = PluginSettings()
+        val project = mockk<Project>(relaxed = true)
+        every { project.getService(PluginSettings::class.java) } returns settings
+        val service = DelegationDoorbellService(project, CoroutineScope(SupervisorJob()))
+        val inbound = mockk<DelegationInboundService>(relaxed = true)
+        val store = PendingDelegationStore(tmp)
+        store.write(PendingDelegationRequest("IntelliJ IDEA", "frontend", "sess-A", "do the thing", "nAA", 1L))
+        assertFalse(store.readFresh(Long.MAX_VALUE).isEmpty(), "precondition: pending file on disk")
+
+        service.applyConsent(knock(nonce = "nAA", delegator = "sess-A"), ConsentChoice.ALLOW_ALWAYS, store, inbound)
+
+        assertTrue(store.readFresh(Long.MAX_VALUE).isEmpty(), "ALLOW_ALWAYS must drop the consumed pending file")
+    }
+
+    @Test
+    fun `ALLOW_ONCE clears the consumed pending file so it is not replayed later`(@TempDir tmp: Path) {
+        val project = mockk<Project>(relaxed = true)
+        val service = DelegationDoorbellService(project, CoroutineScope(SupervisorJob()))
+        val inbound = mockk<DelegationInboundService>(relaxed = true)
+        val store = PendingDelegationStore(tmp)
+        store.write(PendingDelegationRequest("IntelliJ IDEA", "frontend", "sess-B", "do the thing", "nAO", 1L))
+
+        service.applyConsent(knock(nonce = "nAO", delegator = "sess-B"), ConsentChoice.ALLOW_ONCE, store, inbound)
+
+        assertTrue(store.readFresh(Long.MAX_VALUE).isEmpty(), "ALLOW_ONCE must drop the consumed pending file")
+    }
+
+    @Test
+    fun `CANCEL preserves the declined marker for the still-polling sender`(@TempDir tmp: Path) {
+        // The sender's poll observes isDeclined() to bail promptly; CANCEL must NOT remove that
+        // marker (only the sender clears it once observed).
+        val project = mockk<Project>(relaxed = true)
+        val service = DelegationDoorbellService(project, CoroutineScope(SupervisorJob()))
+        val inbound = mockk<DelegationInboundService>(relaxed = true)
+        val store = PendingDelegationStore(tmp)
+        store.write(PendingDelegationRequest("IntelliJ IDEA", "frontend", "sess-C", "do the thing", "nC", 1L))
+
+        service.applyConsent(knock(nonce = "nC", delegator = "sess-C"), ConsentChoice.CANCEL, store, inbound)
+
+        assertTrue(store.isDeclined("nC"), "declined marker must survive for the polling sender")
+    }
+
     // ── dedupe / rate-limit ──────────────────────────────────────────────────────
 
     @Test
@@ -140,6 +189,35 @@ class DelegationDoorbellServiceTest {
 
         assertEquals(KnockOutcome.RINGING, first)
         assertEquals(KnockOutcome.DUPLICATE, second)
+    }
+
+    @Test
+    fun `a second knock from the same delegator after the first dialog resolved is NOT suppressed`() {
+        // Bug B secondary: showDialogAndApply's finally cleared pendingNonces +
+        // pendingDelegatorSessions but LEAKED lastDialogAt, so a legitimate SECOND delegation from
+        // the same delegator session — arriving after the first dialog was resolved but still
+        // within RATE_LIMIT_WINDOW_MS — was wrongly rate-limited as DUPLICATE and raised no dialog
+        // (and on IDE-A that turns into a 90s dead-poll → TargetNotReachable). Once a dialog has
+        // RESOLVED, a fresh knock must be allowed to ring again.
+        val project = mockk<Project>(relaxed = true)
+        every { project.basePath } returns "/tmp/proj-doorbell-resolved"
+        val service = DelegationDoorbellService(project, CoroutineScope(SupervisorJob()))
+        service.dialogLauncher = { /* no real dialog; we drive resolution explicitly below */ }
+
+        val first = service.handleKnock(knock(nonce = "first", delegator = "sess-repeat"))
+        assertEquals(KnockOutcome.RINGING, first)
+
+        // Simulate the dialog resolving: this is exactly what showDialogAndApply's finally does.
+        service.clearDedupeSlots(knock(nonce = "first", delegator = "sess-repeat"))
+
+        // A fresh delegation (new nonce) from the SAME delegator session, immediately after the
+        // first resolved (well within RATE_LIMIT_WINDOW_MS), must ring again — not DUPLICATE.
+        val second = service.handleKnock(knock(nonce = "second", delegator = "sess-repeat"))
+        assertEquals(
+            KnockOutcome.RINGING,
+            second,
+            "after the first dialog resolved, a later knock from the same delegator must ring (lastDialogAt cleared)",
+        )
     }
 
     // ── security boundary ────────────────────────────────────────────────────────

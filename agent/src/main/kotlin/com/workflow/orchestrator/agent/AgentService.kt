@@ -3229,6 +3229,127 @@ class AgentService(
         return sid
     }
 
+    /**
+     * Resume a previously-COMPLETED delegated agent session and continue it with a follow-up
+     * user turn (Fix 3 — true continuation). The resurrection counterpart of [startDelegatedSession]:
+     * it mirrors the delegated-session lifecycle (count, re-stamp delegation metadata, register the
+     * reply channel, map the terminal [LoopResult] → [DelegationMessage.Result], tear down) but drives
+     * [resumeSession] with `userText = userTurnText` instead of [executeTask] — so the SAME persisted
+     * IDE-B conversation is re-opened, the follow-up turn appended, and the loop continued.
+     *
+     * Called from [com.workflow.orchestrator.agent.ui.AgentController.resumeDelegatedSession]
+     * (controller-routed so the busy-gate + live "Delegated by…" banner apply), which is itself driven
+     * by [DelegationInboundService.handleChannelResume] when IDE-A reattaches to a closed delegation.
+     *
+     * @throws IllegalStateException if [resumeSession] cannot drive the session (locked by another
+     * instance, missing on disk, or no api history) — propagated so the caller replies a clear error
+     * IDE-A can map, rather than silently swallowing.
+     */
+    fun resumeDelegatedSession(
+        sessionId: String,
+        userTurnText: String,
+        delegationMetadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
+        replyWith: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage) -> Unit,
+        onResult: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit,
+        onStreamChunk: (String) -> Unit = {},
+        onToolCall: (ToolCallProgress) -> Unit = {},
+        approvalGate: (suspend (String, String, String, Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
+        sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
+        onSessionStarted: ((String) -> Unit)? = null,
+        onJobCreated: ((kotlinx.coroutines.Job) -> Unit)? = null,
+    ) {
+        val startTime = System.currentTimeMillis()
+        log.info(
+            "[Agent] resumeDelegatedSession: sessionId=$sessionId, delegator=${delegationMetadata.delegatorIde}, " +
+                "repo=${delegationMetadata.delegatorRepo}, follow-up='${userTurnText.take(60)}'"
+        )
+
+        // Count this resumed delegated session as live (mirrors startDelegatedSession Task 8).
+        activeDelegatedSessions.incrementAndGet()
+
+        // Re-stamp the per-session state with delegation metadata BEFORE the loop continues so the
+        // delegated context (AskQuestionsTool routing, banner) is detected on the very first iteration.
+        sessionStateFor(sessionId).also { it.delegated = delegationMetadata }
+
+        // Register the reply channel so routeQuestion can find it when the tool fires.
+        val inbound = project.getService(
+            com.workflow.orchestrator.agent.delegation.DelegationInboundService::class.java
+        )
+        inbound.registerSessionChannel(sessionId, replyWith)
+
+        val loopResultDeferred = kotlinx.coroutines.CompletableDeferred<LoopResult>()
+
+        // Drive resumeSession with the follow-up turn. A non-null userText makes resumeSession fall
+        // through the RESUME_COMPLETED_TASK branch and continue the loop (its core enabler).
+        val job: kotlinx.coroutines.Job? = try {
+            resumeSession(
+                sessionId = sessionId,
+                userText = userTurnText,
+                onStreamChunk = onStreamChunk,
+                onToolCall = onToolCall,
+                approvalGate = approvalGate,
+                sessionApprovalStore = sessionApprovalStore,
+                onSessionStarted = onSessionStarted,
+                onComplete = { result -> loopResultDeferred.complete(result) },
+            )
+        } catch (e: Throwable) {
+            // Synchronous setup failed — roll back what we did above to avoid leaks.
+            releaseSessionState(sessionId)
+            inbound.unregisterSessionChannel(sessionId)
+            inbound.stopIfTransientAndIdle(activeDelegatedSessions.decrementAndGet())
+            throw e
+        }
+
+        if (job == null) {
+            // resumeSession returned null → locked / missing dir / no api history. Roll back and
+            // propagate a CLEAR failure so the caller (handleChannelResume) replies an error IDE-A
+            // maps — do NOT silently swallow.
+            releaseSessionState(sessionId)
+            inbound.unregisterSessionChannel(sessionId)
+            inbound.stopIfTransientAndIdle(activeDelegatedSessions.decrementAndGet())
+            throw IllegalStateException(
+                "resume_failed: session $sessionId could not be resumed " +
+                    "(locked by another instance, missing on disk, or no conversation history)"
+            )
+        }
+        onJobCreated?.invoke(job)
+
+        cs.launch(Dispatchers.IO) {
+            try {
+                job.join()
+                val loopResult = loopResultDeferred.await()
+                val durationSeconds = (System.currentTimeMillis() - startTime) / 1000
+                val delegationResult = mapLoopResultToDelegationResult(loopResult, durationSeconds)
+                log.info("[Agent] Resumed delegated session $sessionId finished: " +
+                    "status=${delegationResult.status}, duration=${durationSeconds}s")
+                onResult(delegationResult)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                val durationSeconds = (System.currentTimeMillis() - startTime) / 1000
+                onResult(
+                    com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                        status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.CANCELED,
+                        reason = e.message,
+                        durationSeconds = durationSeconds,
+                    )
+                )
+                throw e
+            } catch (e: Exception) {
+                log.error("[Agent] Resumed delegated session $sessionId failed unexpectedly", e)
+                val durationSeconds = (System.currentTimeMillis() - startTime) / 1000
+                onResult(
+                    com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                        status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.FAILED,
+                        reason = e.message ?: e::class.qualifiedName,
+                        durationSeconds = durationSeconds,
+                    )
+                )
+            } finally {
+                inbound.unregisterSessionChannel(sessionId)
+                inbound.stopIfTransientAndIdle(activeDelegatedSessions.decrementAndGet())
+            }
+        }
+    }
+
     // ── Cancel ─────────────────────────────────────────────────────────────
 
     /**

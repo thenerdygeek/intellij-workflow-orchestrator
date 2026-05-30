@@ -12,6 +12,7 @@ import com.workflow.orchestrator.agent.delegation.DelegationException
 import com.workflow.orchestrator.agent.delegation.DelegationOutboundService
 import com.workflow.orchestrator.agent.delegation.DelegationStatusResult
 import com.workflow.orchestrator.agent.delegation.DelegationWaitOutcome
+import com.workflow.orchestrator.agent.delegation.HandleState
 import com.workflow.orchestrator.agent.delegation.FetchTranscriptResult
 import com.workflow.orchestrator.agent.delegation.ui.DelegationAnswerConfirmDialog
 import com.workflow.orchestrator.agent.delegation.ui.SocketGlobDiscovery
@@ -23,6 +24,7 @@ import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
 import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
 import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
+import com.workflow.orchestrator.agent.delegation.TargetStatusResolver
 import com.workflow.orchestrator.core.delegation.DelegationClient
 import com.workflow.orchestrator.core.delegation.DelegationMessage
 import com.workflow.orchestrator.core.delegation.DelegationPaths
@@ -38,10 +40,11 @@ import java.nio.file.Path
 /**
  * `delegation` — meta-tool consolidating the cross-IDE delegation surface into a
  * single tool with an `action` enum, mirroring the [com.workflow.orchestrator.agent.tools.runtime.RuntimeExecTool]
- * pattern. Five actions:
+ * pattern. Seven actions:
  *
  * - `send` — request work from an agent in another running IntelliJ instance (fresh send
- *   opens a picker; continuation with `handle` skips it).
+ *   opens a picker; continuation with `handle` skips it and resumes the SAME remote
+ *   session — even after it COMPLETED, within the ~30 min retention window).
  * - `close` — close an active delegation channel by handle (idempotent).
  * - `answer` — reply to a clarifying question raised by a delegated session.
  * - `fetch_transcript` — retrieve the full message history of a delegated session
@@ -94,35 +97,50 @@ class DelegationTool(
         Actions and their parameters:
         - send(request, suggested_repo?, handle?) → Delegate a task. Without `handle`,
           opens a picker so the user selects the target IDE/repo; with `handle`, sends
-          a follow-up user turn on an existing channel (Plan 4 continuation). Returns
-          a handle + "running" status; the actual result arrives later as a system nudge
-          when the remote agent finishes. Do NOT poll.
+          a follow-up user turn on the SAME session — this CONTINUES the existing
+          conversation even if the remote (IDE-B) session has already COMPLETED: within
+          the ~30 min retention window IDE-B resurrects the persisted session and resumes
+          it from where it left off. Returns a handle + "running" status; the actual
+          result arrives later as a system nudge when the remote agent finishes. Do NOT poll.
         - close(handle) → Close an active delegation channel (idempotent — closing an
-          already-closed handle is a no-op success).
+          already-closed handle returns {"closed":false} and is still a success).
         - answer(handle, question_id, answer) → Reply to a clarifying Question nudge from
-          a delegated session. When auto-approve is off, a confirmation dialog opens.
+          a delegated session (the reply param is `answer`, not `request`). When
+          auto-approve is off, a confirmation dialog opens.
         - fetch_transcript(handle) → Retrieve the full message history of a delegated
           session. Returns a local transcript path plus a 2 KiB head preview; use
           read_file on the path for full content. Still works AFTER the delegation
           completes — the transcript is retained for ~30 min after the channel closes.
         - status(handle) → Cheap liveness check: returns active (with last-seen state),
-          closed (with last-seen state), or a not-found error once the retention window
-          elapses. Use this instead of fetch_transcript when you only need to know whether
-          the delegation is still running. Do NOT poll in a tight loop.
+          closed (with the TERMINAL last_state — COMPLETED/FAILED/CANCELED/REJECTED),
+          or a not-found error once the ~30 min retention window elapses. Use this instead
+          of fetch_transcript when you only need to know whether the delegation is still
+          running. Do NOT poll in a tight loop. status, answer, and send-continuation now
+          AGREE about a handle's existence (closed-but-retained = consistently "closed";
+          pruned = consistently "not found").
         - wait(handle, timeout_seconds?) → Block the current turn until the delegation
           completes or raises a clarifying question, then return it inline (default 300s,
           5-1800). Use this to "attach" and get the answer in the same turn. On a question,
           answer it then wait again. A timeout returns "still running" — NOT a failure;
           the result auto-delivers (the session auto-resumes) when it finishes.
         - list_targets() → Read-only enumeration of potential delegation targets (same
-          list the picker shows: running / closed / discovered / missing). No UI opens.
+          list the picker shows: running / available / closed / discovered / missing).
+          "available" = IDE open but inbound delegation OFF — a send rings its doorbell
+          for consent. No UI opens.
 
         Errors (across all actions):
           DelegationOutboundDisabled — outbound delegation off in settings.
           DelegationUserCanceledPicker / DelegationTargetNotReachable / DelegationLimitReached /
-          DelegationRejected — send-specific picker / connection / quota failures.
-          DelegationExpired — handle is gone (timed out, pruned, remote IDE closed).
-          DelegationHandleNotFound — handle is unknown or already closed (answer).
+          DelegationRejected / DelegationDeclined — send-specific picker / connection / quota /
+          consent failures (declined_timeout is now specific: "IDE-B agent tab busy; user did
+          not click Start within 55s").
+          DelegationExpired — handle/session gone. On a send-continuation it carries the
+          specific reason: session_closed / session_not_found (remote session genuinely
+          gone or pruned), ide_b_not_running (target IDE down), ide_b_busy (target tab busy
+          with another task — try again), resume_failed (session locked/missing on disk).
+          DelegationHandleClosed — answer on a closed-but-retained handle (the session
+          completed; start a new send or fetch_transcript instead).
+          DelegationHandleNotFound — handle is unknown or pruned (answer / status / wait).
           DelegationWriteFailed — IPC write failed (send continuation / answer).
     """.trimIndent()
 
@@ -147,7 +165,9 @@ class DelegationTool(
                 type = "string",
                 description = "Channel handle returned by a prior delegation send — required for " +
                     "action=close/answer/fetch_transcript/status/wait; optional for action=send (continuation: " +
-                    "skips the picker and Accept dialog, sends a new user turn on the existing channel)",
+                    "skips the picker and Accept dialog, sends a new user turn on the existing session — works " +
+                    "even after the remote session COMPLETED, within the ~30 min retention window: the remote IDE " +
+                    "resurrects the persisted session and resumes it)",
             ),
             "timeout_seconds" to ParameterProperty(
                 type = "integer",
@@ -217,13 +237,15 @@ class DelegationTool(
                 "The fix is to ask the user to enable 'Accept incoming delegations' on the target IDE, not to abandon the task."
         )
         llmMistake(
-            "Re-opens a fresh delegation (send with no handle) to ask a follow-up, instead of continuing the existing channel. " +
-                "To send a follow-up turn to a session that's already running, pass the original handle to send — that skips the " +
-                "picker and the Accept dialog and reuses the same remote session. A bare send spins up a brand-new picker each time."
+            "Re-opens a fresh delegation (send with no handle) to ask a follow-up, instead of continuing the existing session. " +
+                "To send a follow-up turn, pass the original handle to send — that skips the picker and the Accept dialog and " +
+                "reuses the same remote session, EVEN IF that session already COMPLETED (within the ~30 min retention window the " +
+                "remote IDE resurrects and resumes it). A bare send spins up a brand-new picker and loses the prior context."
         )
         llmMistake(
-            "Calls answer with a stale handle after the remote session already terminated, then retries the same handle on " +
-                "DelegationHandleNotFound. That handle is gone — the correct recovery is a new send, not a retry."
+            "Calls answer on a handle whose session already COMPLETED and then retries on DelegationHandleClosed. You cannot " +
+                "answer a finished session — to ask it something more, use send with the same handle (continuation resumes it); " +
+                "to read what it did, use fetch_transcript. Only DelegationHandleNotFound (pruned/unknown handle) needs a brand-new send."
         )
         flowchart(
             """
@@ -278,7 +300,7 @@ class DelegationTool(
                         example("frontend")
                     }
                     optional("handle", "string") {
-                        llmSeesIt("Channel handle returned by a prior delegation send — required for action=close/answer/fetch_transcript; optional for action=send (continuation: skips the picker and Accept dialog, sends a new user turn on the existing channel)")
+                        llmSeesIt("Channel handle returned by a prior delegation send — required for action=close/answer/fetch_transcript/status/wait; optional for action=send (continuation: skips the picker and Accept dialog, sends a new user turn on the existing session — works even after the remote session COMPLETED, within the ~30 min retention window: the remote IDE resurrects the persisted session and resumes it)")
                         humanReadable("Reuse a previous delegation's handle to continue that same remote session instead of starting a new one.")
                         whenPresent("Continuation branch: no picker, no Accept dialog — a follow-up turn is written to the existing channel.")
                         whenAbsent("Fresh-send branch: the target picker opens and a new channel is created.")
@@ -296,19 +318,19 @@ class DelegationTool(
                 onFailure("cannot connect to the target IDE", "DelegationTargetNotReachable — most often the target has inbound delegation disabled (looks identical to 'not running'). Ask the user to enable 'Accept incoming delegations' on the target first.")
                 onFailure("too many open channels", "DelegationLimitReached — DelegationOutboundService.MAX_CHANNELS concurrent delegations already open; close one before sending another.")
                 onFailure("target user declines the consent prompt", "DelegationDeclined / DelegationRejected — the target IDE's user said no. Surface to the user; don't retry blindly.")
-                onFailure("continuation handle expired or write failed", "DelegationExpired (channel gone) or DelegationWriteFailed (IPC write failed) — for an expired handle, start a new send instead of retrying.")
+                onFailure("continuation handle expired or write failed", "DelegationExpired carries a specific reason — session_closed / session_not_found (remote session genuinely gone or pruned), ide_b_not_running (target IDE down), ide_b_busy (target tab busy — try again), resume_failed (session locked/missing on disk); or DelegationWriteFailed (IPC write failed). For ide_b_busy, retry; for session_not_found, start a new send.")
                 example("fresh delegation") {
                     param("action", "send")
                     param("request", "Implement the /orders endpoint per the spec in docs/api.md and open a PR.")
                     param("suggested_repo", "backend")
                     outcome("Picker opens pre-selected on 'backend'; on accept, returns a handle with status=running. Result arrives later as a nudge.")
                 }
-                example("continue an existing delegation") {
+                example("continue an existing delegation (even after it completed)") {
                     param("action", "send")
                     param("handle", "d3f9a1b2-...")
                     param("request", "Also add an integration test for the 404 case.")
-                    outcome("No picker — the follow-up turn is delivered to the same remote session on the existing channel.")
-                    notes("Reuse the handle from the original send rather than starting a new delegation for follow-ups.")
+                    outcome("No picker — the follow-up turn is delivered to the same remote session; if that session already COMPLETED, the remote IDE resurrects the persisted session (within ~30 min) and resumes it.")
+                    notes("Reuse the handle from the original send rather than starting a new delegation for follow-ups; the remote agent resumes from where it left off.")
                 }
                 verdict {
                     keep("The core of the feature — the only way an agent can hand work to a repo it doesn't have open. Async + consent-gated by design.", VerdictSeverity.STRONG)
@@ -322,7 +344,7 @@ class DelegationTool(
                 whenLLMUses("After a delegation's result has been received and there's no follow-up coming, to free a channel slot (the concurrent-channel limit is shared).")
                 params {
                     required("handle", "string") {
-                        llmSeesIt("Channel handle returned by a prior delegation send — required for action=close/answer/fetch_transcript; optional for action=send (continuation: skips the picker and Accept dialog, sends a new user turn on the existing channel)")
+                        llmSeesIt("Channel handle returned by a prior delegation send — required for action=close/answer/fetch_transcript/status/wait; optional for action=send (continuation: skips the picker and Accept dialog, sends a new user turn on the existing session — works even after the remote session COMPLETED, within the ~30 min retention window: the remote IDE resurrects the persisted session and resumes it)")
                         humanReadable("Which delegation channel to close.")
                         whenPresent("That channel is torn down; the result is reported regardless of whether it was still open.")
                         example("d3f9a1b2-...")
@@ -353,7 +375,7 @@ class DelegationTool(
                 whenLLMUses("Only in response to a Question nudge from a delegated session — it carries the handle and question_id you must echo back.")
                 params {
                     required("handle", "string") {
-                        llmSeesIt("Channel handle returned by a prior delegation send — required for action=close/answer/fetch_transcript; optional for action=send (continuation: skips the picker and Accept dialog, sends a new user turn on the existing channel)")
+                        llmSeesIt("Channel handle returned by a prior delegation send — required for action=close/answer/fetch_transcript/status/wait; optional for action=send (continuation: skips the picker and Accept dialog, sends a new user turn on the existing session — works even after the remote session COMPLETED, within the ~30 min retention window: the remote IDE resurrects the persisted session and resumes it)")
                         humanReadable("Which delegation the question came from.")
                         whenPresent("Used to locate the open channel; if the channel is gone, returns DelegationHandleNotFound.")
                         example("d3f9a1b2-...")
@@ -373,7 +395,8 @@ class DelegationTool(
                 }
                 precondition("A Question nudge must have been received for this handle (the source of question_id).")
                 onSuccess("Returns `{\"sent\":true,\"handle\":...,\"question_id\":...}`; the remote agent resumes with the answer.")
-                onFailure("handle unknown or already closed", "DelegationHandleNotFound — the delegated session likely terminated. Start a new send rather than retrying.")
+                onFailure("handle is closed-but-retained (session already completed)", "DelegationHandleClosed — you cannot answer a finished session; use action=send (same handle) to resume it with a new turn, or action=fetch_transcript to read what it did. Distinct from DelegationHandleNotFound so recovery differs.")
+                onFailure("handle unknown or pruned", "DelegationHandleNotFound — the handle is gone (never existed or its retention window elapsed). Start a new send.")
                 onFailure("user declines the confirm dialog", "Returns an error that the user declined to send the answer (only when auto-approve is off).")
                 onFailure("channel rejected the write", "DelegationWriteFailed — the channel may be shutting down; try again or start a new send.")
                 example("answer a clarifying question") {
@@ -401,7 +424,7 @@ class DelegationTool(
                 whenLLMUses("On demand when you need to see what the remote agent actually did or is doing — e.g. to debug an unexpected result, or to summarize the remote work. NOT for completion polling.")
                 params {
                     required("handle", "string") {
-                        llmSeesIt("Channel handle returned by a prior delegation send — required for action=close/answer/fetch_transcript; optional for action=send (continuation: skips the picker and Accept dialog, sends a new user turn on the existing channel)")
+                        llmSeesIt("Channel handle returned by a prior delegation send — required for action=close/answer/fetch_transcript/status/wait; optional for action=send (continuation: skips the picker and Accept dialog, sends a new user turn on the existing session — works even after the remote session COMPLETED, within the ~30 min retention window: the remote IDE resurrects the persisted session and resumes it)")
                         humanReadable("Which delegated session's transcript to retrieve.")
                         whenPresent("Resolves to the remote session and exports its message history.")
                         example("d3f9a1b2-...")
@@ -416,6 +439,100 @@ class DelegationTool(
                 }
                 verdict {
                     keep("The only window into what the remote agent did; the path+preview shape keeps token cost bounded while still allowing a full read on demand.")
+                }
+            }
+            action("status") {
+                description {
+                    technical(
+                        "DelegationOutboundService.statusOf(handle) — a cheap liveness check that reads the single " +
+                            "handle-state source of truth (the same lookup send-continuation and answer use, so the three " +
+                            "agree). Returns active (with last-seen state), closed (with the TERMINAL last_state — " +
+                            "COMPLETED/FAILED/CANCELED/REJECTED, no longer a stale 'RUNNING'), or DelegationHandleNotFound " +
+                            "once the ~30 min retention window elapses. No transcript round-trip."
+                    )
+                    plain(
+                        "Ask 'is the other window still working on it, or did it finish?' without pulling the whole " +
+                            "conversation. Tells you running / finished (and how it finished) / gone."
+                    )
+                }
+                whenLLMUses(
+                    "When you only need to know whether a delegation is still running or has finished — e.g. before " +
+                        "deciding whether to wait or to fetch the transcript. Cheaper than fetch_transcript. Do NOT call " +
+                        "it in a tight loop to poll for completion — the result auto-delivers; use wait to block instead."
+                )
+                params {
+                    required("handle", "string") {
+                        llmSeesIt("Channel handle returned by a prior delegation send — required for action=close/answer/fetch_transcript/status/wait; optional for action=send (continuation: skips the picker and Accept dialog, sends a new user turn on the existing session — works even after the remote session COMPLETED, within the ~30 min retention window: the remote IDE resurrects the persisted session and resumes it)")
+                        humanReadable("Which delegation channel to check the liveness of.")
+                        whenPresent("Resolved through the retained-aware handle lookup; returns active / closed / not-found consistently with answer and send-continuation.")
+                        example("d3f9a1b2-...")
+                    }
+                }
+                onSuccess(
+                    "Returns `{\"handle\":...,\"status\":\"active\",\"state\":...,\"repo\":...}` while running, or " +
+                        "`{\"handle\":...,\"status\":\"closed\",\"last_state\":COMPLETED|FAILED|CANCELED|REJECTED,\"repo\":...}` " +
+                        "once finished (still retained for transcript reads)."
+                )
+                onFailure("handle unknown or its retention window elapsed", "DelegationHandleNotFound — start a fresh send; a pruned handle is consistently 'not found' across status/answer/send-continuation.")
+                example("check whether a delegation finished") {
+                    param("action", "status")
+                    param("handle", "d3f9a1b2-...")
+                    outcome("Returns active+state while running, or closed+terminal last_state once done — no transcript fetched.")
+                    notes("Use this for a one-off liveness check, not as a polling loop; the result auto-delivers when done.")
+                }
+                verdict {
+                    keep("Cheap, retained-aware liveness check that lets the LLM branch (wait vs fetch_transcript vs move on) without a transcript round-trip.")
+                }
+            }
+            action("wait") {
+                description {
+                    technical(
+                        "DelegationOutboundService.awaitResult(handle, timeoutMs) — suspends the current turn on a one-shot " +
+                            "deferred completed by the reader loop on the delegation's Result or Question (the async nudge is " +
+                            "suppressed for that handle while a wait is pending). A TimedOut outcome is NOT a failure: the async " +
+                            "auto-delivery still fires when the remote finishes. Bounded by timeout_seconds, not the per-tool timeout."
+                    )
+                    plain(
+                        "Sit and wait for the other window to finish (or to ask you something) and get the answer right here in " +
+                            "this turn, instead of continuing other work and being interrupted later. If it takes too long the wait " +
+                            "ends with 'still running' — that's fine, the result still shows up on its own."
+                    )
+                }
+                whenLLMUses(
+                    "When the next step depends on the delegation's result and there's nothing useful to do meanwhile — " +
+                        "'attach' and get the outcome inline. On a Question outcome, answer it (action=answer) then wait again."
+                )
+                params {
+                    required("handle", "string") {
+                        llmSeesIt("Channel handle returned by a prior delegation send — required for action=close/answer/fetch_transcript/status/wait; optional for action=send (continuation: skips the picker and Accept dialog, sends a new user turn on the existing session — works even after the remote session COMPLETED, within the ~30 min retention window: the remote IDE resurrects the persisted session and resumes it)")
+                        humanReadable("Which delegation to block on until it finishes or asks a question.")
+                        whenPresent("The turn suspends until the remote session delivers a Result or Question, or the timeout elapses.")
+                        example("d3f9a1b2-...")
+                    }
+                    optional("timeout_seconds", "integer") {
+                        llmSeesIt("For action=wait only: how long to block for the result before returning 'still running' (default 300, range 5-1800). The result also arrives automatically when done, so a timeout is not a failure.")
+                        humanReadable("Maximum seconds to block before giving up the wait (the work keeps running regardless).")
+                        whenPresent("Caps the blocking wait at this many seconds (clamped to 5–1800).")
+                        whenAbsent("Defaults to 300 seconds.")
+                        constraint("5–1800 (values outside are clamped)")
+                        example("600")
+                    }
+                }
+                onSuccess(
+                    "On completion returns the same [DELEGATION RESULT …] block the async nudge would carry (status, summary, " +
+                        "files changed, branch/commit). On a clarifying question returns the question text + question_id to answer. " +
+                        "On timeout returns a 'still running' note (NOT an error) — the result will auto-deliver."
+                )
+                onFailure("handle unknown or never opened", "DelegationHandleNotFound — start a fresh send.")
+                example("block until the delegation finishes") {
+                    param("action", "wait")
+                    param("handle", "d3f9a1b2-...")
+                    param("timeout_seconds", "600")
+                    outcome("Suspends up to 600s; returns the result inline on completion, the question on a clarifying-question, or 'still running' on timeout.")
+                    notes("A timeout is not a failure — the async result still auto-delivers. On a question, answer then wait again.")
+                }
+                verdict {
+                    keep("Lets the LLM synchronously attach to a delegation when the next step depends on its result, while preserving the no-failure-on-timeout + async-auto-delivery contract.")
                 }
             }
             action("list_targets") {
@@ -444,7 +561,7 @@ class DelegationTool(
         }
         verdict {
             keep(
-                "The entire cross-IDE delegation feature is exposed through this one meta-tool; consolidating the five " +
+                "The entire cross-IDE delegation feature is exposed through this one meta-tool; consolidating the seven " +
                     "actions mirrors the runtime_exec / jira pattern and keeps the schema token cost low while the feature is gated off by default.",
                 VerdictSeverity.STRONG,
             )
@@ -694,10 +811,21 @@ class DelegationTool(
             )
         }
 
-        // Plan 2 F10: distinguish "handle not in map" from "write failed" so the LLM
-        // can decide whether to retry the same handle or open a new delegation.
-        if (!outboundService.hasOpenChannel(handleId)) {
-            return ToolResult.error(
+        // Fix A: route the existence check through the single source of truth (handleState)
+        // that `status` and `send`-continuation use, so the three actions can't disagree about
+        // whether the handle is known. Distinguish a CLOSED-but-retained handle (consistent with
+        // `status`'s "closed" classification) from a truly unknown/pruned one, and from a write
+        // failure (handled below) — so the LLM knows whether to retry or start a new delegation.
+        val shortId = handleId.take(8)
+        when (val state = outboundService.handleState(handleId)) {
+            is HandleState.Active -> Unit // open — proceed to the write below
+            is HandleState.ClosedRetained -> return ToolResult.error(
+                "DelegationHandleClosed: $handleId — the delegated session has already completed " +
+                    "(last state ${state.lastState}); the channel is closed (still retained for transcript reads). " +
+                    "You cannot answer a closed session — use delegation with action=send to start a new one, or " +
+                    "action=fetch_transcript to read what it did."
+            )
+            HandleState.Unknown -> return ToolResult.error(
                 "DelegationHandleNotFound: $handleId — the handle is unknown or already closed. " +
                     "The delegated session may have already terminated; use delegation with action=send to start a new one."
             )
@@ -705,7 +833,6 @@ class DelegationTool(
 
         val sent = outboundService.sendAnswer(handleId, questionId, finalAnswer)
 
-        val shortId = handleId.take(8)
         return if (sent) {
             LOG.debug("[DelegationAnswer] handle=$shortId question=$questionId sent=true")
             ToolResult(
@@ -926,26 +1053,22 @@ class DelegationTool(
             '"' + s.replace("\\", "\\\\").replace("\"", "\\\"") + '"'
 
         /**
-         * Resolve a recent target's status from socket reachability (Bug A).
+         * Resolve a recent target's status from socket reachability.
+         *
+         * Delegates to [TargetStatusResolver.resolveTargetStatusString] — the shared resolver
+         * consumed by both this tool and the picker UI so the two surfaces cannot diverge.
          *
          * - `missing`   — path no longer exists on disk.
-         * - `running`   — delegation socket bound (inbound ON / already accepting); a send connects
-         *                 directly.
-         * - `available` — delegation socket NOT bound but the always-on doorbell IS: the IDE is open
-         *                 with inbound delegation off. A send rings the doorbell and prompts the user
-         *                 for consent. (Previously mislabeled `closed`, indistinguishable from dead.)
+         * - `running`   — delegation socket bound (inbound ON / already accepting).
+         * - `available` — delegation socket NOT bound but the doorbell IS: IDE open, inbound off.
+         *                 A send rings the doorbell for consent.
          * - `closed`    — neither socket bound: the IDE is not running this project.
          */
         internal fun resolveTargetStatus(
             exists: Boolean,
             delegationReachable: Boolean,
             doorbellReachable: Boolean,
-        ): String = when {
-            !exists -> "missing"
-            delegationReachable -> "running"
-            doorbellReachable -> "available"
-            else -> "closed"
-        }
+        ): String = TargetStatusResolver.resolveTargetStatusString(exists, delegationReachable, doorbellReachable)
 
         /**
          * Production recents provider.
@@ -971,15 +1094,13 @@ class DelegationTool(
                         } catch (_: Exception) { null }
                             ?: path.fileName?.toString()
                             ?: pathStr
-                        val exists = Files.exists(path)
-                        // Probe the delegation socket first; only ring the doorbell when the
-                        // delegation door is shut, so we can tell "running, inbound off" (doorbell
-                        // bound → "available") from a genuinely closed IDE.
-                        val delegationReachable =
-                            exists && DelegationClient.ping(DelegationPaths.socketFor(path)) != null
-                        val doorbellReachable = exists && !delegationReachable &&
-                            DelegationClient.ping(DelegationPaths.doorbellSocketFor(path)) != null
-                        val status = resolveTargetStatus(exists, delegationReachable, doorbellReachable)
+                        // Use the shared dual-probe so picker and list_targets always agree.
+                        val targetStatus = TargetStatusResolver.dualProbeStatus(path)
+                        val status = TargetStatusResolver.resolveTargetStatusString(
+                            exists = targetStatus != TargetStatusResolver.TargetStatus.MISSING,
+                            delegationReachable = targetStatus == TargetStatusResolver.TargetStatus.RUNNING,
+                            doorbellReachable = targetStatus == TargetStatusResolver.TargetStatus.AVAILABLE,
+                        )
                         RecentEntry(
                             projectPath = pathStr,
                             repoName = name,

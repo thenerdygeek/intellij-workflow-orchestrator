@@ -82,9 +82,30 @@ class BusyDelegationTopBarTest {
             s.contains("declined_timeout"),
             "handleConnect must reply AcceptResult(accepted=false, reason=declined_timeout) on timeout",
         )
+        // The old fake-FAILED busy shortcut lived in handleConnect; it must be gone from THAT method.
+        // (Fix 3's handleChannelResume legitimately uses an ide_b_busy SessionClosed reason for the
+        // resurrection busy-decline — a different code path — so scope this guard to handleConnect.)
+        val handleConnectBody = s.substringAfter("private suspend fun handleConnect(")
+            .substringBefore("internal suspend fun runInboundReadLoop(")
         assertFalse(
-            s.contains("ide_b_busy"),
-            "the old ide_b_busy FAILED reply must be removed",
+            handleConnectBody.contains("ide_b_busy"),
+            "the old ide_b_busy FAILED reply must be removed from handleConnect",
+        )
+    }
+
+    @Test
+    fun `declined_timeout reason names the specific cause so the next debugger is not blind`() {
+        // Bug B follow-up: a bare "declined_timeout" gave the IDE-A side (and the next debugger)
+        // no signal about WHAT timed out. The reason string must spell out that IDE-B's agent tab
+        // was busy and the human did not click Start within the accept window.
+        val s = inbound()
+        assertTrue(
+            s.contains("declined_timeout: IDE-B agent tab busy"),
+            "the declined_timeout reason must explain that IDE-B's agent tab was busy",
+        )
+        assertTrue(
+            Regex("""did not click Start""").containsMatchIn(s),
+            "the declined_timeout reason must explain that the human did not click Start in time",
         )
     }
 

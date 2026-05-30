@@ -64,6 +64,14 @@ class SystemPromptDelegationGateTest {
             prompt.contains("delegation with action=\"fetch_transcript\""),
             "delegation fetch_transcript hint must be absent when outbound off"
         )
+        assertFalse(
+            prompt.contains("delegation with action=\"status\""),
+            "delegation status hint must be absent when outbound off"
+        )
+        assertFalse(
+            prompt.contains("delegation with action=\"wait\""),
+            "delegation wait hint must be absent when outbound off"
+        )
     }
 
     @Test
@@ -95,6 +103,34 @@ class SystemPromptDelegationGateTest {
         assertTrue(
             prompt.contains("delegation with action=\"fetch_transcript\""),
             "delegation fetch_transcript hint must be present when outbound on"
+        )
+        assertTrue(
+            prompt.contains("delegation with action=\"status\""),
+            "delegation status hint must be present when outbound on"
+        )
+        assertTrue(
+            prompt.contains("delegation with action=\"wait\""),
+            "delegation wait hint must be present when outbound on"
+        )
+    }
+
+    @Test
+    fun `wait attach and continuation-after-completion guidance present when outbound enabled`() {
+        val prompt = buildWith(delegationOutboundEnabled = true)
+        // The attach-vs-don't-poll flow must steer the LLM to `wait` instead of polling.
+        assertTrue(
+            prompt.contains("do NOT poll") || prompt.contains("don't poll") || prompt.contains("Do NOT poll"),
+            "UX note must tell the LLM not to poll for the result"
+        )
+        assertTrue(
+            prompt.contains("ATTACH") || prompt.contains("attach"),
+            "UX note must mention attaching via wait to get the result inline"
+        )
+        // Continuation now resumes even a completed remote session.
+        assertTrue(
+            prompt.contains("resumes the SAME remote session even if it already completed") ||
+                prompt.contains("continuation"),
+            "UX note must explain that reusing the handle continues the same session (now even after completion)"
         )
     }
 
@@ -236,6 +272,14 @@ class SystemPromptDelegationGateTest {
         assertFalse(
             prompt.contains("delegation with action=\"send\""),
             "Sub-agent prompt must never contain delegation send hints"
+        )
+        assertFalse(
+            prompt.contains("delegation with action=\"status\""),
+            "Sub-agent prompt must never contain delegation status hints"
+        )
+        assertFalse(
+            prompt.contains("delegation with action=\"wait\""),
+            "Sub-agent prompt must never contain delegation wait hints"
         )
         assertFalse(
             prompt.contains("Cross-IDE delegation UX"),

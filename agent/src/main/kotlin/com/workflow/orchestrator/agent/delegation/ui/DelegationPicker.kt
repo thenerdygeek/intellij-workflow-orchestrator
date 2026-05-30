@@ -21,6 +21,7 @@ import com.workflow.orchestrator.agent.delegation.DefaultProcessSpawner
 import com.workflow.orchestrator.agent.delegation.LauncherResolver
 import com.workflow.orchestrator.agent.delegation.ProcessSpawner
 import com.workflow.orchestrator.agent.delegation.SpawnResult
+import com.workflow.orchestrator.agent.delegation.TargetStatusResolver
 import com.workflow.orchestrator.agent.delegation.ToolboxFlavorReader
 import com.workflow.orchestrator.core.delegation.DelegationClient
 import com.workflow.orchestrator.core.delegation.DelegationPaths
@@ -50,12 +51,13 @@ data class PickerEntry(
     /** When true this row is a non-selectable section header, not a project entry. */
     val isHeader: Boolean = false,
 ) {
-    enum class Status { RUNNING, CLOSED, MISSING }
+    enum class Status { RUNNING, AVAILABLE, CLOSED, MISSING }
 
     override fun toString(): String {
         if (isHeader) return displayName
         val badge = when (status) {
             Status.RUNNING -> "● Running"
+            Status.AVAILABLE -> "◑ Available (inbound off)"
             Status.CLOSED -> "○ Closed"
             Status.MISSING -> "⚠ Missing"
         }
@@ -263,8 +265,13 @@ class DelegationPicker(
 
     override fun doOKAction() {
         val sel = list.selectedValue
-        if (sel?.isHeader == true || sel?.status != PickerEntry.Status.RUNNING) {
-            // Disable OK for header rows and non-Running selections — silently no-op
+        // RUNNING and AVAILABLE are both delegatable:
+        //   RUNNING  → delegation socket bound, connect directly.
+        //   AVAILABLE → doorbell bound, inbound off; send() will ring the doorbell for consent.
+        val isDelegatable = sel != null && !sel.isHeader &&
+            (sel.status == PickerEntry.Status.RUNNING || sel.status == PickerEntry.Status.AVAILABLE)
+        if (!isDelegatable) {
+            // Disable OK for headers, CLOSED, and MISSING entries — silently no-op.
             return
         }
         selectedEntry = sel
@@ -306,25 +313,38 @@ class DelegationPicker(
     }
 
     /**
-     * Retry probe: re-PINGs the socket once. On PONG updates the selected row's status
-     * to RUNNING and enables the regular Delegate button.
+     * Retry probe: dual-probes the delegation and doorbell sockets once.
+     *
+     * Fix C: upgraded from single-socket to dual-probe so a running-but-inbound-off IDE
+     * (doorbell reachable, delegation socket unbound) is correctly shown as AVAILABLE
+     * (delegatable) rather than remaining CLOSED.
      */
     private fun onRetryProbe() {
         val sel = list.selectedValue ?: return
         if (sel.isHeader) return
-        val socketPath = DelegationPaths.socketFor(sel.path)
         ProgressManager.getInstance().run(
             object : Task.Backgroundable(project, "Probing IDE socket…", false) {
                 override fun run(indicator: ProgressIndicator) {
-                    val pong = runBlockingCancellable {
-                        DelegationClient.ping(socketPath, timeoutMillis = 2_000)
+                    val probed = runBlockingCancellable {
+                        try {
+                            TargetStatusResolver.dualProbeStatus(sel.path) { socketPath ->
+                                DelegationClient.ping(socketPath, timeoutMillis = 2_000)
+                            }
+                        } catch (_: Exception) {
+                            TargetStatusResolver.TargetStatus.CLOSED
+                        }
+                    }
+                    val newStatus = when (probed) {
+                        TargetStatusResolver.TargetStatus.RUNNING -> PickerEntry.Status.RUNNING
+                        TargetStatusResolver.TargetStatus.AVAILABLE -> PickerEntry.Status.AVAILABLE
+                        TargetStatusResolver.TargetStatus.CLOSED -> PickerEntry.Status.CLOSED
+                        TargetStatusResolver.TargetStatus.MISSING -> PickerEntry.Status.MISSING
                     }
                     ApplicationManager.getApplication().invokeLater {
-                        if (pong != null) {
-                            // Upgrade the row status so the regular Delegate button activates.
+                        if (newStatus == PickerEntry.Status.RUNNING || newStatus == PickerEntry.Status.AVAILABLE) {
                             val idx = listModel.indexOf(sel)
                             if (idx >= 0) {
-                                listModel.set(idx, sel.copy(status = PickerEntry.Status.RUNNING))
+                                listModel.set(idx, sel.copy(status = newStatus))
                                 list.setSelectedIndex(idx)
                             }
                             hideLaunchFailure()
@@ -442,32 +462,44 @@ class DelegationPicker(
      * Cancelled automatically when the dialog is disposed.
      *
      * Spec §5.5 + Plan 3.1 Fix 3: EDT must not block for N × ping-timeout on open.
+     *
+     * Fix C: uses [TargetStatusResolver.dualProbeStatus] (shared with the `list_targets` tool)
+     * for doorbell-aware dual-probe so RUNNING/AVAILABLE/CLOSED/MISSING can't diverge between
+     * the picker and the tool action.
      */
     private fun triggerDiscoveryAsync() {
         discoveryScope.launch {
-            // Step A: probe recent-project sockets and upgrade CLOSED → RUNNING as pongs arrive.
+            // Step A: probe recent-project sockets — upgrade CLOSED → RUNNING or AVAILABLE.
+            // Uses the shared dual-probe so picker and list_targets always agree.
             val recentsSnapshot: List<PickerEntry> = withContext(Dispatchers.Main) {
                 // Safe to read listModel on EDT (Dispatchers.Main).
                 (0 until listModel.size()).map { listModel.getElementAt(it) }
             }
             for (entry in recentsSnapshot) {
                 if (entry.isHeader || entry.status == PickerEntry.Status.MISSING) continue
-                val socketPath = DelegationPaths.socketFor(entry.path)
-                val pong = try {
-                    DelegationClient.ping(socketPath, timeoutMillis = 200)
+                val probed: TargetStatusResolver.TargetStatus = try {
+                    TargetStatusResolver.dualProbeStatus(entry.path)
                 } catch (e: Exception) {
-                    null
+                    TargetStatusResolver.TargetStatus.CLOSED
                 }
-                if (pong != null) {
+                val newStatus = when (probed) {
+                    TargetStatusResolver.TargetStatus.RUNNING -> PickerEntry.Status.RUNNING
+                    TargetStatusResolver.TargetStatus.AVAILABLE -> PickerEntry.Status.AVAILABLE
+                    TargetStatusResolver.TargetStatus.CLOSED -> PickerEntry.Status.CLOSED
+                    TargetStatusResolver.TargetStatus.MISSING -> PickerEntry.Status.MISSING
+                }
+                if (newStatus != entry.status) {
                     withContext(Dispatchers.Main) {
                         if (isDisposed) return@withContext
                         val idx = listModel.indexOf(entry)
                         if (idx >= 0) {
-                            listModel.set(idx, entry.copy(status = PickerEntry.Status.RUNNING))
-                            // Update auto-select hint if this newly-RUNNING row matches.
-                            suggestedRepo?.let { hint ->
-                                if (entry.displayName.contains(hint, ignoreCase = true)) {
-                                    list.setSelectedValue(listModel.getElementAt(idx), true)
+                            listModel.set(idx, entry.copy(status = newStatus))
+                            // Update auto-select hint for RUNNING/AVAILABLE rows.
+                            if (newStatus == PickerEntry.Status.RUNNING || newStatus == PickerEntry.Status.AVAILABLE) {
+                                suggestedRepo?.let { hint ->
+                                    if (entry.displayName.contains(hint, ignoreCase = true)) {
+                                        list.setSelectedValue(listModel.getElementAt(idx), true)
+                                    }
                                 }
                             }
                         }

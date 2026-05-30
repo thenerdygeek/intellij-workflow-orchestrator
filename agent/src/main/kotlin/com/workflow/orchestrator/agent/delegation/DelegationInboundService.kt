@@ -45,6 +45,30 @@ fun interface DelegatedSessionStarter {
 }
 
 /**
+ * Test-seam abstraction over [com.workflow.orchestrator.agent.ui.AgentController.resumeDelegatedSession]
+ * — the resurrection counterpart of [DelegatedSessionStarter]. Used by [DelegationInboundService.handleChannelResume]
+ * to RESUME a previously-completed delegated session (Fix 3 — true continuation) and continue it with a
+ * follow-up user turn, instead of replying [DelegationMessage.SessionClosed].
+ *
+ * Production wires this to the live [com.workflow.orchestrator.agent.ui.AgentController]; headless tests
+ * inject a fake (via [DelegationInboundService.testDelegatedResumeStarter]). The signature mirrors
+ * [DelegatedSessionStarter] but adds the persisted [sessionId] to resume and the [userTurnText] follow-up
+ * to append. It returns a [DelegatedStartOutcome]: [DelegatedStartOutcome.STARTED] when the resume kicked
+ * off (busy-gate passed + session re-opened), or [DelegatedStartOutcome.DECLINED_TIMEOUT] when IDE-B's tab
+ * is busy with another task (graceful decline — never hijack a running session).
+ */
+fun interface DelegatedResumeStarter {
+    suspend fun resume(
+        sessionId: String,
+        userTurnText: String,
+        metadata: DelegationMetadata,
+        replyWith: suspend (DelegationMessage) -> Unit,
+        onResult: suspend (DelegationMessage.Result) -> Unit,
+        onSessionStarted: ((String) -> Unit)?,
+    ): DelegatedStartOutcome
+}
+
+/**
  * Per-project service. Manages the lifecycle of [DelegationServer] for this
  * project and routes incoming Connect messages through the Accept dialog into
  * new delegated AgentSessions.
@@ -201,6 +225,14 @@ class DelegationInboundService(
      */
     internal var testDelegatedSessionStarter: DelegatedSessionStarter? = null
 
+    /**
+     * Visible-for-tests delegated-session RESUME starter (Fix 3 — true continuation). Production code
+     * resolves the live [com.workflow.orchestrator.agent.ui.AgentController] and adapts its
+     * `resumeDelegatedSession` (see [handleChannelResume]); headless tests inject a fake so they can
+     * drive the resurrection path without a live UI service. When null, production behavior is unchanged.
+     */
+    internal var testDelegatedResumeStarter: DelegatedResumeStarter? = null
+
     private suspend fun handleConnect(
         connect: DelegationMessage.Connect,
         replyWith: suspend (DelegationMessage) -> Unit,
@@ -316,7 +348,15 @@ class DelegationInboundService(
             // Busy tab, human did not click Start within the accept window. Decline cleanly so
             // IDE-A's accept-await resolves (rather than hanging on a session that never starts).
             // onSessionStarted never fired, so do NOT await sessionIdReady.
-            replyWith(DelegationMessage.AcceptResult(accepted = false, reason = "declined_timeout"))
+            // Bug B: name the specific cause so IDE-A (and the next debugger) isn't blind — a bare
+            // "declined_timeout" gave no signal about WHAT timed out.
+            replyWith(
+                DelegationMessage.AcceptResult(
+                    accepted = false,
+                    reason = "declined_timeout: IDE-B agent tab busy; user did not click Start " +
+                        "within ${com.workflow.orchestrator.agent.ui.AgentController.ACCEPT_WINDOW_MS / 1000}s",
+                )
+            )
             closeChannel()
             return
         }
@@ -708,7 +748,9 @@ class DelegationInboundService(
     /**
      * Handle an incoming [DelegationMessage.ChannelResume] from IDE-A. Dispatches:
      *  - Live session → [DelegationMessage.ChannelResumed] (channel stays open for ongoing exchange)
-     *  - Terminal session (known from sessions.json with `delegated` metadata) → [DelegationMessage.SessionClosed]
+     *  - Terminal-but-persisted delegated session → RESURRECT (Fix 3): reply
+     *    [DelegationMessage.ChannelResumed], read the follow-up [DelegationMessage.UserTurn], and
+     *    resume-and-continue the persisted conversation via [resumeDelegatedSessionViaController].
      *  - Unknown sessionId → [DelegationMessage.SessionNotFound]
      *
      * H2 fix (Plan 4 review): after replying ChannelResumed to a live session, the original
@@ -717,13 +759,20 @@ class DelegationInboundService(
      * IDE-A on the new channel would never be dispatched. The fix runs [runInboundReadLoop]
      * on the resumed channel, wrapped in the same Plan-1-F8 try/finally that handleConnect uses.
      *
+     * Fix 3 (true continuation): a terminated session is no longer a dead end. A persisted
+     * delegated session (its HistoryItem carries `delegated` metadata) is RE-OPENED and continued
+     * with the follow-up turn IDE-A sends right after the resume handshake — the same conversation,
+     * resumed. The inbound consent dialog is SKIPPED (the human accepted this channel when the
+     * delegation was first established). IDE-B's busy-gate still applies: if its tab is actively
+     * running another task, the resume declines gracefully (we never hijack a running session).
+     *
      * Old-channel note: The old [replyWith] closure stored in [sessionChannels] is replaced
      * by the new one from this resume call. The underlying old socket is assumed dead by virtue
      * of IDE-A's restart (the OS reclaims it); the read-loop on the original handleConnect
      * will have already hit EOF and exited. If future versions need explicit old-socket close,
      * store the old channel reference per-session and close it here.
      *
-     * Plan 4 spec §3.3.
+     * Plan 4 spec §3.3 + Fix 3 (2026-05-30 continuation campaign).
      */
     suspend fun handleChannelResume(
         msg: DelegationMessage.ChannelResume,
@@ -755,7 +804,7 @@ class DelegationInboundService(
             return
         }
 
-        // Session not in live registry — check on-disk index for terminal record.
+        // Session not in live registry — check on-disk index for a terminal delegated record.
         val basePath = project.basePath
         val agentDir: java.io.File? = if (basePath != null)
             com.workflow.orchestrator.core.util.ProjectIdentifier.agentDir(basePath)
@@ -765,17 +814,156 @@ class DelegationInboundService(
         }
         val delegated = item?.delegated
         if (delegated == null) {
+            // Truly unknown / pruned — never seen here. (Also reached when this isn't a delegated
+            // session; we only resurrect delegated ones since only those carry the delegation marker.)
             replyWith(DelegationMessage.SessionNotFound(sessionId))
-        } else {
+            closeChannel()
+            return
+        }
+
+        // Fix 3: terminated-but-persisted delegated session → RESURRECT and continue.
+        //
+        // The verdict is SYNCHRONOUS: IDE-A's reattach (resurrectAndContinue) sends ChannelResume
+        // IMMEDIATELY followed by the follow-up UserTurn, then blocks on ONE reply. We therefore read
+        // the UserTurn FIRST, run the busy-gate + kick off the resume, and only then send the single
+        // verdict — ChannelResumed (resume started) or SessionClosed (busy / unavailable / resume
+        // failed). This gives the delegating agent an immediate, actionable answer instead of a
+        // ChannelResumed-then-SessionClosed sequence racing on the same channel.
+
+        // 1) Read the follow-up user turn IDE-A sends right after ChannelResume.
+        val firstFrame = try {
+            readMessage()
+        } catch (e: Exception) {
+            LOG.warn("handleChannelResume: failed reading follow-up turn for $sessionId", e)
             replyWith(
                 DelegationMessage.SessionClosed(
                     sessionId = sessionId,
-                    closeReason = delegated.closeReason ?: "closed",
-                    summary = null,  // v1 carries summary in Result, not in HistoryItem.delegated
+                    closeReason = "resume_protocol_error: follow-up turn not received",
                 )
             )
+            closeChannel()
+            return
         }
-        closeChannel()
+        if (firstFrame !is DelegationMessage.UserTurn) {
+            LOG.warn("handleChannelResume: expected UserTurn after resume for $sessionId, " +
+                "got ${firstFrame::class.simpleName}")
+            replyWith(
+                DelegationMessage.SessionClosed(
+                    sessionId = sessionId,
+                    closeReason = "resume_protocol_error: expected a follow-up user turn",
+                )
+            )
+            closeChannel()
+            return
+        }
+
+        // 2) Resolve the resume seam (controller in production; injected fake in tests).
+        val metadata = DelegationMetadata(
+            delegatorIde = item.delegated?.delegatorIde ?: "unknown",
+            delegatorRepo = item.delegated?.delegatorRepo ?: "unknown",
+            delegatorSessionId = item.delegated?.delegatorSessionId ?: sessionId,
+            startedAt = System.currentTimeMillis(),
+        )
+        val starter: DelegatedResumeStarter? = testDelegatedResumeStarter ?: run {
+            val controller = withContext(Dispatchers.EDT) {
+                com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
+                    .getToolWindow("Workflow")?.activate {
+                        val cm = com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
+                            .getToolWindow("Workflow")?.contentManager
+                        cm?.contents?.find { it.displayName == "Agent" }?.let { cm.setSelectedContent(it) }
+                    }
+                com.workflow.orchestrator.agent.ui.AgentControllerRegistry.getInstance(project).controller
+            }
+            controller?.let { c ->
+                DelegatedResumeStarter { sid, turn, md, reply, onResult, onStarted ->
+                    c.resumeDelegatedSession(sid, turn, md, reply, onResult, onStarted)
+                }
+            }
+        }
+        if (starter == null) {
+            LOG.warn("handleChannelResume: AgentController unavailable for ${project.name}; cannot resume $sessionId")
+            replyWith(
+                DelegationMessage.SessionClosed(
+                    sessionId = sessionId,
+                    closeReason = "ide_b_agent_unavailable",
+                )
+            )
+            closeChannel()
+            return
+        }
+
+        // 3) Resume-and-continue through the seam (busy-gated; consent SKIPPED). We must NOT reply
+        // ChannelResumed before this returns STARTED + delivers a sid, or IDE-A would treat a busy /
+        // failed resume as success.
+        val sessionIdReady = CompletableDeferred<String>()
+        val outcome = try {
+            starter.resume(
+                sessionId = sessionId,
+                userTurnText = firstFrame.text,
+                metadata = metadata,
+                replyWith = replyWith,
+                onResult = { result ->
+                    stopHeartbeatForSession(sessionId)
+                    replyWith(result)
+                    closeChannel()
+                },
+                onSessionStarted = { sid -> sessionIdReady.complete(sid) },
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // resumeSession returned null (locked / missing / no history) or threw — distinct error.
+            LOG.warn("handleChannelResume: resume starter threw for $sessionId", e)
+            replyWith(
+                DelegationMessage.SessionClosed(
+                    sessionId = sessionId,
+                    closeReason = "resume_failed: ${e.message ?: e::class.simpleName}",
+                )
+            )
+            closeChannel()
+            return
+        }
+        if (outcome == DelegatedStartOutcome.DECLINED_TIMEOUT) {
+            // IDE-B is busy running another task — decline gracefully (never hijack). onSessionStarted
+            // never fired, so do NOT await it. IDE-A maps this to a clear "busy" error.
+            replyWith(
+                DelegationMessage.SessionClosed(
+                    sessionId = sessionId,
+                    closeReason = "ide_b_busy: agent tab is running another task; could not resume",
+                )
+            )
+            closeChannel()
+            return
+        }
+        // STARTED: await the resumed sid, then send the SUCCESS verdict.
+        val resumedSid = withTimeoutOrNull(
+            com.workflow.orchestrator.agent.ui.AgentController.SESSION_START_TIMEOUT_MS
+        ) { sessionIdReady.await() }
+        if (resumedSid == null) {
+            LOG.warn("handleChannelResume: resumed session id not delivered for $sessionId; failing")
+            replyWith(
+                DelegationMessage.SessionClosed(
+                    sessionId = sessionId,
+                    closeReason = "resume_failed: session id not delivered in time",
+                )
+            )
+            closeChannel()
+            return
+        }
+        // The resume is live — NOW send the single success verdict so IDE-A re-attaches its channel
+        // and arms its reader for the eventual terminal Result.
+        replyWith(DelegationMessage.ChannelResumed(sessionId, "RESUMING"))
+        // Run the inbound read-loop for subsequent answer / fetch_transcript / further user turns,
+        // mirroring handleConnect's Plan-1-F8 try/finally. The terminal Result already closes the
+        // channel via the onResult lambda above; this loop also exits on EOF.
+        try {
+            runInboundReadLoop(resumedSid, readMessage, replyWith)
+        } finally {
+            try { closeChannel() } catch (e: Exception) {
+                LOG.warn("handleChannelResume finally (resumed): closeChannel threw for $resumedSid", e)
+            }
+            unregisterSessionChannel(resumedSid)
+        }
     }
 
     /** Visible-for-tests sink. Production uses the JCEF bridge through AgentController. */

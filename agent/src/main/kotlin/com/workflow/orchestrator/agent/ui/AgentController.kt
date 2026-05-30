@@ -85,6 +85,24 @@ internal suspend fun awaitIncomingStart(
 ): Boolean = kotlinx.coroutines.withTimeoutOrNull(windowMs) { gate.await() } == true
 
 /**
+ * Whether an INCOMING cross-IDE delegation should be treated as "busy" (→ QUEUE_INCOMING) on
+ * IDE-B. Factored out of [AgentController.startDelegatedSession] so the decision is unit-testable
+ * headless (Bug B regression — `IncomingDelegationBusyGateTest`).
+ *
+ * "Busy" means *an agent loop is actively running right now* — i.e. [jobActive]. It deliberately
+ * does NOT consider [sessionLoaded]: a session that merely sits LOADED in the tab after completing
+ * (delegated or interactive) is NOT busy. Counting a loaded-but-idle session as busy was the
+ * works-once bug — a completed delegated session never clears `currentSessionId` (only
+ * [resetForNewChat] does), so the second delegation got stuck in the human-Start accept window and
+ * timed out as `declined_timeout`.
+ *
+ * [sessionLoaded] is accepted (and ignored) so the call site reads self-documentingly and so a
+ * future policy change has the signal in hand without re-threading it.
+ */
+internal fun decideIncomingBusy(jobActive: Boolean, @Suppress("UNUSED_PARAMETER") sessionLoaded: Boolean): Boolean =
+    jobActive
+
+/**
  * Bridges the JCEF chat dashboard to [AgentService].
  *
  * Responsibilities:
@@ -3087,7 +3105,15 @@ class AgentController(
         onResult: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit,
         onSessionStarted: ((String) -> Unit)? = null,
     ): DelegatedStartOutcome {
-        val busy = currentJob?.isActive == true || currentSessionId != null
+        // Bug B: "busy" for an INCOMING delegation means an agent loop is ACTIVELY RUNNING, not
+        // merely that a session is loaded in the tab. A completed session (delegated or
+        // interactive) leaves currentSessionId set until the next "New Chat" — gating on it made
+        // every delegation after the first dead-end in the human-Start accept window
+        // (declined_timeout). Gate on the live job only; decideIncomingBusy pins this contract.
+        val busy = decideIncomingBusy(
+            jobActive = currentJob?.isActive == true,
+            sessionLoaded = currentSessionId != null,
+        )
         return when (com.workflow.orchestrator.agent.delegation.DelegatedSessionSurface.decide(busy)) {
             com.workflow.orchestrator.agent.delegation.DelegatedSurface.RUN_NOW -> {
                 runDelegatedNow(request, metadata, replyWith, onResult, onSessionStarted)
@@ -3224,6 +3250,89 @@ class AgentController(
             } catch (e: Throwable) {
                 LOG.error("runDelegatedNow: delegated session start failed on EDT — " +
                     "handleConnect's sid await will time out and reply FAILED", e)
+            }
+        }
+    }
+
+    /**
+     * Entry point for RESUMING a previously-completed inbound delegated session and continuing it
+     * with a follow-up turn (Fix 3 — true continuation). The resurrection counterpart of
+     * [startDelegatedSession]: same busy-gate ([decideIncomingBusy]) and live "Delegated by…" banner
+     * ([pushActiveSessionDelegated]), but it re-opens the SAME persisted session via
+     * [AgentService.resumeDelegatedSession] (which drives `resumeSession`) instead of starting a fresh
+     * one — so it must NOT `resetForNewChat()` (that would wipe the session being resumed).
+     *
+     * Called by [com.workflow.orchestrator.agent.delegation.DelegationInboundService.handleChannelResume]
+     * OFF the EDT (socket coroutine). The inbound consent dialog has already been skipped upstream (the
+     * human accepted this channel when the delegation was first established).
+     *
+     * Busy semantics mirror the incoming-delegation gate exactly: if an agent loop is ACTIVELY running
+     * another task, decline gracefully ([DelegatedStartOutcome.DECLINED_TIMEOUT]) — never hijack it.
+     * A merely loaded-but-idle session (including the very session we're resuming) is NOT busy.
+     */
+    suspend fun resumeDelegatedSession(
+        sessionId: String,
+        userTurnText: String,
+        metadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
+        replyWith: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage) -> Unit,
+        onResult: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit,
+        onSessionStarted: ((String) -> Unit)? = null,
+    ): DelegatedStartOutcome {
+        // Same busy rule as the incoming-delegation gate (Bug B): "busy" = an agent loop is actively
+        // running right now, not merely that a session sits loaded in the tab.
+        val busy = decideIncomingBusy(
+            jobActive = currentJob?.isActive == true,
+            sessionLoaded = currentSessionId != null,
+        )
+        if (busy) {
+            // Decline gracefully — handleChannelResume maps this to a clear "busy" SessionClosed.
+            LOG.info("resumeDelegatedSession: IDE-B tab busy with another task — declining resume of $sessionId")
+            return DelegatedStartOutcome.DECLINED_TIMEOUT
+        }
+        runResumedDelegatedNow(sessionId, userTurnText, metadata, replyWith, onResult, onSessionStarted)
+        return DelegatedStartOutcome.STARTED
+    }
+
+    /**
+     * Continue a resumed delegation as a foreground session. Mirrors [runDelegatedNow] but drives
+     * [AgentService.resumeDelegatedSession] (re-opening the persisted session) and does NOT
+     * `resetForNewChat()`. [currentJob]/[currentSessionId]/[sessionActive] + the delegated banner are
+     * wired through the same callbacks so steering/short-circuit paths see a live delegated session.
+     */
+    private fun runResumedDelegatedNow(
+        sessionId: String,
+        userTurnText: String,
+        metadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
+        replyWith: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage) -> Unit,
+        onResult: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit,
+        onSessionStarted: ((String) -> Unit)? = null,
+    ) {
+        controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.resumeDelegatedSession")) {
+            try {
+                service.resumeDelegatedSession(
+                    sessionId = sessionId,
+                    userTurnText = userTurnText,
+                    delegationMetadata = metadata,
+                    replyWith = replyWith,
+                    onResult = onResult,
+                    onStreamChunk = ::onStreamChunk,
+                    onToolCall = ::onToolCall,
+                    approvalGate = ::approvalGate,
+                    sessionApprovalStore = sessionApprovalStore,
+                    onSessionStarted = { sid ->
+                        currentSessionId = sid
+                        sessionActive = true
+                        // Light up the "Delegated by {IDE} from {repo}" banner for this resumed session.
+                        pushActiveSessionDelegated(metadata)
+                        onSessionStarted?.invoke(sid)
+                    },
+                    onJobCreated = { job -> currentJob = job },
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                LOG.error("runResumedDelegatedNow: resumed delegated session failed on EDT — " +
+                    "handleChannelResume's sid await will time out and reply a clear error", e)
             }
         }
     }

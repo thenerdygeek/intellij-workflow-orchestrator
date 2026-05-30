@@ -297,8 +297,19 @@ class DelegationOutboundService(
      *   5. On bind → return a [DelegationMessage.Connect] copy carrying the
      *      preauth nonce so IDE-B skips its Accept dialog.
      *
-     * The pending file + any declined marker are cleared on every exit (success,
-     * declined, or timeout) via [PendingDelegationStore.clear].
+     * Pending-file lifetime (Fix D — cold-launch consent race). The pending file exists so the
+     * RECEIVER (a freshly-launched, still-indexing IDE-B) can replay it via
+     * [DelegationDoorbellService.replayPendingRequests]. Its lifetime is therefore DECOUPLED from
+     * the sender's in-memory [CONSENT_WAIT_TIMEOUT_MILLIS] wait. The nonce is cleared ONLY when its
+     * outcome is actually known:
+     *   • SUCCESS — the door bound + we are about to Connect (the receiver consumed the request).
+     *   • DECLINE — the receiver wrote the `.declined` marker (we poll for it).
+     * A BARE TIMEOUT (the cold IDE is still booting/indexing past the wait) does NOT clear the
+     * file — leaving it is what lets the cold IDE's post-index replay still raise the consent
+     * dialog. Lingering pending files are reaped by the receiver-side replay TTL
+     * ([DelegationDoorbellService.REPLAY_TTL_MS]) / [PendingDelegationStore.readFresh], NOT by a
+     * sender-side `finally`. (Pre-Fix-D an unconditional `finally { store.clear(nonce) }` deleted
+     * the file the instant the 90s wait elapsed, so cold-launch delegation never completed.)
      *
      * @throws DelegationException.Rejected("inbound_consent_declined") if the
      * IDE-B user declined the consent prompt.
@@ -317,32 +328,41 @@ class DelegationOutboundService(
         val store = PendingDelegationStore(targetAgentDir)
         val preview = baseConnect.request.take(REQUEST_PREVIEW_CHARS)
 
-        try {
-            // Step 2: drop the pending request so a freshly-launched IDE-B can
-            // replay it after smart mode (the doorbell knock covers already-running).
-            store.write(
-                PendingDelegationRequest(
-                    delegatorIde = baseConnect.delegatorIde,
-                    delegatorRepo = baseConnect.delegatorRepo,
-                    delegatorSessionId = delegatorSessionId,
-                    requestPreview = preview,
-                    nonce = nonce,
-                    createdAt = System.currentTimeMillis(),
-                )
-            )
-
-            // Step 3: ring the doorbell. Null ack ⇒ doorbell not bound ⇒ IDE-B
-            // isn't running ⇒ spawn the launcher (which will replay the pending file).
-            val knock = DelegationMessage.Knock(
+        // Step 2: drop the pending request so a freshly-launched IDE-B can
+        // replay it after smart mode (the doorbell knock covers already-running).
+        store.write(
+            PendingDelegationRequest(
                 delegatorIde = baseConnect.delegatorIde,
                 delegatorRepo = baseConnect.delegatorRepo,
                 delegatorSessionId = delegatorSessionId,
                 requestPreview = preview,
                 nonce = nonce,
+                createdAt = System.currentTimeMillis(),
             )
-            val doorbellPath = DelegationPaths.doorbellSocketFor(picked.path)
-            val ack = knockFn(doorbellPath, knock)
-            if (ack == null) {
+        )
+
+        // Step 3: ring the doorbell. Null ack ⇒ doorbell not bound ⇒ IDE-B
+        // isn't running ⇒ spawn the launcher (which will replay the pending file).
+        val knock = DelegationMessage.Knock(
+            delegatorIde = baseConnect.delegatorIde,
+            delegatorRepo = baseConnect.delegatorRepo,
+            delegatorSessionId = delegatorSessionId,
+            requestPreview = preview,
+            nonce = nonce,
+        )
+        val doorbellPath = DelegationPaths.doorbellSocketFor(picked.path)
+        val ack = knockFn(doorbellPath, knock)
+        // Bug B: honor the KnockAck outcome instead of treating any non-null ack like a fresh
+        // ring. A non-null ack means IDE-B is RUNNING — never spawn a launcher (that path is
+        // only for an unreachable doorbell). RINGING ⇒ a consent dialog was raised; poll for
+        // the bind. DUPLICATE ⇒ a dialog for an equivalent request is already pending on IDE-B
+        // (e.g. a rapid double-knock) — DON'T dead-spawn or fail; the existing dialog can still
+        // resolve and bind the socket, so proceed to the same poll. (The "second legitimate
+        // delegation wrongly DUPLICATE" case is fixed upstream by clearing lastDialogAt in
+        // DelegationDoorbellService once the prior dialog resolves; here we just avoid making a
+        // DUPLICATE masquerade as a fresh ring.)
+        when {
+            ack == null -> {
                 LOG.info("Doorbell unreachable for ${picked.displayName} — spawning launcher")
                 when (val spawn = launchFn(picked.path)) {
                     is SpawnResult.Failed ->
@@ -351,34 +371,46 @@ class DelegationOutboundService(
                         LOG.info("Launcher spawned for ${picked.displayName}")
                 }
             }
-
-            // Step 4: wait for the door to bind OR a decline OR timeout. We poll
-            // ping directly (rather than AutoLaunchPoller) so we can interleave
-            // the declined-marker check between ticks without touching
-            // AutoLaunchOutcome (B3).
-            val socketPath = DelegationPaths.socketFor(picked.path)
-            val bound = withTimeoutOrNull(CONSENT_WAIT_TIMEOUT_MILLIS) {
-                while (true) {
-                    if (store.isDeclined(nonce)) {
-                        throw DelegationException.Rejected("inbound_consent_declined")
-                    }
-                    if (pingFn(socketPath) != null) return@withTimeoutOrNull true
-                    delay(CONSENT_POLL_INTERVAL_MILLIS)
-                }
-                @Suppress("UNREACHABLE_CODE")
-                true
-            }
-            if (bound != true) {
-                throw DelegationException.TargetNotReachable
-            }
-
-            // Step 5: the door is bound — Connect with the preauth nonce so IDE-B
-            // skips its Accept dialog (consent already granted via the doorbell).
-            return baseConnect.copy(preauthNonce = nonce)
-        } finally {
-            // Step (cleanup): remove the pending file + declined marker on every exit.
-            store.clear(nonce)
+            ack.outcome == com.workflow.orchestrator.core.delegation.KnockOutcome.DUPLICATE ->
+                LOG.info(
+                    "Doorbell for ${picked.displayName} answered DUPLICATE — a consent dialog " +
+                        "for this delegator is already pending; polling for the existing bind",
+                )
+            else ->
+                LOG.info("Doorbell for ${picked.displayName} is RINGING — polling for the consent bind")
         }
+
+        // Step 4: wait for the door to bind OR a decline OR timeout. We poll
+        // ping directly (rather than AutoLaunchPoller) so we can interleave
+        // the declined-marker check between ticks without touching
+        // AutoLaunchOutcome (B3).
+        val socketPath = DelegationPaths.socketFor(picked.path)
+        val bound = withTimeoutOrNull(CONSENT_WAIT_TIMEOUT_MILLIS) {
+            while (true) {
+                if (store.isDeclined(nonce)) {
+                    // DECLINE — outcome known: the receiver wrote the marker. Clear the pending
+                    // file + marker, then surface the decline to the caller.
+                    store.clear(nonce)
+                    throw DelegationException.Rejected("inbound_consent_declined")
+                }
+                if (pingFn(socketPath) != null) return@withTimeoutOrNull true
+                delay(CONSENT_POLL_INTERVAL_MILLIS)
+            }
+            @Suppress("UNREACHABLE_CODE")
+            true
+        }
+        if (bound != true) {
+            // BARE TIMEOUT — the cold IDE is still booting/indexing past the wait. Do NOT clear
+            // the pending file: leaving it is what lets the receiver's post-index replay still
+            // raise the consent dialog. The receiver-side TTL reaps it if consent never comes.
+            throw DelegationException.TargetNotReachable
+        }
+
+        // Step 5: the door is bound — SUCCESS. The receiver consumed/served the request, so clear
+        // the pending file now, then Connect with the preauth nonce so IDE-B skips its Accept
+        // dialog (consent already granted via the doorbell).
+        store.clear(nonce)
+        return baseConnect.copy(preauthNonce = nonce)
     }
 
     /**
@@ -440,6 +472,11 @@ class DelegationOutboundService(
                             ?: LOG.debug("FetchTranscriptReply for unknown requestId ${msg.requestId} (dormant path)")
                     }
                     is DelegationMessage.Result -> {
+                        // Fix A: record the TERMINAL state on the handle BEFORE we return —
+                        // the finally below calls close(), which snapshots the RetainedHandle
+                        // from handleToLastSeenState. Without this the snapshot would keep the
+                        // stale "RUNNING" seed and `status` would misreport a COMPLETED session.
+                        recordTerminalState(handle.id, msg.status)
                         val waiter = pendingResultWaiters.remove(handle.id)
                         if (waiter != null) {
                             // Blocking wait() consumes the result inline; skip the async nudge.
@@ -468,6 +505,9 @@ class DelegationOutboundService(
                 status = DelegationMessage.ResultStatus.FAILED,
                 reason = "ipc_read_failed: ${e.message}",
             )
+            // Fix A: a socket EOF / read error is a terminal FAILED state — record it before the
+            // finally's close() snapshots the RetainedHandle, so `status` doesn't show "RUNNING".
+            recordTerminalState(handle.id, DelegationMessage.ResultStatus.FAILED)
             val waiter = pendingResultWaiters.remove(handle.id)
             if (waiter != null) {
                 waiter.complete(DelegationWaitOutcome.Completed(failed, handle.targetRepoName))
@@ -480,6 +520,18 @@ class DelegationOutboundService(
             pendingResultWaiters.remove(handle.id)?.complete(DelegationWaitOutcome.NotActive("channel_closed"))
             close(handle.id)
         }
+    }
+
+    /**
+     * Record the terminal remote state of a delegation on the handle's last-seen-state map,
+     * so the [RetainedHandle] snapshot that [close] takes (and therefore `status`) reflects
+     * the real outcome (COMPLETED / FAILED / CANCELED / REJECTED) instead of the literal
+     * "RUNNING" seeded at handle creation. Called from [runOutboundReaderLoop] when a terminal
+     * [DelegationMessage.Result] arrives (or a socket error synthesises a FAILED result) —
+     * BEFORE the reader loop's finally invokes [close].
+     */
+    private fun recordTerminalState(handleId: String, status: DelegationMessage.ResultStatus) {
+        handleToLastSeenState[handleId] = status.name
     }
 
     /**
@@ -608,8 +660,22 @@ class DelegationOutboundService(
         request: String,
         delegatorSessionId: String,
     ): DelegationHandle {
-        val sessionId = handleToSessionId[handleId]
-            ?: throw DelegationException.Expired("handle_not_found")
+        val sessionId = handleToSessionId[handleId] ?: run {
+            // Not in the live maps. Route the existence check through the same single source of
+            // truth `status` / `answer` use so the three actions can't disagree (Fix A). A
+            // closed-but-retained handle is REATTACHED (Fix 3 — true continuation): we RESURRECT the
+            // completed IDE-B conversation and continue it. A truly-unknown/pruned handle yields a
+            // bare `handle_not_found` (distinct error).
+            when (handleState(handleId)) {
+                is HandleState.ClosedRetained -> {
+                    // Fix 3: the channel was wiped on close(); dial a fresh socket to IDE-B, resurrect
+                    // the persisted session, and continue it with this follow-up turn. Returns a
+                    // running handle on success; throws a DISTINCT error on busy / gone / locked.
+                    return resurrectAndContinue(handleId, request, delegatorSessionId)
+                }
+                else -> throw DelegationException.Expired("handle_not_found")
+            }
+        }
         if (sessionId != delegatorSessionId) {
             // Defensive: a session can only continue its own handles.
             throw DelegationException.Expired("handle_owned_by_other_session")
@@ -718,6 +784,135 @@ class DelegationOutboundService(
     }.trimEnd()
 
     /**
+     * Test-injectable resurrection probe (mirrors [testResumeProbe]). Given the target socket path
+     * and the two frames to send ([DelegationMessage.ChannelResume] + [DelegationMessage.UserTurn]),
+     * returns the verdict reply (or null to simulate no PONG / dial failure). When set, [resurrectAndContinue]
+     * uses this seam INSTEAD of opening a real socket — but it still re-registers / arms the channel on
+     * a [DelegationMessage.ChannelResumed] verdict, so the result-nudge wiring is exercised end-to-end.
+     *
+     * Null in production (the live socket I/O path runs). Fix 3.
+     */
+    internal var testResurrectProbe: (
+        suspend (java.nio.file.Path, DelegationMessage.ChannelResume, DelegationMessage.UserTurn) -> Pair<DelegationMessage?, java.nio.channels.SocketChannel?>?
+    )? = null
+
+    /**
+     * Fix 3 (true continuation) — IDE-A reattach-from-retained. The live channel for [handleId] was
+     * wiped by [close] when the delegation completed; its metadata survives in [retainedHandles].
+     * This RESURRECTS the completed IDE-B conversation: dial a fresh socket, send [ChannelResume] +
+     * the follow-up [UserTurn] in one shot, and read a SINGLE verdict.
+     *
+     * On [DelegationMessage.ChannelResumed] (IDE-B re-opened + continued the persisted session):
+     * re-register the live maps for this handle bound to the CURRENT [delegatorSessionId], arm a
+     * reader loop so the eventual terminal [DelegationMessage.Result] is delivered as a nudge to that
+     * session, and return a running [DelegationHandle].
+     *
+     * Maps every non-success verdict / transport failure to a DISTINCT [DelegationException.Expired]:
+     * - [DelegationMessage.SessionClosed] → `session_closed: <reason>` (busy → `ide_b_busy…`, locked /
+     *   missing → `resume_failed…`, surfaced verbatim from IDE-B).
+     * - [DelegationMessage.SessionNotFound] → `session_not_found` (pruned / never seen).
+     * - dial / ping / IO failure → `ide_b_not_running` / `io_error: …`.
+     *
+     * Returns a RUNNING handle; the result arrives later as a nudge (the action is async, exactly like
+     * a fresh `send`).
+     */
+    private suspend fun resurrectAndContinue(
+        handleId: String,
+        request: String,
+        delegatorSessionId: String,
+    ): DelegationHandle {
+        // Source the resurrection coordinates from the retained snapshot (live maps are gone).
+        pruneRetainedHandles()
+        val retained = retainedHandles[handleId]
+            ?: throw DelegationException.Expired("handle_not_found")
+        val bSessionId = retained.bSessionId
+        val targetPath = retained.targetProjectPath
+        val repoName = retained.repoName
+        val lastState = retained.lastState
+        val socketPath = DelegationPaths.socketFor(java.nio.file.Path.of(targetPath))
+
+        val resume = DelegationMessage.ChannelResume(bSessionId, lastState)
+        val userTurn = DelegationMessage.UserTurn(sessionId = bSessionId, text = request)
+
+        // Dial + handshake. Test seam short-circuits the real socket; production opens one channel,
+        // writes ChannelResume + UserTurn, and reads one verdict frame.
+        val probe = testResurrectProbe
+        val (reply: DelegationMessage?, openedChannel: java.nio.channels.SocketChannel?) =
+            if (probe != null) {
+                probe.invoke(socketPath, resume, userTurn) ?: (null to null)
+            } else {
+                // PING first to confirm IDE-B is up, then open a fresh channel for the resurrection.
+                DelegationClient.ping(socketPath)
+                    ?: throw DelegationException.Expired("ide_b_not_running")
+                try {
+                    withContext(Dispatchers.IO) {
+                        val ch = SocketChannel.open(java.net.UnixDomainSocketAddress.of(socketPath))
+                        try {
+                            DelegationFraming.writeFramed(ch, resume, json)
+                            DelegationFraming.writeFramed(ch, userTurn, json)
+                            val msg = DelegationFraming.readFramed(ch, json)
+                            if (msg is DelegationMessage.ChannelResumed) {
+                                // Keep the channel open for the eventual terminal Result.
+                                msg to ch
+                            } else {
+                                try { ch.close() } catch (_: Exception) {}
+                                msg to null
+                            }
+                        } catch (e: Exception) {
+                            try { ch.close() } catch (_: Exception) {}
+                            throw e
+                        }
+                    }
+                } catch (e: Exception) {
+                    LOG.warn("resurrectAndContinue: handshake write/read failed for $handleId", e)
+                    throw DelegationException.Expired("io_error: ${e.message}")
+                }
+            }
+
+        return when (reply) {
+            is DelegationMessage.ChannelResumed -> {
+                val channel = openedChannel
+                    ?: throw DelegationException.Expired("resume_inconsistent")
+                // Re-register the live maps for this handle, bound to the CURRENT delegator session so
+                // the resumed result nudges the right place (mirrors send()'s registration).
+                activeChannels[handleId] = channel
+                lastSeenAt[handleId] = System.currentTimeMillis()
+                handleToSessionId[handleId] = delegatorSessionId
+                handleToBSessionId[handleId] = bSessionId
+                handleToTargetPath[handleId] = targetPath
+                handleToRepoName[handleId] = repoName
+                handleToLastSeenState[handleId] = reply.currentState
+                // Drop the retained snapshot now that the handle is live again.
+                retainedHandles.remove(handleId)
+                // Re-arm the reader loop so the terminal Result (and any Question/Heartbeat) is
+                // dispatched; route the result back to the CURRENT delegator session as a nudge.
+                val handle = DelegationHandle(
+                    id = handleId,
+                    targetProjectPath = targetPath,
+                    targetRepoName = repoName,
+                    lastSeenState = reply.currentState,
+                )
+                cs.launch(Dispatchers.IO) {
+                    runOutboundReaderLoop(handle, channel) { h, result ->
+                        val nudge = buildResumedResultNudge(h.targetRepoName, h.id, result)
+                        project.getService(
+                            com.workflow.orchestrator.agent.AgentService::class.java
+                        ).enqueueNudgeForSession(delegatorSessionId, nudge)
+                    }
+                }
+                handle
+            }
+            is DelegationMessage.SessionClosed -> throw DelegationException.Expired(
+                "session_closed: ${reply.closeReason}${reply.summary?.let { " — $it" } ?: ""}"
+            )
+            is DelegationMessage.SessionNotFound -> throw DelegationException.Expired("session_not_found")
+            else -> throw DelegationException.Expired(
+                "unexpected_reply: ${reply?.let { it::class.simpleName } ?: "null"}"
+            )
+        }
+    }
+
+    /**
      * Test-injectable probe. Production code uses the live socket I/O path.
      * Tests override this to drive deterministic reply outcomes.
      *
@@ -760,11 +955,19 @@ class DelegationOutboundService(
      *
      * Plan 4 spec §3.3.
      */
-    suspend fun attemptResume(handleId: String): ResumeOutcome {
-        val bSessionId = handleToBSessionId[handleId]
+    suspend fun attemptResume(
+        handleId: String,
+        explicitBSessionId: String? = null,
+        explicitTargetPath: String? = null,
+    ): ResumeOutcome {
+        // Source bSessionId / targetPath from the live maps by default, but allow an explicit
+        // override so a CLOSED handle can reattach from its [retainedHandles] snapshot (Fix 3 — the
+        // live maps are wiped on close()). On a successful ChannelResumed, the channel is re-stored
+        // under handleId, so subsequent sendContinuation calls find it live again.
+        val bSessionId = explicitBSessionId ?: handleToBSessionId[handleId]
             ?: return ResumeOutcome.NotFound
         val lastSeenState = handleToLastSeenState[handleId] ?: "unknown"
-        val targetPath = handleToTargetPath[handleId]
+        val targetPath = explicitTargetPath ?: handleToTargetPath[handleId]
             ?: return ResumeOutcome.NotFound
 
         val socketPath = DelegationPaths.socketFor(java.nio.file.Path.of(targetPath))
@@ -1037,27 +1240,56 @@ class DelegationOutboundService(
     }
 
     /**
-     * Lightweight status of a delegation handle WITHOUT a transcript round-trip —
-     * answers the agent's "is it still running / did it finish?" question cheaply.
-     * Open handles report their last-seen remote state; closed handles report the
-     * retained snapshot; unknown handles report [DelegationStatusResult.Unknown].
+     * SINGLE SOURCE OF TRUTH for "does this handle exist, and in what state?".
+     *
+     * Every action that needs to know whether a handle is known — `status`, the `answer`
+     * existence gate, and `send`-continuation's existence check — routes through this one
+     * lookup so they can NEVER disagree (the Fix-A bug: `status` said closed, `send` said
+     * `handle_not_found`, `answer` said `HandleNotFound` for the SAME handle).
+     *
+     * Resolution order:
+     *  1. Live channel open ([activeChannels]) → [HandleState.Active] with the last-seen state.
+     *  2. Otherwise, after pruning, a retained post-close snapshot ([retainedHandles]) →
+     *     [HandleState.ClosedRetained] (closed but still known within the retention window).
+     *  3. Otherwise → [HandleState.Unknown] (never existed, or its retention window elapsed).
+     *
+     * Note: a DEAD-but-persisted handle (rehydrated by [loadPersistedHandles] after an IDE-A
+     * restart — present in the live maps but with NO open channel and NO retained snapshot)
+     * is reported [HandleState.Unknown] here; [sendContinuation] handles that case separately
+     * via [attemptResume] before consulting this lookup.
      */
-    fun statusOf(handleId: String): DelegationStatusResult {
+    fun handleState(handleId: String): HandleState {
         if (activeChannels.containsKey(handleId)) {
-            return DelegationStatusResult.Active(
+            return HandleState.Active(
                 state = handleToLastSeenState[handleId] ?: "RUNNING",
                 repoName = handleToRepoName[handleId],
             )
         }
         pruneRetainedHandles()
         retainedHandles[handleId]?.let {
-            return DelegationStatusResult.Closed(
+            return HandleState.ClosedRetained(
                 lastState = it.lastState,
                 repoName = it.repoName,
                 closedAtMillis = it.capturedAt,
             )
         }
-        return DelegationStatusResult.Unknown
+        return HandleState.Unknown
+    }
+
+    /**
+     * Lightweight status of a delegation handle WITHOUT a transcript round-trip —
+     * answers the agent's "is it still running / did it finish?" question cheaply.
+     * Open handles report their last-seen remote state; closed handles report the
+     * retained snapshot; unknown handles report [DelegationStatusResult.Unknown].
+     *
+     * Defined in terms of [handleState] so it can never diverge from the existence
+     * classification the `answer` / `send`-continuation paths use.
+     */
+    fun statusOf(handleId: String): DelegationStatusResult = when (val s = handleState(handleId)) {
+        is HandleState.Active -> DelegationStatusResult.Active(state = s.state, repoName = s.repoName)
+        is HandleState.ClosedRetained ->
+            DelegationStatusResult.Closed(lastState = s.lastState, repoName = s.repoName, closedAtMillis = s.closedAtMillis)
+        HandleState.Unknown -> DelegationStatusResult.Unknown
     }
 
     /**
@@ -1114,6 +1346,20 @@ class DelegationOutboundService(
          */
         const val TRANSCRIPT_RETENTION_MILLIS = 30L * 60_000L
     }
+}
+
+/**
+ * Single-source-of-truth classification of a delegation handle returned by
+ * [DelegationOutboundService.handleState]. All three handle actions (`status`, `answer`,
+ * `send`-continuation) branch on this so they agree about whether a handle is known.
+ */
+sealed class HandleState {
+    /** A live channel is open; [state] is the last-seen remote state ("RUNNING", "AWAITING_ANSWER", …). */
+    data class Active(val state: String, val repoName: String?) : HandleState()
+    /** The channel has closed but the post-close snapshot is still retained (within the retention window). */
+    data class ClosedRetained(val lastState: String, val repoName: String?, val closedAtMillis: Long) : HandleState()
+    /** Unknown — never existed, or the retained snapshot has been pruned. */
+    object Unknown : HandleState()
 }
 
 /**

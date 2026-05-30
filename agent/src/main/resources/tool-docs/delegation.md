@@ -2,13 +2,14 @@
 
 ## Why this is a meta-tool
 
-Five verbs share one schema entry: `send`, `close`, `answer`, `fetch_transcript`,
-and `list_targets`. They are bundled because every action operates on the same
-anchor — a delegation *channel* identified by a handle — and shares the same
-substrate: `DelegationOutboundService` over a local Unix-domain-socket (UDS) IPC
-transport to another running IntelliJ instance. Splitting them into five sibling
-tools would scatter the channel-lifecycle and settings-gating logic and add
-schema tokens *every iteration*, even though most sessions never delegate at all.
+Seven verbs share one schema entry: `send`, `close`, `answer`, `fetch_transcript`,
+`status`, `wait`, and `list_targets`. They are bundled because every action operates
+on the same anchor — a delegation *handle* (and the *channel* / retained session it
+identifies) — and shares the same substrate: `DelegationOutboundService` over a local
+Unix-domain-socket (UDS) IPC transport to another running IntelliJ instance. Splitting
+them into seven sibling tools would scatter the channel-lifecycle and settings-gating
+logic and add schema tokens *every iteration*, even though most sessions never delegate
+at all.
 
 This mirrors the `runtime_exec` / `jira` consolidation pattern: the action-enum
 keeps the cost flat and presents "coordinate with another IDE" as one capability
@@ -31,6 +32,11 @@ is no HTTP, no TCP, no network egress.
 Explicit v1 non-goals (do not suggest these as fixes): cross-machine,
 cross-user, multi-hop (B delegating onward to C), per-delegation tool
 restrictions, encryption, and non-plugin IDEs.
+
+Continuation **after** the remote session completes is **in** scope (added in the
+2026-05-30 campaign): reusing a handle with `send` resumes the persisted remote
+session within a ~30 min retention window. It is *not* a non-goal — earlier docs that
+implied "follow-ups only work on a still-live channel" are superseded.
 
 Despite being localhost IPC, the blast-radius classification is `NETWORK`, not
 `AGENT_CONTROL`: the call crosses the process boundary and causes *another user's
@@ -70,7 +76,47 @@ yield and continue other work; the nudge wakes it when the result is ready.
 `fetch_transcript` exists for *on-demand inspection* of an in-flight or finished
 session — not as a completion-polling mechanism. An agent that reads the
 `status:"running"` header as if it were the result, or that spins on
-`fetch_transcript`/`list_targets` waiting for completion, is misusing the tool.
+`fetch_transcript`/`status`/`list_targets` waiting for completion, is misusing the tool.
+
+The async result is also robust to an **idle delegator**: the normal post-`send`
+state is idle (the LLM finishes its turn after delegating), and a result that lands
+then is persisted and **auto-wakes** the session with a `[DELEGATION RESULT —
+AUTO-RESUMED]` message — the same auto-wake mechanism background-process completion
+uses. (Previously an idle-arrival result was silently dropped.)
+
+### When you DO need the result inline: `wait`
+
+If the next step genuinely depends on the delegation's outcome and there's nothing
+useful to do meanwhile, **attach** with `wait` instead of polling:
+
+`delegation(action="wait", handle=…, timeout_seconds=…)` suspends the current turn
+(default 300 s, range 5–1800) until the remote session delivers its `Result` or raises
+a `Question`, and returns it inline — the same `[DELEGATION RESULT …]` block the nudge
+would carry, or the question text + `question_id` to answer. Mechanically this is a
+one-shot deferred (`pendingResultWaiters`) completed by the reader loop; the async
+nudge is suppressed for that handle while a wait is pending, with a `finally`
+safety-net so a channel close can't leave `wait` hanging. `DelegationTool.timeoutMs =
+Long.MAX_VALUE` so the loop's 120 s per-tool timeout never truncates a legitimate
+wait — the action is self-bounded by its own `timeout_seconds`.
+
+**A wait timeout is not a failure.** It returns a "still running" note; the async
+auto-delivery still fires when the remote finishes. On a `Question` outcome, call
+`answer` then `wait` again.
+
+### When you only need liveness: `status`
+
+`delegation(action="status", handle=…)` is a cheap check that reads the single
+handle-state source of truth (the same lookup `send`-continuation and `answer` use):
+
+- `active` — the delegation is still running (with its last-seen state).
+- `closed` — it finished, reported with the **terminal** `last_state`
+  (`COMPLETED` / `FAILED` / `CANCELED` / `REJECTED`). This used to misreport a stale
+  `RUNNING`; `handleToLastSeenState` is now updated to the terminal state before
+  `close()` snapshots the retained handle.
+- `DelegationHandleNotFound` — the handle is unknown or its retention window elapsed.
+
+Use it for a one-off "is it done yet?" decision (wait vs fetch_transcript vs move on),
+never as a tight poll loop.
 
 ## `send`: two branches on `handle`
 
@@ -80,12 +126,19 @@ present:
 | Branch | Trigger | Behavior |
 |---|---|---|
 | Fresh send | no `handle` | `DelegationOutboundService.send` opens the target **picker**, runs the inbound-consent handshake on the chosen target, creates a new channel, and registers the result nudge. |
-| Continuation | `handle` present | `sendContinuation` skips the picker *and* the Accept dialog and writes a fresh `UserTurn` onto the existing channel (Plan 4). |
+| Continuation | `handle` present | `sendContinuation` skips the picker *and* the Accept dialog and writes a fresh `UserTurn` onto the existing session — **even if that session already COMPLETED.** Within the ~30 min retention window it sources `bSessionId` + `targetPath` from the retained handle (the live maps are wiped on close), dials IDE-B with `ChannelResume`, and IDE-B **resurrects the persisted session** (its TASK RESUMPTION / `initiateTaskLoop` machinery), re-registers the channel, and resumes from where it left off. |
 
-The continuation branch is the correct way to send a *follow-up* to a delegation
-that is already running. Opening a fresh `send` for a follow-up spins up a new
-picker and a new remote session, losing the conversational context the remote
-agent already has.
+The continuation branch is the correct way to send a *follow-up* to a delegation,
+whether it is still running or has already finished. Opening a fresh `send` for a
+follow-up spins up a new picker and a new remote session, losing the conversational
+context the remote agent already has.
+
+**This is the campaign's big new capability.** Continuation used to require a
+still-live channel; reattach-after-completion (IDE-A re-dials from the retained
+handle, IDE-B resurrects the persisted session) means a `COMPLETED` delegation is no
+longer a dead end within the retention window. If the remote session is genuinely
+gone the continuation fails with a *specific* `DelegationExpired` reason (see the
+taxonomy below) rather than a vague "expired".
 
 ## Reachability is ambiguous by construction
 
@@ -100,27 +153,41 @@ that is the cause a user cannot diagnose from this side and the one a naive
 "the other IDE must be closed" reading gets wrong.
 
 This is also why `list_targets` reports a coarse `status` per target
-(`running` / `closed` / `discovered` / `missing`) derived from a socket probe
-(`DelegationClient.ping`): it tells you a socket answered, not that the target
-will accept.
+(`running` / `available` / `closed` / `discovered` / `missing`) derived from a
+**dual** socket probe: the work socket (`running`) then the always-bound doorbell
+socket (`available` — IDE open but inbound delegation OFF, so a send rings its
+doorbell for consent). It tells you a socket answered, not that the target will
+accept silently. The same `TargetStatusResolver` probe now backs the **picker** too,
+so the picker no longer shows a running-but-inbound-off IDE as "closed".
 
 ## Consent and the human-in-the-loop on `answer`
 
-`answer` forwards a reply to a clarifying-question nudge from the remote session.
-It honors `PluginSettings.autoApproveDelegationAnswers`:
+`answer(handle, question_id, answer)` forwards a reply to a clarifying-question
+nudge from the remote session. Note the reply parameter is **`answer`**, not
+`request`. It honors `PluginSettings.autoApproveDelegationAnswers`:
 
 - **off (default-safe):** opens `DelegationAnswerConfirmDialog` showing the
   remote question, the proposed answer, and the target repo. The human can edit
   the answer or decline entirely (decline → error, nothing is sent).
 - **on:** the answer is forwarded directly without interrupting the loop.
 
-`answer` also distinguishes two failure shapes so recovery differs:
+`answer` routes its existence check through the **same** retained-aware
+`handleState` lookup `status` and `send`-continuation use, so the three now agree
+about whether a handle exists, and it distinguishes **three** failure shapes so
+recovery differs:
 
-- `DelegationHandleNotFound` — the channel is unknown or already closed (the
-  remote session terminated since the question arrived). **Recovery: start a new
-  `send`, do not retry the dead handle.**
+- `DelegationHandleClosed` — the handle is **closed-but-retained**: the remote
+  session has already COMPLETED (you can see its terminal state). You can't answer a
+  finished session. **Recovery: continue it with `send` (same handle resumes it), or
+  read it with `fetch_transcript` — do not retry `answer`.**
+- `DelegationHandleNotFound` — the handle is genuinely unknown or pruned (never
+  existed, or its retention window elapsed). **Recovery: start a new `send`.**
 - `DelegationWriteFailed` — the channel exists but the IPC write was rejected
   (channel shutting down). **Recovery: retry, or fall back to a new `send`.**
+
+This three-way split is part of Fix A: before it, `status`, `send`-continuation, and
+`answer` could give three contradictory answers about the same handle (one read
+`retainedHandles`, another the wiped `handleToSessionId`, a third `activeChannels`).
 
 ## `fetch_transcript`: path + bounded preview
 
@@ -132,8 +199,14 @@ marker pointing the LLM at `read_file` on the path for the full content.
 The path-plus-preview shape is deliberate: a long remote session can produce a
 large transcript, and returning it inline would blow the context budget on every
 inspection. The preview answers "what is this session doing?" cheaply; the full
-read is opt-in. `NotFound` maps to `DelegationExpired` — the handle has timed
-out, been pruned, or the remote IDE closed.
+read is opt-in. It reads IDE-B's `api_conversation_history.json` **directly off the
+shared filesystem** (Unix sockets ⇒ same host) using the channel's own
+`localSessionId`, not an IPC round-trip — fixing the old "no conversation history on
+disk" (wrong session id sent) and "handle_not_found ~83 s post-completion" (handle
+torn down on result arrival) bugs. It **still works after completion**: `close()`
+snapshots a `RetainedHandle` kept for `TRANSCRIPT_RETENTION_MILLIS` (~30 min), so the
+transcript stays reachable in that window. Past it, `NotFound` maps to
+`DelegationExpired`.
 
 ## `list_targets`: read-only, never throws
 
@@ -165,6 +238,39 @@ path also releases the channel automatically when a remote session ends, but
 explicit `close` is the way to reclaim a slot for a session you're done with
 before the timeout prunes it.
 
+## Handle lifecycle / retention (~30 min after close)
+
+Closing or completing a delegation does **not** immediately invalidate its handle.
+`close()` snapshots a `RetainedHandle` (`bSessionId`, `targetPath`, `repoName`,
+terminal `lastState`) into `retainedHandles`, kept for
+`TRANSCRIPT_RETENTION_MILLIS` (~30 min) and swept by `pruneRetainedHandles()`.
+
+Within that retention window, all three handle-reading actions keep working and
+**agree** on the handle's existence:
+
+- `status` → `closed` with the terminal `last_state`.
+- `fetch_transcript` → the persisted transcript (read off disk).
+- `send`-continuation → resurrects and resumes the persisted remote session.
+
+`answer` also consults the same source: a closed-but-retained handle is consistently
+`DelegationHandleClosed`; a pruned/unknown handle is consistently
+`DelegationHandleNotFound`. After the window elapses the handle is uniformly "not
+found" everywhere. (Fix A made these reads share one source of truth — see the
+`answer` section above for the pre-fix divergence.)
+
+## Cold launch of a closed target
+
+A `closed` target (in recents, IDE not running) can still receive a delegation: the
+picker offers **Launch & delegate**. IDE-A writes a `pending-delegation/<nonce>.json`
+into IDE-B's agent dir, launches IDE-B, and after IDE-B finishes **indexing** its
+post-startup activity replays the pending request and raises the consent dialog. Fix
+D decoupled the pending file's lifetime from IDE-A's in-memory wait and widened the
+replay TTL so a large-repo index that runs longer than the old 90 s / 5 min budgets
+no longer deletes the request before IDE-B can read it — the launch request now stays
+valid ~30 min. Practical consequence for the LLM: on a cold launch, the consent
+dialog may take a while to appear (until indexing completes); that delay is expected,
+not a failure.
+
 ## Error taxonomy
 
 The first token of every error is the category, on purpose: branch on the prefix,
@@ -176,9 +282,10 @@ don't retry blindly.
 | `DelegationUserCanceledPicker` | send | user dismissed the picker | Don't auto-retry; confirm intent with the user. |
 | `DelegationTargetNotReachable` | send | socket unreachable — usually inbound disabled on target | Ask user to enable "Accept incoming delegations" on the target IDE. |
 | `DelegationLimitReached` | send | `MAX_CHANNELS` already open | `close` an existing channel, then resend. |
-| `DelegationDeclined` / `DelegationRejected` | send | target user declined consent / channel rejected | Surface to user; don't retry blindly. |
-| `DelegationExpired` | send (continuation), fetch_transcript | handle gone (timeout / prune / IDE closed) | Start a fresh `send`. |
-| `DelegationHandleNotFound` | answer | handle unknown or already closed | Start a fresh `send`. |
+| `DelegationDeclined` / `DelegationRejected` | send | target user declined consent / tab busy (`declined_timeout: IDE-B agent tab busy; user did not click Start within 55s`) | Surface to user; for a busy tab, retry once it's free. |
+| `DelegationExpired` | send (continuation), fetch_transcript | handle/session gone. On continuation the reason is specific: `session_closed` / `session_not_found` (remote session gone or pruned), `ide_b_not_running` (target IDE down), `ide_b_busy` (target tab busy), `resume_failed` (session locked/missing on disk) | `ide_b_busy` → retry shortly; `ide_b_not_running` → reopen/send fresh; `session_not_found`/`resume_failed` → fresh `send`. |
+| `DelegationHandleClosed` | answer | closed-but-retained: the session already COMPLETED | Continue it with `send` (same handle resumes it), or `fetch_transcript`; don't retry `answer`. |
+| `DelegationHandleNotFound` | answer, status, wait | handle unknown or its ~30 min retention elapsed | Start a fresh `send`. |
 | `DelegationWriteFailed` | send (continuation), answer | IPC write rejected | Retry, or fall back to a fresh `send`. |
 
 ## Counterfactual: dropping `delegation`
@@ -197,15 +304,20 @@ transcript trail for auditing what the remote agent did.
 Net verdict: **STRONG keep** for the tool overall.
 
 - `send` is the entire feature — the only way to hand work across the IDE
-  boundary, async and consent-gated by design.
+  boundary, async and consent-gated by design; its continuation branch now resumes
+  the same remote session even after completion (within retention).
 - `answer` keeps a delegated session unblocked while preserving a human review
   step (unless the user opts into auto-approve).
 - `fetch_transcript` is the only window into the remote session, with bounded
-  token cost.
+  token cost; works post-completion within retention.
+- `status` is a cheap, retained-aware liveness check (active / closed+terminal /
+  not-found) that lets the LLM branch without a transcript round-trip.
+- `wait` lets the LLM synchronously attach when the next step depends on the result,
+  preserving the no-failure-on-timeout + async-auto-delivery contract.
 - `close` is cheap channel hygiene against the concurrent-channel cap.
 - `list_targets` is side-effect-free situational awareness that avoids a blind
   send into a picker.
 
-All five anchor on the same channel/handle substrate and IPC transport, so they
-belong in one tool. The feature is off by default, so the schema cost is only
+All seven anchor on the same handle / retained-session substrate and IPC transport,
+so they belong in one tool. The feature is off by default, so the schema cost is only
 paid by users who opt in.

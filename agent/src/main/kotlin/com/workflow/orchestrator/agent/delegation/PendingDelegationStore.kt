@@ -54,4 +54,17 @@ class PendingDelegationStore(baseDir: Path) {
         runCatching { Files.deleteIfExists(dir.resolve("$nonce.json")) }
         runCatching { Files.deleteIfExists(dir.resolve("$nonce.declined")) }
     }
+
+    /**
+     * Remove ONLY the pending-request `.json` (leaving any `.declined` marker intact).
+     *
+     * Used by the RECEIVER once it has consumed a request (the user consented via the doorbell
+     * dialog) so the file is not replayed again on a later IDE restart and does not linger until
+     * the replay TTL elapses. Unlike [clear], this deliberately preserves a `.declined` marker so
+     * the SENDER's still-running poll can still observe the decline — the sender owns clearing the
+     * marker (Fix D).
+     */
+    fun clearPending(nonce: String) {
+        runCatching { Files.deleteIfExists(dir.resolve("$nonce.json")) }
+    }
 }

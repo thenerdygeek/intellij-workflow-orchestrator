@@ -236,9 +236,27 @@ class DelegationDoorbellService(
         } catch (e: Exception) {
             LOG.warn("doorbell consent dialog/apply failed for nonce=${knock.nonce}", e)
         } finally {
-            pendingNonces.remove(knock.nonce)
-            pendingDelegatorSessions.remove(knock.delegatorSessionId)
+            clearDedupeSlots(knock)
         }
+    }
+
+    /**
+     * Release all dedupe/rate-limit reservations for [knock]. Called from [showDialogAndApply]'s
+     * `finally` once the consent dialog has resolved, so a later knock from the same delegator
+     * session can raise a fresh dialog.
+     *
+     * Bug B: this MUST clear [lastDialogAt] too. Previously only [pendingNonces] +
+     * [pendingDelegatorSessions] were released, so a legitimate SECOND delegation from the same
+     * delegator session — arriving after the first dialog resolved but still within
+     * [RATE_LIMIT_WINDOW_MS] — was wrongly answered DUPLICATE and raised no dialog (and on IDE-A
+     * that surfaced as a 90s dead-poll → TargetNotReachable). The rate-limit is meant to throttle
+     * dialog SPAM while one is pending, not to block a real follow-up after the prior one resolved.
+     */
+    @Synchronized
+    internal fun clearDedupeSlots(knock: DelegationMessage.Knock) {
+        pendingNonces.remove(knock.nonce)
+        pendingDelegatorSessions.remove(knock.delegatorSessionId)
+        lastDialogAt.remove(knock.delegatorSessionId)
     }
 
     // ── Consent application (socket/EDT-free for unit testing) ─────────────────
@@ -253,6 +271,12 @@ class DelegationDoorbellService(
      *   then record the preauth nonce.
      * - [ConsentChoice.ALLOW_ONCE] → transient bind + record preauth nonce; setting unchanged.
      * - [ConsentChoice.CANCEL] → write the declined marker; no bind, no preauth.
+     *
+     * Fix D: on either ALLOW choice the consumed pending `.json` is dropped via
+     * [PendingDelegationStore.clearPending] so a cold-launch request that the SENDER already
+     * stopped polling for (its 90s wait timed out before the user consented) is not replayed again
+     * on a later IDE restart and does not linger until [REPLAY_TTL_MS]. The `.declined` marker is
+     * deliberately NOT removed on CANCEL — the sender's poll may still need to observe it.
      */
     internal fun applyConsent(
         knock: DelegationMessage.Knock,
@@ -278,6 +302,7 @@ class DelegationDoorbellService(
                     }
                 }
                 inbound.recordPreauth(knock.nonce)
+                store.clearPending(knock.nonce)
             }
             ConsentChoice.ALLOW_ONCE -> {
                 // Bug D: record the preauth nonce BEFORE binding the socket. Once startTransient()
@@ -286,6 +311,7 @@ class DelegationDoorbellService(
                 // IDE-B would pop a redundant Accept dialog. Recording first closes that window.
                 inbound.recordPreauth(knock.nonce)
                 inbound.startTransient()
+                store.clearPending(knock.nonce)
             }
             ConsentChoice.CANCEL -> {
                 store.markDeclined(knock.nonce)
@@ -331,7 +357,19 @@ class DelegationDoorbellService(
         /** ≤ 1 consent dialog per delegator session per 10 s (Plan 6 spec §10). */
         const val RATE_LIMIT_WINDOW_MS = 10_000L
 
-        /** Fresh-launch replay TTL: 5 minutes (Plan 6 spec §10). */
-        const val REPLAY_TTL_MS = 5L * 60 * 1000
+        /**
+         * Fresh-launch replay TTL: 30 minutes (Fix D).
+         *
+         * This bounds how stale a fresh-launch pending request may be before [readFresh] discards
+         * it (and thus before the consent dialog is suppressed). It is evaluated by the COLD,
+         * newly-launched IDE-B *after* it finishes indexing — so it must comfortably exceed a
+         * large-repo cold boot + full index, which can run well past the old 5-minute value. At
+         * 5 min, a request that survived the sender's wait (the PRIMARY Fix-D change) could still be
+         * dropped as "stale" the moment the cold IDE became ready, so the dialog never appeared.
+         * 30 min gives generous headroom for indexing while still ensuring a genuinely abandoned
+         * fresh-launch request (delegator long gone) does not pop a surprise dialog much later.
+         * Stamped from IDE-A's `createdAt` (see [DelegationOutboundService.knockAndWaitForBind]).
+         */
+        const val REPLAY_TTL_MS = 30L * 60 * 1000
     }
 }
