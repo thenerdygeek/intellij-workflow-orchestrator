@@ -191,8 +191,14 @@ class AgentAdvancedConfigurable(
                         .bindIntText(agentSettings.state::concurrentBackgroundProcessesPerSession)
                 }
                 row {
-                    checkBox("Auto-wake session on background completion")
+                    checkBox("Auto-wake session on background process / delegation completion")
                         .bindSelected(agentSettings.state::autoWakeOnBackgroundCompletion)
+                        .comment(
+                            "When a background process finishes — or a cross-IDE delegation you " +
+                                "sent returns its result — after your turn already ended, resume the " +
+                                "session automatically to deliver it (subject to the per-session cap " +
+                                "and cooldown below)."
+                        )
                 }
                 row("Max auto-wakes per session:") {
                     intTextField(1..50)

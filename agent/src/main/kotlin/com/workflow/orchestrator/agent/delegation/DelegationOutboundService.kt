@@ -110,6 +110,15 @@ class DelegationOutboundService(
     private val retainedHandles = java.util.concurrent.ConcurrentHashMap<String, RetainedHandle>()
 
     /**
+     * One-shot waiters for the explicit `delegation(action="wait")` attach action.
+     * When a [DelegationMessage.Result] or [DelegationMessage.Question] arrives for a
+     * handle with a registered waiter, the reader loop completes it directly (and skips
+     * the async nudge / question-nudge path) so the blocking `wait` call returns inline.
+     */
+    private val pendingResultWaiters =
+        java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.CompletableDeferred<DelegationWaitOutcome>>()
+
+    /**
      * Test seams (mirror [testSessionDirResolver] / [testResumeProbe] style) so the
      * direct shared-FS transcript read can run hermetically against @TempDir fixtures
      * instead of the real `~/.workflow-orchestrator` tree. Null in production.
@@ -406,7 +415,16 @@ class DelegationOutboundService(
                 }
                 lastSeenAt[handle.id] = System.currentTimeMillis()
                 when (msg) {
-                    is DelegationMessage.Question -> handleIncomingQuestion(handle, msg)
+                    is DelegationMessage.Question -> {
+                        val waiter = pendingResultWaiters.remove(handle.id)
+                        if (waiter != null) {
+                            // An explicit wait() is blocking on this handle — hand the question
+                            // straight to it so the LLM can answer, instead of a separate nudge.
+                            waiter.complete(DelegationWaitOutcome.Question(msg, handle.targetRepoName))
+                        } else {
+                            handleIncomingQuestion(handle, msg)
+                        }
+                    }
                     is DelegationMessage.AnswerCanceled -> rescindLocalQuestion(handle, msg.questionId, msg.reason)
                     is DelegationMessage.Heartbeat -> {
                         // Liveness signal — already accounted for by the lastSeenAt update above.
@@ -422,7 +440,13 @@ class DelegationOutboundService(
                             ?: LOG.debug("FetchTranscriptReply for unknown requestId ${msg.requestId} (dormant path)")
                     }
                     is DelegationMessage.Result -> {
-                        onResult(handle, msg)
+                        val waiter = pendingResultWaiters.remove(handle.id)
+                        if (waiter != null) {
+                            // Blocking wait() consumes the result inline; skip the async nudge.
+                            waiter.complete(DelegationWaitOutcome.Completed(msg, handle.targetRepoName))
+                        } else {
+                            onResult(handle, msg)
+                        }
                         return
                     }
                     else -> {
@@ -440,14 +464,20 @@ class DelegationOutboundService(
             }
         } catch (e: Exception) {
             LOG.warn("Result read failed for ${handle.id}", e)
-            onResult(
-                handle,
-                DelegationMessage.Result(
-                    status = DelegationMessage.ResultStatus.FAILED,
-                    reason = "ipc_read_failed: ${e.message}",
-                )
+            val failed = DelegationMessage.Result(
+                status = DelegationMessage.ResultStatus.FAILED,
+                reason = "ipc_read_failed: ${e.message}",
             )
+            val waiter = pendingResultWaiters.remove(handle.id)
+            if (waiter != null) {
+                waiter.complete(DelegationWaitOutcome.Completed(failed, handle.targetRepoName))
+            } else {
+                onResult(handle, failed)
+            }
         } finally {
+            // Safety net: unblock any wait() still pending (e.g. unknown-message drop path)
+            // so it returns promptly instead of waiting out its full timeout.
+            pendingResultWaiters.remove(handle.id)?.complete(DelegationWaitOutcome.NotActive("channel_closed"))
             close(handle.id)
         }
     }
@@ -1030,6 +1060,32 @@ class DelegationOutboundService(
         return DelegationStatusResult.Unknown
     }
 
+    /**
+     * Explicit attach: suspend until the delegation for [handleId] completes or raises a
+     * clarifying question, or [timeoutMillis] elapses. Returns a [DelegationWaitOutcome].
+     *
+     * When a result/question arrives, the reader loop completes this waiter directly and
+     * suppresses the async nudge path, so the answer is delivered inline to the caller.
+     * If the handle is no longer active (already completed, or unknown) returns
+     * [DelegationWaitOutcome.NotActive] immediately — there is nothing to attach to.
+     */
+    suspend fun awaitResult(handleId: String, timeoutMillis: Long): DelegationWaitOutcome {
+        if (!activeChannels.containsKey(handleId)) {
+            pruneRetainedHandles()
+            val reason = if (retainedHandles.containsKey(handleId)) "already_completed" else "handle_not_found"
+            return DelegationWaitOutcome.NotActive(reason)
+        }
+        val deferred = kotlinx.coroutines.CompletableDeferred<DelegationWaitOutcome>()
+        pendingResultWaiters[handleId] = deferred
+        return try {
+            kotlinx.coroutines.withTimeoutOrNull(timeoutMillis) { deferred.await() }
+                ?: DelegationWaitOutcome.TimedOut(handleId, handleToRepoName[handleId] ?: handleId.take(8))
+        } finally {
+            // Remove only if still ours (a concurrent completion may have replaced it).
+            pendingResultWaiters.remove(handleId, deferred)
+        }
+    }
+
     /** Drop retained snapshots older than [TRANSCRIPT_RETENTION_MILLIS]. */
     private fun pruneRetainedHandles() {
         val cutoff = System.currentTimeMillis() - TRANSCRIPT_RETENTION_MILLIS
@@ -1070,6 +1126,20 @@ sealed class DelegationStatusResult {
     data class Closed(val lastState: String, val repoName: String?, val closedAtMillis: Long) : DelegationStatusResult()
     /** Handle is unknown or its retention window has elapsed. */
     object Unknown : DelegationStatusResult()
+}
+
+/**
+ * Outcome of [DelegationOutboundService.awaitResult] (the explicit `wait` attach action).
+ */
+sealed class DelegationWaitOutcome {
+    /** The delegation finished; [result] is the terminal result. */
+    data class Completed(val result: DelegationMessage.Result, val repoName: String) : DelegationWaitOutcome()
+    /** The delegated session raised a clarifying question — answer it, then wait again. */
+    data class Question(val question: DelegationMessage.Question, val repoName: String) : DelegationWaitOutcome()
+    /** Still running after the wait budget elapsed (the async path / auto-wake will still deliver it). */
+    data class TimedOut(val handleId: String, val repoName: String) : DelegationWaitOutcome()
+    /** Nothing to attach to — already completed, or unknown handle. */
+    data class NotActive(val reason: String) : DelegationWaitOutcome()
 }
 
 /**

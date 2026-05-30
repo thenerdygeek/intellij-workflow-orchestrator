@@ -164,6 +164,28 @@ class AgentService(
     private val autoWakeGuards = com.workflow.orchestrator.agent.tools.background.AutoWakeGuardState()
 
     /**
+     * Shared auto-wake orchestrator used by BOTH background-process completion and
+     * cross-IDE delegation result/question delivery. Reads [AgentSettings] live, routes
+     * through [autoWakeGuards] (so the per-session cap/cooldown is shared), and on WAKE
+     * invokes [autoWakeListener] via `invokeLater`. Logic lives in [IdleSessionWaker] so it
+     * is unit-testable without constructing AgentService.
+     */
+    private val idleWaker = com.workflow.orchestrator.agent.tools.background.IdleSessionWaker(
+        guards = autoWakeGuards,
+        settings = {
+            val s = AgentSettings.getInstance(project).state
+            com.workflow.orchestrator.agent.tools.background.AutoWakeSettings(
+                enabled = s.autoWakeOnBackgroundCompletion,
+                cap = s.autoWakeMaxPerSession,
+                cooldownMs = s.autoWakeCooldownMs,
+            )
+        },
+        listener = { autoWakeListener },
+        invoker = { block -> com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(block) },
+        onLog = { log.info(it) },
+    )
+
+    /**
      * Task 6.1 — optional hook the UI layer (AgentController) registers to carry out
      * the actual auto-wake. The agent service cannot drive the full resume pipeline
      * on its own because all the interactive callbacks (approval gate, plan, token
@@ -445,36 +467,23 @@ class AgentService(
         sessionId: String,
         event: com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent,
     ) {
-        val settings = AgentSettings.getInstance(project).state
-        val decision = autoWakeGuards.decide(
+        // The event is already persisted by the caller, so a SKIP_GUARD / DEFER_NO_LISTENER
+        // route here still surfaces on the next manual resume (Task 6.2 pickup).
+        autoWakeIdleSession(
             sessionId = sessionId,
-            enabled = settings.autoWakeOnBackgroundCompletion,
-            cap = settings.autoWakeMaxPerSession,
-            cooldownMs = settings.autoWakeCooldownMs,
+            syntheticText = buildAutoResumeSyntheticMessage(event),
+            source = "bg ${event.bgId}",
         )
-        if (decision != com.workflow.orchestrator.agent.tools.background.AutoWakeGuardState.Decision.PROCEED) {
-            log.info(
-                "[AutoWake] skipped (${decision.name}); session=$sessionId bg=${event.bgId} " +
-                    "attempts=${autoWakeGuards.attemptCount(sessionId)}"
-            )
-            return
-        }
-
-        val listener = autoWakeListener
-        if (listener == null) {
-            // No UI controller wired — persisted entry will be delivered on the
-            // next manual resume via Task 6.2's resume-path pickup. Expected in
-            // headless tests and during plugin startup before AgentController init.
-            log.info("[AutoWake] no listener registered; deferring to resume pickup; session=$sessionId bg=${event.bgId}")
-            return
-        }
-
-        val synthetic = buildAutoResumeSyntheticMessage(event)
-        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
-            runCatching { listener.invoke(sessionId, synthetic) }
-                .onFailure { log.warn("[AutoWake] listener failed: ${it.message}", it) }
-        }
     }
+
+    /**
+     * Guarded auto-wake of an idle session — delegates to the testable [idleWaker]
+     * ([IdleSessionWaker]). Shared by background-process completion
+     * ([autoResumeForBackgroundCompletion]) and cross-IDE delegation result/question
+     * delivery ([enqueueNudgeForSession]) so both async-completion paths behave identically.
+     */
+    private fun autoWakeIdleSession(sessionId: String, syntheticText: String, source: String) =
+        idleWaker.wake(sessionId, syntheticText, source)
 
     /**
      * Build the synthetic `[BACKGROUND COMPLETION — AUTO-RESUMED]` user message
@@ -525,21 +534,40 @@ class AgentService(
     /**
      * Inject a synthetic nudge message into the loop that owns [sessionId].
      *
-     * Called by [com.workflow.orchestrator.agent.tools.delegation.DelegationTool]'s
-     * `send` action `onResult` closure when an async delegation result arrives — the loop is still
-     * running, and the nudge surfaces at the next iteration boundary via the steering
-     * queue.  Safe to call from any thread.
-     *
-     * If the loop is no longer active (session ended / new chat) the nudge is silently
-     * dropped — the session is over and there is nowhere to inject it.
+     * Called when an async cross-IDE delegation result / clarifying question arrives.
+     * If the loop is still running, the nudge surfaces at the next iteration boundary
+     * via the steering queue. If the loop has already ended — the NORMAL state after the
+     * orchestrator completes its turn following a `delegation(send)` — the nudge is NOT
+     * dropped: it auto-wakes the session (subject to the auto-wake guards), so the
+     * delegated answer is delivered automatically. This mirrors background-process
+     * completion ([onBackgroundCompletion]); previously the idle case silently lost the
+     * result. Safe to call from any thread.
      */
     fun enqueueNudgeForSession(sessionId: String, text: String) {
         val loop = activeLoopForSession(sessionId)
         if (loop != null) {
             loop.enqueueSteeringMessage(text)
         } else {
-            log.warn("[AgentService] enqueueNudgeForSession: no active loop for session $sessionId — nudge dropped")
+            // Loop ended — wake the session with the result instead of dropping it.
+            autoWakeIdleSession(sessionId, buildDelegationAutoResumeMessage(text), "delegation")
         }
+    }
+
+    /**
+     * Synthetic `[DELEGATION RESULT — AUTO-RESUMED]` user message delivered when a
+     * cross-IDE delegation completes (or raises a question) after the orchestrator's
+     * turn already ended. Mirrors [buildAutoResumeSyntheticMessage] for background
+     * completions so the LLM knows its turn was resumed and why.
+     */
+    internal fun buildDelegationAutoResumeMessage(nudge: String): String = buildString {
+        appendLine("[DELEGATION RESULT — AUTO-RESUMED]")
+        appendLine("Your previous turn ended, but a cross-IDE delegation you sent just finished:")
+        appendLine()
+        append(nudge)
+        appendLine()
+        appendLine()
+        appendLine("Decide whether this needs action. If it completes the original task, call")
+        appendLine("attempt_completion. Otherwise continue working with this result.")
     }
 
     /**

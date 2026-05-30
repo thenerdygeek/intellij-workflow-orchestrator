@@ -11,6 +11,7 @@ import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.delegation.DelegationException
 import com.workflow.orchestrator.agent.delegation.DelegationOutboundService
 import com.workflow.orchestrator.agent.delegation.DelegationStatusResult
+import com.workflow.orchestrator.agent.delegation.DelegationWaitOutcome
 import com.workflow.orchestrator.agent.delegation.FetchTranscriptResult
 import com.workflow.orchestrator.agent.delegation.ui.DelegationAnswerConfirmDialog
 import com.workflow.orchestrator.agent.delegation.ui.SocketGlobDiscovery
@@ -29,6 +30,7 @@ import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.nio.file.Files
 import java.nio.file.Path
@@ -47,6 +49,9 @@ import java.nio.file.Path
  *   transcript is retained for a grace period after the channel closes.
  * - `status` — cheap liveness check of a handle (active / closed / unknown) without a
  *   transcript round-trip.
+ * - `wait` — block until the delegation completes or raises a question (bounded by
+ *   `timeout_seconds`); returns the result inline. The async result still auto-delivers,
+ *   so a timeout is not a failure.
  * - `list_targets` — read-only enumeration of potential delegation targets.
  *
  * The settings gate ([PluginSettings.enableOutboundCrossIdeDelegation]) is checked once
@@ -104,6 +109,11 @@ class DelegationTool(
           closed (with last-seen state), or a not-found error once the retention window
           elapses. Use this instead of fetch_transcript when you only need to know whether
           the delegation is still running. Do NOT poll in a tight loop.
+        - wait(handle, timeout_seconds?) → Block the current turn until the delegation
+          completes or raises a clarifying question, then return it inline (default 300s,
+          5-1800). Use this to "attach" and get the answer in the same turn. On a question,
+          answer it then wait again. A timeout returns "still running" — NOT a failure;
+          the result auto-delivers (the session auto-resumes) when it finishes.
         - list_targets() → Read-only enumeration of potential delegation targets (same
           list the picker shows: running / closed / discovered / missing). No UI opens.
 
@@ -121,7 +131,7 @@ class DelegationTool(
             "action" to ParameterProperty(
                 type = "string",
                 description = "Operation to perform",
-                enumValues = listOf("send", "close", "answer", "fetch_transcript", "status", "list_targets"),
+                enumValues = listOf("send", "close", "answer", "fetch_transcript", "status", "wait", "list_targets"),
             ),
             "request" to ParameterProperty(
                 type = "string",
@@ -136,8 +146,14 @@ class DelegationTool(
             "handle" to ParameterProperty(
                 type = "string",
                 description = "Channel handle returned by a prior delegation send — required for " +
-                    "action=close/answer/fetch_transcript/status; optional for action=send (continuation: " +
+                    "action=close/answer/fetch_transcript/status/wait; optional for action=send (continuation: " +
                     "skips the picker and Accept dialog, sends a new user turn on the existing channel)",
+            ),
+            "timeout_seconds" to ParameterProperty(
+                type = "integer",
+                description = "For action=wait only: how long to block for the result before returning " +
+                    "'still running' (default 300, range 5-1800). The result also arrives automatically " +
+                    "when done, so a timeout is not a failure.",
             ),
             "question_id" to ParameterProperty(
                 type = "string",
@@ -157,15 +173,21 @@ class DelegationTool(
         WorkerType.ANALYZER,
     )
 
+    // No wall-clock loop timeout: action=wait blocks for up to its own timeout_seconds cap
+    // (≤30 min), and send/answer suspend on user dialogs. Each action is internally bounded;
+    // the default 120s per-tool timeout would otherwise truncate a legitimate wait or picker.
+    override val timeoutMs: Long get() = Long.MAX_VALUE
+
     override fun documentation(): ToolDocumentation = toolDoc("delegation") {
         summary {
             technical(
-                "Single-tool dispatcher for the cross-IDE delegation surface: six actions over a local " +
+                "Single-tool dispatcher for the cross-IDE delegation surface: seven actions over a local " +
                     "Unix-domain-socket IPC channel to another running IntelliJ instance on the same machine — " +
                     "send (fresh delegation via picker, or handle-keyed continuation), close (idempotent), " +
                     "answer (forward a clarifying-question reply), fetch_transcript (path + 2 KiB head preview; " +
                     "retained ~30 min post-completion), status (cheap active/closed liveness check), " +
-                    "and list_targets (read-only recents+discovery enumeration). Gated behind " +
+                    "wait (block until the delegation completes/asks, returned inline; async result still " +
+                    "auto-delivers), and list_targets (read-only recents+discovery enumeration). Gated behind " +
                     "PluginSettings.enableOutboundCrossIdeDelegation; results return asynchronously as loop nudges, never inline."
             )
             plain(
@@ -455,10 +477,11 @@ class DelegationTool(
             "answer" -> handleAnswer(params, project)
             "fetch_transcript" -> handleFetchTranscript(params, project)
             "status" -> handleStatus(params, project)
+            "wait" -> handleWait(params, project)
             "list_targets" -> handleListTargets(params, project)
             else -> ToolResult.error(
                 "delegation: unknown action '$action' — must be one of " +
-                    "send|close|answer|fetch_transcript|status|list_targets"
+                    "send|close|answer|fetch_transcript|status|wait|list_targets"
             )
         }
     }
@@ -732,6 +755,63 @@ class DelegationTool(
         }
     }
 
+    // ── Action: wait ─────────────────────────────────────────────────────────
+
+    private suspend fun handleWait(params: JsonObject, project: Project): ToolResult {
+        val handleId = params["handle"]?.jsonPrimitive?.content
+            ?: return ToolResult.error("delegation: 'handle' is required")
+        val outbound = project.getService(DelegationOutboundService::class.java)
+            ?: return ToolResult.error("delegation: DelegationOutboundService unavailable")
+        val timeoutSeconds = (params["timeout_seconds"]?.jsonPrimitive?.intOrNull ?: DEFAULT_WAIT_SECONDS)
+            .coerceIn(MIN_WAIT_SECONDS, MAX_WAIT_SECONDS)
+        val shortId = handleId.take(8)
+        return when (val outcome = outbound.awaitResult(handleId, timeoutSeconds * 1000L)) {
+            is DelegationWaitOutcome.Completed -> ToolResult(
+                content = buildNudgeText(outcome.repoName, handleId, outcome.result),
+                summary = "Delegation $shortId (${outcome.repoName}) finished: ${outcome.result.status}",
+                tokenEstimate = 60,
+            )
+            is DelegationWaitOutcome.Question -> ToolResult(
+                content = buildString {
+                    appendLine("The delegated session ${outcome.repoName} ($shortId) is asking a clarifying question:")
+                    appendLine()
+                    appendLine(outcome.question.text)
+                    if (outcome.question.options.isNotEmpty()) {
+                        appendLine("Suggested options: ${outcome.question.options.joinToString(", ")}")
+                    }
+                    appendLine()
+                    append(
+                        "Answer it with delegation(action=\"answer\", handle=\"$handleId\", " +
+                            "question_id=\"${outcome.question.questionId}\", answer=\"…\"), then wait again if needed."
+                    )
+                },
+                summary = "Delegation $shortId asked a clarifying question",
+                tokenEstimate = 40,
+            )
+            is DelegationWaitOutcome.TimedOut -> ToolResult(
+                content = "Delegation ${outcome.repoName} ($shortId) is still running after ${timeoutSeconds}s. " +
+                    "This is not a failure — it will deliver its result automatically when done (your session " +
+                    "auto-resumes). You may continue with other work, call delegation(action=\"status\") to " +
+                    "check, or delegation(action=\"wait\") again.",
+                summary = "Delegation $shortId still running (waited ${timeoutSeconds}s)",
+                tokenEstimate = 30,
+            )
+            is DelegationWaitOutcome.NotActive -> if (outcome.reason == "already_completed") {
+                ToolResult(
+                    content = "Delegation $shortId has already completed. " +
+                        "Use delegation(action=\"fetch_transcript\", handle=\"$handleId\") to read its conversation.",
+                    summary = "Delegation $shortId already completed",
+                    tokenEstimate = 20,
+                )
+            } else {
+                ToolResult.error(
+                    "DelegationHandleNotFound: $handleId — unknown handle or never opened. " +
+                        "Use delegation with action=send to start one."
+                )
+            }
+        }
+    }
+
     // ── Action: fetch_transcript ─────────────────────────────────────────────
 
     private suspend fun handleFetchTranscript(params: JsonObject, project: Project): ToolResult {
@@ -833,6 +913,11 @@ class DelegationTool(
 
     companion object {
         private val LOG = Logger.getInstance(DelegationTool::class.java)
+
+        /** action=wait blocking budget bounds (seconds). */
+        const val DEFAULT_WAIT_SECONDS = 300
+        const val MIN_WAIT_SECONDS = 5
+        const val MAX_WAIT_SECONDS = 1800
 
         private fun canon(p: String): String =
             try { Path.of(p).toAbsolutePath().normalize().toString() } catch (_: Exception) { p }
