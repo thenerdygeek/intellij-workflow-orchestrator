@@ -2,6 +2,8 @@ package com.workflow.orchestrator.core.delegation
 
 import com.intellij.openapi.diagnostic.Logger
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
@@ -130,8 +132,17 @@ class DelegationServer(
                     try { client.close() } catch (_: Exception) {}
                 }
                 is DelegationMessage.Connect -> {
+                    // BUG #6 fix: per-connection write mutex serializes every framed write through
+                    // the shared replyWith closure. Without this, concurrent producers — e.g.
+                    // DelegationInboundService.routeQuestion (Question frame) and HeartbeatScheduler
+                    // (Heartbeat tick) — can interleave their writes under send-buffer back-pressure,
+                    // corrupting the framed stream and causing IDE-A to mis-decode a spurious FAILED
+                    // result. Mirrors the OUTBOUND sendMutex pattern in DelegationOutboundService.
+                    val writeMutex = Mutex()
                     val replyWith: suspend (DelegationMessage) -> Unit = { reply ->
-                        withContext(Dispatchers.IO) { DelegationFraming.writeFramed(client, reply, json) }
+                        writeMutex.withLock {
+                            withContext(Dispatchers.IO) { DelegationFraming.writeFramed(client, reply, json) }
+                        }
                     }
                     val readMessage: suspend () -> DelegationMessage = {
                         withContext(Dispatchers.IO) { DelegationFraming.readFramed(client, json) }
@@ -147,8 +158,14 @@ class DelegationServer(
                     // any exception path.
                 }
                 is DelegationMessage.ChannelResume -> {
+                    // BUG #6 fix: same per-connection writeMutex for the ChannelResume path.
+                    // The resumed-channel reader loop also drives replyWith concurrently with the
+                    // HeartbeatScheduler, so it needs the same serialization guarantee.
+                    val writeMutex = Mutex()
                     val replyWith: suspend (DelegationMessage) -> Unit = { reply ->
-                        withContext(Dispatchers.IO) { DelegationFraming.writeFramed(client, reply, json) }
+                        writeMutex.withLock {
+                            withContext(Dispatchers.IO) { DelegationFraming.writeFramed(client, reply, json) }
+                        }
                     }
                     val readMessage: suspend () -> DelegationMessage = {
                         withContext(Dispatchers.IO) { DelegationFraming.readFramed(client, json) }

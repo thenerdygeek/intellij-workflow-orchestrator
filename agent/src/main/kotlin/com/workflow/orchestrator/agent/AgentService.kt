@@ -181,6 +181,10 @@ class AgentService(
             )
         },
         listener = { autoWakeListener },
+        // BUG #4 — the live loop's session id (null when idle). The waker only fires an
+        // auto-wake-resume when the target IS this session (or nothing is active); otherwise
+        // it defers (DEFER_ACTIVE_SESSION) so it can't cancel/reset a different live session.
+        activeSessionId = { activeTask.get()?.sessionId },
         invoker = { block -> com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater(block) },
         onLog = { log.info(it) },
     )
@@ -537,37 +541,44 @@ class AgentService(
      * Called when an async cross-IDE delegation result / clarifying question arrives.
      * If the loop is still running, the nudge surfaces at the next iteration boundary
      * via the steering queue. If the loop has already ended — the NORMAL state after the
-     * orchestrator completes its turn following a `delegation(send)` — the nudge is NOT
-     * dropped: it auto-wakes the session (subject to the auto-wake guards), so the
-     * delegated answer is delivered automatically. This mirrors background-process
-     * completion ([onBackgroundCompletion]); previously the idle case silently lost the
-     * result. Safe to call from any thread.
+     * orchestrator completes its turn following a `delegation(send)` — the nudge is
+     * PERSISTED FIRST (BUG #2) and then auto-woken:
+     *
+     *  - persist-first mirrors [onBackgroundCompletion] (persist before [autoWakeIdleSession]):
+     *    if the auto-wake guard rejects (cooldown / cap / disabled / no-listener) OR the wake is
+     *    deferred because a DIFFERENT session is currently active (BUG #4), the nudge is NOT
+     *    dropped — it REPLAYS in the resume preamble ([resumeSession] → "[DELEGATION RESULTS —
+     *    delivered on resume]") when the target session is next resumed.
+     *  - the persisted entry is consumed on successful replay; on a successful auto-wake the
+     *    [resumeSession] pickup also drains it, so it is delivered exactly once.
+     *
+     * This matters most for a clarifying QUESTION nudge: IDE-B's `routeQuestion` await is
+     * bounded by the channel lifecycle — the outbound `IdleTimer` (delegationIdleTimeoutMinutes)
+     * closes a silent channel, which terminates IDE-B's read loop and cancels the pending
+     * question (CancellationException → a clean "session ended" tool error). Persist-first
+     * additionally guarantees IDE-A surfaces the question on its next resume even if the live
+     * wake was rejected/deferred, so a human/LLM can answer well before that idle timeout fires.
+     *
+     * Safe to call from any thread.
      */
     fun enqueueNudgeForSession(sessionId: String, text: String) {
         val loop = activeLoopForSession(sessionId)
         if (loop != null) {
             loop.enqueueSteeringMessage(text)
         } else {
-            // Loop ended — wake the session with the result instead of dropping it.
-            autoWakeIdleSession(sessionId, buildDelegationAutoResumeMessage(text), "delegation")
+            // Loop ended (the normal post-delegate state). Persist FIRST so a guard-rejected
+            // or active-session-deferred wake still replays on the next resume, then attempt
+            // the auto-wake — exactly mirroring onBackgroundCompletion's persist-then-wake.
+            val nudgeId = persistDelegationNudgeForLaterResume(sessionId, text)
+            // The persisted nudge is the SINGLE delivery carrier: on WAKE the listener triggers
+            // resumeSession, whose "[DELEGATION RESULTS — delivered on resume]" preamble replays
+            // AND consumes the persisted entry exactly once. We therefore hand the waker a BLANK
+            // synthetic message (resumeSession adds no duplicate "User message on resume" line),
+            // avoiding double-delivery. On SKIP_GUARD / DEFER_ACTIVE_SESSION / DEFER_NO_LISTENER
+            // the nudge simply stays persisted until the target session is next resumed.
+            val route = autoWakeIdleSession(sessionId, syntheticText = "", source = "delegation")
+            log.info("[AgentService] delegation nudge for $sessionId routed=$route (persisted id=$nudgeId)")
         }
-    }
-
-    /**
-     * Synthetic `[DELEGATION RESULT — AUTO-RESUMED]` user message delivered when a
-     * cross-IDE delegation completes (or raises a question) after the orchestrator's
-     * turn already ended. Mirrors [buildAutoResumeSyntheticMessage] for background
-     * completions so the LLM knows its turn was resumed and why.
-     */
-    internal fun buildDelegationAutoResumeMessage(nudge: String): String = buildString {
-        appendLine("[DELEGATION RESULT — AUTO-RESUMED]")
-        appendLine("Your previous turn ended, but a cross-IDE delegation you sent just finished:")
-        appendLine()
-        append(nudge)
-        appendLine()
-        appendLine()
-        appendLine("Decide whether this needs action. If it completes the original task, call")
-        appendLine("attempt_completion. Otherwise continue working with this result.")
     }
 
     /**
@@ -593,6 +604,22 @@ class AgentService(
             log.warn("[AgentService] BackgroundPersistence append failed for ${event.sessionId}: ${it.message}", it)
         }
     }
+
+    /**
+     * BUG #2 — persist a cross-IDE delegation result/question nudge for an idle session so
+     * it survives an auto-wake guard rejection / active-session defer and REPLAYS in the
+     * resume preamble ([resumeSession] Task-6.2-style pickup). Mirrors [persistForLaterResume]
+     * for background completions; returns the generated nudge id (for logging/observability).
+     * Best-effort: a persistence failure is logged but never propagated (the live auto-wake
+     * may still deliver the nudge).
+     */
+    private fun persistDelegationNudgeForLaterResume(sessionId: String, text: String): String? =
+        runCatching {
+            com.workflow.orchestrator.agent.tools.background.DelegationNudgePersistence(agentDir.toPath())
+                .appendNudge(sessionId, text)
+        }.onFailure {
+            log.warn("[AgentService] DelegationNudgePersistence append failed for $sessionId: ${it.message}", it)
+        }.getOrNull()
 
     /** Current session's message state handler — non-null while a task is running. */
     @Volatile var activeMessageStateHandler: MessageStateHandler? = null
@@ -2753,7 +2780,7 @@ class AgentService(
         // sessions/{id}/background/pending_completions.json; we splice them into
         // the preamble so the resumed LLM turn sees them in-context, then consume
         // them so they're not re-delivered on a subsequent resume.
-        val preamble = run {
+        val withBgCompletions = run {
             val persistence = com.workflow.orchestrator.agent.tools.background
                 .BackgroundPersistence(agentDir.toPath())
             val pending = runCatching { persistence.loadPendingCompletions(sessionId) }
@@ -2783,6 +2810,38 @@ class AgentService(
                 }
                 log.info("[AgentService] resume pickup: delivered ${pending.size} persisted background completion(s) for $sessionId")
                 basePreamble + completionsPreamble
+            }
+        }
+
+        // BUG #2 — append any cross-IDE delegation result/question nudges that landed while
+        // the session was idle but whose auto-wake was rejected (cooldown/cap/disabled/
+        // no-listener) or DEFERRED because a different session was active (BUG #4). Mirrors
+        // the background-completion pickup above: splice into the preamble, then consume so
+        // they're delivered exactly once.
+        val preamble = run {
+            val nudgePersistence = com.workflow.orchestrator.agent.tools.background
+                .DelegationNudgePersistence(agentDir.toPath())
+            val pendingNudges = runCatching { nudgePersistence.loadPendingNudges(sessionId) }
+                .getOrElse { err ->
+                    log.warn("[AgentService] loadPendingNudges failed for $sessionId: ${err.message}", err)
+                    emptyList()
+                }
+            if (pendingNudges.isEmpty()) {
+                withBgCompletions
+            } else {
+                val body = pendingNudges.joinToString("\n\n---\n\n") { it.text }
+                val nudgesPreamble = "\n\n[DELEGATION RESULTS — delivered on resume]\n" +
+                    "While the session was paused, these cross-IDE delegation results/questions " +
+                    "arrived. Decide whether each needs action; if a question is included, answer " +
+                    "it via delegation(action=\"answer\"):\n\n" + body + "\n"
+                pendingNudges.forEach { n ->
+                    runCatching { nudgePersistence.consumeNudge(sessionId, n.id) }
+                        .onFailure { err ->
+                            log.warn("[AgentService] consumeNudge failed for $sessionId/${n.id}: ${err.message}", err)
+                        }
+                }
+                log.info("[AgentService] resume pickup: delivered ${pendingNudges.size} persisted delegation nudge(s) for $sessionId")
+                withBgCompletions + nudgesPreamble
             }
         }
 

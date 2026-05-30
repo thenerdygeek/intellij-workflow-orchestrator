@@ -127,6 +127,13 @@ class DelegationOutboundService(
     internal var testLocalCacheDir: java.nio.file.Path? = null
 
     /**
+     * Test seam (mirrors [testResumeProbe] style): overrides the [IdleTimer] tick cadence so
+     * idle-timeout firing can be exercised in milliseconds instead of the production
+     * [IDLE_CHECK_INTERVAL_MILLIS] (30 s). Null in production. Plan 3 / BUG #5 coverage.
+     */
+    internal var testIdleCheckIntervalMillis: Long? = null
+
+    /**
      * F5: Serializes concurrent [send] calls so the 5-channel cap is atomic.
      *
      * Without this mutex two concurrent calls could both read [openChannelCount] == 4
@@ -228,46 +235,9 @@ class DelegationOutboundService(
         // Plan 4: persist the new handle so it survives IDE-A restart.
         persistHandlesForSession(delegatorSessionId)
 
-        // Plan 3 idle timer — the timeout-millis provider re-reads PluginSettings on every
-        // tick so changes take effect for already-open channels (spec §3.3). A return of
-        // <= 0 disables the check for that tick. We always start the timer; it's an idle
-        // loop until the setting is non-zero.
-        run {
-            val settingsSvc = project.getService(
-                com.workflow.orchestrator.core.settings.PluginSettings::class.java
-            )
-            val timer = IdleTimer(
-                handleId = handle.id,
-                scope = cs,
-                checkIntervalMillis = IDLE_CHECK_INTERVAL_MILLIS,
-                timeoutMillisProvider = {
-                    settingsSvc.state.delegationIdleTimeoutMinutes.toLong() * 60_000L
-                },
-                clock = SystemClock,
-                lastSeenAtProvider = { lastSeenMillis(handle.id) },
-                onTimeout = {
-                    val timedOut = DelegationException.IdleTimedOut(
-                        handle = handle,
-                        lastSeenAt = lastSeenMillis(handle.id) ?: 0L,
-                    )
-                    LOG.info("IdleTimer fired: ${timedOut.message} — closing channel ${handle.id}")
-                    val sid = handleToSessionId[handle.id]
-                    if (sid != null) {
-                        project.getService(
-                            com.workflow.orchestrator.agent.AgentService::class.java
-                        ).enqueueNudgeForSession(
-                            sid,
-                            "Delegated session ${handle.targetRepoName} (handle ${handle.id.take(8)}) " +
-                                "timed out due to inactivity. The channel has been closed."
-                        )
-                    }
-                    close(handle.id)
-                },
-            )
-            idleTimers[handle.id] = timer
-            timer.start()
-        }
-        // end Plan 3 idle timer block
+        // Plan 3 idle timer — see [installIdleTimer]. We always start it; it's an idle loop
+        // until the setting is non-zero.
+        installIdleTimer(handle)
 
         // Note: the result-reader coroutine is launched OUTSIDE the sendMutex.withLock
         // body so that result delivery is not gated on the next send call. The channel
@@ -276,6 +246,62 @@ class DelegationOutboundService(
             runOutboundReaderLoop(handle, channel, onResult)
         }
         handle
+    }
+
+    /**
+     * Install + start the per-channel [IdleTimer] for [handle] (keyed by `handle.id`).
+     *
+     * BUG #5 fix — this is the SINGLE installer shared by EVERY path that re-registers a live
+     * outbound channel: [send] (fresh), [attemptResume] (dead-but-persisted reattach), and
+     * [resurrectAndContinue] (closed-retained resurrection). Before this consolidation only [send]
+     * armed a timer; resumed/resurrected channels had no idle timeout, so a deadlocked-but-alive
+     * IDE-B (with no socket read timeout on [DelegationFraming.readFramed]) leaked the channel + its
+     * reader coroutine forever AND kept counting toward [MAX_CHANNELS].
+     *
+     * The timeout-millis provider re-reads [com.workflow.orchestrator.core.settings.PluginSettings]
+     * on every tick so changes take effect for already-open channels (spec §3.3); a return of <= 0
+     * disables the check for that tick. On fire it enqueues the same "timed out due to inactivity"
+     * nudge and calls [close] (which removes + stops the timer, keyed by handle id).
+     *
+     * Idempotent: if a timer already exists for this handle (e.g. a path is hit twice for the same
+     * id), the previous one is stopped before the replacement starts — no duplicate timer coroutine.
+     * The tick cadence is overridable via [testIdleCheckIntervalMillis] for tests.
+     */
+    private fun installIdleTimer(handle: DelegationHandle) {
+        val settingsSvc = project.getService(
+            com.workflow.orchestrator.core.settings.PluginSettings::class.java
+        )
+        val timer = IdleTimer(
+            handleId = handle.id,
+            scope = cs,
+            checkIntervalMillis = testIdleCheckIntervalMillis ?: IDLE_CHECK_INTERVAL_MILLIS,
+            timeoutMillisProvider = {
+                settingsSvc.state.delegationIdleTimeoutMinutes.toLong() * 60_000L
+            },
+            clock = SystemClock,
+            lastSeenAtProvider = { lastSeenMillis(handle.id) },
+            onTimeout = {
+                val timedOut = DelegationException.IdleTimedOut(
+                    handle = handle,
+                    lastSeenAt = lastSeenMillis(handle.id) ?: 0L,
+                )
+                LOG.info("IdleTimer fired: ${timedOut.message} — closing channel ${handle.id}")
+                val sid = handleToSessionId[handle.id]
+                if (sid != null) {
+                    project.getService(
+                        com.workflow.orchestrator.agent.AgentService::class.java
+                    ).enqueueNudgeForSession(
+                        sid,
+                        "Delegated session ${handle.targetRepoName} (handle ${handle.id.take(8)}) " +
+                            "timed out due to inactivity. The channel has been closed."
+                    )
+                }
+                close(handle.id)
+            },
+        )
+        // Replace-and-stop so a path hit twice for the same handle never leaks a duplicate timer.
+        idleTimers.put(handle.id, timer)?.stop()
+        timer.start()
     }
 
     /**
@@ -448,12 +474,15 @@ class DelegationOutboundService(
                 lastSeenAt[handle.id] = System.currentTimeMillis()
                 when (msg) {
                     is DelegationMessage.Question -> {
+                        // BUG #1 fix — deliver to a GENUINELY-active waiter, else fall back to the
+                        // async nudge. `complete()` returns false when the waiter has already been
+                        // claimed by its own timeout (abandoned deferred still mapped in the race
+                        // gap), so we must not let that swallow the question. Exactly-once.
                         val waiter = pendingResultWaiters.remove(handle.id)
-                        if (waiter != null) {
-                            // An explicit wait() is blocking on this handle — hand the question
-                            // straight to it so the LLM can answer, instead of a separate nudge.
-                            waiter.complete(DelegationWaitOutcome.Question(msg, handle.targetRepoName))
-                        } else {
+                        val delivered = waiter?.complete(
+                            DelegationWaitOutcome.Question(msg, handle.targetRepoName)
+                        ) == true
+                        if (!delivered) {
                             handleIncomingQuestion(handle, msg)
                         }
                     }
@@ -477,11 +506,17 @@ class DelegationOutboundService(
                         // from handleToLastSeenState. Without this the snapshot would keep the
                         // stale "RUNNING" seed and `status` would misreport a COMPLETED session.
                         recordTerminalState(handle.id, msg.status)
+                        // BUG #1 fix — deliver to a GENUINELY-active waiter (blocking wait()
+                        // consumes it inline; the async nudge is then suppressed), ELSE fall back
+                        // to onResult. `complete()` returns false when the waiter has already been
+                        // claimed by its own timeout (abandoned deferred still mapped in the race
+                        // gap) — in that case the result must NOT be swallowed; it goes to onResult.
+                        // Exactly one path delivers.
                         val waiter = pendingResultWaiters.remove(handle.id)
-                        if (waiter != null) {
-                            // Blocking wait() consumes the result inline; skip the async nudge.
-                            waiter.complete(DelegationWaitOutcome.Completed(msg, handle.targetRepoName))
-                        } else {
+                        val delivered = waiter?.complete(
+                            DelegationWaitOutcome.Completed(msg, handle.targetRepoName)
+                        ) == true
+                        if (!delivered) {
                             onResult(handle, msg)
                         }
                         return
@@ -508,10 +543,14 @@ class DelegationOutboundService(
             // Fix A: a socket EOF / read error is a terminal FAILED state — record it before the
             // finally's close() snapshots the RetainedHandle, so `status` doesn't show "RUNNING".
             recordTerminalState(handle.id, DelegationMessage.ResultStatus.FAILED)
+            // BUG #1 fix — same exactly-once arbitration as the Result branch: a waiter already
+            // claimed by its own timeout (complete() == false) must not swallow the FAILED result;
+            // it falls back to the async onResult nudge.
             val waiter = pendingResultWaiters.remove(handle.id)
-            if (waiter != null) {
-                waiter.complete(DelegationWaitOutcome.Completed(failed, handle.targetRepoName))
-            } else {
+            val delivered = waiter?.complete(
+                DelegationWaitOutcome.Completed(failed, handle.targetRepoName)
+            ) == true
+            if (!delivered) {
                 onResult(handle, failed)
             }
         } finally {
@@ -892,6 +931,9 @@ class DelegationOutboundService(
                     targetRepoName = repoName,
                     lastSeenState = reply.currentState,
                 )
+                // BUG #5 fix — arm the idle timer on the resurrected channel (mirrors send()), so a
+                // hung IDE-B is closed + nudged on inactivity instead of leaking the channel forever.
+                installIdleTimer(handle)
                 cs.launch(Dispatchers.IO) {
                     runOutboundReaderLoop(handle, channel) { h, result ->
                         val nudge = buildResumedResultNudge(h.targetRepoName, h.id, result)
@@ -997,6 +1039,16 @@ class DelegationOutboundService(
                             activeChannels[handleId] = ch
                             lastSeenAt[handleId] = System.currentTimeMillis()
                             handleToLastSeenState[handleId] = msg.currentState
+                            // BUG #5 fix — a reattached live channel needs an idle timer too, else a
+                            // hung IDE-B leaks it forever (readFramed has no socket read timeout).
+                            installIdleTimer(
+                                DelegationHandle(
+                                    id = handleId,
+                                    targetProjectPath = targetPath,
+                                    targetRepoName = handleToRepoName[handleId] ?: handleId.take(8),
+                                    lastSeenState = msg.currentState,
+                                )
+                            )
                         } else {
                             try { ch.close() } catch (_: Exception) {}
                         }
@@ -1311,7 +1363,24 @@ class DelegationOutboundService(
         pendingResultWaiters[handleId] = deferred
         return try {
             kotlinx.coroutines.withTimeoutOrNull(timeoutMillis) { deferred.await() }
-                ?: DelegationWaitOutcome.TimedOut(handleId, handleToRepoName[handleId] ?: handleId.take(8))
+            // BUG #1 fix — exactly-once delivery under a timeout/Result race.
+            //
+            // `withTimeoutOrNull` cancels only the `await()` suspension; the deferred itself lingers
+            // in `pendingResultWaiters` until the `finally` below removes it. The reader loop's
+            // terminal branch may `remove()` it in that gap. An *uncompleted* abandoned deferred is
+            // indistinguishable (via `complete()`) from a live one — so on timeout we ATOMICALLY
+            // claim the deferred by completing it with `TimedOut`. This is the arbiter both sides
+            // use; `CompletableDeferred.complete()` lets exactly one caller win:
+            //   • We win  → genuine timeout; the deferred now holds `TimedOut`, so if the reader
+            //               later tries to deliver, its `complete()` returns false and it falls back
+            //               to the async `onResult` nudge (auto-delivery still fires — a wait timeout
+            //               is NOT a failure). We return `TimedOut`.
+            //   • We lose → the reader already completed the deferred in the race gap; we read back
+            //               its real `Completed`/`Question` outcome (NOT lost, delivered inline) and
+            //               the reader, having won `complete()`, correctly suppressed its own nudge.
+            // `await()` on the now-completed deferred returns immediately (no suspension).
+            val timedOut = DelegationWaitOutcome.TimedOut(handleId, handleToRepoName[handleId] ?: handleId.take(8))
+            if (deferred.complete(timedOut)) timedOut else deferred.await()
         } finally {
             // Remove only if still ours (a concurrent completion may have replaced it).
             pendingResultWaiters.remove(handleId, deferred)

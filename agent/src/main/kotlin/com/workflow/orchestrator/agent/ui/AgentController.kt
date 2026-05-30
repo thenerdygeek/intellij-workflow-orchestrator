@@ -413,6 +413,24 @@ class AgentController(
     private val pendingIncomingStarts =
         java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
 
+    /**
+     * Atomic single-slot reservation that closes BUG #3's check-then-act gap: the incoming-delegation
+     * busy gate ([decideIncomingBusy]) reads the LIVE job, but `currentJob` is assigned LATER on the
+     * fire-and-forget EDT coroutine inside [runDelegatedNow] / [runResumedDelegatedNow] (via
+     * `onJobCreated`). `DelegationServer.acceptLoop` launches inbound handlers WITHOUT joining, so two
+     * near-simultaneous inbound delegations BOTH read `currentJob` inactive → BOTH RUN_NOW, and the
+     * second's `resetForNewChat` cancels the first's just-started session.
+     *
+     * [startDelegatedSession] / [resumeDelegatedSession] CLAIM this reservation atomically (folding in
+     * the job-based busy verdict) BEFORE launching the runner, so exactly ONE of N concurrent inbound
+     * delegations proceeds to RUN_NOW; the rest take QUEUE_INCOMING / DECLINED_TIMEOUT. The runners
+     * RELEASE it once `currentJob` is actually assigned (`onJobCreated`) AND on every failure /
+     * exception path so a failed start can never wedge the gate closed. Pure contract pinned by
+     * `DelegationStartReservationTest`.
+     */
+    private val startReservation =
+        com.workflow.orchestrator.agent.delegation.DelegationStartReservation()
+
     /** Coalesces rapid-fire stream chunks into ~16ms batched bridge dispatches. */
     private val streamBatcher = StreamBatcher(
         onFlush = { batched -> dashboard.appendStreamToken(batched) }
@@ -639,16 +657,31 @@ class AgentController(
     /**
      * Register the auto-wake listener with [AgentService].
      *
-     * When a dormant session is auto-woken (e.g. a background process completed and
-     * the agent needs to continue), [AgentService] fires the listener with the target
-     * [sessionId] and an optional [syntheticMessage] to inject as the next user turn.
-     * We route the call through [resumeSession] so all UI callbacks (streaming,
-     * approval gates, stats) are properly wired — identical to a
-     * user-initiated resume.
+     * When a dormant session is auto-woken (e.g. a background process completed, or a
+     * cross-IDE delegation result arrived), [AgentService] fires the listener with the
+     * target [sessionId] and an optional [syntheticMessage] to inject as the next user turn.
+     * We route the call through [resumeSession] so all UI callbacks (streaming, approval
+     * gates, stats) are properly wired — identical to a user-initiated resume.
+     *
+     * BUG #4 — defense-in-depth delivery guard. The waker already declines to fire for a
+     * non-active target ([IdleSessionWaker] / DEFER_ACTIVE_SESSION), but its safety check
+     * reads the active session id at decision time while the actual resume runs later on the
+     * EDT (`invokeLater`). In that window the user could start a NEW chat. So we RE-CHECK here,
+     * at the moment of delivery: if a DIFFERENT session is currently running, do NOT hijack it
+     * — [resumeSession] → [prepareForReplay] would cancel the live job + reset the chat. The
+     * nudge/completion stays persisted (AgentService persist-first) and replays when the user
+     * next resumes the target session manually.
      */
     private fun wireAutoWakeListener() {
         service.setAutoWakeListener { sessionId, syntheticMessage ->
             invokeLater {
+                if (currentJob?.isActive == true && currentSessionId != null && currentSessionId != sessionId) {
+                    LOG.info(
+                        "[AgentController] auto-wake for $sessionId skipped — session $currentSessionId is " +
+                            "actively running; leaving it persisted for manual resume (no hijack)"
+                    )
+                    return@invokeLater
+                }
                 runCatching {
                     val msg = syntheticMessage.ifBlank { null }
                     resumeSession(sessionId, msg)
@@ -3110,12 +3143,27 @@ class AgentController(
         // interactive) leaves currentSessionId set until the next "New Chat" — gating on it made
         // every delegation after the first dead-end in the human-Start accept window
         // (declined_timeout). Gate on the live job only; decideIncomingBusy pins this contract.
-        val busy = decideIncomingBusy(
-            jobActive = currentJob?.isActive == true,
-            sessionLoaded = currentSessionId != null,
+        //
+        // BUG #3: fold the busy CHECK and the slot CLAIM into a single atomic step. The job-based
+        // busy verdict alone has a check-then-act gap — `currentJob` is assigned LATER on the EDT
+        // coroutine in runDelegatedNow (onJobCreated), and DelegationServer.acceptLoop launches
+        // inbound handlers WITHOUT joining, so two near-simultaneous delegations both read the job
+        // inactive and both decide RUN_NOW. tryReserve makes exactly one of N concurrent claimants
+        // win RUN_NOW; the rest fall through to QUEUE_INCOMING. The reservation is released by
+        // runDelegatedNow once currentJob is assigned AND on every failure path (so a failed start
+        // can't wedge the gate). decideIncomingBusy is still consulted (do not regress Fix B): a
+        // genuinely running loop refuses the claim; a completed-but-loaded session does not.
+        val reservedRunNow = startReservation.tryReserve(
+            busy = decideIncomingBusy(
+                jobActive = currentJob?.isActive == true,
+                sessionLoaded = currentSessionId != null,
+            )
         )
-        return when (com.workflow.orchestrator.agent.delegation.DelegatedSessionSurface.decide(busy)) {
+        // A lost reservation (live job OR another delegation mid-start) ⇒ busy ⇒ QUEUE_INCOMING.
+        val surfaceBusy = !reservedRunNow
+        return when (com.workflow.orchestrator.agent.delegation.DelegatedSessionSurface.decide(surfaceBusy)) {
             com.workflow.orchestrator.agent.delegation.DelegatedSurface.RUN_NOW -> {
+                // We hold the reservation; runDelegatedNow releases it (onJobCreated / failure).
                 runDelegatedNow(request, metadata, replyWith, onResult, onSessionStarted)
                 DelegatedStartOutcome.STARTED
             }
@@ -3136,6 +3184,13 @@ class AgentController(
                     // I4: timing core lives in the pure, unit-tested awaitIncomingStart helper.
                     val started = awaitIncomingStart(startGate, ACCEPT_WINDOW_MS)
                     if (started) {
+                        // BUG #3: the human clicked Start → this runs AS A NEW CHAT and will assign
+                        // currentJob later on the EDT coroutine, so it must hold the reservation just
+                        // like the direct RUN_NOW path. Claim it now; runDelegatedNow releases it on
+                        // onJobCreated / failure. (A deliberate human Start interrupts whatever was
+                        // running via resetForNewChat, and release is idempotent, so we proceed even
+                        // in the rare case another start briefly holds the slot.)
+                        startReservation.tryReserve(busy = false)
                         runDelegatedNow(request, metadata, replyWith, onResult, onSessionStarted)
                         DelegatedStartOutcome.STARTED
                     } else {
@@ -3243,13 +3298,26 @@ class AgentController(
                         // can run with the correct session id.
                         onSessionStarted?.invoke(sid)
                     },
-                    onJobCreated = { job -> currentJob = job },
+                    onJobCreated = { job ->
+                        // BUG #3: assign currentJob FIRST, then release the reservation. From here on
+                        // a concurrent inbound delegation reads currentJob.isActive == true via
+                        // decideIncomingBusy and queues — the live-job gate has taken over, so the
+                        // reservation's job (covering the assign gap) is done. Order matters: release
+                        // before the assignment would briefly leave the gate open with no live job.
+                        currentJob = job
+                        startReservation.release()
+                    },
                 )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
                 LOG.error("runDelegatedNow: delegated session start failed on EDT — " +
                     "handleConnect's sid await will time out and reply FAILED", e)
+            } finally {
+                // BUG #3 safety-net: release on EVERY exit path so a failed/cancelled start (or one
+                // where onJobCreated never fired) can't wedge the gate closed forever. Idempotent —
+                // a harmless no-op on the happy path where onJobCreated already released.
+                startReservation.release()
             }
         }
     }
@@ -3280,15 +3348,28 @@ class AgentController(
     ): DelegatedStartOutcome {
         // Same busy rule as the incoming-delegation gate (Bug B): "busy" = an agent loop is actively
         // running right now, not merely that a session sits loaded in the tab.
-        val busy = decideIncomingBusy(
-            jobActive = currentJob?.isActive == true,
-            sessionLoaded = currentSessionId != null,
+        //
+        // BUG #3: the resume path shares the SAME check-then-act gap as startDelegatedSession —
+        // runResumedDelegatedNow assigns currentJob LATER on the EDT coroutine (onJobCreated), so two
+        // concurrent resumes (or a resume racing an inbound start) could both read the job inactive
+        // and both launch a loop, clobbering currentJob. Claim the SAME atomic reservation so exactly
+        // one delegation start/resume is in-flight at a time; runResumedDelegatedNow releases it on
+        // onJobCreated AND on failure. decideIncomingBusy still gates the live-job case (Fix B / a
+        // loaded-but-idle session — including the one being resumed — is NOT busy).
+        val reserved = startReservation.tryReserve(
+            busy = decideIncomingBusy(
+                jobActive = currentJob?.isActive == true,
+                sessionLoaded = currentSessionId != null,
+            )
         )
-        if (busy) {
-            // Decline gracefully — handleChannelResume maps this to a clear "busy" SessionClosed.
+        if (!reserved) {
+            // Busy (live loop OR another delegation mid-start). Decline gracefully —
+            // handleChannelResume maps this to a clear "busy" SessionClosed. Nothing to release: a
+            // refused tryReserve never changed reservation state.
             LOG.info("resumeDelegatedSession: IDE-B tab busy with another task — declining resume of $sessionId")
             return DelegatedStartOutcome.DECLINED_TIMEOUT
         }
+        // We hold the reservation; runResumedDelegatedNow releases it (onJobCreated / failure).
         runResumedDelegatedNow(sessionId, userTurnText, metadata, replyWith, onResult, onSessionStarted)
         return DelegatedStartOutcome.STARTED
     }
@@ -3326,13 +3407,22 @@ class AgentController(
                         pushActiveSessionDelegated(metadata)
                         onSessionStarted?.invoke(sid)
                     },
-                    onJobCreated = { job -> currentJob = job },
+                    onJobCreated = { job ->
+                        // BUG #3: assign currentJob FIRST, then release — same handoff-to-live-job
+                        // ordering as runDelegatedNow.
+                        currentJob = job
+                        startReservation.release()
+                    },
                 )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
                 LOG.error("runResumedDelegatedNow: resumed delegated session failed on EDT — " +
                     "handleChannelResume's sid await will time out and reply a clear error", e)
+            } finally {
+                // BUG #3 safety-net: idempotent release on every exit path so a failed/cancelled
+                // resume can't wedge the gate.
+                startReservation.release()
             }
         }
     }

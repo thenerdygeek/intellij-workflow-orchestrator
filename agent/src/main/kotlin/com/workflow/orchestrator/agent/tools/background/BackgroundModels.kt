@@ -25,6 +25,21 @@ data class BackgroundCompletionEvent(
     val occurredAt: Long,
 )
 
+/**
+ * BUG #2 — a cross-IDE delegation result / clarifying-question nudge persisted for an
+ * idle delegator session so it REPLAYS on the next resume instead of being dropped when
+ * the auto-wake guard rejects (cooldown / cap / disabled / no-listener / different active
+ * session). Unlike [BackgroundCompletionEvent] this is plain text (delegation nudges are
+ * already-formatted strings, with no bgId/exitCode/state), so it carries only an [id]
+ * (for single-entry consume), the [text], and a timestamp.
+ */
+@Serializable
+data class DelegationNudge(
+    val id: String,
+    val text: String,
+    val occurredAt: Long,
+)
+
 @Serializable
 data class BackgroundProcessSnapshot(
     val bgId: String,
