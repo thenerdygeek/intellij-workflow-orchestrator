@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.document.poi
 
 import com.workflow.orchestrator.core.model.DocumentBlock
+import com.workflow.orchestrator.document.safeExtract
 import com.workflow.orchestrator.document.service.ImageExtractionService
 import org.apache.poi.ss.usermodel.Cell
 import org.apache.poi.ss.usermodel.FormulaEvaluator
@@ -99,123 +100,146 @@ class XlsxTableExtractor(
 
             for (sheet in wb) {
                 val xssfSheet = sheet as? XSSFSheet ?: continue
-
-                val visibility = try {
-                    wb.getSheetVisibility(wb.getSheetIndex(xssfSheet))
-                } catch (_: Exception) {
-                    org.apache.poi.ss.usermodel.SheetVisibility.VISIBLE
-                }
-                val headingText = if (visibility != org.apache.poi.ss.usermodel.SheetVisibility.VISIBLE) {
-                    "(hidden) ${sheet.sheetName}"
-                } else {
-                    sheet.sheetName
-                }
-                blocks += DocumentBlock.Heading(2, headingText)
-
-                val rowIter = sheet.iterator()
-                if (!rowIter.hasNext()) continue
-
-                // Accumulates cell comments in row-major order as we walk cells.
-                val sheetComments = mutableListOf<DocumentBlock.Comment>()
-
-                // The first physical row. We do NOT yet assume it is a header — that decision
-                // (P-5) requires looking at the data rows below it, so the raw row is held here.
-                val firstRow = rowIter.next()
-                val columnCount = firstRow.lastCellNum.toInt().coerceAtLeast(0)
-                if (columnCount == 0) continue
-
-                // Render the first row's cells (string values), collecting its comments.
-                val firstRowValues = (0 until columnCount).map { col ->
-                    val cell = firstRow.getCell(col)
-                    collectCellComment(cell, sheetComments)
-                    cellValueWithHyperlink(cellOrMergedValue(cell, col, firstRow, xssfSheet, evaluator), evaluator)
-                }
-
-                // Subsequent physical rows → candidate data rows.
-                val dataRows = mutableListOf<List<String>>()
-                // Parallel record of each data row's POI cell types per column, used by the
-                // type-break header heuristic (P-5). Kept in lock-step with dataRows.
-                val dataRowCellTypes = mutableListOf<List<org.apache.poi.ss.usermodel.CellType>>()
-                var rowsRead = 0
-
-                while (rowIter.hasNext() && rowsRead < MAX_ROWS_PER_SHEET) {
-                    val row = rowIter.next()
-                    val cells = (0 until columnCount).map { col ->
-                        val cell = row.getCell(col)
-                        collectCellComment(cell, sheetComments)
-                        cellValueWithHyperlink(cellOrMergedValue(cell, col, row, xssfSheet, evaluator), evaluator)
-                    }
-                    dataRows += cells
-                    dataRowCellTypes += (0 until columnCount).map { col ->
-                        row.getCell(col)?.cellType ?: org.apache.poi.ss.usermodel.CellType.BLANK
-                    }
-                    rowsRead++
-
-                    // Also collect comments from cells BEYOND the column arity — they're not part
-                    // of the Table but they still carry review context the LLM should see.
-                    val lastPhysical = row.lastCellNum.toInt()
-                    if (lastPhysical > columnCount) {
-                        for (col in columnCount until lastPhysical) {
-                            collectCellComment(row.getCell(col), sheetComments)
-                        }
-                    }
-                }
-
-                // P-5: decide whether the first row is a genuine header. Only promote it when
-                // there is positive evidence (styling, a defined-table header row, or a clear
-                // type break vs the data). Otherwise emit POSITIONAL headers and keep the first
-                // row as data — never invent a header out of the first data row.
-                val headerRowIndices = definedTableHeaderRowIndices(xssfSheet)
-                val firstRowIsHeader = hasHeaderEvidence(
-                    firstRow = firstRow,
-                    firstRowValues = firstRowValues,
-                    dataRowCellTypes = dataRowCellTypes,
-                    columnCount = columnCount,
-                    definedHeaderRowIndices = headerRowIndices,
-                )
-
-                val headers: List<String>
-                val rows: List<List<String>>
-                if (firstRowIsHeader) {
-                    headers = firstRowValues
-                    rows = dataRows
-                } else {
-                    headers = (0 until columnCount).map { positionalColumnName(it) }
-                    rows = buildList {
-                        add(firstRowValues)
-                        addAll(dataRows)
-                    }
-                }
-
-                blocks += DocumentBlock.Table(headers, rows)
-
-                // P-6: surface any defined Excel tables (ListObjects) with their declared
-                // headers + A1 range, since those are semantically distinct from the raw grid.
-                blocks += collectDefinedTables(xssfSheet)
-
-                // P-3: the merged-cell anchor value is no longer fabricated across the span.
-                // Emit the merge STRUCTURE as a compact note so the LLM still knows which
-                // ranges were merged (without inventing repeated data points).
-                mergedRangesNote(xssfSheet)?.let { note ->
-                    blocks += DocumentBlock.Paragraph("Merged ranges: $note")
-                }
-
-                // Drain per-sheet comments AFTER the Table so the LLM sees them
-                // immediately following the data they annotate, in row-major order.
-                blocks += sheetComments
-
-                // P2T3: image extraction — emit EmbeddedFileRef blocks after comments.
-                if (imageService != null) {
-                    blocks += collectSheetImages(xssfSheet)
-                }
-
-                // P5a-3: chart extraction — emit Table blocks (one per chart) after images.
-                blocks += collectSheetCharts(xssfSheet)
-
-                if (rowIter.hasNext()) {
-                    blocks += DocumentBlock.Paragraph("_(truncated at $MAX_ROWS_PER_SHEET rows)_")
+                // Per-sheet isolation: one malformed sheet (corrupt drawing, broken defined-table,
+                // pathological merge geometry) must not abort the workbook — the other sheets still
+                // extract. A failed sheet contributes nothing (its partial blocks are discarded so
+                // the output never carries a half-built sheet).
+                blocks += safeExtract("XLSX sheet '${sheet.sheetName}'", emptyList()) {
+                    sheetToBlocks(wb, xssfSheet, evaluator)
                 }
             }
+        }
+
+        return blocks
+    }
+
+    /**
+     * Extracts one sheet's blocks (heading + table + defined-tables + merge note + comments +
+     * images + charts + truncation marker). Returns its own list so the per-sheet [safeExtract]
+     * guard in [extract] can discard a malformed sheet's partial output wholesale rather than
+     * leaving the shared block list in a half-built state.
+     */
+    private fun sheetToBlocks(
+        wb: XSSFWorkbook,
+        xssfSheet: XSSFSheet,
+        evaluator: FormulaEvaluator,
+    ): List<DocumentBlock> {
+        val blocks = mutableListOf<DocumentBlock>()
+
+        val visibility = try {
+            wb.getSheetVisibility(wb.getSheetIndex(xssfSheet))
+        } catch (_: Exception) {
+            org.apache.poi.ss.usermodel.SheetVisibility.VISIBLE
+        }
+        val headingText = if (visibility != org.apache.poi.ss.usermodel.SheetVisibility.VISIBLE) {
+            "(hidden) ${xssfSheet.sheetName}"
+        } else {
+            xssfSheet.sheetName
+        }
+        blocks += DocumentBlock.Heading(2, headingText)
+
+        val rowIter = xssfSheet.iterator()
+        if (!rowIter.hasNext()) return blocks
+
+        // Accumulates cell comments in row-major order as we walk cells.
+        val sheetComments = mutableListOf<DocumentBlock.Comment>()
+
+        // The first physical row. We do NOT yet assume it is a header — that decision
+        // (P-5) requires looking at the data rows below it, so the raw row is held here.
+        val firstRow = rowIter.next()
+        val columnCount = firstRow.lastCellNum.toInt().coerceAtLeast(0)
+        if (columnCount == 0) return blocks
+
+        // Render the first row's cells (string values), collecting its comments.
+        val firstRowValues = (0 until columnCount).map { col ->
+            val cell = firstRow.getCell(col)
+            collectCellComment(cell, sheetComments)
+            cellValueWithHyperlink(cellOrMergedValue(cell, col, firstRow, xssfSheet, evaluator), evaluator)
+        }
+
+        // Subsequent physical rows → candidate data rows.
+        val dataRows = mutableListOf<List<String>>()
+        // Parallel record of each data row's POI cell types per column, used by the
+        // type-break header heuristic (P-5). Kept in lock-step with dataRows.
+        val dataRowCellTypes = mutableListOf<List<org.apache.poi.ss.usermodel.CellType>>()
+        var rowsRead = 0
+
+        while (rowIter.hasNext() && rowsRead < MAX_ROWS_PER_SHEET) {
+            val row = rowIter.next()
+            val cells = (0 until columnCount).map { col ->
+                val cell = row.getCell(col)
+                collectCellComment(cell, sheetComments)
+                cellValueWithHyperlink(cellOrMergedValue(cell, col, row, xssfSheet, evaluator), evaluator)
+            }
+            dataRows += cells
+            dataRowCellTypes += (0 until columnCount).map { col ->
+                row.getCell(col)?.cellType ?: org.apache.poi.ss.usermodel.CellType.BLANK
+            }
+            rowsRead++
+
+            // Also collect comments from cells BEYOND the column arity — they're not part
+            // of the Table but they still carry review context the LLM should see.
+            val lastPhysical = row.lastCellNum.toInt()
+            if (lastPhysical > columnCount) {
+                for (col in columnCount until lastPhysical) {
+                    collectCellComment(row.getCell(col), sheetComments)
+                }
+            }
+        }
+
+        // P-5: decide whether the first row is a genuine header. Only promote it when
+        // there is positive evidence (styling, a defined-table header row, or a clear
+        // type break vs the data). Otherwise emit POSITIONAL headers and keep the first
+        // row as data — never invent a header out of the first data row.
+        val headerRowIndices = definedTableHeaderRowIndices(xssfSheet)
+        val firstRowIsHeader = hasHeaderEvidence(
+            firstRow = firstRow,
+            firstRowValues = firstRowValues,
+            dataRowCellTypes = dataRowCellTypes,
+            columnCount = columnCount,
+            definedHeaderRowIndices = headerRowIndices,
+        )
+
+        val headers: List<String>
+        val rows: List<List<String>>
+        if (firstRowIsHeader) {
+            headers = firstRowValues
+            rows = dataRows
+        } else {
+            headers = (0 until columnCount).map { positionalColumnName(it) }
+            rows = buildList {
+                add(firstRowValues)
+                addAll(dataRows)
+            }
+        }
+
+        blocks += DocumentBlock.Table(headers, rows)
+
+        // P-6: surface any defined Excel tables (ListObjects) with their declared
+        // headers + A1 range, since those are semantically distinct from the raw grid.
+        blocks += collectDefinedTables(xssfSheet)
+
+        // P-3: the merged-cell anchor value is no longer fabricated across the span.
+        // Emit the merge STRUCTURE as a compact note so the LLM still knows which
+        // ranges were merged (without inventing repeated data points).
+        mergedRangesNote(xssfSheet)?.let { note ->
+            blocks += DocumentBlock.Paragraph("Merged ranges: $note")
+        }
+
+        // Drain per-sheet comments AFTER the Table so the LLM sees them
+        // immediately following the data they annotate, in row-major order.
+        blocks += sheetComments
+
+        // P2T3: image extraction — emit EmbeddedFileRef blocks after comments.
+        if (imageService != null) {
+            blocks += collectSheetImages(xssfSheet)
+        }
+
+        // P5a-3: chart extraction — emit Table blocks (one per chart) after images.
+        blocks += collectSheetCharts(xssfSheet)
+
+        if (rowIter.hasNext()) {
+            blocks += DocumentBlock.Paragraph("_(truncated at $MAX_ROWS_PER_SHEET rows)_")
         }
 
         return blocks

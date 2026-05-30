@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.document.pipeline
 
 import com.workflow.orchestrator.core.model.DocumentBlock
+import com.workflow.orchestrator.document.safeExtract
 import com.workflow.orchestrator.document.pdf.PdfColumnDetector
 import com.workflow.orchestrator.document.pdf.PdfColumnProseExtractor
 import com.workflow.orchestrator.document.pdf.PdfLink
@@ -151,13 +152,27 @@ class PdfPipeline(
         docKey: String = "anonymous",
         onPage: ((done: Int, total: Int) -> Unit)? = null,
     ): List<DocumentBlock> {
+        // Sub-extractor isolation: tables, prose, and metadata are three INDEPENDENT streams that
+        // each open the file separately and are merged below. A failure in one (e.g. Tabula throws
+        // on a pathological page, or PDFBox chokes on a malformed annotation tree) must not lose
+        // the others — a datasheet whose tables fail should still return its prose, and vice versa.
+        // Each stream degrades to empty; the merge then yields a partial-but-useful document.
+        //
         // Raw (pre-merge) tables keep every table's true page; the SF-1 gate needs ALL pages a
         // multi-page table occupies (continuation-merge would collapse them onto the first page).
-        val tablesRaw: List<PositionedBlock<DocumentBlock.Table>> = tableExtractor.extractRaw(file, onPage)
-        val tables: List<PositionedBlock<DocumentBlock.Table>> = tableExtractor.mergeContinuations(tablesRaw)
-        val proseTika: List<PositionedBlock<DocumentBlock>> = proseExtractor.extract(file)
+        // DOCUMENT_FATAL is rethrown from every sub-extractor: an encrypted / corrupt / zero-byte
+        // PDF fails to even open, and that is a whole-document error the caller must surface
+        // (mapErrorToFailure → "password-protected" / "appears corrupt"), NOT a per-unit skip that
+        // would mask it as a silent empty success.
+        val tablesRaw: List<PositionedBlock<DocumentBlock.Table>> =
+            safeExtract("PDF tables (Tabula)", emptyList(), DOCUMENT_FATAL) { tableExtractor.extractRaw(file, onPage) }
+        val tables: List<PositionedBlock<DocumentBlock.Table>> =
+            safeExtract("PDF table continuation-merge", tablesRaw) { tableExtractor.mergeContinuations(tablesRaw) }
+        val proseTika: List<PositionedBlock<DocumentBlock>> =
+            safeExtract("PDF prose (Tika XHTML)", emptyList(), DOCUMENT_FATAL) { proseExtractor.extract(file) }
         val metadataExtractor = PdfMetadataExtractor(imageService = imageService, docKey = docKey)
-        val metadata: List<PositionedBlock<DocumentBlock>> = metadataExtractor.extract(file)
+        val metadata: List<PositionedBlock<DocumentBlock>> =
+            safeExtract("PDF metadata (annotations/outline/images)", emptyList(), DOCUMENT_FATAL) { metadataExtractor.extract(file) }
 
         val tablePages: Set<Int> = tablesRaw.map { it.page }.toSet()
 
@@ -167,7 +182,9 @@ class PdfPipeline(
         // BEFORE the SF-1 column reorder so a rebuilt page is not also column-split, and BEFORE
         // link-splice so links splice into the rebuilt prose.
         val (proseAfterPre, preformattedPages) = if (enablePreformatted) {
-            substitutePreformattedPages(file, proseTika, tablePages)
+            safeExtract("SF-2 preformatted substitution", proseTika to emptySet()) {
+                substitutePreformattedPages(file, proseTika, tablePages)
+            }
         } else {
             proseTika to emptySet()
         }
@@ -177,7 +194,9 @@ class PdfPipeline(
         // Single-column pages are untouched. Done BEFORE link-splice so links splice into the
         // correctly-ordered column text.
         val proseRaw = if (enableColumnReorder) {
-            substituteTwoColumnPages(file, proseAfterPre, tablePages + preformattedPages)
+            safeExtract("SF-1 two-column substitution", proseAfterPre) {
+                substituteTwoColumnPages(file, proseAfterPre, tablePages + preformattedPages)
+            }
         } else {
             proseAfterPre
         }
@@ -186,7 +205,9 @@ class PdfPipeline(
         // as Markdown without duplicating or hoisting the visible display text. Done before any
         // dedup/merge so the link markup travels with the paragraph through the rest of the pipeline.
         val links: List<PdfLink> = try { metadataExtractor.extractLinks(file) } catch (_: Exception) { emptyList() }
-        val prose = if (links.isEmpty()) proseRaw else spliceLinksIntoProse(proseRaw, links)
+        val prose = if (links.isEmpty()) proseRaw else safeExtract("G-6 link splice", proseRaw) {
+            spliceLinksIntoProse(proseRaw, links)
+        }
 
         // NAV-4/NAV-6: when PdfMetadataExtractor harvested the PDF outline into authoritative
         // Heading blocks, the prose heuristic's promoted Headings (which both invert the
@@ -197,26 +218,32 @@ class PdfPipeline(
         // and the heuristic headings flow through unchanged (rfc7230 / nist-csf path).
         val outlineHeadings = metadata.mapNotNull { (it.block as? DocumentBlock.Heading) }
         val outlineSeeded = outlineHeadings.isNotEmpty()
-        val proseForMerge = if (outlineSeeded) demoteProseHeadings(prose, outlineHeadings) else prose
+        val proseForMerge = if (outlineSeeded) {
+            safeExtract("NAV-4 heading demotion", prose) { demoteProseHeadings(prose, outlineHeadings) }
+        } else {
+            prose
+        }
 
         // Dedup pass: when Tabula extracted a Table, the same cell content also appears in
         // Tika's prose stream as flat whitespace-separated lines. Drop the prose paragraphs
         // whose tokens are entirely contained in the table's cell+header set.
         // This avoids the LLM seeing every cell value twice (once as prose, once as table).
-        val dedupedProse = removeProseDuplicatedByTables(proseForMerge, tables)
+        val dedupedProse = safeExtract("table-dup prose removal", proseForMerge) {
+            removeProseDuplicatedByTables(proseForMerge, tables)
+        }
 
         @Suppress("UNCHECKED_CAST")
         val merged: List<PositionedBlock<DocumentBlock>> =
             (tables.map { it as PositionedBlock<DocumentBlock> } + dedupedProse + metadata)
                 .sortedWith(compareBy({ it.page }, { it.top }))
 
-        val deChromed = stripRepeatedPageChrome(merged)
+        val deChromed = safeExtract("SF-5 chrome stripping", merged) { stripRepeatedPageChrome(merged) }
         // SF-10: rejoin paragraphs split by a soft line-wrap hyphen across the visual-line breaks
         // that Tika emits as separate <p> blocks ("… Board of Gov-" + "ernors, …"). Done after
         // chrome stripping so a footer band can't be merged into body, and before overlap
         // suppression so the rejoined paragraph carries the first fragment's bbox.
-        val rejoined = rejoinHyphenatedParagraphs(deChromed)
-        return suppressOverlaps(rejoined).map { it.block }
+        val rejoined = safeExtract("SF-10 hyphen rejoin", deChromed) { rejoinHyphenatedParagraphs(deChromed) }
+        return safeExtract("overlap suppression", rejoined) { suppressOverlaps(rejoined) }.map { it.block }
     }
 
     /**
@@ -909,6 +936,19 @@ class PdfPipeline(
     }
 
     private companion object {
+        /**
+         * Whole-document failures that must propagate out of the per-stream guards instead of
+         * degrading to an empty stream. These are thrown at the `Loader.loadPDF` boundary by an
+         * encrypted, corrupt, truncated, or zero-byte PDF — the file cannot be opened at all, so
+         * there are no "sibling units" to preserve. Letting them bubble keeps
+         * `TikaDocumentExtractor.mapErrorToFailure` producing the typed `isError=true` result
+         * (password-protected / appears corrupt) rather than a silent empty-but-successful artifact.
+         */
+        val DOCUMENT_FATAL: Array<out Class<out Throwable>> = arrayOf(
+            org.apache.pdfbox.pdmodel.encryption.InvalidPasswordException::class.java,
+            java.io.IOException::class.java,
+        )
+
         /** Tables overlapping prose by more than this fraction of prose height are suppressed. */
         const val OVERLAP_THRESHOLD = 0.70
 

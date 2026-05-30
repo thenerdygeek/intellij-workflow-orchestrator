@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.document.poi
 
 import com.workflow.orchestrator.core.model.DocumentBlock
+import com.workflow.orchestrator.document.safeExtract
 import com.workflow.orchestrator.document.service.ImageExtractionService
 import org.apache.poi.common.usermodel.HyperlinkType
 import org.apache.poi.xslf.usermodel.XSLFComment
@@ -85,7 +86,11 @@ class PptxExtractor(
         XMLSlideShow(stream).use { presentation ->
             presentation.slides.forEachIndexed { idx, slide ->
                 val slideNumber = idx + 1
-                blocks += slideToBlocks(slide, slideNumber)
+                // Per-slide isolation: one malformed slide (broken shape tree, corrupt notes part)
+                // must not abort the deck — the remaining slides still extract.
+                blocks += safeExtract("PPTX slide $slideNumber", emptyList()) {
+                    slideToBlocks(slide, slideNumber)
+                }
             }
 
             // P5a-4: SmartArt text extraction. Each diagramData part becomes one flat ListBlock.
@@ -114,7 +119,11 @@ class PptxExtractor(
 
         for (shape: XSLFShape in slide.shapes) {
             if (shape === titleShape) continue
-            blocks += handleShape(shape)
+            // Per-shape isolation: a single broken shape (corrupt table cell, picture-data fault,
+            // group recursion failure) must not lose the slide's other shapes.
+            blocks += safeExtract("PPTX slide $slideNumber shape '${shapeLabel(shape)}'", emptyList()) {
+                handleShape(shape)
+            }
         }
 
         // Speaker notes
@@ -129,6 +138,11 @@ class PptxExtractor(
 
         return blocks
     }
+
+    /** Best-effort shape name for the per-shape isolation WARN log; never throws. */
+    private fun shapeLabel(shape: XSLFShape): String =
+        try { shape.shapeName?.takeIf { it.isNotBlank() } ?: shape::class.java.simpleName }
+        catch (_: Exception) { shape::class.java.simpleName }
 
     // ── Per-shape dispatch (recursive for group shapes) ───────────────────────
 

@@ -34,7 +34,7 @@ import java.nio.file.Files
  * the pipeline itself creates fresh Tika instances per call. [PdfProseExtractor] itself holds
  * no mutable state.
  */
-class PdfProseExtractor {
+open class PdfProseExtractor {
 
     /**
      * Extracts prose blocks from [file], tagged with page and synthetic Y position.
@@ -43,7 +43,7 @@ class PdfProseExtractor {
      * @return Ordered list of positioned blocks. PageMarkers appear first on each page
      *         (`top = 0.0`); prose blocks follow in document order.
      */
-    fun extract(file: Path): List<PositionedBlock<DocumentBlock>> {
+    open fun extract(file: Path): List<PositionedBlock<DocumentBlock>> {
         val rawBlocks: List<DocumentBlock> = Files.newInputStream(file).use { stream ->
             TikaXhtmlPipeline().extract(stream, "application/pdf")
         }

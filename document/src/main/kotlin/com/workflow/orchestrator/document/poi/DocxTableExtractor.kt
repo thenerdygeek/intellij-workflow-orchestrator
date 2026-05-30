@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.document.poi
 
 import com.workflow.orchestrator.core.model.DocumentBlock
+import com.workflow.orchestrator.document.safeExtract
 import com.workflow.orchestrator.document.poi.visitor.CommentExtractionVisitor
 import com.workflow.orchestrator.document.poi.visitor.DefaultHeadingParagraphVisitor
 import com.workflow.orchestrator.document.poi.visitor.DefaultTableVisitor
@@ -133,16 +134,24 @@ class DocxTableExtractor(
             // Phase 3 T4: prepend header / footer paragraphs (one each, deduplicated).
             blocks += extractHeaderFooter(doc)
 
+            // Per-body-element + per-visitor isolation: a single malformed paragraph/table or one
+            // throwing visitor must not abort the document. The stateful ListAccumulatorVisitor is
+            // resilient by design (its end-of-body flush runs in postBodyVisitors), so skipping one
+            // element loses only that element's blocks, not the rest of the body.
             for (element: IBodyElement in doc.bodyElements) {
                 when (element) {
                     is XWPFParagraph -> {
                         for (visitor in paragraphVisitors) {
-                            blocks += visitor.visit(element, doc)
+                            blocks += safeExtract("DOCX paragraph visitor ${visitor::class.java.simpleName}", emptyList()) {
+                                visitor.visit(element, doc)
+                            }
                         }
                     }
                     is XWPFTable -> {
                         for (visitor in tableVisitors) {
-                            blocks += visitor.visit(element, doc)
+                            blocks += safeExtract("DOCX table visitor ${visitor::class.java.simpleName}", emptyList()) {
+                                visitor.visit(element, doc)
+                            }
                         }
                     }
                     else -> continue
@@ -150,7 +159,9 @@ class DocxTableExtractor(
             }
 
             for (visitor in postBodyVisitors) {
-                blocks += visitor.visit(doc)
+                blocks += safeExtract("DOCX post-body visitor ${visitor::class.java.simpleName}", emptyList()) {
+                    visitor.visit(doc)
+                }
             }
 
             // P5a-4: SmartArt text extraction. Each diagramData part in the package

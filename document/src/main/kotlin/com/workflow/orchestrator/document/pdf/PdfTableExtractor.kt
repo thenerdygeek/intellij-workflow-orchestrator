@@ -2,6 +2,7 @@ package com.workflow.orchestrator.document.pdf
 
 import com.workflow.orchestrator.core.model.DocumentBlock
 import com.workflow.orchestrator.document.normaliseRow
+import com.workflow.orchestrator.document.safeExtract
 import org.apache.pdfbox.Loader
 import technology.tabula.ObjectExtractor
 import technology.tabula.RectangularTextContainer
@@ -50,7 +51,7 @@ import java.nio.file.Path
  *                         [isStreamPhantomTable] guard applied to its output. Default: `false`
  *                         (this constructor); [PdfPipeline] constructs with `true`.
  */
-class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
+open class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
 
     private companion object {
         /** Tables with more than this fraction of empty cells are treated as chart artefacts. */
@@ -144,7 +145,7 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
      *
      * @return Raw positioned table blocks, one per Tabula detection, in (page, top) order.
      */
-    fun extractRaw(
+    open fun extractRaw(
         file: Path,
         onPage: ((done: Int, total: Int) -> Unit)? = null,
     ): List<PositionedBlock<DocumentBlock.Table>> {
@@ -203,7 +204,13 @@ class PdfTableExtractor(private val enableStreamMode: Boolean = false) {
                 val pageText: List<TextElement> = if (tables.isNotEmpty()) page.text else emptyList()
 
                 for (t in tables) {
-                    val block = tabulaTableToDocumentBlock(t, pageText) ?: continue
+                    // Per-table isolation: cell-text re-derivation (center-point containment),
+                    // grouped-header detection, and row normalisation each touch Tabula geometry
+                    // that can throw on a pathological detection. One malformed table must not
+                    // drop the page's other tables (or, via the loop, the rest of the document).
+                    val block = safeExtract("PDF table on page ${page.pageNumber}", null) {
+                        tabulaTableToDocumentBlock(t, pageText)
+                    } ?: continue
                     positioned += PositionedBlock(
                         page = page.pageNumber,
                         top = t.top.toDouble(),
