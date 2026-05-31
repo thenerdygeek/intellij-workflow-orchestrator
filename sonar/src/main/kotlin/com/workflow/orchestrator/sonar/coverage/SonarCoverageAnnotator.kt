@@ -38,14 +38,12 @@ class SonarCoverageAnnotator(project: Project) : BaseCoverageAnnotator(project) 
             return null
         }
 
-        // SonarDataService keys fileCoverage by Sonar's repo-relative path (via CoverageMapper),
-        // not by the absolute VirtualFile path. Convert before lookup to prevent a permanent miss.
-        val relativePath = SonarPathResolver.computeRelativePath(
-            filePath = vFile.path,
-            vcsRootPath = project.basePath,
-            projectBasePath = project.basePath,
-        )
-        val fileCoverage = sonarService.stateFlow.value.fileCoverage[relativePath]
+        // SonarDataService keys fileCoverage by Sonar's repo-relative path (via CoverageMapper).
+        // Use resolveContext (which uses RepoContextResolver.resolveFromFile) so secondary repos
+        // in multi-repo projects are addressed by the correct per-repo VCS root, not the
+        // aggregator basePath. Mirrors the path used by SonarIssueAnnotator.
+        val pathCtx = SonarPathResolver.resolveContext(project, vFile)
+        val fileCoverage = sonarService.stateFlow.value.fileCoverage[pathCtx.relativePath]
             ?: return null
 
         val linePct = "%.1f".format(fileCoverage.lineCoverage)

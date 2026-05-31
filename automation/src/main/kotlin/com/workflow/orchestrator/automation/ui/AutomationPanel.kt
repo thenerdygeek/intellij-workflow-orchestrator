@@ -60,7 +60,6 @@ class AutomationPanel(
     private val tagBuilderService by lazy { project.getService(TagBuilderService::class.java) }
     private val queueService by lazy { project.getService(QueueService::class.java) }
     private val bambooService by lazy { project.getService(BambooService::class.java) }
-    private val driftDetectorService by lazy { project.getService(DriftDetectorService::class.java) }
     private val baselineCacheService: BaselineCacheService =
         project.getService(BaselineCacheService::class.java)
     private val refreshButton: JButton = JButton(AllIcons.Actions.Refresh).apply {
@@ -181,7 +180,7 @@ class AutomationPanel(
     private var branchEnableInFlight = false
 
     // State
-    private var currentSuitePlanKey: String = ""
+    @Volatile private var currentSuitePlanKey: String = ""
     /**
      * The focused build from [WorkflowContextService] — drives docker-tag detection.
      * Null when no PR is focused or chain-key resolution failed.
@@ -618,12 +617,7 @@ class AutomationPanel(
             "${baselineResult.diagnostics.buildsWithDockerTags} parseable, " +
             "selected=${baselineResult.selectedBuild?.buildNumber}")
 
-        // Step 2: Enrich with latest release tags from Nexus (if configured)
-        if (tags.isNotEmpty() && driftDetectorService.isRegistryConfigured()) {
-            log.info("[Automation:UI] Fetching latest release tags from registry...")
-            tags = driftDetectorService.enrichWithLatestReleaseTags(tags)
-        }
-
+        // Step 2: (registry enrichment removed — DriftDetectorService always returns no-op)
         // Step 3: Load plan variables for the suite (master plan key)
         val varsResult = bambooService.getPlanVariables(planKey)
 
@@ -696,33 +690,6 @@ class AutomationPanel(
             ?: settings.getPrimaryRepo()
         val fromRepo = repoConfig?.dockerTagKey?.takeIf { it.isNotBlank() }
         val fromGlobal = settings.state.dockerTagKey?.takeIf { it.isNotBlank() }
-        return (fromRepo ?: fromGlobal).orEmpty()
-    }
-
-    /**
-     * Resolves the effective CI plan key using fallback chain:
-     * PluginSettings.State.serviceCiPlanKey → focused-PR RepoConfig.bambooPlanKey →
-     * primary RepoConfig.bambooPlanKey → PluginSettings.State.bambooPlanKey.
-     *
-     * Repo source is the focused PR — see [resolveDockerTagKey] for why editor-derived
-     * resolution is intentionally avoided here.
-     *
-     * NOTE (Phase B): This method is no longer called from the docker-tag detection path.
-     * Docker-tag detection now uses [currentFocusBuild]?.chainKey exclusively.
-     * This method remains because it may be used by other future callers — keep it until
-     * Phase D cleans up the remaining indirect usages.
-     */
-    private fun resolveServiceCiPlanKey(): String {
-        val fromDedicated = settings.state.serviceCiPlanKey?.takeIf { it.isNotBlank() }
-        if (fromDedicated != null) return fromDedicated
-
-        val focusedRepoName = WorkflowContextService
-            .getInstance(project).state.value.focusPr?.repoName
-        val repoConfig = focusedRepoName
-            ?.let { name -> settings.getRepos().firstOrNull { it.name == name || it.displayLabel == name } }
-            ?: settings.getPrimaryRepo()
-        val fromRepo = repoConfig?.bambooPlanKey?.takeIf { it.isNotBlank() }
-        val fromGlobal = settings.state.bambooPlanKey?.takeIf { it.isNotBlank() }
         return (fromRepo ?: fromGlobal).orEmpty()
     }
 

@@ -38,6 +38,17 @@ class JiraPreviewPane(
     cs: CoroutineScope,
 ) : JPanel(BorderLayout()), PreviewPane, Disposable {
 
+    // ── Coroutine lifecycle ───────────────────────────────────────────────────
+
+    /**
+     * Standalone Job for the liveResults collector coroutine.
+     * NOT a child of [cs] — avoids UncompletedCoroutinesError in runTest when the
+     * test scope exits (SharedFlow.collect never completes on its own).
+     * Must be cancelled in [dispose] so the coroutine does not outlive the pane.
+     * (Audit finding HANDOVER-COR-4)
+     */
+    private val collectorJob = Job()
+
     // ── State ────────────────────────────────────────────────────────────────
 
     @Volatile

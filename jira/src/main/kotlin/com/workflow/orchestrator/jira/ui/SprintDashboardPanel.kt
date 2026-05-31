@@ -706,6 +706,14 @@ class SprintDashboardPanel(
                 return@launch
             }
 
+            // Guard: reject JQL with control characters before sending to the server.
+            if (jql.any { it.code < 32 }) {
+                withContext(Dispatchers.EDT) {
+                    setLoading(false, "Filter JQL contains invalid characters.")
+                }
+                return@launch
+            }
+
             // Use the underlying API client so the result is List<JiraIssue> and
             // can plug straight into the existing list model + cell renderer.
             val api = service.getApiClient()

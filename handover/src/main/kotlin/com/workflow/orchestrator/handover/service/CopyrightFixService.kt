@@ -157,6 +157,13 @@ class CopyrightFixService {
     }
 
     companion object {
+        /**
+         * Number of lines scanned from the file header for copyright detection and year update.
+         * Must be kept in sync with [CopyrightFixCard.applyFixes] which uses the same window
+         * to reassemble the file after patching.
+         */
+        const val HEADER_SCAN_LINES = 30
+
         fun getInstance(project: Project): CopyrightFixService =
             project.getService(CopyrightFixService::class.java)
     }

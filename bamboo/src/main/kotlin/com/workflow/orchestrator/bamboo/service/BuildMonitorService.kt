@@ -28,6 +28,8 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 
 @Service(Service.Level.PROJECT)
@@ -150,6 +152,18 @@ open class BuildMonitorService {
     private var lastLogFetchedForBuild: Int? = null
     private var poller: SmartPoller? = null
 
+    /**
+     * Guards the entire body of [pollOnce] so that the SmartPoller coroutine and
+     * a concurrent user-initiated Refresh call cannot execute [pollOnce] at the same
+     * time. Without this lock, two concurrent invocations could both observe
+     * `previousBuildNumber == null` and emit a double BuildFinished event, or
+     * `lastLogFetchedForBuild` could be set by one before the other has fetched
+     * all logs, silently skipping the retry path.
+     *
+     * Contention is negligible: SmartPoller fires every 30s and Refresh is user-initiated.
+     */
+    private val pollMutex = Mutex()
+
     // Canonical per-stage job order (stageName -> ordered job shortNames) from the plan
     // DEFINITION, cached per plan key. The result endpoint returns jobs in an unstable order;
     // this restores the plan-defined (website) order for the Build-tab job list. Cached only
@@ -206,7 +220,7 @@ open class BuildMonitorService {
         startPolling(planKey, newBranch, intervalMs)
     }
 
-    suspend fun pollOnce(planKey: String, branch: String) {
+    suspend fun pollOnce(planKey: String, branch: String) = pollMutex.withLock {
         log.info("[Bamboo:Monitor] pollOnce planKey=$planKey, branch=$branch")
         val result = apiClient.getLatestResult(planKey)
         log.info("[Bamboo:Monitor] pollOnce result: ${if (result is ApiResult.Success) "SUCCESS" else "FAILED: $result"}")

@@ -217,136 +217,142 @@ class HandoverStateService {
             return
         }
         log.info("[Handover:State] Handling $name (${eventSummary(event)})")
-        val current = _stateFlow.value
-        val next = when (event) {
-            is WorkflowEvent.BuildFinished -> {
-                log.info("[Handover:State] buildStatus → plan=${event.planKey} build#${event.buildNumber} status=${event.status}")
-                current.copy(
-                    buildStatus = BuildSummary(
-                        buildNumber = event.buildNumber,
-                        status = event.status,
-                        planKey = event.planKey
-                    )
-                )
-            }
-
-            is WorkflowEvent.QualityGateResult -> {
-                log.info("[Handover:State] qualityGatePassed: ${current.qualityGatePassed} → ${event.passed}")
-                current.copy(qualityGatePassed = event.passed)
-            }
-
-            is WorkflowEvent.HealthCheckFinished -> {
-                log.info("[Handover:State] healthCheckPassed: ${current.healthCheckPassed} → ${event.passed}")
-                current.copy(healthCheckPassed = event.passed)
-            }
-
-            is WorkflowEvent.AutomationTriggered -> {
-                val bambooUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/')
-                // Security: validate buildResultKey against the Bamboo key format
-                // before assembling the browse URL.  An invalid key (e.g. one
-                // containing injection characters) produces a null link — the
-                // wiki comment and UI will show no link rather than a broken URL.
-                // (Audit finding automation:F-9)
-                val bambooLink = buildSafeBambooLink(bambooUrl, event.buildResultKey)
-                if (bambooLink == null) {
-                    log.warn(
-                        "[Handover:State] Omitting bambooLink — buildResultKey='${event.buildResultKey.take(120)}' " +
-                            "does not match expected Bamboo key format"
+        // Use _stateFlow.update { } for all state transitions to ensure atomic read-modify-write.
+        // Non-atomic `_stateFlow.value = _stateFlow.value.copy(…)` is racy when handleEvent
+        // (IO dispatcher) and markX() methods (EDT) run concurrently — the update{} lambda
+        // eliminates the window. (Audit finding handover:HANDOVER-COR-3)
+        _stateFlow.update { current ->
+            when (event) {
+                is WorkflowEvent.BuildFinished -> {
+                    log.info("[Handover:State] buildStatus → plan=${event.planKey} build#${event.buildNumber} status=${event.status}")
+                    current.copy(
+                        buildStatus = BuildSummary(
+                            buildNumber = event.buildNumber,
+                            status = event.status,
+                            planKey = event.planKey
+                        )
                     )
                 }
-                val newSuite = SuiteResult(
-                    suitePlanKey = event.suitePlanKey,
-                    buildResultKey = event.buildResultKey,
-                    dockerTagsJson = event.dockerTagsJson,
-                    passed = null,
-                    durationMs = null,
-                    triggeredAt = Instant.now(),
-                    bambooLink = bambooLink
-                )
-                // Replace existing entry for same suite plan key (latest run wins)
-                val updated = current.suiteResults
-                    .filter { it.suitePlanKey != event.suitePlanKey } + newSuite
-                log.info(
-                    "[Handover:State] suiteResults: triggered ${event.suitePlanKey} (resultKey=${event.buildResultKey}); " +
-                        "total suites=${updated.size}"
-                )
-                current.copy(suiteResults = updated)
-            }
 
-            is WorkflowEvent.AutomationFinished -> {
-                val before = current.suiteResults.firstOrNull { it.buildResultKey == event.buildResultKey }
-                if (before == null) {
-                    // Out-of-order arrival: AutomationFinished arrived without a prior
-                    // AutomationTriggered (e.g. IDE restarted while a Bamboo build was
-                    // running — in-memory state was reset but the build finished).
-                    // Fix automation:F-7: upsert a synthetic SuiteResult so the
-                    // Handover checklist is updated rather than silently dropped.
+                is WorkflowEvent.QualityGateResult -> {
+                    log.info("[Handover:State] qualityGatePassed: ${current.qualityGatePassed} → ${event.passed}")
+                    current.copy(qualityGatePassed = event.passed)
+                }
+
+                is WorkflowEvent.HealthCheckFinished -> {
+                    log.info("[Handover:State] healthCheckPassed: ${current.healthCheckPassed} → ${event.passed}")
+                    current.copy(healthCheckPassed = event.passed)
+                }
+
+                is WorkflowEvent.AutomationTriggered -> {
                     val bambooUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/')
+                    // Security: validate buildResultKey against the Bamboo key format
+                    // before assembling the browse URL.  An invalid key (e.g. one
+                    // containing injection characters) produces a null link — the
+                    // wiki comment and UI will show no link rather than a broken URL.
+                    // (Audit finding automation:F-9)
                     val bambooLink = buildSafeBambooLink(bambooUrl, event.buildResultKey)
-                    val synthetic = SuiteResult(
+                    if (bambooLink == null) {
+                        log.warn(
+                            "[Handover:State] Omitting bambooLink — buildResultKey='${event.buildResultKey.take(120)}' " +
+                                "does not match expected Bamboo key format"
+                        )
+                    }
+                    val newSuite = SuiteResult(
                         suitePlanKey = event.suitePlanKey,
                         buildResultKey = event.buildResultKey,
-                        dockerTagsJson = "",          // not available without Triggered event
-                        passed = event.passed,
-                        durationMs = event.durationMs,
-                        triggeredAt = Instant.now(),  // approximate — Triggered event was lost
-                        bambooLink = bambooLink,
+                        dockerTagsJson = event.dockerTagsJson,
+                        passed = null,
+                        durationMs = null,
+                        triggeredAt = Instant.now(),
+                        bambooLink = bambooLink
                     )
-                    log.warn(
-                        "[Handover:State] AutomationFinished resultKey=${event.buildResultKey} arrived out-of-order " +
-                            "(no prior Triggered event) — inserting synthetic SuiteResult for ${event.suitePlanKey}"
-                    )
-                    current.copy(suiteResults = current.suiteResults + synthetic)
-                } else {
-                    val updated = current.suiteResults.map { suite ->
-                        if (suite.buildResultKey == event.buildResultKey) {
-                            suite.copy(passed = event.passed, durationMs = event.durationMs)
-                        } else suite
-                    }
+                    // Replace existing entry for same suite plan key (latest run wins)
+                    val updated = current.suiteResults
+                        .filter { it.suitePlanKey != event.suitePlanKey } + newSuite
                     log.info(
-                        "[Handover:State] suiteResults: ${before.suitePlanKey} (resultKey=${event.buildResultKey}) " +
-                            "passed=${before.passed} → ${event.passed}"
+                        "[Handover:State] suiteResults: triggered ${event.suitePlanKey} (resultKey=${event.buildResultKey}); " +
+                            "total suites=${updated.size}"
                     )
                     current.copy(suiteResults = updated)
                 }
-            }
 
-            is WorkflowEvent.PullRequestCreated -> {
-                log.info("[Handover:State] prCreated=true prUrl=${event.prUrl}")
-                current.copy(prUrl = event.prUrl, prCreated = true)
-            }
+                is WorkflowEvent.AutomationFinished -> {
+                    val before = current.suiteResults.firstOrNull { it.buildResultKey == event.buildResultKey }
+                    if (before == null) {
+                        // Out-of-order arrival: AutomationFinished arrived without a prior
+                        // AutomationTriggered (e.g. IDE restarted while a Bamboo build was
+                        // running — in-memory state was reset but the build finished).
+                        // Fix automation:F-7: upsert a synthetic SuiteResult so the
+                        // Handover checklist is updated rather than silently dropped.
+                        val bambooUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/')
+                        val bambooLink = buildSafeBambooLink(bambooUrl, event.buildResultKey)
+                        val synthetic = SuiteResult(
+                            suitePlanKey = event.suitePlanKey,
+                            buildResultKey = event.buildResultKey,
+                            dockerTagsJson = "",          // not available without Triggered event
+                            passed = event.passed,
+                            durationMs = event.durationMs,
+                            triggeredAt = Instant.now(),  // approximate — Triggered event was lost
+                            bambooLink = bambooLink,
+                        )
+                        log.warn(
+                            "[Handover:State] AutomationFinished resultKey=${event.buildResultKey} arrived out-of-order " +
+                                "(no prior Triggered event) — inserting synthetic SuiteResult for ${event.suitePlanKey}"
+                        )
+                        current.copy(suiteResults = current.suiteResults + synthetic)
+                    } else {
+                        val updated = current.suiteResults.map { suite ->
+                            if (suite.buildResultKey == event.buildResultKey) {
+                                suite.copy(passed = event.passed, durationMs = event.durationMs)
+                            } else suite
+                        }
+                        log.info(
+                            "[Handover:State] suiteResults: ${before.suitePlanKey} (resultKey=${event.buildResultKey}) " +
+                                "passed=${before.passed} → ${event.passed}"
+                        )
+                        current.copy(suiteResults = updated)
+                    }
+                }
 
-            is WorkflowEvent.JiraCommentPosted -> {
-                log.info("[Handover:State] jiraCommentPosted=true (commentId=${event.commentId})")
-                current.copy(jiraCommentPosted = true)
-            }
+                is WorkflowEvent.PullRequestCreated -> {
+                    log.info("[Handover:State] prCreated=true prUrl=${event.prUrl}")
+                    current.copy(prUrl = event.prUrl, prCreated = true)
+                }
 
-            else -> return // Ignore events we don't care about (TicketChanged is now handled by activeTicketFlow)
+                is WorkflowEvent.JiraCommentPosted -> {
+                    log.info("[Handover:State] jiraCommentPosted=true (commentId=${event.commentId})")
+                    current.copy(jiraCommentPosted = true)
+                }
+
+                else -> current // Ignore events we don't care about (TicketChanged is now handled by activeTicketFlow)
+            }
         }
-        _stateFlow.value = next
     }
 
     fun markCopyrightFixed() {
         log.info("[Handover:State] Marked copyright as fixed")
-        _stateFlow.value = _stateFlow.value.copy(copyrightFixed = true)
+        _stateFlow.update { it.copy(copyrightFixed = true) }
     }
 
     fun markJiraCommentPosted() {
         log.info("[Handover:State] Marked Jira comment as posted")
-        _stateFlow.value = _stateFlow.value.copy(jiraCommentPosted = true)
+        _stateFlow.update { it.copy(jiraCommentPosted = true) }
     }
 
     fun markJiraTransitioned(statusName: String? = null) {
         log.info("[Handover:State] Marked Jira as transitioned${statusName?.let { " to $it" }.orEmpty()}")
-        _stateFlow.value = _stateFlow.value.copy(
-            jiraTransitioned = true,
-            currentStatusName = statusName ?: _stateFlow.value.currentStatusName
-        )
+        _stateFlow.update { current ->
+            current.copy(
+                jiraTransitioned = true,
+                currentStatusName = statusName ?: current.currentStatusName
+            )
+        }
     }
 
     fun markWorkLogged() {
         log.info("[Handover:State] Marked work as logged")
-        _stateFlow.value = _stateFlow.value.copy(todayWorkLogged = true)
+        _stateFlow.update { it.copy(todayWorkLogged = true) }
     }
 
     fun resetForNewTicket(ticketId: String, ticketSummary: String) {

@@ -8,6 +8,7 @@ import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.sonar.api.dto.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import okhttp3.CacheControl
 import okhttp3.OkHttpClient
@@ -531,7 +532,11 @@ class SonarApiClient(
                                     "Unexpected response Content-Type: $contentType (expected JSON)"
                                 )
                             }
-                            val bodyStr = it.body?.string() ?: ""
+                            val bodyStr = it.body?.string()
+                                ?: return@withContext ApiResult.Error(
+                                    ErrorType.PARSE_ERROR,
+                                    "Empty response body from SonarQube for $path"
+                                )
                             ApiResult.Success(json.decodeFromString<T>(bodyStr))
                         }
                         401 -> {
@@ -556,6 +561,9 @@ class SonarApiClient(
                         }
                     }
                 }
+            } catch (e: SerializationException) {
+                log.error("[Sonar:API] $path -> JSON parse error: ${e.message}", e)
+                ApiResult.Error(ErrorType.PARSE_ERROR, "Invalid JSON from SonarQube: ${e.message}", e)
             } catch (e: IOException) {
                 log.error("[Sonar:API] $path -> Network error: ${e.message}", e)
                 ApiResult.Error(ErrorType.NETWORK_ERROR, "Cannot reach SonarQube: ${e.message}", e)

@@ -8,9 +8,9 @@ import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
-import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.jira.WorklogData
+import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.core.ui.StatusColors
-import com.workflow.orchestrator.jira.service.JiraServiceImpl
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -58,31 +58,19 @@ class WorklogSection(private val project: Project) : JPanel(BorderLayout()), Dis
         repaint()
 
         scope.launch {
-            val jiraServiceImpl = JiraServiceImpl.getInstance(project)
-            val apiClient = jiraServiceImpl.getApiClient()
-
-            if (apiClient == null) {
-                withContext(Dispatchers.EDT) {
-                    showMessage("Jira not configured.")
-                }
-                return@launch
-            }
-
-            val result = apiClient.getWorklogs(issueKey)
+            val jiraService = project.getService(JiraService::class.java)
+            val result = jiraService.getWorklogs(issueKey)
 
             withContext(Dispatchers.EDT) {
-                when (result) {
-                    is ApiResult.Success -> {
-                        val worklogs = result.data.worklogs
-                        if (worklogs.isEmpty()) {
-                            showMessage("No time logged.")
-                        } else {
-                            renderWorklogs(worklogs)
-                        }
-                    }
-                    is ApiResult.Error -> {
-                        log.warn("[Jira:UI] Failed to load worklogs for $issueKey: ${result.message}")
-                        showMessage("Could not load worklogs.")
+                if (result.isError) {
+                    log.warn("[Jira:UI] Failed to load worklogs for $issueKey: ${result.summary}")
+                    showMessage("Could not load worklogs.")
+                } else {
+                    val worklogs = result.data ?: emptyList()
+                    if (worklogs.isEmpty()) {
+                        showMessage("No time logged.")
+                    } else {
+                        renderWorklogs(worklogs)
                     }
                 }
             }
@@ -99,7 +87,7 @@ class WorklogSection(private val project: Project) : JPanel(BorderLayout()), Dis
         repaint()
     }
 
-    private fun renderWorklogs(worklogs: List<com.workflow.orchestrator.jira.api.dto.JiraWorklog>) {
+    private fun renderWorklogs(worklogs: List<WorklogData>) {
         removeAll()
 
         val container = JPanel().apply {
@@ -137,7 +125,7 @@ class WorklogSection(private val project: Project) : JPanel(BorderLayout()), Dis
         // Data rows (last 5, most recent first)
         val recentWorklogs = worklogs.sortedByDescending { it.started }.take(5)
         for (worklog in recentWorklogs) {
-            val authorName = worklog.author?.displayName ?: "Unknown"
+            val authorName = worklog.author.ifBlank { "Unknown" }
             val timeStr = formatTimeSpent(worklog.timeSpentSeconds)
             val dateStr = formatStartedDate(worklog.started)
             tablePanel.add(createTableRow(authorName, timeStr, dateStr, isHeader = false))

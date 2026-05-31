@@ -133,7 +133,8 @@ class QueueService {
 
     fun enqueue(entry: QueueEntry) {
         launchWithErrorSurface("Enqueue") {
-            mutex.withLock {
+            // Step 1: state mutation under lock (fast, no HTTP).
+            val shouldFastPath = mutex.withLock {
                 // PR 8: depth check counts only LIVE entries — terminal rows that
                 // the user hasn't dismissed yet must not block new enqueues.
                 val suiteEntries = _stateFlow.value.count {
@@ -164,30 +165,36 @@ class QueueService {
                     estimatedWaitMs = null
                 ))
 
-                // Fast-path: if this is the first entry for this suite AND Bamboo is
-                // idle for this plan, trigger immediately instead of waiting for the
-                // next poll tick (which could be up to 60s when the queue was empty).
-                if (autoTriggerEnabled && suiteEntries == 0) {
-                    // Idle check targets the actual trigger plan (the branch plan when a
-                    // branch is selected), not the master — a build running on the master
-                    // plan must not gate a branch trigger and vice-versa.
-                    val runningResult = bambooService.getRunningBuilds(entry.branchKey ?: entry.suitePlanKey)
-                    if (!runningResult.isError && runningResult.data!!.isEmpty()) {
-                        log.info("[Automation:Queue] Fast-path trigger for entry ${entry.id} (queue was empty and Bamboo is idle)")
-                        val triggerResult = doTrigger(entry)
-                        if (!triggerResult.isError) {
-                            val updatedEntry = entry.copy(
-                                status = QueueEntryStatus.QUEUED_ON_BAMBOO,
-                                bambooResultKey = triggerResult.data
-                            )
+                // Return whether we should attempt the fast-path trigger (first entry + autoTrigger).
+                autoTriggerEnabled && suiteEntries == 0
+            }
+            // Lock released — concurrent cancel/dismiss/pollOnce can now proceed.
+
+            // Step 2: fast-path idle check and trigger outside the lock.
+            // Both HTTP calls (getRunningBuilds + triggerBuild) execute without holding
+            // the mutex, so they don't block other user actions.
+            if (shouldFastPath) {
+                // Idle check targets the actual trigger plan (the branch plan when a
+                // branch is selected), not the master — a build running on the master
+                // plan must not gate a branch trigger and vice-versa.
+                val runningResult = bambooService.getRunningBuilds(entry.branchKey ?: entry.suitePlanKey)
+                if (!runningResult.isError && runningResult.data!!.isEmpty()) {
+                    log.info("[Automation:Queue] Fast-path trigger for entry ${entry.id} (queue was empty and Bamboo is idle)")
+                    val triggerResult = doTrigger(entry)
+                    if (!triggerResult.isError) {
+                        // Step 3: re-acquire the lock only to update the status/key.
+                        mutex.withLock {
                             _stateFlow.value = _stateFlow.value.map {
-                                if (it.id == entry.id) updatedEntry else it
+                                if (it.id == entry.id) it.copy(
+                                    status = QueueEntryStatus.QUEUED_ON_BAMBOO,
+                                    bambooResultKey = triggerResult.data
+                                ) else it
                             }
                         }
-                        // Start poller to track the build we just fired (even on fast-path)
-                        startPollingIfNeeded()
-                        return@withLock
                     }
+                    // Start poller to track the build we just fired (even on fast-path)
+                    startPollingIfNeeded()
+                    return@launchWithErrorSurface
                 }
             }
 
@@ -210,9 +217,24 @@ class QueueService {
                 log.info("[Automation:Queue] Cancelling entry $entryId (status=${entry.status}, suite='${entry.suitePlanKey}')")
 
                 val resultKey = entry.bambooResultKey
-                if (resultKey != null && entry.status == QueueEntryStatus.QUEUED_ON_BAMBOO) {
-                    log.info("[Automation:Queue] Cancelling Bamboo build $resultKey")
-                    bambooService.cancelBuild(resultKey)
+                if (resultKey != null) {
+                    when (entry.status) {
+                        QueueEntryStatus.QUEUED_ON_BAMBOO -> {
+                            log.info("[Automation:Queue] Cancelling queued Bamboo build $resultKey")
+                            val cancelResult = bambooService.cancelBuild(resultKey)
+                            if (cancelResult.isError) {
+                                log.warn("[Automation:Queue] Failed to cancel build $resultKey on Bamboo (continuing with local CANCELLED): ${cancelResult.summary}")
+                            }
+                        }
+                        QueueEntryStatus.RUNNING -> {
+                            log.info("[Automation:Queue] Stopping running Bamboo build $resultKey")
+                            val stopResult = bambooService.stopBuild(resultKey)
+                            if (stopResult.isError) {
+                                log.warn("[Automation:Queue] Failed to stop build $resultKey on Bamboo (continuing with local CANCELLED): ${stopResult.summary}")
+                            }
+                        }
+                        else -> {}
+                    }
                 }
 
                 tagHistoryService.updateQueueEntryStatus(entryId, QueueEntryStatus.CANCELLED)

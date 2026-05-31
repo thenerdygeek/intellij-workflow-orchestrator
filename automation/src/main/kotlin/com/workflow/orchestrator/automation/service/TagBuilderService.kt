@@ -146,7 +146,7 @@ class TagBuilderService {
 
             val tags = parseDockerTagsJson(dockerTagsJson)
             if (tags.isEmpty()) {
-                val reason = "#${build.buildNumber}: dockerTagsAsJson parsed to empty — ${dockerTagsJson.take(100)}"
+                val reason = "#${build.buildNumber}: dockerTagsAsJson was ${dockerTagsJson.length} chars, did not parse as a non-empty JSON object"
                 log.info("[Automation:Tags]   $reason")
                 skippedReasons.add(reason)
                 continue

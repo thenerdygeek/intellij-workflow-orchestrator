@@ -47,8 +47,11 @@ class BambooApiClient(
 
     suspend fun getProjects(): ApiResult<List<BambooProjectDto>> {
         log.debug("[Bamboo:API] Fetching all projects")
-        return get<BambooProjectListResponse>("/rest/api/latest/project?max-results=100")
-            .map { it.projects.project }
+        return paginate(pageSize = 100, maxPages = 50, label = "projects") { start ->
+            get<BambooProjectListResponse>(
+                "/rest/api/latest/project?max-results=100&start-index=$start"
+            ).map { it.projects.project }
+        }
     }
 
     suspend fun getProjectPlans(projectKey: String): ApiResult<List<BambooPlanDto>> {

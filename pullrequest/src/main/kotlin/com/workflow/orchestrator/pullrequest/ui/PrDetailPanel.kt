@@ -96,8 +96,15 @@ class PrDetailPanel(
         Disposer.register(this, it)
     }
 
-    private var currentPrId: Int? = null
-    private var currentPr: BitbucketPrDetail? = null
+    /**
+     * @Volatile mirrors the pattern on [cachedUsername]: the EDT writes these fields
+     * via showPr/showPrDetail/refreshCurrentPr while Dispatchers.IO coroutines read
+     * them (renderPrHeader approve-button toggle at line ~1427 and
+     * FilesSubPanel.openDiffViewer). Without the annotation the JVM memory model does
+     * not guarantee visibility across dispatcher boundaries (COR-5 fix).
+     */
+    @Volatile private var currentPrId: Int? = null
+    @Volatile private var currentPr: BitbucketPrDetail? = null
     private var currentMergeStatus: BitbucketMergeStatus? = null
     private var loadJob: Job? = null
     private var createRepoConfig: RepoConfig? = null
@@ -1221,28 +1228,33 @@ class PrDetailPanel(
                     if (!dialog.showAndGet()) return@invokeLater
 
                     scope.launch {
-                        try {
-                            // version dropped in PR 3 of the 2026-05-07 write-ops fix plan —
-                            // PrActionService.merge now refetches inside mergePullRequestWithRetry.
-                            PrActionService.getInstance(project).merge(
-                                prId = prId,
-                                strategyId = dialog.selectedStrategyId,
-                                deleteSourceBranch = dialog.deleteSourceBranch,
-                                commitMessage = dialog.commitMessage.takeIf { it.isNotBlank() }
-                            )
-                            invokeLater {
-                                mergeButton.isEnabled = false
-                                approveButton.isEnabled = false
-                                needsWorkButton.isEnabled = false
-                                declineButton.isEnabled = false
-                            }
-                        } catch (e: Exception) {
-                            invokeLater {
-                                WorkflowNotificationService.getInstance(project).notifyError(
-                                    WorkflowNotificationService.GROUP_BUILD,
-                                    "PR Action Failed",
-                                    "PR action failed: ${e.message}"
-                                )
+                        // version dropped in PR 3 of the 2026-05-07 write-ops fix plan —
+                        // PrActionService.merge now refetches inside mergePullRequestWithRetry.
+                        val mergeResult = PrActionService.getInstance(project).merge(
+                            prId = prId,
+                            strategyId = dialog.selectedStrategyId,
+                            deleteSourceBranch = dialog.deleteSourceBranch,
+                            commitMessage = dialog.commitMessage.takeIf { it.isNotBlank() }
+                        )
+                        invokeLater {
+                            when (mergeResult) {
+                                is ApiResult.Success -> {
+                                    // Merge succeeded — disable all mutating actions
+                                    mergeButton.isEnabled = false
+                                    approveButton.isEnabled = false
+                                    needsWorkButton.isEnabled = false
+                                    declineButton.isEnabled = false
+                                }
+                                is ApiResult.Error -> {
+                                    // Merge failed — surface the error and leave buttons
+                                    // enabled so the user can retry (mirrors declineButton
+                                    // handler pattern, COR-1 fix).
+                                    WorkflowNotificationService.getInstance(project).notifyError(
+                                        WorkflowNotificationService.GROUP_BUILD,
+                                        "Merge Failed",
+                                        mergeResult.message.ifBlank { "Could not merge PR #$prId — try refreshing." }
+                                    )
+                                }
                             }
                         }
                     }
@@ -1970,6 +1982,7 @@ class PrDetailPanel(
         private fun saveDescription() {
             val prId = currentPrId ?: return
             val newDescription = editArea.text
+            val priorDescription = currentDescription
             updateButton.isEnabled = false
 
             scope.launch {
@@ -1977,11 +1990,23 @@ class PrDetailPanel(
                 // modifyPullRequest which fetches the fresh version itself and retries
                 // once on a 409 stale-version response (PR 6 of the 2026-05-07
                 // write-ops fix plan).
-                PrActionService.getInstance(project).updateDescription(prId, newDescription)
+                val result = PrActionService.getInstance(project).updateDescription(prId, newDescription)
                 invokeLater {
                     updateButton.isEnabled = true
-                    currentDescription = newDescription
-                    showDescription(newDescription)
+                    when (result) {
+                        is ApiResult.Success -> {
+                            // Server accepted the update — commit local state
+                            currentDescription = newDescription
+                            showDescription(newDescription)
+                        }
+                        is ApiResult.Error -> {
+                            // Server rejected the update — revert to the pre-edit
+                            // text so the panel stays consistent with the server
+                            // (mirrors saveTitleEdit revert pattern, COR-2 fix).
+                            showDescription(priorDescription)
+                            showNotification("Failed to update description: ${result.message}")
+                        }
+                    }
                 }
             }
         }

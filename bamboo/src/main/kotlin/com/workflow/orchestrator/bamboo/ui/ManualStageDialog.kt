@@ -140,43 +140,59 @@ class ManualStageDialog(
         init()
 
         // Load variables and (for CUSTOM_STAGES) plan stages asynchronously.
+        // All Swing component construction and field writes happen on the EDT inside
+        // invokeLater — no cross-thread JMM visibility gap, no off-EDT widget creation.
         scope.launch {
             val varResult = bambooService.getPlanVariables(planKey)
-            if (!varResult.isError) {
-                variables = varResult.data!!
-            }
+            val loadedVariables: List<PlanVariableData> = if (!varResult.isError) varResult.data!! else emptyList()
 
-            if (triggerMode == TriggerMode.CUSTOM_STAGES) {
-                // Fetch stages from the latest build result for this plan.
-                // H6: on load failure, show banner and disable OK — no silent "run all".
+            // Compute plain data on IO (no Swing) for CUSTOM_STAGES.
+            data class StagesData(
+                val stageNames: List<String>?,   // null on error
+                val errorMessage: String?
+            )
+            val stagesData: StagesData? = if (triggerMode == TriggerMode.CUSTOM_STAGES) {
                 val stagesResult = bambooService.getLatestBuild(planKey)
-                isLoadingStages = false
                 if (!stagesResult.isError && stagesResult.data != null) {
-                    val stageNames = stagesResult.data!!.stages.map { it.name }
-                    if (stageNames.isNotEmpty()) {
-                        stageCheckboxes = stageNames.map { name ->
+                    val names = stagesResult.data!!.stages.map { it.name }
+                    if (names.isNotEmpty()) StagesData(stageNames = names, errorMessage = null)
+                    else StagesData(
+                        stageNames = null,
+                        errorMessage = "No stage information available for plan $planKey. " +
+                            "Trigger a full build first so Bamboo records the stage list."
+                    )
+                } else {
+                    StagesData(
+                        stageNames = null,
+                        errorMessage = "Couldn't load stages from Bamboo: ${stagesResult.summary}. " +
+                            "Refresh, or cancel."
+                    )
+                }
+            } else null
+
+            // All field writes and Swing construction happen on the EDT.
+            invokeLater {
+                variables = loadedVariables
+
+                if (stagesData != null) {
+                    isLoadingStages = false
+                    if (stagesData.stageNames != null) {
+                        stageCheckboxes = stagesData.stageNames.map { name ->
                             // Pre-check logic (H6): saved default if any; else first stage; else nothing.
                             val preChecked = when {
                                 savedDefaultStages != null -> name in savedDefaultStages
-                                else -> name == stageNames.first()
+                                else -> name == stagesData.stageNames.first()
                             }
                             val cb = JBCheckBox(name, preChecked)
                             cb.addActionListener { updateOkButton() }
                             name to cb
                         }
                     } else {
-                        stageLoadError = "No stage information available for plan $planKey. " +
-                            "Trigger a full build first so Bamboo records the stage list."
+                        stageLoadError = stagesData.errorMessage
                     }
-                } else {
-                    // H6: stage load failure — banner + OK stays disabled. Never silently runs all.
-                    stageLoadError = "Couldn't load stages from Bamboo: ${stagesResult.summary}. " +
-                        "Refresh, or cancel."
                 }
-            }
 
-            isLoading = false
-            invokeLater {
+                isLoading = false
                 refillSlots()
                 updateOkButton()
             }

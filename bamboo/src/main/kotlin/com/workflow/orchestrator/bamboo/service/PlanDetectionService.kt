@@ -13,6 +13,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 class PlanDetectionService(
     private val apiClient: BambooApiClient,
@@ -403,10 +404,22 @@ internal fun defaultRevList(repoRoot: Path): List<String> {
         .directory(repoRoot.toFile())
         .redirectError(ProcessBuilder.Redirect.DISCARD)
         .start()
-    val output = process.inputStream.bufferedReader().readText()
+    // Drain stdout on a separate thread so the timeout can fire concurrently.
+    // Calling readText() synchronously BEFORE waitFor() would block indefinitely
+    // on a slow/hung network-mounted repo — the timeout guard could never interrupt it.
+    val outputBuilder = StringBuilder()
+    val readerThread = thread(start = true, isDaemon = true) {
+        try {
+            outputBuilder.append(process.inputStream.bufferedReader().readText())
+        } catch (_: Exception) {
+            // Stream closed by destroyForcibly() — ignore.
+        }
+    }
     if (!process.waitFor(REV_LIST_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
         process.destroyForcibly()
+        readerThread.interrupt()
         return emptyList()
     }
-    return output.lines().map { it.trim() }.filter { it.isNotBlank() }
+    readerThread.join()
+    return outputBuilder.toString().lines().map { it.trim() }.filter { it.isNotBlank() }
 }

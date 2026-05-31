@@ -37,29 +37,46 @@ class TagHistoryService : Disposable {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    @Volatile
-    private var connectionInitialized = false
-
-    private val connection: Connection by lazy {
-        val parentDir = File(dbPath).parentFile
-        parentDir?.mkdirs()
-        // Explicitly load the SQLite JDBC driver — IntelliJ's plugin classloader
-        // isolates the driver JAR from DriverManager's system classloader SPI scan.
-        Class.forName("org.sqlite.JDBC")
-        val conn = DriverManager.getConnection("jdbc:sqlite:$dbPath")
-        conn.createStatement().use { stmt ->
-            stmt.executeQuery("PRAGMA journal_mode = WAL").close()
+    /**
+     * Nullable lazy connection — returns null when initialisation fails (e.g. SQLite JDBC
+     * unavailable, disk full). Using a nullable lazy eliminates the TOCTOU window that
+     * existed when a separate `connectionInitialized` flag was set at the END of the lazy
+     * block: if `close()` was called while `initSchema` was still running, the flag was
+     * still false and `close()` returned early without closing the connection, leaking the
+     * WAL/SHM locks and causing "database is locked" errors on project reopen.
+     *
+     * `close()` uses `_connection?.close()` — the lazy property's own initialisation state
+     * is the guard, not a separate flag. Kotlin's `by lazy` (SYNCHRONIZED mode) ensures
+     * only one thread can initialise the property; the null check is the only safe guard.
+     */
+    private val _connection: Connection? by lazy {
+        try {
+            val parentDir = File(dbPath).parentFile
+            parentDir?.mkdirs()
+            // Explicitly load the SQLite JDBC driver — IntelliJ's plugin classloader
+            // isolates the driver JAR from DriverManager's system classloader SPI scan.
+            Class.forName("org.sqlite.JDBC")
+            val conn = DriverManager.getConnection("jdbc:sqlite:$dbPath")
+            conn.createStatement().use { stmt ->
+                stmt.executeQuery("PRAGMA journal_mode = WAL").close()
+            }
+            conn.createStatement().use { stmt ->
+                stmt.execute("PRAGMA busy_timeout = 5000")
+            }
+            conn.createStatement().use { stmt ->
+                stmt.execute("PRAGMA wal_autocheckpoint = 1000")
+            }
+            initSchema(conn)
+            conn
+        } catch (e: Exception) {
+            log.error("[TagHistoryService] Failed to open SQLite connection at $dbPath", e)
+            null
         }
-        conn.createStatement().use { stmt ->
-            stmt.execute("PRAGMA busy_timeout = 5000")
-        }
-        conn.createStatement().use { stmt ->
-            stmt.execute("PRAGMA wal_autocheckpoint = 1000")
-        }
-        initSchema(conn)
-        connectionInitialized = true
-        conn
     }
+
+    /** Resolves the connection, throwing if it failed to initialise. */
+    private val connection: Connection
+        get() = _connection ?: error("[TagHistoryService] SQLite connection is unavailable (initialisation failed)")
 
     /**
      * D4 (audit finding automation:F-1): All JDBC operations must run under this Mutex.
@@ -332,8 +349,7 @@ class TagHistoryService : Disposable {
     }
 
     fun close() {
-        if (!connectionInitialized) return
-        try { connection.close() } catch (_: Exception) {}
+        try { _connection?.close() } catch (_: Exception) {}
     }
 
     /**

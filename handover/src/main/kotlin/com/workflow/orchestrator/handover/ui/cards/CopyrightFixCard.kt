@@ -166,9 +166,11 @@ class CopyrightFixCard(private val project: Project) : JPanel(BorderLayout()), D
                     )
                 }
                 rescanButton.isEnabled = true
+                // Re-scan so the UI reflects post-fix state.
+                // Called inside withContext(EDT) so the initial Swing mutations in
+                // onRescan() (rescanButton.isEnabled = false, statusLabel.text) execute on the EDT.
+                onRescan()
             }
-            // Re-scan so the UI reflects post-fix state.
-            onRescan()
         }
     }
 
@@ -218,12 +220,14 @@ class CopyrightFixCard(private val project: Project) : JPanel(BorderLayout()), D
                     val original = document.text
                     val updated = when (entry.status) {
                         CopyrightStatus.YEAR_OUTDATED -> {
-                            val headerRegion = original.lines().take(15).joinToString("\n")
+                            val headerRegion = original.lines().take(CopyrightFixService.HEADER_SCAN_LINES).joinToString("\n")
                             val rewritten = service.updateYearInHeader(headerRegion, currentYear)
                             if (rewritten == headerRegion) original
                             else {
-                                // Reassemble: rewritten 15-line region + the rest verbatim
-                                val rest = original.lines().drop(15).joinToString("\n")
+                                // Reassemble: rewritten header region + the rest verbatim.
+                                // Use the same HEADER_SCAN_LINES constant as CopyrightFixService.analyzeFile
+                                // to avoid a scan-window mismatch that would leave years in lines 16-30 unpatched.
+                                val rest = original.lines().drop(CopyrightFixService.HEADER_SCAN_LINES).joinToString("\n")
                                 if (rest.isEmpty()) rewritten else "$rewritten\n$rest"
                             }
                         }

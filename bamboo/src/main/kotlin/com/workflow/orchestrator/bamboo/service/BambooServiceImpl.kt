@@ -40,8 +40,13 @@ class BambooServiceImpl(private val project: Project) : BambooService {
     private val credentialStore = CredentialStore()
     private val settings get() = PluginSettings.getInstance(project)
 
-    @Volatile private var cachedClient: BambooApiClient? = null
-    @Volatile private var cachedBaseUrl: String? = null
+    /**
+     * Single-holder for the cached (url, client) pair. The read-check-write is now a
+     * single volatile store, eliminating the TOCTOU window where one writer's
+     * cachedBaseUrl could land before another writer's cachedClient in the old two-field
+     * design. Callers that observe a stale pair will reconstruct atomically.
+     */
+    @Volatile private var cachedEntry: Pair<String, BambooApiClient>? = null
 
     /** Test-only override: when set, [client] returns this instead of building from settings. */
     @Volatile internal var testClientOverride: BambooApiClient? = null
@@ -58,18 +63,21 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             testClientOverride?.let { return it }
             val url = settings.connections.bambooUrl.orEmpty().trimEnd('/')
             if (url.isBlank()) return null
-            if (url != cachedBaseUrl || cachedClient == null) {
-                cachedBaseUrl = url
-                val timeouts = com.workflow.orchestrator.core.http.HttpClientFactory.timeoutsFromSettings(project)
-                cachedClient = BambooApiClient(
-                    baseUrl = url,
-                    tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
-                    connectTimeoutSeconds = timeouts.connectSeconds,
-                    readTimeoutSeconds = timeouts.readSeconds
-                )
-            }
-            return cachedClient
+            val entry = cachedEntry
+            if (entry != null && entry.first == url) return entry.second
+            val timeouts = com.workflow.orchestrator.core.http.HttpClientFactory.timeoutsFromSettings(project)
+            val newClient = BambooApiClient(
+                baseUrl = url,
+                tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
+                connectTimeoutSeconds = timeouts.connectSeconds,
+                readTimeoutSeconds = timeouts.readSeconds
+            )
+            cachedEntry = url to newClient
+            return newClient
         }
+
+    /** The cached base URL of the current client, used to build absolute links in [triggerBuild]. */
+    private val cachedBaseUrl: String? get() = cachedEntry?.first
 
     override suspend fun getLatestBuild(chainKey: String): ToolResult<BuildResultData> {
         val api = client ?: return notConfiguredError("fetch latest build for $chainKey")

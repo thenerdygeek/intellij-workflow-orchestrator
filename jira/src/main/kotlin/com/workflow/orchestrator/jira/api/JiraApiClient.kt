@@ -470,7 +470,9 @@ class JiraApiClient(
         val obj = Json.parseToJsonElement(raw).jsonObject
         val messages = mutableListOf<String>()
         obj["errorMessages"]?.jsonArray?.forEach { messages += it.jsonPrimitive.content }
-        obj["errors"]?.jsonObject?.entries?.forEach { (k, v) -> messages += "$k: ${v.jsonPrimitive.content}" }
+        obj["errors"]?.jsonObject?.entries?.forEach { (k, v) ->
+            messages += "$k: ${(v as? kotlinx.serialization.json.JsonPrimitive)?.content ?: v.toString()}"
+        }
         messages.joinToString("; ").ifBlank { null }
     } catch (_: Exception) { null }
 
