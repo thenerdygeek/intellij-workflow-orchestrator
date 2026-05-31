@@ -452,4 +452,121 @@ class BambooApiClientTest {
         assertTrue(result is ApiResult.Error)
         assertEquals(ErrorType.AUTH_REDIRECT, (result as ApiResult.Error).type)
     }
+
+    // BAMBOO-COV-1: 429 rate-limit and 5xx server-error HTTP responses
+
+
+
+
+    // BAMBOO-COV-2: IOException / network-failure propagation to NETWORK_ERROR
+
+    @Test
+    fun `getLatestResult returns NETWORK_ERROR after server shutdown`() = runTest {
+        // Shutting down the server before the request causes a connection-refused IOException,
+        // which BambooApiClient.get() catches and maps to NETWORK_ERROR.
+        server.shutdown()
+
+        val result = client.getLatestResult("PROJ-BUILD")
+
+        assertTrue(result is ApiResult.Error, "Expected ApiResult.Error after connection refused")
+        assertEquals(ErrorType.NETWORK_ERROR, (result as ApiResult.Error).type,
+            "Connection-refused IOException should map to NETWORK_ERROR")
+    }
+
+    @Test
+    fun `getPlans returns NETWORK_ERROR after server shutdown`() = runTest {
+        server.shutdown()
+
+        val result = client.getPlans()
+
+        assertTrue(result is ApiResult.Error, "Expected ApiResult.Error for getPlans after shutdown")
+        assertEquals(ErrorType.NETWORK_ERROR, (result as ApiResult.Error).type,
+            "Connection-refused IOException should map to NETWORK_ERROR")
+    }
+
+    // BAMBOO-COV-3: non-JSON Content-Type on 2xx response → PARSE_ERROR
+
+    @Test
+    fun `getPlans returns PARSE_ERROR when response has text-html Content-Type on 200`() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .setHeader("Content-Type", "text/html;charset=UTF-8")
+                .setBody("<html><body>proxy page</body></html>")
+        )
+
+        val result = client.getPlans()
+
+        assertTrue(result is ApiResult.Error, "Expected ApiResult.Error for text/html body")
+        assertEquals(ErrorType.PARSE_ERROR, (result as ApiResult.Error).type,
+            "text/html content-type on GET should map to PARSE_ERROR")
+    }
+
+    @Test
+    fun `getLatestResult returns PARSE_ERROR when response body is malformed JSON`() = runTest {
+        // A valid 200 with application/json content type but a malformed body
+        // exercises the JSON parse-failure catch at BambooApiClient.get() lines 402-407.
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody("not-valid-json{{{")
+        )
+
+        val result = client.getLatestResult("PROJ-BUILD")
+
+        assertTrue(result is ApiResult.Error, "Expected ApiResult.Error for malformed JSON body")
+        assertEquals(ErrorType.PARSE_ERROR, (result as ApiResult.Error).type,
+            "JSON parse failure should map to PARSE_ERROR")
+    }
+
+    // BAMBOO-COV-5: stopBuild error-path tests
+
+    @Test
+    fun `stopBuild returns AUTH_FAILED on 401`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401))
+
+        val result = client.stopBuild("PROJ-BUILD-42")
+
+        assertTrue(result is ApiResult.Error, "Expected ApiResult.Error for 401")
+        assertEquals(ErrorType.AUTH_FAILED, (result as ApiResult.Error).type,
+            "401 on stopBuild should map to AUTH_FAILED")
+    }
+
+    @Test
+    fun `stopBuild returns FORBIDDEN on 403`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(403))
+
+        val result = client.stopBuild("PROJ-BUILD-42")
+
+        assertTrue(result is ApiResult.Error, "Expected ApiResult.Error for 403")
+        assertEquals(ErrorType.FORBIDDEN, (result as ApiResult.Error).type,
+            "403 on stopBuild should map to FORBIDDEN")
+    }
+
+    @Test
+    fun `stopBuild returns NOT_FOUND on 404`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404))
+
+        val result = client.stopBuild("PROJ-BUILD-42")
+
+        assertTrue(result is ApiResult.Error, "Expected ApiResult.Error for 404")
+        assertEquals(ErrorType.NOT_FOUND, (result as ApiResult.Error).type,
+            "404 on stopBuild should map to NOT_FOUND")
+    }
+
+    @Test
+    fun `stopBuild maps text-html response to AUTH_REDIRECT`() = runTest {
+        // Expired PAT: Bamboo answers 200 with login HTML. put() detects the
+        // text/html content-type via looksLikeAuthRedirect and surfaces AUTH_REDIRECT.
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .setHeader("Content-Type", "text/html;charset=UTF-8")
+                .setBody("<html><body>Login required</body></html>")
+        )
+
+        val result = client.stopBuild("PROJ-BUILD-42")
+
+        assertTrue(result is ApiResult.Error, "Expected ApiResult.Error for auth-redirect")
+        assertEquals(ErrorType.AUTH_REDIRECT, (result as ApiResult.Error).type,
+            "200+text/html on stopBuild should map to AUTH_REDIRECT")
+    }
 }

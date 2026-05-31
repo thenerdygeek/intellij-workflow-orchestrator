@@ -6,6 +6,7 @@ import com.workflow.orchestrator.core.model.jira.StatusCategory
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 
 class JiraTransitionResponseParserTest {
 
@@ -112,5 +113,35 @@ class JiraTransitionResponseParserTest {
         val meta = parser.parse(json).single()
         assertEquals(false, meta.hasScreen)
         assertEquals(0, meta.fields.size)
+    }
+
+    // ── JIRA-COV-8: malformed / missing fields ────────────────────────────
+
+    @Test
+    fun `parse returns empty list for empty transitions array`() {
+        val json = """{"transitions":[]}"""
+        val result = parser.parse(json)
+        assertTrue(result.isEmpty(), "Empty transitions array must produce an empty list, got: $result")
+    }
+
+    @Test
+    fun `parse returns empty list when transitions key is missing entirely`() {
+        // The ?: return emptyList() guard at line 23 covers this case
+        val json = """{}"""
+        val result = parser.parse(json)
+        assertTrue(result.isEmpty(), "Missing transitions key must produce an empty list, got: $result")
+    }
+
+    @Test
+    fun `parse throws on transition with missing to field — current behavior pinned`() {
+        // JiraTransitionResponseParser.parseTransition uses n["to"]!!.jsonObject (line 28).
+        // !! throws NullPointerException when the key is absent. This test pins the current
+        // (throw) behavior so any future change to skip-and-log is a deliberate decision.
+        val json = """{"transitions":[{"id":"31","name":"Admin Transition"}]}"""
+        // NullPointerException is wrapped in a Kotlin runtime exception or thrown directly.
+        // We assert that parse() throws rather than silently returning a partial result.
+        assertThrows<Exception> {
+            parser.parse(json)
+        }
     }
 }

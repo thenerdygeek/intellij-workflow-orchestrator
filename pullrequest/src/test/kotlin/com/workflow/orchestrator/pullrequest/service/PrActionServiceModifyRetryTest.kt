@@ -268,4 +268,38 @@ class PrActionServiceModifyRetryTest {
 
         assertEquals(ErrorType.STALE_VERSION, (result as ApiResult.Error).type)
     }
+
+    // ── PULLREQUEST-COV-12: mergePullRequestWithRetry GET failure ─────────────
+
+    @Test
+    fun `mergePullRequestWithRetry returns error when getPullRequestDetail returns 404 and no POST is made`() = runTest {
+        // Simulate the PR being deleted or access revoked between UI load and merge click
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"errors":[{"message":"PR not found"}]}"""))
+
+        val result = client.mergePullRequestWithRetry(
+            repo = RepoCoords("P", "r"),
+            prId = 42,
+        )
+
+        assertTrue(result is ApiResult.Error, "mergePullRequestWithRetry must return an error when the GET pre-fetch returns 404; got: $result")
+        // Verify only the GET was made — no POST to /merge
+        assertEquals(1, server.requestCount,
+            "Only the GET request must be made; no POST to /merge must follow a 404 pre-fetch")
+        val req = server.takeRequest()
+        assertEquals("GET", req.method, "The only request must be a GET (PR detail pre-fetch)")
+    }
+
+    @Test
+    fun `mergePullRequestWithRetry returns error when getPullRequestDetail returns 403 and no POST is made`() = runTest {
+        // Simulate permission revoked
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"errors":[{"message":"forbidden"}]}"""))
+
+        val result = client.mergePullRequestWithRetry(
+            repo = RepoCoords("P", "r"),
+            prId = 42,
+        )
+
+        assertTrue(result is ApiResult.Error, "mergePullRequestWithRetry must propagate a 403 from the GET as an error; got: $result")
+        assertEquals(1, server.requestCount, "No POST must be made after a 403 on the GET pre-fetch")
+    }
 }

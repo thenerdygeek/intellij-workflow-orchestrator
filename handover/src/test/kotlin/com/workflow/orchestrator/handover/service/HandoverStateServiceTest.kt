@@ -363,4 +363,86 @@ class HandoverStateServiceTest {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    // ── HANDOVER-COV-1: null activeTicket emission resets state to blank strings ──
+
+    @Test
+    fun `null emission on activeTicketFlow resets ticketId and ticketSummary to blank`() = runTest {
+        service.stateFlow.test {
+            skipItems(1) // initial state
+
+            // Seed some state first
+            service.markCopyrightFixed()
+            awaitItem()
+
+            // Emit null — simulates "Stop Work"
+            activeTicketFlow.value = null
+
+            val state = awaitItem()
+            assertEquals("", state.ticketId, "ticketId must be blank after null ticket emission")
+            assertEquals("", state.ticketSummary, "ticketSummary must be blank after null ticket emission")
+            assertFalse(state.copyrightFixed, "copyrightFixed must be reset on ticket clear")
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // ── HANDOVER-COV-2: startWorkTimestamp propagated from settings into initial state ──
+
+    @Test
+    fun `startWorkTimestamp from settings is propagated to initial stateFlow`() {
+        val timestampMs = 1_700_000_000_000L
+        val customSettings = mockk<PluginSettings>(relaxed = true)
+        every { customSettings.state } returns PluginSettings.State().apply {
+            startWorkTimestamp = timestampMs
+        }
+        every { customSettings.connections.bambooUrl } returns "https://bamboo.example.com"
+
+        val seededTicket = TicketRef("PROJ-999", "Seeded")
+        val ticketFlow = MutableStateFlow<TicketRef?>(seededTicket)
+        val wfService = mockk<WorkflowContextService>(relaxed = true)
+        every { wfService.state } returns MutableStateFlow(
+            WorkflowContext(activeTicket = seededTicket)
+        )
+        every { wfService.activeTicketFlow } returns ticketFlow
+
+        val testScope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
+        val svc = HandoverStateService(wfService, eventBus, customSettings, testScope)
+
+        assertEquals(
+            timestampMs,
+            svc.stateFlow.value.startWorkTimestamp,
+            "startWorkTimestamp must be seeded from settings.state.startWorkTimestamp"
+        )
+        testScope.cancel()
+    }
+
+    // ── HANDOVER-COV-4: unrecognised events (TicketChanged, BranchChanged) are silently dropped ──
+
+    @Test
+    fun `TicketChanged emitted on EventBus does not mutate stateFlow`() = runTest {
+        service.stateFlow.test {
+            skipItems(1) // consume initial
+
+            eventBus.emit(WorkflowEvent.TicketChanged("PROJ-999", "Other ticket"))
+
+            // No new state emission expected
+            expectNoEvents()
+            // State is unchanged from initial
+            assertEquals("PROJ-123", service.stateFlow.value.ticketId)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `BranchChanged emitted on EventBus does not mutate stateFlow`() = runTest {
+        service.stateFlow.test {
+            skipItems(1)
+
+            eventBus.emit(WorkflowEvent.BranchChanged("main", "feature/other"))
+
+            expectNoEvents()
+            assertFalse(service.stateFlow.value.prCreated)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
 }

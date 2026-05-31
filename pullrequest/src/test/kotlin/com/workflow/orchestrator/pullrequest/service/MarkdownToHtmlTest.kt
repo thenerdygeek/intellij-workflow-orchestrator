@@ -94,4 +94,48 @@ class MarkdownToHtmlTest {
         assertTrue(html.contains("&amp;"))
         assertTrue(html.contains("&gt;"))
     }
+
+    // ── PULLREQUEST-COV-11: edge cases ────────────────────────────────────────
+
+    @Test
+    fun `convert on empty string returns valid html body wrapper without body content`() {
+        val html = MarkdownToHtml.convert("")
+        assertTrue(html.startsWith("<html><body style='"), "convert(\"\") must still emit html/body wrapper")
+        assertTrue(html.endsWith("</body></html>"), "convert(\"\") must close html/body correctly")
+        // Between the opening and closing body tags there must be no actual text content
+        val bodyContent = html.substringAfter(">", "").substringBefore("</body>")
+        // It should not contain real text — just possibly whitespace or empty
+        assertFalse(bodyContent.contains("null"), "convert(\"\") must not produce 'null' in output")
+    }
+
+    @Test
+    fun `unclosed code block is auto-closed at end of document`() {
+        // Triple-backtick opens a code block that is never closed
+        val md = "```\nsome code\nno closing fence"
+        val html = MarkdownToHtml.convertFragment(md)
+        // The safety-close on line 93 must produce a closed </code></pre>
+        assertTrue(html.contains("</code></pre>"), "unclosed fenced code block must be auto-closed with </code></pre>")
+        // Must contain the code content
+        assertTrue(html.contains("some code"), "code block content must appear in output")
+        // Well-formed: for every opening <pre there must be a closing </pre>
+        val preOpen = "<pre".toRegex().findAll(html).count()
+        val preClose = "</pre>".toRegex().findAll(html).count()
+        assertEquals(preOpen, preClose, "every <pre> must have a matching </pre>")
+    }
+
+    @Test
+    fun `heading immediately after list item closes the ul before opening the heading`() {
+        // No blank line between list and heading — the heading guard must close the open <ul>
+        val md = "- item\n## Heading"
+        val html = MarkdownToHtml.convertFragment(md)
+        // There must be exactly one </ul> and it must appear before the <h2>
+        val ulCloseIdx = html.indexOf("</ul>")
+        val h2Idx = html.indexOf("<h2")
+        assertTrue(ulCloseIdx >= 0, "list must be closed with </ul> when heading follows immediately")
+        assertTrue(h2Idx >= 0, "## Heading must produce an <h2> element")
+        assertTrue(ulCloseIdx < h2Idx, "</ul> must appear before <h2> when heading follows a list with no blank line")
+        // Exactly one <ul> block must have been opened and closed
+        assertEquals(1, "<ul".toRegex().findAll(html).count(), "exactly one <ul> must be emitted")
+        assertEquals(1, "</ul>".toRegex().findAll(html).count(), "exactly one </ul> must close the list")
+    }
 }

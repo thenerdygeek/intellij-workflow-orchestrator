@@ -280,6 +280,93 @@ class HandoverTemplateStoreTest {
     // Fix 3 — watcher registers newly-created sub-directories at runtime
     // -----------------------------------------------------------------------
 
+    // -----------------------------------------------------------------------
+    // HANDOVER-COV-5 — rename() paths
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `rename GLOBAL template moves file and updates templates list`() = runTest {
+        writeGlobal(HandoverTemplateAction.JIRA, "old-name", "wiki", "content")
+        val store = makeStore()
+
+        store.rename("jira/old-name", "new-name")
+
+        val list = store.templates.value
+        assertTrue(list.none { it.id == "jira/old-name" }, "old id must be gone after rename")
+        assertTrue(list.any { it.id == "jira/new-name" }, "new id must be present after rename")
+
+        val oldFile = globalDir.resolve("jira/old-name.wiki")
+        val newFile = globalDir.resolve("jira/new-name.wiki")
+        assertTrue(!Files.exists(oldFile), "old file must not exist after rename")
+        assertTrue(Files.exists(newFile), "new file must exist after rename")
+    }
+
+    @Test
+    fun `rename BUNDLED template throws UnsupportedOperationException`() = runTest {
+        val bundled = bundledTemplate("standard-closure")
+        val store = makeStore(fakeLoader(bundled))
+
+        assertThrows<UnsupportedOperationException> {
+            store.rename("jira/standard-closure", "new-name")
+        }
+    }
+
+    @Test
+    fun `rename PROJECT template when GLOBAL with same name exists throws IllegalArgumentException`() = runTest {
+        writeGlobal(HandoverTemplateAction.JIRA, "shared-name", "wiki", "global content")
+        writeProject(HandoverTemplateAction.JIRA, "my-project-template", "wiki", "project content")
+        val store = makeStore()
+
+        // shared-name already exists as GLOBAL → renaming project template to it must be rejected
+        assertThrows<IllegalArgumentException> {
+            store.rename("jira/my-project-template", "shared-name")
+        }
+    }
+
+    @Test
+    fun `rename unknown id throws NoSuchElementException`() = runTest {
+        val store = makeStore()
+
+        assertThrows<NoSuchElementException> {
+            store.rename("jira/does-not-exist", "new-name")
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // HANDOVER-COV-6 — findOrThrow for missing id on delete/update/duplicate
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `delete unknown id throws NoSuchElementException`() = runTest {
+        val store = makeStore()
+
+        assertThrows<NoSuchElementException> {
+            store.delete("jira/does-not-exist")
+        }
+    }
+
+    @Test
+    fun `update unknown id throws NoSuchElementException`() = runTest {
+        val store = makeStore()
+
+        assertThrows<NoSuchElementException> {
+            store.update("jira/does-not-exist", "new content")
+        }
+    }
+
+    @Test
+    fun `duplicate unknown sourceId throws NoSuchElementException`() = runTest {
+        val store = makeStore()
+
+        assertThrows<NoSuchElementException> {
+            store.duplicate("jira/does-not-exist", "copy-name")
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // (existing test continues below)
+    // -----------------------------------------------------------------------
+
     @Test
     fun `watcher detects file in newly created sub-directory within 1 second`() {
         // Start with NO sub-directories under globalDir so they don't exist yet.

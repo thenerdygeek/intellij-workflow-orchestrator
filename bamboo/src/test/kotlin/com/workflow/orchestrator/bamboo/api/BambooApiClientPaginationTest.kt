@@ -295,4 +295,23 @@ class BambooApiClientPaginationTest {
         val repos = (result as ApiResult.Success).data
         assertEquals(42, repos[0].id, "id must be copied from the BambooLinkedRepositoryItem wrapper")
     }
+
+    // BAMBOO-COV-4: mid-pagination error discards all collected data
+
+    @Test
+    fun `getPlans returns error when second page fails and discards first-page data`() = runTest {
+        // Page 1 succeeds (full 100 items) then page 2 returns 500.
+        // The paginate() helper returns the error immediately — all collected first-page
+        // items are discarded. This test documents that contract.
+        val page1Keys = (1..100).map { "PROJ-P$it" }
+        server.enqueue(MockResponse().setResponseCode(200).setBody(
+            plansPage(page1Keys, startIndex = 0, maxResult = 100)
+        ))
+        server.enqueue(MockResponse().setResponseCode(500))
+
+        val result = client.getPlans()
+
+        assertTrue(result is ApiResult.Error,
+            "Expected ApiResult.Error when a mid-pagination page fails, got: $result")
+    }
 }

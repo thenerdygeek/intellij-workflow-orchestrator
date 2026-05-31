@@ -291,4 +291,22 @@ class BambooApiClientStageSelectionTest {
             "Expected otherVar in form body, got: $body"
         )
     }
+
+    // BAMBOO-COV-6: parse failure on the queue-response body
+
+    @Test
+    fun `queueBuildWithStageSelection returns PARSE_ERROR when response body is malformed JSON`() = runTest {
+        // A 200 response with a non-JSON body exercises the catch at
+        // BambooApiClient.kt lines 269-275 that wraps parse exceptions as PARSE_ERROR.
+        server.enqueue(MockResponse().setResponseCode(200).setBody("not-json"))
+
+        val result = client.queueBuildWithStageSelection("PROJ-BUILD", emptyMap(), null)
+
+        assertTrue(result is ApiResult.Error, "Expected ApiResult.Error for malformed queue response")
+        assertEquals(
+            ErrorType.PARSE_ERROR,
+            (result as ApiResult.Error).type,
+            "Malformed queue response body should map to PARSE_ERROR"
+        )
+    }
 }

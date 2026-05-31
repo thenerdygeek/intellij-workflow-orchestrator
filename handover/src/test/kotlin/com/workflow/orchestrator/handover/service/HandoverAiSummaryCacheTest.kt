@@ -18,6 +18,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import org.junit.jupiter.api.AfterEach
@@ -334,6 +336,22 @@ class HandoverAiSummaryCacheTest {
     // -------------------------------------------------------------------------
     // D5: Cancelled entry cleanup (audit finding handover:F-3)
     // -------------------------------------------------------------------------
+
+    // ── HANDOVER-COV-14: concurrent changeSummary calls coalesce to one LLM call ──
+
+    @Test
+    fun `concurrent changeSummary calls coalesce to exactly one LLM invocation`() =
+        runTest(UnconfinedTestDispatcher()) {
+            coEvery { generator.generate(any()) } returns "Summary result"
+
+            // Launch 5 concurrent callers
+            repeat(5) {
+                launch { cache.changeSummary() }
+            }
+            advanceUntilIdle()
+
+            coVerify(exactly = 1) { generator.generate(any()) }
+        }
 
     @Test
     fun `D5 source-text pin - await is wrapped in try-catch with cache remove on failure`() {

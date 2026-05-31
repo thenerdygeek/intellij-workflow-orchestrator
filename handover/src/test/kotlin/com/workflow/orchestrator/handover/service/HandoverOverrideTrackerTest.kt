@@ -175,6 +175,29 @@ class HandoverOverrideTrackerTest {
     }
 
     // -----------------------------------------------------------------------
+    // HANDOVER-COV-9: malformed timestamp entries are silently ignored
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `malformed timestamp entry in log is silently excluded from count30d`() {
+        // Insert a non-ISO-8601 string alongside a valid recent entry
+        state.handoverOverrideLog.add("not-a-valid-date")
+        val recent = Instant.now().minus(1, ChronoUnit.DAYS)
+        state.handoverOverrideLog.add(DateTimeFormatter.ISO_INSTANT.format(recent))
+
+        // Only the valid recent entry should be counted; no exception thrown
+        assertDoesNotThrow { assertEquals(1, tracker.count30d()) }
+    }
+
+    @Test
+    fun `log with only malformed entries gives count of zero without throwing`() {
+        state.handoverOverrideLog.add("garbage")
+        state.handoverOverrideLog.add("2026-99-99T25:99:99Z") // structurally invalid ISO date
+
+        assertDoesNotThrow { assertEquals(0, tracker.count30d()) }
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 

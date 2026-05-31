@@ -107,4 +107,79 @@ class AiReviewViewModelTest {
         vm.discard("f-1")
         coVerify { store.discard("f-1") }
     }
+
+    // ── PULLREQUEST-COV-1: guard and error paths ──────────────────────────────
+
+    @Test
+    fun `pushFinding returns false without calling service when finding is already pushed`() = runTest {
+        val store = mockk<PrReviewFindingsStore>()
+        val service = mockk<BitbucketService>()
+        val alreadyPushed = sample(id = "f-pushed", pushed = true)
+        val vm = AiReviewViewModel(store, service, "PROJ", "repo", 1, "s1")
+
+        val result = vm.pushFinding(alreadyPushed)
+
+        assertFalse(result, "pushFinding must return false for an already-pushed finding")
+        coVerify(exactly = 0) { service.addPrComment(any(), any(), any()) }
+        coVerify(exactly = 0) { service.addInlineComment(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `pushFinding returns false without calling service when finding is already discarded`() = runTest {
+        val store = mockk<PrReviewFindingsStore>()
+        val service = mockk<BitbucketService>()
+        val discarded = sample(id = "f-discarded", discarded = true)
+        val vm = AiReviewViewModel(store, service, "PROJ", "repo", 1, "s1")
+
+        val result = vm.pushFinding(discarded)
+
+        assertFalse(result, "pushFinding must return false for an already-discarded finding")
+        coVerify(exactly = 0) { service.addPrComment(any(), any(), any()) }
+    }
+
+    @Test
+    fun `pushFinding returns false and sets lastError when service returns error`() = runTest {
+        val store = mockk<PrReviewFindingsStore>()
+        val service = mockk<BitbucketService>()
+        val finding = sample(id = "f-err")
+        coEvery { service.addPrComment(1, "msg", null) } returns
+            ToolResult(data = Unit, summary = "network error", isError = true)
+        val vm = AiReviewViewModel(store, service, "PROJ", "repo", 1, "s1")
+
+        val result = vm.pushFinding(finding)
+
+        assertFalse(result, "pushFinding must return false when service returns an error")
+        assertEquals("network error", vm.lastError, "lastError must be populated with the service error summary")
+        // store.markPushed must NOT be called when the push failed
+        coVerify(exactly = 0) { store.markPushed(any(), any(), any()) }
+    }
+
+    @Test
+    fun `pushAllKept pushes only fresh findings and skips already-pushed and discarded`() = runTest {
+        val store = mockk<PrReviewFindingsStore>()
+        val service = mockk<BitbucketService>()
+
+        val fresh1 = sample(id = "f-fresh1")
+        val fresh2 = sample(id = "f-fresh2")
+        val alreadyPushed = sample(id = "f-pushed", pushed = true)
+        val discarded = sample(id = "f-discarded", discarded = true)
+
+        // Seed the VM with 4 findings via refresh
+        coEvery { store.list(any(), any(), any()) } returns
+            ToolResult.success(listOf(fresh1, fresh2, alreadyPushed, discarded), summary = "4")
+        coEvery { service.addPrComment(1, "msg", null) } returns ToolResult.success(Unit, summary = "posted")
+        coEvery { store.markPushed(any(), any(), any()) } returns ToolResult.success(Unit, summary = "")
+
+        val vm = AiReviewViewModel(store, service, "PROJ", "repo", 1, "s1")
+        vm.refresh()
+
+        // After pushAllKept only fresh1 and fresh2 should be pushed
+        coEvery { store.list(any(), any(), any()) } returns ToolResult.success(emptyList(), summary = "0")
+        val count = vm.pushAllKept()
+
+        assertEquals(2, count, "pushAllKept must push exactly the two fresh (unpushed, undiscarded) findings")
+        coVerify(exactly = 2) { service.addPrComment(1, "msg", null) }
+        // markPushed must be called exactly twice (once per fresh finding) and not for the skipped ones
+        coVerify(exactly = 2) { store.markPushed(any(), any(), any()) }
+    }
 }

@@ -107,6 +107,26 @@ class TagBuilderServiceTest {
         assertFalse(result.any { it.isCurrentRepo })
     }
 
+    // ── AUTOMATION-COV-8: replaceCurrentRepoTag null featureBranchTag early-return ──
+
+    @Test
+    fun `replaceCurrentRepoTag returns entries unchanged when featureBranchTag is null`() {
+        // AUTOMATION-COV-8: null featureBranchTag triggers early-return guard;
+        // the input list must be returned as-is with no entry marked isCurrentRepo.
+        val entries = listOf(
+            TagEntry("auth", "2.4.0", TagSource.BASELINE, RegistryStatus.UNKNOWN, false),
+            TagEntry("payments", "2.3.1", TagSource.BASELINE, RegistryStatus.UNKNOWN, false)
+        )
+        val context = CurrentRepoContext(serviceName = "auth", featureBranchTag = null)
+
+        val result = service.replaceCurrentRepoTag(entries, context)
+
+        assertEquals(entries, result,
+            "When featureBranchTag is null the original list must be returned unchanged")
+        assertFalse(result.any { it.isCurrentRepo },
+            "No entry must have isCurrentRepo=true when featureBranchTag is null")
+    }
+
     @Test
     fun `buildJsonPayload produces valid JSON`() {
         val entries = listOf(
@@ -586,6 +606,38 @@ class TagBuilderServiceTest {
         assertEquals("2.4.0", auth.currentTag)
         assertEquals(TagSource.BASELINE, auth.source)
         assertEquals(RegistryStatus.UNKNOWN, auth.registryStatus)
+    }
+
+    // ── AUTOMATION-COV-10: scoreAndRankRuns require() precondition enforcement ──
+
+    @Test
+    fun `scoreAndRankRuns throws IllegalArgumentException when targetParseable is zero`() = runTest {
+        // AUTOMATION-COV-10(a): require(targetParseable > 0) must be enforced.
+        // require() fires before any suspension so we catch it as a try/catch
+        // (assertThrows needs a non-suspend lambda and can't directly call suspend fns).
+        val ex = try {
+            service.scoreAndRankRuns("PROJ-AUTO", targetParseable = 0)
+            null
+        } catch (e: IllegalArgumentException) {
+            e
+        }
+        assertNotNull(ex, "scoreAndRankRuns must throw IllegalArgumentException for targetParseable=0")
+        assertTrue(ex!!.message!!.contains("positive"),
+            "Exception message must contain 'positive'; was: ${ex.message}")
+    }
+
+    @Test
+    fun `scoreAndRankRuns throws IllegalArgumentException when maxWalk is less than targetParseable`() = runTest {
+        // AUTOMATION-COV-10(b): require(maxWalk >= targetParseable) must be enforced.
+        val ex = try {
+            service.scoreAndRankRuns("PROJ-AUTO", targetParseable = 5, maxWalk = 3)
+            null
+        } catch (e: IllegalArgumentException) {
+            e
+        }
+        assertNotNull(ex, "scoreAndRankRuns must throw IllegalArgumentException for maxWalk < targetParseable")
+        assertTrue(ex!!.message!!.contains("maxWalk"),
+            "Exception message must reference 'maxWalk'; was: ${ex.message}")
     }
 
     @Test

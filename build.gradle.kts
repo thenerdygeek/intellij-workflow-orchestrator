@@ -55,6 +55,12 @@ subprojects {
             exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib-common")
         }
     }
+    // The default test-JVM heap (~512m) OOMs once a module's suite grows large
+    // (MockK + MockWebServer + coroutine fixtures retain memory across a single
+    // forked JVM). Raise it for every module's Test task. (audit 2026-05-31)
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+        maxHeapSize = "2g"
+    }
 }
 configurations.configureEach {
     if (name in PLUGIN_DIST_CONFIGURATIONS) {

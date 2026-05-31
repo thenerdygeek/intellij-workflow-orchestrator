@@ -203,6 +203,26 @@ class CoverageMapperTest {
         assertEquals(19, file.cognitiveComplexity)
     }
 
+    // ── SONAR-COV-13: coveredConditions==null with conditions!=null edge case ──
+
+    @Test
+    fun `line with conditions but null coveredConditions maps to COVERED (current behavior)`() {
+        // SonarQube's /api/sources/lines API consistently returns coveredConditions=0
+        // (not omitted) when no branches are covered. However, both fields are nullable
+        // in the DTO, so the combination (conditions!=null, coveredConditions==null) is
+        // structurally possible. This test documents the current behavior: the when-block's
+        // PARTIAL branch guards on coveredConditions!=null, so a line with conditions=2 and
+        // coveredConditions=null with lineHits>0 falls through to the else->COVERED branch.
+        // See CoverageMapper.kt lines 47-51.
+        val lines = listOf(
+            SonarSourceLineDto(line = 1, lineHits = 1, conditions = 2, coveredConditions = null)
+        )
+
+        val result = CoverageMapper.mapLineStatuses(lines)
+
+        assertEquals(LineCoverageStatus.COVERED, result[1])
+    }
+
     @Test
     fun `new-code filter keeps files with newLinesToCover gt 0 and drops the rest`() {
         // Mirrors SonarDataService.refreshWith line 349-350: the newCodeFileCoverage

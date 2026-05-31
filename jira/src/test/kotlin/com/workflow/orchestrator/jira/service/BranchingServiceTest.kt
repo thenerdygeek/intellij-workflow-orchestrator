@@ -10,6 +10,7 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.jira.api.JiraApiClient
+import com.workflow.orchestrator.jira.api.dto.DevStatusBranch
 import com.workflow.orchestrator.jira.api.dto.JiraIssue
 import com.workflow.orchestrator.jira.api.dto.JiraIssueFields
 import com.workflow.orchestrator.jira.api.dto.JiraStatus
@@ -111,6 +112,62 @@ class BranchingServiceTest {
             "Configured VCS root '$pinned' not found — repick in Start Work dialog",
             err.message,
         )
+    }
+
+    // ── JIRA-COV-10: fetchLinkedBranches primary path and Bitbucket fallback ─
+
+    @Test
+    fun `fetchLinkedBranches returns dev-status branches when dev-status API returns non-empty`() = runTest {
+        val devBranch1 = DevStatusBranch(name = "feature/PROJ-123-login-fix", url = "https://bitbucket/branch1")
+        val devBranch2 = DevStatusBranch(name = "feature/PROJ-123-unit-tests", url = "https://bitbucket/branch2")
+        coEvery { apiClient.getDevStatusBranches(testIssue.id) } returns ApiResult.Success(
+            listOf(devBranch1, devBranch2)
+        )
+
+        val result = service.fetchLinkedBranches(testIssue, allBranches = emptyList())
+
+        assertEquals(2, result.size, "Both dev-status branches must be returned")
+        assertTrue(result.contains("feature/PROJ-123-login-fix"))
+        assertTrue(result.contains("feature/PROJ-123-unit-tests"))
+    }
+
+    @Test
+    fun `fetchLinkedBranches falls back to Bitbucket name filter when dev-status returns empty list`() = runTest {
+        coEvery { apiClient.getDevStatusBranches(testIssue.id) } returns ApiResult.Success(emptyList())
+
+        val matchingBranch = BitbucketBranch(
+            id = "refs/heads/feature/PROJ-123-fix",
+            displayId = "feature/PROJ-123-fix",
+            latestCommit = "abc123"
+        )
+        val nonMatchingBranch = BitbucketBranch(
+            id = "refs/heads/feature/OTHER-456-unrelated",
+            displayId = "feature/OTHER-456-unrelated",
+            latestCommit = "def456"
+        )
+        val allBranches = listOf(matchingBranch, nonMatchingBranch)
+
+        val result = service.fetchLinkedBranches(testIssue, allBranches)
+
+        assertEquals(1, result.size,
+            "Fallback must return only branches whose displayId contains the ticket key; got: $result")
+        assertEquals("feature/PROJ-123-fix", result[0])
+    }
+
+    @Test
+    fun `fetchLinkedBranches returns empty list when both dev-status and Bitbucket search find nothing`() = runTest {
+        coEvery { apiClient.getDevStatusBranches(testIssue.id) } returns ApiResult.Success(emptyList())
+
+        val unrelatedBranch = BitbucketBranch(
+            id = "refs/heads/main",
+            displayId = "main",
+            latestCommit = "abc123"
+        )
+
+        val result = service.fetchLinkedBranches(testIssue, allBranches = listOf(unrelatedBranch))
+
+        assertTrue(result.isEmpty(),
+            "When neither dev-status nor Bitbucket filter finds a match, result must be empty; got: $result")
     }
 
     @Test

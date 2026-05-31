@@ -94,6 +94,36 @@ class JiraClosureServiceTest {
         assertTrue(comment.contains("PROJ-REGR"))
     }
 
+    // ── HANDOVER-COV-15: last-wins merge semantics for conflicting docker tag keys ──
+
+    @Test
+    fun `buildClosureComment last-wins when two suites report same service with different tags`() {
+        val suites = listOf(
+            SuiteResult(
+                "PROJ-SUITE-1", "PROJ-SUITE-1-1",
+                """{"my-service":"1.0.0"}""",
+                true, 60_000, Instant.now(),
+                "https://bamboo.example.com/browse/PROJ-SUITE-1-1"
+            ),
+            SuiteResult(
+                "PROJ-SUITE-2", "PROJ-SUITE-2-1",
+                """{"my-service":"2.0.0"}""",
+                true, 30_000, Instant.now(),
+                "https://bamboo.example.com/browse/PROJ-SUITE-2-1"
+            ),
+        )
+
+        val comment = service.buildClosureComment(suites)
+
+        // Exactly one occurrence of "my-service" key in the JSON block
+        val occurrences = "my-service".toRegex().findAll(comment).count()
+        assertEquals(1, occurrences, "my-service must appear exactly once in the merged tags")
+
+        // The second suite's value (2.0.0) wins because last-write-wins via mutableMapOf put
+        assertTrue(comment.contains("2.0.0"), "last-suite's tag value (2.0.0) must be present")
+        assertFalse(comment.contains("1.0.0"), "first-suite's tag value (1.0.0) must be overwritten")
+    }
+
     @Test
     fun `escapeWikiMarkup does not produce broken Jira link syntax for bracket-bearing plan keys`() {
         // Regression for H-P1-5: bare '[' in a suite plan key was passed through

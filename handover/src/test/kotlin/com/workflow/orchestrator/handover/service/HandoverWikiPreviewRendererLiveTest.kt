@@ -128,4 +128,71 @@ class HandoverWikiPreviewRendererLiveTest {
         // Transient server error — live rendering must remain available for retry.
         assertTrue(r.isLiveAvailable(), "isLiveAvailable must stay true after a 5xx transient error")
     }
+
+    // ── HANDOVER-COV-7: 403 / AUTH failure branch and transient-warning notification ──
+
+    @Test
+    fun `403 response flips isLiveAvailable to false and notifies once`() = runTest {
+        coEvery { jira.renderWikiMarkup(any(), any()) } returns
+            ToolResult.error<String>(summary = "403 Forbidden")
+        val r = newRenderer(this)
+
+        r.requestLive("h2. Hi", "AFTER8TE-912")
+        advanceUntilIdle()
+
+        assertFalse(r.isLiveAvailable(), "isLiveAvailable must become false after 403")
+        coVerify(exactly = 1) { notifications.notifyWarning(any(), any(), any()) }
+    }
+
+    @Test
+    fun `AUTH substring in summary flips isLiveAvailable to false and notifies once`() = runTest {
+        coEvery { jira.renderWikiMarkup(any(), any()) } returns
+            ToolResult.error<String>(summary = "AUTH token invalid")
+        val r = newRenderer(this)
+
+        r.requestLive("h2. Hi", "AFTER8TE-912")
+        advanceUntilIdle()
+
+        assertFalse(r.isLiveAvailable(), "isLiveAvailable must become false after AUTH failure")
+        coVerify(exactly = 1) { notifications.notifyWarning(any(), any(), any()) }
+    }
+
+    @Test
+    fun `5xx error fires transient notifyWarning with groupId workflow-handover-wiki-transient`() = runTest {
+        coEvery { jira.renderWikiMarkup(any(), any()) } returns
+            ToolResult.error<String>(summary = "Jira render failed: 500 Server Error")
+        val r = newRenderer(this)
+
+        r.requestLive("h2. Hi", "AFTER8TE-912")
+        advanceUntilIdle()
+
+        // Live must stay available AND transient warning must have been fired
+        assertTrue(r.isLiveAvailable(), "isLiveAvailable must stay true after a 5xx transient error")
+        coVerify(exactly = 1) {
+            notifications.notifyWarning(
+                match { it.contains("transient") },
+                any(),
+                any()
+            )
+        }
+    }
+
+    // ── HANDOVER-COV-8: null jira — requestLive is a silent no-op ──
+
+    @Test
+    fun `requestLive with null jira is silent no-op and keeps isLiveAvailable true`() = runTest {
+        // Construct directly with jira=null — cannot use the forTest() factory
+        val renderer = HandoverWikiPreviewRendererService(
+            jira = null,
+            notifications = notifications,
+            cs = this,
+        )
+
+        renderer.requestLive("h2. Hi", "AFTER8TE-912")
+        advanceUntilIdle()
+
+        assertTrue(renderer.isLiveAvailable(), "isLiveAvailable must remain true when jira is null")
+        // No HTTP call should have been made and no notification fired
+        coVerify(exactly = 0) { notifications.notifyWarning(any(), any(), any()) }
+    }
 }

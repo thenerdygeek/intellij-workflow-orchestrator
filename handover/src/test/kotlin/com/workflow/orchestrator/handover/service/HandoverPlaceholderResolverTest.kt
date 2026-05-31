@@ -585,4 +585,58 @@ class HandoverPlaceholderResolverTest {
         val vAfter = resolver.resolve("ticket.id", HandoverTemplateAction.JIRA)
         assertFalse(vAfter.isAvailable, "ticket.id must be unavailable when no active ticket")
     }
+
+    // ── HANDOVER-COV-12: docker.tag with non-object JSON shapes ──────────────
+
+    @Test
+    fun `docker tag unavailable when dockerTagsJson is a JSON array`() = runTest {
+        eventBus.emit(
+            WorkflowEvent.AutomationTriggered(
+                suitePlanKey = "ORCH-SMOKE",
+                buildResultKey = "ORCH-SMOKE-1",
+                dockerTagsJson = "[]",
+                triggeredBy = "test",
+            )
+        )
+        yield()
+
+        val v = resolver.resolve("docker.tag", HandoverTemplateAction.JIRA)
+        assertFalse(v.isAvailable)
+        assertEquals("docker tags not a JSON object", v.unavailableReason)
+    }
+
+    @Test
+    fun `docker tag unavailable when dockerTagsJson is an empty JSON object`() = runTest {
+        eventBus.emit(
+            WorkflowEvent.AutomationTriggered(
+                suitePlanKey = "ORCH-SMOKE",
+                buildResultKey = "ORCH-SMOKE-2",
+                dockerTagsJson = "{}",
+                triggeredBy = "test",
+            )
+        )
+        yield()
+
+        val v = resolver.resolve("docker.tag", HandoverTemplateAction.JIRA)
+        assertFalse(v.isAvailable)
+        assertEquals("docker tags object is empty", v.unavailableReason)
+    }
+
+    @Test
+    fun `docker tag unavailable when dockerTagsJson is JSON null literal`() = runTest {
+        eventBus.emit(
+            WorkflowEvent.AutomationTriggered(
+                suitePlanKey = "ORCH-SMOKE",
+                buildResultKey = "ORCH-SMOKE-3",
+                dockerTagsJson = "null",
+                triggeredBy = "test",
+            )
+        )
+        yield()
+
+        val v = resolver.resolve("docker.tag", HandoverTemplateAction.JIRA)
+        assertFalse(v.isAvailable)
+        // "null" parsed as JsonNull, cast to JsonObject? returns null → "docker tags not a JSON object"
+        assertEquals("docker tags not a JSON object", v.unavailableReason)
+    }
 }

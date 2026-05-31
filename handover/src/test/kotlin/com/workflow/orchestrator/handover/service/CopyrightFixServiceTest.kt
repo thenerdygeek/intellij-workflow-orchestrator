@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.handover.service
 
+import com.workflow.orchestrator.handover.model.CopyrightStatus
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
@@ -111,10 +112,40 @@ class CopyrightFixServiceTest {
         val content = "$preamble\n// Copyright (c) 2023 MyCompany\npackage com.example;"
         val entry = service.analyzeFile("Foo.kt", content, currentYear = 2026)
         assertEquals(
-            com.workflow.orchestrator.handover.model.CopyrightStatus.YEAR_OUTDATED,
+            CopyrightStatus.YEAR_OUTDATED,
             entry.status,
             "year on line 20 must be detected and flagged as YEAR_OUTDATED within the 30-line window"
         )
+    }
+
+    // ── HANDOVER-COV-11: analyzeFile OK path and MISSING_HEADER path ──────────
+
+    @Test
+    fun `analyzeFile returns OK when header already has current year`() {
+        val content = "// Copyright (c) 2026 Corp\npackage foo"
+        val entry = service.analyzeFile("Foo.kt", content, currentYear = 2026)
+
+        assertEquals(CopyrightStatus.OK, entry.status, "header with current year must be OK")
+        assertNull(entry.oldYear, "oldYear must be null for an OK entry")
+        assertNull(entry.newYear, "newYear must be null for an OK entry")
+    }
+
+    @Test
+    fun `analyzeFile returns OK when header has current-year range`() {
+        val content = "// Copyright (c) 2020-2026 Corp\npackage foo"
+        val entry = service.analyzeFile("Foo.kt", content, currentYear = 2026)
+
+        assertEquals(CopyrightStatus.OK, entry.status, "header ending in current year must be OK")
+        assertNull(entry.oldYear)
+        assertNull(entry.newYear)
+    }
+
+    @Test
+    fun `analyzeFile returns MISSING_HEADER when no copyright keyword present`() {
+        val content = "package foo\n\nclass Bar {}"
+        val entry = service.analyzeFile("Bar.kt", content, currentYear = 2026)
+
+        assertEquals(CopyrightStatus.MISSING_HEADER, entry.status)
     }
 
 }

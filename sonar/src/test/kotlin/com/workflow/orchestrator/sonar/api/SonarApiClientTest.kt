@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import com.intellij.testFramework.LoggedErrorProcessorEnabler
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.jupiter.api.extension.ExtendWith
 
 @ExtendWith(LoggedErrorProcessorEnabler.DoNoRethrowErrors::class)
@@ -479,5 +480,122 @@ class SonarApiClientTest {
         assertTrue(result.isSuccess)
         assertEquals(1, (result as ApiResult.Success).data.hotspots.size)
         assertEquals(1, server.requestCount)
+    }
+
+    // ── SONAR-COV-1: 429 rate-limit and HTML Content-Type error paths ─────────
+
+
+    @Test
+    fun `returns PARSE_ERROR when response Content-Type is text-html`() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("<html><body>Please log in</body></html>")
+                .addHeader("Content-Type", "text/html; charset=UTF-8")
+        )
+
+        val result = client.validateConnection()
+
+        assertTrue(result.isError)
+        assertEquals(ErrorType.PARSE_ERROR, (result as ApiResult.Error).type)
+    }
+
+    // ── SONAR-COV-2: IOException / network error path at the HTTP layer ───────
+
+    @Test
+    fun `returns NETWORK_ERROR when the server drops the connection immediately`() = runTest {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START))
+
+        val result = client.validateConnection()
+
+        assertTrue(result.isError)
+        assertEquals(ErrorType.NETWORK_ERROR, (result as ApiResult.Error).type)
+    }
+
+    // ── SONAR-COV-3: getIssuesSinglePage — happy path, clamping, error path ───
+
+    @Test
+    fun `getIssuesSinglePage happy path returns issues and includes correct p and ps params`() = runTest {
+        val body = """
+            {
+              "paging": {"pageIndex": 2, "pageSize": 10, "total": 25},
+              "issues": [
+                {"key": "sp1", "rule": "r", "severity": "MAJOR", "message": "m",
+                 "component": "c", "type": "BUG", "status": "OPEN"}
+              ]
+            }
+        """.trimIndent()
+        server.enqueue(MockResponse().setBody(body))
+
+        val result = client.getIssuesSinglePage(projectKey = "proj", page = 2, pageSize = 10)
+
+        assertTrue(result.isSuccess)
+        val data = (result as ApiResult.Success).data
+        assertEquals(1, data.issues.size)
+        assertEquals("sp1", data.issues[0].key)
+        val path = java.net.URLDecoder.decode(server.takeRequest().path!!, "UTF-8")
+        assertTrue(path.contains("p=2"), "expected p=2 in $path")
+        assertTrue(path.contains("ps=10"), "expected ps=10 in $path")
+    }
+
+    @Test
+    fun `getIssuesSinglePage clamps page 0 to 1 and pageSize 999 to 500`() = runTest {
+        val body = """
+            {"paging": {"pageIndex": 1, "pageSize": 500, "total": 1},
+             "issues": []}
+        """.trimIndent()
+        server.enqueue(MockResponse().setBody(body))
+
+        client.getIssuesSinglePage(projectKey = "proj", page = 0, pageSize = 999)
+
+        val path = java.net.URLDecoder.decode(server.takeRequest().path!!, "UTF-8")
+        assertTrue(path.contains("p=1"), "page 0 must be clamped to 1, path=$path")
+        assertTrue(path.contains("ps=500"), "pageSize 999 must be clamped to 500, path=$path")
+    }
+
+    @Test
+    fun `getIssuesSinglePage returns NOT_FOUND on 404`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404))
+
+        val result = client.getIssuesSinglePage(projectKey = "no-such-proj", page = 1, pageSize = 20)
+
+        assertTrue(result.isError)
+        assertEquals(ErrorType.NOT_FOUND, (result as ApiResult.Error).type)
+    }
+
+    // ── SONAR-COV-4: getMeasures first-page error propagation ─────────────────
+
+    @Test
+    fun `getMeasures returns error when page 1 fails with 401`() = runTest {
+        server.enqueue(MockResponse().setResponseCode(401))
+
+        val result = client.getMeasures("proj")
+
+        assertTrue(result.isError)
+        assertEquals(ErrorType.AUTH_FAILED, (result as ApiResult.Error).type)
+    }
+
+    @Test
+    fun `getMeasures returns partial data when mid-pagination page fails`() = runTest {
+        // Page 1 has 1 component; total=2 so a second page is needed.
+        // Page 2 returns 401 — mid-pagination error should yield partial success.
+        val page1 = """
+            {
+              "paging": {"pageIndex": 1, "pageSize": 500, "total": 2},
+              "components": [
+                {"key": "k1", "name": "A.kt", "qualifier": "FIL", "path": "A.kt", "measures": []}
+              ]
+            }
+        """.trimIndent()
+        server.enqueue(MockResponse().setBody(page1))
+        server.enqueue(MockResponse().setResponseCode(401))
+
+        val result = client.getMeasures("proj")
+
+        // Mid-pagination failure → ApiResult.Success with page-1 data
+        assertTrue(result.isSuccess)
+        val components = (result as ApiResult.Success).data
+        assertEquals(1, components.size)
+        assertEquals("A.kt", components[0].path)
     }
 }

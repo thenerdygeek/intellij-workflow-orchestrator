@@ -123,6 +123,77 @@ class CommentsViewModelTest {
         assertEquals(1, captured!!.prId)
     }
 
+    // ── PULLREQUEST-COV-2: error paths + reopen ───────────────────────────────
+
+    @Test
+    fun `postGeneralComment returns false and sets lastError when service returns error`() = runTest {
+        val service = mockk<BitbucketService>()
+        coEvery { service.addPrComment(1, "hello", null) } returns
+            ToolResult(data = Unit, summary = "auth failed", isError = true)
+        val vm = CommentsViewModel(service, "P", "R", 1)
+
+        val ok = vm.postGeneralComment("hello")
+
+        assertFalse(ok, "postGeneralComment must return false on service error")
+        assertEquals("auth failed", vm.lastError, "lastError must be set to the service error summary")
+        assertEquals(0, vm.comments.size, "comments must not be modified on error")
+    }
+
+    @Test
+    fun `reply returns false and sets lastError when service returns error`() = runTest {
+        val service = mockk<BitbucketService>()
+        coEvery { service.replyToComment(1, 50, "ack", null) } returns
+            ToolResult(data = Unit, summary = "PR is merged", isError = true)
+        val vm = CommentsViewModel(service, "P", "R", 1)
+
+        val ok = vm.reply(50L, "ack")
+
+        assertFalse(ok, "reply must return false on service error")
+        assertEquals("PR is merged", vm.lastError)
+    }
+
+    @Test
+    fun `resolve returns false and sets lastError when service returns error`() = runTest {
+        val service = mockk<BitbucketService>()
+        coEvery { service.resolvePrComment("P", "R", 1, 99L) } returns
+            ToolResult(data = makeComment("99", state = PrCommentState.OPEN), summary = "403 forbidden", isError = true)
+        val vm = CommentsViewModel(service, "P", "R", 1)
+
+        val ok = vm.resolve(99L)
+
+        assertFalse(ok, "resolve must return false on service error")
+        assertEquals("403 forbidden", vm.lastError)
+    }
+
+    @Test
+    fun `reopen calls service reopenPrComment and refreshes on success`() = runTest {
+        val service = mockk<BitbucketService>()
+        coEvery { service.reopenPrComment("P", "R", 1, 77L) } returns
+            ToolResult.success(makeComment("77", state = PrCommentState.OPEN), summary = "reopened")
+        coEvery { service.listPrComments("P", "R", 1, false, false) } returns
+            ToolResult.success(listOf(makeComment("77", state = PrCommentState.OPEN)), summary = "1")
+        val vm = CommentsViewModel(service, "P", "R", 1)
+
+        val ok = vm.reopen(77L)
+
+        assertTrue(ok, "reopen must return true on success")
+        assertEquals(1, vm.comments.size, "comments list must be refreshed after reopen")
+        coVerify { service.reopenPrComment("P", "R", 1, 77L) }
+    }
+
+    @Test
+    fun `reopen returns false and sets lastError when service returns error`() = runTest {
+        val service = mockk<BitbucketService>()
+        coEvery { service.reopenPrComment("P", "R", 1, 77L) } returns
+            ToolResult(data = makeComment("77"), summary = "not transitionable", isError = true)
+        val vm = CommentsViewModel(service, "P", "R", 1)
+
+        val ok = vm.reopen(77L)
+
+        assertFalse(ok, "reopen must return false on service error")
+        assertEquals("not transitionable", vm.lastError)
+    }
+
     // ── F-10 Mutex concurrency guard ──────────────────────────────────────────
 
     @Test

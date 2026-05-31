@@ -345,6 +345,51 @@ class TagHistoryServiceTest {
             "null branchKey must survive persistence round-trip as null")
     }
 
+    // ── AUTOMATION-COV-5: updateQueueEntryStatus errorMessage round-trip ──
+
+    @Test
+    fun `updateQueueEntryStatus writes errorMessage to SQLite and it is readable via direct JDBC`() = runTest {
+        // AUTOMATION-COV-5: verify the error_message column is actually written to disk
+        // when updateQueueEntryStatus is called with a non-null errorMessage.
+        // getActiveQueueEntries() excludes FAILED_TO_TRIGGER (terminal), so we probe
+        // the SQLite row directly via JDBC — same pattern as the dismiss/legacy tests above.
+        val entry = QueueEntry(
+            id = "cov5-1", suitePlanKey = "PROJ-AUTO",
+            dockerTagsPayload = "{}", variables = emptyMap(),
+            stages = null, enqueuedAt = Instant.now(),
+            status = QueueEntryStatus.WAITING_LOCAL, bambooResultKey = null
+        )
+        service.saveQueueEntry(entry, sequenceOrder = 1)
+
+        service.updateQueueEntryStatus(
+            "cov5-1",
+            QueueEntryStatus.FAILED_TO_TRIGGER,
+            errorMessage = "Bamboo 401: token expired"
+        )
+
+        // Probe the raw SQLite row — FAILED_TO_TRIGGER is terminal so getActiveQueueEntries()
+        // excludes it; direct JDBC is the only way to confirm the column was written.
+        val dbPath = tempDir.resolve("automation.db").toString()
+        Class.forName("org.sqlite.JDBC")
+        val conn = java.sql.DriverManager.getConnection("jdbc:sqlite:$dbPath")
+        try {
+            conn.prepareStatement(
+                "SELECT error_message FROM queue_entries WHERE id = ?"
+            ).use { stmt ->
+                stmt.setString(1, "cov5-1")
+                val rs = stmt.executeQuery()
+                assertTrue(rs.next(), "Row cov5-1 must exist in the DB")
+                assertEquals(
+                    "Bamboo 401: token expired",
+                    rs.getString("error_message"),
+                    "updateQueueEntryStatus must persist errorMessage to the error_message column"
+                )
+            }
+        } finally {
+            conn.close()
+        }
+    }
+
     @Test
     fun `migration from schema_version 1 to 2 adds branch_key column idempotently`() = runTest {
         val dbPath = tempDir.resolve("v1-migration.db").toString()

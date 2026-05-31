@@ -357,6 +357,33 @@ class HandoverStateServicePrScopingTest {
         }
     }
 
+    // ── HANDOVER-COV-3: PullRequestCreated dropped when activeTicket is null ────
+
+    @Test
+    fun `PullRequestCreated dropped when activeTicket is null`() = runTest {
+        // Clear active ticket on context — simulates no active ticket
+        contextFlow.value = WorkflowContext()
+        activeTicketFlow.value = null
+        yield()
+
+        service.stateFlow.test {
+            skipItems(1) // consume the focus-change reset emission
+
+            eventBus.emit(
+                WorkflowEvent.PullRequestCreated(
+                    prUrl = "https://bb.example.com/pr/99",
+                    prNumber = 99,
+                    ticketId = "PROJ-123",
+                )
+            )
+
+            // null activeTicket → null == "PROJ-123" is false → event is dropped
+            expectNoEvents()
+            assertFalse(service.stateFlow.value.prCreated, "prCreated must remain false when activeTicket is null")
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     // ── AutomationFinished unfiltered (known limitation) ─────────────────────
 
     @Test

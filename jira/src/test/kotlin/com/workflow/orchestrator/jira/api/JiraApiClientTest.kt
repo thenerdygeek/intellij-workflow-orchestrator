@@ -530,6 +530,29 @@ class JiraApiClientTest {
         assertEquals("/rest/api/2/filter/91483", recorded.path)
     }
 
+    // ── JIRA-COV-9: getRawString non-JSON content-type + 429 rate-limit ──
+
+    @Test
+    fun `getRawString 200 with application-xml content-type maps to PARSE_ERROR`() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/xml")
+                .setBody("<?xml version=\"1.0\"?><root/>")
+        )
+
+        val result = client.getRawString("/rest/api/2/some-endpoint")
+
+        assertTrue(result.isError, "200 + application/xml must be mapped to an error, got: $result")
+        val err = result as ApiResult.Error
+        assertEquals(ErrorType.PARSE_ERROR, err.type,
+            "Non-JSON content-type on a 200 must map to PARSE_ERROR, got: ${err.type}")
+        assertTrue(err.message.contains("application/xml", ignoreCase = true) ||
+            err.message.contains("Content-Type", ignoreCase = true),
+            "Error message should mention the unexpected content-type, got: ${err.message}")
+    }
+
+
     @Test
     fun `getIssueWithContextAndChangelog requests both renderedFields and changelog and parses histories`() = runTest {
         server.enqueue(

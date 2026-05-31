@@ -33,6 +33,11 @@ class BuildMonitorServiceTest {
         // pollOnce now fetches the plan definition to order jobs. These tests don't assert on
         // ordering, so return an empty config → the mapper keeps the result's job order.
         coEvery { apiClient.getPlanStructure(any()) } returns ApiResult.Success(BambooPlanConfigResponse())
+        // checkForNewerBuild() is called on every terminal-state poll. Without this stub the
+        // strict mock throws MockKException which is then swallowed by the catch block in
+        // checkForNewerBuild(), causing tests to silently skip the newer-build detection path.
+        // Default to empty → no newer build (safe, does not affect other assertions).
+        coEvery { apiClient.getRunningAndQueuedBuilds(any()) } returns ApiResult.Success(emptyList())
     }
 
     private fun makeResult(state: String, lifeCycle: String, buildNumber: Int = 42): BambooResultDto {
@@ -438,4 +443,82 @@ class BuildMonitorServiceTest {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    // BAMBOO-COV-10: newer-build detection path
+
+    @Test
+    fun `pollOnce populates newerBuild when a higher-numbered build is running`() = runTest {
+        // Current finished build is #42; build #43 is InProgress.
+        val result = makeResult("Successful", "Finished", buildNumber = 42)
+        coEvery { apiClient.getLatestResult("PROJ-BUILD") } returns ApiResult.Success(result)
+        mockJobLogs(buildNumber = 42, job1Log = ApiResult.Success("log"))
+
+        // Override the default stub: return a build with a higher number.
+        coEvery { apiClient.getRunningAndQueuedBuilds("PROJ-BUILD") } returns ApiResult.Success(
+            listOf(
+                BambooResultDto(
+                    key = "PROJ-BUILD-43",
+                    buildNumber = 43,
+                    state = "Unknown",
+                    lifeCycleState = "InProgress"
+                )
+            )
+        )
+
+        val service = BuildMonitorService(apiClient, eventBus, this)
+        service.pollOnce("PROJ-BUILD", "main")
+
+        val state = service.stateFlow.value
+        assertNotNull(state, "stateFlow should have a non-null value after poll")
+        assertNotNull(state!!.newerBuild,
+            "newerBuild should be populated when build #43 is running")
+        assertEquals(43, state.newerBuild!!.buildNumber,
+            "newerBuild.buildNumber should be 43")
+    }
+
+    @Test
+    fun `pollOnce leaves newerBuild null when no higher-numbered build exists`() = runTest {
+        val result = makeResult("Successful", "Finished", buildNumber = 42)
+        coEvery { apiClient.getLatestResult("PROJ-BUILD") } returns ApiResult.Success(result)
+        mockJobLogs(buildNumber = 42, job1Log = ApiResult.Success("log"))
+
+        // Explicitly return empty list (matches the default stub but is explicitly documented here).
+        coEvery { apiClient.getRunningAndQueuedBuilds("PROJ-BUILD") } returns ApiResult.Success(emptyList())
+
+        val service = BuildMonitorService(apiClient, eventBus, this)
+        service.pollOnce("PROJ-BUILD", "main")
+
+        val state = service.stateFlow.value
+        assertNotNull(state)
+        assertNull(state!!.newerBuild,
+            "newerBuild should be null when no higher-numbered build is running")
+    }
+
+    // BAMBOO-COV-11: first-poll BuildFinished suppression
+
+    @Test
+    fun `pollOnce does not emit BuildFinished on the very first terminal poll`() = runTest {
+        // The !isFirstPoll guard at BuildMonitorService.kt prevents stale "Build Failed"
+        // notifications on IDE startup. This test pins that guard: removing it would
+        // cause an immediate BuildFinished event, failing this test.
+        val result = makeResult("Successful", "Finished")
+        coEvery { apiClient.getLatestResult("PROJ-BUILD") } returns ApiResult.Success(result)
+        mockJobLogs(job1Log = ApiResult.Success("Compiling..."))
+
+        val service = BuildMonitorService(apiClient, eventBus, this)
+
+        eventBus.events.test {
+            service.pollOnce("PROJ-BUILD", "main")
+
+            // BuildLogReady IS emitted on first poll; BuildFinished must NOT be.
+            val event = awaitItem()
+            assertTrue(event is WorkflowEvent.BuildLogReady,
+                "First event must be BuildLogReady, got: $event")
+
+            // No further events on first poll — specifically, no BuildFinished.
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
 }

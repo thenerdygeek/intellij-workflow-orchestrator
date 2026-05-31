@@ -126,4 +126,22 @@ class TimeTrackingServiceTest {
         assertEquals("0m", service.hoursToJiraTimeString(0.0))
         assertEquals("0m", service.hoursToJiraTimeString(-1.0))
     }
+
+    // ── HANDOVER-COV-13: computeElapsedHours negative diff (clock rollback) ──
+
+    @Test
+    fun `computeElapsedHours returns negative value when start is in the future`() {
+        val now = System.currentTimeMillis()
+        val futureStart = now + (3_600_000L) // 1 hour in the future
+        val elapsed = service.computeElapsedHours(futureStart, now)
+        assertTrue(elapsed < 0.0, "elapsed hours must be negative when startTimestamp is in the future (got $elapsed)")
+    }
+
+    @Test
+    fun `validateHours rejects the negative result of a clock-rollback elapsed computation`() {
+        val now = System.currentTimeMillis()
+        val futureStart = now + (3_600_000L)
+        val elapsed = service.computeElapsedHours(futureStart, now)
+        assertFalse(service.validateHours(elapsed), "negative elapsed hours must be rejected by validateHours")
+    }
 }

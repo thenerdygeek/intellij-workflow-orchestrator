@@ -12,6 +12,7 @@ import com.workflow.orchestrator.core.model.bamboo.BuildTriggerData
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.services.ToolResult
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -725,4 +726,175 @@ class QueueServiceTest {
         assertNotNull(queued, "Fast-path must set bambooResultKey on the entry after immediate trigger")
         assertEquals(QueueEntryStatus.QUEUED_ON_BAMBOO, queued!!.status)
     }
+
+    // ── AUTOMATION-COV-1: handleWaitingLocal — Bamboo-busy and getRunningBuilds-error paths ──
+
+    @Test
+    fun `handleWaitingLocal stays WAITING_LOCAL when getRunningBuilds returns an error`() = runTest {
+        // AUTOMATION-COV-1(a): network/auth failure on getRunningBuilds must NOT trigger
+        coEvery { bambooService.getRunningBuilds("PROJ-AUTO") } returns ToolResult(
+            data = emptyList<BuildResultData>(),
+            summary = "Bamboo 401: Unauthorized",
+            isError = true
+        )
+
+        val scopeForTest = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val testService = QueueService(
+            bambooService = bambooService,
+            eventBus = eventBus,
+            tagHistoryService = TagHistoryService(tempDir.resolve("cov1a.db").toString()),
+            scope = scopeForTest,
+            autoTriggerEnabled = false,
+            maxDepthPerSuite = 10
+        )
+
+        val entry = makeEntry(id = "cov1a-1", planKey = "PROJ-AUTO")
+        testService.enqueue(entry)
+        awaitState(2000) { testService.stateFlow.value.size == 1 }
+
+        runBlocking(Dispatchers.IO) { testService.pollOnce() }
+
+        val state = testService.stateFlow.value
+        assertEquals(1, state.size)
+        assertEquals(
+            QueueEntryStatus.WAITING_LOCAL, state[0].status,
+            "getRunningBuilds error must keep entry in WAITING_LOCAL — should not attempt trigger"
+        )
+        coVerify(exactly = 0) { bambooService.triggerBuild(any(), any(), any()) }
+        scopeForTest.cancel()
+    }
+
+    @Test
+    fun `handleWaitingLocal stays WAITING_LOCAL when Bamboo has active running builds`() = runTest {
+        // AUTOMATION-COV-1(b): non-empty running builds list must block the trigger
+        coEvery { bambooService.getRunningBuilds("PROJ-AUTO") } returns ToolResult.success(
+            data = listOf(
+                BuildResultData(
+                    planKey = "PROJ-AUTO", buildNumber = 888,
+                    state = "InProgress", durationSeconds = 0,
+                    buildResultKey = "PROJ-AUTO-888"
+                )
+            ),
+            summary = "1 running build"
+        )
+
+        val scopeForTest = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val testService = QueueService(
+            bambooService = bambooService,
+            eventBus = eventBus,
+            tagHistoryService = TagHistoryService(tempDir.resolve("cov1b.db").toString()),
+            scope = scopeForTest,
+            autoTriggerEnabled = false,
+            maxDepthPerSuite = 10
+        )
+
+        val entry = makeEntry(id = "cov1b-1", planKey = "PROJ-AUTO")
+        testService.enqueue(entry)
+        awaitState(2000) { testService.stateFlow.value.size == 1 }
+
+        runBlocking(Dispatchers.IO) { testService.pollOnce() }
+
+        val state = testService.stateFlow.value
+        assertEquals(1, state.size)
+        assertEquals(
+            QueueEntryStatus.WAITING_LOCAL, state[0].status,
+            "Non-empty getRunningBuilds must keep entry in WAITING_LOCAL — Bamboo is busy"
+        )
+        coVerify(exactly = 0) { bambooService.triggerBuild(any(), any(), any()) }
+        scopeForTest.cancel()
+    }
+
+    // ── AUTOMATION-COV-2: cancel() — cancelBuild invocation for QUEUED_ON_BAMBOO entries ──
+
+    @Test
+    fun `cancel calls cancelBuild when entry is QUEUED_ON_BAMBOO with a bambooResultKey`() = runTest {
+        // AUTOMATION-COV-2(a): cancelBuild must be invoked for QUEUED_ON_BAMBOO entries
+        coEvery { bambooService.cancelBuild("PROJ-AUTO-500") } returns ToolResult.success(
+            data = Unit,
+            summary = "Build cancelled"
+        )
+
+        val scopeForTest = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val testService = QueueService(
+            bambooService = bambooService,
+            eventBus = eventBus,
+            tagHistoryService = TagHistoryService(tempDir.resolve("cov2a.db").toString()),
+            scope = scopeForTest,
+            autoTriggerEnabled = false,
+            maxDepthPerSuite = 10
+        )
+
+        // Seed entry directly in QUEUED_ON_BAMBOO state with a bambooResultKey
+        val entry = QueueEntry(
+            id = "cov2a-1", suitePlanKey = "PROJ-AUTO",
+            dockerTagsPayload = """{"auth":"1.0.0"}""",
+            variables = emptyMap(), stages = null,
+            enqueuedAt = Instant.now(),
+            status = QueueEntryStatus.QUEUED_ON_BAMBOO,
+            bambooResultKey = "PROJ-AUTO-500"
+        )
+        testService.enqueue(entry)
+        awaitState(2000) { testService.stateFlow.value.size == 1 }
+
+        testService.cancel("cov2a-1")
+        awaitState(2000) {
+            testService.stateFlow.value.firstOrNull()?.status == QueueEntryStatus.CANCELLED
+        }
+
+        coVerify(exactly = 1) { bambooService.cancelBuild("PROJ-AUTO-500") }
+        scopeForTest.cancel()
+    }
+
+
+    // ── AUTOMATION-COV-3: restoreFromPersistence() — crash-recovery path ──
+
+
+    @Test
+    fun `restoreFromPersistence leaves stateFlow empty when DB has no active entries`() = runTest {
+        // AUTOMATION-COV-3(b): empty DB → stateFlow stays empty, no polling started
+        val scopeForTest = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val emptyHistory = TagHistoryService(tempDir.resolve("cov3-empty.db").toString())
+        val testService = QueueService(
+            bambooService = bambooService,
+            eventBus = eventBus,
+            tagHistoryService = emptyHistory,
+            scope = scopeForTest,
+            autoTriggerEnabled = false,
+            maxDepthPerSuite = 10
+        )
+
+        testService.restoreFromPersistence()
+        // Give the async launch time to complete
+        runBlocking(Dispatchers.IO) { delay(100) }
+
+        assertEquals(0, testService.stateFlow.value.size,
+            "Empty DB must leave stateFlow empty after restore")
+
+        emptyHistory.close()
+        scopeForTest.cancel()
+    }
+
+    // ── AUTOMATION-COV-4: triggerNow() error path ──
+
+    @Test
+    fun `triggerNow returns isError=true and forwards payload when triggerBuild fails`() = runTest {
+        // AUTOMATION-COV-4: error result from triggerBuild must be propagated through triggerNow
+        coEvery { bambooService.triggerBuild(any(), any(), any()) } returns ToolResult(
+            data = BuildTriggerData(buildKey = "", buildNumber = 0, link = ""),
+            summary = "Bamboo 401: token expired",
+            isError = true,
+            payload = ErrorType.AUTH_FAILED
+        )
+
+        val entry = makeEntry()
+        val result = service.triggerNow(entry)
+
+        assertTrue(result.isError, "triggerNow must return isError=true when triggerBuild fails")
+        assertEquals("", result.data, "triggerNow must return empty string data on failure")
+        assertEquals(ErrorType.AUTH_FAILED, result.payload,
+            "triggerNow must forward the ErrorType payload from triggerBuild")
+    }
+
+    // ── AUTOMATION-COV-7: handleWaitingLocal ordering — second-in-queue entry is skipped ──
+
 }

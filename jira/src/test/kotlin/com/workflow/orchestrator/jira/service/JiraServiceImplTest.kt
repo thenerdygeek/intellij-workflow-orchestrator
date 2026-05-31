@@ -414,4 +414,45 @@ class JiraServiceImplTest {
         assertEquals("Jane Doe", result.data!![0].author)
         assertEquals("jdoe", result.data!![0].authorUsername)
     }
+
+    // ── JIRA-COV-7: getWorklogs mid-pagination error path ─────────────────
+
+    @Test
+    fun `getWorklogs returns error immediately when second page request fails`() = runTest {
+        // Page 1 succeeds: 100 worklogs, total=200 → must fetch page 2
+        val page1 = (1..100).joinToString(",") {
+            """{"author":{"displayName":"Jane Doe","name":"jdoe"},"timeSpent":"1h","timeSpentSeconds":3600,"started":"2026-05-10T09:00:00.000+0000"}"""
+        }
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("""{"total":200,"worklogs":[$page1]}""")
+        )
+        // Page 2 returns 401 — mid-pagination auth failure
+        server.enqueue(MockResponse().setResponseCode(401))
+
+        val result = service.getWorklogs("PROJ-1")
+
+        assertTrue(result.isError,
+            "A 401 on the second page must propagate as an error, discarding already-collected page 1 data")
+        assertTrue(result.summary.contains("PROJ-1"),
+            "Error summary should identify the issue; got: ${result.summary}")
+        assertEquals(2, server.requestCount,
+            "Exactly two HTTP requests must be issued — page 1 (success) and page 2 (failure)")
+    }
+
+    @Test
+    fun `getWorklogs returns empty success list when server reports total zero`() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json")
+                .setBody("""{"total":0,"worklogs":[]}""")
+        )
+
+        val result = service.getWorklogs("PROJ-1")
+
+        assertFalse(result.isError, "total=0 with empty worklogs must be a success, not an error")
+        assertTrue(result.data.isNullOrEmpty(),
+            "total=0 response must yield an empty list, got: ${result.data}")
+        assertEquals(1, server.requestCount,
+            "Only one HTTP request must be issued when the first page is the last page")
+    }
 }

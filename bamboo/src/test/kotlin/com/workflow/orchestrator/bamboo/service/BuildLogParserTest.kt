@@ -62,4 +62,20 @@ class BuildLogParserTest {
         assertNull(errors[0].lineNumber)
         assertTrue(errors[0].message.contains("Failed to execute goal"))
     }
+
+    // BAMBOO-COV-12: boundary tests for empty/blank input
+
+    @Test
+    fun `parse returns empty list for empty string`() {
+        val errors = BuildLogParser.parse("")
+        assertTrue(errors.isEmpty(),
+            "parse(\"\") should return an empty list, got: $errors")
+    }
+
+    @Test
+    fun `parse returns empty list for blank whitespace-only input`() {
+        val errors = BuildLogParser.parse("   \n  \n  ")
+        assertTrue(errors.isEmpty(),
+            "parse with only whitespace should return an empty list, got: $errors")
+    }
 }

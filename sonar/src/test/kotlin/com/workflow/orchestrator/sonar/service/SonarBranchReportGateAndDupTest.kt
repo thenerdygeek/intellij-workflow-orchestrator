@@ -3,7 +3,9 @@ package com.workflow.orchestrator.sonar.service
 import com.intellij.openapi.project.Project
 import com.intellij.testFramework.LoggedErrorProcessorEnabler
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.sonar.api.SonarApiClient
+import com.workflow.orchestrator.sonar.api.SonarMetricKey
 import com.workflow.orchestrator.sonar.api.dto.*
 import io.mockk.coEvery
 import io.mockk.mockk
@@ -119,5 +121,65 @@ class SonarBranchReportGateAndDupTest {
         assertEquals(1, fileReport.duplicatedLineRanges.size)
         assertEquals(10, fileReport.duplicatedLineRanges[0].startLine)
         assertEquals(14, fileReport.duplicatedLineRanges[0].endLine)
+    }
+
+    // ── SONAR-COV-8: getCoverage happy path via testClient seam ───────────────
+
+    @Test
+    fun `getCoverage returns correct data on happy path`() = runTest {
+        // Override the setUp stub for getProjectMeasures with coverage-specific data.
+        // getCoverage calls getProjectMeasures with a metricKeys subset; any() matcher covers it.
+        coEvery { api.getProjectMeasures(projectKey, branch = branch, metricKeys = any()) } returns ApiResult.Success(
+            listOf(
+                SonarMeasureDto(SonarMetricKey.COVERAGE, "80.0"),
+                SonarMeasureDto(SonarMetricKey.BRANCH_COVERAGE, "75.0"),
+                SonarMeasureDto(SonarMetricKey.LINES_TO_COVER, "100"),
+                SonarMeasureDto(SonarMetricKey.UNCOVERED_LINES, "20"),
+            )
+        )
+
+        val result = service.getCoverage(projectKey, branch)
+
+        assertFalse(result.isError)
+        val data = result.data!!
+        assertEquals(80.0, data.lineCoverage, 0.01)
+        assertEquals(75.0, data.branchCoverage, 0.01)
+        assertEquals(100, data.totalLines)
+        // coveredLines = totalLinesToCover - uncoveredLines = 100 - 20 = 80
+        assertEquals(80, data.coveredLines)
+        assertTrue(result.summary.contains(projectKey))
+        assertTrue(result.summary.contains("80.0%"))
+    }
+
+    @Test
+    fun `getCoverage returns error result when API call fails`() = runTest {
+        coEvery { api.getProjectMeasures(projectKey, branch = branch, metricKeys = any()) } returns
+            ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid token")
+
+        val result = service.getCoverage(projectKey, branch)
+
+        assertTrue(result.isError)
+        assertEquals(0, result.data!!.coveredLines)
+    }
+
+    @Test
+    fun `getCoverage summary contains Covered line with correct values`() = runTest {
+        coEvery { api.getProjectMeasures(projectKey, branch = branch, metricKeys = any()) } returns ApiResult.Success(
+            listOf(
+                SonarMeasureDto(SonarMetricKey.COVERAGE, "60.0"),
+                SonarMeasureDto(SonarMetricKey.BRANCH_COVERAGE, "50.0"),
+                SonarMeasureDto(SonarMetricKey.LINES_TO_COVER, "50"),
+                SonarMeasureDto(SonarMetricKey.UNCOVERED_LINES, "20"),
+            )
+        )
+
+        val result = service.getCoverage(projectKey, branch)
+
+        assertFalse(result.isError)
+        // summary must contain the covered/total line count: 50-20=30 covered / 50 total
+        assertTrue(
+            result.summary.contains("30 / 50"),
+            "expected '30 / 50' in summary but was: ${result.summary}"
+        )
     }
 }

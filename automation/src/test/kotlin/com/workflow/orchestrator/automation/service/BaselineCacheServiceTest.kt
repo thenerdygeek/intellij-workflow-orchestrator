@@ -117,6 +117,27 @@ class BaselineCacheServiceTest {
         assertNull(svc.get("PROJ-A"))
     }
 
+    // ── AUTOMATION-COV-9: invalidate no-op for non-existent key ──
+
+    @Test
+    fun `invalidate for a non-existent key is a no-op and does not create the cache file`(@TempDir tmp: Path) = runTest {
+        // AUTOMATION-COV-9: the early-return guard (entries.remove(planKey) == null) must
+        // prevent a disk write when the key was never in the cache.
+        val svc = BaselineCacheService.forTesting(tmp.toFile())
+        val cacheFile = tmp.resolve("baseline-cache.json").toFile()
+
+        // Precondition: no cache file exists yet (empty service, no puts).
+        assertFalse(cacheFile.exists(), "Cache file must not exist before any put/invalidate")
+
+        // Invalidating an unknown key must not throw and must not create the file.
+        svc.invalidate("NON-EXISTENT")
+
+        assertFalse(cacheFile.exists(),
+            "invalidate for a non-existent key must not create the cache file (no-op early return)")
+        assertNull(svc.get("NON-EXISTENT"),
+            "get after no-op invalidate must still return null")
+    }
+
     @Test
     fun `latest write wins on disk under concurrent puts`(@TempDir tmp: Path) = runDispatchedTest {
         val svc = BaselineCacheService.forTesting(tmp.toFile())

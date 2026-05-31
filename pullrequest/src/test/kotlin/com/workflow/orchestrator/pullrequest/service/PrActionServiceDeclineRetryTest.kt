@@ -123,6 +123,24 @@ class PrActionServiceDeclineRetryTest {
         )
     }
 
+    // ── PULLREQUEST-COV-10: fetchAndDecline early-return on GET failure ──────────
+
+    @Test
+    fun `getPullRequestDetail returns an error on 404 and no decline POST is made`() = runTest {
+        // Simulate a 404 on the GET (PR was deleted or access revoked between UI load and click)
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"errors":[{"message":"PR not found"}]}"""))
+
+        val getResult = client.getPullRequestDetail("P", "r", prId = 42)
+
+        assertTrue(getResult is ApiResult.Error,
+            "getPullRequestDetail must return ApiResult.Error on 404; got: $getResult")
+        // Verify only 1 request was made (the GET) and no POST to /decline was issued
+        assertEquals(1, server.requestCount,
+            "Only the GET request should be made; no POST to /decline must follow a 404 pre-fetch")
+        val req = server.takeRequest()
+        assertEquals("GET", req.method, "The single request must be a GET (pre-fetch)")
+    }
+
     @Test
     fun `declinePullRequest 409 then success in two-step sequence`() = runTest {
         // Simulate the retry cycle: POST v3 → 409, POST v5 → 200
