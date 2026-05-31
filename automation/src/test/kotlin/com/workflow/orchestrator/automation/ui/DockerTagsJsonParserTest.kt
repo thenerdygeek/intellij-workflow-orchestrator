@@ -21,9 +21,7 @@ class DockerTagsJsonParserTest {
         assertEquals("2.4.0", auth.currentTag)
         assertEquals(TagSource.USER_EDIT, auth.source)
         assertEquals(RegistryStatus.UNKNOWN, auth.registryStatus)
-        assertFalse(auth.isDrift)
         assertFalse(auth.isCurrentRepo)
-        assertNull(auth.latestReleaseTag)
     }
 
     @Test

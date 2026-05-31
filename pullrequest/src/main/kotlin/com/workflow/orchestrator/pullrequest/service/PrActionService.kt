@@ -185,15 +185,12 @@ class PrActionService(private val project: Project) {
     /**
      * Decline a pull request, retrying once on 409 Conflict (stale version).
      *
-     * The caller supplies a [cachedVersion] from their last-known state (e.g.
-     * `currentPr?.version`). `decline` always refetches a fresh version before
-     * posting the decline request, so [cachedVersion] is intentionally unused
-     * in the primary attempt — passing it is optional and retained only for API
-     * compatibility. On a 409 the cache is force-evicted and a second attempt
-     * is made with the freshly-fetched version (mirrors the [modifyPullRequest]
-     * retry pattern used by [updateTitle]).
+     * Always refetches a fresh version before posting the decline request.
+     * On a 409 the cache is force-evicted and a second attempt is made with
+     * the freshly-fetched version (mirrors the [modifyPullRequest] retry
+     * pattern used by [updateTitle]).
      */
-    suspend fun decline(prId: Int, cachedVersion: Int = 0): ApiResult<Unit> {
+    suspend fun decline(prId: Int): ApiResult<Unit> {
         val client = getClient()
             ?: return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket not configured")
         if (!isConfigured())

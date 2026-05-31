@@ -881,7 +881,6 @@ class SonarServiceImpl(private val project: Project) : SonarService {
             hint = "Set up SonarQube connection in Settings > Tools > Workflow Orchestrator > General."
         )
 
-        // ── Phase 1: parallel project-level fetches ─────────────────────────
         val newCodeMetrics = SonarMetricKey.csv(
             SonarMetricKey.NEW_UNCOVERED_LINES, SonarMetricKey.NEW_LINE_COVERAGE, SonarMetricKey.NEW_BRANCH_COVERAGE,
             SonarMetricKey.NEW_UNCOVERED_CONDITIONS, SonarMetricKey.NEW_DUPLICATED_LINES,
@@ -892,16 +891,26 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         val issues: ApiResult<List<com.workflow.orchestrator.sonar.api.dto.SonarIssueDto>>
         val hotspots: ApiResult<com.workflow.orchestrator.sonar.api.dto.SonarHotspotSearchResult>
         val fileMeasures: ApiResult<List<com.workflow.orchestrator.sonar.api.dto.SonarMeasureComponentDto>>
+        val projectMeasures: ApiResult<List<com.workflow.orchestrator.sonar.api.dto.SonarMeasureDto>>
+
+        // ── Phase 1: parallel project-level fetches (SONAR-ARC-6: projectMeasures moved inside) ─
+        val projectNewCodeMetrics = SonarMetricKey.csv(
+            SonarMetricKey.NEW_LINE_COVERAGE, SonarMetricKey.NEW_BRANCH_COVERAGE,
+            SonarMetricKey.NEW_DUPLICATED_LINES_DENSITY,
+            SonarMetricKey.NEW_UNCOVERED_LINES, SonarMetricKey.NEW_UNCOVERED_CONDITIONS,
+        )
 
         coroutineScope {
             val gateDeferred = async { api.getQualityGateStatus(projectKey, branch) }
             val issuesDeferred = async { api.getIssues(projectKey, branch = branch, inNewCodePeriod = true) }
             val hotspotsDeferred = async { api.getSecurityHotspots(projectKey, branch) }
             val measuresDeferred = async { api.getMeasures(projectKey, branch, newCodeMetrics) }
+            val projectMeasuresDeferred = async { api.getProjectMeasures(projectKey, branch, projectNewCodeMetrics) }
             gate = gateDeferred.await()
             issues = issuesDeferred.await()
             hotspots = hotspotsDeferred.await()
             fileMeasures = measuresDeferred.await()
+            projectMeasures = projectMeasuresDeferred.await()
         }
 
         // Quality gate: trust the server's authoritative status (for a branch this already IS
@@ -992,15 +1001,9 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         val truncated = fileInfos.size > maxFiles
         val filesToDrill = fileInfos.take(maxFiles)
 
-        // Get project-level new code coverage from measures/component
+        // projectMeasures was fetched in Phase 1 (now part of the parallel coroutineScope block).
         // Fetch uncovered counts from project-level API (not file sums) to avoid undercounting
         // when component_tree is paginated (ps=500)
-        val projectNewCodeMetrics = SonarMetricKey.csv(
-            SonarMetricKey.NEW_LINE_COVERAGE, SonarMetricKey.NEW_BRANCH_COVERAGE,
-            SonarMetricKey.NEW_DUPLICATED_LINES_DENSITY,
-            SonarMetricKey.NEW_UNCOVERED_LINES, SonarMetricKey.NEW_UNCOVERED_CONDITIONS,
-        )
-        val projectMeasures = api.getProjectMeasures(projectKey, branch, projectNewCodeMetrics)
         val projM = when (projectMeasures) {
             is ApiResult.Success -> projectMeasures.data.associate { it.metric to it.effectiveValue() }
             is ApiResult.Error -> emptyMap()
@@ -1048,7 +1051,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         )
 
         // ── Build LLM summary ───────────────────────────────────────────────
-        val summary = buildBranchQualityReportSummary(data, projectKey)
+        val summary = buildBranchQualityReportSummary(data, projectKey, maxFiles)
         return ToolResult.success(data = data, summary = summary)
     }
 
@@ -1140,7 +1143,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         val newDuplicatedLines: Int
     )
 
-    private fun buildBranchQualityReportSummary(data: BranchQualityReportData, projectKey: String): String = buildString {
+    private fun buildBranchQualityReportSummary(data: BranchQualityReportData, projectKey: String, maxFiles: Int): String = buildString {
         append("Branch Quality Report: $projectKey (${data.branch}) — New Code\n")
         append("═══════════════════════════════════════════════════\n\n")
 
@@ -1201,7 +1204,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         // Per-file details
         if (data.fileReports.isNotEmpty()) {
             append("File Details (${data.fileReports.size} files")
-            if (data.truncatedFiles) append(", showing top $maxFilesDefault")
+            if (data.truncatedFiles) append(", showing top $maxFiles")
             append("):\n")
             append("───────────────────────────────────────────────────\n")
 
@@ -1473,11 +1476,10 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     }
 
     companion object {
-        private const val maxFilesDefault = 20
         private const val COMPONENT_EXISTS_TTL_MS = 5L * 60 * 1000  // matches the 5-min cache convention used elsewhere
 
         @JvmStatic
-        fun getInstance(project: Project): SonarServiceImpl =
-            project.getService(SonarService::class.java) as SonarServiceImpl
+        fun getInstance(project: Project): SonarService =
+            project.getService(SonarService::class.java)
     }
 }

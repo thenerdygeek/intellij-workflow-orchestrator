@@ -127,7 +127,6 @@ class SprintDashboardPanel(
             sprint?.let(::sprintLabel).orEmpty()
         }
     }
-    private var availableSprints: List<JiraSprint> = emptyList()
     private var sprintSelectorLoading = false
 
     // -- Status bar --
@@ -202,7 +201,7 @@ class SprintDashboardPanel(
     private var sprintIssuesSnapshot: List<JiraIssue> = emptyList()
 
     /** Check if a JiraIssue is a section header (used for assignee grouping). */
-    private fun isHeader(issue: JiraIssue): Boolean = issue.id.startsWith("header-")
+    private fun isHeader(issue: JiraIssue): Boolean = issue.isSectionHeader()
 
     init {
         background = JBColor.PanelBackground
@@ -418,7 +417,7 @@ class SprintDashboardPanel(
 
         // Saved Filters section — populated lazily on first load. Hidden until non-empty
         // results arrive (per R-ADD-7 spec: empty/error states hide the entire section).
-        savedFiltersSection = SavedFiltersSection(project) { filter -> onFilterClicked(filter) }
+        savedFiltersSection = SavedFiltersSection { filter -> onFilterClicked(filter) }
         savedFiltersCollapsible = CollapsibleSection(
             title = "SAVED FILTERS",
             content = savedFiltersSection,
@@ -607,7 +606,6 @@ class SprintDashboardPanel(
     }
 
     private fun populateSprintSelector(sprints: List<JiraSprint>) {
-        availableSprints = sprints
         sprintSelectorLoading = true
         try {
             sprintSelector.removeAllItems()
@@ -706,10 +704,16 @@ class SprintDashboardPanel(
                 return@launch
             }
 
-            // Guard: reject JQL with control characters before sending to the server.
+            // Guard: reject JQL with control characters or excessive length before sending to the server.
             if (jql.any { it.code < 32 }) {
                 withContext(Dispatchers.EDT) {
                     setLoading(false, "Filter JQL contains invalid characters.")
+                }
+                return@launch
+            }
+            if (jql.length > JiraServiceImpl.MAX_JQL_LENGTH) {
+                withContext(Dispatchers.EDT) {
+                    setLoading(false, "Filter JQL exceeds maximum allowed length.")
                 }
                 return@launch
             }
@@ -1155,11 +1159,6 @@ class SprintDashboardPanel(
                     val selectedRepo = allRepos.getOrElse(dialogResult.selectedRepoIndex) { initialRepo }
                     val finalProjectKey = selectedRepo.bitbucketProjectKey.orEmpty()
                     val finalRepoSlug = selectedRepo.bitbucketRepoSlug.orEmpty()
-                    val finalBranchClient = if (dialogResult.selectedRepoIndex != detectedIndex) {
-                        // User switched repo — create a new branch client isn't needed,
-                        // but we need to use the correct project/repo for the API call
-                        branchClient // same HTTP client, different projectKey/repoSlug passed below
-                    } else branchClient
 
                     if (dialogResult.useExisting) {
                         setLoading(true, "Checking out branch\u2026")
@@ -1193,7 +1192,7 @@ class SprintDashboardPanel(
                                 issue = selectedIssue,
                                 branchName = dialogResult.branchName,
                                 sourceBranch = dialogResult.sourceBranch,
-                                branchClient = finalBranchClient,
+                                branchClient = branchClient,
                                 projectKey = finalProjectKey,
                                 repoSlug = finalRepoSlug,
                                 localVcsRootPath = selectedRepo.localVcsRootPath
@@ -1233,13 +1232,7 @@ class SprintDashboardPanel(
         override fun getActionUpdateThread() = ActionUpdateThread.BGT
     }
 
-    // ---------------------------------------------------------------
-    // Constants
-    // ---------------------------------------------------------------
-
     override fun dispose() {
         scope.cancel()
     }
-
-    companion object
 }

@@ -52,7 +52,7 @@ class TicketListCellRenderer : JPanel(), ListCellRenderer<JiraIssue> {
         return this
     }
 
-    private fun isHeader(issue: JiraIssue): Boolean = issue.id.startsWith("header-")
+    private fun isHeader(issue: JiraIssue): Boolean = issue.isSectionHeader()
 
     private fun paintSectionHeader(g: Graphics, issue: JiraIssue) {
         val g2 = g.create() as Graphics2D

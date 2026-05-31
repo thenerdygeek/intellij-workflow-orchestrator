@@ -139,7 +139,8 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()),
                     if (row >= 0) {
                         val modelRow = table.convertRowIndexToModel(row)
                         val filePath = tableModel.getFilePath(modelRow)
-                        navigateToFile(filePath)
+                        val coverageData = tableModel.getFileCoverageData(modelRow)
+                        navigateToFile(filePath, coverageData?.projectKey)
                     }
                 }
             }
@@ -290,8 +291,15 @@ class CoverageTablePanel(private val project: Project) : JPanel(BorderLayout()),
         summaryLabel.text = "${data.size} files | %.1f%% avg coverage | $belowThreshold files below 80%%".format(avgCoverage)
     }
 
-    private fun navigateToFile(filePath: String) {
-        val basePath = project.basePath ?: return
+    private fun navigateToFile(filePath: String, projectKey: String? = null) {
+        // SONAR-CLE-7/SONAR-ARC-2: resolve the owning repo root using projectKey so that
+        // files in secondary repos (multi-repo projects) are found correctly. Falls back to
+        // project.basePath for single-repo setups or when projectKey is not matched.
+        val settings = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
+        val basePath = projectKey?.let { key ->
+            settings.getRepos().firstOrNull { it.sonarProjectKey == key }?.localVcsRootPath
+                ?.takeIf { it.isNotBlank() }
+        } ?: project.basePath ?: return
         val vf = LocalFileSystem.getInstance().findFileByPath(java.io.File(basePath, filePath).path) ?: return
         OpenFileDescriptor(project, vf, 0, 0).navigate(true)
     }

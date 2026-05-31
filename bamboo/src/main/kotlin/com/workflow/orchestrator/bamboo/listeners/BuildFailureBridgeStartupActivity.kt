@@ -6,14 +6,11 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import com.intellij.openapi.util.Disposer
-import com.workflow.orchestrator.bamboo.api.BambooApiClient
-import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.bamboo.service.BambooServiceImpl
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
-import com.workflow.orchestrator.core.http.HttpClientFactory
 import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
@@ -132,7 +129,7 @@ class BuildFailureBridgeStartupActivity : ProjectActivity {
      */
     private suspend fun resolveCommitSha(project: Project, event: WorkflowEvent.BuildFinished): String? {
         val resultKey = "${event.planKey}-${event.buildNumber}"
-        val client = bambooClientOrNull(project) ?: return null
+        val client = project.getService(BambooServiceImpl::class.java)?.getPollClient() ?: return null
         return when (val r = client.getResultVcsRevision(resultKey)) {
             is ApiResult.Success -> r.data?.takeIf { it.isNotBlank() }
             is ApiResult.Error -> {
@@ -140,19 +137,5 @@ class BuildFailureBridgeStartupActivity : ProjectActivity {
                 null
             }
         }
-    }
-
-    private fun bambooClientOrNull(project: Project): BambooApiClient? {
-        val settings = PluginSettings.getInstance(project)
-        val baseUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/')
-        if (baseUrl.isBlank()) return null
-        val timeouts = HttpClientFactory.timeoutsFromSettings(project)
-        val credentialStore = CredentialStore()
-        return BambooApiClient(
-            baseUrl = baseUrl,
-            tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
-            connectTimeoutSeconds = timeouts.connectSeconds,
-            readTimeoutSeconds = timeouts.readSeconds,
-        )
     }
 }

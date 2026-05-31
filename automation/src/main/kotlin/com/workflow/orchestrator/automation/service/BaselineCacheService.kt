@@ -195,10 +195,8 @@ class BaselineCacheService(private val cacheDir: File) {
                 TagEntry(
                     serviceName = svc,
                     currentTag = tag,
-                    latestReleaseTag = null,
                     source = TagSource.BASELINE,
                     registryStatus = RegistryStatus.UNKNOWN,
-                    isDrift = false,
                     isCurrentRepo = false
                 )
             } ?: emptyList()

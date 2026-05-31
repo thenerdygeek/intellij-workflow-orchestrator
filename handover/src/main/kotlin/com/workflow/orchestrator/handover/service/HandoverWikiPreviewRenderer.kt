@@ -4,6 +4,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.services.JiraService
+import com.workflow.orchestrator.core.util.HtmlEscape
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -173,7 +174,7 @@ class HandoverWikiPreviewRendererService(
  * All other lines are passed through wrapped in <p> (unless they already start
  * with a block-level HTML tag).
  *
- * T10 will wrap this with a project-scoped service that adds a live-render path.
+ * Wrapped by [HandoverWikiPreviewRendererService] (above) which provides the live Jira render path.
  */
 object HandoverWikiPreviewRenderer {
 
@@ -234,7 +235,7 @@ object HandoverWikiPreviewRenderer {
                     i++
                 }
                 output.append("""<pre><code class="$lang">""")
-                output.append(codeLines.joinToString("\n") { escape(it) })
+                output.append(codeLines.joinToString("\n") { HtmlEscape.escapeHtml(it) })
                 output.append("</code></pre>")
                 continue
             }
@@ -307,7 +308,7 @@ object HandoverWikiPreviewRenderer {
 
     private fun applyInline(text: String): String {
         // Escape raw text first so user content never injects HTML tags.
-        var result = escape(text)
+        var result = HtmlEscape.escapeHtml(text)
         result = COLOR_RE.replace(result) { m ->
             // The color span wrapper is safe; escape the inner text (already escaped by this point
             // because we replaced on the escaped string — so groupValues[2] is already escaped).
@@ -321,7 +322,4 @@ object HandoverWikiPreviewRenderer {
         return result
     }
 
-    /** Escapes HTML special characters so user content cannot inject tags. */
-    private fun escape(s: String): String =
-        s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 }

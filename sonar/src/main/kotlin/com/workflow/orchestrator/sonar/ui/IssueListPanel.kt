@@ -8,6 +8,7 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
 import com.intellij.ui.JBSplitter
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -20,7 +21,6 @@ import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.core.util.PathLinkResolver
 import com.workflow.orchestrator.sonar.model.*
-import kotlinx.coroutines.*
 import java.awt.*
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
@@ -36,13 +36,12 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
         cellRenderer = IssueListCellRenderer()
         selectionMode = ListSelectionModel.SINGLE_SELECTION
     }
-    private val filterCombo = JComboBox(arrayOf("All", "Bug", "Vulnerability", "Code Smell", "Hotspot"))
-    private val severityCombo = JComboBox(arrayOf("All", "Blocker", "Critical", "Major", "Minor", "Info"))
+    private val filterCombo = ComboBox(arrayOf("All", "Bug", "Vulnerability", "Code Smell", "Hotspot"))
+    private val severityCombo = ComboBox(arrayOf("All", "Blocker", "Critical", "Major", "Minor", "Info"))
     private val countLabel = JBLabel("0 issues")
 
     private var allIssues: List<MappedIssue> = emptyList()
     private var allHotspots: List<SecurityHotspotData> = emptyList()
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val paginationWarning = JBLabel().apply {
         foreground = StatusColors.WARNING
@@ -177,7 +176,7 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
      * Applies a pre-filter to the issue list by selecting the appropriate type and resetting severity.
      * Used by GateStatusBanner to navigate directly to failing issue types.
      */
-    fun applyPreFilter(type: IssueType?, newCodeMode: Boolean?) {
+    fun applyPreFilter(type: IssueType?) {
         val typeIndex = when (type) {
             IssueType.BUG -> 1
             IssueType.VULNERABILITY -> 2
@@ -315,7 +314,8 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
     }
 
     override fun dispose() {
-        scope.cancel()
+        // No own resources to clean up — IssueDetailPanel (registered as child Disposer)
+        // owns its own scope and handles all async fetches for the selected issue.
     }
 
     /**

@@ -16,33 +16,47 @@ import kotlinx.serialization.json.jsonPrimitive
 class TagBuilderService {
 
     private val log = Logger.getInstance(TagBuilderService::class.java)
+
+    // Backing fields — set by test constructor, or lazily resolved from project on first use.
+    private var _project: Project? = null
+    private var _bambooService: BambooService? = null
+    private var _buildLogCache: BuildLogCache? = null
+    private var _buildVariableName: String? = null
+
     private val bambooService: BambooService
-    private val buildVariableName: String
+        get() = _bambooService ?: _project!!.getService(BambooService::class.java)
+            .also { _bambooService = it }
+
     private val buildLogCache: BuildLogCache?
+        get() = _buildLogCache ?: _project?.let { BuildLogCache.getInstance(it) }
+
+    /** Reads the current setting at call time so setting changes take effect without restart. */
+    private val buildVariableName: String
+        get() = _buildVariableName
+            ?: _project?.let { PluginSettings.getInstance(it).state.bambooBuildVariableName
+                ?.takeIf { v -> v.isNotBlank() } }
+            ?: "DockerTagsAsJSON"
 
     companion object {
         private val DOCKER_TAG_REGEX = Regex("Unique Docker Tag\\s*:\\s*(.+)")
         private val ANSI_ESCAPE_REGEX = Regex("\\x1B\\[[0-9;]*m")
     }
 
-    /** Project service constructor — used by IntelliJ DI. */
+    /** Project service constructor — used by IntelliJ DI. Heavy deps are lazy-inited on first use. */
     constructor(project: Project) {
-        val settings = PluginSettings.getInstance(project)
-        this.bambooService = project.getService(BambooService::class.java)
-        this.buildLogCache = BuildLogCache.getInstance(project)
-        this.buildVariableName = settings.state.bambooBuildVariableName?.takeIf { it.isNotBlank() } ?: "DockerTagsAsJSON"
-        log.info("[Automation:Tags] TagBuilderService initialized, buildVariableName='$buildVariableName'")
+        this._project = project
+        log.info("[Automation:Tags] TagBuilderService constructed for project '${project.name}'")
     }
 
-    /** Test constructor — allows injecting mocks. */
+    /** Test constructor — allows injecting mocks directly. */
     constructor(
         bambooService: BambooService,
         buildVariableName: String = "DockerTagsAsJSON",
         buildLogCache: BuildLogCache? = null,
     ) {
-        this.bambooService = bambooService
-        this.buildVariableName = buildVariableName
-        this.buildLogCache = buildLogCache
+        this._bambooService = bambooService
+        this._buildVariableName = buildVariableName
+        this._buildLogCache = buildLogCache
     }
     private val json = Json { ignoreUnknownKeys = true }
     // A-P2-2: reject pre-release / build-metadata suffixes so e.g. "1.2.3-rc1" or
@@ -84,20 +98,10 @@ class TagBuilderService {
         log.info("[Automation:Tags] Scoring runs for plan '$suitePlanKey' " +
             "(targetParseable=$targetParseable, maxWalk=$maxWalk)")
 
-        // Single-page legacy mode: targetParseable == maxWalk → one fetch, no
-        // pagination. Preserves the pre-PR-7 behavior for existing call sites
-        // that pass only `maxResults`.
-        val singlePageMode = targetParseable == maxWalk
-
-        val buildsResult = if (singlePageMode) {
-            bambooService.getRecentBuilds(suitePlanKey, targetParseable)
-        } else {
-            // Multi-page: fetch maxWalk in one request (Bamboo's max-results)
-            // and walk through it client-side. Bamboo's `result/{plan}` collection
-            // endpoint accepts `max-results=200`; capping at maxWalk means we
-            // never over-fetch.
-            bambooService.getRecentBuilds(suitePlanKey, maxWalk)
-        }
+        // Fetch up to maxWalk builds in one request (Bamboo's max-results). Walking
+        // stops early via the targetParseable break below when enough parseable builds
+        // have been accumulated.
+        val buildsResult = bambooService.getRecentBuilds(suitePlanKey, maxWalk)
         if (buildsResult.isError) {
             log.info("[Automation:Tags] getRecentBuilds failed for '$suitePlanKey': ${buildsResult.summary}")
             return emptyList<BaselineRun>() to BaselineDiagnostics(
@@ -215,10 +219,8 @@ class TagBuilderService {
             TagEntry(
                 serviceName = service,
                 currentTag = tag,
-                latestReleaseTag = null,
                 source = TagSource.BASELINE,
                 registryStatus = RegistryStatus.UNKNOWN,
-                isDrift = false,
                 isCurrentRepo = false
             )
         }
@@ -242,17 +244,11 @@ class TagBuilderService {
             TagEntry(
                 serviceName = service,
                 currentTag = tag,
-                latestReleaseTag = null,
                 source = TagSource.BASELINE,
                 registryStatus = RegistryStatus.UNKNOWN,
-                isDrift = false,
                 isCurrentRepo = false
             )
         }
-
-    /** Legacy method — delegates to [loadBaselineWithDiagnostics]. */
-    suspend fun loadBaseline(suitePlanKey: String): List<TagEntry> =
-        loadBaselineWithDiagnostics(suitePlanKey).tags
 
     fun replaceCurrentRepoTag(
         entries: List<TagEntry>,

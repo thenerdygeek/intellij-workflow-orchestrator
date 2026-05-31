@@ -188,7 +188,7 @@ class SonarApiClient(
             extractItems = { it.issues },
             extractTotal = { it.paging.total },
             combineResult = { firstResult, allItems ->
-                firstResult.copy(issues = allItems, paging = firstResult.paging.copy(total = firstResult.paging.total))
+                firstResult.copy(issues = allItems)
             }
         )
     }
@@ -304,11 +304,10 @@ class SonarApiClient(
         metricKeys: String = DEFAULT_METRIC_KEYS
     ): ApiResult<List<SonarMeasureComponentDto>> {
         log.info("[Sonar:API] GET /api/measures/component_tree for project '$projectKey' branch='${branch ?: "default"}'")
-        val metrics = metricKeys.ifBlank { DEFAULT_METRIC_KEYS }
         val branchParam = branch?.let { "&branch=${URLEncoder.encode(it, "UTF-8")}" } ?: ""
         // additionalFields=period is required for new_* metrics (SonarQube returns
         // them in period.value, not value).
-        val needsPeriod = metrics.contains("new_")
+        val needsPeriod = metricKeys.contains("new_")
         val additionalFields = if (needsPeriod) "&additionalFields=period" else ""
         // When new_lines_to_cover is in the metric set, sort by it descending so
         // files with the most new code surface in the earliest pages. Without
@@ -316,7 +315,7 @@ class SonarApiClient(
         // files past the page cutoff on large projects — verified against a
         // 531-file project where the Coverage tab showed an empty new-code
         // listing because the new-code files happened to sort late.
-        val sortParams = if (metrics.contains("new_lines_to_cover")) {
+        val sortParams = if (metricKeys.contains("new_lines_to_cover")) {
             "&s=metric&metricSort=new_lines_to_cover&asc=false"
         } else ""
         // Paginate up to MAX_PAGES so projects with thousands of files still
@@ -325,7 +324,7 @@ class SonarApiClient(
         val all = mutableListOf<SonarMeasureComponentDto>()
         for (page in 1..MAX_MEASURES_PAGES) {
             val url = "/api/measures/component_tree?component=${URLEncoder.encode(projectKey, "UTF-8")}" +
-                "&metricKeys=$metrics&qualifiers=FIL&ps=$MEASURES_PAGE_SIZE&p=$page" +
+                "&metricKeys=$metricKeys&qualifiers=FIL&ps=$MEASURES_PAGE_SIZE&p=$page" +
                 "$branchParam$additionalFields$sortParams"
             when (val pageResult = get<SonarMeasureSearchResult>(url)) {
                 is ApiResult.Success -> {
@@ -471,7 +470,7 @@ class SonarApiClient(
             extractItems = { it.hotspots },
             extractTotal = { it.paging.total },
             combineResult = { firstResult, allItems ->
-                firstResult.copy(hotspots = allItems, paging = firstResult.paging.copy(total = firstResult.paging.total))
+                firstResult.copy(hotspots = allItems)
             }
         )
     }

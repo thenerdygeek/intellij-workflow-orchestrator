@@ -1,11 +1,14 @@
 package com.workflow.orchestrator.sonar.ui
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import javax.swing.JButton
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.workflow.orchestrator.sonar.model.FileCoverageData
@@ -14,9 +17,7 @@ import com.workflow.orchestrator.sonar.service.SonarDataService
 import kotlinx.coroutines.*
 import java.awt.BorderLayout
 import java.awt.Font
-import javax.swing.JButton
 import javax.swing.JPanel
-import javax.swing.JTextArea
 import javax.swing.SwingConstants
 
 /**
@@ -32,7 +33,7 @@ class CoveragePreviewPanel(private val project: Project) : JPanel(BorderLayout()
         border = JBUI.Borders.empty(4, 8)
     }
 
-    private val codeArea = JTextArea().apply {
+    private val codeArea = JBTextArea().apply {
         isEditable = false
         font = Font("JetBrains Mono", Font.PLAIN, JBUI.scale(11))
         border = JBUI.Borders.empty(4, 8)
@@ -112,7 +113,7 @@ class CoveragePreviewPanel(private val project: Project) : JPanel(BorderLayout()
             if (baseForFile == null) return@launch
             val file = java.io.File(baseForFile, filePath)
             if (!file.exists()) {
-                withContext(Dispatchers.Main) {
+                withContext(Dispatchers.EDT) {
                     codeArea.text = "File not found: $filePath"
                     showContentLayout()
                 }
@@ -128,7 +129,7 @@ class CoveragePreviewPanel(private val project: Project) : JPanel(BorderLayout()
                 buildRegionDisplay(regions)
             }
 
-            withContext(Dispatchers.Main) {
+            withContext(Dispatchers.EDT) {
                 codeArea.text = displayText
                 codeArea.caretPosition = 0
                 showContentLayout()

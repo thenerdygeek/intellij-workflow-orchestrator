@@ -36,7 +36,6 @@ import java.awt.Font
 import java.time.Year
 import javax.swing.DefaultListModel
 import javax.swing.JButton
-import javax.swing.JLabel
 import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.ListCellRenderer
@@ -284,10 +283,10 @@ private class CopyrightCellRenderer : ListCellRenderer<CopyrightFileEntry> {
         }
         val rel = relativeProjectPath(value.filePath)
 
-        val left = JLabel(rel, icon, SwingConstants.LEFT).apply {
+        val left = JBLabel(rel, icon, SwingConstants.LEFT).apply {
             font = font.deriveFont(Font.PLAIN)
         }
-        val right = JLabel(suffix).apply {
+        val right = JBLabel(suffix).apply {
             foreground = color
             font = font.deriveFont(Font.PLAIN, font.size - 1f)
             border = JBUI.Borders.emptyLeft(8)

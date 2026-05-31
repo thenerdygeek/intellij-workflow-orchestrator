@@ -54,7 +54,12 @@ class AutomationPanel(
 ) : JPanel(BorderLayout()), Disposable {
 
     private val log = Logger.getInstance(AutomationPanel::class.java)
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val scope = CoroutineScope(
+        Dispatchers.IO + SupervisorJob() +
+            CoroutineExceptionHandler { _, t ->
+                log.error("[Automation:UI] Unhandled coroutine exception", t)
+            }
+    )
     private val settings = PluginSettings.getInstance(project)
 
     private val tagBuilderService by lazy { project.getService(TagBuilderService::class.java) }
@@ -559,9 +564,7 @@ class AutomationPanel(
                         val currentTags = tagStagingPanel.getCurrentTags()
                         val updatedTags = tagBuilderService.replaceCurrentRepoTag(currentTags, CurrentRepoContext(
                             serviceName = dockerTagKey,
-                            branchName = focusBuild.branch,
-                            featureBranchTag = tagDetection.tag,
-                            detectedFrom = DetectionSource.SETTINGS_MAPPING
+                            featureBranchTag = tagDetection.tag
                         ))
                         // Promote the auto-overlay output to baseline so that Revert is
                         // sticky: every auto-computed tag set (baseline pick OR per-build
@@ -617,8 +620,7 @@ class AutomationPanel(
             "${baselineResult.diagnostics.buildsWithDockerTags} parseable, " +
             "selected=${baselineResult.selectedBuild?.buildNumber}")
 
-        // Step 2: (registry enrichment removed — DriftDetectorService always returns no-op)
-        // Step 3: Load plan variables for the suite (master plan key)
+        // Step 2: Load plan variables for the suite (master plan key)
         val varsResult = bambooService.getPlanVariables(planKey)
 
         // Step 4: Docker-tag detection is driven by onFocusBuildChanged (Phase B).
@@ -637,9 +639,7 @@ class AutomationPanel(
         if (tagDetection?.detected == true && tagDetection.tag != null && dockerTagKey.isNotBlank()) {
             tags = tagBuilderService.replaceCurrentRepoTag(tags, CurrentRepoContext(
                 serviceName = dockerTagKey,
-                branchName = focusBuild?.branch ?: "",
-                featureBranchTag = tagDetection.tag,
-                detectedFrom = DetectionSource.SETTINGS_MAPPING
+                featureBranchTag = tagDetection.tag
             ))
         }
 
@@ -782,9 +782,7 @@ class AutomationPanel(
                     val currentTags = tagStagingPanel.getCurrentTags()
                     val updatedTags = tagBuilderService.replaceCurrentRepoTag(currentTags, CurrentRepoContext(
                         serviceName = dockerTagKey,
-                        branchName = currentFocusBuild?.branch ?: "",
-                        featureBranchTag = tagDetection.tag,
-                        detectedFrom = DetectionSource.SETTINGS_MAPPING
+                        featureBranchTag = tagDetection.tag
                     ))
                     // Promote the auto-overlay output to baseline so that Revert is
                     // sticky: every auto-computed tag set (baseline pick OR per-build

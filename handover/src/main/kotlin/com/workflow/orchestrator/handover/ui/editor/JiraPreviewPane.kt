@@ -98,7 +98,7 @@ class JiraPreviewPane(
         // Launch as a standalone coroutine whose Job is NOT a child of cs — this way
         // runTest with UnconfinedTestDispatcher does not fail with UncompletedCoroutinesError
         // when the test scope exits (SharedFlow.collect never completes on its own).
-        val collectorJob = Job()
+        // collectorJob is a class-level field cancelled in dispose(). (Audit HANDOVER-COR-4)
         CoroutineScope(cs.coroutineContext + collectorJob).launch {
             renderer.liveResults.collect { (text, result) ->
                 if (text == currentMarkup) {
@@ -140,7 +140,10 @@ class JiraPreviewPane(
     override fun asComponent(): JComponent = this
 
     override fun dispose() {
-        // Nothing to dispose — the cs is owned by the parent
+        // Cancel the liveResults collector coroutine so it does not outlive the pane.
+        // The cs is owned by the parent; only our standalone collectorJob is cancelled here.
+        // (Audit finding HANDOVER-COR-4)
+        collectorJob.cancel()
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────

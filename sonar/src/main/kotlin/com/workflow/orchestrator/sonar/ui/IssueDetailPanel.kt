@@ -1,11 +1,14 @@
 package com.workflow.orchestrator.sonar.ui
 
+import com.intellij.openapi.application.EDT
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
+import javax.swing.JButton
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.ai.AgentChatRedirect
 import com.workflow.orchestrator.core.model.sonar.SonarRuleData
@@ -64,7 +67,7 @@ class IssueDetailPanel(
         isVisible = false
     }
 
-    private val codeArea = JTextArea().apply {
+    private val codeArea = JBTextArea().apply {
         isEditable = false
         font = Font("JetBrains Mono", Font.PLAIN, JBUI.scale(12))
         rows = 12
@@ -293,7 +296,7 @@ class IssueDetailPanel(
         codeArea.text = "Loading..."
         scope.launch {
             val snippet = buildCodeSnippet(relativePath, issueLine, projectKey)
-            withContext(Dispatchers.Main) {
+            withContext(Dispatchers.EDT) {
                 codeArea.text = snippet
                 codeArea.caretPosition = 0
             }
@@ -371,16 +374,16 @@ class IssueDetailPanel(
                 if (!result.isError) {
                     val rule = result.data!!
                     ruleCache[ruleKey] = rule
-                    withContext(Dispatchers.Main) {
+                    withContext(Dispatchers.EDT) {
                         displayRuleInfo(rule)
                     }
                 } else {
-                    withContext(Dispatchers.Main) {
+                    withContext(Dispatchers.EDT) {
                         ruleInfoLabel.text = "<html><i>Could not load rule info</i></html>"
                     }
                 }
             } catch (_: Exception) {
-                withContext(Dispatchers.Main) {
+                withContext(Dispatchers.EDT) {
                     ruleInfoLabel.text = ""
                 }
             }

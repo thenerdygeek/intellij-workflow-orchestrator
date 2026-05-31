@@ -79,6 +79,13 @@ class BambooServiceImpl(private val project: Project) : BambooService {
     /** The cached base URL of the current client, used to build absolute links in [triggerBuild]. */
     private val cachedBaseUrl: String? get() = cachedEntry?.first
 
+    /**
+     * Exposes the URL-change-aware cached [BambooApiClient] to sibling classes in the
+     * `:bamboo` module (e.g. [BuildFailureBridgeStartupActivity]) so they share the single
+     * cached client instead of constructing their own.  Null when Bamboo is not configured.
+     */
+    internal fun getPollClient(): BambooApiClient? = client
+
     override suspend fun getLatestBuild(chainKey: String): ToolResult<BuildResultData> {
         val api = client ?: return notConfiguredError("fetch latest build for $chainKey")
         return when (val result = api.getLatestResult(chainKey)) {

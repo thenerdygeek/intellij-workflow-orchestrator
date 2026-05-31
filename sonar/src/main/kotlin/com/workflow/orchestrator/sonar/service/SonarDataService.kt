@@ -44,7 +44,7 @@ class SonarDataService(
     private val _stateFlow = MutableStateFlow(SonarState.EMPTY)
     val stateFlow: StateFlow<SonarState> = _stateFlow.asStateFlow()
 
-    private var previousGateStatus: QualityGateStatus? = null
+    @Volatile private var previousGateStatus: QualityGateStatus? = null
 
     private val settings get() = PluginSettings.getInstance(project)
 
@@ -57,10 +57,10 @@ class SonarDataService(
     @Volatile private var cachedApiClient: SonarApiClient? = null
     @Volatile private var cachedSonarUrl: String? = null
 
-    @Volatile private var refreshDebounceJob: Job? = null
-
     // F-10: top-level refresh job tracked so a newer refresh can cancel a prior one's
     // in-flight HTTP children (which run under structured coroutineScope inside refreshWith).
+    // SONAR-CLE-2: refreshDebounceJob was a redundant alias always assigned the same Job —
+    // removed; activeRefreshJob covers both the debounce delay and in-flight HTTP children.
     @Volatile private var activeRefreshJob: Job? = null
 
     /**
@@ -72,6 +72,13 @@ class SonarDataService(
      * if the same file path existed in both.
      */
     val lineCoverageCache = ConcurrentHashMap<String, Map<Int, LineCoverageStatus>>()
+
+    /**
+     * SONAR-COR-6: Single-flight guard for getLineCoverage. Keyed by the same composite key as
+     * lineCoverageCache. A concurrent caller that arrives while a fetch is in-flight awaits the
+     * same Deferred rather than firing a duplicate HTTP request.
+     */
+    private val lineCoverageInFlight = ConcurrentHashMap<String, Deferred<Map<Int, LineCoverageStatus>>>()
 
     private fun cacheKey(projectKey: String, relativePath: String): String =
         "$projectKey\u0000$relativePath"
@@ -175,17 +182,15 @@ class SonarDataService(
      */
     fun refreshForBranch(branch: String, projectKey: String) {
         if (projectKey.isBlank()) return
-        // F-10: cancel the debounce *and* any in-flight HTTP children from a prior refresh.
+        // F-10: cancel any in-flight HTTP children from a prior refresh.
         // activeRefreshJob wraps both the debounce delay and the coroutineScope inside
         // refreshWith, so cancelling it propagates to all in-flight children (F-5 fix).
-        refreshDebounceJob?.cancel()
         activeRefreshJob?.cancel()
         val job = cs.launch {
             delay(500)
             val client = resolveApiClient() ?: return@launch
             refreshWith(client, projectKey, branch)
         }
-        refreshDebounceJob = job
         activeRefreshJob = job
     }
 
@@ -248,19 +253,38 @@ class SonarDataService(
             return emptyMap()
         }
 
+        // SONAR-COR-6: single-flight deduplication — register a Deferred in the in-flight map
+        // BEFORE starting the HTTP request. A concurrent caller that arrives while the fetch is
+        // running will find the existing Deferred and await it instead of issuing a duplicate call.
+        // Use cs.async so the Deferred is created in the service scope (not a child coroutineScope
+        // that would wait for it to complete before returning the reference).
         log.info("[Sonar:LineCoverage] Fetching line coverage for '$componentKey' branch='$effectiveBranch'")
 
-        return when (val result = client.getSourceLines(componentKey, branch = effectiveBranch)) {
-            is ApiResult.Success -> {
-                val statuses = CoverageMapper.mapLineStatuses(result.data)
-                lineCoverageCache[key] = statuses
-                log.info("[Sonar:LineCoverage] Cached ${statuses.size} line statuses for '$relativePath' (projectKey='$effectiveKey')")
-                statuses
+        val deferred = cs.async {
+            when (val result = client.getSourceLines(componentKey, branch = effectiveBranch)) {
+                is ApiResult.Success -> {
+                    val statuses = CoverageMapper.mapLineStatuses(result.data)
+                    lineCoverageCache[key] = statuses
+                    log.info("[Sonar:LineCoverage] Cached ${statuses.size} line statuses for '$relativePath' (projectKey='$effectiveKey')")
+                    statuses
+                }
+                is ApiResult.Error -> {
+                    log.warn("[Sonar:LineCoverage] Failed to fetch line coverage for '$componentKey': ${result.message}")
+                    emptyMap<Int, LineCoverageStatus>()
+                }
             }
-            is ApiResult.Error -> {
-                log.warn("[Sonar:LineCoverage] Failed to fetch line coverage for '$componentKey': ${result.message}")
-                emptyMap()
-            }
+        }
+        // Only register if no concurrent caller beat us to it; if one did, await its Deferred.
+        val winner = lineCoverageInFlight.putIfAbsent(key, deferred) ?: deferred
+        if (winner !== deferred) {
+            deferred.cancel()
+        }
+        return try {
+            winner.await()
+        } catch (_: Exception) {
+            emptyMap()
+        } finally {
+            lineCoverageInFlight.remove(key, winner)
         }
     }
 

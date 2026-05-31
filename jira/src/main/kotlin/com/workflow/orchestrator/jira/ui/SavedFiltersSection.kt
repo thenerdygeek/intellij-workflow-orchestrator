@@ -1,8 +1,6 @@
 package com.workflow.orchestrator.jira.ui
 
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.model.jira.FilterData
@@ -30,7 +28,6 @@ import javax.swing.JPanel
  * the section stays decoupled from JiraService and the result-rendering area.
  */
 class SavedFiltersSection(
-    @Suppress("UNUSED_PARAMETER") project: Project,
     private val onFilterClicked: (FilterData) -> Unit
 ) : JPanel(BorderLayout()) {
 

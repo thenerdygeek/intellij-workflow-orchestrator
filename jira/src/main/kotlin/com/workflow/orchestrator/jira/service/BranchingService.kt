@@ -115,7 +115,12 @@ class BranchingService(
             val git = Git.getInstance()
 
             // Fetch to update remote tracking refs (safe, doesn't touch local branches)
-            val fetchResult = git.fetch(repo, repo.remotes.first(), emptyList())
+            val remote = repo.remotes.firstOrNull()
+                ?: return ApiResult.Error(
+                    ErrorType.NOT_FOUND,
+                    "No Git remote configured for repository '${repo.root.path}'."
+                )
+            val fetchResult = git.fetch(repo, remote, emptyList())
             if (!fetchResult.success()) {
                 log.warn("[Jira:Branch] Git fetch returned warnings: ${fetchResult.errorOutputAsJoinedString}")
             }
@@ -211,7 +216,12 @@ class BranchingService(
                     "Configured VCS root '$localVcsRootPath' not found — repick in Start Work dialog"
                 )
             val git = Git.getInstance()
-            val fetchResult = git.fetch(repo, repo.remotes.first(), emptyList())
+            val remote = repo.remotes.firstOrNull()
+                ?: return ApiResult.Error(
+                    ErrorType.NOT_FOUND,
+                    "No Git remote configured for repository '${repo.root.path}'."
+                )
+            val fetchResult = git.fetch(repo, remote, emptyList())
             if (!fetchResult.success()) {
                 log.warn("[Jira:Branch] Git fetch returned warnings: ${fetchResult.errorOutputAsJoinedString}")
             }

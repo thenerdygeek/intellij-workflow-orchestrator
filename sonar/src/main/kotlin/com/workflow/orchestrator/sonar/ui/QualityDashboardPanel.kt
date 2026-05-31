@@ -7,6 +7,7 @@ import com.intellij.openapi.ui.ComboBox
 import com.intellij.icons.AllIcons
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
+import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
@@ -33,10 +34,9 @@ import java.awt.Color
 import java.awt.Cursor
 import java.awt.FlowLayout
 import java.awt.Font
+import javax.swing.JButton
 import javax.swing.BoxLayout
 import javax.swing.DefaultComboBoxModel
-import javax.swing.JButton
-import javax.swing.JCheckBox
 import javax.swing.JPanel
 
 class QualityDashboardPanel(
@@ -149,7 +149,7 @@ class QualityDashboardPanel(
 
         // Header: left label + right toggle + refresh
         // Use FlowLayout so elements wrap at narrow widths instead of overlapping
-        val gutterMarkersCheckbox = JCheckBox("Gutter Markers").apply {
+        val gutterMarkersCheckbox = JBCheckBox("Gutter Markers").apply {
             isSelected = settings.state.coverageGutterMarkersEnabled
             toolTipText = "Show coverage markers in the editor gutter"
             isFocusPainted = false
@@ -224,7 +224,7 @@ class QualityDashboardPanel(
                 tabbedPane.selectedIndex = 2  // Coverage tab
             } else {
                 tabbedPane.selectedIndex = 1  // Issues tab
-                filter.issueType?.let { issueListPanel.applyPreFilter(it, filter.newCodeMode) }
+                filter.issueType?.let { issueListPanel.applyPreFilter(it) }
             }
         }
 

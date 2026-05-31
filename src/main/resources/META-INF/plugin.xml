@@ -303,8 +303,6 @@
         <projectService
             serviceImplementation="com.workflow.orchestrator.automation.service.TagBuilderService"/>
         <projectService
-            serviceImplementation="com.workflow.orchestrator.automation.service.DriftDetectorService"/>
-        <projectService
             serviceImplementation="com.workflow.orchestrator.automation.service.ConflictDetectorService"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.automation.service.TagHistoryService"/>

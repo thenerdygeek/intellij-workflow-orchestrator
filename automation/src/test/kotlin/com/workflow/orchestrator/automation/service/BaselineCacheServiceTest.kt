@@ -32,7 +32,7 @@ class BaselineCacheServiceTest {
             score = 35
         )
         val tags = run.dockerTags.map { (svc, tag) ->
-            TagEntry(svc, tag, null, TagSource.BASELINE, RegistryStatus.UNKNOWN, false, false)
+            TagEntry(svc, tag, TagSource.BASELINE, RegistryStatus.UNKNOWN, false)
         }
         return BaselineLoadResult(
             tags = tags,

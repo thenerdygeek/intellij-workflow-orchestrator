@@ -92,45 +92,6 @@ object CreatePrPrefetch {
 
     private val log = Logger.getInstance(CreatePrPrefetch::class.java)
 
-    /**
-     * Re-resolve the default-reviewer list when the dialog's target branch
-     * changes. The repo's default-reviewer conditions are scoped per
-     * (sourceRefMatcher, targetRefMatcher), so a different target branch can
-     * surface a different reviewer set (audit P1 finding #6, PR 6 of the
-     * 2026-05-07 write-ops fix plan).
-     *
-     * Returns an empty list on any error so the dialog falls back to the
-     * pre-fetched chips rather than crashing — net effect: same UX as before
-     * the change, just with sharper defaults when the call succeeds.
-     */
-    suspend fun resolveDefaultReviewersForBranch(
-        @Suppress("UNUSED_PARAMETER") project: Project,
-        repoConfig: RepoConfig,
-        sourceBranch: String,
-        targetBranch: String,
-    ): List<BitbucketUser> {
-        val client = BitbucketBranchClient.forRepo(repoConfig) ?: return emptyList()
-        return try {
-            when (val r = client.getDefaultReviewersForBranch(
-                repo = com.workflow.orchestrator.core.bitbucket.RepoCoords(
-                    repoConfig.bitbucketProjectKey.orEmpty(),
-                    repoConfig.bitbucketRepoSlug.orEmpty(),
-                ),
-                sourceBranch = sourceBranch,
-                targetBranch = targetBranch,
-            )) {
-                is ApiResult.Success -> r.data
-                is ApiResult.Error -> {
-                    log.warn("[PR:Prefetch] resolveDefaultReviewersForBranch failed for '${repoConfig.displayLabel}': ${r.message}")
-                    emptyList()
-                }
-            }
-        } catch (e: Exception) {
-            log.warn("[PR:Prefetch] resolveDefaultReviewersForBranch exception for '${repoConfig.displayLabel}': ${e.message}")
-            emptyList()
-        }
-    }
-
     suspend fun run(project: Project): PrefetchResult {
         val settings = PluginSettings.getInstance(project)
         val resolver = RepoContextResolver.getInstance(project)

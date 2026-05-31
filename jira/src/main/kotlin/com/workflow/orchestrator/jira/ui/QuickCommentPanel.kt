@@ -4,6 +4,7 @@ import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import javax.swing.JButton
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.model.jira.CommentVisibility
@@ -23,7 +24,6 @@ import kotlinx.coroutines.withContext
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import javax.swing.DefaultComboBoxModel
-import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JPanel
 

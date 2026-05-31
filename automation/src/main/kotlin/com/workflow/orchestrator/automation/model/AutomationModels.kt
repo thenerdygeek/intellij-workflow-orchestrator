@@ -5,16 +5,16 @@ import java.time.Instant
 data class TagEntry(
     val serviceName: String,
     val currentTag: String,
-    val latestReleaseTag: String?,
     val source: TagSource,
     val registryStatus: RegistryStatus,
-    val isDrift: Boolean,
     val isCurrentRepo: Boolean
 )
 
 enum class TagSource { BASELINE, USER_EDIT, AUTO_DETECTED }
 
-enum class RegistryStatus { VALID, NOT_FOUND, CHECKING, UNKNOWN, ERROR }
+// VALID, NOT_FOUND, CHECKING removed — registry enrichment was removed; no production code
+// sets these values. UNKNOWN is the default; ERROR is kept for setValueAt's user-edit reset.
+enum class RegistryStatus { UNKNOWN, ERROR }
 
 data class BaselineRun(
     val buildNumber: Int,
@@ -101,18 +101,7 @@ enum class QueueEntryStatus {
 
 data class CurrentRepoContext(
     val serviceName: String,
-    val branchName: String,
-    val featureBranchTag: String?,
-    val detectedFrom: DetectionSource
-)
-
-enum class DetectionSource { PROJECT_NAME, SETTINGS_MAPPING, GIT_BRANCH }
-
-data class DriftResult(
-    val serviceName: String,
-    val currentTag: String,
-    val latestReleaseTag: String,
-    val isStale: Boolean
+    val featureBranchTag: String?
 )
 
 /**

@@ -11,6 +11,7 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.intellij.ui.JBColor
+import javax.swing.JButton
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
@@ -102,7 +103,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         repaint()
     }
 
-    private var currentIssueKey: String? = null
+    @Volatile private var currentIssueKey: String? = null
     private var currentWorklogSection: WorklogSection? = null
     private var currentDevStatusSection: DevStatusSection? = null
     private var currentChangelogSection: ChangelogSection? = null
@@ -139,8 +140,8 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         contentPanel.removeAll()
 
         // Buttons (transition + watch) are wired to permission state once it loads.
-        val transitionBtnHolder = AtomicReference<javax.swing.JButton?>(null)
-        val watchBtnHolder = AtomicReference<javax.swing.JButton?>(null)
+        val transitionBtnHolder = AtomicReference<JButton?>(null)
+        val watchBtnHolder = AtomicReference<JButton?>(null)
 
         // Immediate sections (from cached sprint data)
         addHeader(issue)
@@ -227,14 +228,14 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
 
     private fun addTransitionAndWatchButtons(
         issue: JiraIssue,
-        transitionBtnHolder: AtomicReference<javax.swing.JButton?>,
-        watchBtnHolder: AtomicReference<javax.swing.JButton?>
+        transitionBtnHolder: AtomicReference<JButton?>,
+        watchBtnHolder: AtomicReference<JButton?>
     ) {
         val buttonPanel = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
             isOpaque = false
         }
 
-        val transitionBtn = javax.swing.JButton("${issue.fields.status.name} ▾").apply {
+        val transitionBtn = JButton("${issue.fields.status.name} ▾").apply {
             addActionListener {
                 TicketTransitionDialog(
                     project = project,
@@ -251,7 +252,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         // Watch button. Initial label is neutral; loadInitialWatchState() flips it
         // to "Watching" or "Watch" once getWatchers() returns. Permission check
         // may hide it entirely.
-        val watchBtn = javax.swing.JButton("👁 Watch").apply {
+        val watchBtn = JButton("👁 Watch").apply {
             border = JBUI.Borders.empty(2, 8)
             toolTipText = "Add yourself as a watcher"
             addActionListener { onWatchButtonClicked(issue, this) }
@@ -283,8 +284,8 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
      */
     private fun loadPermissionsAndApplyGating(
         issue: JiraIssue,
-        transitionBtnHolder: AtomicReference<javax.swing.JButton?>,
-        watchBtnHolder: AtomicReference<javax.swing.JButton?>
+        transitionBtnHolder: AtomicReference<JButton?>,
+        watchBtnHolder: AtomicReference<JButton?>
     ) {
         val projectKey = issue.key.substringBefore("-")
         lazyScope.launch {
@@ -305,8 +306,8 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
 
     private fun applyGating(
         gate: PermissionGate,
-        transitionBtn: javax.swing.JButton?,
-        watchBtn: javax.swing.JButton?
+        transitionBtn: JButton?,
+        watchBtn: JButton?
     ) {
         // Transition: disable + tooltip
         transitionBtn?.let {
@@ -328,7 +329,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
     /**
      * Fetches the watcher list once, sets the initial button label and tooltip.
      */
-    private fun loadInitialWatchState(issue: JiraIssue, watchBtnHolder: AtomicReference<javax.swing.JButton?>) {
+    private fun loadInitialWatchState(issue: JiraIssue, watchBtnHolder: AtomicReference<JButton?>) {
         lazyScope.launch {
             val service = project.getService(JiraService::class.java)
             val result = service.getWatchers(issue.key)
@@ -344,7 +345,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         }
     }
 
-    private fun applyWatchState(btn: javax.swing.JButton, isWatching: Boolean, watchCount: Int) {
+    private fun applyWatchState(btn: JButton, isWatching: Boolean, watchCount: Int) {
         btn.text = if (isWatching) "👁 Watching" else "👁 Watch"
         btn.toolTipText = if (watchCount >= 0) {
             "Watching: $watchCount user${if (watchCount == 1) "" else "s"}"
@@ -353,7 +354,7 @@ class TicketDetailPanel(private val project: com.intellij.openapi.project.Projec
         }
     }
 
-    private fun onWatchButtonClicked(issue: JiraIssue, btn: javax.swing.JButton) {
+    private fun onWatchButtonClicked(issue: JiraIssue, btn: JButton) {
         btn.isEnabled = false
         lazyScope.launch {
             val service = project.getService(JiraService::class.java)

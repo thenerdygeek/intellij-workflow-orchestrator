@@ -50,7 +50,12 @@ import javax.swing.*
 class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.intellij.openapi.Disposable {
 
     private val log = Logger.getInstance(MonitorPanel::class.java)
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val scope = CoroutineScope(
+        Dispatchers.IO + SupervisorJob() +
+            CoroutineExceptionHandler { _, t ->
+                log.error("[Automation:Monitor] Unhandled coroutine exception", t)
+            }
+    )
     private val settings = PluginSettings.getInstance(project)
 
     private val runListModel = DefaultListModel<RunEntry>()

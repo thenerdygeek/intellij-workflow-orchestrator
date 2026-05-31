@@ -72,14 +72,33 @@ class PrListPanel : JPanel(BorderLayout()) {
         isOpaque = false
     }
 
-    private val emptyLabel = JBLabel("No pull requests found. Click Refresh to update.").apply {
+    private val emptyStateLabel = JBLabel("No pull requests open.").apply {
         foreground = JBUI.CurrentTheme.Label.disabledForeground()
         horizontalAlignment = SwingConstants.CENTER
-        verticalAlignment = SwingConstants.CENTER
+    }
+    private val emptyStateRefreshLink = JBLabel("Refresh").apply {
+        foreground = StatusColors.LINK
+        horizontalAlignment = SwingConstants.CENTER
+        cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        font = font.deriveFont(font.size.toFloat())
+        addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent) { onRefreshClicked?.invoke() }
+        })
+    }
+    private val emptyPanel = JPanel().apply {
+        isOpaque = false
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
         border = JBUI.Borders.emptyTop(40)
+        emptyStateLabel.alignmentX = JBLabel.CENTER_ALIGNMENT
+        emptyStateRefreshLink.alignmentX = JBLabel.CENTER_ALIGNMENT
+        add(emptyStateLabel)
+        add(Box.createVerticalStrut(JBUI.scale(6)))
+        add(emptyStateRefreshLink)
     }
 
     var onPrSelected: ((prId: Int) -> Unit)? = null
+    /** Called when the user clicks the "Refresh" action link in the empty state. */
+    var onRefreshClicked: (() -> Unit)? = null
 
     init {
         isOpaque = false
@@ -111,9 +130,10 @@ class PrListPanel : JPanel(BorderLayout()) {
         showEmpty()
     }
 
-    fun showEmpty() {
+    fun showEmpty(stateLabel: String = "open") {
         allItems = emptyList()
-        replaceCenterWith(emptyLabel)
+        emptyStateLabel.text = "No pull requests $stateLabel."
+        replaceCenterWith(emptyPanel)
     }
 
     /**

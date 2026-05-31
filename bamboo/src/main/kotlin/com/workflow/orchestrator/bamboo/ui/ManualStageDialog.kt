@@ -26,6 +26,7 @@ import javax.swing.BorderFactory
 import javax.swing.BoxLayout
 import javax.swing.JComponent
 import javax.swing.JPanel
+import com.intellij.ui.table.JBTable
 import javax.swing.JTable
 import javax.swing.table.AbstractTableModel
 import javax.swing.table.DefaultTableCellRenderer
@@ -34,8 +35,6 @@ import javax.swing.table.DefaultTableCellRenderer
  * Trigger mode for [ManualStageDialog].
  *
  * - [STAGE] — trigger a single named manual stage (original dialog behaviour).
- * - [FULL_BUILD] — trigger the full plan (all stages). Legacy escape hatch;
- *   most callers should use [CUSTOM_STAGES] or the split-button on the Automation tab.
  * - [CUSTOM_STAGES] — show a checkbox list of all plan stages, let the user pick one
  *   or more. Pre-checks: saved default if any; else first stage; else nothing.
  *   OK button disabled when nothing is selected or stage load failed.
@@ -44,8 +43,6 @@ import javax.swing.table.DefaultTableCellRenderer
  */
 enum class TriggerMode {
     STAGE,
-    /** Legacy escape hatch — most callers should use CUSTOM_STAGES. */
-    FULL_BUILD,
     CUSTOM_STAGES
 }
 
@@ -124,12 +121,10 @@ class ManualStageDialog(
 
     init {
         title = when (triggerMode) {
-            TriggerMode.FULL_BUILD -> "Trigger Build"
             TriggerMode.STAGE -> "Run Stage: $stageName"
             TriggerMode.CUSTOM_STAGES -> "Trigger Customized Build"
         }
         setOKButtonText(when (triggerMode) {
-            TriggerMode.FULL_BUILD -> "Trigger"
             TriggerMode.STAGE -> "OK"
             TriggerMode.CUSTOM_STAGES -> "Trigger"
         })
@@ -449,7 +444,7 @@ class ManualStageDialog(
         val sortedEntries = vars.entries.sortedBy { it.key }
 
         val tableModel = VariablesTableModel(sortedEntries)
-        val table = JTable(tableModel).apply {
+        val table = JBTable(tableModel).apply {
             // Read-only — variables are edited on the Automation tab, not here.
             setDefaultEditor(Any::class.java, null)
             // Allow row selection so the user can copy individual rows with Ctrl+C.
@@ -648,13 +643,9 @@ class ManualStageDialog(
         // CUSTOM_STAGES: the caller reads getResult() after show() returns.
         // The dialog does NOT trigger the build itself in this mode — the caller owns
         // the trigger call so it can combine stages with the queue service.
-        if (triggerMode != TriggerMode.CUSTOM_STAGES) {
+        if (triggerMode == TriggerMode.STAGE) {
             scope.launch {
-                when (triggerMode) {
-                    TriggerMode.FULL_BUILD -> bambooService.triggerBuild(planKey, vars, stages = null)
-                    TriggerMode.STAGE -> bambooService.triggerStage(planKey, vars, stageName)
-                    TriggerMode.CUSTOM_STAGES -> { /* handled by caller */ }
-                }
+                bambooService.triggerStage(planKey, vars, stageName)
             }
         }
 

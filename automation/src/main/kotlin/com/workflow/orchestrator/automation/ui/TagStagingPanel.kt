@@ -3,8 +3,6 @@ package com.workflow.orchestrator.automation.ui
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
-import com.intellij.ui.ColorUtil
-import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.ui.table.JBTable
@@ -254,9 +252,6 @@ class TagStagingPanel(
                 1 -> entry.currentTag
                 2 -> when {
                     entry.isCurrentRepo -> "Your branch"
-                    entry.isDrift -> "⚠ Drift"
-                    entry.registryStatus == RegistryStatus.VALID -> "✓ OK"
-                    entry.registryStatus == RegistryStatus.NOT_FOUND -> "✗ Missing"
                     else -> ""
                 }
                 else -> ""
@@ -305,9 +300,6 @@ class TagStagingPanel(
                     val entry = model.entries[row]
                     foreground = when {
                         entry.isCurrentRepo -> StatusColors.LINK
-                        entry.isDrift -> StatusColors.WARNING
-                        entry.registryStatus == RegistryStatus.VALID -> StatusColors.SUCCESS
-                        entry.registryStatus == RegistryStatus.NOT_FOUND -> StatusColors.ERROR
                         else -> StatusColors.SECONDARY_TEXT
                     }
                 }
@@ -320,11 +312,6 @@ class TagStagingPanel(
                     val entry = model.entries[row]
                     background = when {
                         entry.isCurrentRepo -> StatusColors.SUCCESS_BG
-                        entry.isDrift -> StatusColors.WARNING_BG
-                        entry.registryStatus == RegistryStatus.NOT_FOUND -> JBColor(
-                            ColorUtil.withAlpha(StatusColors.ERROR, 0.1),
-                            ColorUtil.withAlpha(StatusColors.ERROR, 0.1)
-                        )
                         else -> table.background
                     }
                 }
@@ -354,10 +341,8 @@ class TagStagingPanel(
                     TagEntry(
                         serviceName = service,
                         currentTag = tagElement.jsonPrimitive.content,
-                        latestReleaseTag = null,
                         source = TagSource.USER_EDIT,
                         registryStatus = RegistryStatus.UNKNOWN,
-                        isDrift = false,
                         isCurrentRepo = false
                     )
                 }

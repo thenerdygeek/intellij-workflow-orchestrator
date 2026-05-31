@@ -34,9 +34,10 @@ import com.intellij.ui.SearchTextField
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
+import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
+import javax.swing.JButton
 import com.intellij.util.ui.JBUI
-import com.workflow.orchestrator.bamboo.model.BuildError
 import com.workflow.orchestrator.core.model.bamboo.ArtifactData
 import com.workflow.orchestrator.core.services.BambooService
 import com.workflow.orchestrator.core.ui.StatusColors
@@ -293,9 +294,8 @@ class StageDetailPanel(
     /**
      * Show build log in the console.
      * @param logText The full log text
-     * @param errors Parsed errors (unused now — ConsoleView handles highlighting natively)
      */
-    fun showLog(logText: String, errors: List<BuildError>) {
+    fun showLog(logText: String) {
         val console = consoleView ?: return
         console.clear()
 
@@ -527,7 +527,7 @@ class StageDetailPanel(
                 } else {
                     artifactsModel.clear()
                     result.data!!.forEach { artifactsModel.addElement(it) }
-                    val scrollPane = JScrollPane(artifactsList)
+                    val scrollPane = JBScrollPane(artifactsList).apply { border = JBUI.Borders.empty() }
                     artifactsPanel.add(scrollPane, BorderLayout.CENTER)
                 }
                 artifactsPanel.revalidate()

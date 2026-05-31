@@ -55,7 +55,7 @@ class TagBuilderServiceTest {
     }
 
     @Test
-    fun `loadBaseline returns tag entries from best-scored run`() = runTest {
+    fun `loadBaselineWithDiagnostics returns tag entries from best-scored run`() = runTest {
         val runs = listOf(
             makeBuildResultData(847, "Successful", listOf("Successful", "Successful"),
                 variables = mapOf("dockerTagsAsJson" to """{"auth":"2.4.0","payments":"2.3.1"}"""))
@@ -65,7 +65,7 @@ class TagBuilderServiceTest {
             summary = "Found 1 build"
         )
 
-        val entries = service.loadBaseline("PROJ-AUTO")
+        val entries = service.loadBaselineWithDiagnostics("PROJ-AUTO").tags
 
         assertEquals(2, entries.size)
         assertTrue(entries.any { it.serviceName == "auth" && it.currentTag == "2.4.0" })
@@ -76,14 +76,12 @@ class TagBuilderServiceTest {
     @Test
     fun `replaceCurrentRepoTag swaps tag for matching service`() {
         val entries = listOf(
-            TagEntry("auth", "2.4.0", null, TagSource.BASELINE, RegistryStatus.UNKNOWN, false, false),
-            TagEntry("payments", "2.3.1", null, TagSource.BASELINE, RegistryStatus.UNKNOWN, false, false)
+            TagEntry("auth", "2.4.0", TagSource.BASELINE, RegistryStatus.UNKNOWN, false),
+            TagEntry("payments", "2.3.1", TagSource.BASELINE, RegistryStatus.UNKNOWN, false)
         )
         val context = CurrentRepoContext(
             serviceName = "auth",
-            branchName = "feature/PROJ-123",
-            featureBranchTag = "feature-PROJ-123-a1b2c3d",
-            detectedFrom = DetectionSource.PROJECT_NAME
+            featureBranchTag = "feature-PROJ-123-a1b2c3d"
         )
 
         val result = service.replaceCurrentRepoTag(entries, context)
@@ -100,9 +98,9 @@ class TagBuilderServiceTest {
     @Test
     fun `replaceCurrentRepoTag does nothing when service not found`() {
         val entries = listOf(
-            TagEntry("auth", "2.4.0", null, TagSource.BASELINE, RegistryStatus.UNKNOWN, false, false)
+            TagEntry("auth", "2.4.0", TagSource.BASELINE, RegistryStatus.UNKNOWN, false)
         )
-        val context = CurrentRepoContext("unknown-service", "main", "tag", DetectionSource.PROJECT_NAME)
+        val context = CurrentRepoContext("unknown-service", "tag")
 
         val result = service.replaceCurrentRepoTag(entries, context)
 
@@ -112,8 +110,8 @@ class TagBuilderServiceTest {
     @Test
     fun `buildJsonPayload produces valid JSON`() {
         val entries = listOf(
-            TagEntry("auth", "2.4.0", null, TagSource.BASELINE, RegistryStatus.VALID, false, false),
-            TagEntry("payments", "2.3.1", null, TagSource.BASELINE, RegistryStatus.VALID, false, false)
+            TagEntry("auth", "2.4.0", TagSource.BASELINE, RegistryStatus.UNKNOWN, false),
+            TagEntry("payments", "2.3.1", TagSource.BASELINE, RegistryStatus.UNKNOWN, false)
         )
 
         val payload = service.buildJsonPayload(entries)
@@ -133,8 +131,8 @@ class TagBuilderServiceTest {
         // Construct entries with a synthetic registry path to confirm the *return value*
         // is not redacted — only the debug log line was removed.
         val entries = listOf(
-            TagEntry("internal-registry.example.com/svc-auth", "v2.4.0-sha1234", null,
-                TagSource.BASELINE, RegistryStatus.VALID, false, false),
+            TagEntry("internal-registry.example.com/svc-auth", "v2.4.0-sha1234",
+                TagSource.BASELINE, RegistryStatus.UNKNOWN, false),
         )
         val payload = service.buildJsonPayload(entries)
         // The returned payload is unchanged — full service name and tag are present.
@@ -147,26 +145,26 @@ class TagBuilderServiceTest {
     }
 
     @Test
-    fun `loadBaseline handles empty results gracefully`() = runTest {
+    fun `loadBaselineWithDiagnostics handles empty results gracefully`() = runTest {
         coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult.success(
             data = emptyList(),
             summary = "No builds found"
         )
 
-        val entries = service.loadBaseline("PROJ-AUTO")
+        val entries = service.loadBaselineWithDiagnostics("PROJ-AUTO").tags
 
         assertTrue(entries.isEmpty())
     }
 
     @Test
-    fun `loadBaseline handles API error gracefully`() = runTest {
+    fun `loadBaselineWithDiagnostics handles API error gracefully`() = runTest {
         coEvery { bambooService.getRecentBuilds("PROJ-AUTO", 10) } returns ToolResult(
             data = emptyList(),
             summary = "timeout",
             isError = true
         )
 
-        val entries = service.loadBaseline("PROJ-AUTO")
+        val entries = service.loadBaselineWithDiagnostics("PROJ-AUTO").tags
 
         assertTrue(entries.isEmpty())
     }

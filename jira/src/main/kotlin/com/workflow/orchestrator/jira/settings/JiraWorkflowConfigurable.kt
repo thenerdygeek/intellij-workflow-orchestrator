@@ -6,7 +6,9 @@ import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextField
 import com.intellij.ui.dsl.builder.*
 import com.workflow.orchestrator.core.model.jira.JiraBoardSummary
 import com.workflow.orchestrator.core.model.jira.JiraFieldData
@@ -66,19 +68,19 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
     private var selectedBoardId: Int = 0
     private var selectedBoardType: String = ""
     private var selectedBoardName: String = ""
-    private var boardSearchFieldRef: javax.swing.JTextField? = null
+    private var boardSearchFieldRef: JBTextField? = null
 
     // Ticket key regex (reads/writes ConnectionSettings)
-    private var ticketKeyRegexField: javax.swing.JTextField? = null
+    private var ticketKeyRegexField: JBTextField? = null
 
     // Custom-field pickers — combo + textField fallback for both Epic Link and Acceptance Criteria.
     // The combo lists discovered custom fields; the textField fallback is shown when discovery
     // fails OR the configured ID isn't in the discovered list (manual override).
-    private var epicFieldCombo: javax.swing.JComboBox<JiraCustomFieldItem>? = null
-    private var epicFieldTextField: javax.swing.JTextField? = null
+    private var epicFieldCombo: ComboBox<JiraCustomFieldItem>? = null
+    private var epicFieldTextField: JBTextField? = null
     private var epicFieldFallbackVisible: Boolean = false
-    private var acceptanceFieldCombo: javax.swing.JComboBox<JiraCustomFieldItem>? = null
-    private var acceptanceFieldTextField: javax.swing.JTextField? = null
+    private var acceptanceFieldCombo: ComboBox<JiraCustomFieldItem>? = null
+    private var acceptanceFieldTextField: JBTextField? = null
     private var acceptanceFieldFallbackVisible: Boolean = false
     private var customFields: List<JiraFieldData> = emptyList()
 
@@ -115,10 +117,10 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
         }
 
         val boardStatusLabel = JLabel("")
-        val boardSearchField = javax.swing.JTextField(20)
+        val boardSearchField = JBTextField(20)
         boardSearchField.text = settings.state.boardFilterRegex ?: ""
         boardSearchFieldRef = boardSearchField
-        val boardComboBox = javax.swing.JComboBox<JiraWorkflowBoardItem>()
+        val boardComboBox = ComboBox<JiraWorkflowBoardItem>()
         boardComboBox.renderer = com.intellij.ui.SimpleListCellRenderer.create("") { item ->
             if (item == null) "Select a board..." else "${item.board.name} (${item.board.type}, ID: ${item.board.id})"
         }
@@ -146,7 +148,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
         }
 
         // Ticket key regex field
-        val regexField = javax.swing.JTextField(30)
+        val regexField = JBTextField(30)
         regexField.text = connSettings.state.ticketKeyRegex
         ticketKeyRegexField = regexField
 
@@ -352,7 +354,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
             // === 8. Jira Custom Fields (collapsed by default) ===
             collapsibleGroup("Jira Custom Fields (Advanced)") {
                 // Combo + manual-ID fallback for Epic Link.
-                val epicCombo = javax.swing.JComboBox<JiraCustomFieldItem>().apply {
+                val epicCombo = ComboBox<JiraCustomFieldItem>().apply {
                     renderer = com.intellij.ui.SimpleListCellRenderer.create("") { item ->
                         item?.toString() ?: "Loading custom fields..."
                     }
@@ -360,7 +362,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                     toolTipText = "Custom field for Epic Link"
                     bindBoundedWidth(ComboBoxWidth.WIDE)
                 }
-                val epicManualField = javax.swing.JTextField(20).apply {
+                val epicManualField = JBTextField(20).apply {
                     text = settings.state.epicLinkFieldId ?: ""
                     toolTipText = "Field discovery unavailable; enter ID manually"
                 }
@@ -377,7 +379,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                 }
 
                 // Combo + manual-ID fallback for Acceptance Criteria.
-                val acceptanceCombo = javax.swing.JComboBox<JiraCustomFieldItem>().apply {
+                val acceptanceCombo = ComboBox<JiraCustomFieldItem>().apply {
                     renderer = com.intellij.ui.SimpleListCellRenderer.create("") { item ->
                         item?.toString() ?: "Loading custom fields..."
                     }
@@ -385,7 +387,7 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
                     toolTipText = "Custom field for Acceptance Criteria"
                     bindBoundedWidth(ComboBoxWidth.WIDE)
                 }
-                val acceptanceManualField = javax.swing.JTextField(20).apply {
+                val acceptanceManualField = JBTextField(20).apply {
                     text = settings.state.jiraAcceptanceCriteriaFieldId ?: ""
                     toolTipText = "Field discovery unavailable; enter ID manually"
                 }
@@ -477,8 +479,8 @@ class JiraWorkflowConfigurable(private val project: Project) : SearchableConfigu
     }
 
     private fun populateFieldCombo(
-        combo: javax.swing.JComboBox<JiraCustomFieldItem>?,
-        manualField: javax.swing.JTextField?,
+        combo: ComboBox<JiraCustomFieldItem>?,
+        manualField: JBTextField?,
         savedId: String,
         markFallback: (Boolean) -> Unit
     ) {

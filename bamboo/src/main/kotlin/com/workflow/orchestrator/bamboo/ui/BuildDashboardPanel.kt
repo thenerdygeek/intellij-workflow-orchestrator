@@ -11,6 +11,7 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.actionSystem.Separator
 import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.application.readAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.project.Project
@@ -24,7 +25,6 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.bamboo.model.BuildStatus
-import com.workflow.orchestrator.bamboo.service.BuildLogParser
 import com.workflow.orchestrator.bamboo.service.BuildMonitorService
 import com.workflow.orchestrator.core.maven.MavenBuildService
 import com.workflow.orchestrator.core.maven.SurefireReportParser
@@ -763,33 +763,6 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
     }
 
     /**
-     * T-B2/B3-b: startMonitoring() no longer calls BuildMonitorService.startPolling().
-     * Polling lifecycle is entirely owned by BuildMonitorService's focusBuild subscription
-     * (T-B2/B3-a). This method is retained only to update the header label when a configured
-     * plan key exists but no focusPr is set — i.e., the single-repo, no-PR-open case where
-     * the user wants to see the build status for their current branch.
-     *
-     * No polling is started here; the focus cascade will start it when the PR tab seeds
-     * focusPr (via T-AutoSeed) or the user selects a PR.
-     */
-    private fun startMonitoring() {
-        val planKey = currentPlanKey()
-        if (planKey.isBlank()) {
-            headerLabel.text = "Waiting for PR detection to find Bamboo plan..."
-            return
-        }
-        val knownBranch = getCurrentBranch()
-        if (knownBranch != null) {
-            headerLabel.text = "Plan: $planKey / $knownBranch (polling via focus chain)"
-        } else {
-            panelScope.launch {
-                val branch = getGitRepo()?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
-                invokeLater { headerLabel.text = "Plan: $planKey / $branch (polling via focus chain)" }
-            }
-        }
-    }
-
-    /**
      * Resolve the Git repository backing the Build tab's active repo. Prefers
      * [activeRepoConfig]'s `localVcsRootPath` so branch lookups and divergence
      * checks target the repo shown in the dropdown — NOT the editor's repo.
@@ -804,10 +777,10 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         return RepoContextResolver.getInstance(project).resolvePrimaryGitRepo()
     }
 
-    private fun getCurrentBranch(): String? = getGitRepo()?.currentBranchName
+    private suspend fun getCurrentBranch(): String? = readAction { getGitRepo()?.currentBranchName }
 
     /** Local HEAD SHA of the active repo, or null when no repo is configured. */
-    private fun readActionLocalHead(): String? = getGitRepo()?.currentRevision
+    private suspend fun readActionLocalHead(): String? = readAction { getGitRepo()?.currentRevision }
 
     /**
      * Resolve the plan key for an action, preferring in order:
@@ -1158,8 +1131,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                             }
                         }
                     }
-                    val errors = BuildLogParser.parse(logContent)
-                    stageDetailPanel.showLog(logContent, errors)
+                    stageDetailPanel.showLog(logContent)
 
                     // Feed native test runner UI with TeamCity messages
                     if (teamCityMessages.isNotEmpty()) {
@@ -1181,7 +1153,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
 
     private fun loadJobLog(resultKey: String) {
         log.info("[Build:Dashboard] Loading job log + test results + artifacts for $resultKey")
-        invokeLater { stageDetailPanel.showLog("Loading log...", emptyList()) }
+        invokeLater { stageDetailPanel.showLog("Loading log...") }
         stageDetailPanel.showArtifacts(resultKey)
         panelScope.launch {
             // Fetch log first (needed for both display and test error extraction)
@@ -1193,9 +1165,9 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                 // Cap the rendered string to LOG_RENDER_CAP_BYTES tail to avoid EDT jank on large logs.
                 // BuildLogParser below receives the full log separately.
                 val displayLog = capLogForDisplay(buildLogText)
-                invokeLater { stageDetailPanel.showLog(displayLog, emptyList()) }
+                invokeLater { stageDetailPanel.showLog(displayLog) }
             } else {
-                invokeLater { stageDetailPanel.showLog("Failed to load job log: ${logResult.summary}", emptyList()) }
+                invokeLater { stageDetailPanel.showLog("Failed to load job log: ${logResult.summary}") }
             }
 
             // Fetch test results for this job
@@ -1222,14 +1194,14 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
         val state = monitorService.stateFlow.value ?: return
         val resultKey = "${state.planKey}-${state.buildNumber}"
 
-        invokeLater { stageDetailPanel.showLog("Loading log...", emptyList()) }
+        invokeLater { stageDetailPanel.showLog("Loading log...") }
         panelScope.launch {
             val logResult = bambooService.getBuildLog(resultKey)
             if (!logResult.isError) {
                 // Cap the rendered string to LOG_RENDER_CAP_BYTES tail to avoid EDT jank on large logs.
-                invokeLater { stageDetailPanel.showLog(capLogForDisplay(logResult.data!!), emptyList()) }
+                invokeLater { stageDetailPanel.showLog(capLogForDisplay(logResult.data!!)) }
             } else {
-                invokeLater { stageDetailPanel.showLog("Failed to load log: ${logResult.summary}", emptyList()) }
+                invokeLater { stageDetailPanel.showLog("Failed to load log: ${logResult.summary}") }
             }
         }
     }

@@ -13,11 +13,7 @@ import org.jetbrains.annotations.TestOnly
 @Service(Service.Level.PROJECT)
 class JiraClosureService {
 
-    private var project: Project? = null
-
-    constructor(project: Project) {
-        this.project = project
-    }
+    constructor(project: Project)
 
     /** No-arg constructor for unit tests (audit H-P1-2). Production DI always uses `(Project)`. */
     @TestOnly

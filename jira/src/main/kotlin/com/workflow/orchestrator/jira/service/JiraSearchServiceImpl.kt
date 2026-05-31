@@ -62,8 +62,6 @@ class JiraSearchServiceImpl : JiraSearchService {
 
     // ── Cache support ──────────────────────────────────────────────────────────
 
-    private data class CacheEntry<T>(val value: T, val expiresAt: Long)
-
     private val versionsCache = ConcurrentHashMap<String, CacheEntry<List<VersionSuggestion>>>()
     private val componentsCache = ConcurrentHashMap<String, CacheEntry<List<ComponentSuggestion>>>()
 

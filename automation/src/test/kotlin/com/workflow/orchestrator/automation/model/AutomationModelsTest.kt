@@ -11,14 +11,11 @@ class AutomationModelsTest {
         val entry = TagEntry(
             serviceName = "service-auth",
             currentTag = "feature/PROJ-123-a1b2c3d",
-            latestReleaseTag = "2.4.0",
             source = TagSource.AUTO_DETECTED,
-            registryStatus = RegistryStatus.VALID,
-            isDrift = true,
+            registryStatus = RegistryStatus.UNKNOWN,
             isCurrentRepo = true
         )
         assertEquals("service-auth", entry.serviceName)
-        assertTrue(entry.isDrift)
         assertTrue(entry.isCurrentRepo)
         assertEquals(TagSource.AUTO_DETECTED, entry.source)
     }
@@ -105,26 +102,13 @@ class AutomationModelsTest {
     }
 
     @Test
-    fun `CurrentRepoContext captures detection source`() {
+    fun `CurrentRepoContext captures service and feature branch tag`() {
         val ctx = CurrentRepoContext(
             serviceName = "service-auth",
-            branchName = "feature/PROJ-123",
-            featureBranchTag = "feature/PROJ-123-a1b2c3d",
-            detectedFrom = DetectionSource.PROJECT_NAME
+            featureBranchTag = "feature/PROJ-123-a1b2c3d"
         )
-        assertEquals(DetectionSource.PROJECT_NAME, ctx.detectedFrom)
+        assertEquals("service-auth", ctx.serviceName)
         assertEquals("feature/PROJ-123-a1b2c3d", ctx.featureBranchTag)
-    }
-
-    @Test
-    fun `DriftResult marks stale when versions differ`() {
-        val result = DriftResult(
-            serviceName = "service-payments",
-            currentTag = "2.3.1",
-            latestReleaseTag = "2.4.0",
-            isStale = true
-        )
-        assertTrue(result.isStale)
     }
 
 }

@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.automation.ui
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.StatusBar
 import com.intellij.openapi.wm.StatusBarWidget
@@ -29,8 +30,14 @@ private class AutomationStatusBarWidget(
     project: Project
 ) : EditorBasedWidget(project), StatusBarWidget.TextPresentation {
 
+    private val log = Logger.getInstance(AutomationStatusBarWidget::class.java)
     private var text = "\u2713 Suite Idle"
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val scope = CoroutineScope(
+        Dispatchers.IO + SupervisorJob() +
+            CoroutineExceptionHandler { _, t ->
+                log.error("[Automation:StatusBar] Unhandled coroutine exception", t)
+            }
+    )
 
     override fun ID(): String = "WorkflowAutomationStatusBar"
 

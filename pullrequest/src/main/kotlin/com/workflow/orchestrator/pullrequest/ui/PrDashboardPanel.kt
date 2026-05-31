@@ -299,6 +299,11 @@ class PrDashboardPanel(
             detailPanel.showEmpty()
         }
 
+        // Empty-state "Refresh" action link wired to PrListService.refresh() (ARC-7 fix)
+        listPanel.onRefreshClicked = {
+            scope.launch { PrListService.getInstance(project).refresh() }
+        }
+
         myPrsToggle.addActionListener {
             if (suppressToggleListener) return@addActionListener
             activeFilter = PrFilter.MY

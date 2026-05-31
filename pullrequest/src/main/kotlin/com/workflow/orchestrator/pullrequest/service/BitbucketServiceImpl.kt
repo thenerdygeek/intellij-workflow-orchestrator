@@ -706,6 +706,13 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
         }
     }
 
+    /**
+     * Agent entry point for merging a PR. Routes through [PrActionService.merge] for the
+     * primary repo so [BitbucketBranchClient.mergePullRequestWithRetry]'s built-in
+     * fetch-fresh-version + 409-retry logic is not bypassed (ARC-5 fix — mirrors the
+     * [addReviewer] / [updatePrTitle] routing pattern). For non-primary repos, delegates
+     * to [mergePullRequestForAgent] which calls [mergePullRequestWithRetry] directly.
+     */
     override suspend fun mergePullRequest(
         prId: Int,
         strategy: String?,
@@ -716,18 +723,44 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
         val api = client ?: return notConfiguredError("Cannot merge PR #$prId.")
         val (projectKey, repoSlug) = resolveRepo(repoName) ?: return repoNotConfiguredError()
 
-        // Fetch PR to get current version for optimistic locking
-        val currentPr = api.getPullRequestDetail(projectKey, repoSlug, prId)
-        val prDetail = when (currentPr) {
-            is ApiResult.Success -> currentPr.data
-            is ApiResult.Error -> return ToolResult(data = Unit,
-                summary = "Error fetching PR #$prId for merge: ${currentPr.message}", isError = true,
-                hint = "Verify the PR exists.")
+        if (!isPrimaryRepo(projectKey, repoSlug)) {
+            return mergePullRequestForAgent(api, prId, projectKey, repoSlug, strategy, deleteSourceBranch, commitMessage)
         }
 
-        return when (val result = api.mergePullRequest(
-            projectKey, repoSlug, prId, prDetail.version,
-            strategyId = strategy, deleteSourceBranch = deleteSourceBranch, commitMessage = commitMessage
+        val result = PrActionService.getInstance(project).merge(
+            prId = prId,
+            strategyId = strategy,
+            deleteSourceBranch = deleteSourceBranch,
+            commitMessage = commitMessage,
+        )
+        return result.toToolResult(
+            okSummary = "PR #$prId merged successfully",
+            errPrefix = "Error merging PR #$prId",
+            hint = "Check merge preconditions with checkMergeStatus first.",
+        )
+    }
+
+    /**
+     * Non-primary-repo fallback for [mergePullRequest]: calls
+     * [BitbucketBranchClient.mergePullRequestWithRetry] directly with the resolved coords,
+     * getting the same fetch-fresh-version + 409-retry that [PrActionService.merge] provides
+     * for the primary repo.
+     */
+    private suspend fun mergePullRequestForAgent(
+        api: BitbucketBranchClient,
+        prId: Int,
+        projectKey: String,
+        repoSlug: String,
+        strategy: String?,
+        deleteSourceBranch: Boolean,
+        commitMessage: String?,
+    ): ToolResult<Unit> {
+        return when (val result = api.mergePullRequestWithRetry(
+            repo = com.workflow.orchestrator.core.bitbucket.RepoCoords(projectKey, repoSlug),
+            prId = prId,
+            strategyId = strategy,
+            deleteSourceBranch = deleteSourceBranch,
+            commitMessage = commitMessage,
         )) {
             is ApiResult.Success -> ToolResult.success(Unit, "PR #$prId merged successfully")
             is ApiResult.Error -> {
@@ -738,11 +771,42 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
         }
     }
 
+    /**
+     * Agent entry point for declining a PR. Routes through [PrActionService.decline] for
+     * the primary repo so the 409-retry logic (fetch-fresh-version → POST → refetch-on-409)
+     * is not bypassed (ARC-1 / COR-3 fix — mirrors the [addReviewer] / [updatePrTitle]
+     * routing pattern). For non-primary repos, uses a private helper that calls the client's
+     * decline endpoint directly with the freshly-fetched version.
+     */
     override suspend fun declinePullRequest(prId: Int, repoName: String?): ToolResult<Unit> {
         val api = client ?: return notConfiguredError("Cannot decline PR #$prId.")
         val (projectKey, repoSlug) = resolveRepo(repoName) ?: return repoNotConfiguredError()
 
-        // Fetch PR to get current version for optimistic locking
+        if (!isPrimaryRepo(projectKey, repoSlug)) {
+            return declinePullRequestForAgent(api, prId, projectKey, repoSlug)
+        }
+
+        val result = PrActionService.getInstance(project).decline(prId)
+        return result.toToolResult(
+            okSummary = "PR #$prId declined",
+            errPrefix = "Error declining PR #$prId",
+            hint = "The PR may already be declined or merged.",
+        )
+    }
+
+    /**
+     * Non-primary-repo fallback for [declinePullRequest]: fetches the current version and
+     * posts the decline. Unlike the primary-repo path (which routes through
+     * [PrActionService.decline] and its 409-retry), this path does a single attempt since
+     * there is no cached version to invalidate. Concurrent edits are unlikely for the decline
+     * case, but the GET-then-POST pattern is still safer than using a stale version.
+     */
+    private suspend fun declinePullRequestForAgent(
+        api: BitbucketBranchClient,
+        prId: Int,
+        projectKey: String,
+        repoSlug: String,
+    ): ToolResult<Unit> {
         val currentPr = api.getPullRequestDetail(projectKey, repoSlug, prId)
         val prDetail = when (currentPr) {
             is ApiResult.Success -> currentPr.data
@@ -750,7 +814,6 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
                 summary = "Error fetching PR #$prId for decline: ${currentPr.message}", isError = true,
                 hint = "Verify the PR exists.")
         }
-
         return when (val result = api.declinePullRequest(projectKey, repoSlug, prId, prDetail.version)) {
             is ApiResult.Success -> ToolResult.success(Unit, "PR #$prId declined")
             is ApiResult.Error -> {
@@ -761,35 +824,29 @@ class BitbucketServiceImpl(private val project: Project) : BitbucketService {
         }
     }
 
+    /**
+     * Agent entry point for updating a PR description. Routes through
+     * [PrActionService.updateDescription] for the primary repo (which uses
+     * [BitbucketBranchClient.modifyPullRequest] with built-in 409 retry) and falls back
+     * to [modifyPullRequestForAgent] for non-primary repos — same pattern as
+     * [addReviewer] / [updatePrTitle] (ARC-1 / COR-3 fix).
+     */
     override suspend fun updatePrDescription(prId: Int, description: String, repoName: String?): ToolResult<Unit> {
         val api = client ?: return notConfiguredError("Cannot update PR #$prId description.")
         val (projectKey, repoSlug) = resolveRepo(repoName) ?: return repoNotConfiguredError()
 
-        // Fetch current PR to preserve title/reviewers (PUT replaces entire PR)
-        val currentPr = api.getPullRequestDetail(projectKey, repoSlug, prId)
-        val existingPr = when (currentPr) {
-            is ApiResult.Success -> currentPr.data
-            is ApiResult.Error -> return ToolResult(data = Unit,
-                summary = "Error fetching PR #$prId: ${currentPr.message}", isError = true,
-                hint = "Verify the PR exists.")
+        if (!isPrimaryRepo(projectKey, repoSlug)) {
+            return modifyPullRequestForAgent(api, prId, projectKey, repoSlug, "update description") { current ->
+                updateDescriptionMutator(current, description)
+            }
         }
 
-        val updateRequest = BitbucketPrUpdateRequest(
-            title = existingPr.title,
-            description = description,
-            version = existingPr.version,
-            reviewers = existingPr.reviewers.map {
-                BitbucketPrReviewerRef(user = BitbucketReviewerUser(name = it.user.name))
-            }
+        val result = PrActionService.getInstance(project).updateDescription(prId, description)
+        return result.toToolResult(
+            okSummary = "PR #$prId description updated",
+            errPrefix = "Error updating PR description",
+            hint = "Check Bitbucket connection in Settings.",
         )
-        return when (val result = api.updatePullRequest(projectKey, repoSlug, prId, updateRequest)) {
-            is ApiResult.Success -> ToolResult.success(Unit, "PR #$prId description updated")
-            is ApiResult.Error -> {
-                log.warn("[BitbucketService] Failed to update PR #$prId description: ${result.message}")
-                ToolResult(data = Unit, summary = "Error updating PR description: ${result.message}", isError = true,
-                    hint = "Check Bitbucket connection in Settings.")
-            }
-        }
     }
 
     override suspend fun addPrComment(prId: Int, text: String, repoName: String?): ToolResult<Unit> {

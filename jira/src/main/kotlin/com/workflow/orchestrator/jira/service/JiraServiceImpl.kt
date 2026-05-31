@@ -96,8 +96,11 @@ class JiraServiceImpl(private val project: Project) : JiraService {
     @Volatile private var cachedClient: JiraApiClient? = null
     @Volatile private var cachedBaseUrl: String? = null
 
+    // @Synchronized eliminates the check-then-act TOCTOU race on cachedClient/cachedBaseUrl:
+    // two concurrent IO-thread callers could both observe url != cachedBaseUrl and both
+    // construct a new JiraApiClient, leaking the first one's OkHttp connection pool.
     private val client: JiraApiClient?
-        get() {
+        @Synchronized get() {
             testClient?.let { return it }
             val url = settings.connections.jiraUrl.orEmpty().trimEnd('/')
             if (url.isBlank()) return null
@@ -1278,8 +1281,6 @@ class JiraServiceImpl(private val project: Project) : JiraService {
     }
 
     // ── Caches for new endpoints ─────────────────────────────────────────
-
-    private data class CacheEntry<T>(val value: T, val expiresAt: Long)
 
     private val permissionsCache = ConcurrentHashMap<String, CacheEntry<MyPermissionsData>>()
 

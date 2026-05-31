@@ -90,6 +90,12 @@ class CommentsViewModel(
     }
 
     suspend fun reply(parentCommentId: Long, text: String): Boolean {
+        // SEC-24: guard against overflow before narrowing to Int (mirrors ActivitySubPanel).
+        if (parentCommentId < Int.MIN_VALUE || parentCommentId > Int.MAX_VALUE) {
+            lastError = "Comment ID $parentCommentId exceeds Int range"
+            fire()
+            return false
+        }
         val result = service.replyToComment(
             prId = prId,
             parentCommentId = parentCommentId.toInt(),

@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.jira.listeners
 
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.runReadAction
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
@@ -45,9 +46,13 @@ class BranchChangeTicketDetector(private val project: Project) : BranchChangeLis
     }
 
     override fun branchHasChanged(branchName: String) {
-        // Filter: only process branch changes for configured repos
-        val gitRepos = GitRepositoryManager.getInstance(project).repositories
-        val changedRepo = gitRepos.find { it.currentBranchName == branchName }
+        // Filter: only process branch changes for configured repos.
+        // GitRepository.currentBranchName is VCS model state protected by the platform
+        // read/write lock — access it under runReadAction to satisfy the threading contract.
+        val changedRepo = runReadAction {
+            GitRepositoryManager.getInstance(project).repositories
+                .find { it.currentBranchName == branchName }
+        }
         if (changedRepo != null) {
             val resolver = RepoContextResolver.getInstance(project)
             val repoConfig = resolver.resolveFromGitRepo(changedRepo)

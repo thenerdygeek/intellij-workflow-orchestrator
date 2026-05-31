@@ -82,7 +82,7 @@ class AiReviewTabPanel(
         scope.launch {
             val toHash = runCatching {
                 val commits = service.getPullRequestCommits(prId, repoName = null)
-                if (commits.isError) "" else commits.data!!.firstOrNull()?.id.orEmpty()
+                commits.data?.firstOrNull()?.id.orEmpty()
             }.getOrDefault("")
             ApplicationManager.getApplication().invokeLater {
                 val vm = AiReviewViewModel(store, service, projectKey, repoSlug, prId, entry.sessionId, toHash).apply {

@@ -12,6 +12,7 @@ import com.workflow.orchestrator.automation.service.QueueService
 import com.workflow.orchestrator.core.ui.StatusColors
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -41,7 +42,12 @@ class QueueStatusPanel(
 ) : JPanel(BorderLayout()), Disposable {
 
     private val log = Logger.getInstance(QueueStatusPanel::class.java)
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val scope = CoroutineScope(
+        Dispatchers.IO + SupervisorJob() +
+            CoroutineExceptionHandler { _, t ->
+                log.error("[Automation:QueueStatus] Unhandled coroutine exception", t)
+            }
+    )
 
     private val statusDot = JBLabel("●").apply { foreground = JBColor.GRAY }
     private val statusLabel = JBLabel("Queue idle.").apply {

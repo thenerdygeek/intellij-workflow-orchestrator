@@ -16,9 +16,7 @@ import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
-import com.workflow.orchestrator.core.ui.ComboBoxWidth
 import com.workflow.orchestrator.core.ui.StatusColors
-import com.workflow.orchestrator.core.ui.bindBoundedWidth
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -37,13 +35,7 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketPrRef
 import com.workflow.orchestrator.core.ui.TimeFormatter
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
-import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
-import com.workflow.orchestrator.core.bitbucket.BitbucketReviewer
-import com.workflow.orchestrator.core.bitbucket.BitbucketReviewerUser
 import com.workflow.orchestrator.core.bitbucket.BitbucketUser
-import com.workflow.orchestrator.core.events.EventBus
-import com.workflow.orchestrator.core.events.WorkflowEvent
-import com.workflow.orchestrator.core.util.TicketKeyExtractor
 import com.workflow.orchestrator.core.services.BitbucketService
 import com.workflow.orchestrator.core.model.workflow.InteractionMode
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
@@ -53,17 +45,14 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.wm.ToolWindowManager
 import com.workflow.orchestrator.core.ai.AgentChatRedirect
 import com.workflow.orchestrator.core.util.HtmlEscape
+import com.workflow.orchestrator.pullrequest.service.BitbucketBranchClientCache
 import com.workflow.orchestrator.pullrequest.service.MarkdownToHtml
 import com.workflow.orchestrator.pullrequest.service.PrActionService
 import com.workflow.orchestrator.pullrequest.service.PrDetailService
-import com.workflow.orchestrator.pullrequest.service.PrListService
 import com.workflow.orchestrator.pullrequest.service.PrReviewSessionRegistry
 import com.workflow.orchestrator.pullrequest.service.PrReviewTaskBuilder
 import java.util.UUID
-import com.workflow.orchestrator.core.settings.RepoConfig
-import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import com.workflow.orchestrator.core.util.StringUtils
-import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.*
 import java.awt.*
 import java.awt.event.FocusAdapter
@@ -95,6 +84,8 @@ class PrDetailPanel(
     private val readOnlyBanner = ReadOnlyBanner(project).also {
         Disposer.register(this, it)
     }
+    /** Shared client cache — reuses HTTP connections across all IO calls in this panel (ARC-2 fix). */
+    private val clientCache = BitbucketBranchClientCache()
 
     /**
      * @Volatile mirrors the pattern on [cachedUsername]: the EDT writes these fields
@@ -107,7 +98,6 @@ class PrDetailPanel(
     @Volatile private var currentPr: BitbucketPrDetail? = null
     private var currentMergeStatus: BitbucketMergeStatus? = null
     private var loadJob: Job? = null
-    private var createRepoConfig: RepoConfig? = null
 
     // Per-PR repo coordinates. These are the OWNER of the currently-shown PR — distinct from
     // the project-default PluginSettings.bitbucketProjectKey/Slug because in multi-repo setups
@@ -122,7 +112,6 @@ class PrDetailPanel(
         const val CARD_EMPTY = "empty"
         const val CARD_LOADING = "loading"
         const val CARD_DETAIL = "detail"
-        const val CARD_CREATE = "create"
 
         private val SECONDARY_TEXT = StatusColors.SECONDARY_TEXT
         private val CARD_BG = StatusColors.CARD_BG
@@ -165,46 +154,6 @@ class PrDetailPanel(
         isOpaque = false
     }
 
-    // -- Create PR form components --
-    private val createPanel = JPanel(BorderLayout()).apply {
-        isOpaque = false
-    }
-    private val createSourceBranchLabel = JBLabel("").apply {
-        font = font.deriveFont(JBUI.scale(12).toFloat())
-    }
-    private val createTargetBranchCombo = ComboBox<String>().apply {
-        isEditable = false
-        bindBoundedWidth(ComboBoxWidth.DEFAULT)
-    }
-    private val createTitleField = JBTextField().apply {
-        emptyText.text = "PR title"
-    }
-    private val createDescriptionArea = JBTextArea().apply {
-        lineWrap = true
-        wrapStyleWord = true
-        rows = 6
-        font = font.deriveFont(JBUI.scale(12).toFloat())
-        border = JBUI.Borders.empty(8)
-    }
-    private val createReviewersPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
-        isOpaque = false
-    }
-    private val createAddReviewerLink = JBLabel("+ Add").apply {
-        foreground = LINK_COLOR
-        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-        font = font.deriveFont(JBUI.scale(11).toFloat())
-    }
-    private val createButton = JButton("Create Pull Request").apply {
-        icon = AllIcons.General.Add
-    }
-    private val createBackLabel = JBLabel("\u2190 Back to list").apply {
-        foreground = LINK_COLOR
-        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-        font = font.deriveFont(JBUI.scale(11).toFloat())
-        border = JBUI.Borders.emptyBottom(4)
-    }
-    private val selectedReviewerUsernames = mutableListOf<String>()
-    private val selectedReviewerDisplayNames = mutableListOf<String>()
 
     // Back navigation callback — set by PrDashboardPanel
     var onBackClicked: (() -> Unit)? = null
@@ -315,9 +264,6 @@ class PrDetailPanel(
 
         buildDetailPanel()
         add(detailPanel, CARD_DETAIL)
-
-        buildCreatePanel()
-        add(createPanel, CARD_CREATE)
 
         showEmpty()
     }
@@ -463,356 +409,6 @@ class PrDetailPanel(
                     updateBuildStatusBadge(statuses)
                 }
             }
-        }
-    }
-
-    // ---------------------------------------------------------------
-    // Create PR form
-    // ---------------------------------------------------------------
-
-    fun showCreateForm(repoConfig: RepoConfig) {
-        currentPrId = null
-        currentPr = null
-        loadJob?.cancel()
-        createRepoConfig = repoConfig
-
-        // Resolve the GitRepository whose root matches the caller-supplied repoConfig.
-        // No editor fallback: the caller owns the user-action signal that picked this repo.
-        // If the configured path no longer matches a checked-out repo (e.g. settings drift),
-        // targetRepo is null and currentBranch falls back to "unknown" below.
-        val gitRepos = GitRepositoryManager.getInstance(project).repositories
-        val targetRepo = gitRepos.find { it.root.path == repoConfig.localVcsRootPath }
-        val currentBranch = targetRepo?.currentBranch?.name ?: "unknown"
-        createSourceBranchLabel.text = currentBranch
-
-        // Auto-fill title from branch name (e.g., "PROJ-123-feature" -> "PROJ-123: ").
-        // Uses canonical TicketKeyExtractor. The PR-scoped Jira-link endpoint
-        // (R-ADD-11) doesn't apply here — there's no PR id yet at create-PR time.
-        val branchKey = TicketKeyExtractor.extractFromBranch(currentBranch)
-        createTitleField.text = if (branchKey != null) "$branchKey: " else ""
-
-        // Clear previous form state
-        createDescriptionArea.text = ""
-        selectedReviewerUsernames.clear()
-        selectedReviewerDisplayNames.clear()
-        renderCreateReviewers()
-        createButton.isEnabled = true
-        createButton.text = "Create Pull Request"
-
-        // Populate target branches — default shown immediately, resolved asynchronously
-        createTargetBranchCombo.removeAllItems()
-        val settings = PluginSettings.getInstance(project).state
-        createTargetBranchCombo.addItem("develop")
-
-        (layout as CardLayout).show(this, CARD_CREATE)
-
-        // Load branches from Bitbucket in background and resolve real default target
-        scope.launch {
-            val repo = GitRepositoryManager.getInstance(project).repositories.firstOrNull()
-            val defaultTarget = repo?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
-
-            val connSettings = ConnectionSettings.getInstance().state
-            val url = connSettings.bitbucketUrl.trimEnd('/')
-            if (url.isBlank()) {
-                invokeLater {
-                    createTargetBranchCombo.removeAllItems()
-                    createTargetBranchCombo.addItem(defaultTarget)
-                }
-                return@launch
-            }
-            val projectKey = createRepoConfig?.bitbucketProjectKey?.takeIf { it.isNotBlank() }
-                ?: settings.bitbucketProjectKey.orEmpty()
-            val repoSlug = createRepoConfig?.bitbucketRepoSlug?.takeIf { it.isNotBlank() }
-                ?: settings.bitbucketRepoSlug.orEmpty()
-            if (projectKey.isBlank() || repoSlug.isBlank()) {
-                invokeLater {
-                    createTargetBranchCombo.removeAllItems()
-                    createTargetBranchCombo.addItem(defaultTarget)
-                }
-                return@launch
-            }
-
-            val client = BitbucketBranchClient.fromConfiguredSettings() ?: return@launch
-            when (val result = client.getBranches(projectKey, repoSlug)) {
-                is ApiResult.Success -> {
-                    invokeLater {
-                        val branches = result.data.map { it.displayId }
-                        createTargetBranchCombo.removeAllItems()
-                        // Put default target first if it exists
-                        if (branches.contains(defaultTarget)) {
-                            createTargetBranchCombo.addItem(defaultTarget)
-                        }
-                        for (branch in branches) {
-                            if (branch != defaultTarget && branch != currentBranch) {
-                                createTargetBranchCombo.addItem(branch)
-                            }
-                        }
-                    }
-                }
-                is ApiResult.Error -> {
-                    invokeLater {
-                        createTargetBranchCombo.removeAllItems()
-                        createTargetBranchCombo.addItem(defaultTarget)
-                    }
-                }
-            }
-        }
-    }
-
-    private fun buildCreatePanel() {
-        val contentPanel = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            isOpaque = false
-            border = JBUI.Borders.empty(12, 16)
-        }
-
-        // Back navigation
-        val backRow = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
-            isOpaque = false
-            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(20))
-            alignmentX = Component.LEFT_ALIGNMENT
-        }
-        createBackLabel.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(e: MouseEvent) {
-                onBackClicked?.invoke()
-            }
-        })
-        backRow.add(createBackLabel)
-        contentPanel.add(backRow)
-
-        // Title heading
-        contentPanel.add(JBLabel("Create Pull Request").apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(16).toFloat())
-            foreground = JBColor.foreground()
-            alignmentX = Component.LEFT_ALIGNMENT
-            border = JBUI.Borders.empty(8, 0)
-        })
-
-        // Source branch (read-only)
-        val sourceRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
-            isOpaque = false
-            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(28))
-            alignmentX = Component.LEFT_ALIGNMENT
-            border = JBUI.Borders.emptyBottom(4)
-        }
-        sourceRow.add(JBLabel("Source:").apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
-            foreground = SECONDARY_TEXT
-        })
-        sourceRow.add(createSourceBranchLabel)
-        contentPanel.add(sourceRow)
-
-        // Target branch
-        val targetRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
-            isOpaque = false
-            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(32))
-            alignmentX = Component.LEFT_ALIGNMENT
-            border = JBUI.Borders.emptyBottom(4)
-        }
-        targetRow.add(JBLabel("Target:").apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
-            foreground = SECONDARY_TEXT
-        })
-        createTargetBranchCombo.preferredSize = Dimension(JBUI.scale(200), JBUI.scale(24))
-        targetRow.add(createTargetBranchCombo)
-        contentPanel.add(targetRow)
-
-        // Title field
-        val titleRow = JPanel(BorderLayout()).apply {
-            isOpaque = false
-            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(40))
-            alignmentX = Component.LEFT_ALIGNMENT
-            border = JBUI.Borders.emptyBottom(4)
-        }
-        titleRow.add(JBLabel("Title:").apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
-            foreground = SECONDARY_TEXT
-            border = JBUI.Borders.emptyRight(8)
-        }, BorderLayout.WEST)
-        titleRow.add(createTitleField, BorderLayout.CENTER)
-        contentPanel.add(titleRow)
-
-        // Description area
-        contentPanel.add(JBLabel("Description:").apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
-            foreground = SECONDARY_TEXT
-            alignmentX = Component.LEFT_ALIGNMENT
-            border = JBUI.Borders.emptyBottom(4)
-        })
-        val descScroll = JBScrollPane(createDescriptionArea).apply {
-            border = JBUI.Borders.empty()
-            preferredSize = Dimension(0, JBUI.scale(120))
-            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(200))
-            alignmentX = Component.LEFT_ALIGNMENT
-        }
-        contentPanel.add(descScroll)
-
-        // Reviewers row
-        val reviewersRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
-            isOpaque = false
-            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(28))
-            alignmentX = Component.LEFT_ALIGNMENT
-            border = JBUI.Borders.empty(8, 0, 4, 0)
-        }
-        reviewersRow.add(JBLabel("Reviewers:").apply {
-            font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
-            foreground = SECONDARY_TEXT
-        })
-        reviewersRow.add(createReviewersPanel)
-        createAddReviewerLink.addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(e: MouseEvent) {
-                showCreateReviewerPopup(createAddReviewerLink)
-            }
-        })
-        reviewersRow.add(createAddReviewerLink)
-        contentPanel.add(reviewersRow)
-
-        // Create button
-        val buttonRow = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
-            isOpaque = false
-            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(40))
-            alignmentX = Component.LEFT_ALIGNMENT
-            border = JBUI.Borders.emptyTop(8)
-        }
-        createButton.addActionListener { submitCreatePr() }
-        buttonRow.add(createButton)
-        contentPanel.add(buttonRow)
-
-        val scrollPane = JBScrollPane(contentPanel).apply {
-            border = JBUI.Borders.empty()
-            isOpaque = false
-            viewport.isOpaque = false
-        }
-        createPanel.add(scrollPane, BorderLayout.CENTER)
-    }
-
-    private fun submitCreatePr() {
-        val title = createTitleField.text.trim()
-        if (title.isBlank()) {
-            showNotification("PR title cannot be empty")
-            return
-        }
-        val fromBranch = createSourceBranchLabel.text
-        val toBranch = createTargetBranchCombo.selectedItem as? String ?: return
-        val description = createDescriptionArea.text.trim()
-
-        createButton.isEnabled = false
-        createButton.text = "Creating..."
-
-        val settings = PluginSettings.getInstance(project).state
-        val connSettings = ConnectionSettings.getInstance().state
-        val url = connSettings.bitbucketUrl.trimEnd('/')
-        val projectKey = createRepoConfig?.bitbucketProjectKey?.takeIf { it.isNotBlank() }
-            ?: settings.bitbucketProjectKey.orEmpty()
-        val repoSlug = createRepoConfig?.bitbucketRepoSlug?.takeIf { it.isNotBlank() }
-            ?: settings.bitbucketRepoSlug.orEmpty()
-
-        if (url.isBlank() || projectKey.isBlank() || repoSlug.isBlank()) {
-            showNotification("Bitbucket connection not configured. Check Settings > Tools > Workflow Orchestrator.")
-            createButton.isEnabled = true
-            createButton.text = "Create Pull Request"
-            return
-        }
-
-        val reviewers = selectedReviewerUsernames.map { BitbucketReviewer(BitbucketReviewerUser(it)) }
-            .takeIf { it.isNotEmpty() }
-
-        scope.launch {
-            val client = BitbucketBranchClient.fromConfiguredSettings() ?: return@launch
-            when (val result = client.createPullRequest(
-                projectKey = projectKey,
-                repoSlug = repoSlug,
-                title = title,
-                description = description,
-                fromBranch = fromBranch,
-                toBranch = toBranch,
-                reviewers = reviewers
-            )) {
-                is ApiResult.Success -> {
-                    val pr = result.data
-                    val prUrl = pr.links.self.firstOrNull()?.href ?: ""
-                    // Extract ticket ID from branch name via canonical helper.
-                    val ticketId = TicketKeyExtractor.extractFromBranch(fromBranch) ?: ""
-
-                    // Emit PullRequestCreated event
-                    project.getService(EventBus::class.java)
-                        .emit(WorkflowEvent.PullRequestCreated(prUrl, pr.id, ticketId))
-
-                    // Refresh PR list
-                    PrListService.getInstance(project).refresh()
-
-                    invokeLater {
-                        createButton.isEnabled = true
-                        createButton.text = "Create Pull Request"
-                        // Show the newly created PR by loading it
-                        showPr(pr.id)
-                        WorkflowNotificationService.getInstance(project).notifyInfo(
-                            WorkflowNotificationService.GROUP_BUILD,
-                            "Pull Request Created",
-                            "PR #${pr.id} created successfully"
-                        )
-                    }
-                }
-                is ApiResult.Error -> {
-                    invokeLater {
-                        createButton.isEnabled = true
-                        createButton.text = "Create Pull Request"
-                        showNotification("Failed to create PR: ${result.message}")
-                    }
-                }
-            }
-        }
-    }
-
-    private fun renderCreateReviewers() {
-        createReviewersPanel.removeAll()
-        for (i in selectedReviewerUsernames.indices) {
-            val name = selectedReviewerDisplayNames.getOrElse(i) { selectedReviewerUsernames[i] }
-            val chipPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(2), 0)).apply {
-                isOpaque = false
-            }
-            chipPanel.add(JBLabel(name).apply {
-                font = font.deriveFont(JBUI.scale(11).toFloat())
-                foreground = JBColor.foreground()
-            })
-            val removeLabel = JBLabel("\u00D7").apply {
-                foreground = StatusColors.ERROR
-                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-                font = font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
-                toolTipText = "Remove $name"
-            }
-            val idx = i
-            removeLabel.addMouseListener(object : MouseAdapter() {
-                override fun mouseClicked(e: MouseEvent) {
-                    selectedReviewerUsernames.removeAt(idx)
-                    selectedReviewerDisplayNames.removeAt(idx)
-                    renderCreateReviewers()
-                }
-            })
-            chipPanel.add(removeLabel)
-            createReviewersPanel.add(chipPanel)
-        }
-        createReviewersPanel.revalidate()
-        createReviewersPanel.repaint()
-    }
-
-    private fun showCreateReviewerPopup(relativeTo: Component) {
-        // For create-PR flow, scope the user search to the target repo so suggestions
-        // match REPO_READ on the repo the PR will land in (matches Bitbucket web UI).
-        val pluginSettings = PluginSettings.getInstance(project).state
-        val createProjectKey = createRepoConfig?.bitbucketProjectKey?.takeIf { it.isNotBlank() }
-            ?: pluginSettings.bitbucketProjectKey?.takeIf { it.isNotBlank() }
-        val createRepoSlug = createRepoConfig?.bitbucketRepoSlug?.takeIf { it.isNotBlank() }
-            ?: pluginSettings.bitbucketRepoSlug?.takeIf { it.isNotBlank() }
-        showUserSearchPopup(
-            relativeTo = relativeTo,
-            excludeUsernames = selectedReviewerUsernames.toSet(),
-            projectKey = createProjectKey,
-            repoSlug = createRepoSlug,
-        ) { user, _ ->
-            selectedReviewerUsernames.add(user.name)
-            selectedReviewerDisplayNames.add(user.displayName.ifBlank { user.name })
-            renderCreateReviewers()
         }
     }
 
@@ -1469,7 +1065,7 @@ class PrDetailPanel(
 
     private suspend fun resolveCurrentUsername(): String? {
         cachedUsername?.let { return it }
-        val client = BitbucketBranchClient.fromConfiguredSettings() ?: return null
+        val client = clientCache.get() ?: return null
         return when (val result = client.getCurrentUsername()) {
             is ApiResult.Success -> { cachedUsername = result.data; result.data }
             is ApiResult.Error -> null
@@ -1628,9 +1224,8 @@ class PrDetailPanel(
             relativeTo = relativeTo,
             projectKey = currentPrProjectKey,
             repoSlug = currentPrRepoSlug,
-        ) { user, popup ->
+        ) { user, _ ->
             val prId = currentPrId ?: return@showUserSearchPopup
-            popup.cancel()
             scope.launch {
                 val result = PrActionService.getInstance(project).addReviewer(prId, user.name)
                 invokeLater {
@@ -1715,7 +1310,7 @@ class PrDetailPanel(
                 }
                 searchJob = scope.launch {
                     delay(300) // debounce
-                    val client = BitbucketBranchClient.fromConfiguredSettings() ?: return@launch
+                    val client = clientCache.get() ?: return@launch
                     when (val result = client.getUsers(query, projectKey, repoSlug)) {
                         is ApiResult.Success -> {
                             invokeLater {
