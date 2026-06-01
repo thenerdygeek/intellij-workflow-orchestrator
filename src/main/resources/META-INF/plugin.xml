@@ -7,7 +7,6 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.java</depends>
-    <depends config-file="web-plugin.xml">com.workflow.orchestrator.web</depends>
     <depends optional="true" config-file="plugin-withGit.xml">Git4Idea</depends>
 <depends optional="true" config-file="plugin-withMaven.xml">org.jetbrains.idea.maven</depends>
     <depends optional="true" config-file="plugin-withSpring.xml">com.intellij.spring</depends>
@@ -134,6 +133,21 @@
             id="com.workflow.orchestrator.core.settings.CrossIdeDelegationConfigurable"
             displayName="Cross-IDE Delegation"
             nonDefaultProject="true"/>
+
+        <!-- :web module — bundled into this plugin (implementation(project(":web"))).
+             Registered here rather than via a standalone web-plugin.xml descriptor so the
+             platform treats it as part of this plugin, not a separate installable one. -->
+        <projectService serviceInterface="com.workflow.orchestrator.core.web.WebFetchService"
+                        serviceImplementation="com.workflow.orchestrator.web.service.WebFetchServiceImpl"/>
+        <projectService serviceInterface="com.workflow.orchestrator.core.web.WebSearchService"
+                        serviceImplementation="com.workflow.orchestrator.web.service.WebSearchServiceImpl"/>
+        <projectConfigurable
+            parentId="workflow.orchestrator.agent"
+            instance="com.workflow.orchestrator.web.ui.WebSettingsConfigurable"
+            id="com.workflow.orchestrator.web.settings"
+            displayName="Web"
+            nonDefaultProject="true"/>
+        <postStartupActivity implementation="com.workflow.orchestrator.web.audit.WebAuditRotationStartup"/>
 
         <projectConfigurable
             parentId="workflow.orchestrator"
