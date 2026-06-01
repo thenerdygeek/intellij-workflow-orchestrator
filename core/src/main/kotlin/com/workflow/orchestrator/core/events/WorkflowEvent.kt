@@ -87,7 +87,7 @@ sealed class WorkflowEvent {
 
     /** Actions that can be performed from the Handover tab. Used in [HandoverOverride]. */
     enum class HandoverAction {
-        POST_JIRA, COPY_EMAIL, FIX_COPYRIGHT, LOG_WORK, COPY_CHIP
+        POST_JIRA, COPY_EMAIL, COPY_WIKI, FIX_COPYRIGHT, LOG_WORK, COPY_CHIP
     }
 
     /**

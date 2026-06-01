@@ -6,7 +6,6 @@ import java.time.Instant
 data class HandoverState(
     val ticketId: String = "",
     val ticketSummary: String = "",
-    val currentBranch: String = "",
 
     // PR status
     val prUrl: String? = null,

@@ -72,8 +72,8 @@ class BambooTestResultConverterTest {
             successful = 0,
             failed = 0,
             skipped = 1,
-            failedTests = BambooTestCaseCollection(size = 0, testResult = emptyList()),
-            successfulTests = BambooTestCaseCollection(size = 1, testResult = listOf(skippedDto))
+            failedTests = BambooTestCaseCollection(testResult = emptyList()),
+            successfulTests = BambooTestCaseCollection(testResult = listOf(skippedDto))
         )
 
         val messages = BambooTestResultConverter.toTeamCityMessages(dto)
@@ -105,8 +105,8 @@ class BambooTestResultConverterTest {
             successful = 2,
             failed = 0,
             skipped = 0,
-            failedTests = BambooTestCaseCollection(size = 0, testResult = emptyList()),
-            successfulTests = BambooTestCaseCollection(size = 2, testResult = listOf(passedDto1, passedDto2))
+            failedTests = BambooTestCaseCollection(testResult = emptyList()),
+            successfulTests = BambooTestCaseCollection(testResult = listOf(passedDto1, passedDto2))
         )
 
         val messages = BambooTestResultConverter.toTeamCityMessages(dto)
@@ -154,8 +154,8 @@ class BambooTestResultConverterTest {
             successful = 0,
             failed = 0,
             skipped = 0,
-            failedTests = BambooTestCaseCollection(size = 0, testResult = emptyList()),
-            successfulTests = BambooTestCaseCollection(size = 0, testResult = emptyList())
+            failedTests = BambooTestCaseCollection(testResult = emptyList()),
+            successfulTests = BambooTestCaseCollection(testResult = emptyList())
         )
 
         val messages = BambooTestResultConverter.toTeamCityMessages(dto)

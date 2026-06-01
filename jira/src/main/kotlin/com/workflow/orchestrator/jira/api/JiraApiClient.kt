@@ -528,9 +528,9 @@ class JiraApiClient(
         // into JQL. An unvalidated key like `ABC-1, summary~"x"` would inject extra JQL
         // clauses via the joinToString — fail-fast on the whole batch.
         val jiraKeyPattern = Regex("^[A-Z][A-Z0-9_]+-\\d+$")
-        keys.forEach { k ->
+        for (k in keys) {
             if (!jiraKeyPattern.matches(k)) {
-                throw IllegalArgumentException("Invalid Jira key: $k")
+                return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Invalid Jira key: $k")
             }
         }
         val jql = "key in (${keys.joinToString(",")})"

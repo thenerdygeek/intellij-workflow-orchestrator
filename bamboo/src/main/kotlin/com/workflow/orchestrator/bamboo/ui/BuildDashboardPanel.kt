@@ -653,7 +653,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
      * Phase 5 T10: handle a focusPr change from [WorkflowContextService].
      *
      * Drives BOTH the PrBar header (via [PrBar.showPrInfo]) and the job-stages reader
-     * (via [loadBuildsForContext] → [BuildMonitorService.switchBranch]) from a single
+     * (via [loadBuildsForContext] → focusBuild subscription in [BuildMonitorService]) from a single
      * call site, so the two readers always share the same `WorkflowContext` snapshot.
      * That structural coherence is what spec §4.4 and §9.2 guarantee — see
      * `BuildDashboardPanelCoherenceTest`.

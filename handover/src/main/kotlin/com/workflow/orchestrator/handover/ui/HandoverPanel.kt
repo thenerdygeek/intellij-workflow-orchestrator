@@ -109,6 +109,13 @@ class HandoverPanel private constructor(
         header.updateState(state)
         checksTab.updateState(state)
         banner.setFailures(failedFromState(state))
+        // Wire the active ticket into TimeLogCard so the Log Work button becomes enabled.
+        // The cast is safe: production always uses ActionsTab; tests use a plain JPanel stub
+        // (in which case the cast returns null and the call is silently skipped).
+        (actionsTab as? ActionsTab)?.updateTicket(
+            ticketKey = state.ticketId.takeIf { it.isNotBlank() },
+            startWorkTimestamp = state.startWorkTimestamp,
+        )
     }
 
     override fun dispose() {

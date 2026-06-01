@@ -12,7 +12,6 @@ data class BambooProjectListResponse(
 
 @Serializable
 data class BambooProjectCollection(
-    val size: Int = 0,
     val project: List<BambooProjectDto> = emptyList()
 )
 
@@ -25,8 +24,6 @@ data class BambooProjectDto(
 
 @Serializable
 data class BambooProjectDetailResponse(
-    val key: String = "",
-    val name: String = "",
     val plans: BambooPlanCollection = BambooPlanCollection()
 )
 
@@ -39,16 +36,12 @@ data class BambooPlanListResponse(
 
 @Serializable
 data class BambooPlanCollection(
-    val size: Int = 0,
-    @SerialName("max-result") val maxResult: Int = 25,
-    @SerialName("start-index") val startIndex: Int = 0,
     val plan: List<BambooPlanDto> = emptyList()
 )
 
 @Serializable
 data class BambooPlanDto(
     val key: String,
-    val shortKey: String = "",
     val name: String,
     val shortName: String = "",
     val enabled: Boolean = true,
@@ -71,9 +64,6 @@ data class BambooBranchListResponse(
 
 @Serializable
 data class BambooBranchCollection(
-    val size: Int = 0,
-    @SerialName("max-result") val maxResult: Int = 25,
-    @SerialName("start-index") val startIndex: Int = 0,
     val branch: List<BambooBranchDto> = emptyList()
 )
 
@@ -89,7 +79,6 @@ data class BambooBranchDto(
 
 @Serializable
 data class BambooResultCollection(
-    val size: Int = 0,
     val result: List<BambooResultDto> = emptyList()
 )
 
@@ -109,7 +98,6 @@ data class BambooResultDto(
 
 @Serializable
 data class BambooStageCollection(
-    val size: Int = 0,
     val stage: List<BambooStageDto> = emptyList()
 )
 
@@ -125,7 +113,6 @@ data class BambooStageDto(
 
 @Serializable
 data class BambooJobResultCollection(
-    val size: Int = 0,
     val result: List<BambooJobResultDto> = emptyList()
 )
 
@@ -136,7 +123,6 @@ data class BambooJobResultDto(
     val state: String = "",
     val lifeCycleState: String = "",
     val buildDurationInSeconds: Long = 0,
-    val buildDuration: Long = 0,
     val plan: BambooPlanDto? = null
 )
 
@@ -154,7 +140,6 @@ data class BambooVcsRevisionsResponse(
 
 @Serializable
 data class BambooVcsRevisionCollection(
-    val size: Int = 0,
     val vcsRevision: List<BambooVcsRevisionDto> = emptyList(),
 )
 
@@ -191,7 +176,6 @@ data class BambooPlanDetailResponse(
  */
 @Serializable
 data class BambooVariableContextCollection(
-    val size: Int = 0,
     val variable: List<BambooPlanContextVariableDto> = emptyList()
 )
 
@@ -210,7 +194,6 @@ data class BambooPlanContextVariableDto(
 
 @Serializable
 data class BambooVariableCollection(
-    val size: Int = 0,
     val variable: List<BambooPlanVariableDto> = emptyList()
 )
 
@@ -234,7 +217,6 @@ data class BambooBuildChangesResponse(
 
 @Serializable
 data class BambooBuildChangeCollection(
-    val size: Int = 0,
     val change: List<BambooBuildChangeDto> = emptyList()
 )
 
@@ -256,9 +238,6 @@ data class BambooBuildChangeDto(
 
 @Serializable
 data class BambooSearchResponse(
-    val size: Int = 0,
-    @SerialName("max-result") val maxResult: Int = 25,
-    @SerialName("start-index") val startIndex: Int = 0,
     val searchResults: List<BambooSearchResultItem> = emptyList()
 )
 
@@ -304,14 +283,12 @@ data class BambooTestResultsDto(
     val successful: Int = 0,
     val failed: Int = 0,
     val skipped: Int = 0,
-    val quarantined: Int = 0,
     val failedTests: BambooTestCaseCollection = BambooTestCaseCollection(),
     val successfulTests: BambooTestCaseCollection = BambooTestCaseCollection()
 )
 
 @Serializable
 data class BambooTestCaseCollection(
-    val size: Int = 0,
     val testResult: List<BambooTestCaseDto> = emptyList()
 )
 
@@ -371,8 +348,7 @@ data class BambooResultsByChangesetResponse(
 
 @Serializable
 data class BambooChangesetResultList(
-    val result: List<BambooChangesetResultEntry> = emptyList(),
-    val size: Int = 0
+    val result: List<BambooChangesetResultEntry> = emptyList()
 )
 
 @Serializable
@@ -395,10 +371,7 @@ data class BambooPlanResultKey(
 /** Wraps GET /rest/api/latest/repository — array under "searchResults" key */
 @Serializable
 data class BambooLinkedRepositoryListResponse(
-    val searchResults: List<BambooLinkedRepositoryItem> = emptyList(),
-    val size: Int = 0,
-    @SerialName("max-result") val maxResult: Int = 0,
-    @SerialName("start-index") val startIndex: Int = 0
+    val searchResults: List<BambooLinkedRepositoryItem> = emptyList()
 )
 
 @Serializable
@@ -437,10 +410,7 @@ data class BambooPlanBranchListResponse(
 
 @Serializable
 data class BambooPlanBranchCollection(
-    val branch: List<BambooPlanBranch> = emptyList(),
-    val size: Int = 0,
-    @SerialName("max-result") val maxResult: Int = 0,
-    @SerialName("start-index") val startIndex: Int = 0
+    val branch: List<BambooPlanBranch> = emptyList()
 )
 
 @Serializable

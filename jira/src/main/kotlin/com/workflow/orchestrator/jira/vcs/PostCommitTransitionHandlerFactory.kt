@@ -34,6 +34,15 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
 
     private val log = Logger.getInstance(PostCommitTransitionHandler::class.java)
 
+    // Single scope per handler instance — created at most once (on first commit) and
+    // registered against the project Disposable exactly once so the Disposer tree does
+    // not accumulate one entry per commit (audit finding jira:COR-8).
+    private val scope: CoroutineScope by lazy {
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).also { s ->
+            Disposer.register(project as Disposable) { s.cancel("project disposed") }
+        }
+    }
+
     override fun checkinSuccessful() {
         val settings = PluginSettings.getInstance(project)
         if (!settings.state.autoTransitionOnCommit) return
@@ -42,10 +51,6 @@ class PostCommitTransitionHandler(private val project: Project) : CheckinHandler
         if (ticketId.isNullOrBlank()) return
 
         // Fire-and-forget: post-commit transition check must not block the commit flow.
-        // Scope is tied to the project Disposable so it is cancelled when the project
-        // closes, preventing a leak for the process lifetime (audit finding jira:F-6).
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        Disposer.register(project as Disposable) { scope.cancel("project disposed") }
         scope.launch {
             if (project.isDisposed) return@launch
             try {

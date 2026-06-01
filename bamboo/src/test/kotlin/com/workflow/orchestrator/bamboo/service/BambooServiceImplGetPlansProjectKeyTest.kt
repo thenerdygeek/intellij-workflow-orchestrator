@@ -41,7 +41,6 @@ class BambooServiceImplGetPlansProjectKeyTest {
         // Old substringBefore("-") would produce "MY"; the fix must produce "MY-PROJ".
         val dto = BambooPlanDto(
             key = "MY-PROJ-AUTOTESTS",
-            shortKey = "AUTOTESTS",
             name = "Auto Tests",
             projectKey = "MY-PROJ"
         )
@@ -62,7 +61,6 @@ class BambooServiceImplGetPlansProjectKeyTest {
         // defensive path and is correct for simple (non-hyphenated) project keys.
         val dto = BambooPlanDto(
             key = "SIMPLE-PLAN",
-            shortKey = "PLAN",
             name = "Simple Plan",
             projectKey = ""   // blank → trigger fallback
         )
@@ -79,7 +77,6 @@ class BambooServiceImplGetPlansProjectKeyTest {
     fun `getPlans preserves other PlanData fields`() = runTest {
         val dto = BambooPlanDto(
             key = "MY-PROJ-BUILD",
-            shortKey = "BUILD",
             name = "Build Pipeline",
             shortName = "Build",
             enabled = false,

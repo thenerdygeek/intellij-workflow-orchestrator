@@ -67,8 +67,8 @@ class BambooServiceImplTestResultsTest {
             successful = 2,
             failed = 2,
             skipped = 1,
-            failedTests = BambooTestCaseCollection(size = 2, testResult = listOf(failed1, failed2)),
-            successfulTests = BambooTestCaseCollection(size = 2, testResult = emptyList())
+            failedTests = BambooTestCaseCollection(testResult = listOf(failed1, failed2)),
+            successfulTests = BambooTestCaseCollection(testResult = emptyList())
         )
         val jobDto = BambooJobTestResultDto(testResults = successDto)
 
@@ -98,8 +98,8 @@ class BambooServiceImplTestResultsTest {
             successful = 3,
             failed = 0,
             skipped = 0,
-            failedTests = BambooTestCaseCollection(size = 0, testResult = emptyList()),
-            successfulTests = BambooTestCaseCollection(size = 3, testResult = emptyList())
+            failedTests = BambooTestCaseCollection(testResult = emptyList()),
+            successfulTests = BambooTestCaseCollection(testResult = emptyList())
         )
         coEvery { mockClient.getTestResults("PROJ-BUILD-99") } returns
             ApiResult.Success(BambooJobTestResultDto(testResults = successDto))

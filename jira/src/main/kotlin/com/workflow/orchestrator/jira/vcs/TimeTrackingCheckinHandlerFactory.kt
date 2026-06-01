@@ -38,6 +38,15 @@ class TimeTrackingCheckinHandler(private val project: Project) : CheckinHandler(
 
     private val log = Logger.getInstance(TimeTrackingCheckinHandler::class.java)
 
+    // Single scope per handler instance — created at most once (on first commit) and
+    // registered against the project Disposable exactly once so the Disposer tree does
+    // not accumulate one entry per commit (audit finding jira:COR-8).
+    private val scope: CoroutineScope by lazy {
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).also { s ->
+            Disposer.register(project as Disposable) { s.cancel("project disposed") }
+        }
+    }
+
     private var logTimeCheckbox: JBCheckBox? = null
     private var minutesSpinner: JSpinner? = null
 
@@ -105,10 +114,6 @@ class TimeTrackingCheckinHandler(private val project: Project) : CheckinHandler(
         val timeSpent = TimeTrackingLogic.toJiraTimeSpent(minutes)
 
         // Fire-and-forget: post-commit time logging must not block the commit flow.
-        // Scope is tied to the project Disposable so it is cancelled when the project
-        // closes, preventing a leak for the process lifetime (audit finding jira:F-6).
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        Disposer.register(project as Disposable) { scope.cancel("project disposed") }
         scope.launch {
             if (project.isDisposed) return@launch
             try {

@@ -100,6 +100,23 @@ class HandoverPlaceholderResolver {
                 // BuildSummary has no url field — flag and defer.
                 HandoverPlaceholderValue.unavailable("build URL not in state model")
 
+            "build.planKey" ->
+                state.buildStatus?.planKey
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { HandoverPlaceholderValue.available(it) }
+                    ?: HandoverPlaceholderValue.unavailable("no build status")
+
+            "build.number" ->
+                state.buildStatus?.buildNumber?.toString()
+                    ?.let { HandoverPlaceholderValue.available(it) }
+                    ?: HandoverPlaceholderValue.unavailable("no build status")
+
+            "automation.url" ->
+                state.suiteResults.lastOrNull()?.bambooLink
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { HandoverPlaceholderValue.available(it) }
+                    ?: HandoverPlaceholderValue.unavailable("no automation suite results")
+
             "docker.tag" ->
                 resolveFirstDockerTag(state)
 

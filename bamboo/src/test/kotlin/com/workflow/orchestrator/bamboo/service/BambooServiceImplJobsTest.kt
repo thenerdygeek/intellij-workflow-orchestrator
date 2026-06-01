@@ -35,7 +35,6 @@ class BambooServiceImplJobsTest {
         buildRelativeTime = "2 hours ago",
         plan = BambooPlanDto(key = "PROJ-PLAN138", name = "feature/foo", shortName = "feature/foo"),
         stages = BambooStageCollection(
-            size = 2,
             stage = listOf(
                 BambooStageDto(
                     name = "Build",
@@ -44,7 +43,6 @@ class BambooServiceImplJobsTest {
                     manual = false,
                     buildDurationInSeconds = 120,
                     results = BambooJobResultCollection(
-                        size = 1,
                         result = listOf(
                             BambooJobResultDto(
                                 key = "PROJ-PLAN138-COMPILE-4",
@@ -64,7 +62,6 @@ class BambooServiceImplJobsTest {
                     manual = false,
                     buildDurationInSeconds = 192,
                     results = BambooJobResultCollection(
-                        size = 2,
                         result = listOf(
                             BambooJobResultDto(
                                 key = "PROJ-PLAN138-UNIT-4",

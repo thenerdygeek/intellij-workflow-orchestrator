@@ -4,15 +4,12 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.bamboo.api.BambooApiClient
-import com.workflow.orchestrator.bamboo.api.dto.BambooResultDto
 import com.workflow.orchestrator.bamboo.model.BuildState
 import com.workflow.orchestrator.bamboo.model.BuildStatus
 import com.workflow.orchestrator.bamboo.model.NewerBuild
-import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
-import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.model.workflow.BuildRef
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
 import com.workflow.orchestrator.core.services.BuildLogCache
@@ -46,18 +43,17 @@ open class BuildMonitorService {
     private var _notificationService: WorkflowNotificationService? = null
     private var _buildLogCache: BuildLogCache? = null
 
-    private val apiClient: BambooApiClient get() = _apiClient ?: run {
-        val p = _project!!
-        val settings = PluginSettings.getInstance(p)
-        val credentialStore = CredentialStore()
-        val timeouts = com.workflow.orchestrator.core.http.HttpClientFactory.timeoutsFromSettings(p)
-        BambooApiClient(
-            baseUrl = settings.connections.bambooUrl.orEmpty().trimEnd('/'),
-            tokenProvider = { credentialStore.getToken(ServiceType.BAMBOO) },
-            connectTimeoutSeconds = timeouts.connectSeconds,
-            readTimeoutSeconds = timeouts.readSeconds
-        ).also { _apiClient = it }
-    }
+    /**
+     * Returns the URL-change-aware [BambooApiClient] for this project.
+     *
+     * - Test path: [_apiClient] is set directly by the test constructor and returned as-is.
+     * - Production path: delegates to [BambooServiceImpl.getPollClient] so all Bamboo HTTP
+     *   calls in the module share the single URL-change-aware client (which invalidates when
+     *   the user changes the Bamboo URL in settings). No second cached client is created.
+     */
+    private val apiClient: BambooApiClient get() = _apiClient
+        ?: _project!!.getService(BambooServiceImpl::class.java)?.getPollClient()
+        ?: error("[Bamboo:Monitor] Bamboo not configured — no base URL set")
 
     private val eventBus: EventBus get() = _eventBus ?: _project!!.getService(EventBus::class.java).also { _eventBus = it }
     private val buildLogCache: BuildLogCache get() = _buildLogCache
@@ -212,12 +208,6 @@ open class BuildMonitorService {
 
     fun setVisible(isVisible: Boolean) {
         poller?.setVisible(isVisible)
-    }
-
-    fun switchBranch(planKey: String, newBranch: String, intervalMs: Long = 30_000) {
-        log.info("[Bamboo:Monitor] Switching branch to '$newBranch' for planKey=$planKey")
-        _stateFlow.value = null
-        startPolling(planKey, newBranch, intervalMs)
     }
 
     suspend fun pollOnce(planKey: String, branch: String) = pollMutex.withLock {

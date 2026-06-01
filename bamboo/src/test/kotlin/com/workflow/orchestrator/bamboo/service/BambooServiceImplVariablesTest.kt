@@ -36,7 +36,6 @@ class BambooServiceImplVariablesTest {
             plan = BambooPlanDto(key = "PROJ-PLAN", name = "My Plan", shortName = "My Plan"),
             stages = BambooStageCollection(),
             variables = BambooVariableCollection(
-                size = 2,
                 variable = listOf(
                     BambooPlanVariableDto(name = "dockerTagsAsJson", value = """{"service":"1.2.3"}"""),
                     BambooPlanVariableDto(name = "buildEnv", value = "production")

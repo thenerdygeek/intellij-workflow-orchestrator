@@ -1,0 +1,50 @@
+[
+  {
+    "id": "PULLREQUEST-CLE-2",
+    "module": "pullrequest",
+    "tab": "PR",
+    "lens": "cleanup",
+    "category": "cleanup",
+    "severity": "Low",
+    "title": "Dead AUTHOR/REVIEWER branches in fetchAllPages and effectively-unused username param",
+    "file": "pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/PrListService.kt",
+    "description": "`fetchAllPages` is called from exactly one site (line 170) with `role = \"ALL\"`. The `\"AUTHOR\"` and `\"REVIEWER\"` arms of the `when` expression (lines 250\u2013251) are therefore dead \u2014 they were the pre-dashboard per-repo loop replaced by `fetchDashboardPrs` but never removed. Consequently, the `username` parameter (line 243) is also never read at any live call site (always passed as `null` and only consumed in the dead arms).",
+    "evidence": "val results = fetchAllPages(client, projectKey, repoSlug, null, \"ALL\")  // line 170\n// inside fetchAllPages:\n\"AUTHOR\" -> client.getMyPullRequests(...)  // line 250, dead\n\"REVIEWER\" -> client.getReviewingPullRequests(...)  // line 251, dead",
+    "suggestedFix": "Collapse the `when` to just `client.getRepoPullRequests(projectKey, repoSlug, currentState, start, 25)` (the `else` branch). Remove the `username: String?` parameter from `fetchAllPages`. No behavior changes at any live call site.",
+    "verdictReasoning": "Confirmed. `fetchAllPages` is invoked at exactly one site (PrListService.kt line 170) with `role = \"ALL\"` and `username = null`. The `\"AUTHOR\"` and `\"REVIEWER\"` branches at lines 250-251 are dead; they were the pre-dashboard per-repo role-filtered calls replaced by `fetchDashboardPrs` (which correctly uses `BitbucketBranchClient.getDashboardPullRequests`) as documented in the CLAUDE.md Bitbucket DC 9.4 audit changes section. The `username: String?` parameter is passed as `null` at the only call site and only consumed in those dead branches. Collapsing the `when` to just the `else` branch and removing the `username` parameter is a safe refactor with no behavioral change at any live call site. Severity is Low: the dead branches are not executable, they pose no correctness risk.",
+    "recommendedAction": "Collapse the `when (role)` in `fetchAllPages` to a single unconditional call: `client.getRepoPullRequests(projectKey, repoSlug, currentState, start, 25)`. Remove the `username: String?` parameter from `fetchAllPages` and update the one call site at line 170 accordingly.",
+    "panel": null
+  },
+  {
+    "id": "PULLREQUEST-ARC-3",
+    "module": "pullrequest",
+    "tab": "PR",
+    "lens": "architecture",
+    "category": "architecture",
+    "severity": "Low",
+    "title": "PrListService.getClient() throws instead of returning null, risking uncaught exception in polling",
+    "file": "pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/PrListService.kt",
+    "description": "`getClient()` (line 96\u201397) calls `error(\"Bitbucket URL not configured\")` when the URL is blank, throwing `IllegalStateException`. `refresh()` at line 107 calls `getClient()` only after an early-exit check on `bitbucketUrl.isBlank()` (line 102), so the happy path is safe. However, the `SmartPoller` action lambda at line 54 calls `refresh()` directly, and any race where the URL becomes blank between the poller's scheduling and the actual call will propagate the exception up through the poller, potentially cancelling or corrupting the `SupervisorJob` child for that poll cycle. The CLAUDE.md threading contract states polling runs under `CoroutineScope+SupervisorJob` to isolate failures; an uncaught `IllegalStateException` escapes that isolation. All other PR services return `null` from their `getClient()` equivalents.",
+    "evidence": "96:    private fun getClient(): BitbucketBranchClient =\n97:        clientCache.get() ?: error(\"Bitbucket URL not configured\")\n// vs PrActionService.getClient() which returns null",
+    "suggestedFix": "Change `getClient()` to `return clientCache.get()` (nullable), and update `refresh()` to treat a null client as a no-op early-return with a log message (same pattern as `PrDetailService.getDetail`, `PrActionService.approve`, etc.). The `bitbucketUrl.isBlank()` pre-check in `refresh()` can be removed since `clientCache.get()` already returns null when the URL is blank.",
+    "verdictReasoning": "Confirmed: PrListService.getClient() at lines 96-97 throws `IllegalStateException` via `error(...)` when the URL is blank, while PrActionService.getClient() (line 40) returns null. The finding's claim that this would 'cancel or corrupt the SupervisorJob child' is overstated: SmartPoller's action lambda is wrapped in a try-catch (lines 55-67 of SmartPoller.kt) that catches all `Exception` types including `IllegalStateException`, logs a warning, and increases backoff \u2014 the job is NOT cancelled. The real race window (URL becomes blank between line 102's isBlank check and line 107's getClient call) is extremely narrow in practice. The issue is an inconsistency with the module's own pattern (every other service returns null) and does add unnecessary noise to logs, but it does not produce the crash/corruption described. Fixing it to match the nullable pattern is safe.",
+    "recommendedAction": "Change PrListService.getClient() to return `clientCache.get()` (nullable) and update refresh() to return early on null client, matching the pattern used by PrActionService and the rest of the PR services. Severity should be treated as Low given SmartPoller catches the exception anyway.",
+    "panel": null
+  },
+  {
+    "id": "PULLREQUEST-ARC-4",
+    "module": "pullrequest",
+    "tab": "PR",
+    "lens": "architecture",
+    "category": "architecture",
+    "severity": "Low",
+    "title": "PersistentStateComponent bitbucketUsername written from IO dispatcher, not EDT",
+    "file": "pullrequest/src/main/kotlin/com/workflow/orchestrator/pullrequest/service/PrListService.kt",
+    "description": "The comment at lines 117\u2013119 claims the mutation was moved to `Dispatchers.EDT`. The actual code at lines 119\u2013121 wraps only the `connSettings.bitbucketUsername = result.data` assignment inside `withContext(Dispatchers.EDT)`. However, `connSettings` is a direct reference to the mutable state object obtained at line 100 with `ConnectionSettings.getInstance().state`. The CLAUDE.md threading rule (D2 in the comment) requires that `PersistentStateComponent` state mutations happen on the EDT. While the assignment is dispatched to EDT, the surrounding code still reads `connSettings` from the IO thread (line 111: `connSettings.bitbucketUsername.takeIf {\u2026}`). A concurrent EDT write (e.g., the user saving Settings) could produce a torn read on the IO thread. The fix is narrowly scoped but the underlying issue is that `connSettings` is a mutable state snapshot used across two threads.",
+    "evidence": "100:        val connSettings = ConnectionSettings.getInstance().state\n...\n119:                    withContext(Dispatchers.EDT) {\n120:                        connSettings.bitbucketUsername = result.data\n121:                    }",
+    "suggestedFix": "Read `ConnectionSettings.getInstance().state.bitbucketUsername` freshly on the EDT inside the `withContext(Dispatchers.EDT)` block rather than holding a reference captured on IO. Better yet, use the canonical pattern: call `ConnectionSettings.getInstance().bitbucketUsername` (via the ApplicationService accessor) on EDT. The outer IO-thread check for a saved username (`connSettings.bitbucketUsername.takeIf { it.isNotBlank() }`) should access the state via a snapshot read: `withContext(Dispatchers.EDT) { ConnectionSettings.getInstance().state.bitbucketUsername }` before the suspend network call.",
+    "verdictReasoning": "Confirmed: at PrListService.kt line 100, `connSettings` is captured as a direct mutable state reference on the IO dispatcher. Line 111 reads `connSettings.bitbucketUsername` on IO, while line 120 writes `connSettings.bitbucketUsername` on EDT. These are concurrent accesses to the same mutable object across two thread pools. However, the practical risk is narrow: this code path only executes once (on first refresh, before `cachedUsername` is set), the field is a simple String property on a POJO, and the worst case is a torn read (the IO thread sees a partially-written string) not data loss or corruption. The write-to-EDT fix was already partially applied (line 119 dispatch); the remaining gap is the IO-thread read. Fixing it by reading `ConnectionSettings.getInstance().state.bitbucketUsername` freshly on EDT before the network call is safe, but the claim of 'High' severity overstates a narrow single-pass race on a string field.",
+    "recommendedAction": "Read the cached username check via `withContext(Dispatchers.EDT) { ConnectionSettings.getInstance().state.bitbucketUsername }` before the network call, matching the write dispatch already present at line 119. Low-priority threading hygiene.",
+    "panel": null
+  }
+]

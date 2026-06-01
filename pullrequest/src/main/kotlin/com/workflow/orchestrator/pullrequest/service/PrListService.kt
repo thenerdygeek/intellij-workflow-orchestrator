@@ -93,22 +93,22 @@ class PrListService(
     private val clientCache = BitbucketBranchClientCache()
     private val pluginSettings by lazy { PluginSettings.getInstance(project) }
 
-    private fun getClient(): BitbucketBranchClient =
-        clientCache.get() ?: error("Bitbucket URL not configured")
+    private fun getClient(): BitbucketBranchClient? = clientCache.get()
 
     suspend fun refresh() {
-        val connSettings = ConnectionSettings.getInstance().state
-        val bitbucketUrl = connSettings.bitbucketUrl.trimEnd('/')
-        if (bitbucketUrl.isBlank()) {
+        val client = getClient()
+        if (client == null) {
             log.info("[PR:List] Bitbucket URL not configured, skipping refresh")
             return
         }
 
-        val client = getClient()
+        val connSettings = ConnectionSettings.getInstance().state
 
-        // Auto-detect username on first call (or use saved setting)
+        // Auto-detect username on first call (or use saved setting).
+        // Read bitbucketUsername from a fresh state snapshot to avoid holding a stale
+        // reference captured on the IO dispatcher (ARC-4: EDT-mutation threading hygiene).
         val username = cachedUsername
-            ?: connSettings.bitbucketUsername.takeIf { it.isNotBlank() }
+            ?: ConnectionSettings.getInstance().state.bitbucketUsername.takeIf { it.isNotBlank() }
             ?: run {
                 val result = client.getCurrentUsername()
                 if (result is ApiResult.Success && result.data.isNotBlank()) {
@@ -167,7 +167,7 @@ class PrListService(
                 repoEntries.map { (projectKey, repoSlug, repoName) ->
                     async {
                         repoFetchSemaphore.withPermit {
-                            val results = fetchAllPages(client, projectKey, repoSlug, null, "ALL")
+                            val results = fetchAllPages(client, projectKey, repoSlug, "ALL")
                             results.forEach { it.repoName = repoName }
                             results
                         }
@@ -232,25 +232,25 @@ class PrListService(
     }
 
     /**
-     * Fetches all pages of PRs for the given role (AUTHOR, REVIEWER, or ALL),
+     * Fetches all pages of PRs for the ALL role (no dashboard equivalent),
      * capped at 100 results to avoid excessive API calls.
+     *
+     * The AUTHOR and REVIEWER roles are handled by [fetchDashboardPrs] via the
+     * cross-repo dashboard endpoint (R-SWAP-1/R-SWAP-2, 2026-05-07 Bitbucket audit).
+     * The dead AUTHOR/REVIEWER branches and the no-longer-needed `username` parameter
+     * have been removed (PULLREQUEST-CLE-2).
      */
     private suspend fun fetchAllPages(
         client: BitbucketBranchClient,
         projectKey: String,
         repoSlug: String,
-        username: String?,
         role: String
     ): List<BitbucketPrDetail> {
         val results = mutableListOf<BitbucketPrDetail>()
         var start = 0
         var isLast = false
         while (!isLast && results.size < 100) {
-            val result = when (role) {
-                "AUTHOR" -> client.getMyPullRequests(projectKey, repoSlug, currentState, username, start, 25)
-                "REVIEWER" -> client.getReviewingPullRequests(projectKey, repoSlug, currentState, username, start, 25)
-                else -> client.getRepoPullRequests(projectKey, repoSlug, currentState, start, 25)
-            }
+            val result = client.getRepoPullRequests(projectKey, repoSlug, currentState, start, 25)
             if (result is ApiResult.Success) {
                 results.addAll(result.data.values)
                 isLast = result.data.isLastPage

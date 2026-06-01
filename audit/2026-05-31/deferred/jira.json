@@ -1,0 +1,50 @@
+[
+  {
+    "id": "JIRA-COR-2",
+    "module": "jira",
+    "tab": "Sprint",
+    "lens": "correctness",
+    "category": "bug",
+    "severity": "Low",
+    "title": "validateTicketKeys throws IllegalArgumentException instead of returning ApiResult.Error, propagating uncaught through TicketKeyCache",
+    "file": "jira/src/main/kotlin/com/workflow/orchestrator/jira/api/JiraApiClient.kt",
+    "description": "Lines 529-532: when a key fails the anchored Jira key pattern, `validateTicketKeys` throws `IllegalArgumentException(\"Invalid Jira key: $k\")` rather than returning `ApiResult.Error`. The only caller in production code is `TicketKeyCache.validateAndCache` (line 76), which is a `suspend fun` that does NOT wrap the call in try/catch. The exception propagates as an unhandled coroutine exception, cancelling the enclosing coroutine scope and potentially crashing the feature silently. The function signature promises `ApiResult<...>` so callers do not expect an exception.",
+    "evidence": "keys.forEach { k ->\n    if (!jiraKeyPattern.matches(k)) {\n        throw IllegalArgumentException(\"Invalid Jira key: $k\")\n    }\n}",
+    "suggestedFix": "Replace `throw IllegalArgumentException(...)` with `return ApiResult.Error(ErrorType.VALIDATION_ERROR, \"Invalid Jira key: $k\")`. This keeps the function contract and lets callers handle it uniformly.",
+    "verdictReasoning": "Confirmed at lines 529-532. `validateTicketKeys` throws `IllegalArgumentException` rather than returning `ApiResult.Error`. The sole production caller, `TicketKeyCache.validateAndCache` at line 76, calls `client.validateTicketKeys(uncached.toList())` with no try/catch, meaning the exception would propagate as an unhandled coroutine exception. However, the practical impact is very limited: `TicketKeyCache.extractKeys()` at line 36 pre-filters all keys using `DEFAULT_REGEX = Regex(\"\\\\b([A-Z][A-Z0-9]+-\\\\d+)\\\\b\")`, which matches the same key format as the `jiraKeyPattern` in `validateTicketKeys`. Keys that reach `validateTicketKeys` have already passed a compatible regex match, so the `throw` path is essentially unreachable in the normal flow. The contract violation (function signature implies no exception but can throw) is real and the fix is safe.",
+    "recommendedAction": "Replace `throw IllegalArgumentException(\"Invalid Jira key: $k\")` with `return ApiResult.Error(ErrorType.VALIDATION_ERROR, \"Invalid Jira key: $k\")` at line 531. Also add a try/catch guard in `TicketKeyCache.validateAndCache` as defense-in-depth. No passing tests would break.",
+    "panel": null
+  },
+  {
+    "id": "JIRA-ARC-4",
+    "module": "jira",
+    "tab": "Sprint",
+    "lens": "architecture",
+    "category": "architecture",
+    "severity": "Medium",
+    "title": "TicketTransitionServiceImpl secondary constructor has a circular dependency on JiraServiceImpl concrete class",
+    "file": "jira/src/main/kotlin/com/workflow/orchestrator/jira/service/TicketTransitionServiceImpl.kt",
+    "description": "The platform-invoked secondary constructor calls JiraServiceImpl.getInstance(project).getApiClient() to obtain the JiraApiClient. This couples a core-interface implementation (TicketTransitionService) to a sibling concrete class (JiraServiceImpl), forming a within-module dependency chain that makes both services harder to test in isolation and violates the convention that services resolve through interfaces.",
+    "evidence": "constructor(project: Project, cs: CoroutineScope) : this(\n    api = JiraServiceImpl.getInstance(project).getApiClient()\n        ?: JiraApiClient(baseUrl = \"\", tokenProvider = { null }),",
+    "suggestedFix": "Resolve the JiraApiClient by injecting it from plugin.xml using the <serviceImplementation> constructor parameter or by having the platform inject a JiraApiClient-provider service. Alternatively, have TicketTransitionServiceImpl construct its own JiraApiClient from CredentialStore and PluginSettings directly (same pattern as JiraSearchServiceImpl.createClient()), removing the JiraServiceImpl dependency.",
+    "verdictReasoning": "Confirmed real. TicketTransitionServiceImpl.kt lines 66-74 show the secondary constructor directly calls `JiraServiceImpl.getInstance(project).getApiClient()`. This creates a concrete-to-concrete dependency between two sibling service implementations in the same `:jira` module. The class KDoc at line 37-44 acknowledges this design choice ('no duplicate HTTP clients are created'). The fallback sentinel at lines 68-71 is a defensive measure. No circular dependency in the JVM sense (neither extends the other; both are constructed by the platform DI sequentially). The claimed fix (injecting from plugin.xml or constructing JiraApiClient from CredentialStore like JiraSearchServiceImpl) is technically correct and would make TicketTransitionServiceImpl independently testable, but current tests likely already provide the primary constructor directly. Medium severity confirmed.",
+    "recommendedAction": "For testability, prefer constructing JiraApiClient directly from CredentialStore/PluginSettings in the secondary constructor (mirroring JiraSearchServiceImpl.createClient()), removing the JiraServiceImpl dependency.",
+    "panel": null
+  },
+  {
+    "id": "JIRA-COR-8",
+    "module": "jira",
+    "tab": "Sprint",
+    "lens": "correctness",
+    "category": "bug",
+    "severity": "Low",
+    "title": "TimeTrackingCheckinHandler and PostCommitTransitionHandler register a new Disposer callback on every commit, accumulating callbacks for the project's lifetime",
+    "file": "jira/src/main/kotlin/com/workflow/orchestrator/jira/vcs/TimeTrackingCheckinHandlerFactory.kt",
+    "description": "Lines 110-111: every call to `checkinSuccessful()` creates a new `CoroutineScope` and registers a new `Disposer.register(project as Disposable) { scope.cancel(...) }` lambda. The project's Disposer tree accumulates one entry per commit for the project's lifetime. After many commits, this is a slow memory leak (lambda references to dead scopes). `PostCommitTransitionHandlerFactory.kt` lines 47-48 has the same pattern. Additionally, `project as Disposable` is an unsafe cast \u2014 `Project` does not implement `Disposable` in all IntelliJ platform versions and can throw `ClassCastException` on some versions.",
+    "evidence": "val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)\nDisposer.register(project as Disposable) { scope.cancel(\"project disposed\") }\nscope.launch { ... }",
+    "suggestedFix": "Instead of creating a scope per invocation, inject the project-level `CoroutineScope` via the service container or use `project.coroutineScope` (available from platform 2024.1+). If a per-invocation scope is needed, register it against a `Disposable` that itself is already project-scoped, not the project directly. Use `Disposer.newDisposable(\"time-tracking-commit\")` registered under the project.",
+    "verdictReasoning": "Confirmed at lines 110-111 in TimeTrackingCheckinHandlerFactory.kt and lines 47-48 in PostCommitTransitionHandlerFactory.kt. Each `checkinSuccessful()` call registers a new lambda closure in the project's Disposer tree via `Disposer.register(project as Disposable)`. After N commits, there are N lambda entries in the tree even though each associated `CoroutineScope` has already completed. This is a slow memory leak (closure captures the dead scope). However: (a) each leaked entry is tiny (a few hundred bytes), (b) commits are infrequent human actions (not a tight loop), so in practice a developer would need thousands of commits in one session to see measurable pressure. The `project as Disposable` cast is safe for IntelliJ 2023+ (target is 2025.1+). Severity is Low rather than Medium given the extremely slow accumulation rate. The fix (using `project.coroutineScope` from platform 2024.1+) is correct and non-breaking.",
+    "recommendedAction": "Replace the per-invocation `CoroutineScope` + `Disposer.register` pattern in both files with `project.coroutineScope.launch(Dispatchers.IO) { ... }`. This eliminates the per-commit Disposer entry since `project.coroutineScope` is already lifecycle-managed by the platform. If the platform version constraint makes `project.coroutineScope` unavailable, use a single `@Service`-level scope injected via the service container instead.",
+    "panel": null
+  }
+]

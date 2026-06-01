@@ -107,7 +107,6 @@ object BambooTestResultConverter {
             failed = testResults.failed,
             skipped = testResults.skipped,
             failedTests = com.workflow.orchestrator.bamboo.api.dto.BambooTestCaseCollection(
-                size = failedDtos.size,
                 testResult = failedDtos
             ),
             successfulTests = com.workflow.orchestrator.bamboo.api.dto.BambooTestCaseCollection()

@@ -48,14 +48,12 @@ class BuildMonitorServiceTest {
             lifeCycleState = lifeCycle,
             buildDurationInSeconds = 120,
             stages = BambooStageCollection(
-                size = 2,
                 stage = listOf(
                     BambooStageDto(
                         name = "Compile",
                         state = "Successful",
                         lifeCycleState = "Finished",
                         results = BambooJobResultCollection(
-                            size = 1,
                             result = listOf(
                                 BambooJobResultDto(
                                     buildResultKey = "PROJ-BUILD-JOB1-$buildNumber",
@@ -70,7 +68,6 @@ class BuildMonitorServiceTest {
                         state = state,
                         lifeCycleState = lifeCycle,
                         results = BambooJobResultCollection(
-                            size = 1,
                             result = listOf(
                                 BambooJobResultDto(
                                     buildResultKey = "PROJ-BUILD-JOB2-$buildNumber",
@@ -365,7 +362,7 @@ class BuildMonitorServiceTest {
             state = "Successful",
             lifeCycleState = "Finished",
             buildDurationInSeconds = 120,
-            stages = BambooStageCollection(size = 0, stage = emptyList())
+            stages = BambooStageCollection(stage = emptyList())
         )
         coEvery { apiClient.getLatestResult("PROJ-BUILD") } returns ApiResult.Success(result)
         coEvery { apiClient.getBuildLog("PROJ-BUILD-42") } returns ApiResult.Success("fallback log")

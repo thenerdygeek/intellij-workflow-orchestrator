@@ -31,7 +31,7 @@ class BambooTestResultConverterReDoSTest {
             successful = 0,
             failed = 1,
             skipped = 0,
-            failedTests = BambooTestCaseCollection(size = 1, testResult = listOf(dto)),
+            failedTests = BambooTestCaseCollection(testResult = listOf(dto)),
             successfulTests = BambooTestCaseCollection()
         )
     }

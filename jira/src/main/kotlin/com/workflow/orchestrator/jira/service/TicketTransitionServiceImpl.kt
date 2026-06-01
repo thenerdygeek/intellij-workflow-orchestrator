@@ -3,9 +3,11 @@ package com.workflow.orchestrator.jira.service
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.TicketTransitioned
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.model.jira.MissingFieldsError
 import com.workflow.orchestrator.core.model.jira.StatusCategory
 import com.workflow.orchestrator.core.model.jira.StatusRef
@@ -15,6 +17,7 @@ import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.core.model.jira.TransitionOutcome
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.services.jira.TicketTransitionService
+import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.jira.api.JiraApiClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -59,19 +62,32 @@ class TicketTransitionServiceImpl(
 
     /**
      * Secondary constructor used by the IntelliJ platform service container.
-     * Resolves [JiraApiClient] through [JiraServiceImpl] and [EventBus] from the
-     * project's service container so that no duplicate HTTP clients are created.
+     * Builds [JiraApiClient] directly from [ConnectionSettings] and [CredentialStore]
+     * (mirroring [JiraSearchServiceImpl.createClient]) to avoid coupling to the
+     * [JiraServiceImpl] concrete class.
      * `cs` is the platform-injected coroutine scope tied to the project lifecycle.
      */
     constructor(project: Project, cs: CoroutineScope) : this(
-        api = JiraServiceImpl.getInstance(project).getApiClient()
-            ?: JiraApiClient(
-                baseUrl = "",
-                tokenProvider = { null }
-            ),
+        api = buildClient(),
         eventBus = project.getService(EventBus::class.java),
         cs = cs,
     )
+
+    companion object {
+        /**
+         * Constructs a [JiraApiClient] from current [ConnectionSettings] and [CredentialStore].
+         * Extracted as a companion function so it can be called in a constructor-delegation
+         * expression without referencing `this`.
+         */
+        private fun buildClient(): JiraApiClient {
+            val url = ConnectionSettings.getInstance().state.jiraUrl.orEmpty().trimEnd('/')
+            val credentialStore = CredentialStore()
+            return JiraApiClient(
+                baseUrl = url,
+                tokenProvider = { credentialStore.getToken(ServiceType.JIRA) }
+            )
+        }
+    }
 
     private val log = Logger.getInstance(TicketTransitionServiceImpl::class.java)
 

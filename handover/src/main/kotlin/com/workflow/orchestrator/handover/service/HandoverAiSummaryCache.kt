@@ -7,12 +7,12 @@ import com.workflow.orchestrator.core.ai.TextGenerationService
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
+import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import com.workflow.orchestrator.handover.model.HandoverPlaceholderValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import org.jetbrains.annotations.TestOnly
 import java.util.concurrent.ConcurrentHashMap
@@ -57,6 +57,7 @@ class HandoverAiSummaryCache {
     private val generator: TextGenerator?
     private val workflowContext: WorkflowContextService
     private val notifications: WorkflowNotificationService?
+    private val settings: PluginSettings?
     private val cs: CoroutineScope
 
     // ConcurrentHashMap so reads never block; Deferred coalesces concurrent misses.
@@ -74,6 +75,7 @@ class HandoverAiSummaryCache {
         this.generator = svc?.let { s -> TextGenerator { prompt -> s.generateText(project, prompt) } }
         this.workflowContext = WorkflowContextService.getInstance(project)
         this.notifications = WorkflowNotificationService.getInstance(project)
+        this.settings = PluginSettings.getInstance(project)
         this.cs = cs
         subscribeToInvalidationEvents(project)
     }
@@ -82,6 +84,7 @@ class HandoverAiSummaryCache {
      * Test constructor — allows injecting collaborators without a running IDE.
      *
      * Pass `null` for [generator] to simulate a missing [TextGenerationService] EP.
+     * Pass `null` for [settings] to leave the aiSummariesEnabled check as the default (enabled).
      */
     @TestOnly
     constructor(
@@ -90,10 +93,12 @@ class HandoverAiSummaryCache {
         notifications: WorkflowNotificationService?,
         eventBus: EventBus,
         scope: CoroutineScope,
+        settings: PluginSettings? = null,
     ) {
         this.generator = generator
         this.workflowContext = workflowContext
         this.notifications = notifications
+        this.settings = settings
         this.cs = scope
         subscribeToInvalidationEvents(eventBus)
     }
@@ -105,12 +110,19 @@ class HandoverAiSummaryCache {
     /**
      * Returns an AI-generated change summary for the active ticket.
      *
+     * Returns [HandoverPlaceholderValue.unavailable] immediately when
+     * [PluginSettings.State.aiSummariesEnabled] is `false` — the toggle in
+     * Settings → Handover → AI summaries is now honoured at runtime.
+     *
      * Cache hit: returns the same [Deferred] result — no duplicate LLM call.
      * Cache miss: launches one async compute; all concurrent callers await the same [Deferred].
      *
      * Diff capture is deferred (see class KDoc) — the prompt uses a placeholder string.
      */
     suspend fun changeSummary(): HandoverPlaceholderValue {
+        if (settings?.state?.aiSummariesEnabled == false) {
+            return HandoverPlaceholderValue.unavailable("AI summaries disabled")
+        }
         val ticketId = activeTicketId()
             ?: return HandoverPlaceholderValue.unavailable("no active ticket")
         val key = CacheKey(ticketId, NO_SHA, Kind.CHANGE_SUMMARY)
@@ -120,9 +132,15 @@ class HandoverAiSummaryCache {
     /**
      * Returns an AI-generated ticket summary for the active ticket.
      *
+     * Returns [HandoverPlaceholderValue.unavailable] immediately when
+     * [PluginSettings.State.aiSummariesEnabled] is `false`.
+     *
      * Cache hit / miss semantics identical to [changeSummary].
      */
     suspend fun ticketSummary(): HandoverPlaceholderValue {
+        if (settings?.state?.aiSummariesEnabled == false) {
+            return HandoverPlaceholderValue.unavailable("AI summaries disabled")
+        }
         val ticketId = activeTicketId()
             ?: return HandoverPlaceholderValue.unavailable("no active ticket")
         val key = CacheKey(ticketId, NO_SHA, Kind.TICKET_SUMMARY)
@@ -162,21 +180,19 @@ class HandoverAiSummaryCache {
         val gen = generator
             ?: return unavailableAndMaybeNotify("AI text generation service is not available")
 
-        val deferred: Deferred<HandoverPlaceholderValue> = coroutineScope {
-            cache.computeIfAbsent(key) {
-                async {
-                    runCatching {
-                        val prompt = promptBuilder()
-                        val result = gen.generate(prompt)
-                        if (result != null) {
-                            HandoverPlaceholderValue.available(result)
-                        } else {
-                            unavailableAndMaybeNotify("AI service returned no result")
-                        }
-                    }.getOrElse { ex ->
-                        log.warn("[Handover:AiCache] Generation failed for $key: ${ex.message}")
-                        unavailableAndMaybeNotify("AI service error: ${ex.message ?: "unknown"}")
+        val deferred: Deferred<HandoverPlaceholderValue> = cache.computeIfAbsent(key) {
+            cs.async {
+                runCatching {
+                    val prompt = promptBuilder()
+                    val result = gen.generate(prompt)
+                    if (result != null) {
+                        HandoverPlaceholderValue.available(result)
+                    } else {
+                        unavailableAndMaybeNotify("AI service returned no result")
                     }
+                }.getOrElse { ex ->
+                    log.warn("[Handover:AiCache] Generation failed for $key: ${ex.message}")
+                    unavailableAndMaybeNotify("AI service error: ${ex.message ?: "unknown"}")
                 }
             }
         }

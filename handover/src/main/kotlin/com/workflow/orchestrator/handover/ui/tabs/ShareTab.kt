@@ -138,7 +138,7 @@ class ShareTab private constructor(
 
     // ── Action handlers ──────────────────────────────────────────────────────
 
-    internal suspend fun handlePostComment(resolvedMarkup: String, @Suppress("UNUSED_PARAMETER") template: HandoverTemplate) {
+    internal suspend fun handlePostComment(resolvedMarkup: String) {
         emitOverrideIfNeeded(WorkflowEvent.HandoverAction.POST_JIRA)
         val ticketId = resolveTicketId()
         if (ticketId.isBlank()) {
@@ -157,7 +157,7 @@ class ShareTab private constructor(
     }
 
     internal suspend fun handleCopyWiki(resolvedMarkup: String) {
-        emitOverrideIfNeeded(WorkflowEvent.HandoverAction.COPY_EMAIL)
+        emitOverrideIfNeeded(WorkflowEvent.HandoverAction.COPY_WIKI)
         try {
             ClipboardUtil.copyToClipboard(resolvedMarkup)
         } catch (e: Exception) {
@@ -165,7 +165,7 @@ class ShareTab private constructor(
         }
     }
 
-    internal suspend fun handleCopyFormatted(resolvedMarkup: String, @Suppress("UNUSED_PARAMETER") template: HandoverTemplate) {
+    internal suspend fun handleCopyFormatted(resolvedMarkup: String) {
         emitOverrideIfNeeded(WorkflowEvent.HandoverAction.COPY_EMAIL)
         try {
             clipboardSink.place(OutlookHtmlTransferable(resolvedMarkup))
@@ -222,12 +222,12 @@ class ShareTab private constructor(
 
     @TestOnly
     fun testTriggerPostComment(template: HandoverTemplate) {
-        scope.launch { handlePostComment(template.source, template) }
+        scope.launch { handlePostComment(template.source) }
     }
 
     @TestOnly
     fun testTriggerCopyFormatted(template: HandoverTemplate) {
-        scope.launch { handleCopyFormatted(template.source, template) }
+        scope.launch { handleCopyFormatted(template.source) }
     }
 
     @TestOnly
@@ -277,7 +277,7 @@ class ShareTab private constructor(
                 action = HandoverTemplateAction.JIRA,
                 previewPane = jiraPreview,
                 primaryActionLabel = "Post Comment",
-                onPrimaryAction = { markup, tmpl -> holder[0]?.handlePostComment(markup, tmpl) },
+                onPrimaryAction = { markup, _ -> holder[0]?.handlePostComment(markup) },
                 secondaryActionLabel = "Copy as wiki",
                 onSecondaryAction = { markup, _ -> holder[0]?.handleCopyWiki(markup) },
                 templateActions = templateActions,
@@ -291,7 +291,7 @@ class ShareTab private constructor(
                 action = HandoverTemplateAction.EMAIL,
                 previewPane = EmailPreviewPane(),
                 primaryActionLabel = "Copy formatted",
-                onPrimaryAction = { markup, tmpl -> holder[0]?.handleCopyFormatted(markup, tmpl) },
+                onPrimaryAction = { markup, _ -> holder[0]?.handleCopyFormatted(markup) },
                 templateActions = templateActions,
                 placeholderResolver = resolver,
             )

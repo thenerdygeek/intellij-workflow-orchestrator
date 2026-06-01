@@ -46,5 +46,15 @@ class ActionsTab(project: Project) : JPanel(BorderLayout()), Disposable {
         Disposer.register(this, timeLog)
     }
 
+    /**
+     * Propagates the active ticket key to [TimeLogCard] so the Log Work button
+     * becomes enabled. Called from [com.workflow.orchestrator.handover.ui.HandoverPanel.applyState]
+     * on every state update.
+     */
+    fun updateTicket(ticketKey: String?, startWorkTimestamp: Long = 0L) {
+        timeLog.setTicket(ticketKey)
+        timeLog.setStartedTimestamp(startWorkTimestamp)
+    }
+
     override fun dispose() { /* children disposed by Disposer */ }
 }
