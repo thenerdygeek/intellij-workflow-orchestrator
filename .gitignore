@@ -79,3 +79,6 @@ hs_err_pid*.log
 
 # Temporary API-doc extraction source — probe bundles copied from the root repo (Task 7), removed in Task 9
 /.apidocs-source/
+
+# Maestro skill artifacts
+/.maestro/
