@@ -16,8 +16,8 @@ function formatTimeAgo(ts: number): string {
 
 /**
  * Banner rendered at the top of the chat view when the active session was
- * delegated from another IDE instance. Shows delegator IDE, repo, start time,
- * and close status.
+ * delegated from another IDE instance. Shows the delegator REPO name (never the
+ * raw "ide-$pid" identifier), start time, and close status.
  */
 export const DelegationBanner = memo(function DelegationBanner() {
   const delegated = useChatStore((s) => s.activeSessionDelegated);
@@ -42,12 +42,8 @@ export const DelegationBanner = memo(function DelegationBanner() {
     >
       <span style={{ flexShrink: 0 }}>📨</span>
       <span style={{ color: 'var(--fg-secondary, #aaa)' }}>
-        Delegated by{' '}
+        Delegated from{' '}
         <span style={{ color: 'var(--badge-read-fg, #569cd6)', fontWeight: 600 }}>
-          {delegated.delegatorIde}
-        </span>{' '}
-        from{' '}
-        <span style={{ color: 'var(--fg, #ccc)', fontWeight: 600 }}>
           {delegated.delegatorRepo}
         </span>
         {' · '}Started {startedTime}{closedSegment}

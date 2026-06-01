@@ -80,12 +80,17 @@ class DelegationTool(
      *                        consent), "closed" (in recents, not running), "discovered" (socket-glob
      *                        only), "missing" (path doesn't exist on disk).
      * @property lastOpened   Epoch millis if known from recents; null otherwise.
+     * @property busy         ADVISORY, point-in-time (TOCTOU) hint for a `running` target: true =
+     *                        the target's agent tab is busy with another task, false = idle, null =
+     *                        unknown (old peer / not resolvable / non-running status). Surfaced as
+     *                        the `running (busy)` / `running (idle)` label.
      */
     data class RecentEntry(
         val projectPath: String,
         val repoName: String,
         val status: String,
         val lastOpened: Long?,
+        val busy: Boolean? = null,
     )
 
     override val name = "delegation"
@@ -129,7 +134,11 @@ class DelegationTool(
           delegation handles (use list_handles for that). Statuses: running = IDE open AND
           inbound delegation ON (no consent prompt); available = IDE open but inbound OFF —
           a send rings its doorbell and the user is asked to consent; closed = in recents,
-          not running; missing = path gone. No UI opens.
+          not running; missing = path gone. No UI opens. Each target also carries an ADVISORY
+          busy hint: `status_label` shows running (busy) vs running (idle), and a machine
+          `busy` field is true/false/null. It is a point-in-time snapshot (the target may pick
+          up work between this probe and your send); null = unknown (older peer) — treat as plain
+          running. Prefer an idle target when one is available.
         - list_handles() → Read-only enumeration of the delegation handles YOU currently
           hold for THIS session (active + closed-but-retained), each with its repo, project
           path and last_state (via the same SSOT status uses). Takes no handle. Use it to
@@ -139,17 +148,18 @@ class DelegationTool(
         Errors (across all actions):
           DelegationOutboundDisabled — outbound delegation off in settings.
           DelegationUserCanceledPicker / DelegationTargetNotReachable / DelegationLimitReached /
-          DelegationRejected / DelegationDeclined — send-specific picker / connection / quota /
-          consent failures. A busy decline now leads with `ide_b_busy:` and NAMES the in-flight
-          task the target repo is busy with (and, when that task is itself delegated, echoes its delegator
-          session id so you can recognize the blocker as your OWN earlier task — match it against
-          list_handles' bSessionId).
-          DelegationExpired — a KNOWN handle's continuation/transcript is genuinely unreachable.
-          On a send-continuation it carries the specific reason: session_closed / session_not_found
-          (remote session genuinely gone or pruned), ide_b_not_running (target IDE down), ide_b_busy
-          (target tab busy with another task — try again), resume_failed (session locked/missing on
-          disk). On fetch_transcript it means the handle is known but its transcript is not on disk
-          yet or an IO read failed. NOT used for an unknown/pruned handle — that is HandleNotFound.
+          DelegationRejected / DelegationDeclined — RETRYABLE; the handle (if any) stays valid.
+          Picker / connection / quota / consent failures, AND a busy target (ide_b_busy) on BOTH a
+          fresh send and a continuation send. A busy decline leads with `ide_b_busy:` and NAMES the
+          in-flight task the target repo is busy with (and, when that task is itself delegated, echoes
+          its delegator session id so you can recognize the blocker as your OWN earlier task — match
+          it against list_handles' bSessionId). Retry shortly with the same handle.
+          DelegationExpired — the handle is GONE / no longer usable (NOT a busy target — that is
+          DelegationRejected). On a send-continuation it carries the terminal-gone reason:
+          session_closed / session_not_found (remote session genuinely gone or pruned),
+          ide_b_not_running (target IDE down), resume_failed (session locked/missing on disk). On
+          fetch_transcript it means the handle is known but its transcript is not on disk yet or an
+          IO read failed. NOT used for an unknown/pruned handle — that is HandleNotFound.
           DelegationHandleClosed — answer on a closed-but-retained handle (the session
           completed; start a new send or fetch_transcript instead).
           DelegationHandleNotFound — handle is unknown or retention-pruned. CONSISTENT across ALL
@@ -334,7 +344,7 @@ class DelegationTool(
                 onFailure("cannot connect to the target IDE", "DelegationTargetNotReachable — most often the target has inbound delegation disabled (looks identical to 'not running'). Ask the user to enable 'Accept incoming delegations' on the target first.")
                 onFailure("too many open channels", "DelegationLimitReached — DelegationOutboundService.MAX_CHANNELS concurrent delegations already open; close one before sending another.")
                 onFailure("target user declines the consent prompt", "DelegationDeclined / DelegationRejected — the target IDE's user said no. Surface to the user; don't retry blindly.")
-                onFailure("continuation handle unknown / expired / write failed", "DelegationHandleNotFound when the handle is unknown or retention-pruned (same type as status/answer/wait/fetch_transcript) — start a fresh send. DelegationExpired carries a specific reason on a KNOWN handle — session_closed / session_not_found (remote session gone or pruned), ide_b_not_running (target IDE down), ide_b_busy (target tab busy — try again), resume_failed (session locked/missing on disk). DelegationWriteFailed — IPC write failed. For ide_b_busy, retry; for HandleNotFound/session_not_found, start a new send.")
+                onFailure("continuation handle unknown / busy / gone / write failed", "DelegationHandleNotFound when the handle is unknown or retention-pruned (same type as status/answer/wait/fetch_transcript) — start a fresh send. DelegationRejected (RETRYABLE, handle still valid) when the target is ide_b_busy (tab occupied) — retry shortly with the same handle. DelegationExpired (handle GONE) carries a terminal-gone reason on a KNOWN handle — session_closed / session_not_found (remote session gone or pruned), ide_b_not_running (target IDE down), resume_failed (session locked/missing on disk). DelegationWriteFailed — IPC write failed. For ide_b_busy retry the same handle; for HandleNotFound/session_not_found/ide_b_not_running start a new send.")
                 example("fresh delegation") {
                     param("action", "send")
                     param("request", "Implement the /orders endpoint per the spec in docs/api.md and open a PR.")
@@ -703,6 +713,20 @@ class DelegationTool(
                 // Consistency fix (2026-06-01): a truly-unknown/pruned handle on a send-continuation
                 // surfaces the SAME error TYPE + message as status/answer/wait/fetch_transcript, not Expired.
                 ToolResult.error(HANDLE_NOT_FOUND_MESSAGE(e.handleId))
+            } catch (e: DelegationException.Rejected) {
+                // Fix B (.23 #5): a continuation to a BUSY target is a TRANSIENT, RETRYABLE rejection —
+                // the handle is still valid; the target is just occupied. Render it distinctly from
+                // DelegationExpired (handle gone), matching the fresh-send Rejected path.
+                val reason = e.rejectReason ?: "none"
+                val shortId = handleId.take(8)
+                if (reason.startsWith("ide_b_busy")) {
+                    ToolResult.error(
+                        "DelegationRejected: target (handle $shortId) is busy with another task — " +
+                            "retry shortly with the same handle; your handle is still valid. ($reason)"
+                    )
+                } else {
+                    ToolResult.error("DelegationRejected: the continuation was rejected — reason: $reason. Your handle is still valid; retry shortly.")
+                }
             } catch (e: DelegationException.Expired) {
                 // Reserved for a genuinely-distinct condition on a KNOWN handle: resurrection/reattach
                 // failure (ide_b_not_running / ide_b_busy / session_closed / session_not_found / io_error).
@@ -1028,15 +1052,47 @@ class DelegationTool(
                 summary = "Delegation $shortId still running (waited ${timeoutSeconds}s)",
                 tokenEstimate = 30,
             )
-            is DelegationWaitOutcome.NotActive -> if (outcome.reason == "already_completed") {
-                ToolResult(
+            is DelegationWaitOutcome.NotActive -> when (outcome.reason) {
+                "already_completed" -> ToolResult(
                     content = "Delegation $shortId has already completed. " +
                         "Use delegation(action=\"fetch_transcript\", handle=\"$handleId\") to read its conversation.",
                     summary = "Delegation $shortId already completed",
                     tokenEstimate = 20,
                 )
-            } else {
-                ToolResult.error(HANDLE_NOT_FOUND_MESSAGE(handleId))
+                // Fix A (.23 #3): distinct, accurate wording per terminal state — a canceled / failed /
+                // rejected handle must NOT claim "already completed". These are known terminal states
+                // (not tool failures), so they return a non-error result with recovery affordances.
+                "already_canceled" -> ToolResult(
+                    content = "Delegation $shortId was canceled (last state CANCELED). " +
+                        "Use delegation(action=\"fetch_transcript\", handle=\"$handleId\") to see what it did, " +
+                        "or delegation(action=\"send\", handle=\"$handleId\", request=\"…\") with the same handle to resume.",
+                    summary = "Delegation $shortId was canceled",
+                    tokenEstimate = 30,
+                )
+                "already_failed" -> ToolResult(
+                    content = "Delegation $shortId failed (last state FAILED). " +
+                        "Use delegation(action=\"fetch_transcript\", handle=\"$handleId\") to see the error, " +
+                        "or delegation(action=\"send\", handle=\"$handleId\", request=\"…\") with the same handle to retry.",
+                    summary = "Delegation $shortId failed",
+                    tokenEstimate = 30,
+                )
+                "already_rejected" -> ToolResult(
+                    content = "Delegation $shortId was rejected (last state REJECTED). " +
+                        "Use delegation(action=\"fetch_transcript\", handle=\"$handleId\") to see the reason, " +
+                        "or start a fresh delegation with action=\"send\" (no handle).",
+                    summary = "Delegation $shortId was rejected",
+                    tokenEstimate = 30,
+                )
+                "handle_not_found" -> ToolResult.error(HANDLE_NOT_FOUND_MESSAGE(handleId))
+                // Any other terminal token (forward-compat): surface it accurately rather than as
+                // "completed" or "not found".
+                else -> ToolResult(
+                    content = "Delegation $shortId is no longer active (${outcome.reason}). " +
+                        "Use delegation(action=\"fetch_transcript\", handle=\"$handleId\") to inspect it, " +
+                        "or start a fresh delegation with action=\"send\".",
+                    summary = "Delegation $shortId no longer active (${outcome.reason})",
+                    tokenEstimate = 30,
+                )
             }
         }
     }
@@ -1132,6 +1188,12 @@ class DelegationTool(
                 append(quoteJson(e.projectPath))
                 append(""","status":""")
                 append(quoteJson(e.status))
+                // ADVISORY busy hint (TOCTOU snapshot): `status_label` folds it into running
+                // (busy)/(idle); `busy` is the machine field (true/false/null). null → plain running.
+                append(""","status_label":""")
+                append(quoteJson(TargetStatusResolver.statusLabel(e.status, e.busy)))
+                append(""","busy":""")
+                append(e.busy?.toString() ?: "null")
                 append(""","lastOpened":""")
                 append(e.lastOpened?.toString() ?: "null")
                 append('}')
@@ -1271,17 +1333,19 @@ class DelegationTool(
                             ?: path.fileName?.toString()
                             ?: pathStr
                         // Use the shared dual-probe so picker and list_targets always agree.
-                        val targetStatus = TargetStatusResolver.dualProbeStatus(path)
+                        // Detailed variant also carries the advisory busy hint off the same Pong.
+                        val probe = TargetStatusResolver.dualProbeStatusDetailed(path)
                         val status = TargetStatusResolver.resolveTargetStatusString(
-                            exists = targetStatus != TargetStatusResolver.TargetStatus.MISSING,
-                            delegationReachable = targetStatus == TargetStatusResolver.TargetStatus.RUNNING,
-                            doorbellReachable = targetStatus == TargetStatusResolver.TargetStatus.AVAILABLE,
+                            exists = probe.status != TargetStatusResolver.TargetStatus.MISSING,
+                            delegationReachable = probe.status == TargetStatusResolver.TargetStatus.RUNNING,
+                            doorbellReachable = probe.status == TargetStatusResolver.TargetStatus.AVAILABLE,
                         )
                         RecentEntry(
                             projectPath = pathStr,
                             repoName = name,
                             status = status,
                             lastOpened = null, // RecentProjectsManagerBase doesn't expose timestamps directly
+                            busy = probe.busy,
                         )
                     } catch (e: Exception) {
                         LOG.debug("delegation list_targets: skipping malformed recent $pathStr", e)

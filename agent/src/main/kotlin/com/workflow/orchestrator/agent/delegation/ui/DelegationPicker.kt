@@ -15,6 +15,8 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextArea
+import com.workflow.orchestrator.agent.delegation.DelegationOutboundService
 import com.workflow.orchestrator.agent.delegation.AutoLaunchOutcome
 import com.workflow.orchestrator.agent.delegation.AutoLaunchPoller
 import com.workflow.orchestrator.agent.delegation.DefaultProcessSpawner
@@ -82,6 +84,15 @@ data class PickerEntry(
 class DelegationPicker(
     private val project: Project,
     private val suggestedRepo: String?,
+    /**
+     * The task text being delegated.  Shown as a read-only truncated preview so
+     * the user understands *what* is being sent before they choose a target.
+     *
+     * Defaults to `""` so existing test call-sites (pickTargetOverride lambdas,
+     * reflective construction in [DialogModalityContractTest]) keep compiling
+     * without passing this argument.
+     */
+    private val request: String = "",
     private val launcherResolver: LauncherResolver = LauncherResolver(),
     private val toolboxFlavorReader: ToolboxFlavorReader = ToolboxFlavorReader(),
     private val processSpawner: ProcessSpawner = DefaultProcessSpawner,
@@ -157,6 +168,16 @@ class DelegationPicker(
         addActionListener { onRetryProbe() }
     }
 
+    /**
+     * Per-selection explainer that updates in [list]'s selection listener.
+     * Starts empty; updated by [DelegationPickerExplainer.explainerFor] on every
+     * selection change so the user knows what "Delegate" will do for each row.
+     */
+    private val explainerLabel = JBLabel("").apply {
+        foreground = StatusColors.SECONDARY_TEXT
+        border = BorderFactory.createEmptyBorder(4, 0, 2, 0)
+    }
+
     // ---- DialogWrapper button actions --------------------------------------
 
     private var launchAndDelegateAction: Action? = null
@@ -184,8 +205,11 @@ class DelegationPicker(
                 .firstOrNull { !it.isHeader && it.displayName.contains(hint, ignoreCase = true) }
             if (match != null) list.setSelectedValue(match, true)
         }
-        // Keep the Launch & Delegate button state in sync with the selection.
-        list.addListSelectionListener { updateLaunchButtonState() }
+        // Keep the Launch & Delegate button state and per-selection explainer in sync.
+        list.addListSelectionListener {
+            updateLaunchButtonState()
+            updateExplainerLabel()
+        }
     }
 
     override fun dispose() {
@@ -196,17 +220,50 @@ class DelegationPicker(
     override fun createCenterPanel(): JComponent {
         val panel = JPanel(BorderLayout())
 
-        // Top: friendlier hint copy + toolbox-unknown banner (rounded background panel).
-        // Per Plan 5.3 §4.3 / §4.4. Hint uses `<html>` so the two-line copy wraps cleanly.
+        // Top: (1) intent header, (2) optional task preview, (3) toolbox-unknown banner.
+        // Per Plan 5.3 §4.3 / §4.4 + enrichment spec.
         val northPanel = JPanel(java.awt.GridLayout(0, 1, 0, 6))
+
+        // (1) Intent header — explains WHAT is being sent and WHERE it runs.
         val hintLabel = JBLabel(
-            "<html>Choose where to send this task. Running targets receive it immediately; " +
-                "closed ones can be launched first.</html>"
+            "<html>Send this task to another IDE's agent. " +
+                "The task runs there under that IDE's own tool permissions — " +
+                "you can watch or take over in that window.</html>"
         ).apply {
             foreground = StatusColors.SECONDARY_TEXT
-            border = BorderFactory.createEmptyBorder(12, 0, 8, 0)
+            border = BorderFactory.createEmptyBorder(12, 0, 4, 0)
         }
         northPanel.add(hintLabel)
+
+        // (2) Task preview — only when request is non-blank.
+        // Truncated to REQUEST_PREVIEW_CHARS (280) with a total-chars suffix so a
+        // multi-KB prompt can't blow out the dialog height.
+        if (request.isNotBlank()) {
+            val taskBeingSentLabel = JBLabel("<html><b>Task being sent:</b></html>").apply {
+                border = BorderFactory.createEmptyBorder(4, 0, 2, 0)
+            }
+            northPanel.add(taskBeingSentLabel)
+
+            val totalChars = request.length
+            val truncated = if (totalChars > DelegationOutboundService.REQUEST_PREVIEW_CHARS) {
+                request.take(DelegationOutboundService.REQUEST_PREVIEW_CHARS) +
+                    "… ($totalChars chars total)"
+            } else {
+                request
+            }
+            val taskPreviewArea = JBTextArea(3, 60).apply {
+                text = truncated
+                isEditable = false
+                lineWrap = true
+                wrapStyleWord = true
+            }
+            val taskPreviewScroll = JBScrollPane(taskPreviewArea).apply {
+                // Fixed 3-row height; vertically scrollable for very wide content.
+                preferredSize = Dimension(720, taskPreviewArea.preferredSize.height.coerceAtMost(80))
+            }
+            northPanel.add(taskPreviewScroll)
+        }
+
         northPanel.add(toolboxUnknownBannerPanel)
         panel.add(northPanel, BorderLayout.NORTH)
 
@@ -215,12 +272,19 @@ class DelegationPicker(
         }
         panel.add(scrollPane, BorderLayout.CENTER)
 
-        // South: failure panel (rounded background) + retry button. Order is failure on top,
-        // retry below, both left-aligned in a vertical stack.
+        // South: (a) dynamic per-selection explainer, (b) failure panel + retry button,
+        // (c) static inbound reminder — always visible.
         val southPanel = JPanel(BorderLayout()).apply {
             border = BorderFactory.createEmptyBorder(8, 0, 0, 0)
         }
-        southPanel.add(launchFailurePanel, BorderLayout.NORTH)
+
+        // (a) Dynamic explainer — updates in the selection listener via updateExplainerLabel().
+        val explainerRow = JPanel(BorderLayout()).apply { isOpaque = false }
+        explainerRow.add(explainerLabel, BorderLayout.CENTER)
+        southPanel.add(explainerRow, BorderLayout.NORTH)
+
+        // (b) + (c) Failure panel + retry button + inbound reminder.
+        southPanel.add(launchFailurePanel, BorderLayout.CENTER)
         // Plan 5.4 — Sticky footer reminder. The picker shows everything-not-running
         // as "closed" regardless of whether the IDE is actually off, on a different
         // project, or just has inbound disabled. This footer tells the user up-front
@@ -285,6 +349,16 @@ class DelegationPicker(
         val sel = list.selectedValue
         val enabled = sel != null && !sel.isHeader && sel.status == PickerEntry.Status.CLOSED
         launchAndDelegateAction?.isEnabled = enabled
+    }
+
+    /**
+     * Updates [explainerLabel] text based on the currently-selected [PickerEntry].
+     * Delegates to [DelegationPickerExplainer.explainerFor] so the text mapping is
+     * pure and independently testable.
+     */
+    private fun updateExplainerLabel() {
+        val sel = list.selectedValue
+        explainerLabel.text = "<html>${DelegationPickerExplainer.explainerFor(sel)}</html>"
     }
 
     /** Shows a non-modal red inline label below the row list. Also reveals Retry button. */

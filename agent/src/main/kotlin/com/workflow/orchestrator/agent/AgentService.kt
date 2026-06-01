@@ -3293,12 +3293,7 @@ class AgentService(
                 task = request,
                 sessionId = sid,
                 delegationMetadata = delegationMetadata,
-                uiMessageOverride = com.workflow.orchestrator.agent.session.UiMessage(
-                    ts = System.currentTimeMillis(),
-                    type = com.workflow.orchestrator.agent.session.UiMessageType.SAY,
-                    say = com.workflow.orchestrator.agent.session.UiSay.USER_MESSAGE,
-                    text = delegatedIncomingTaskText(delegationMetadata, request),
-                ),
+                uiMessageOverride = delegatedIncomingUiMessageOverride(delegationMetadata, request),
                 // Forward EVERY field of the bundle — parity-locked by SessionUiCallbacksParityTest.
                 onStreamChunk = callbacks.onStreamChunk,
                 onToolCall = callbacks.onToolCall,
@@ -3306,6 +3301,9 @@ class AgentService(
                 // generic completion card) with the socket result delivery. loopResultDeferred +
                 // onResult below are UNCHANGED — the result card is still the single terminal card.
                 onComplete = { result ->
+                    // Orphan-cancel: mark the channel terminal BEFORE result delivery / socket
+                    // teardown, so a normal completion-close is not misread as an orphaning drop.
+                    inbound.markTerminal(sid)
                     callbacks.onComplete(result)
                     loopResultDeferred.complete(result)
                 },
@@ -3339,6 +3337,10 @@ class AgentService(
             inbound.stopIfTransientAndIdle(activeDelegatedSessions.decrementAndGet())
             throw e
         }
+        // Orphan-cancel: attach the loop Job to the inbound channel so a CancelTask (or a
+        // non-terminal socket EOF) from IDE-A can cancel it. The job did not exist at
+        // registerSessionChannel time — wire it the instant executeTask returns it.
+        inbound.attachJob(sid, job)
         onJobCreated?.invoke(job)
 
         cs.launch(Dispatchers.IO) {
@@ -3464,6 +3466,8 @@ class AgentService(
                 onToolCall = callbacks.onToolCall,
                 // #1: chain controller's delegated finalize with socket result delivery (unchanged).
                 onComplete = { result ->
+                    // Orphan-cancel: mark terminal before result delivery / socket teardown.
+                    inbound.markTerminal(sessionId)
                     callbacks.onComplete(result)
                     loopResultDeferred.complete(result)
                 },
@@ -3508,6 +3512,8 @@ class AgentService(
                     "(locked by another instance, missing on disk, or no conversation history)"
             )
         }
+        // Orphan-cancel: attach the resumed loop Job so a CancelTask / non-terminal EOF cancels it.
+        inbound.attachJob(sessionId, job)
         onJobCreated?.invoke(job)
 
         cs.launch(Dispatchers.IO) {
@@ -3786,13 +3792,37 @@ class AgentService(
          * persisted `uiMessageOverride` and the live bubble that
          * [com.workflow.orchestrator.agent.ui.AgentController.runDelegatedNow] pushes
          * MUST use this exact text so the live render and the history render match.
-         * Uses the delegator's REPO NAME — never "IDE-A"/"IDE-B".
+         *
+         * The old "[⬇ Delegated task · from {repo}]" text prefix was DROPPED — the
+         * delegation is now conveyed by the per-bubble tint + accent stripe + the
+         * "delegated · {repo}" pill (which carries the repo name), so the prefix was
+         * redundant. This returns just the verbatim task text. The [metadata] param is
+         * retained for signature stability and so callers stamp the delegated flag/repo
+         * onto the UiMessage themselves (see [delegatedIncomingUiMessageOverride]).
          */
         fun delegatedIncomingTaskText(
+            @Suppress("UNUSED_PARAMETER") metadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
+            request: String,
+        ): String = request
+
+        /**
+         * The persisted leg-a USER_MESSAGE for a delegated session — carries the
+         * `delegated`/`delegatorRepo` flags so reopening the session from history
+         * renders the delegated pill + tint on the opening bubble (matching the live
+         * render produced by `AgentCefPanel.startSessionDelegated`).
+         */
+        fun delegatedIncomingUiMessageOverride(
             metadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
             request: String,
-        ): String =
-            "[⬇ Delegated task · from ${metadata.delegatorRepo}]\n\n$request"
+        ): com.workflow.orchestrator.agent.session.UiMessage =
+            com.workflow.orchestrator.agent.session.UiMessage(
+                ts = System.currentTimeMillis(),
+                type = com.workflow.orchestrator.agent.session.UiMessageType.SAY,
+                say = com.workflow.orchestrator.agent.session.UiSay.USER_MESSAGE,
+                text = delegatedIncomingTaskText(metadata, request),
+                delegated = true,
+                delegatorRepo = metadata.delegatorRepo,
+            )
 
         fun mapLoopResultToDelegationResult(
             loopResult: LoopResult,

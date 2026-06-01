@@ -108,6 +108,34 @@ class DelegationSendToolContinueWithTest {
     }
 
     @Test
+    fun `delegation send-continuation to a busy target returns retryable DelegationRejected not Expired`() = runBlocking {
+        // Fix B (.23 #5): ide_b_busy on a continuation is a TRANSIENT, RETRYABLE rejection — the handle
+        // is fine, the target is just occupied. It must surface as DelegationRejected, NOT DelegationExpired
+        // (which means the handle is gone/invalid).
+        val outbound = mockk<DelegationOutboundService>(relaxed = true)
+        coEvery {
+            outbound.sendContinuation(any(), any(), any())
+        } throws DelegationException.Rejected("ide_b_busy: agent tab is running another task; could not resume")
+
+        val project = makeProject(outbound)
+        val tool = DelegationTool()
+        val params: JsonObject = buildJsonObject {
+            put("action", JsonPrimitive("send"))
+            put("handle", JsonPrimitive("h-busy"))
+            put("request", JsonPrimitive("anything"))
+        }
+        val result = tool.execute(params, project)
+
+        assertTrue(result.isError)
+        val text = result.content + " " + result.summary
+        assertTrue(text.contains("DelegationRejected"), "Expected 'DelegationRejected' in: $text")
+        assertFalse(text.contains("DelegationExpired"), "Must NOT be DelegationExpired (handle is still valid): $text")
+        assertTrue(text.contains("busy", ignoreCase = true), "Should explain the target is busy: $text")
+        assertTrue(text.contains("retry", ignoreCase = true) || text.contains("still valid", ignoreCase = true),
+            "Should signal it's retryable / handle still valid: $text")
+    }
+
+    @Test
     fun `delegation send-continuation on an unknown handle returns DelegationHandleNotFound`() = runBlocking {
         // Fix (2026-06-01): a truly-unknown/pruned handle is now DelegationHandleNotFound — the same
         // error TYPE status/answer/wait/fetch_transcript surface — NOT DelegationExpired.

@@ -175,6 +175,110 @@ class DelegationListTargetsToolTest {
         assertEquals(0, countDiscovered, "discovered duplicate should be filtered out")
     }
 
+    // ── advisory busy hint: status_label + machine busy field (feedback .23 #2) ──
+
+    @Test
+    fun `running target with busy true renders running (busy) label and busy true field`() = runBlocking {
+        val project = mockk<Project>(relaxed = true)
+        every { project.basePath } returns "/proj"
+
+        val tool = DelegationTool(
+            recentsProvider = {
+                listOf(
+                    DelegationTool.RecentEntry(
+                        projectPath = "/repo/busy",
+                        repoName = "busy-app",
+                        status = "running",
+                        lastOpened = null,
+                        busy = true,
+                    )
+                )
+            },
+            discoveredProvider = { emptyList() },
+        )
+        val result = tool.execute(listTargetsParams(), project)
+        assertFalse(result.isError)
+        assertTrue(result.summary.contains("\"status_label\":\"running (busy)\""), result.summary)
+        assertTrue(result.summary.contains("\"busy\":true"), result.summary)
+    }
+
+    @Test
+    fun `running target with busy false renders running (idle) label and busy false field`() = runBlocking {
+        val project = mockk<Project>(relaxed = true)
+        every { project.basePath } returns "/proj"
+
+        val tool = DelegationTool(
+            recentsProvider = {
+                listOf(
+                    DelegationTool.RecentEntry(
+                        projectPath = "/repo/idle",
+                        repoName = "idle-app",
+                        status = "running",
+                        lastOpened = null,
+                        busy = false,
+                    )
+                )
+            },
+            discoveredProvider = { emptyList() },
+        )
+        val result = tool.execute(listTargetsParams(), project)
+        assertFalse(result.isError)
+        assertTrue(result.summary.contains("\"status_label\":\"running (idle)\""), result.summary)
+        assertTrue(result.summary.contains("\"busy\":false"), result.summary)
+    }
+
+    @Test
+    fun `running target with null busy renders plain running label and busy null (old peer)`() = runBlocking {
+        val project = mockk<Project>(relaxed = true)
+        every { project.basePath } returns "/proj"
+
+        val tool = DelegationTool(
+            recentsProvider = {
+                listOf(
+                    DelegationTool.RecentEntry(
+                        projectPath = "/repo/legacy",
+                        repoName = "legacy-app",
+                        status = "running",
+                        lastOpened = null,
+                        busy = null,
+                    )
+                )
+            },
+            discoveredProvider = { emptyList() },
+        )
+        val result = tool.execute(listTargetsParams(), project)
+        assertFalse(result.isError)
+        assertTrue(result.summary.contains("\"status_label\":\"running\""), result.summary)
+        // The plain label must NOT be the busy/idle variant.
+        assertFalse(result.summary.contains("running (busy)"))
+        assertFalse(result.summary.contains("running (idle)"))
+        assertTrue(result.summary.contains("\"busy\":null"), result.summary)
+    }
+
+    @Test
+    fun `non-running statuses keep their plain label regardless of busy`() = runBlocking {
+        val project = mockk<Project>(relaxed = true)
+        every { project.basePath } returns "/proj"
+
+        val tool = DelegationTool(
+            recentsProvider = {
+                listOf(
+                    DelegationTool.RecentEntry(
+                        projectPath = "/repo/avail",
+                        repoName = "avail-app",
+                        status = "available",
+                        lastOpened = null,
+                        busy = null,
+                    )
+                )
+            },
+            discoveredProvider = { emptyList() },
+        )
+        val result = tool.execute(listTargetsParams(), project)
+        assertFalse(result.isError)
+        assertTrue(result.summary.contains("\"status_label\":\"available\""), result.summary)
+    }
+
     @Test
     fun `null lastOpened is serialised as null not the string null`() = runBlocking {
         val project = mockk<Project>(relaxed = true)

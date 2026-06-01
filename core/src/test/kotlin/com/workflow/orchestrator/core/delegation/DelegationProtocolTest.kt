@@ -31,6 +31,43 @@ class DelegationProtocolTest {
     }
 
     @Test
+    fun `Pong busy round-trips true false and null`() {
+        val busyT = DelegationMessage.Pong(projectPath = "/p", busy = true)
+        val busyF = DelegationMessage.Pong(projectPath = "/p", busy = false)
+        val busyN = DelegationMessage.Pong(projectPath = "/p", busy = null)
+        val t = json.decodeFromString<DelegationMessage>(json.encodeToString<DelegationMessage>(busyT)) as DelegationMessage.Pong
+        val f = json.decodeFromString<DelegationMessage>(json.encodeToString<DelegationMessage>(busyF)) as DelegationMessage.Pong
+        val n = json.decodeFromString<DelegationMessage>(json.encodeToString<DelegationMessage>(busyN)) as DelegationMessage.Pong
+        assertEquals(true, t.busy)
+        assertEquals(false, f.busy)
+        assertNull(n.busy)
+    }
+
+    @Test
+    fun `Pong busy defaults to null`() {
+        val pong = DelegationMessage.Pong(projectPath = "/p")
+        assertNull(pong.busy)
+        val decoded = json.decodeFromString<DelegationMessage>(json.encodeToString<DelegationMessage>(pong)) as DelegationMessage.Pong
+        assertNull(decoded.busy)
+    }
+
+    @Test
+    fun `old-peer Pong without the busy field decodes with busy null`() {
+        // Forward/backward-compat: an OLD IDE-B omits the busy field entirely on the wire.
+        // ignoreUnknownKeys + the default null must decode it back to busy=null (UNKNOWN).
+        // Build the wire form from a real encode (so the polymorphic "type" discriminator is
+        // correct) then strip the busy field to simulate a pre-this-field peer.
+        val withBusy = json.encodeToString<DelegationMessage>(
+            DelegationMessage.Pong(projectPath = "/legacy/peer", busy = false),
+        )
+        val oldPeerWire = withBusy.replace(",\"busy\":false", "").replace("\"busy\":false,", "")
+        assertFalse(oldPeerWire.contains("busy"), "precondition: busy field stripped from wire")
+        val decoded = json.decodeFromString<DelegationMessage>(oldPeerWire) as DelegationMessage.Pong
+        assertEquals("/legacy/peer", decoded.projectPath)
+        assertNull(decoded.busy, "absent busy field must decode to null (unknown / old peer)")
+    }
+
+    @Test
     fun `Connect carries briefing and delegator identity`() {
         val msg = DelegationMessage.Connect(
             delegatorIde = "ide-1234",
@@ -244,6 +281,57 @@ class DelegationProtocolTest {
             as DelegationMessage.UserTurn
         assertEquals("sess-x", decoded.sessionId)
         assertEquals("Please also add a Dockerfile.", decoded.text)
+    }
+
+    @Test
+    fun `CancelTask round-trips with sessionId and reason`() {
+        val msg: DelegationMessage = DelegationMessage.CancelTask(
+            sessionId = "sess-b-uuid",
+            reason = "delegator_canceled",
+        )
+        val encoded = json.encodeToString(msg)
+        assertTrue(encoded.contains("CancelTask"), "type discriminator must name the subclass")
+        val decoded = json.decodeFromString<DelegationMessage>(encoded) as DelegationMessage.CancelTask
+        assertEquals("sess-b-uuid", decoded.sessionId)
+        assertEquals("delegator_canceled", decoded.reason)
+    }
+
+    @Test
+    fun `CancelTask reason defaults to null`() {
+        val msg: DelegationMessage = DelegationMessage.CancelTask(sessionId = "sess-x")
+        val decoded = json.decodeFromString<DelegationMessage>(json.encodeToString(msg))
+            as DelegationMessage.CancelTask
+        assertEquals("sess-x", decoded.sessionId)
+        assertNull(decoded.reason)
+    }
+
+    @Test
+    fun `CancelTask round-trips through length-prefixed framing`() {
+        val out = ByteArrayOutputStream()
+        val msg: DelegationMessage = DelegationMessage.CancelTask(sessionId = "sess-frame", reason = "cancel")
+        DelegationFraming.writeFramed(Channels.newChannel(out), msg, json)
+        val bytes = out.toByteArray()
+        val readBack = DelegationFraming.readFramed(Channels.newChannel(ByteArrayInputStream(bytes)), json)
+        assertEquals(msg, readBack)
+    }
+
+    @Test
+    fun `adding CancelTask does not break decode of an unknown future subclass`() {
+        // Forward-compat: a peer that predates a hypothetical NEWER subclass must not crash on it.
+        // We can't add a real new subclass here, but we CAN assert the decode config the contract
+        // relies on (ignoreUnknownKeys) tolerates extra fields on a CancelTask payload — the same
+        // mechanism that lets an OLD IDE-B degrade gracefully when it sees a CancelTask it knows,
+        // and lets either side tolerate a future field appended to CancelTask.
+        val encoded = json.encodeToString<DelegationMessage>(
+            DelegationMessage.CancelTask(sessionId = "sess-fwd", reason = "x")
+        )
+        val withExtra = encoded.replace(
+            "\"sessionId\":\"sess-fwd\"",
+            "\"sessionId\":\"sess-fwd\",\"futureField\":123",
+        )
+        val decoded = json.decodeFromString<DelegationMessage>(withExtra)
+        assertTrue(decoded is DelegationMessage.CancelTask)
+        assertEquals("sess-fwd", (decoded as DelegationMessage.CancelTask).sessionId)
     }
 
     @Test

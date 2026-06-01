@@ -490,6 +490,17 @@ export interface UiMessage {
    */
   analyzedImageBadge?: boolean;
   /**
+   * Cross-IDE delegation (IDE-B side) — true for EVERY message of a delegated
+   * session (the incoming leg-a user task, plus all assistant/tool turns). The
+   * bubble renders a distinct background tint, a thin left accent stripe, and a
+   * small "delegated · {delegatorRepo}" pill. Per-message (Option A) rather than
+   * derived from the session flag, because `chatStore.startSession` resets the
+   * session-level `activeSessionDelegated` and the push ordering is timing-fragile.
+   */
+  delegated?: boolean;
+  /** Repo name of the delegating IDE — rendered in the delegated pill. Never an "ide-$pid" id. */
+  delegatorRepo?: string;
+  /**
    * Multimodal-agent — image attachments the user added to this turn. The
    * USER_MESSAGE bubble renders these as thumbnails via
    * `<img src="http://workflow-agent/attachments/{sha256}">` (served by the

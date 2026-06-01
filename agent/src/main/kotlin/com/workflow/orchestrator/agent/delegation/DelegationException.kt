@@ -4,15 +4,21 @@ sealed class DelegationException(message: String) : RuntimeException(message) {
     object UserCanceledPicker : DelegationException("user_canceled_picker")
     object TargetNotReachable : DelegationException("target_not_reachable")
     object LimitReached : DelegationException("delegation_limit_reached")
+    /**
+     * The target IDE declined the request. **RETRYABLE** — the handle (if any) is still valid; the
+     * target is simply unwilling or unable right now. Covers both fresh-send declines and the
+     * TRANSIENT continuation case `ide_b_busy` (target alive but its agent tab is occupied — retry
+     * shortly) as well as `declined_timeout` and consent declines. Mapped uniformly across the
+     * fresh-send and continuation paths so busy is always `Rejected`, never [Expired].
+     */
     data class Rejected(val rejectReason: String?) :
         DelegationException("rejected: ${rejectReason ?: "no_reason"}")
     /**
-     * Reserved scaffolding for CHANNEL_RESUME / continue_with / TTL on handles.
-     *
-     * TODO Plan 4: thrown when a re-association attempt determines the handle's
-     * session has reached a terminal state since the channel was last alive.
-     * v1 keeps the type but never throws it — kept here so the rest of the
-     * exception hierarchy doesn't change shape when Plan 4 lands.
+     * The handle is GONE / no longer usable — distinct from a transient [Rejected]. Thrown when a
+     * re-association / continuation attempt determines the handle's remote session is genuinely gone:
+     * `session_closed` (terminal close), `session_not_found` (pruned / never seen),
+     * `ide_b_not_running` (target IDE down), `resume_failed` (session locked/missing on disk), and
+     * similar terminal-gone reasons. A BUSY target is NOT expired — it maps to [Rejected] (retryable).
      */
     data class Expired(val expireReason: String?) :
         DelegationException("expired: ${expireReason ?: "no_reason"}")

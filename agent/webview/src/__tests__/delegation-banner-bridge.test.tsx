@@ -54,16 +54,20 @@ describe('_setActiveSessionDelegated bridge', () => {
     expect(useChatStore.getState().activeSessionDelegated).toEqual(META);
   });
 
-  it('renders the banner with the delegator IDE + repo once the bridge fires', () => {
-    render(<DelegationBanner />);
-    expect(screen.queryByText(/Delegated by/)).toBeNull();
+  it('renders the banner with the delegator REPO once the bridge fires (no IDE id)', () => {
+    const { container } = render(<DelegationBanner />);
+    expect(screen.queryByText(/Delegated from/)).toBeNull();
 
     act(() => {
       window._setActiveSessionDelegated!(JSON.stringify(META));
     });
 
-    expect(screen.getByText(/Delegated by/)).toBeTruthy();
-    expect(screen.getByText('IntelliJ IDEA')).toBeTruthy();
+    // Repo-named: "Delegated from {repo}" — never the IDE process id / name.
+    expect(screen.getByText(/Delegated from/)).toBeTruthy();
     expect(screen.getByText('team/backend-service')).toBeTruthy();
+    // The delegator IDE identifier is no longer rendered (#1 fix).
+    expect(screen.queryByText('IntelliJ IDEA')).toBeNull();
+    expect(container.textContent).not.toMatch(/Delegated by/);
+    expect(container.textContent).not.toMatch(/ide-\d+/i);
   });
 });

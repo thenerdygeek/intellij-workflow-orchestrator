@@ -102,13 +102,16 @@ class BusyDelegationTopBarTest {
             src.contains("ide_b_busy: agent tab is busy running"),
             "the composer must lead with ide_b_busy and name the in-flight session",
         )
+        // The message must convey that a takeover/consent prompt exists and a human must accept.
+        // "not accepted within" appears in the new wording:
+        //   "a takeover prompt is waiting for the user … it auto-declines if not accepted within ${N}s"
         assertTrue(
-            Regex("""did not accept the takeover""").containsMatchIn(src),
-            "the reason must explain the user did not accept the takeover in time",
+            src.contains("not accepted within") || src.contains("accept the takeover"),
+            "the reason must explain a takeover prompt waits for a human and auto-declines if not accepted in time",
         )
         assertTrue(
             src.contains("ACCEPT_WINDOW_MS"),
-            "the reason must use the real ACCEPT_WINDOW_MS, not a hardcoded value",
+            "the reason must reference ACCEPT_WINDOW_MS (the default constant for the window)",
         )
     }
 

@@ -38,7 +38,9 @@ class AcceptDelegationDialog(
     override fun createCenterPanel(): JComponent = panel {
         group("Incoming delegation from ${connect.delegatorRepo}") {
             row {
-                label("Delegator IDE: ${connect.delegatorIde}")
+                // Show the delegator's REPO NAME — never the raw "ide-$pid" process
+                // identifier, which is meaningless to the user.
+                label("From repository: ${connect.delegatorRepo}")
             }
             row { label("Request:") }
             row {

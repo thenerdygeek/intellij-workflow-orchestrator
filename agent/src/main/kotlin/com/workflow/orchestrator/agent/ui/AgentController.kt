@@ -47,6 +47,7 @@ import com.workflow.orchestrator.agent.tools.background.BackgroundPool
 import com.workflow.orchestrator.core.events.BackgroundProcessSnapshotDto
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.settings.effectiveAcceptWindowMs
 import com.workflow.orchestrator.core.util.PathLinkResolver
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.*
@@ -3335,6 +3336,15 @@ class AgentController(
      * HistoryItem. Any field that can't be resolved is left null; the inbound reason composer
      * falls back to the generic wording when the descriptor (or a field) is absent.
      */
+    /**
+     * ADVISORY busy snapshot for the doorbell liveness probe. Returns true iff an agent loop is
+     * ACTIVELY RUNNING right now — the SAME verdict the inbound busy gate uses ([decideIncomingBusy]
+     * over `currentJob?.isActive`). A merely loaded-but-idle session is NOT busy. Point-in-time
+     * (TOCTOU) — the caller surfaces it as a hint only. Cheap + side-effect-free so it is safe on
+     * the doorbell's liveness path.
+     */
+    fun isAgentBusy(): Boolean = currentJob?.isActive == true
+
     private fun currentBusyInfo(): BusyInfo {
         val sid = currentSessionId
         val delegated = runCatching { service.currentSessionState()?.delegated }.getOrNull()
@@ -3390,20 +3400,26 @@ class AgentController(
             }
             com.workflow.orchestrator.agent.delegation.DelegatedSurface.QUEUE_INCOMING -> {
                 // No background execution: surface a top-bar prompt and wait for the human to
-                // click Start within ACCEPT_WINDOW_MS. The deferred is completed by
+                // click Start within the configured accept window. The deferred is completed by
                 // startIncomingDelegation(key); the window is bounded by withTimeoutOrNull.
+                // Read the configured window from settings so it is user-adjustable.
+                // ACCEPT_WINDOW_MS is the default value and a reference sentinel — the runtime
+                // value comes from effectiveAcceptWindowMs() (clamped to [10, 59] s to stay
+                // below IDE-A's 60 s connectAndAwaitAccept timeout).
+                val acceptWindowMs = com.workflow.orchestrator.core.settings.PluginSettings
+                    .getInstance(project).state.effectiveAcceptWindowMs()
                 val key = metadata.delegatorSessionId
-                val deadlineEpochMs = System.currentTimeMillis() + ACCEPT_WINDOW_MS
+                val deadlineEpochMs = System.currentTimeMillis() + acceptWindowMs
                 val startGate = CompletableDeferred<Boolean>()
                 pendingIncomingStarts[key] = startGate
                 LOG.info(
                     "Incoming delegation from ${metadata.delegatorRepo} arrived while busy — " +
-                        "surfacing top-bar prompt (key=$key, ${ACCEPT_WINDOW_MS}ms window)"
+                        "surfacing top-bar prompt (key=$key, ${acceptWindowMs}ms window)"
                 )
                 pushIncomingDelegation(key, metadata.delegatorRepo, deadlineEpochMs)
                 try {
                     // I4: timing core lives in the pure, unit-tested awaitIncomingStart helper.
-                    val started = awaitIncomingStart(startGate, ACCEPT_WINDOW_MS)
+                    val started = awaitIncomingStart(startGate, acceptWindowMs)
                     if (started) {
                         // BUG #3: the human clicked Start → this runs AS A NEW CHAT and will assign
                         // currentJob later on the EDT coroutine, so it must hold the reservation just
@@ -3506,9 +3522,12 @@ class AgentController(
         viewedSessionId = sid
         pushActiveSessionDelegated(metadata)
         // Leg (a): resetForNewChat() already cleared the panel; push the task as the opening
-        // bubble using the delegator's REPO NAME via the shared builder.
-        dashboard.startSession(
-            com.workflow.orchestrator.agent.AgentService.delegatedIncomingTaskText(metadata, request)
+        // bubble flagged delegated AT CREATION so it (and every subsequent assistant/tool
+        // bubble for the session's lifetime) renders the delegated tint + accent stripe +
+        // "delegated · {repo}" pill. The repo NAME — never the raw "ide-$pid" — is the pill.
+        dashboard.startSessionDelegated(
+            com.workflow.orchestrator.agent.AgentService.delegatedIncomingTaskText(metadata, request),
+            metadata.delegatorRepo,
         )
         onSessionStarted?.invoke(sid)
     }

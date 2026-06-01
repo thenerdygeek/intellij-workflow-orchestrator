@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.delegation
 
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.delegation.DelegationMessage
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.unmockkAll
 import kotlinx.coroutines.CompletableDeferred
@@ -40,8 +41,20 @@ class DelegationWaitTest {
 
     private fun seedChannel(svc: DelegationOutboundService, handleId: String) {
         val f = DelegationOutboundService::class.java.getDeclaredField("activeChannels").apply { isAccessible = true }
+        // The mock must emulate a BLOCKING SocketChannel write: a relaxed mock's write() returns 0,
+        // which makes DelegationFraming.writeFramed's `while (buf.hasRemaining()) channel.write(buf)`
+        // spin forever (and MockK records every invocation → OOM). Since close() now best-effort
+        // writes a CancelTask frame on a live channel, the mock must consume the buffer like a real
+        // blocking channel does.
+        val ch = mockk<SocketChannel>(relaxed = true)
+        every { ch.write(any<java.nio.ByteBuffer>()) } answers {
+            val buf = firstArg<java.nio.ByteBuffer>()
+            val n = buf.remaining()
+            buf.position(buf.limit())
+            n
+        }
         @Suppress("UNCHECKED_CAST")
-        (f.get(svc) as java.util.concurrent.ConcurrentHashMap<String, SocketChannel>)[handleId] = mockk(relaxed = true)
+        (f.get(svc) as java.util.concurrent.ConcurrentHashMap<String, SocketChannel>)[handleId] = ch
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -78,6 +91,56 @@ class DelegationWaitTest {
         val outcome = runBlocking { svc.awaitResult("h", 60L) }
         val na = assertInstanceOf(DelegationWaitOutcome.NotActive::class.java, outcome)
         assertEquals("already_completed", na.reason)
+    }
+
+    @Test
+    fun `awaitResult returns NotActive(already_completed) when the retained terminal state is COMPLETED`() {
+        val svc = newService()
+        seedMap(svc, "handleToBSessionId", "h", "sess-b")
+        seedMap(svc, "handleToTargetPath", "h", "/x")
+        // The reader records the real terminal Result into handleToLastSeenState BEFORE close().
+        seedMap(svc, "handleToLastSeenState", "h", "COMPLETED")
+        svc.close("h")
+        val outcome = runBlocking { svc.awaitResult("h", 60L) }
+        val na = assertInstanceOf(DelegationWaitOutcome.NotActive::class.java, outcome)
+        assertEquals("already_completed", na.reason)
+    }
+
+    @Test
+    fun `awaitResult returns NotActive(already_canceled) for a CANCELED retained handle`() {
+        val svc = newService()
+        // A live-running channel that is intentionally closed → close() seeds lastState=CANCELED.
+        seedChannel(svc, "h")
+        seedMap(svc, "handleToBSessionId", "h", "sess-b")
+        seedMap(svc, "handleToTargetPath", "h", "/x")
+        svc.close("h")
+        val outcome = runBlocking { svc.awaitResult("h", 60L) }
+        val na = assertInstanceOf(DelegationWaitOutcome.NotActive::class.java, outcome)
+        assertEquals("already_canceled", na.reason)
+    }
+
+    @Test
+    fun `awaitResult returns NotActive(already_failed) for a FAILED retained handle`() {
+        val svc = newService()
+        seedMap(svc, "handleToBSessionId", "h", "sess-b")
+        seedMap(svc, "handleToTargetPath", "h", "/x")
+        seedMap(svc, "handleToLastSeenState", "h", "FAILED")
+        svc.close("h")
+        val outcome = runBlocking { svc.awaitResult("h", 60L) }
+        val na = assertInstanceOf(DelegationWaitOutcome.NotActive::class.java, outcome)
+        assertEquals("already_failed", na.reason)
+    }
+
+    @Test
+    fun `awaitResult returns NotActive(already_rejected) for a REJECTED retained handle`() {
+        val svc = newService()
+        seedMap(svc, "handleToBSessionId", "h", "sess-b")
+        seedMap(svc, "handleToTargetPath", "h", "/x")
+        seedMap(svc, "handleToLastSeenState", "h", "REJECTED")
+        svc.close("h")
+        val outcome = runBlocking { svc.awaitResult("h", 60L) }
+        val na = assertInstanceOf(DelegationWaitOutcome.NotActive::class.java, outcome)
+        assertEquals("already_rejected", na.reason)
     }
 
     @Test

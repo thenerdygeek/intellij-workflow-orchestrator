@@ -131,6 +131,60 @@ class ChannelResumeTest {
         assertEquals("AWAITING_ANSWER", outcome.currentState)
     }
 
+    // ── Fix B (.23 #5): continuation busy → Rejected (retryable), terminal-gone → Expired ──
+
+    @Test
+    fun `sendContinuation to a busy target throws Rejected not Expired`(@TempDir tmp: Path) {
+        val project = mockk<Project>(relaxed = true)
+        every { project.messageBus } returns mockk(relaxed = true)
+        val cs = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob())
+        val service = DelegationOutboundService(project, cs)
+
+        // IDE-B is alive but its agent tab is occupied → SessionClosed(ide_b_busy …).
+        service.testResumeProbe = { _, _ ->
+            DelegationMessage.SessionClosed(
+                sessionId = "sess-busy",
+                closeReason = "ide_b_busy: agent tab is running another task; could not resume",
+                summary = null,
+            )
+        }
+        injectPersistedHandle(service, "h-busy", "sess-busy")
+
+        val ex = assertThrows(DelegationException.Rejected::class.java) {
+            kotlinx.coroutines.runBlocking {
+                service.sendContinuation(handleId = "h-busy", request = "follow up", delegatorSessionId = "sess-a")
+            }
+        }
+        assertTrue(ex.rejectReason?.contains("ide_b_busy") == true,
+            "Rejected reason must carry ide_b_busy, got: ${ex.rejectReason}")
+    }
+
+    @Test
+    fun `sendContinuation to a genuinely-closed session throws Expired not Rejected`(@TempDir tmp: Path) {
+        val project = mockk<Project>(relaxed = true)
+        every { project.messageBus } returns mockk(relaxed = true)
+        val cs = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob())
+        val service = DelegationOutboundService(project, cs)
+
+        // Genuinely-gone terminal close (NOT busy) → still Expired (handle no longer usable).
+        service.testResumeProbe = { _, _ ->
+            DelegationMessage.SessionClosed(
+                sessionId = "sess-done",
+                closeReason = "completed",
+                summary = "All work done.",
+            )
+        }
+        injectPersistedHandle(service, "h-done", "sess-done")
+
+        val ex = assertThrows(DelegationException.Expired::class.java) {
+            kotlinx.coroutines.runBlocking {
+                service.sendContinuation(handleId = "h-done", request = "follow up", delegatorSessionId = "sess-a")
+            }
+        }
+        assertTrue(ex.expireReason?.contains("session_closed") == true,
+            "Expired reason must carry session_closed for a terminal close, got: ${ex.expireReason}")
+    }
+
     private fun injectPersistedHandle(service: DelegationOutboundService, handleId: String, bSessionId: String) {
         // Use reflection to seed the internal maps a load would have populated.
         // attemptResume returns NotFound early if any of these are missing — seed all four.

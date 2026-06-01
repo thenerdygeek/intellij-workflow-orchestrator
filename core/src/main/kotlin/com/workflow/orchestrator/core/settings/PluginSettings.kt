@@ -417,6 +417,22 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var delegationIdleTimeoutMinutes by property(30)
 
         /**
+         * How long (seconds) the target IDE waits for the human to click Start on
+         * the busy-takeover prompt before declining an incoming delegation.
+         *
+         * Default: 55 s — matches [com.workflow.orchestrator.agent.ui.AgentController.ACCEPT_WINDOW_MS]
+         * / 1000 (55_000 ms), which is the single source of truth for the default value.
+         *
+         * Invariant: [effectiveAcceptWindowMs] must stay STRICTLY LESS than IDE-A's
+         * `connectAndAwaitAccept` acceptTimeoutMillis (60_000 ms). Values that would
+         * violate this are clamped at 59 s inside [effectiveAcceptWindowMs].
+         *
+         * Range surfaced in the settings UI: 10–600 s (operator-facing; the 59 s
+         * invariant ceiling is enforced silently at runtime by [effectiveAcceptWindowMs]).
+         */
+        var delegationAcceptWindowSeconds by property(55)
+
+        /**
          * How long (seconds) the `render_artifact` tool waits for the sandbox iframe to
          * report a render outcome before returning a Timeout. Data-heavy components (deep
          * nesting, large inline datasets, many stat computations) can legitimately exceed
@@ -523,3 +539,24 @@ fun PluginSettings.lookupPlanValidation(key: String): Boolean? {
 fun PluginSettings.clearPlanValidationCache() {
     state.bambooPlanValidationCache.clear()
 }
+
+/**
+ * Returns the effective accept-window duration in milliseconds, clamping
+ * [PluginSettings.State.delegationAcceptWindowSeconds] to the range [10, 59] seconds.
+ *
+ * **Why 59 s, not 600 s?**
+ * The UI allows up to 600 s as a convenient operator range, but the runtime
+ * MUST stay strictly below IDE-A's `connectAndAwaitAccept` acceptTimeoutMillis (60 000 ms).
+ * A value ≥ 60 s would mean IDE-B's reply could arrive after IDE-A has already timed out
+ * and torn down the accept channel. The ceiling is therefore silently clamped to 59 s.
+ *
+ * **Why 10 s minimum?**
+ * Anything below 10 s is too short for a human to read the prompt and click Start in
+ * practice; treat pathologically small values (incl. 0, negatives) as misconfiguration
+ * and raise to the 10 s floor.
+ */
+fun PluginSettings.State.effectiveAcceptWindowMs(): Long {
+    val clamped = delegationAcceptWindowSeconds.coerceIn(10, 59)
+    return clamped * 1_000L
+}
+

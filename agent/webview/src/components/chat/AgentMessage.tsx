@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
+import type { CSSProperties } from 'react';
 import { FileText } from 'lucide-react';
 import type { UiMessage, Mention, Question } from '@/bridge/types';
 import { useChatStore } from '@/stores/chatStore';
@@ -182,6 +183,21 @@ export const AgentMessage = memo(function AgentMessage({
 
   const content = message.text ?? '';
 
+  // Cross-IDE delegation (IDE-B) — EVERY message of a delegated session gets a
+  // distinct background tint + a thin left accent stripe in the established
+  // delegation accent (--badge-read-fg), plus a "delegated · {repo}" pill. The
+  // tint base differs for user (--user-bg) vs assistant (--bg) bubbles so each
+  // reads as a slightly-shifted variant of its normal background.
+  const isDelegated = message.delegated === true;
+  const delegatedStyle: CSSProperties | undefined = isDelegated
+    ? {
+        background: isUser
+          ? 'color-mix(in srgb, var(--badge-read-fg, #569cd6) 12%, var(--user-bg))'
+          : 'color-mix(in srgb, var(--badge-read-fg, #569cd6) 8%, var(--bg))',
+        borderLeft: '2px solid var(--badge-read-fg, #569cd6)',
+      }
+    : undefined;
+
   // Editor-tab fullscreen: skip avatar / "Agent" label / max-w-[85%] bubble
   // chrome and render the markdown directly. The flex chain below propagates
   // height all the way down to the artifact iframe / mermaid SVG.
@@ -212,6 +228,8 @@ export const AgentMessage = memo(function AgentMessage({
       {/* Content bubble */}
       <div
         ref={contentRef}
+        data-delegated={isDelegated ? 'true' : undefined}
+        style={delegatedStyle}
         className={cn(
           'relative max-w-[85%] rounded-lg px-4 py-3 whitespace-normal [overflow-wrap:anywhere]',
           isUser
@@ -219,6 +237,25 @@ export const AgentMessage = memo(function AgentMessage({
             : 'bg-transparent text-[var(--fg)]',
         )}
       >
+        {/* Cross-IDE delegation pill — rendered on EVERY bubble of a delegated
+            session (user's explicit choice). Copies the analyzedImageBadge pill
+            shape; tinted in the delegation accent. Always repo-named. */}
+        {isDelegated && (
+          <div
+            className="delegated-pill mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px]"
+            title={`Task delegated from ${message.delegatorRepo ?? 'another IDE'}`}
+            style={{
+              color: 'var(--badge-read-fg, #569cd6)',
+              background: 'color-mix(in srgb, var(--badge-read-fg, #569cd6) 14%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--badge-read-fg, #569cd6) 35%, transparent)',
+            }}
+            aria-label={`Delegated from ${message.delegatorRepo ?? 'another IDE'}`}
+          >
+            <span aria-hidden="true">📨</span>
+            <span>delegated · {message.delegatorRepo ?? 'another IDE'}</span>
+          </div>
+        )}
+
         {!isUser && (
           <span className="mb-1 block text-[11px] font-medium text-[var(--fg-secondary)]">
             Agent

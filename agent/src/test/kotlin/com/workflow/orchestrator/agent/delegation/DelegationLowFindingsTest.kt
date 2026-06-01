@@ -28,15 +28,24 @@ class DelegationLowFindingsTest {
         )
     }
 
-    /** Plan 1 F10: DelegationException.Expired must have a Plan-4 TODO marker. */
+    /**
+     * .23#5: DelegationException.Expired is now a real first-class error meaning the handle is
+     * GONE — distinct from a transient, retryable [DelegationException.Rejected]. A BUSY target
+     * (ide_b_busy) is retryable and must map to Rejected, NOT Expired. (Supersedes the old
+     * "Plan 4 scaffolding" marker, which is obsolete now that Expired carries a real contract.)
+     */
     @Test
-    fun `Expired exception is annotated as Plan 4 scaffolding`() {
+    fun `Expired documents it is handle-gone and busy maps to Rejected`() {
         val src = java.io.File(
             "src/main/kotlin/com/workflow/orchestrator/agent/delegation/DelegationException.kt"
         ).readText()
         assertTrue(
-            src.contains("Plan 4") && src.contains("Expired"),
-            "DelegationException.Expired must carry a Plan 4 TODO marker explaining it's scaffolding",
+            src.contains("Expired") && src.contains("Rejected"),
+            "DelegationException must define both Expired (handle-gone) and Rejected (retryable)",
+        )
+        assertTrue(
+            Regex("busy[^.]*Rejected", RegexOption.IGNORE_CASE).containsMatchIn(src),
+            "DelegationException must document that a busy target maps to Rejected (retryable), not Expired",
         )
     }
 

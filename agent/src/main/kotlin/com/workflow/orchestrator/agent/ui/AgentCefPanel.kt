@@ -1025,6 +1025,16 @@ class AgentCefPanel(
         callJs("startSession(${JsEscape.toJsString(task)})")
     }
 
+    /**
+     * Cross-IDE delegation (IDE-B leg-a): start a session whose opening user bubble
+     * AND every subsequent assistant/tool bubble render the delegated tint + left
+     * accent stripe + "delegated · {repo}" pill. [delegatorRepo] is the delegating
+     * IDE's REPO NAME — never the raw "ide-$pid" identifier.
+     */
+    fun startSessionDelegated(task: String, delegatorRepo: String) {
+        callJs("startSessionDelegated(${JsEscape.toJsString(task)}, ${JsEscape.toJsString(delegatorRepo)})")
+    }
+
     fun startSessionWithMentions(task: String, mentionsJson: String, attachmentsJson: String? = null) {
         if (!attachmentsJson.isNullOrBlank() && attachmentsJson != "[]") {
             callJs("startSessionWithMentionsAndAttachments(${JsEscape.toJsString(task)}, ${JsEscape.toJsString(mentionsJson)}, ${JsEscape.toJsString(attachmentsJson)})")

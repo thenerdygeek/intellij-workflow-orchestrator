@@ -164,6 +164,49 @@ class DelegationWaitActionTest {
         assertTrue(result.summary.contains("DelegationHandleNotFound") || result.content.contains("DelegationHandleNotFound"))
     }
 
+    // ── Fix A (.23 #3): per-terminal-state wording, NOT a blanket "already completed" ──
+
+    @Test
+    fun `wait on a canceled handle says canceled and is not an error`() = runBlocking {
+        coEvery { outbound.awaitResult("h", any()) } returns DelegationWaitOutcome.NotActive("already_canceled")
+        val result = tool.execute(waitParams("h"), project)
+        assertFalse(result.isError, "a canceled handle is a known terminal state, not a tool failure")
+        val text = result.content + " " + result.summary
+        assertTrue(text.contains("cancel", ignoreCase = true), "must say canceled: $text")
+        assertFalse(text.contains("has already completed"), "must NOT claim completion for a canceled handle")
+        // points the LLM at recovery affordances
+        assertTrue(text.contains("fetch_transcript") || text.contains("send"), "must offer a recovery action: $text")
+    }
+
+    @Test
+    fun `wait on a failed handle says failed and is not the completed wording`() = runBlocking {
+        coEvery { outbound.awaitResult("h", any()) } returns DelegationWaitOutcome.NotActive("already_failed")
+        val result = tool.execute(waitParams("h"), project)
+        assertFalse(result.isError)
+        val text = result.content + " " + result.summary
+        assertTrue(text.contains("fail", ignoreCase = true), "must say failed: $text")
+        assertFalse(text.contains("has already completed"))
+    }
+
+    @Test
+    fun `wait on a rejected handle says rejected and is not the completed wording`() = runBlocking {
+        coEvery { outbound.awaitResult("h", any()) } returns DelegationWaitOutcome.NotActive("already_rejected")
+        val result = tool.execute(waitParams("h"), project)
+        assertFalse(result.isError)
+        val text = result.content + " " + result.summary
+        assertTrue(text.contains("reject", ignoreCase = true), "must say rejected: $text")
+        assertFalse(text.contains("has already completed"))
+    }
+
+    @Test
+    fun `wait on a completed handle still says completed and points to fetch_transcript`() = runBlocking {
+        coEvery { outbound.awaitResult("h", any()) } returns DelegationWaitOutcome.NotActive("already_completed")
+        val result = tool.execute(waitParams("h"), project)
+        assertFalse(result.isError)
+        assertTrue(result.content.contains("completed"))
+        assertTrue(result.content.contains("fetch_transcript"))
+    }
+
     @Test
     fun `wait requires a handle`() = runBlocking {
         val result = tool.execute(buildJsonObject { put("action", JsonPrimitive("wait")) }, project)

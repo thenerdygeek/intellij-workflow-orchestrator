@@ -208,7 +208,7 @@ class DelegationOutboundService(
         if (openChannelCount >= MAX_CHANNELS) {
             throw DelegationException.LimitReached
         }
-        val picked = (pickTargetOverride?.invoke(suggestedRepo) ?: pickTarget(suggestedRepo))
+        val picked = (pickTargetOverride?.invoke(suggestedRepo) ?: pickTarget(request, suggestedRepo))
             ?: throw DelegationException.UserCanceledPicker
         val socketPath = DelegationPaths.socketFor(picked.path)
         val baseConnect = DelegationMessage.Connect(
@@ -621,12 +621,17 @@ class DelegationOutboundService(
      * is no longer active). If there are no remaining handles for the session,
      * [PersistentHandleStore.save] will write an empty list.
      */
-    fun close(handleId: String): Boolean {
+    fun close(handleId: String, reason: String = "delegator_closed"): Boolean {
         // Item 3: mark this as a LOCAL/intentional close so the reader's catch records CANCELED
         // (not FAILED) and suppresses the spurious ipc_read_failed nudge when the ch.close() below
         // unblocks its blocked readFramed. Consumed by the reader catch via atomic remove.
         intentionallyClosing.add(handleId)
         val sessionId: String? = handleToSessionId[handleId]
+        // Orphan-cancel signal (captured under the lock, sent just before ch.close() OUTSIDE it):
+        // when this close cancels a STILL-RUNNING delegation, tell IDE-B to cancel its agent Job
+        // instead of letting it run orphaned to completion into a dead socket. On a NORMAL
+        // post-completion close (terminal Result already recorded) we must NOT send CancelTask.
+        var cancelTaskTarget: Pair<SocketChannel, DelegationMessage.CancelTask>? = null
         val wasFound: Boolean = synchronized(this) {
             // Retain the metadata needed to serve a post-completion fetch_transcript / status
             // BEFORE we clear the live maps. Requires IDE-B's session id + project path.
@@ -657,6 +662,21 @@ class DelegationOutboundService(
                 val closingLiveRunningChannel = intentionallyClosing.contains(handleId) &&
                     activeChannels.containsKey(handleId) &&
                     !alreadyTerminal
+                // Orphan-cancel: a still-running delegation is being torn down (LLM `close`, UI Kill
+                // cancel-cascade, or project disposal) WITHOUT a terminal Result having arrived. The
+                // bare socket close alone leaves IDE-B's agent Job running orphaned until it finishes
+                // into a dead socket — so first ask IDE-B to cancel its Job by name. NOT sent on a
+                // normal post-completion close (alreadyTerminal == true → closingLiveRunningChannel
+                // false). Same discriminator as the CANCELED lastState above. bSid is guaranteed
+                // non-null here (we're inside the `bSid != null` block).
+                if (closingLiveRunningChannel) {
+                    activeChannels[handleId]?.let { liveCh ->
+                        cancelTaskTarget = liveCh to DelegationMessage.CancelTask(
+                            sessionId = bSid,
+                            reason = reason,
+                        )
+                    }
+                }
                 retainedHandles[handleId] = RetainedHandle(
                     delegatorSessionId = sessionId,
                     bSessionId = bSid,
@@ -682,6 +702,19 @@ class DelegationOutboundService(
             lastSeenAt.remove(handleId)
             val ch = activeChannels.remove(handleId)
             if (ch != null) {
+                // Best-effort orphan-cancel frame BEFORE closing the socket: a dead/half-closed
+                // channel just throws here (caught + ignored) and the EOF fallback on IDE-B covers
+                // it. A frame on a healthy socket reaches IDE-B's inbound reader, which cancels the
+                // delegated agent Job by sessionId. Must precede ch.close() so the bytes are flushed
+                // while the FD is still open. CancellationException can't arise (non-suspend write).
+                cancelTaskTarget?.let { (liveCh, msg) ->
+                    try {
+                        DelegationFraming.writeFramed(liveCh, msg, json)
+                        LOG.info("close($handleId): sent CancelTask(session=${msg.sessionId}) before socket close")
+                    } catch (e: Exception) {
+                        LOG.info("close($handleId): CancelTask write skipped (peer already gone: ${e.message})")
+                    }
+                }
                 try { ch.close() } catch (_: Exception) {}
                 true
             } else {
@@ -718,7 +751,9 @@ class DelegationOutboundService(
             .map { it.key }
         for (h in toClose) {
             LOG.info("cancelAllForSession: closing handle $h (session=$delegatorSessionId, reason=$reason)")
-            close(h)
+            // Thread the cancel reason into close() so the CancelTask frame IDE-B receives names WHY
+            // (e.g. "parent_canceled"); IDE-B surfaces it in the Job cancellation message.
+            close(h, reason = reason)
         }
         return toClose
     }
@@ -842,10 +877,7 @@ class DelegationOutboundService(
 
                     resumedChannel
                 }
-                is ResumeOutcome.Closed -> throw DelegationException.Expired(
-                    classifyResumeCloseReason(outcome.closeReason) +
-                        (outcome.summary?.let { " — $it" } ?: "")
-                )
+                is ResumeOutcome.Closed -> throw resumeClosedToException(outcome.closeReason, outcome.summary)
                 ResumeOutcome.NotFound -> throw DelegationException.Expired("session_not_found")
                 is ResumeOutcome.ProbeFailed -> throw DelegationException.Expired(outcome.reason)
             }
@@ -1020,10 +1052,7 @@ class DelegationOutboundService(
                 }
                 handle
             }
-            is DelegationMessage.SessionClosed -> throw DelegationException.Expired(
-                classifyResumeCloseReason(reply.closeReason) +
-                    (reply.summary?.let { " — $it" } ?: "")
-            )
+            is DelegationMessage.SessionClosed -> throw resumeClosedToException(reply.closeReason, reply.summary)
             is DelegationMessage.SessionNotFound -> throw DelegationException.Expired("session_not_found")
             else -> throw DelegationException.Expired(
                 "unexpected_reply: ${reply?.let { it::class.simpleName } ?: "null"}"
@@ -1286,9 +1315,9 @@ class DelegationOutboundService(
         )
     }
 
-    private suspend fun pickTarget(suggestedRepo: String?): PickerEntry? =
+    private suspend fun pickTarget(request: String, suggestedRepo: String?): PickerEntry? =
         withContext(Dispatchers.EDT) {
-            val dlg = DelegationPicker(project, suggestedRepo)
+            val dlg = DelegationPicker(project, suggestedRepo, request)
             if (dlg.showAndGet()) dlg.selectedEntry else null
         }
 
@@ -1512,7 +1541,20 @@ class DelegationOutboundService(
     suspend fun awaitResult(handleId: String, timeoutMillis: Long): DelegationWaitOutcome {
         if (!activeChannels.containsKey(handleId)) {
             pruneRetainedHandles()
-            val reason = if (retainedHandles.containsKey(handleId)) "already_completed" else "handle_not_found"
+            // Fix A (.23 #3): branch on the retained handle's ACTUAL terminal state instead of a flat
+            // "already_completed". A CANCELED / FAILED / REJECTED handle was wrongly reported as
+            // "already completed". `RetainedHandle.lastState` carries the true terminal token
+            // (COMPLETED / CANCELED / FAILED / REJECTED, or the "closed" sentinel for a normal
+            // post-completion close where no explicit Result state was recorded).
+            val retained = retainedHandles[handleId]
+            val reason = when {
+                retained == null -> "handle_not_found"
+                retained.lastState == DelegationMessage.ResultStatus.COMPLETED.name -> "already_completed"
+                // "closed" is the sentinel for a normal close with no recorded terminal Result — treat
+                // it as completion (the session finished and the channel was closed normally).
+                retained.lastState == "closed" -> "already_completed"
+                else -> "already_${retained.lastState.lowercase()}"
+            }
             return DelegationWaitOutcome.NotActive(reason)
         }
         val deferred = kotlinx.coroutines.CompletableDeferred<DelegationWaitOutcome>()
@@ -1717,4 +1759,27 @@ internal fun classifyResumeCloseReason(closeReason: String?): String {
     )
     return if (knownTokens.any { reason.startsWith(it) }) reason
     else "session_closed: $reason"
+}
+
+/**
+ * Fix B (.23 #5) — maps a resume/continuation close into the correct [DelegationException].
+ *
+ * `ide_b_busy` means the TARGET is alive but its agent tab is occupied: the handle is still valid,
+ * so this is a TRANSIENT, RETRYABLE [DelegationException.Rejected] — matching the fresh-send busy
+ * path (which already maps IDE-B busy → `Rejected`). Reserve [DelegationException.Expired] for
+ * genuinely-gone reasons (`session_closed`, `session_not_found`, `ide_b_not_running`, `resume_failed`,
+ * etc.) where the handle is no longer usable.
+ *
+ * Both continuation sites ([DelegationOutboundService.sendContinuation] `ResumeOutcome.Closed` and
+ * [DelegationOutboundService.resurrectAndContinue] `SessionClosed`) route through here so busy is
+ * UNIFORMLY `Rejected` regardless of branch. The known-token classification is delegated to
+ * [classifyResumeCloseReason] so the taxonomy set is never duplicated.
+ */
+internal fun resumeClosedToException(closeReason: String?, summary: String?): DelegationException {
+    val classified = classifyResumeCloseReason(closeReason) + (summary?.let { " — $it" } ?: "")
+    return if ((closeReason ?: "").startsWith("ide_b_busy")) {
+        DelegationException.Rejected(classified)
+    } else {
+        DelegationException.Expired(classified)
+    }
 }

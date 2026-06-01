@@ -28,9 +28,30 @@ sealed class DelegationMessage {
     @Serializable
     data class Ping(val projectPath: String) : DelegationMessage()
 
-    /** Response to Ping. Includes the responder's project path so the prober can confirm match. */
+    /**
+     * Response to Ping. Includes the responder's project path so the prober can confirm match.
+     *
+     * [busy] is an ADVISORY, point-in-time hint about whether the responder's agent tab is
+     * currently running another task (an active agent loop). It rides along on the always-bound
+     * doorbell liveness probe so a delegator can pre-check whether a target can actually accept
+     * work BEFORE sending — surfaced by `list_targets` as `running (busy)` vs `running (idle)`.
+     *
+     * Semantics:
+     *  - `true`  — the responder's agent loop is actively running right now (a send may be declined / queued).
+     *  - `false` — the agent tab is idle and ready to accept work.
+     *  - `null`  — UNKNOWN. Either an OLD peer that predates this field (it omits it on the wire, and
+     *              `ignoreUnknownKeys=true` decodes the absent field back to null), or the responder
+     *              could not resolve its own busy state defensively. Renders as plain `running`.
+     *
+     * It is a TOCTOU snapshot — the target may change between probe and send. APPEND-ONLY /
+     * forward-compatible: MUST stay the LAST field; default null keeps backward-compat with
+     * pre-this-field serialized payloads.
+     */
     @Serializable
-    data class Pong(val projectPath: String) : DelegationMessage()
+    data class Pong(
+        val projectPath: String,
+        val busy: Boolean? = null,
+    ) : DelegationMessage()
 
     /** First-contact delegation. Carries the full briefing and delegator identity. */
     @Serializable
@@ -235,6 +256,35 @@ sealed class DelegationMessage {
     data class UserTurn(
         val sessionId: String,
         val text: String,
+    ) : DelegationMessage()
+
+    /**
+     * IDE-A → IDE-B. Explicit cancellation of a STILL-RUNNING delegated session.
+     *
+     * Sent best-effort by [DelegationOutboundService] (IDE-A) when the human cancels /
+     * closes Agent-A's session BEFORE the delegated task on IDE-B has reached a terminal
+     * state — i.e. when there is no prior cancel/cancel-cascade signal in the protocol and
+     * IDE-B's agent `Job` would otherwise keep running orphaned (burning tokens + executing
+     * WRITE tools into the target repo) until it finished into a dead socket.
+     *
+     * On receipt IDE-B cancels the registered delegated agent `Job` for [sessionId] and lets
+     * its inbound reader exit. Cancellation surfaces back to IDE-A — when reachable — as a
+     * [Result] with [ResultStatus.CANCELED]; if the socket is already gone the EOF fallback on
+     * either side covers it.
+     *
+     * APPEND-ONLY / forward-compatible: an OLD IDE-B that predates this subclass receives the
+     * frame, fails to match a known `type` discriminator, and — because both sides decode with
+     * `Json { ignoreUnknownKeys = true; classDiscriminator = "type" }` AND IDE-A always also
+     * closes the socket — degrades gracefully to the pre-existing EOF-on-close behavior. [sessionId]
+     * is IDE-B's local session id (the `bSessionId` IDE-A persisted from [AcceptResult.bSessionId]).
+     *
+     * MUST stay the last subclass / [reason] MUST stay the last field for serialized-payload
+     * backward-compat.
+     */
+    @Serializable
+    data class CancelTask(
+        val sessionId: String,
+        val reason: String? = null,
     ) : DelegationMessage()
 }
 

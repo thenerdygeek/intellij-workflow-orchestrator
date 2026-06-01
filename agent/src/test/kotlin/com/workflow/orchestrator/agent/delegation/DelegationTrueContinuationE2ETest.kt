@@ -447,8 +447,11 @@ class DelegationTrueContinuationE2ETest {
                 )
             }.exceptionOrNull()
             assertTrue(starterInvoked.get(), "IDE-B's resume starter must have been consulted")
-            assertTrue(ex is DelegationException.Expired, "busy decline must surface as Expired, got $ex")
-            val reason = (ex as DelegationException.Expired).expireReason ?: ""
+            assertTrue(
+                ex is DelegationException.Rejected,
+                "busy decline is RETRYABLE — must surface as Rejected (handle stays valid), not Expired, got $ex",
+            )
+            val reason = (ex as DelegationException.Rejected).rejectReason ?: ""
             assertTrue(
                 reason.contains("ide_b_busy", ignoreCase = true),
                 "busy decline must produce an ide_b_busy reason, got: $reason",

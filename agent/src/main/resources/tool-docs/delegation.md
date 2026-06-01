@@ -2,12 +2,12 @@
 
 ## Why this is a meta-tool
 
-Seven verbs share one schema entry: `send`, `close`, `answer`, `fetch_transcript`,
-`status`, `wait`, and `list_targets`. They are bundled because every action operates
-on the same anchor — a delegation *handle* (and the *channel* / retained session it
-identifies) — and shares the same substrate: `DelegationOutboundService` over a local
-Unix-domain-socket (UDS) IPC transport to another running IntelliJ instance. Splitting
-them into seven sibling tools would scatter the channel-lifecycle and settings-gating
+Eight verbs share one schema entry: `send`, `close`, `answer`, `fetch_transcript`,
+`status`, `wait`, `list_targets`, and `list_handles`. They are bundled because every
+action operates on the same anchor — a delegation *handle* (and the *channel* / retained
+session it identifies) — and shares the same substrate: `DelegationOutboundService` over a
+local Unix-domain-socket (UDS) IPC transport to another running IntelliJ instance. Splitting
+them into eight sibling tools would scatter the channel-lifecycle and settings-gating
 logic and add schema tokens *every iteration*, even though most sessions never delegate
 at all.
 
@@ -246,7 +246,15 @@ Status meanings:
 
 - **`running`** — IDE is open AND inbound delegation is ON (the "Accept incoming
   delegations" setting is enabled). A `send` to this target connects directly, no
-  consent prompt needed.
+  consent prompt needed. The per-target `status_label` refines this into **`running
+  (busy)`** vs **`running (idle)`** using an **advisory** busy hint (machine field
+  `busy`: `true` / `false` / `null`) that rides back on the liveness probe — `busy:
+  true` means the target's agent tab is already running another task, so a `send`
+  may be declined as `ide_b_busy` (or queued); `busy: false` means the tab is idle
+  and ready. This is a **point-in-time (TOCTOU) snapshot** — the target could pick up
+  work between this probe and your `send` — and `busy: null` means UNKNOWN (an older
+  peer that predates the hint), which renders as plain `running`. Prefer an idle
+  target when one is offered.
 - **`available`** — IDE is open but inbound delegation is OFF. A `send` rings its
   doorbell and the **user on that IDE is asked to consent** before the remote agent
   starts.
@@ -359,11 +367,14 @@ handle is known. (The 2026-06-01 consistency fix folded `fetch_transcript` and
 `send`-continuation into this agreement: both previously reported the unknown case as
 `DelegationExpired: handle_not_found` while the others said `DelegationHandleNotFound`.)
 
-`DelegationExpired` is now reserved for a genuinely **distinct** condition on a
-**known** handle: a `send`-continuation whose resurrection/reattach fails
-(`ide_b_not_running` / `ide_b_busy` / `session_closed` / `session_not_found` /
+`DelegationExpired` is now reserved for a genuinely **distinct, handle-gone** condition on a
+**known** handle: a `send`-continuation whose resurrection/reattach fails because the remote
+session is genuinely unreachable (`ide_b_not_running` / `session_closed` / `session_not_found` /
 `resume_failed`), or a `fetch_transcript` whose persisted transcript is unreachable
-(not on disk yet / IO error). It is **not** used for an unknown/pruned handle.
+(not on disk yet / IO error). It is **not** used for an unknown/pruned handle, and it is **not**
+used for a busy target: a continuation that fails because the target is `ide_b_busy` is a
+TRANSIENT, RETRYABLE **`DelegationRejected`** (the handle is still valid; the target is just
+occupied) — uniform with the fresh-send busy path. `DelegationExpired` means the handle is gone.
 
 ## Cold launch of a closed target
 
@@ -390,8 +401,8 @@ don't retry blindly.
 | `DelegationUserCanceledPicker` | send | user dismissed the picker | Don't auto-retry; confirm intent with the user. |
 | `DelegationTargetNotReachable` | send | socket unreachable — usually inbound disabled on target | Ask user to enable "Accept incoming delegations" on the target IDE. |
 | `DelegationLimitReached` | send | `MAX_CHANNELS` already open | `close` an existing channel, then resend. |
-| `DelegationDeclined` / `DelegationRejected` | send | target user declined consent / tab busy (`declined_timeout: the agent tab is busy; the user did not accept the takeover within 55s`) | Surface to user; for a busy tab, retry once it's free. |
-| `DelegationExpired` | send (continuation), fetch_transcript | a **known** handle whose continuation/transcript is genuinely unreachable. On continuation the reason is specific: `session_closed` / `session_not_found` (remote session gone or pruned), `ide_b_not_running` (target IDE down), `ide_b_busy` (target tab busy), `resume_failed` (session locked/missing on disk). On fetch_transcript: the transcript is not on disk yet or an IO read failed. **Not** used for an unknown/pruned handle. | `ide_b_busy` → retry shortly; `ide_b_not_running` → reopen/send fresh; `session_not_found`/`resume_failed` → fresh `send`; transcript-unreachable → retry shortly. |
+| `DelegationDeclined` / `DelegationRejected` | send, send (continuation) | **RETRYABLE.** target user declined consent, or the target tab is busy (`ide_b_busy` / `declined_timeout: the agent tab is busy; the user did not accept the takeover within 55s`). On a continuation, `ide_b_busy` lands here too (NOT `DelegationExpired`) — the handle is still valid; the target is just occupied. | Surface to user; for a busy tab, retry shortly with the **same handle** (still valid). |
+| `DelegationExpired` | send (continuation), fetch_transcript | **HANDLE GONE.** a **known** handle whose continuation/transcript is genuinely unreachable. On continuation the reason is specific: `session_closed` / `session_not_found` (remote session gone or pruned), `ide_b_not_running` (target IDE down), `resume_failed` (session locked/missing on disk). On fetch_transcript: the transcript is not on disk yet or an IO read failed. **Not** used for an unknown/pruned handle, and **not** for a busy target (that's `DelegationRejected`, retryable). | `ide_b_not_running` → reopen/send fresh; `session_not_found`/`resume_failed`/`session_closed` → fresh `send`; transcript-unreachable → retry shortly. |
 | `DelegationHandleClosed` | answer | closed-but-retained: the session already COMPLETED | Continue it with `send` (same handle resumes it), or `fetch_transcript`; don't retry `answer`. |
 | `DelegationHandleNotFound` | **status, wait, answer, fetch_transcript, send (continuation)** | handle unknown or its ~30 min retention elapsed. Consistent type **and** message across all five handle-reading actions (shared `handleState` SSOT). | Start a fresh `send`. |
 | `DelegationWriteFailed` | send (continuation), answer | IPC write rejected | Retry, or fall back to a fresh `send`. |
@@ -425,7 +436,9 @@ Net verdict: **STRONG keep** for the tool overall.
 - `close` is cheap channel hygiene against the concurrent-channel cap.
 - `list_targets` is side-effect-free situational awareness that avoids a blind
   send into a picker.
+- `list_handles` enumerates the handles you already hold this session — recover a lost
+  handle or correlate an `ide_b_busy` blocker against your own `b_session_id`.
 
-All seven anchor on the same handle / retained-session substrate and IPC transport,
+All eight anchor on the same handle / retained-session substrate and IPC transport,
 so they belong in one tool. The feature is off by default, so the schema cost is only
 paid by users who opt in.

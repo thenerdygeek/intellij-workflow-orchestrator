@@ -1,7 +1,9 @@
 package com.workflow.orchestrator.agent.delegation
 
+import com.workflow.orchestrator.core.delegation.DelegationMessage
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
@@ -135,5 +137,101 @@ class TargetStatusResolverTest {
             "pong" // Both sockets would respond, but doorbell must not be called
         }
         assertEquals(1, probed.size, "Doorbell probe is skipped when delegation socket already pongs")
+    }
+
+    // ── statusLabel (advisory busy folding) ───────────────────────────────────
+
+    @Test
+    fun `statusLabel folds busy into the running label`() {
+        val R = TargetStatusResolver.TargetStatus.RUNNING
+        assertEquals("running (busy)", TargetStatusResolver.statusLabel(R, true))
+        assertEquals("running (idle)", TargetStatusResolver.statusLabel(R, false))
+        assertEquals("running", TargetStatusResolver.statusLabel(R, null))
+        // String variant agrees.
+        assertEquals("running (busy)", TargetStatusResolver.statusLabel("running", true))
+        assertEquals("running (idle)", TargetStatusResolver.statusLabel("running", false))
+        assertEquals("running", TargetStatusResolver.statusLabel("running", null))
+    }
+
+    @Test
+    fun `statusLabel leaves non-running statuses unchanged regardless of busy`() {
+        assertEquals("available", TargetStatusResolver.statusLabel("available", true))
+        assertEquals("closed", TargetStatusResolver.statusLabel("closed", false))
+        assertEquals("missing", TargetStatusResolver.statusLabel("missing", null))
+        assertEquals(
+            "available",
+            TargetStatusResolver.statusLabel(TargetStatusResolver.TargetStatus.AVAILABLE, true),
+        )
+    }
+
+    // ── dualProbeStatusDetailed (busy surfaced from the Pong) ──────────────────
+
+    private fun pong(busy: Boolean?) = DelegationMessage.Pong(projectPath = "/p", busy = busy)
+
+    @Test
+    fun `dualProbeStatusDetailed surfaces running (busy) when the delegation Pong reports busy`(@TempDir tmp: Path) = runBlocking {
+        val result = TargetStatusResolver.dualProbeStatusDetailed(tmp) { socket ->
+            if (socket.toString().endsWith(".sock") && !socket.toString().endsWith(".doorbell.sock")) {
+                pong(busy = true)
+            } else null
+        }
+        assertEquals(TargetStatusResolver.TargetStatus.RUNNING, result.status)
+        assertEquals(true, result.busy)
+        assertEquals("running (busy)", TargetStatusResolver.statusLabel(result.status, result.busy))
+    }
+
+    @Test
+    fun `dualProbeStatusDetailed surfaces running (idle) when the delegation Pong reports not busy`(@TempDir tmp: Path) = runBlocking {
+        val result = TargetStatusResolver.dualProbeStatusDetailed(tmp) { socket ->
+            if (socket.toString().endsWith(".sock") && !socket.toString().endsWith(".doorbell.sock")) {
+                pong(busy = false)
+            } else null
+        }
+        assertEquals(TargetStatusResolver.TargetStatus.RUNNING, result.status)
+        assertEquals(false, result.busy)
+        assertEquals("running (idle)", TargetStatusResolver.statusLabel(result.status, result.busy))
+    }
+
+    @Test
+    fun `dualProbeStatusDetailed keeps busy null for an old-peer Pong without the field`(@TempDir tmp: Path) = runBlocking {
+        val result = TargetStatusResolver.dualProbeStatusDetailed(tmp) { socket ->
+            if (socket.toString().endsWith(".sock") && !socket.toString().endsWith(".doorbell.sock")) {
+                pong(busy = null) // old peer omits the field → decodes to null
+            } else null
+        }
+        assertEquals(TargetStatusResolver.TargetStatus.RUNNING, result.status)
+        assertNull(result.busy)
+        assertEquals("running", TargetStatusResolver.statusLabel(result.status, result.busy))
+    }
+
+    @Test
+    fun `dualProbeStatusDetailed keeps busy null for a non-Pong ping result`(@TempDir tmp: Path) = runBlocking {
+        // A reachable-but-stubbed ping (test string) still counts as RUNNING but has no busy bit.
+        val result = TargetStatusResolver.dualProbeStatusDetailed(tmp) { socket ->
+            if (socket.toString().endsWith(".sock") && !socket.toString().endsWith(".doorbell.sock")) "pong" else null
+        }
+        assertEquals(TargetStatusResolver.TargetStatus.RUNNING, result.status)
+        assertNull(result.busy)
+    }
+
+    @Test
+    fun `dualProbeStatusDetailed surfaces doorbell busy for AVAILABLE`(@TempDir tmp: Path) = runBlocking {
+        // Inbound OFF: delegation socket silent, doorbell answers with busy hint.
+        val result = TargetStatusResolver.dualProbeStatusDetailed(tmp) { socket ->
+            if (socket.toString().endsWith(".doorbell.sock")) pong(busy = true) else null
+        }
+        assertEquals(TargetStatusResolver.TargetStatus.AVAILABLE, result.status)
+        assertEquals(true, result.busy)
+    }
+
+    @Test
+    fun `dualProbeStatusDetailed reports null busy for CLOSED and MISSING`(@TempDir tmp: Path) = runBlocking {
+        val closed = TargetStatusResolver.dualProbeStatusDetailed(tmp) { null }
+        assertEquals(TargetStatusResolver.TargetStatus.CLOSED, closed.status)
+        assertNull(closed.busy)
+
+        val missing = TargetStatusResolver.dualProbeStatusDetailed(tmp.resolve("nope")) { pong(busy = true) }
+        assertEquals(TargetStatusResolver.TargetStatus.MISSING, missing.status)
+        assertNull(missing.busy)
     }
 }

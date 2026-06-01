@@ -516,6 +516,17 @@ class AgentDashboardPanel(
         broadcast { it.startSession(task) }
     }
 
+    /**
+     * Cross-IDE delegation (IDE-B leg-a): start a session whose opening user bubble AND
+     * all subsequent assistant/tool bubbles are flagged delegated (distinct tint + left
+     * accent stripe + "delegated · {repo}" pill). [delegatorRepo] is the delegating IDE's
+     * REPO NAME — never the raw "ide-$pid" identifier.
+     */
+    fun startSessionDelegated(task: String, delegatorRepo: String) {
+        cefPanel?.startSessionDelegated(task, delegatorRepo) ?: fallbackPanel?.startSession(task)
+        broadcast { it.startSession(task) }
+    }
+
     fun startSessionWithMentions(task: String, mentionsJson: String, attachmentsJson: String? = null) {
         cefPanel?.startSessionWithMentions(task, mentionsJson, attachmentsJson)
             ?: fallbackPanel?.startSession(task)

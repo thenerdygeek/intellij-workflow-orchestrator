@@ -49,6 +49,13 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   startSession(task: string) {
     stores?.getChatStore().startSession(task);
   },
+  // Cross-IDE delegation (IDE-B leg-a) — start a session whose opening user bubble
+  // AND all subsequent assistant/tool bubbles are flagged delegated, so the chat
+  // shows the distinct tint + accent stripe + "delegated · {repo}" pill on EVERY
+  // bubble. Kotlin's AgentController.onDelegatedSessionStarted routes here.
+  startSessionDelegated(task: string, delegatorRepo: string) {
+    stores?.getChatStore().startSessionDelegated(task, delegatorRepo);
+  },
   startSessionWithMentions(task: string, mentionsJson: string) {
     try {
       const mentions = JSON.parse(mentionsJson);

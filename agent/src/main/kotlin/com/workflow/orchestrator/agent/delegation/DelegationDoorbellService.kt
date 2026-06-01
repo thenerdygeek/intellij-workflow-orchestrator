@@ -87,6 +87,36 @@ class DelegationDoorbellService(
         cs.launch { showDialogAndApply(knock) }
     }
 
+    /**
+     * Visible-for-tests seam supplying the ADVISORY busy state stamped onto the [DelegationMessage.Pong]
+     * liveness reply. Returns:
+     *  - `true`  — this project's agent tab is actively running a task (an agent loop is live).
+     *  - `false` — the agent tab is idle and ready to accept work.
+     *  - `null`  — the controller/agent state isn't resolvable (service not yet up, no chat opened).
+     *
+     * Production resolves the live [com.workflow.orchestrator.agent.ui.AgentController] via
+     * [com.workflow.orchestrator.agent.ui.AgentControllerRegistry] and reads its
+     * [com.workflow.orchestrator.agent.ui.AgentController.isAgentBusy] — the SAME `currentJob?.isActive`
+     * verdict the inbound busy gate uses. DEFENSIVE: any failure (registry/controller absent, throw)
+     * resolves to `null` so the liveness path never throws. Tests swap a deterministic provider.
+     */
+    internal var busyStateProvider: () -> Boolean? = { resolveAgentBusy() }
+
+    /**
+     * Best-effort read of this project's agent busy state. Never throws — returns null on any
+     * failure (controller not yet registered, service unavailable). Kept off the dialog/consent
+     * path; only consulted from the side-effect-free Ping→Pong liveness branch.
+     */
+    private fun resolveAgentBusy(): Boolean? = try {
+        com.workflow.orchestrator.agent.ui.AgentControllerRegistry
+            .getInstance(project)
+            .controller
+            ?.isAgentBusy()
+    } catch (e: Exception) {
+        LOG.debug("doorbell: could not resolve agent busy state; leaving busy=null", e)
+        null
+    }
+
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     /**
@@ -160,11 +190,17 @@ class DelegationDoorbellService(
                     // IDE that has inbound delegation OFF, fixing the CLOSED mis-classification.
                     //
                     // No consent dialog, no knock handling — Ping is intentionally side-effect-free.
+                    //
+                    // ADVISORY busy hint: stamp the agent tab's live busy state so a delegator's
+                    // list_targets can pre-check running (busy) vs running (idle). Resolved via the
+                    // injectable busyStateProvider (prod → AgentController.isAgentBusy()); defensive
+                    // null when unavailable so this liveness path never throws.
                     val basePath = project.basePath ?: ""
+                    val busy = try { busyStateProvider() } catch (_: Exception) { null }
                     withContext(Dispatchers.IO) {
                         DelegationFraming.writeFramed(
                             client,
-                            DelegationMessage.Pong(projectPath = basePath),
+                            DelegationMessage.Pong(projectPath = basePath, busy = busy),
                             json,
                         )
                     }

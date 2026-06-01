@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.delegation
 
 import com.workflow.orchestrator.core.delegation.DelegationClient
+import com.workflow.orchestrator.core.delegation.DelegationMessage
 import com.workflow.orchestrator.core.delegation.DelegationPaths
 import java.nio.file.Files
 import java.nio.file.Path
@@ -47,6 +48,43 @@ object TargetStatusResolver {
      * RUNNING → "running", AVAILABLE → "available", CLOSED → "closed", MISSING → "missing".
      */
     enum class TargetStatus { RUNNING, AVAILABLE, CLOSED, MISSING }
+
+    /**
+     * Resolved status PLUS the ADVISORY busy hint carried back by the doorbell/delegation Pong.
+     *
+     * [busy] is meaningful primarily for [TargetStatus.RUNNING] (inbound ON, reachable on the work
+     * socket): `true` → the target's agent tab is running another task right now; `false` → idle;
+     * `null` → UNKNOWN (old peer that omits the field, or the target couldn't resolve its own state).
+     * For [TargetStatus.AVAILABLE] the bit may also ride back on the doorbell Pong (secondary).
+     * It is a point-in-time (TOCTOU) snapshot — the target may change between probe and send.
+     */
+    data class ProbeResult(val status: TargetStatus, val busy: Boolean?)
+
+    /**
+     * Human-readable status label that folds in the advisory busy hint for the running case:
+     * `running (busy)` / `running (idle)` when [busy] is known, plain `running` when null (old peer).
+     * Non-running statuses are returned unchanged ([busy] is not surfaced in their label).
+     */
+    fun statusLabel(status: TargetStatus, busy: Boolean?): String = when (status) {
+        TargetStatus.RUNNING -> when (busy) {
+            true -> "running (busy)"
+            false -> "running (idle)"
+            null -> "running"
+        }
+        TargetStatus.AVAILABLE -> "available"
+        TargetStatus.CLOSED -> "closed"
+        TargetStatus.MISSING -> "missing"
+    }
+
+    /** String-label variant keyed off the canonical four-state strings. */
+    fun statusLabel(statusString: String, busy: Boolean?): String = when (statusString) {
+        "running" -> when (busy) {
+            true -> "running (busy)"
+            false -> "running (idle)"
+            null -> "running"
+        }
+        else -> statusString
+    }
 
     /**
      * Pure (no I/O) status resolution from socket-reachability booleans.
@@ -96,22 +134,53 @@ object TargetStatusResolver {
         pingFn: suspend (Path) -> Any? = { socketPath ->
             DelegationClient.ping(socketPath, timeoutMillis = 200)
         },
-    ): TargetStatus {
+    ): TargetStatus = dualProbeStatusDetailed(projectPath, pingFn).status
+
+    /**
+     * I/O probe variant that ALSO surfaces the ADVISORY busy hint from the responding Pong.
+     *
+     * Same probe order/logic as [dualProbeStatus] (delegation socket first; doorbell only if the
+     * delegation socket is silent) so the running/available/closed mapping is byte-identical — the
+     * busy bit is read OFF the SAME Pong that established reachability, never via an extra probe.
+     *
+     * [busy] is taken from the Pong of whichever socket established the status:
+     *  - RUNNING → the delegation-socket Pong's [DelegationMessage.Pong.busy].
+     *  - AVAILABLE → the doorbell-socket Pong's busy (secondary; doorbell always answers).
+     *  - CLOSED / MISSING → null (no live peer).
+     * Old peers omit the field → null → plain `running` downstream. A non-[DelegationMessage.Pong]
+     * ping result (e.g. a test stub string) yields null busy while still counting as reachable.
+     */
+    suspend fun dualProbeStatusDetailed(
+        projectPath: Path,
+        pingFn: suspend (Path) -> Any? = { socketPath ->
+            DelegationClient.ping(socketPath, timeoutMillis = 200)
+        },
+    ): ProbeResult {
         val exists = Files.exists(projectPath)
-        if (!exists) return TargetStatus.MISSING
+        if (!exists) return ProbeResult(TargetStatus.MISSING, null)
 
         val delegationSocket = DelegationPaths.socketFor(projectPath)
-        val delegationReachable = try {
-            pingFn(delegationSocket) != null
-        } catch (_: Exception) { false }
+        val delegationPong = try { pingFn(delegationSocket) } catch (_: Exception) { null }
+        val delegationReachable = delegationPong != null
 
-        val doorbellReachable = if (delegationReachable) {
-            false // Skip doorbell probe when delegation socket already responded
+        val doorbellPong = if (delegationReachable) {
+            null // Skip doorbell probe when delegation socket already responded
         } else {
             val doorbellSocket = DelegationPaths.doorbellSocketFor(projectPath)
-            try { pingFn(doorbellSocket) != null } catch (_: Exception) { false }
+            try { pingFn(doorbellSocket) } catch (_: Exception) { null }
         }
+        val doorbellReachable = doorbellPong != null
 
-        return resolveTargetStatus(exists, delegationReachable, doorbellReachable)
+        val status = resolveTargetStatus(exists, delegationReachable, doorbellReachable)
+        val busy = when (status) {
+            TargetStatus.RUNNING -> busyOf(delegationPong)
+            TargetStatus.AVAILABLE -> busyOf(doorbellPong)
+            else -> null
+        }
+        return ProbeResult(status, busy)
     }
+
+    /** Extracts the advisory [DelegationMessage.Pong.busy] from a ping result; null for non-Pong. */
+    private fun busyOf(pingResult: Any?): Boolean? =
+        (pingResult as? DelegationMessage.Pong)?.busy
 }

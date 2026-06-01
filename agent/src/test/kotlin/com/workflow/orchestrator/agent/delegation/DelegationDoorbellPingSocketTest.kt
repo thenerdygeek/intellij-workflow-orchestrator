@@ -295,4 +295,93 @@ class DelegationDoorbellPingSocketTest {
         val pong = DelegationClient.ping(doorbellSocket, timeoutMillis = 200)
         assertNull(pong, "ping must return null when no server is bound")
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test 8/9/10 — advisory busy hint rides the Ping→Pong liveness reply
+    // (feedback .23 #2). busyStateProvider is the test seam; production reads
+    // AgentController.isAgentBusy(). Defensive null → busy=null on the wire.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `REAL-SOCKET - Pong carries busy=true when busyStateProvider reports active`(
+        @TempDir tmp: Path,
+    ) = runBlocking {
+        val projectRoot = Files.createDirectory(tmp.resolve("proj-busy-true"))
+        val project = mockk<Project>(relaxed = true)
+        every { project.basePath } returns projectRoot.toAbsolutePath().normalize().toString()
+        DelegationPaths.ensureIpcDir()
+        val cs = CoroutineScope(Job() + Dispatchers.IO)
+        val svc = DelegationDoorbellService(project, cs)
+        svc.dialogLauncher = { /* no dialog */ }
+        svc.busyStateProvider = { true }
+        svc.start()
+        try {
+            val pong = withTimeout(3_000) {
+                DelegationClient.ping(
+                    DelegationPaths.doorbellSocketFor(projectRoot.toAbsolutePath().normalize()),
+                    timeoutMillis = 500,
+                )
+            }
+            assertEquals(true, pong?.busy, "Pong.busy must be true when the agent loop is active")
+        } finally {
+            svc.stop()
+            cs.cancel()
+        }
+    }
+
+    @Test
+    fun `REAL-SOCKET - Pong carries busy=false when busyStateProvider reports idle`(
+        @TempDir tmp: Path,
+    ) = runBlocking {
+        val projectRoot = Files.createDirectory(tmp.resolve("proj-busy-false"))
+        val project = mockk<Project>(relaxed = true)
+        every { project.basePath } returns projectRoot.toAbsolutePath().normalize().toString()
+        DelegationPaths.ensureIpcDir()
+        val cs = CoroutineScope(Job() + Dispatchers.IO)
+        val svc = DelegationDoorbellService(project, cs)
+        svc.dialogLauncher = { /* no dialog */ }
+        svc.busyStateProvider = { false }
+        svc.start()
+        try {
+            val pong = withTimeout(3_000) {
+                DelegationClient.ping(
+                    DelegationPaths.doorbellSocketFor(projectRoot.toAbsolutePath().normalize()),
+                    timeoutMillis = 500,
+                )
+            }
+            assertEquals(false, pong?.busy, "Pong.busy must be false when the agent tab is idle")
+        } finally {
+            svc.stop()
+            cs.cancel()
+        }
+    }
+
+    @Test
+    fun `REAL-SOCKET - Pong carries busy=null defensively when busy state is unresolvable`(
+        @TempDir tmp: Path,
+    ) = runBlocking {
+        val projectRoot = Files.createDirectory(tmp.resolve("proj-busy-null"))
+        val project = mockk<Project>(relaxed = true)
+        every { project.basePath } returns projectRoot.toAbsolutePath().normalize().toString()
+        DelegationPaths.ensureIpcDir()
+        val cs = CoroutineScope(Job() + Dispatchers.IO)
+        val svc = DelegationDoorbellService(project, cs)
+        svc.dialogLauncher = { /* no dialog */ }
+        // Provider throws — the liveness path must swallow it and report busy=null, never crash.
+        svc.busyStateProvider = { throw IllegalStateException("controller not available") }
+        svc.start()
+        try {
+            val pong = withTimeout(3_000) {
+                DelegationClient.ping(
+                    DelegationPaths.doorbellSocketFor(projectRoot.toAbsolutePath().normalize()),
+                    timeoutMillis = 500,
+                )
+            }
+            assertNotNull(pong, "Ping must still get a Pong even when busy state can't be resolved")
+            assertNull(pong?.busy, "Pong.busy must be null when busy state is unresolvable (defensive)")
+        } finally {
+            svc.stop()
+            cs.cancel()
+        }
+    }
 }

@@ -33,8 +33,19 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
     private var inboundEnabled = settings.enableInboundCrossIdeDelegation
     private var autoApprove = settings.autoApproveDelegationAnswers
     private var idleTimeoutMinutes = settings.delegationIdleTimeoutMinutes
+    private var acceptWindowSeconds = settings.delegationAcceptWindowSeconds
     private var dialogPanel: DialogPanel? = null
     private var idleSpinner: JBIntSpinner? = null
+    private var acceptWindowSpinner: JBIntSpinner? = null
+
+    /**
+     * Test seam — sets the in-memory [acceptWindowSeconds] field as if the user
+     * changed the spinner value (the spinner's change-listener does the same thing
+     * at runtime). Used by headless JUnit tests that cannot drive live Swing events.
+     */
+    internal fun setAcceptWindowSecondsForTest(seconds: Int) {
+        acceptWindowSeconds = seconds
+    }
 
     override fun getDisplayName(): String = "Cross-IDE Delegation"
 
@@ -79,6 +90,17 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
                             "Default 30."
                     )
                 }
+                row("Takeover wait for busy target (seconds)") {
+                    val spinner = JBIntSpinner(acceptWindowSeconds, 10, 600, 5)
+                    spinner.addChangeListener { acceptWindowSeconds = spinner.value as Int }
+                    acceptWindowSpinner = spinner
+                    cell(spinner).comment(
+                        "How long the target IDE waits for the user to click Start on the " +
+                            "incoming-delegation prompt before declining. " +
+                            "Must be ≤ 59 s to stay below IDE-A's 60 s accept timeout (enforced at runtime). " +
+                            "Default 55 s."
+                    )
+                }
                 row {
                     comment(
                         "All gates default off. Feature is local-only (same machine, same user). " +
@@ -93,7 +115,8 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
 
     override fun isModified(): Boolean =
         (dialogPanel?.isModified() == true) ||
-            idleTimeoutMinutes != settings.delegationIdleTimeoutMinutes
+            idleTimeoutMinutes != settings.delegationIdleTimeoutMinutes ||
+            acceptWindowSeconds != settings.delegationAcceptWindowSeconds
 
     override fun apply() {
         val prevOutbound = settings.enableOutboundCrossIdeDelegation
@@ -107,6 +130,7 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
         settings.enableInboundCrossIdeDelegation = inboundEnabled
         settings.autoApproveDelegationAnswers = autoApprove
         settings.delegationIdleTimeoutMinutes = idleTimeoutMinutes
+        settings.delegationAcceptWindowSeconds = acceptWindowSeconds
         if (prevOutbound != outboundEnabled) {
             project.messageBus.syncPublisher(CrossIdeDelegationSettingsListener.TOPIC)
                 .outboundSettingChanged(outboundEnabled)
@@ -122,14 +146,17 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
         inboundEnabled = settings.enableInboundCrossIdeDelegation
         autoApprove = settings.autoApproveDelegationAnswers
         idleTimeoutMinutes = settings.delegationIdleTimeoutMinutes
+        acceptWindowSeconds = settings.delegationAcceptWindowSeconds
         // Refresh checkbox UI from the (now-refreshed) getter lambdas; refresh
-        // the spinner directly since it isn't DSL-bound.
+        // spinners directly since they aren't DSL-bound.
         dialogPanel?.reset()
         idleSpinner?.value = idleTimeoutMinutes
+        acceptWindowSpinner?.value = acceptWindowSeconds
     }
 
     override fun disposeUIResources() {
         dialogPanel = null
         idleSpinner = null
+        acceptWindowSpinner = null
     }
 }

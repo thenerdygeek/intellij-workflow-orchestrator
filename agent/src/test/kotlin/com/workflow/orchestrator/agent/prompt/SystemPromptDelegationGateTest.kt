@@ -112,6 +112,11 @@ class SystemPromptDelegationGateTest {
             prompt.contains("delegation with action=\"wait\""),
             "delegation wait hint must be present when outbound on"
         )
+        // Fix C (system-prompt sync): the new list_handles action must be hinted in Section 5.
+        assertTrue(
+            prompt.contains("action=\"list_handles\""),
+            "delegation list_handles hint must be present when outbound on"
+        )
     }
 
     @Test

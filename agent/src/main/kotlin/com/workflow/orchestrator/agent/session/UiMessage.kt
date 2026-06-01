@@ -201,6 +201,17 @@ data class UiMessage(
      */
     val analyzedImageBadge: Boolean = false,
     /**
+     * Cross-IDE delegation (IDE-B side) — true for the persisted leg-a incoming-task
+     * USER_MESSAGE of a delegated session, so reopening the session from history
+     * renders the delegated tint + accent stripe + "delegated · {delegatorRepo}" pill.
+     * Live assistant/tool bubbles are flagged webview-side off the store's
+     * `sessionDelegatedRepo` field for the session's lifetime; only the leg-a override
+     * needs the flag persisted here.
+     */
+    val delegated: Boolean = false,
+    /** Delegator REPO NAME for the delegated pill — never the raw "ide-$pid" identifier. */
+    val delegatorRepo: String? = null,
+    /**
      * Multimodal-agent — image attachments the user added to this turn. The
      * webview renders thumbnails inside the USER_MESSAGE bubble; the actual
      * bytes are served from disk via the `http://workflow-agent/attachments/<sha256>`

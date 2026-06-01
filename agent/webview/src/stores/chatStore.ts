@@ -123,6 +123,16 @@ function uniqueTs(): number {
   return _lastTs;
 }
 
+/**
+ * Cross-IDE delegation (Option A) — partial UiMessage fields stamped onto EVERY
+ * message-creating action when the current session is delegated. Spread into the
+ * created message: `{ ...delegatedStamp(state.sessionDelegatedRepo) }`. Returns an
+ * empty object (no-op) for a non-delegated session, so nothing changes there.
+ */
+function delegatedStamp(repo: string | null): { delegated?: true; delegatorRepo?: string } {
+  return repo ? { delegated: true, delegatorRepo: repo } : {};
+}
+
 // ── messages[] hard cap (2026-05-20 P0 perf audit) ──
 // The UI keeps at most MESSAGES_HARD_CAP entries to bound heap growth on
 // multi-hour sessions; the agent itself still sees the full conversation
@@ -400,6 +410,15 @@ interface ChatState {
   // Delegation banner — non-null when the active session was delegated from another IDE
   activeSessionDelegated: DelegationMetadata | null;
 
+  // Cross-IDE delegation (IDE-B) — repo name of the delegating IDE for the CURRENT
+  // session, used to stamp `delegated`/`delegatorRepo` onto EVERY message-creating
+  // action (leg-a user task + all assistant/tool turns) for the session's lifetime.
+  // Distinct from `activeSessionDelegated` (which `startSession` resets to null);
+  // this is set explicitly by `startSessionDelegated` so the per-message stamping
+  // (Option A) is not racy against banner push ordering. Cleared by the non-delegated
+  // `startSession` / `clearChat` / `completeSession`.
+  sessionDelegatedRepo: string | null;
+
   // Editor-tab fullscreen mode — when true, chrome (TopBar/InputBar/etc.) is hidden
   // and the single block fills the pane. Toggled by AgentVisualizationEditor.
   editorTabMode: boolean;
@@ -430,6 +449,13 @@ interface ChatState {
 
   // Actions
   startSession(task: string, mentions?: Mention[], attachments?: ImageRef[]): void;
+  /**
+   * Cross-IDE delegation (IDE-B leg-a) — start a session whose opening user bubble
+   * AND all subsequent assistant/tool bubbles are flagged delegated. Stamps the
+   * leg-a message AT CREATION (not relying on banner push order) and records
+   * `sessionDelegatedRepo` so later message-creating actions stamp themselves.
+   */
+  startSessionDelegated(task: string, delegatorRepo: string): void;
   completeSession(info: SessionInfo): void;
   addUserMessage(text: string, mentions?: Mention[], attachments?: ImageRef[]): void;
   addPlanApprovedMessage(planMarkdown: string): void;
@@ -672,6 +698,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   historyItems: [],
   historySearch: '',
   activeSessionDelegated: null,
+  sessionDelegatedRepo: null,
   resumeSessionId: null,
   tasks: [],
   backgroundProcesses: [],
@@ -724,6 +751,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       viewMode: 'chat' as const,
       nextStepHint: null,
       activeSessionDelegated: null,
+      // Non-delegated new session — clear any stale delegated-repo stamp.
+      sessionDelegatedRepo: null,
       delegationQuestionPending: { active: false },
       session: {
         status: 'RUNNING',
@@ -735,12 +764,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
+  startSessionDelegated(task: string, delegatorRepo: string) {
+    // Reuse the normal reset, then overwrite the leg-a bubble + the session
+    // delegated-repo stamp. The leg-a USER_MESSAGE is flagged AT CREATION so it
+    // never depends on the banner push arriving first.
+    get().startSession(task);
+    set(state => {
+      const messages = state.messages.map((m, i) =>
+        i === 0 && m.say === 'USER_MESSAGE'
+          ? { ...m, delegated: true, delegatorRepo }
+          : m,
+      );
+      return { messages, sessionDelegatedRepo: delegatorRepo };
+    });
+  },
+
   completeSession(info: SessionInfo) {
     // Finalize any remaining active tool calls as individual UiMessage entries,
     // merging any buffered stream output into each tool call first so it
     // survives past the toolOutputStreams reset.
     const state = get();
     const streams = state.toolOutputStreams;
+    const dlg = delegatedStamp(state.sessionDelegatedRepo);
     const remaining = Array.from(state.activeToolCalls.values());
     const toolMessages: UiMessage[] = remaining.map(tc => {
       const stream = streams[tc.id];
@@ -749,6 +794,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ts: uniqueTs(),
         type: 'SAY' as const,
         say: 'TOOL' as const,
+        ...dlg,
         toolCallData: {
           toolCallId: tc.id,
           toolName: tc.name,
@@ -768,10 +814,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // thinking → text → tool calls → session end). Previously a thinking block
     // mid-stream at completion was dropped (only text was flushed).
     const thinkingFlush: UiMessage[] = (state.streamingThinkingText != null && state.streamingThinkingTs != null)
-      ? [{ ts: state.streamingThinkingTs, type: 'SAY' as const, say: 'REASONING' as const, text: state.streamingThinkingText }]
+      ? [{ ts: state.streamingThinkingTs, type: 'SAY' as const, say: 'REASONING' as const, text: state.streamingThinkingText, ...dlg }]
       : [];
     const streamFlush: UiMessage[] = (state.streamingText != null && state.streamingMsgTs != null)
-      ? [{ ts: state.streamingMsgTs, type: 'SAY' as const, say: 'TEXT' as const, text: state.streamingText, partial: false }]
+      ? [{ ts: state.streamingMsgTs, type: 'SAY' as const, say: 'TEXT' as const, text: state.streamingText, partial: false, ...dlg }]
       : [];
     const messages = (thinkingFlush.length > 0 || streamFlush.length > 0 || toolMessages.length > 0)
       ? [...state.messages, ...thinkingFlush, ...streamFlush, ...toolMessages]
@@ -830,10 +876,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   addAgentText(text: string) {
     set(state => {
+      const dlg = delegatedStamp(state.sessionDelegatedRepo);
       const flushed: UiMessage[] = state.streamingText != null && state.streamingMsgTs != null
-        ? [{ ts: state.streamingMsgTs, type: 'SAY', say: 'TEXT', text: state.streamingText, partial: false }]
+        ? [{ ts: state.streamingMsgTs, type: 'SAY', say: 'TEXT', text: state.streamingText, partial: false, ...dlg }]
         : [];
-      const msg: UiMessage = { ts: uniqueTs(), type: 'SAY', say: 'TEXT', text };
+      const msg: UiMessage = { ts: uniqueTs(), type: 'SAY', say: 'TEXT', text, ...dlg };
       return {
         messages: capMessages([...state.messages, ...flushed, msg]),
         streamingText: null,
@@ -854,6 +901,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         if (state.activeToolCalls.size > 0) {
           const streams = state.toolOutputStreams;
+          const dlg = delegatedStamp(state.sessionDelegatedRepo);
           const toolMsgs: UiMessage[] = Array.from(state.activeToolCalls.values()).map(tc => {
             const s = streams[tc.id];
             const output = tc.output || s || undefined;
@@ -861,6 +909,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
               ts: uniqueTs(),
               type: 'SAY' as const,
               say: 'TOOL' as const,
+              ...dlg,
               toolCallData: {
                 toolCallId: tc.id,
                 toolName: tc.name,
@@ -904,8 +953,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Flush a thinking block that never got its closing tag (stream ended
       // mid-<thinking>) into a REASONING message instead of dropping it. In the
       // normal flow endThinking already flushed + cleared it, so this is empty.
+      const dlg = delegatedStamp(state.sessionDelegatedRepo);
       const thinkingFlush: UiMessage[] = (state.streamingThinkingText != null && state.streamingThinkingTs != null)
-        ? [{ ts: state.streamingThinkingTs, type: 'SAY' as const, say: 'REASONING' as const, text: state.streamingThinkingText }]
+        ? [{ ts: state.streamingThinkingTs, type: 'SAY' as const, say: 'REASONING' as const, text: state.streamingThinkingText, ...dlg }]
         : [];
       if (state.streamingText == null || state.streamingMsgTs == null) {
         return {
@@ -928,6 +978,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         say: 'TEXT',
         text: state.streamingText,
         partial: false,
+        ...dlg,
       };
       return {
         messages: capMessages([...state.messages, ...thinkingFlush, finalized]),
@@ -1303,6 +1354,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const tools = Array.from(state.activeToolCalls.values());
     if (tools.length === 0) return;
     const streams = state.toolOutputStreams;
+    const dlg = delegatedStamp(state.sessionDelegatedRepo);
     const toolMessages: UiMessage[] = tools.map(tc => {
       const stream = streams[tc.id];
       const output = tc.output || stream || undefined;
@@ -1310,6 +1362,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ts: uniqueTs(),
         type: 'SAY' as const,
         say: 'TOOL' as const,
+        ...dlg,
         toolCallData: {
           toolCallId: tc.id,
           toolName: tc.name,
@@ -1363,6 +1416,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       nextStepHint: null,
       aggregateDiff: null,
       activeSessionDelegated: null,
+      sessionDelegatedRepo: null,
       delegationQuestionPending: { active: false },
     });
   },

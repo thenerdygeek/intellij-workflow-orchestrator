@@ -12,6 +12,7 @@ import com.workflow.orchestrator.core.delegation.DelegationPaths
 import com.workflow.orchestrator.core.delegation.DelegationServer
 import com.workflow.orchestrator.core.settings.CrossIdeDelegationSettingsListener
 import com.workflow.orchestrator.core.settings.PluginSettings
+import com.workflow.orchestrator.core.settings.effectiveAcceptWindowMs
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -85,47 +86,53 @@ fun interface DelegatedResumeStarter {
 }
 
 /**
- * PART 2 — busy-enrichment. Composes the SINGLE coherent `ide_b_busy:` reason token IDE-B sends
- * when it declines an incoming delegation because its agent tab is busy.
+ * PART 2 — busy-enrichment. Composes the SINGLE coherent `ide_b_busy:` reason token sent
+ * when an incoming delegation is declined because the agent tab is busy.
  *
  * The reason NAMES the in-flight task and — critically — echoes the in-flight task's delegator
- * session id, so IDE-A can recognize the blocker as ITS OWN earlier task (matching it against
- * `list_handles`' `bSessionId`, or the delegator session id it sent with task-1).
+ * session id, so the delegating agent can recognize the blocker as ITS OWN earlier task (matching
+ * it against `list_handles`' `bSessionId`, or the delegator session id it sent with task-1).
  *
  * Wording (when the descriptor is available):
  *   - in-flight task is itself delegated:
  *       `ide_b_busy: agent tab is busy running session <sid> ('<title>'), delegated by <repo>
- *        session <delegatorSessionId>; user did not click Start within <N>s`
+ *        session <delegatorSessionId>; a takeover prompt is waiting for the user on the target's
+ *        agent tab — it auto-declines if not accepted within <N>s`
  *   - in-flight task is a LOCAL (non-delegated) session — omit the delegator clause:
- *       `ide_b_busy: agent tab is busy running session <sid> ('<title>'); user did not click
- *        Start within <N>s`
+ *       `ide_b_busy: agent tab is busy running session <sid> ('<title>'); a takeover prompt is
+ *        waiting for the user on the target's agent tab — it auto-declines if not accepted within <N>s`
  *   - descriptor null (e.g. resume path with no captured info) → [genericFallback].
  *
- * Leads with `ide_b_busy:` and the in-flight task identity so the trailing accept-window note is
- * not misread as "you had <N>s and ignored it". The literal "user did not click Start within <N>s"
- * is the actual mechanism (busy tab → Start prompt → not clicked within `ACCEPT_WINDOW_MS`); the
- * real `ACCEPT_WINDOW_MS` value is used, never a hardcoded number.
+ * [configuredWindowSeconds] is the actual window value in use (from
+ * [com.workflow.orchestrator.core.settings.PluginSettings.State.delegationAcceptWindowSeconds]
+ * via [com.workflow.orchestrator.core.settings.effectiveAcceptWindowMs], divided back to seconds
+ * for the message). The default value equals [com.workflow.orchestrator.agent.ui.AgentController.ACCEPT_WINDOW_MS] / 1000
+ * so callers that don't yet thread the setting still produce correct output.
  *
- * `ide_b_busy` is a clean PEER reason token (see [classifyResumeCloseReason]'s known-token set) —
+ * `ide_b_busy` is a clean PEER reason token (see `classifyResumeCloseReason`'s known-token set) —
  * it must NOT be conflated with `session_closed:` / `declined_timeout:`.
  */
 internal fun composeBusyDeclineReason(
     busyInfo: com.workflow.orchestrator.agent.ui.BusyInfo?,
-    genericFallback: String = "ide_b_busy: agent tab is busy with another task; " +
-        "the user did not accept the takeover within ${com.workflow.orchestrator.agent.ui.AgentController.ACCEPT_WINDOW_MS / 1000}s",
+    genericFallback: String? = null,
+    configuredWindowSeconds: Long = com.workflow.orchestrator.agent.ui.AgentController.ACCEPT_WINDOW_MS / 1000,
 ): String {
-    if (busyInfo == null) return genericFallback
-    val windowSeconds = com.workflow.orchestrator.agent.ui.AgentController.ACCEPT_WINDOW_MS / 1000
+    val effectiveFallback = genericFallback
+        ?: "ide_b_busy: agent tab is busy with another task; " +
+            "a takeover prompt is waiting for the user on the target's agent tab — " +
+            "it auto-declines if not accepted within ${configuredWindowSeconds}s"
+    if (busyInfo == null) return effectiveFallback
     val sessionPart = busyInfo.inFlightSessionId?.let { sid ->
         val titlePart = busyInfo.inFlightTitle?.takeIf { it.isNotBlank() }?.let { " ('$it')" } ?: ""
         "session $sid$titlePart"
-    } ?: return genericFallback
+    } ?: return effectiveFallback
     val delegatorClause = if (busyInfo.inFlightDelegatorSessionId != null) {
         val repo = busyInfo.inFlightDelegatorRepo ?: "unknown"
         ", delegated by $repo session ${busyInfo.inFlightDelegatorSessionId}"
     } else ""
     return "ide_b_busy: agent tab is busy running $sessionPart$delegatorClause; " +
-        "the user did not accept the takeover within ${windowSeconds}s"
+        "a takeover prompt is waiting for the user on the target's agent tab — " +
+        "it auto-declines if not accepted within ${configuredWindowSeconds}s"
 }
 
 /**
@@ -215,6 +222,29 @@ class DelegationInboundService(
          * and bails without writing a spurious heartbeat to the wire.
          */
         val closed: java.util.concurrent.atomic.AtomicBoolean =
+            java.util.concurrent.atomic.AtomicBoolean(false),
+        /**
+         * Orphan-cancel: the delegated agent [kotlinx.coroutines.Job] for this session,
+         * attached via [attachJob] right after [AgentService.startDelegatedSession] /
+         * [AgentService.resumeDelegatedSession] create it (it does NOT exist yet at
+         * [registerSessionChannel] time). Cancelled when IDE-A sends a
+         * [DelegationMessage.CancelTask], OR when the socket reaches EOF while the session is
+         * still NON-terminal (covers an IDE-A crash / socket drop with no frame). Held in an
+         * [java.util.concurrent.atomic.AtomicReference] so it survives the `copy()` that
+         * [handleChannelResume] does to swap in a fresh [replyWith], and so the late attach is
+         * visible to the reader coroutine without rebuilding the map entry.
+         */
+        val job: java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.Job?> =
+            java.util.concurrent.atomic.AtomicReference(null),
+        /**
+         * Orphan-cancel terminal discriminator. Set true by [markTerminal] the moment the
+         * delegated agent loop reaches a terminal [LoopResult] (BEFORE the terminal Result is
+         * delivered to IDE-A and BEFORE the socket is closed). The reader uses this to tell a
+         * NORMAL completion-close (IDE-A hangs up right after receiving the terminal Result —
+         * `terminalReached == true` → do NOT cancel) apart from an orphaning drop (IDE-A's socket
+         * died while the loop was still running — `terminalReached == false` → cancel the Job).
+         */
+        val terminalReached: java.util.concurrent.atomic.AtomicBoolean =
             java.util.concurrent.atomic.AtomicBoolean(false),
     )
 
@@ -502,7 +532,10 @@ class DelegationInboundService(
             replyWith(
                 DelegationMessage.AcceptResult(
                     accepted = false,
-                    reason = composeBusyDeclineReason(busyInfoHolder.get()),
+                    reason = composeBusyDeclineReason(
+                        busyInfoHolder.get(),
+                        configuredWindowSeconds = settings.effectiveAcceptWindowMs() / 1000,
+                    ),
                 )
             )
             closeChannel()
@@ -612,6 +645,24 @@ class DelegationInboundService(
                         val agentService = project.getService(AgentService::class.java)
                         agentService.enqueueNudgeForSession(localSessionId, msg.text)
                     }
+                    is DelegationMessage.CancelTask -> {
+                        // Orphan-cancel: IDE-A explicitly cancelled this still-running delegation.
+                        // Cancel the delegated agent Job so it stops burning tokens / executing
+                        // WRITE tools, then exit the loop. The cancellation surfaces back through
+                        // the loop's CancellationException → AgentService delivers Result(CANCELED)
+                        // (when the socket is still up). Use THIS channel's own session id — the
+                        // remote-supplied msg.sessionId is IDE-B's session id (the bSessionId IDE-A
+                        // persisted), but localSessionId is authoritative for this channel.
+                        LOG.info(
+                            "CancelTask received for session $localSessionId " +
+                                "(reason=${msg.reason}); cancelling delegated agent Job"
+                        )
+                        cancelDelegatedJob(
+                            localSessionId,
+                            "delegation canceled by delegator: ${msg.reason ?: "no reason given"}",
+                        )
+                        return
+                    }
                     else -> {
                         LOG.warn(
                             "Unexpected message on inbound channel post-Accept for session " +
@@ -623,11 +674,56 @@ class DelegationInboundService(
         } catch (e: java.nio.channels.ClosedChannelException) {
             // F3 fix: normal termination — closeChannel() interrupted readMessage().
             LOG.debug("Inbound read-loop ended (channel closed) for session $localSessionId")
+            cancelJobIfNonTerminal(localSessionId)
         } catch (e: java.nio.channels.AsynchronousCloseException) {
             // F3 fix: normal termination on Windows/async close path.
             LOG.debug("Inbound read-loop ended (async close) for session $localSessionId")
+            cancelJobIfNonTerminal(localSessionId)
         } catch (e: Exception) {
+            // Socket EOF (IDE-A hung up) surfaces here as IOException("unexpected EOF") and on the
+            // close paths above. If the session has NOT reached a terminal state, IDE-A dropping
+            // the socket while the loop is still running is an orphaning drop (IDE-A crash / socket
+            // death with no CancelTask frame) → cancel the Job. A NORMAL completion-close (IDE-A
+            // hangs up right after receiving the terminal Result) has terminalReached == true and
+            // is left untouched.
             LOG.warn("Inbound read-loop failed unexpectedly for session $localSessionId", e)
+            cancelJobIfNonTerminal(localSessionId)
+        }
+    }
+
+    /**
+     * Orphan-cancel: cancel the delegated agent [kotlinx.coroutines.Job] for [sessionId]
+     * unconditionally (used by the explicit [DelegationMessage.CancelTask] path). No-op if no
+     * channel/job is registered or the job already finished.
+     */
+    private fun cancelDelegatedJob(sessionId: String, message: String) {
+        val sc = sessionChannels[sessionId] ?: return
+        val job = sc.job.get() ?: run {
+            LOG.info("cancelDelegatedJob: no job attached for session $sessionId (nothing to cancel)")
+            return
+        }
+        if (job.isActive) {
+            job.cancel(kotlinx.coroutines.CancellationException(message))
+        }
+    }
+
+    /**
+     * Orphan-cancel on socket drop: cancel the delegated agent Job ONLY if the session has not yet
+     * reached a terminal state ([SessionChannel.terminalReached] == false). This is the
+     * discriminator that keeps a NORMAL completion-close (terminal already reached, IDE-A simply
+     * hung up after the Result) from spuriously cancelling an already-finished/finishing Job, while
+     * still stopping a genuinely orphaned loop whose delegator died mid-run.
+     */
+    private fun cancelJobIfNonTerminal(sessionId: String) {
+        val sc = sessionChannels[sessionId] ?: return
+        if (sc.terminalReached.get()) return // normal completion close — do not cancel.
+        val job = sc.job.get() ?: return
+        if (job.isActive) {
+            LOG.info(
+                "Inbound socket dropped for non-terminal delegated session $sessionId " +
+                    "(delegator gone, no CancelTask); cancelling orphaned agent Job"
+            )
+            job.cancel(kotlinx.coroutines.CancellationException("delegator socket dropped before completion"))
         }
     }
 
@@ -658,6 +754,28 @@ class DelegationInboundService(
         sessionChannels[sessionId] = SessionChannel(sessionId, replyWith, token, hb, closed)
         hb.start()
         return token
+    }
+
+    /**
+     * Orphan-cancel: attach the delegated agent [kotlinx.coroutines.Job] to the registered
+     * channel so a [DelegationMessage.CancelTask] (or a non-terminal socket EOF) can cancel it.
+     * Called by [AgentService.startDelegatedSession] / [AgentService.resumeDelegatedSession] as
+     * soon as the loop Job is created (it does not exist yet when [registerSessionChannel] runs).
+     * No-op if the channel was already torn down (the session ended before the job attached).
+     */
+    fun attachJob(sessionId: String, job: kotlinx.coroutines.Job) {
+        sessionChannels[sessionId]?.job?.set(job)
+    }
+
+    /**
+     * Orphan-cancel: mark this delegated session as having reached a terminal state. Called by
+     * [AgentService] the instant the delegated loop completes with a terminal [LoopResult] —
+     * BEFORE the terminal Result is delivered to IDE-A and BEFORE the socket is closed. This is
+     * the discriminator the inbound reader uses so a NORMAL completion-close does NOT spuriously
+     * cancel the (already-finished) Job, while a true orphaning socket drop still does.
+     */
+    fun markTerminal(sessionId: String) {
+        sessionChannels[sessionId]?.terminalReached?.set(true)
     }
 
     /**
@@ -1100,7 +1218,10 @@ class DelegationInboundService(
                     sessionId = sessionId,
                     closeReason = composeBusyDeclineReason(
                         busyInfoHolder.get(),
-                        genericFallback = "ide_b_busy: the agent tab is running another task; could not resume",
+                        genericFallback = "ide_b_busy: the agent tab is running another task; " +
+                            "a takeover prompt is waiting for the user on the target's agent tab — " +
+                            "it auto-declines if not accepted within ${settings.effectiveAcceptWindowMs() / 1000}s",
+                        configuredWindowSeconds = settings.effectiveAcceptWindowMs() / 1000,
                     ),
                 )
             )

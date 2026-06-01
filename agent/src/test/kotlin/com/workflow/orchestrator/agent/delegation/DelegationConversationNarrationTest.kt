@@ -76,11 +76,20 @@ class DelegationConversationNarrationTest {
         val builder = svc.substringAfter("fun delegatedIncomingTaskText").substringBefore("fun mapLoopResultToDelegationResult")
         assertTrue(builder.contains("delegatorRepo"), "the incoming-task text must name the delegator REPO")
         assertFalse(builder.contains("IDE-A") || builder.contains("IDE-B"), "must NOT mention IDE-A/IDE-B")
-        // The persisted uiMessageOverride uses the SAME builder so live + history match.
+        // The persisted uiMessageOverride is built by delegatedIncomingUiMessageOverride,
+        // which reuses delegatedIncomingTaskText for the body so live + history match, and
+        // ALSO stamps the delegated flag + repo so history renders the delegated pill (#2).
         assertTrue(
-            svc.contains("text = delegatedIncomingTaskText(delegationMetadata, request)"),
-            "the persisted uiMessageOverride must reuse delegatedIncomingTaskText",
+            svc.contains("uiMessageOverride = delegatedIncomingUiMessageOverride(delegationMetadata, request)"),
+            "the persisted uiMessageOverride must be built by delegatedIncomingUiMessageOverride",
         )
+        val override = svc.substringAfter("fun delegatedIncomingUiMessageOverride")
+            .substringBefore("fun mapLoopResultToDelegationResult")
+        assertTrue(override.contains("text = delegatedIncomingTaskText(metadata, request)"),
+            "the override must reuse delegatedIncomingTaskText for the body")
+        assertTrue(override.contains("delegated = true"), "the override must persist the delegated flag")
+        assertTrue(override.contains("delegatorRepo = metadata.delegatorRepo"),
+            "the override must persist the delegator REPO for the pill")
     }
 
     // ── (b) routed question ──────────────────────────────────────────────────────
