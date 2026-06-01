@@ -77,7 +77,7 @@ class IncomingDelegationReservationWiringTest {
 
     @Test
     fun `runDelegatedNow releases on currentJob assignment AND on every exit path`() {
-        val body = bodyOf("private fun runDelegatedNow(")
+        val body = bodyOf("private fun runDelegatedNow(", maxLen = 5200)
         // onJobCreated assigns currentJob THEN releases — assignment must come first so the gate is
         // never briefly open with no live job.
         val onJobCreatedIdx = body.indexOf("onJobCreated = { job ->")

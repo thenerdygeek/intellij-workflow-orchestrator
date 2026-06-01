@@ -101,6 +101,26 @@ class MessageStateHandler(
         saveInternal()
     }
 
+    /**
+     * Flip the persisted delegation ASKED card matching [questionId] to answered=true,
+     * so a reopened delegated session renders it as resolved (not stuck "waiting").
+     * No-op when no matching card is present. Cross-IDE delegation narration (2026-06-01).
+     */
+    suspend fun markDelegationQuestionAnswered(questionId: String) = mutex.withLock {
+        var changed = false
+        for (i in uiMessages.indices) {
+            val m = uiMessages[i]
+            val card = m.delegationCardData
+            if (card != null && card.kind == DelegationCardKind.ASKED &&
+                card.questionId == questionId && !card.answered
+            ) {
+                uiMessages[i] = m.copy(delegationCardData = card.copy(answered = true))
+                changed = true
+            }
+        }
+        if (changed) saveInternal()
+    }
+
     suspend fun updateClineMessage(index: Int, updated: UiMessage) = mutex.withLock {
         if (index in uiMessages.indices) {
             uiMessages[index] = updated

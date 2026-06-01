@@ -101,6 +101,12 @@ class DelegationOutboundService(
      * instant it sends the terminal Result). Pruned by [TRANSCRIPT_RETENTION_MILLIS].
      */
     private data class RetainedHandle(
+        /**
+         * PART 1: the delegator (IDE-A) session that originated this handle, retained so
+         * [handlesForSession] can scope closed-but-retained handles to their session after the live
+         * `handleToSessionId` entry was cleared by [close].
+         */
+        val delegatorSessionId: String?,
         val bSessionId: String,
         val targetProjectPath: String,
         val repoName: String,
@@ -132,6 +138,19 @@ class DelegationOutboundService(
      * [IDLE_CHECK_INTERVAL_MILLIS] (30 s). Null in production. Plan 3 / BUG #5 coverage.
      */
     internal var testIdleCheckIntervalMillis: Long? = null
+
+    /**
+     * Test seam for the wall-clock used in [statusOf] (TTL computation) and
+     * [pruneRetainedHandles] (cutoff comparison). Defaults to [System.currentTimeMillis] in
+     * production. Override in tests to drive deterministic TTL assertions without sleeping.
+     *
+     * Goal G — retention-TTL exposure.
+     */
+    internal var testClockFn: (() -> Long)? = null
+
+    /** Returns the current time in millis — production uses [System.currentTimeMillis],
+     *  tests override via [testClockFn]. */
+    private fun nowMillis(): Long = testClockFn?.invoke() ?: System.currentTimeMillis()
 
     /**
      * F5: Serializes concurrent [send] calls so the 5-channel cap is atomic.
@@ -639,6 +658,7 @@ class DelegationOutboundService(
                     activeChannels.containsKey(handleId) &&
                     !alreadyTerminal
                 retainedHandles[handleId] = RetainedHandle(
+                    delegatorSessionId = sessionId,
                     bSessionId = bSid,
                     targetProjectPath = tPath,
                     repoName = handleToRepoName[handleId] ?: handleId.take(8),
@@ -646,7 +666,7 @@ class DelegationOutboundService(
                         closingLiveRunningChannel -> DelegationMessage.ResultStatus.CANCELED.name
                         else -> seenState ?: "closed"
                     },
-                    capturedAt = System.currentTimeMillis(),
+                    capturedAt = nowMillis(),
                 )
             }
             pruneRetainedHandles()
@@ -823,7 +843,8 @@ class DelegationOutboundService(
                     resumedChannel
                 }
                 is ResumeOutcome.Closed -> throw DelegationException.Expired(
-                    "session_closed: ${outcome.closeReason}${outcome.summary?.let { " — $it" } ?: ""}"
+                    classifyResumeCloseReason(outcome.closeReason) +
+                        (outcome.summary?.let { " — $it" } ?: "")
                 )
                 ResumeOutcome.NotFound -> throw DelegationException.Expired("session_not_found")
                 is ResumeOutcome.ProbeFailed -> throw DelegationException.Expired(outcome.reason)
@@ -1000,7 +1021,8 @@ class DelegationOutboundService(
                 handle
             }
             is DelegationMessage.SessionClosed -> throw DelegationException.Expired(
-                "session_closed: ${reply.closeReason}${reply.summary?.let { " — $it" } ?: ""}"
+                classifyResumeCloseReason(reply.closeReason) +
+                    (reply.summary?.let { " — $it" } ?: "")
             )
             is DelegationMessage.SessionNotFound -> throw DelegationException.Expired("session_not_found")
             else -> throw DelegationException.Expired(
@@ -1409,9 +1431,73 @@ class DelegationOutboundService(
      */
     fun statusOf(handleId: String): DelegationStatusResult = when (val s = handleState(handleId)) {
         is HandleState.Active -> DelegationStatusResult.Active(state = s.state, repoName = s.repoName)
-        is HandleState.ClosedRetained ->
-            DelegationStatusResult.Closed(lastState = s.lastState, repoName = s.repoName, closedAtMillis = s.closedAtMillis)
+        is HandleState.ClosedRetained -> {
+            // Compute remaining retention seconds. capturedAt == 0L is the backward-compat sentinel
+            // for old persisted entries that have no real timestamp — omit the field rather than
+            // emitting a bogus large number (e.g. (0 + 1_800_000 - nowMillis) / 1000 ≈ -1.7M).
+            val retentionExpiresInSeconds: Long? = if (s.closedAtMillis > 0L) {
+                maxOf(0L, (s.closedAtMillis + TRANSCRIPT_RETENTION_MILLIS - nowMillis()) / 1000L)
+            } else {
+                null
+            }
+            DelegationStatusResult.Closed(
+                lastState = s.lastState,
+                repoName = s.repoName,
+                closedAtMillis = s.closedAtMillis,
+                retentionExpiresInSeconds = retentionExpiresInSeconds,
+            )
+        }
         HandleState.Unknown -> DelegationStatusResult.Unknown
+    }
+
+    /**
+     * PART 1 — enumerate every delegation handle this IDE-A holds for [delegatorSessionId], so the
+     * agent can recover lost handles and correlate them (backs `delegation(action="list_handles")`).
+     *
+     * Includes BOTH:
+     *  - still-active handles (a live channel in [activeChannels], keyed to the session via
+     *    [handleToSessionId] — the same per-session grouping [send] establishes and
+     *    [cancelAllForSession] / [persistHandlesForSession] key off), and
+     *  - closed-but-retained handles ([retainedHandles] within the retention window), scoped by the
+     *    [RetainedHandle.delegatorSessionId] captured at [close].
+     *
+     * Each summary's [HandleSummary.lastState] is resolved through the [handleState] SSOT (reusing
+     * the same classification `status` / `answer` / send-continuation use) — never a parallel state
+     * computation. Returns an empty list when the session holds no active or retained delegations.
+     */
+    fun handlesForSession(delegatorSessionId: String): List<HandleSummary> {
+        pruneRetainedHandles()
+        // Active handles for this session, classified via the SSOT.
+        val active = handleToSessionId.entries
+            .filter { it.value == delegatorSessionId }
+            .map { (handleId, _) ->
+                val lastState = when (val s = handleState(handleId)) {
+                    is HandleState.Active -> s.state
+                    is HandleState.ClosedRetained -> s.lastState
+                    HandleState.Unknown -> handleToLastSeenState[handleId] ?: "unknown"
+                }
+                HandleSummary(
+                    handleId = handleId,
+                    targetRepoName = handleToRepoName[handleId] ?: handleId.take(8),
+                    targetProjectPath = handleToTargetPath[handleId] ?: "",
+                    bSessionId = handleToBSessionId[handleId],
+                    lastState = lastState,
+                )
+            }
+        val activeIds = active.map { it.handleId }.toSet()
+        // Closed-but-retained handles for this session (excluding any still represented as active).
+        val retained = retainedHandles.entries
+            .filter { it.value.delegatorSessionId == delegatorSessionId && it.key !in activeIds }
+            .map { (handleId, r) ->
+                HandleSummary(
+                    handleId = handleId,
+                    targetRepoName = r.repoName,
+                    targetProjectPath = r.targetProjectPath,
+                    bSessionId = r.bSessionId,
+                    lastState = r.lastState,
+                )
+            }
+        return active + retained
     }
 
     /**
@@ -1459,8 +1545,11 @@ class DelegationOutboundService(
 
     /** Drop retained snapshots older than [TRANSCRIPT_RETENTION_MILLIS]. */
     private fun pruneRetainedHandles() {
-        val cutoff = System.currentTimeMillis() - TRANSCRIPT_RETENTION_MILLIS
-        retainedHandles.entries.removeIf { it.value.capturedAt < cutoff }
+        val cutoff = nowMillis() - TRANSCRIPT_RETENTION_MILLIS
+        // A capturedAt of 0L is the backward-compat sentinel for "no timestamp" (old persisted entry).
+        // Such entries are NOT pruned by this call (they have no meaningful age), but they also report
+        // no TTL in [statusOf]. They are only removed when the handle is explicitly closed or reset.
+        retainedHandles.entries.removeIf { it.value.capturedAt > 0L && it.value.capturedAt < cutoff }
     }
 
     companion object {
@@ -1502,13 +1591,49 @@ sealed class HandleState {
 }
 
 /**
+ * PART 1 — one row of [DelegationOutboundService.handlesForSession]: a compact, read-only summary
+ * of a delegation handle IDE-A holds for the active session.
+ *
+ * @property handleId          the delegation channel handle.
+ * @property targetRepoName    the target IDE-B repo display name.
+ * @property targetProjectPath the target IDE-B project path.
+ * @property bSessionId        IDE-B's session id for this delegation (null if never recorded — e.g.
+ *                             a partially-seeded handle).
+ * @property lastState         the current last-seen state, resolved through the [HandleState] SSOT
+ *                             ("RUNNING" / "AWAITING_ANSWER" while active; the terminal
+ *                             COMPLETED/FAILED/CANCELED/REJECTED once closed-retained).
+ */
+data class HandleSummary(
+    val handleId: String,
+    val targetRepoName: String,
+    val targetProjectPath: String,
+    val bSessionId: String?,
+    val lastState: String,
+)
+
+/**
  * Result type for [DelegationOutboundService.statusOf].
  */
 sealed class DelegationStatusResult {
     /** Handle is open; [state] is the last-seen remote state ("RUNNING", "AWAITING_ANSWER", …). */
     data class Active(val state: String, val repoName: String?) : DelegationStatusResult()
-    /** Handle has closed; metadata retained from the last-seen snapshot. */
-    data class Closed(val lastState: String, val repoName: String?, val closedAtMillis: Long) : DelegationStatusResult()
+
+    /**
+     * Handle has closed; metadata retained from the last-seen snapshot.
+     *
+     * @property retentionExpiresInSeconds How many seconds remain before the retained handle is
+     *   pruned. Computed as `max(0, (closedAtMillis + TRANSCRIPT_RETENTION_MILLIS - now) / 1000)`.
+     *   Null when [closedAtMillis] is 0 (old persisted entry without a close timestamp) — the TTL
+     *   field is omitted from the tool JSON in that case to avoid emitting a bogus large negative
+     *   number. Non-null values are always ≥ 0 (floored at 0). Goal G: retention-TTL exposure.
+     */
+    data class Closed(
+        val lastState: String,
+        val repoName: String?,
+        val closedAtMillis: Long,
+        val retentionExpiresInSeconds: Long? = null,
+    ) : DelegationStatusResult()
+
     /** Handle is unknown or its retention window has elapsed. */
     object Unknown : DelegationStatusResult()
 }
@@ -1558,4 +1683,38 @@ sealed class FetchTranscriptResult {
         /** Known handle, but its transcript is genuinely not reachable (missing-on-disk / IO). */
         TRANSCRIPT_UNREACHABLE,
     }
+}
+
+/**
+ * Maps a raw `closeReason` string from IDE-B's [DelegationMessage.SessionClosed] (or the
+ * equivalent [ResumeOutcome.Closed] field) to the correct [DelegationException.Expired] reason.
+ *
+ * **Contract:**
+ * - If [closeReason] already starts with a known taxonomy token (one of the peer-level
+ *   `DelegationExpired` reasons listed in the cross-IDE delegation docs), return it **verbatim**.
+ *   The token is self-describing — prepending `session_closed:` would be misleading because the
+ *   session was NOT closed in the terminal sense (e.g. `ide_b_busy` means the target is alive but
+ *   occupied; `resume_failed` means the reconnect attempt itself failed).
+ * - Otherwise the reason represents a genuine terminal close (`completed`, `canceled`, `failed`,
+ *   or an unexpected / empty / null value), so wrap it as `"session_closed: <closeReason>"` to
+ *   preserve the original framing that existed before this fix.
+ *
+ * Both [DelegationOutboundService.sendContinuation] and [DelegationOutboundService.resurrectAndContinue]
+ * delegate to this single function so the known-token set is never duplicated.
+ *
+ * Taxonomy tokens matched here must match those documented in
+ * `agent/src/main/resources/skills/cross-ide-delegation/SKILL.md` and
+ * `agent/src/main/resources/tool-docs/delegation.md`.
+ */
+internal fun classifyResumeCloseReason(closeReason: String?): String {
+    val reason = closeReason ?: ""
+    val knownTokens = listOf(
+        "ide_b_busy",
+        "resume_failed",
+        "ide_b_not_running",
+        "ide_b_agent_unavailable",
+        "resume_protocol_error",
+    )
+    return if (knownTokens.any { reason.startsWith(it) }) reason
+    else "session_closed: $reason"
 }

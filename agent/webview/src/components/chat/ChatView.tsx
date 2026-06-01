@@ -12,6 +12,11 @@ import { ArtifactRenderer } from '@/components/rich/ArtifactRenderer';
 import { ThinkingView } from '@/components/agent/ThinkingView';
 import { CompletionCard } from '@/components/agent/CompletionCard';
 import { PlanSummaryCard } from '@/components/agent/PlanSummaryCard';
+import {
+  DelegationQuestionCard,
+  DelegationAnswerCard,
+  DelegationResultCard,
+} from '@/components/agent/DelegationConversationCards';
 import type { UiMessage, ToolCall, Plan } from '@/bridge/types';
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList';
 import { ScrollButton } from '@/components/ui/prompt-kit/scroll-button';
@@ -121,6 +126,21 @@ export const ChatView = memo(function ChatView() {
       return (
         <ErrorBoundary key={key}>
           <SubAgentView subAgent={subAgentState} />
+        </ErrorBoundary>
+      );
+    }
+
+    if (msg.say === 'DELEGATION_CARD' && msg.delegationCardData) {
+      const d = msg.delegationCardData;
+      return (
+        <ErrorBoundary key={key}>
+          {d.kind === 'ASKED' ? (
+            <DelegationQuestionCard data={d} />
+          ) : d.kind === 'ANSWERED' ? (
+            <DelegationAnswerCard data={d} />
+          ) : (
+            <DelegationResultCard data={d} />
+          )}
         </ErrorBoundary>
       );
     }

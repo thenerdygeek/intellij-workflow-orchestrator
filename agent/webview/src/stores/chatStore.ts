@@ -591,6 +591,11 @@ interface ChatState {
   // Delegation question pending banner (Plan 4 §5.5)
   setDelegationQuestionPending(active: boolean, delegatorRepo?: string): void;
 
+  // Delegation conversation narration cards (IDE-B panel, cross-IDE 2026-06-01)
+  appendDelegatedQuestion(questionId: string, delegatorRepo: string, text: string, options: string[]): void;
+  appendDelegatedAnswer(questionId: string, delegatorRepo: string, text: string): void;
+  appendDelegatedResult(delegatorRepo: string, status: string, durationSeconds: number, summary: string, reason: string | null): void;
+
   // Drop-zone overlay
   setDropActive(active: boolean): void;
 
@@ -2536,6 +2541,63 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // ── Delegation question pending banner (Plan 4 §5.5) ──
   setDelegationQuestionPending: (active, delegatorRepo) =>
     set({ delegationQuestionPending: { active, delegatorRepo } }),
+
+  // ── Delegation conversation narration cards (IDE-B panel, cross-IDE 2026-06-01) ──
+  // Render the delegation CONVERSATION (not just the agent's work) on IDE-B's own
+  // panel. The "other side" is always the delegator's repo name (delegatorRepo).
+  appendDelegatedQuestion: (questionId, delegatorRepo, text, options) =>
+    set((state) => {
+      // Dedupe: a re-pushed question id must not double-render.
+      if (state.messages.some((m) => m.delegationCardData?.kind === 'ASKED' && m.delegationCardData.questionId === questionId)) {
+        return state;
+      }
+      const msg: UiMessage = {
+        ts: uniqueTs(),
+        type: 'SAY',
+        say: 'DELEGATION_CARD',
+        delegationCardData: { kind: 'ASKED', delegatorRepo, questionId, text, options, answered: false },
+      };
+      return { messages: capMessages([...state.messages, msg]) };
+    }),
+
+  appendDelegatedAnswer: (questionId, delegatorRepo, text) =>
+    set((state) => {
+      // Flip the matching ASKED card (by question id, else the last unanswered ASKED) to resolved.
+      let flippedIdx = -1;
+      const messages = state.messages.map((m): UiMessage => {
+        if (m.delegationCardData?.kind !== 'ASKED' || m.delegationCardData.answered) return m;
+        const matches = questionId ? m.delegationCardData.questionId === questionId : true;
+        if (!matches) return m;
+        flippedIdx = 0; // mark that we flipped at least one
+        return { ...m, delegationCardData: { ...m.delegationCardData, answered: true } };
+      });
+      void flippedIdx;
+      const answerMsg: UiMessage = {
+        ts: uniqueTs(),
+        type: 'SAY',
+        say: 'DELEGATION_CARD',
+        delegationCardData: { kind: 'ANSWERED', delegatorRepo, questionId, text, answered: true },
+      };
+      return { messages: capMessages([...messages, answerMsg]) };
+    }),
+
+  appendDelegatedResult: (delegatorRepo, status, durationSeconds, summary, reason) =>
+    set((state) => {
+      const msg: UiMessage = {
+        ts: uniqueTs(),
+        type: 'SAY',
+        say: 'DELEGATION_CARD',
+        delegationCardData: {
+          kind: 'RESULT',
+          delegatorRepo,
+          text: summary,
+          resultStatus: status,
+          durationSeconds,
+          reason,
+        },
+      };
+      return { messages: capMessages([...state.messages, msg]) };
+    }),
 
   // ── Drop-zone overlay (OS file drag feedback via JVM Swing DropTarget) ──
   setDropActive: (active) => set({ dropActive: active }),

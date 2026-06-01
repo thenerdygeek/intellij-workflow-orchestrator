@@ -132,6 +132,15 @@ declare global {
      */
     _setActiveSessionDelegated?: (json: string) => void;
     /**
+     * Cross-IDE 2026-06-01 — IDE-B delegation conversation narration cards.
+     * Pushed by Kotlin's AgentController so IDE-B's OWN chat narrates the full
+     * delegation conversation (question routed to / answer from / result sent to
+     * the delegator's repo). Payloads carry `delegatorRepo` — never IDE-A/IDE-B.
+     */
+    _appendDelegatedQuestion?: (json: string) => void;
+    _appendDelegatedAnswer?: (json: string) => void;
+    _appendDelegatedResult?: (json: string) => void;
+    /**
      * Task 11 — drop-zone overlay driven by the JVM Swing DropTarget.
      * Pushed by Kotlin's AttachmentDropTarget via AgentCefPanel.callJs()
      * when an OS file drag enters (true) or exits (false) the JCEF component.

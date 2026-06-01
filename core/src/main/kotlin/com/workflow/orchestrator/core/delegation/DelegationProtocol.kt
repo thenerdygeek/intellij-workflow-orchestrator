@@ -5,6 +5,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.IOException
 import java.nio.ByteBuffer
+import java.nio.channels.ClosedChannelException
 import java.nio.channels.ReadableByteChannel
 import java.nio.channels.WritableByteChannel
 
@@ -253,6 +254,35 @@ object DelegationFraming {
 
     class FrameSizeExceeded(size: Int) :
         IOException("frame size $size exceeds max $MAX_FRAME_BYTES")
+
+    /**
+     * Classifies a write/IO throwable as a benign "peer hung up, nothing to deliver"
+     * disconnect — the case where the remote IDE already closed its end of the socket
+     * (closed the delegation handle, let a `wait` lapse, or cancelled) before a framed
+     * reply could be delivered.
+     *
+     * Returns true for:
+     *  - [ClosedChannelException] and its subclasses ([AsynchronousCloseException],
+     *    [ClosedByInterruptException]) — the channel itself is gone.
+     *  - an [IOException] whose message indicates a closed/reset peer
+     *    ("broken pipe", "connection reset", "socket closed" — case-insensitive contains).
+     *
+     * Returns false for everything else — notably [FrameSizeExceeded] (an [IOException]
+     * thrown BEFORE the write loop, a genuine producer error that MUST propagate) and any
+     * arbitrary exception. Reply boundaries use this to swallow ONLY the benign disconnect
+     * while letting real errors surface.
+     */
+    fun isPeerDisconnect(e: Throwable): Boolean {
+        if (e is FrameSizeExceeded) return false
+        if (e is ClosedChannelException) return true // covers Asynchronous/ByInterrupt subclasses
+        if (e is IOException) {
+            val msg = e.message?.lowercase() ?: return false
+            return msg.contains("broken pipe") ||
+                msg.contains("connection reset") ||
+                msg.contains("socket closed")
+        }
+        return false
+    }
 
     fun writeFramed(channel: WritableByteChannel, msg: DelegationMessage, json: Json) {
         val payload = json.encodeToString(msg).toByteArray(Charsets.UTF_8)

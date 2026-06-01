@@ -98,8 +98,8 @@ class DelegationTool(
         - send(request, suggested_repo?, handle?) → Delegate a task. Without `handle`,
           opens a picker so the user selects the target IDE/repo; with `handle`, sends
           a follow-up user turn on the SAME session — this CONTINUES the existing
-          conversation even if the remote (IDE-B) session has already COMPLETED: within
-          the ~30 min retention window IDE-B resurrects the persisted session and resumes
+          conversation even if the remote (target repo) session has already COMPLETED: within
+          the ~30 min retention window the target repo resurrects the persisted session and resumes
           it from where it left off. Returns a handle + "running" status; the actual
           result arrives later as a system nudge when the remote agent finishes. Do NOT poll.
         - close(handle) → Close an active delegation channel (idempotent — closing an
@@ -119,21 +119,31 @@ class DelegationTool(
           AGREE about a handle's existence (closed-but-retained = consistently "closed";
           pruned = consistently "not found").
         - wait(handle, timeout_seconds?) → Block the current turn until the delegation
-          completes or raises a clarifying question, then return it inline (default 300s,
-          5-1800). Use this to "attach" and get the answer in the same turn. On a question,
-          answer it then wait again. A timeout returns "still running" — NOT a failure;
-          the result auto-delivers (the session auto-resumes) when it finishes.
-        - list_targets() → Read-only enumeration of potential delegation targets (same
-          list the picker shows: running / available / closed / discovered / missing).
-          "available" = IDE open but inbound delegation OFF — a send rings its doorbell
-          for consent. No UI opens.
+          completes or raises a clarifying question, then return it inline (integer
+          seconds, allowed range 5–1800, default 300; values outside are clamped and the
+          clamp is reported). Use this to "attach" and get the answer in the same turn. On
+          a question, answer it then wait again. A timeout returns "still running" — NOT a
+          failure; the result auto-delivers (the session auto-resumes) when it finishes.
+        - list_targets() → Read-only enumeration of candidate target IDEs and their
+          inbound readiness (same list the picker shows). Does NOT list your active
+          delegation handles (use list_handles for that). Statuses: running = IDE open AND
+          inbound delegation ON (no consent prompt); available = IDE open but inbound OFF —
+          a send rings its doorbell and the user is asked to consent; closed = in recents,
+          not running; missing = path gone. No UI opens.
+        - list_handles() → Read-only enumeration of the delegation handles YOU currently
+          hold for THIS session (active + closed-but-retained), each with its repo, project
+          path and last_state (via the same SSOT status uses). Takes no handle. Use it to
+          recover a lost handle or correlate which delegation is which. Empty list → a clear
+          "no active or retained delegations in this session" message.
 
         Errors (across all actions):
           DelegationOutboundDisabled — outbound delegation off in settings.
           DelegationUserCanceledPicker / DelegationTargetNotReachable / DelegationLimitReached /
           DelegationRejected / DelegationDeclined — send-specific picker / connection / quota /
-          consent failures (declined_timeout is now specific: "IDE-B agent tab busy; user did
-          not click Start within 55s").
+          consent failures. A busy decline now leads with `ide_b_busy:` and NAMES the in-flight
+          task the target repo is busy with (and, when that task is itself delegated, echoes its delegator
+          session id so you can recognize the blocker as your OWN earlier task — match it against
+          list_handles' bSessionId).
           DelegationExpired — a KNOWN handle's continuation/transcript is genuinely unreachable.
           On a send-continuation it carries the specific reason: session_closed / session_not_found
           (remote session genuinely gone or pruned), ide_b_not_running (target IDE down), ide_b_busy
@@ -153,7 +163,7 @@ class DelegationTool(
             "action" to ParameterProperty(
                 type = "string",
                 description = "Operation to perform",
-                enumValues = listOf("send", "close", "answer", "fetch_transcript", "status", "wait", "list_targets"),
+                enumValues = listOf("send", "close", "answer", "fetch_transcript", "status", "wait", "list_targets", "list_handles"),
             ),
             "request" to ParameterProperty(
                 type = "string",
@@ -162,8 +172,10 @@ class DelegationTool(
             ),
             "suggested_repo" to ParameterProperty(
                 type = "string",
-                description = "Optional repo-name hint to pre-select in the picker (e.g. \"frontend\") " +
-                    "— used by action=send only",
+                description = "Optional repo-name pre-selection HINT for the picker (e.g. \"frontend\") " +
+                    "— used by action=send only. NOT a hard target: if the suggested IDE is unavailable " +
+                    "or the user picks a different target, the user's selection wins. The success result " +
+                    "narrates whether the suggestion was honoured.",
             ),
             "handle" to ParameterProperty(
                 type = "string",
@@ -175,9 +187,9 @@ class DelegationTool(
             ),
             "timeout_seconds" to ParameterProperty(
                 type = "integer",
-                description = "For action=wait only: how long to block for the result before returning " +
-                    "'still running' (default 300, range 5-1800). The result also arrives automatically " +
-                    "when done, so a timeout is not a failure.",
+                description = "For action=wait only: integer seconds, allowed range 5–1800 (default 300); " +
+                    "values outside are clamped and the clamp is reported in the result. " +
+                    "The result also arrives automatically when done, so a timeout is not a failure.",
             ),
             "question_id" to ParameterProperty(
                 type = "string",
@@ -297,9 +309,9 @@ class DelegationTool(
                         example("Add a loading spinner to the PR list while data is fetching; match the existing skeleton style.")
                     }
                     optional("suggested_repo", "string") {
-                        llmSeesIt("Optional repo-name hint to pre-select in the picker (e.g. \"frontend\") — used by action=send only")
-                        humanReadable("A repo-name hint so the picker lands on the right window by default — the user can still change it.")
-                        whenPresent("The picker pre-selects the matching target if one is found.")
+                        llmSeesIt("Optional repo-name pre-selection HINT for the picker (e.g. \"frontend\") — used by action=send only. NOT a hard target: if the suggested IDE is unavailable or the user picks a different target, the user's selection wins. The success result narrates whether the suggestion was honoured.")
+                        humanReadable("A repo-name hint so the picker lands on the right window by default — the user can still change it. Not a force: the user's pick always wins.")
+                        whenPresent("The picker pre-selects the matching target if one is found; the user may override. The success result narrates whether the suggestion was honoured.")
                         whenAbsent("The picker opens with no pre-selection; the user picks from the full list.")
                         example("frontend")
                     }
@@ -518,11 +530,11 @@ class DelegationTool(
                         example("d3f9a1b2-...")
                     }
                     optional("timeout_seconds", "integer") {
-                        llmSeesIt("For action=wait only: how long to block for the result before returning 'still running' (default 300, range 5-1800). The result also arrives automatically when done, so a timeout is not a failure.")
+                        llmSeesIt("For action=wait only: integer seconds, allowed range 5–1800 (default 300); values outside are clamped and the clamp is reported in the result. The result also arrives automatically when done, so a timeout is not a failure.")
                         humanReadable("Maximum seconds to block before giving up the wait (the work keeps running regardless).")
-                        whenPresent("Caps the blocking wait at this many seconds (clamped to 5–1800).")
+                        whenPresent("Caps the blocking wait at this many seconds (clamped to 5–1800); values outside the range are clamped silently.")
                         whenAbsent("Defaults to 300 seconds.")
-                        constraint("5–1800 (values outside are clamped)")
+                        constraint("integer seconds 5–1800 (values outside are clamped; clamp is reported in the result)")
                         example("600")
                     }
                 }
@@ -566,6 +578,39 @@ class DelegationTool(
                     keep("Read-only situational awareness that avoids a blind send into a picker; cheap and side-effect-free.")
                 }
             }
+            action("list_handles") {
+                description {
+                    technical(
+                        "DelegationOutboundService.handlesForSession(currentSessionId) — enumerates every delegation handle " +
+                            "the delegating session holds for the ACTIVE session: still-active channels (activeChannels, keyed via " +
+                            "handleToSessionId) AND closed-but-retained snapshots (retainedHandles within the ~30 min window). " +
+                            "Each row's last_state comes from the same handleState SSOT status/answer/send-continuation use — no " +
+                            "parallel state computation. Takes NO handle param. Read-only; never opens UI."
+                    )
+                    plain(
+                        "List the delegations you've started in this conversation and how each is doing — so you can recover a " +
+                            "handle you lost track of or work out which delegation is which."
+                    )
+                }
+                whenLLMUses(
+                    "When you've lost a handle, need to correlate which delegation is which, or want to see everything you've " +
+                        "delegated in this session before deciding what to wait on / fetch / continue. Especially useful after a " +
+                        "busy decline: match the in-flight delegator session id in the ide_b_busy reason against a handle's b_session_id."
+                )
+                onSuccess(
+                    "Returns `{\"handles\":[{handle, repo, project_path, b_session_id, last_state, status}]}` for the current " +
+                        "session (status ∈ active | closed, mirroring the status action). Empty session → a clear " +
+                        "\"no active or retained delegations in this session\" message."
+                )
+                example("recover and correlate your delegations") {
+                    param("action", "list_handles")
+                    outcome("Returns the compact JSON list of handles you hold in this session, each with repo/path/last_state; no UI opens.")
+                    notes("No handle param. Empty list returns a clear no-delegations message, not an error.")
+                }
+                verdict {
+                    keep("Closes the observability gap: an agent that lost a handle (or needs to correlate a busy-decline blocker to its own task) can recover it without a transcript round-trip.")
+                }
+            }
         }
         verdict {
             keep(
@@ -604,9 +649,10 @@ class DelegationTool(
             "status" -> handleStatus(params, project)
             "wait" -> handleWait(params, project)
             "list_targets" -> handleListTargets(params, project)
+            "list_handles" -> handleListHandles(project)
             else -> ToolResult.error(
                 "delegation: unknown action '$action' — must be one of " +
-                    "send|close|answer|fetch_transcript|status|wait|list_targets"
+                    "send|close|answer|fetch_transcript|status|wait|list_targets|list_handles"
             )
         }
     }
@@ -679,11 +725,20 @@ class DelegationTool(
             )
 
             val shortId = handle.id.take(8)
+            // E: narrate how the target was chosen based on suggested_repo vs the actual targetRepoName.
+            val selectionNote: String = when {
+                suggestedRepo != null && suggestedRepo == handle.targetRepoName ->
+                    "(target ${handle.targetRepoName} as suggested)"
+                suggestedRepo != null ->
+                    "(you suggested $suggestedRepo; user selected ${handle.targetRepoName} via the picker)"
+                else ->
+                    "(target ${handle.targetRepoName} selected via picker)"
+            }
             val content = buildString {
                 appendLine("""{"handle":"${handle.id}","status":"running","repo":"${handle.targetRepoName}"}""")
                 appendLine()
                 appendLine(
-                    "Delegated to ${handle.targetRepoName} (handle $shortId). " +
+                    "Delegated to ${handle.targetRepoName} (handle $shortId) $selectionNote. " +
                         "Async — result will arrive as a nudge when done."
                 )
             }.trimEnd()
@@ -787,11 +842,18 @@ class DelegationTool(
                 summary = "Closed delegation $shortId — was RUNNING, in-flight work aborted",
                 tokenEstimate = 20,
             )
-        } else {
-            val summary = if (closed) "Closed delegation $shortId" else "Handle $shortId already closed"
+        } else if (closed) {
+            // A live channel that was not RUNNING (e.g. AWAITING_ANSWER state) was closed normally.
             ToolResult(
-                content = """{"closed":$closed,"handle":"$handle"}""",
-                summary = summary,
+                content = """{"closed":true,"handle":"$handle"}""",
+                summary = "Closed delegation $shortId",
+                tokenEstimate = 15,
+            )
+        } else {
+            // Idempotent no-op: the handle was already closed or unknown — explicitly successful.
+            ToolResult(
+                content = """{"closed":false,"already_closed":true,"handle":"$handle"}""",
+                summary = "Delegation $shortId was already closed (no-op).",
                 tokenEstimate = 15,
             )
         }
@@ -886,11 +948,17 @@ class DelegationTool(
             }
             is DelegationStatusResult.Closed -> {
                 val repo = status.repoName ?: "(unknown)"
+                // Goal G: include retention_expires_in_seconds when available so the agent knows
+                // how long fetch_transcript / continuation keep working. Omit the field entirely
+                // for old persisted entries (retentionExpiresInSeconds == null) to avoid confusion.
+                val ttlSeconds = status.retentionExpiresInSeconds
+                val ttlJson = if (ttlSeconds != null) ""","retention_expires_in_seconds":$ttlSeconds""" else ""
+                val ttlSummary = if (ttlSeconds != null) "; retained for ~${ttlSeconds}s more" else ""
                 ToolResult(
-                    content = """{"handle":"$handleId","status":"closed","last_state":"${status.lastState}","repo":"$repo"}""" +
+                    content = """{"handle":"$handleId","status":"closed","last_state":"${status.lastState}","repo":"$repo"$ttlJson}""" +
                         "\n\nThe delegated session has ended. Use delegation(action=\"fetch_transcript\", " +
                         "handle=\"$handleId\") to read its full conversation while it is still retained.",
-                    summary = "Delegation $shortId ($repo): closed — last state ${status.lastState}",
+                    summary = "Delegation $shortId ($repo): closed — last state ${status.lastState}$ttlSummary",
                     tokenEstimate = 30,
                 )
             }
@@ -1080,8 +1148,63 @@ class DelegationTool(
         )
     }
 
+    // ── Action: list_handles ──────────────────────────────────────────────────
+
+    private fun handleListHandles(project: Project): ToolResult {
+        val outbound = project.getService(DelegationOutboundService::class.java)
+            ?: return ToolResult.error("delegation: DelegationOutboundService unavailable")
+        val agentService = project.getService(AgentService::class.java)
+            ?: return ToolResult.error("delegation: AgentService unavailable")
+        val sessionId = agentService.currentSessionState()?.sessionId
+            ?: return ToolResult.error(
+                "delegation: no active session — cannot determine which session's handles to list"
+            )
+
+        val handles = outbound.handlesForSession(sessionId)
+        if (handles.isEmpty()) {
+            return ToolResult(
+                content = "no active or retained delegations in this session",
+                summary = "No active or retained delegations in this session",
+                tokenEstimate = 12,
+            )
+        }
+
+        val json = buildString {
+            append("""{"handles":[""")
+            handles.forEachIndexed { i, h ->
+                if (i > 0) append(',')
+                append("""{"handle":""")
+                append(quoteJson(h.handleId))
+                append(""","repo":""")
+                append(quoteJson(h.targetRepoName))
+                append(""","project_path":""")
+                append(quoteJson(h.targetProjectPath))
+                append(""","b_session_id":""")
+                append(h.bSessionId?.let { quoteJson(it) } ?: "null")
+                append(""","last_state":""")
+                append(quoteJson(h.lastState))
+                // `status` mirrors the status action's vocabulary so the LLM can branch consistently.
+                val terminal = h.lastState in TERMINAL_STATES
+                append(""","status":""")
+                append(quoteJson(if (terminal) "closed" else "active"))
+                append('}')
+            }
+            append("]}")
+        }
+
+        return ToolResult(
+            content = json,
+            summary = "Holding ${handles.size} delegation handle(s) in this session: " +
+                handles.joinToString(", ") { "${it.handleId.take(8)} (${it.targetRepoName}: ${it.lastState})" },
+            tokenEstimate = (json.length / 4).coerceAtLeast(20),
+        )
+    }
+
     companion object {
         private val LOG = Logger.getInstance(DelegationTool::class.java)
+
+        /** Terminal handle states (mirror DelegationMessage.ResultStatus) → "closed" in list_handles. */
+        private val TERMINAL_STATES = setOf("COMPLETED", "FAILED", "CANCELED", "REJECTED")
 
         /** action=wait blocking budget bounds (seconds). */
         const val DEFAULT_WAIT_SECONDS = 300

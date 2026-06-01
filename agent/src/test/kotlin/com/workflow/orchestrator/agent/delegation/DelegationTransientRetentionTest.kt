@@ -133,7 +133,7 @@ class DelegationTransientRetentionTest {
 
             // Resume seam: accept the resume, deliver the same sid, then complete.
             fx.inbound.testDelegatedResumeStarter =
-                DelegatedResumeStarter { resumeSid, _turn, _md, _reply, onResult, onStarted ->
+                DelegatedResumeStarter { resumeSid, _turn, _md, _reply, onResult, onStarted, _onBusy ->
                     onStarted?.invoke(resumeSid)
                     fx.scope.launch {
                         delay(10)
@@ -170,7 +170,7 @@ class DelegationTransientRetentionTest {
             // the starter — it should be rejected before any session begins.
             var starterInvoked = false
             fx.inbound.testDelegatedSessionStarter =
-                DelegatedSessionStarter { _req, _md, _reply, _onResult, _onStarted ->
+                DelegatedSessionStarter { _req, _md, _reply, _onResult, _onStarted, _onBusy ->
                     starterInvoked = true
                     DelegatedStartOutcome.STARTED
                 }

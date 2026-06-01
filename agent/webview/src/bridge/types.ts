@@ -322,6 +322,10 @@ export type UiSay =
   | 'SUBAGENT_COMPLETED' | 'STEERING_RECEIVED' | 'CONTEXT_COMPRESSED'
   | 'MEMORY_SAVED' | 'PLAN_APPROVED'
   | 'COMPACTION_MARKER'
+  // Cross-IDE delegation conversation card (IDE-B panel narration). See
+  // DelegationCardData. Persisted to ui_messages.json so a reopened delegated
+  // session shows the full conversation.
+  | 'DELEGATION_CARD'
   // UI-only spill marker inserted by chatStore.capMessages when the
   // messages[] hard cap evicts an older prefix (see MESSAGES_HARD_CAP).
   // Never emitted by Kotlin; never persisted to api_conversation_history.json.
@@ -398,6 +402,32 @@ export interface UiMessageToolCallData {
   imageRefs?: ImageRef[];
 }
 
+/** Which leg of the IDE-B delegation conversation a DELEGATION_CARD represents. */
+export type DelegationCardKind = 'ASKED' | 'ANSWERED' | 'RESULT';
+
+/**
+ * Mirrors Kotlin DelegationCardData. The "other side" on IDE-B's panel is always
+ * the delegator's REPO NAME (`delegatorRepo`) — never "IDE-A"/"IDE-B".
+ */
+export interface DelegationCardData {
+  kind: DelegationCardKind;
+  delegatorRepo: string;
+  /** Correlation id: ASKED carries the question id; the matching ANSWERED flips it. */
+  questionId?: string;
+  /** Question text (ASKED), answer text (ANSWERED), or result summary (RESULT). */
+  text?: string;
+  /** Suggested options for an ASKED card. */
+  options?: string[];
+  /** ASKED card: true once the matching answer arrived (flips waiting → answered). */
+  answered?: boolean;
+  /** RESULT card: COMPLETED / FAILED / CANCELED / REJECTED. */
+  resultStatus?: string | null;
+  /** RESULT card: wall-clock duration of the delegated session. */
+  durationSeconds?: number;
+  /** RESULT card: failure/cancel reason, if any. */
+  reason?: string | null;
+}
+
 export type CompletionKind = 'done' | 'review' | 'heads_up';
 
 export interface CompletionData {
@@ -442,6 +472,8 @@ export interface UiMessage {
    */
   subagentData?: SubAgentState;
   toolCallData?: UiMessageToolCallData;
+  /** Payload for `say='DELEGATION_CARD'` — IDE-B delegation conversation narration. */
+  delegationCardData?: DelegationCardData;
   completionData?: CompletionData;
   planApprovalData?: UiMessagePlanApprovalData;
   /** Payload for `say='COMPACTION_MARKER'` divider message. */

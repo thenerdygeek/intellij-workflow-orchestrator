@@ -72,40 +72,43 @@ class BusyDelegationTopBarTest {
     }
 
     @Test
-    fun `handleConnect handles the declined-timeout outcome and no longer replies ide_b_busy`() {
+    fun `handleConnect handles the declined-timeout outcome with a self-describing ide_b_busy reason`() {
         val s = inbound()
         assertTrue(
             s.contains("DECLINED_TIMEOUT"),
             "handleConnect must branch on the DECLINED_TIMEOUT outcome",
         )
-        assertTrue(
-            s.contains("declined_timeout"),
-            "handleConnect must reply AcceptResult(accepted=false, reason=declined_timeout) on timeout",
-        )
-        // The old fake-FAILED busy shortcut lived in handleConnect; it must be gone from THAT method.
-        // (Fix 3's handleChannelResume legitimately uses an ide_b_busy SessionClosed reason for the
-        // resurrection busy-decline — a different code path — so scope this guard to handleConnect.)
+        // PART 2 — busy-enrichment: the fresh-connect decline now composes its reason FROM the
+        // in-flight descriptor via the shared composer (a single coherent `ide_b_busy:` reason),
+        // replacing the old bare `declined_timeout:` string.
         val handleConnectBody = s.substringAfter("private suspend fun handleConnect(")
             .substringBefore("internal suspend fun runInboundReadLoop(")
-        assertFalse(
-            handleConnectBody.contains("ide_b_busy"),
-            "the old ide_b_busy FAILED reply must be removed from handleConnect",
+        assertTrue(
+            handleConnectBody.contains("composeBusyDeclineReason"),
+            "handleConnect must compose the decline reason from the BusyInfo descriptor",
         )
     }
 
     @Test
-    fun `declined_timeout reason names the specific cause so the next debugger is not blind`() {
-        // Bug B follow-up: a bare "declined_timeout" gave the IDE-A side (and the next debugger)
-        // no signal about WHAT timed out. The reason string must spell out that IDE-B's agent tab
-        // was busy and the human did not click Start within the accept window.
-        val s = inbound()
+    fun `the busy decline reason names the in-flight task and the accept-window mechanism`() {
+        // PART 2: the reason must lead with `ide_b_busy:`, name the in-flight session, and spell out
+        // the real mechanism (busy tab → Start prompt → not clicked within ACCEPT_WINDOW_MS).
+        val src = run {
+            val d = System.getProperty("user.dir")
+            val root = if (File("$d/src/main/kotlin").isDirectory) "$d/src/main/kotlin" else "$d/agent/src/main/kotlin"
+            File(root, "com/workflow/orchestrator/agent/delegation/DelegationInboundService.kt").readText()
+        }
         assertTrue(
-            s.contains("declined_timeout: IDE-B agent tab busy"),
-            "the declined_timeout reason must explain that IDE-B's agent tab was busy",
+            src.contains("ide_b_busy: agent tab is busy running"),
+            "the composer must lead with ide_b_busy and name the in-flight session",
         )
         assertTrue(
-            Regex("""did not click Start""").containsMatchIn(s),
-            "the declined_timeout reason must explain that the human did not click Start in time",
+            Regex("""did not accept the takeover""").containsMatchIn(src),
+            "the reason must explain the user did not accept the takeover in time",
+        )
+        assertTrue(
+            src.contains("ACCEPT_WINDOW_MS"),
+            "the reason must use the real ACCEPT_WINDOW_MS, not a hardcoded value",
         )
     }
 

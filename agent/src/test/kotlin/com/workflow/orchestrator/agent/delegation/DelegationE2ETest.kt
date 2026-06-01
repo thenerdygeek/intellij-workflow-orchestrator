@@ -310,7 +310,7 @@ class DelegationE2ETest {
         // capture the request, deliver the session id through onSessionStarted (so handleConnect
         // sends AcceptResult(accepted=true, bSessionId=sid)), then fire the terminal onResult with
         // the verbose COMPLETED Result and run Task 8's real teardown gate. Returns STARTED.
-        inbound.testDelegatedSessionStarter = DelegatedSessionStarter { request, _md, _reply, onResult, onSessionStarted ->
+        inbound.testDelegatedSessionStarter = DelegatedSessionStarter { request, _md, _reply, onResult, onSessionStarted, _onBusy ->
             capturedRequest.set(request)
             activeSessions.incrementAndGet()
             onSessionStarted?.invoke(deliveredSid)

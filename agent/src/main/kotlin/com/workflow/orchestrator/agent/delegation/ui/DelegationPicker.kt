@@ -349,7 +349,7 @@ class DelegationPicker(
                             }
                             hideLaunchFailure()
                         } else {
-                            showInlineLaunchFailure("IDE-B is still not reachable. Open the project manually, then click Retry probe.")
+                            showInlineLaunchFailure("${sel.displayName} is still not reachable. Open the project manually, then click Retry probe.")
                         }
                     }
                 }

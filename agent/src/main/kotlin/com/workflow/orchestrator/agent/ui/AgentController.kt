@@ -72,6 +72,31 @@ import kotlinx.serialization.json.jsonPrimitive
 enum class DelegatedStartOutcome { STARTED, DECLINED_TIMEOUT }
 
 /**
+ * Self-describing descriptor of the task IDE-B is busy with when it declines an incoming
+ * delegation (PART 2 — busy-enrichment). Carried out of the busy gate so the inbound
+ * decline reply can NAME the in-flight task and — critically — echo the delegator session
+ * id, so IDE-A can recognize the blocker as ITS OWN earlier task.
+ *
+ * All fields are nullable/best-effort: when IDE-B can't resolve a field, the inbound reason
+ * composer falls back to the generic wording and nothing regresses.
+ *
+ * - [inFlightSessionId]            — IDE-B's currently-running local session id.
+ * - [inFlightTitle]               — that session's human title (HistoryItem.task), if known.
+ * - [inFlightDelegatorSessionId]  — when the in-flight session is ITSELF a delegated one,
+ *                                   the delegator session id that originated it (so IDE-A can
+ *                                   match it against a handle it holds). Null when the in-flight
+ *                                   session is a local (non-delegated) one.
+ * - [inFlightDelegatorRepo]       — the delegator repo that originated the in-flight delegated
+ *                                   session, if any.
+ */
+data class BusyInfo(
+    val inFlightSessionId: String?,
+    val inFlightTitle: String?,
+    val inFlightDelegatorSessionId: String?,
+    val inFlightDelegatorRepo: String?,
+)
+
+/**
  * Busy-path accept-window wait, factored out of [AgentController.startDelegatedSession] so the
  * timing core is unit-testable headless (review finding I4) — no Project/Application/EDT, and
  * kotlinx-coroutines-test virtual time advances [windowMs] deterministically.
@@ -1335,6 +1360,130 @@ class AgentController(
     }
 
     /**
+     * Leg (b): narrate a question routed to the delegator on IDE-B's OWN panel as a
+     * delegation card ("↗ Asked {delegatorRepo}", waiting ⏳ until answered). Invoked
+     * from [com.workflow.orchestrator.agent.delegation.DelegationInboundService.routeQuestion].
+     * Guarded on the delegated session being the active panel session AND null-safe when
+     * the controller/webview is absent (tests/headless) — same shape as
+     * [pushDelegationQuestionPending]. Also persists the card so a reopened delegated
+     * session shows the full conversation.
+     */
+    fun pushDelegatedQuestionAsked(
+        sessionId: String,
+        questionId: String,
+        delegatorRepo: String?,
+        questionText: String,
+        options: List<String>,
+    ) {
+        // Persist regardless of which session is viewed, so the history render is complete.
+        service.appendDelegationCardToSession(
+            sessionId,
+            com.workflow.orchestrator.agent.session.DelegationCardData(
+                kind = com.workflow.orchestrator.agent.session.DelegationCardKind.ASKED,
+                delegatorRepo = delegatorRepo ?: "the delegator",
+                questionId = questionId,
+                text = questionText,
+                options = options,
+                answered = false,
+            ),
+        )
+        if (viewedSessionId != sessionId) return
+        controllerScope.launch(Dispatchers.EDT) {
+            val payload = buildString {
+                append("{\"questionId\":").append(historyJson.encodeToString(questionId))
+                append(",\"delegatorRepo\":").append(historyJson.encodeToString(delegatorRepo ?: "the delegator"))
+                append(",\"text\":").append(historyJson.encodeToString(questionText))
+                append(",\"options\":").append(historyJson.encodeToString(options))
+                append("}")
+            }
+            dashboard.callJs(
+                "if (window._appendDelegatedQuestion) " +
+                    "window._appendDelegatedQuestion(${historyJson.encodeToString(payload)})"
+            )
+        }
+    }
+
+    /**
+     * Leg (c): narrate the answer received from the delegator on IDE-B's OWN panel
+     * ("↘ {delegatorRepo} answered"), pairing beneath the matching (b) card and flipping
+     * it to resolved. Invoked from
+     * [com.workflow.orchestrator.agent.delegation.DelegationInboundService.deliverAnswer]
+     * on a winning resolve. Persists the answer card + flips the persisted ASKED card.
+     */
+    fun pushDelegatedAnswer(
+        sessionId: String,
+        questionId: String,
+        delegatorRepo: String?,
+        answerText: String,
+    ) {
+        service.appendDelegationCardToSession(
+            sessionId,
+            com.workflow.orchestrator.agent.session.DelegationCardData(
+                kind = com.workflow.orchestrator.agent.session.DelegationCardKind.ANSWERED,
+                delegatorRepo = delegatorRepo ?: "the delegator",
+                questionId = questionId,
+                text = answerText,
+                answered = true,
+            ),
+            flipAskedQuestionId = questionId,
+        )
+        if (viewedSessionId != sessionId) return
+        controllerScope.launch(Dispatchers.EDT) {
+            val payload = buildString {
+                append("{\"questionId\":").append(historyJson.encodeToString(questionId))
+                append(",\"delegatorRepo\":").append(historyJson.encodeToString(delegatorRepo ?: "the delegator"))
+                append(",\"text\":").append(historyJson.encodeToString(answerText))
+                append("}")
+            }
+            dashboard.callJs(
+                "if (window._appendDelegatedAnswer) " +
+                    "window._appendDelegatedAnswer(${historyJson.encodeToString(payload)})"
+            )
+        }
+    }
+
+    /**
+     * Leg (d): narrate the terminal result sent back to the delegator on IDE-B's OWN panel
+     * ("✓ Result sent to {delegatorRepo}", status-colored, with duration + summary). Called
+     * from the [onResult] wrapper in [runDelegatedNow] BEFORE the socket [onResult] fires.
+     * Persists the result card.
+     */
+    fun pushDelegatedResult(
+        sessionId: String,
+        delegatorRepo: String?,
+        result: com.workflow.orchestrator.core.delegation.DelegationMessage.Result,
+    ) {
+        service.appendDelegationCardToSession(
+            sessionId,
+            com.workflow.orchestrator.agent.session.DelegationCardData(
+                kind = com.workflow.orchestrator.agent.session.DelegationCardKind.RESULT,
+                delegatorRepo = delegatorRepo ?: "the delegator",
+                text = result.summary,
+                resultStatus = result.status.name,
+                durationSeconds = result.durationSeconds,
+                reason = result.reason,
+            ),
+        )
+        if (viewedSessionId != sessionId) return
+        controllerScope.launch(Dispatchers.EDT) {
+            val payload = buildString {
+                append("{\"delegatorRepo\":").append(historyJson.encodeToString(delegatorRepo ?: "the delegator"))
+                append(",\"status\":").append(historyJson.encodeToString(result.status.name))
+                append(",\"durationSeconds\":").append(result.durationSeconds)
+                append(",\"summary\":").append(historyJson.encodeToString(result.summary))
+                if (result.reason != null) {
+                    append(",\"reason\":").append(historyJson.encodeToString(result.reason!!))
+                }
+                append("}")
+            }
+            dashboard.callJs(
+                "if (window._appendDelegatedResult) " +
+                    "window._appendDelegatedResult(${historyJson.encodeToString(payload)})"
+            )
+        }
+    }
+
+    /**
      * Push the active session's cross-IDE delegation metadata to IDE-B's webview so the
      * `DelegationBanner` (rendered under the top bar) lights up for the LIVE session —
      * "Delegated by {IDE} from {repo}". Without this, the banner only populated when a
@@ -2235,11 +2384,64 @@ class AgentController(
         if (debugEnabled) {
             dashboard.pushDebugLogEntry("session", "task_start", task.take(200), null)
         }
+        // Single source of truth: build the full controller→loop UI-callback bundle once
+        // (see [buildSessionUiCallbacks] / [SessionUiCallbacks]). The SAME builder feeds the
+        // cross-IDE delegated entry points, so a callback added here flows to both paths.
+        val ui = buildSessionUiCallbacks()
         currentJob = service.executeTask(
             task = task,
             sessionId = currentSessionId,
             attachments = attachments,
             contextManager = contextManager,
+            onStreamChunk = ui.onStreamChunk,
+            onToolCall = ui.onToolCall,
+            onComplete = ui.onComplete,
+            onRetry = ui.onRetry,
+            onCompactionState = ui.onCompactionState,
+            onModelSwitch = ui.onModelSwitch,
+            onPlanResponse = ui.onPlanResponse,
+            onPlanPartialContent = ui.onPlanPartialContent,
+            onPlanModeToggled = ui.onPlanModeToggled,
+            onPlanDiscarded = ui.onPlanDiscarded,
+            userInputChannel = userInputChannel,
+            approvalGate = ui.approvalGate,
+            sessionApprovalStore = ui.sessionApprovalStore,
+            onSubagentProgress = ui.onSubagentProgress,
+            onTokenUpdate = ui.onTokenUpdate,
+            onSessionStats = ui.onSessionStats,
+            onDebugLog = ui.onDebugLog,
+            onSessionStarted = ui.onSessionStarted,
+            steeringQueue = ui.steeringQueue,
+            onSteeringDrained = ui.onSteeringDrained,
+            onAwaitingUserInput = ui.onAwaitingUserInput,
+            uiMessageOverride = uiMessageOverride,
+            onUserInputReceived = ui.onUserInputReceived,
+            streamingEditCallback = ui.streamingEditCallback,
+            onHandoffProposed = ui.onHandoffProposed,
+        )
+
+        // Start 30s Haiku phrase timer (if smart working indicator is enabled)
+        startPhraseTimer(task)
+    }
+
+    /**
+     * SINGLE SOURCE OF TRUTH for the controller→loop UI callbacks (see [SessionUiCallbacks]).
+     *
+     * Every reusable callback that [executeTaskInternal] used to wire inline into `executeTask`
+     * lives here. The interactive path ([executeTaskInternal]) and BOTH cross-IDE delegated paths
+     * ([runDelegatedNow], [runResumedDelegatedNow]) source their callbacks from this one builder,
+     * so a future callback added here automatically flows to the delegated path — that is the
+     * structural fix for the "delegated session silently drops callback X" bug class. Pinned by
+     * [com.workflow.orchestrator.agent.delegation.SessionUiCallbacksParityTest].
+     *
+     * Delegated callers `.copy()` the bundle to override [SessionUiCallbacks.onSessionStarted]
+     * (banner + viewedSessionId wiring) and [SessionUiCallbacks.onComplete] (delegated spinner
+     * finalize without the generic completion card — the delegation result card is the terminal
+     * card; see #1 reconciliation in [runDelegatedNow]).
+     */
+    fun buildSessionUiCallbacks(): SessionUiCallbacks {
+        val debugEnabled = AgentSettings.getInstance(project).state.showDebugLog
+        return SessionUiCallbacks(
             onStreamChunk = ::onStreamChunk,
             onToolCall = ::onToolCall,
             onComplete = { result ->
@@ -2294,7 +2496,6 @@ class AgentController(
             onPlanPartialContent = ::onPlanPartialContent,
             onPlanModeToggled = { enabled -> invokeLater { togglePlanMode(enabled) } },
             onPlanDiscarded = { invokeLater { onPlanDiscardedByLlm() } },
-            userInputChannel = userInputChannel,
             approvalGate = ::approvalGate,
             sessionApprovalStore = sessionApprovalStore,
             onSubagentProgress = ::onSubagentProgress,
@@ -2309,7 +2510,6 @@ class AgentController(
                 invokeLater { handleSteeringDrained(drainedIds) }
             },
             onAwaitingUserInput = ::onLoopAwaitingUserInput,
-            uiMessageOverride = uiMessageOverride,
             onUserInputReceived = { _ ->
                 // Consume and clear the pending override atomically.
                 // The override was set in the loopWaitingForInput branch by handleApprovalChoice
@@ -2320,9 +2520,6 @@ class AgentController(
             streamingEditCallback = streamingEditCallback,
             onHandoffProposed = ::onHandoffProposed,
         )
-
-        // Start 30s Haiku phrase timer (if smart working indicator is enabled)
-        startPhraseTimer(task)
     }
 
     // ═══════════════════════════════════════════════════
@@ -3131,12 +3328,32 @@ class AgentController(
      * invoked once a session actually starts (idle tab, or Start clicked); never on a
      * [DECLINED_TIMEOUT] outcome.
      */
+    /**
+     * Snapshot the in-flight task descriptor for a busy-decline (PART 2). Best-effort: reads the
+     * live `currentSessionId`, its delegated-by metadata (`currentSessionState()?.delegated`,
+     * the pattern used at the IDE-B short-circuit), and its human title from the persisted
+     * HistoryItem. Any field that can't be resolved is left null; the inbound reason composer
+     * falls back to the generic wording when the descriptor (or a field) is absent.
+     */
+    private fun currentBusyInfo(): BusyInfo {
+        val sid = currentSessionId
+        val delegated = runCatching { service.currentSessionState()?.delegated }.getOrNull()
+        val title = sid?.let { runCatching { service.currentSessionTitle(it) }.getOrNull() }
+        return BusyInfo(
+            inFlightSessionId = sid,
+            inFlightTitle = title,
+            inFlightDelegatorSessionId = delegated?.delegatorSessionId,
+            inFlightDelegatorRepo = delegated?.delegatorRepo,
+        )
+    }
+
     suspend fun startDelegatedSession(
         request: String,
         metadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
         replyWith: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage) -> Unit,
         onResult: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit,
         onSessionStarted: ((String) -> Unit)? = null,
+        onBusy: ((BusyInfo) -> Unit)? = null,
     ): DelegatedStartOutcome {
         // Bug B: "busy" for an INCOMING delegation means an agent loop is ACTIVELY RUNNING, not
         // merely that a session is loaded in the tab. A completed session (delegated or
@@ -3153,6 +3370,10 @@ class AgentController(
         // runDelegatedNow once currentJob is assigned AND on every failure path (so a failed start
         // can't wedge the gate). decideIncomingBusy is still consulted (do not regress Fix B): a
         // genuinely running loop refuses the claim; a completed-but-loaded session does not.
+        // PART 2: snapshot the in-flight task descriptor BEFORE any reservation/reset mutates state,
+        // so a busy decline can name what IDE-B is actually busy with (and echo the delegator session
+        // id of the in-flight task). Cheap and side-effect-free; only consumed on the decline path.
+        val busyInfo = currentBusyInfo()
         val reservedRunNow = startReservation.tryReserve(
             busy = decideIncomingBusy(
                 jobActive = currentJob?.isActive == true,
@@ -3195,6 +3416,9 @@ class AgentController(
                         DelegatedStartOutcome.STARTED
                     } else {
                         LOG.info("Incoming delegation key=$key declined (accept window elapsed)")
+                        // PART 2: hand the in-flight descriptor to the inbound decline composer so the
+                        // reason names IDE-B's busy task (and echoes its delegator session id).
+                        onBusy?.invoke(busyInfo)
                         DelegatedStartOutcome.DECLINED_TIMEOUT
                     }
                 } finally {
@@ -3261,6 +3485,93 @@ class AgentController(
      * live session, and so the inbound read-loop's sid (set on the service side via the same
      * `onSessionStarted`) is consistent with the controller's view.
      */
+    /**
+     * Leg (a) + live-session wiring for a freshly-started delegated session. Sets the
+     * controller's session pointers, [viewedSessionId] (so gated webview pushes fire), the
+     * top-bar DelegationBanner, and narrates the INCOMING task as the opening bubble using
+     * the delegator's REPO NAME (matching the persisted uiMessageOverride exactly). Extracted
+     * from [runDelegatedNow] so its body stays compact (BUG #3 reservation-wiring source pins).
+     */
+    private fun onDelegatedSessionStarted(
+        sid: String,
+        metadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
+        request: String,
+        onSessionStarted: ((String) -> Unit)?,
+    ) {
+        currentSessionId = sid
+        sessionActive = true
+        // Treat the delegated session as the VIEWED session so gated webview pushes (the
+        // question banner AND the delegation conversation cards) fire — previously
+        // viewedSessionId stayed null on the delegated start, suppressing both.
+        viewedSessionId = sid
+        pushActiveSessionDelegated(metadata)
+        // Leg (a): resetForNewChat() already cleared the panel; push the task as the opening
+        // bubble using the delegator's REPO NAME via the shared builder.
+        dashboard.startSession(
+            com.workflow.orchestrator.agent.AgentService.delegatedIncomingTaskText(metadata, request)
+        )
+        onSessionStarted?.invoke(sid)
+    }
+
+    /**
+     * Leg (d): wrap the socket [onResult] so the delegation RESULT card renders on IDE-B's
+     * own panel (status-colored, with duration + summary, repo-named) BEFORE the result is
+     * shipped over the wire. Delivery is unchanged — the original [onResult] is always called.
+     */
+    private fun wrapDelegatedOnResult(
+        metadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
+        onResult: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit,
+    ): suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit =
+        { result ->
+            currentSessionId?.let { sid -> pushDelegatedResult(sid, metadata.delegatorRepo, result) }
+            onResult(result)
+        }
+
+    /**
+     * #1 reconciliation — terminal/finalize callback for a DELEGATED loop.
+     *
+     * Wiring the bundle's [onComplete] makes the controller's completion handler fire for delegated
+     * sessions too — but the delegated path ALSO renders the Bug-2 delegation RESULT card (via
+     * [wrapDelegatedOnResult] → [pushDelegatedResult] on the socket `onResult`). To avoid TWO
+     * terminal cards, the delegated path uses THIS finalizer instead of the generic [onComplete]:
+     * it performs the spinner / active-tool-chain / busy-state finalization (so the session stops
+     * "looking stuck") but SUPPRESSES the generic completion/failure card — the repo-named,
+     * delegation-styled result card is the single terminal card.
+     *
+     * The socket result delivery is unchanged: [AgentService.startDelegatedSession] /
+     * [AgentService.resumeDelegatedSession] still complete `loopResultDeferred` and invoke
+     * `onResult` exactly as before; this finalizer runs alongside that, never in place of it.
+     */
+    private fun delegatedFinalizeOnComplete(result: LoopResult) {
+        phraseTimerJob?.cancel()
+        phraseTimerJob = null
+        // Drain pre-bridge buffers so no buffered tokens are lost before finalize.
+        flushStream()
+        toolStreamBatcher.flush()
+        invokeLater {
+            try {
+                dashboard.flushStreamBuffer()
+                // Collapse running tool indicators / spinner — the session is done.
+                dashboard.finalizeToolChain()
+                dashboard.hideSkillBanner()
+                dashboard.setSmartWorkingPhrase("")
+            } catch (e: Throwable) {
+                LOG.error("delegatedFinalizeOnComplete: UI finalize failed — clearing spinner anyway", e)
+            }
+            // Deliberately NO appendCompletionCard / completeSession here: the delegation RESULT
+            // card (pushDelegatedResult) is the terminal card for a delegated session.
+            LOG.info("delegatedFinalizeOnComplete: clearing busy/steering for delegated session")
+            dashboard.setBusy(false)
+            dashboard.setInputLocked(false)
+            dashboard.setSteeringMode(false)
+            currentJob = null
+            userInputChannel?.close(CancellationException("delegated agent loop completed"))
+            userInputChannel = null
+            loopWaitingForInput = false
+            steeringQueue.clear()
+        }
+    }
+
     private fun runDelegatedNow(
         request: String,
         metadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
@@ -3279,25 +3590,34 @@ class AgentController(
             // Re-throw CancellationException so coroutine cancellation still propagates.
             try {
                 resetForNewChat()
+                // #7/#8 (documented, intentional NOT-wired):
+                //  - Inbound delegated tasks bypass the local USER_PROMPT_SUBMIT hook on purpose:
+                //    the prompt originates from a REMOTE IDE, not a local user keystroke, so the
+                //    local prompt-submit hook does not apply (it runs only in executeTaskInternal).
+                //  - Local mid-turn STEERING of a delegated session is unsupported: cross-IDE
+                //    interaction flows through the routed question/answer channel
+                //    (DelegationInboundService), not the local steering queue. The bundle's
+                //    steeringQueue is still forwarded (harmless — no local typing path feeds it for
+                //    a delegated session), so no behavior is lost; the human path is the routed
+                //    Q&A channel.
+                //
+                // SINGLE SOURCE OF TRUTH: source the full callback set from the SAME builder the
+                // interactive path uses, then .copy() ONLY the two delegated-specific overrides:
+                //  - onSessionStarted → banner + viewedSessionId wiring (onDelegatedSessionStarted)
+                //  - onComplete → spinner/tool-chain finalize WITHOUT the generic completion card
+                //    (#1: the delegation RESULT card is the single terminal card).
+                val ui = buildSessionUiCallbacks().copy(
+                    onSessionStarted = { sid -> onDelegatedSessionStarted(sid, metadata, request, onSessionStarted) },
+                    onComplete = ::delegatedFinalizeOnComplete,
+                )
                 service.startDelegatedSession(
                     request = request,
                     delegationMetadata = metadata,
                     replyWith = replyWith,
-                    onResult = onResult,
-                    onStreamChunk = ::onStreamChunk,
-                    onToolCall = ::onToolCall,
-                    approvalGate = ::approvalGate,
-                    sessionApprovalStore = sessionApprovalStore,
-                    onSessionStarted = { sid ->
-                        currentSessionId = sid
-                        sessionActive = true
-                        // Light up the top-bar DelegationBanner for this LIVE delegated session
-                        // so the human on IDE-B sees "Delegated by {IDE} from {repo}" immediately.
-                        pushActiveSessionDelegated(metadata)
-                        // Forward the sid to the caller (handleConnect) so the inbound read-loop
-                        // can run with the correct session id.
-                        onSessionStarted?.invoke(sid)
-                    },
+                    // Leg (d): wrap onResult to render the result card on IDE-B's panel FIRST,
+                    // then call the original socket onResult (delivery unchanged).
+                    onResult = wrapDelegatedOnResult(metadata, onResult),
+                    callbacks = ui,
                     onJobCreated = { job ->
                         // BUG #3: assign currentJob FIRST, then release the reservation. From here on
                         // a concurrent inbound delegation reads currentJob.isActive == true via
@@ -3345,6 +3665,7 @@ class AgentController(
         replyWith: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage) -> Unit,
         onResult: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit,
         onSessionStarted: ((String) -> Unit)? = null,
+        onBusy: ((BusyInfo) -> Unit)? = null,
     ): DelegatedStartOutcome {
         // Same busy rule as the incoming-delegation gate (Bug B): "busy" = an agent loop is actively
         // running right now, not merely that a session sits loaded in the tab.
@@ -3356,6 +3677,9 @@ class AgentController(
         // one delegation start/resume is in-flight at a time; runResumedDelegatedNow releases it on
         // onJobCreated AND on failure. decideIncomingBusy still gates the live-job case (Fix B / a
         // loaded-but-idle session — including the one being resumed — is NOT busy).
+        // PART 2: snapshot the in-flight descriptor before the reservation, mirroring the
+        // fresh-connect gate, so a busy decline names what IDE-B is busy with.
+        val busyInfo = currentBusyInfo()
         val reserved = startReservation.tryReserve(
             busy = decideIncomingBusy(
                 jobActive = currentJob?.isActive == true,
@@ -3367,6 +3691,7 @@ class AgentController(
             // handleChannelResume maps this to a clear "busy" SessionClosed. Nothing to release: a
             // refused tryReserve never changed reservation state.
             LOG.info("resumeDelegatedSession: IDE-B tab busy with another task — declining resume of $sessionId")
+            onBusy?.invoke(busyInfo)
             return DelegatedStartOutcome.DECLINED_TIMEOUT
         }
         // We hold the reservation; runResumedDelegatedNow releases it (onJobCreated / failure).
@@ -3390,16 +3715,13 @@ class AgentController(
     ) {
         controllerScope.launch(Dispatchers.EDT + CoroutineName("AgentController.resumeDelegatedSession")) {
             try {
-                service.resumeDelegatedSession(
-                    sessionId = sessionId,
-                    userTurnText = userTurnText,
-                    delegationMetadata = metadata,
-                    replyWith = replyWith,
-                    onResult = onResult,
-                    onStreamChunk = ::onStreamChunk,
-                    onToolCall = ::onToolCall,
-                    approvalGate = ::approvalGate,
-                    sessionApprovalStore = sessionApprovalStore,
+                // #7/#8 (documented, intentional NOT-wired) — same rationale as runDelegatedNow:
+                // resumed delegated turns originate from the remote IDE (no local USER_PROMPT_SUBMIT
+                // hook), and local mid-turn steering is unsupported (routed Q&A channel only).
+                //
+                // SINGLE SOURCE OF TRUTH: same builder as the interactive path, .copy()-ing ONLY the
+                // two delegated overrides (banner/session wiring + #1 single-terminal-card finalize).
+                val ui = buildSessionUiCallbacks().copy(
                     onSessionStarted = { sid ->
                         currentSessionId = sid
                         sessionActive = true
@@ -3407,6 +3729,17 @@ class AgentController(
                         pushActiveSessionDelegated(metadata)
                         onSessionStarted?.invoke(sid)
                     },
+                    onComplete = ::delegatedFinalizeOnComplete,
+                )
+                service.resumeDelegatedSession(
+                    sessionId = sessionId,
+                    userTurnText = userTurnText,
+                    delegationMetadata = metadata,
+                    replyWith = replyWith,
+                    // #1: render the single repo-named delegation RESULT card here too (delivery
+                    // unchanged — wrapDelegatedOnResult always calls the original onResult).
+                    onResult = wrapDelegatedOnResult(metadata, onResult),
+                    callbacks = ui,
                     onJobCreated = { job ->
                         // BUG #3: assign currentJob FIRST, then release — same handoff-to-live-job
                         // ordering as runDelegatedNow.

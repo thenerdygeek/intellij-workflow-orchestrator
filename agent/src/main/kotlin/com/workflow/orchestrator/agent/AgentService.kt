@@ -590,6 +590,44 @@ class AgentService(
         perSessionStates[sessionId]?.delegated
 
     /**
+     * Persist a cross-IDE delegation conversation card ([UiSay.DELEGATION_CARD]) into
+     * [sessionId]'s ui_messages.json so a reopened delegated session shows the full
+     * conversation (incoming task + question/answer pairs + result), not just the agent's
+     * work. Legs (b)/(c)/(d) of the IDE-B narration (2026-06-01).
+     *
+     * Persists via the active [MessageStateHandler] when [sessionId] is the live session
+     * (the delegated session always is at narration time). When [flipAskedQuestionId] is
+     * set (the ANSWERED leg), also flips the matching persisted ASKED card to resolved so
+     * history doesn't render it stuck on "waiting". Fire-and-forget on [cs]; null-safe
+     * (no-op) when no active handler matches — tests/headless paths are unaffected.
+     */
+    fun appendDelegationCardToSession(
+        sessionId: String,
+        card: com.workflow.orchestrator.agent.session.DelegationCardData,
+        flipAskedQuestionId: String? = null,
+    ) {
+        val handler = activeMessageStateHandler ?: return
+        if (handler.sessionId != sessionId) return
+        cs.launch(Dispatchers.IO) {
+            try {
+                if (flipAskedQuestionId != null) {
+                    handler.markDelegationQuestionAnswered(flipAskedQuestionId)
+                }
+                handler.addToClineMessages(
+                    com.workflow.orchestrator.agent.session.UiMessage(
+                        ts = System.currentTimeMillis(),
+                        type = com.workflow.orchestrator.agent.session.UiMessageType.SAY,
+                        say = com.workflow.orchestrator.agent.session.UiSay.DELEGATION_CARD,
+                        delegationCardData = card,
+                    )
+                )
+            } catch (e: Exception) {
+                log.warn("[Agent] appendDelegationCardToSession: persist failed for $sessionId", e)
+            }
+        }
+    }
+
+    /**
      * Persist the completion for later resumption when no loop is active. Task 6
      * will read this store at session start and replay queued completions as
      * steering messages before the first LLM call.
@@ -2108,10 +2146,25 @@ class AgentService(
                 var lastXmlToolDefsHash = 0
                 val toolDefinitionProvider: () -> List<com.workflow.orchestrator.core.ai.dto.ToolDefinition> = {
                     val isPlanMode = isPlanModeActive()
+                    // #5 — a delegated session is ACT-ONLY (mirrors sub-agents'
+                    // includePlanModeSection=false). There is no local human to approve an
+                    // interactive plan over a remotely-driven session, so the plan tools are
+                    // filtered out entirely: the LLM never sees enable_plan_mode or
+                    // plan_mode_respond, and the plan callbacks in the SessionUiCallbacks bundle are
+                    // simply never exercised on the delegated path. The delegation marker is stamped
+                    // on the per-session state before the loop starts (startDelegatedSession /
+                    // resumeDelegatedSession), so it is set on the very first provider call.
+                    val isDelegatedSession = currentSessionState()?.delegated != null
                     val defs = registry.getActiveTools().values
                         .filter { tool ->
                             // Port of Cline's contextRequirements: omit use_skill when no skills available
                             if (tool.name == "use_skill" && !hasSkills) return@filter false
+                            // Act-only delegated: drop BOTH plan tools regardless of plan-mode state.
+                            if (isDelegatedSession &&
+                                (tool.name == "enable_plan_mode" || tool.name == "plan_mode_respond")
+                            ) {
+                                return@filter false
+                            }
                             if (isPlanMode) {
                                 tool.name !in writeToolNames && tool.name != "enable_plan_mode"
                             } else {
@@ -3016,6 +3069,20 @@ class AgentService(
         }
     }
 
+    /**
+     * Best-effort human title for an existing session, read from the persisted HistoryItem
+     * (`HistoryItem.task`). Used by the busy-decline descriptor (PART 2) so IDE-B can name the
+     * in-flight task it is busy with. Returns null on any miss (no index entry, IO failure) —
+     * callers fall back to the generic wording, so nothing regresses.
+     */
+    fun currentSessionTitle(sessionId: String): String? =
+        try {
+            MessageStateHandler.findHistoryItem(agentDir, sessionId)?.task
+        } catch (e: Exception) {
+            log.warn("AgentService.currentSessionTitle: failed to read title (non-fatal)", e)
+            null
+        }
+
     // ── Checkpoint v2 — Reverts and Diff ──────────────────────────────────
 
     /**
@@ -3182,11 +3249,15 @@ class AgentService(
         delegationMetadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
         replyWith: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage) -> Unit,
         onResult: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit,
-        onStreamChunk: (String) -> Unit = {},
-        onToolCall: (ToolCallProgress) -> Unit = {},
-        approvalGate: (suspend (String, String, String, Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
-        sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
-        onSessionStarted: ((String) -> Unit)? = null,
+        /**
+         * Full controller→loop UI-callback bundle (the single source of truth built by
+         * [com.workflow.orchestrator.agent.ui.AgentController.buildSessionUiCallbacks]). Every field
+         * is forwarded into [executeTask] below — so a future callback added to the bundle flows to
+         * the delegated path automatically, instead of being silently dropped (the bug class this
+         * structural fix closes). Pinned by
+         * [com.workflow.orchestrator.agent.delegation.SessionUiCallbacksParityTest].
+         */
+        callbacks: com.workflow.orchestrator.agent.ui.SessionUiCallbacks,
         onJobCreated: ((kotlinx.coroutines.Job) -> Unit)? = null,
     ): String {
         val sid = UUID.randomUUID().toString()
@@ -3215,7 +3286,6 @@ class AgentService(
         // map it to a DelegationMessage.Result and call onResult after the job finishes.
         val loopResultDeferred = kotlinx.coroutines.CompletableDeferred<LoopResult>()
 
-        val title = "Delegated by ${delegationMetadata.delegatorIde} — ${delegationMetadata.delegatorRepo}"
         // F5 fix: if executeTask throws synchronously (before its own finally runs), undo
         // the setup we did above so perSessionStates and sessionChannels don't leak.
         val job = try {
@@ -3227,14 +3297,38 @@ class AgentService(
                     ts = System.currentTimeMillis(),
                     type = com.workflow.orchestrator.agent.session.UiMessageType.SAY,
                     say = com.workflow.orchestrator.agent.session.UiSay.USER_MESSAGE,
-                    text = "[$title]\n\n$request",
+                    text = delegatedIncomingTaskText(delegationMetadata, request),
                 ),
-                onStreamChunk = onStreamChunk,
-                onToolCall = onToolCall,
-                approvalGate = approvalGate,
-                sessionApprovalStore = sessionApprovalStore,
-                onSessionStarted = onSessionStarted,
-                onComplete = { result -> loopResultDeferred.complete(result) },
+                // Forward EVERY field of the bundle — parity-locked by SessionUiCallbacksParityTest.
+                onStreamChunk = callbacks.onStreamChunk,
+                onToolCall = callbacks.onToolCall,
+                // #1: chain the controller's delegated finalize (spinner/tool-chain cleanup, no
+                // generic completion card) with the socket result delivery. loopResultDeferred +
+                // onResult below are UNCHANGED — the result card is still the single terminal card.
+                onComplete = { result ->
+                    callbacks.onComplete(result)
+                    loopResultDeferred.complete(result)
+                },
+                onRetry = callbacks.onRetry,
+                onCompactionState = callbacks.onCompactionState,
+                onModelSwitch = callbacks.onModelSwitch,
+                onPlanResponse = callbacks.onPlanResponse,
+                onPlanPartialContent = callbacks.onPlanPartialContent,
+                onPlanModeToggled = callbacks.onPlanModeToggled,
+                onPlanDiscarded = callbacks.onPlanDiscarded,
+                approvalGate = callbacks.approvalGate,
+                sessionApprovalStore = callbacks.sessionApprovalStore,
+                onSubagentProgress = callbacks.onSubagentProgress,
+                onTokenUpdate = callbacks.onTokenUpdate,
+                onSessionStats = callbacks.onSessionStats,
+                onDebugLog = callbacks.onDebugLog,
+                onSessionStarted = callbacks.onSessionStarted,
+                steeringQueue = callbacks.steeringQueue,
+                onSteeringDrained = callbacks.onSteeringDrained,
+                onAwaitingUserInput = callbacks.onAwaitingUserInput,
+                onUserInputReceived = callbacks.onUserInputReceived,
+                streamingEditCallback = callbacks.streamingEditCallback,
+                onHandoffProposed = callbacks.onHandoffProposed,
             )
         } catch (e: Throwable) {
             // F5 fix: synchronous setup failed — roll back what we did above to avoid leaks.
@@ -3267,15 +3361,35 @@ class AgentService(
                 )
                 throw e
             } catch (e: Exception) {
-                log.error("[Agent] Delegated session $sid failed unexpectedly", e)
-                val durationSeconds = (System.currentTimeMillis() - startTime) / 1000
-                onResult(
-                    com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
-                        status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.FAILED,
-                        reason = e.message ?: e::class.qualifiedName,
-                        durationSeconds = durationSeconds,
-                    )
-                )
+                if (isBenignDeliveryDisconnect(e)) {
+                    // The session SUCCEEDED; only the terminal-result delivery failed because
+                    // IDE-A already hung up (closed the handle / let a `wait` lapse / cancelled).
+                    // Do NOT mislabel this as FAILED and do NOT log at ERROR.
+                    log.info("[Agent] IDE-A disconnected before result delivery for session $sid")
+                } else {
+                    log.error("[Agent] Delegated session $sid failed unexpectedly", e)
+                    val durationSeconds = (System.currentTimeMillis() - startTime) / 1000
+                    // Defense-in-depth: the fallback delivery itself can hit a second
+                    // closed-channel write on a gone peer. Wrap it so a benign double-fault
+                    // can never escape uncaught into the coroutine's handler.
+                    try {
+                        onResult(
+                            com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                                status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.FAILED,
+                                reason = e.message ?: e::class.qualifiedName,
+                                durationSeconds = durationSeconds,
+                            )
+                        )
+                    } catch (ce: kotlinx.coroutines.CancellationException) {
+                        throw ce
+                    } catch (deliveryError: Exception) {
+                        if (isBenignDeliveryDisconnect(deliveryError)) {
+                            log.info("[Agent] IDE-A disconnected before FAILED-result delivery for session $sid")
+                        } else {
+                            log.warn("[Agent] failed to deliver FAILED result for session $sid", deliveryError)
+                        }
+                    }
+                }
             } finally {
                 inbound.unregisterSessionChannel(sid)
                 // Plan 6 Task 8: this delegated session has ended. Decrement first, then
@@ -3310,11 +3424,12 @@ class AgentService(
         delegationMetadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
         replyWith: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage) -> Unit,
         onResult: suspend (com.workflow.orchestrator.core.delegation.DelegationMessage.Result) -> Unit,
-        onStreamChunk: (String) -> Unit = {},
-        onToolCall: (ToolCallProgress) -> Unit = {},
-        approvalGate: (suspend (String, String, String, Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
-        sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
-        onSessionStarted: ((String) -> Unit)? = null,
+        /**
+         * Full controller→loop UI-callback bundle (single source of truth). Every field is forwarded
+         * into [resumeSession] below; parity-locked by
+         * [com.workflow.orchestrator.agent.delegation.SessionUiCallbacksParityTest].
+         */
+        callbacks: com.workflow.orchestrator.agent.ui.SessionUiCallbacks,
         onJobCreated: ((kotlinx.coroutines.Job) -> Unit)? = null,
     ) {
         val startTime = System.currentTimeMillis()
@@ -3344,12 +3459,34 @@ class AgentService(
             resumeSession(
                 sessionId = sessionId,
                 userText = userTurnText,
-                onStreamChunk = onStreamChunk,
-                onToolCall = onToolCall,
-                approvalGate = approvalGate,
-                sessionApprovalStore = sessionApprovalStore,
-                onSessionStarted = onSessionStarted,
-                onComplete = { result -> loopResultDeferred.complete(result) },
+                // Forward EVERY field of the bundle — parity-locked by SessionUiCallbacksParityTest.
+                onStreamChunk = callbacks.onStreamChunk,
+                onToolCall = callbacks.onToolCall,
+                // #1: chain controller's delegated finalize with socket result delivery (unchanged).
+                onComplete = { result ->
+                    callbacks.onComplete(result)
+                    loopResultDeferred.complete(result)
+                },
+                onRetry = callbacks.onRetry,
+                onCompactionState = callbacks.onCompactionState,
+                onModelSwitch = callbacks.onModelSwitch,
+                onPlanResponse = callbacks.onPlanResponse,
+                onPlanPartialContent = callbacks.onPlanPartialContent,
+                onPlanModeToggled = callbacks.onPlanModeToggled,
+                onPlanDiscarded = callbacks.onPlanDiscarded,
+                approvalGate = callbacks.approvalGate,
+                sessionApprovalStore = callbacks.sessionApprovalStore,
+                onSubagentProgress = callbacks.onSubagentProgress,
+                onTokenUpdate = callbacks.onTokenUpdate,
+                onSessionStats = callbacks.onSessionStats,
+                onDebugLog = callbacks.onDebugLog,
+                onSessionStarted = callbacks.onSessionStarted,
+                steeringQueue = callbacks.steeringQueue,
+                onSteeringDrained = callbacks.onSteeringDrained,
+                onAwaitingUserInput = callbacks.onAwaitingUserInput,
+                onUserInputReceived = callbacks.onUserInputReceived,
+                streamingEditCallback = callbacks.streamingEditCallback,
+                onHandoffProposed = callbacks.onHandoffProposed,
             )
         } catch (e: Throwable) {
             // Synchronous setup failed — roll back what we did above to avoid leaks.
@@ -3393,15 +3530,30 @@ class AgentService(
                 )
                 throw e
             } catch (e: Exception) {
-                log.error("[Agent] Resumed delegated session $sessionId failed unexpectedly", e)
-                val durationSeconds = (System.currentTimeMillis() - startTime) / 1000
-                onResult(
-                    com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
-                        status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.FAILED,
-                        reason = e.message ?: e::class.qualifiedName,
-                        durationSeconds = durationSeconds,
-                    )
-                )
+                if (isBenignDeliveryDisconnect(e)) {
+                    // Resumed session SUCCEEDED; IDE-A hung up before result delivery — benign.
+                    log.info("[Agent] IDE-A disconnected before result delivery for resumed session $sessionId")
+                } else {
+                    log.error("[Agent] Resumed delegated session $sessionId failed unexpectedly", e)
+                    val durationSeconds = (System.currentTimeMillis() - startTime) / 1000
+                    try {
+                        onResult(
+                            com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                                status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.FAILED,
+                                reason = e.message ?: e::class.qualifiedName,
+                                durationSeconds = durationSeconds,
+                            )
+                        )
+                    } catch (ce: kotlinx.coroutines.CancellationException) {
+                        throw ce
+                    } catch (deliveryError: Exception) {
+                        if (isBenignDeliveryDisconnect(deliveryError)) {
+                            log.info("[Agent] IDE-A disconnected before FAILED-result delivery for resumed session $sessionId")
+                        } else {
+                            log.warn("[Agent] failed to deliver FAILED result for resumed session $sessionId", deliveryError)
+                        }
+                    }
+                }
             } finally {
                 inbound.unregisterSessionChannel(sessionId)
                 inbound.stopIfTransientAndIdle(activeDelegatedSessions.decrementAndGet())
@@ -3607,6 +3759,20 @@ class AgentService(
             project.service<AgentService>()
 
         /**
+         * True when an exception thrown while delivering a delegated session's terminal
+         * [com.workflow.orchestrator.core.delegation.DelegationMessage.Result] to IDE-A is a
+         * benign "peer hung up, nothing to deliver" condition (IDE-A already closed its end of
+         * the socket — closed the handle / let a `wait` lapse / cancelled). Reuses the single
+         * source of truth in [com.workflow.orchestrator.core.delegation.DelegationFraming.isPeerDisconnect]
+         * so the agent never diverges from the `:core` reply-boundary classification.
+         *
+         * When true, the detached completion coroutine logs at INFO and does NOT emit a FAILED
+         * result — the session actually succeeded; only delivery had nowhere to land.
+         */
+        fun isBenignDeliveryDisconnect(e: Throwable): Boolean =
+            com.workflow.orchestrator.core.delegation.DelegationFraming.isPeerDisconnect(e)
+
+        /**
          * Pure mapping from a [LoopResult] produced by IDE-B's agent loop to the
          * [DelegationMessage.Result] that is sent back to IDE-A.
          *
@@ -3615,6 +3781,19 @@ class AgentService(
          * and [LoopResult.SessionHandoff.context] are forwarded verbatim — no
          * truncation — so IDE-A's agent receives a complete answer.
          */
+        /**
+         * Incoming-task bubble text for a delegated session (IDE-B leg (a)). The
+         * persisted `uiMessageOverride` and the live bubble that
+         * [com.workflow.orchestrator.agent.ui.AgentController.runDelegatedNow] pushes
+         * MUST use this exact text so the live render and the history render match.
+         * Uses the delegator's REPO NAME — never "IDE-A"/"IDE-B".
+         */
+        fun delegatedIncomingTaskText(
+            metadata: com.workflow.orchestrator.agent.session.DelegationMetadata,
+            request: String,
+        ): String =
+            "[⬇ Delegated task · from ${metadata.delegatorRepo}]\n\n$request"
+
         fun mapLoopResultToDelegationResult(
             loopResult: LoopResult,
             durationSeconds: Long,

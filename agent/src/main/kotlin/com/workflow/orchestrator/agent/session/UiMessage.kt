@@ -42,7 +42,49 @@ enum class UiSay {
     STEERING_RECEIVED,
     CONTEXT_COMPRESSED,
     MEMORY_SAVED,
+
+    /**
+     * Cross-IDE delegation conversation card (rendered on IDE-B's panel). Carries
+     * [UiMessage.delegationCardData] describing one leg of the delegation narration:
+     * the question routed to the delegator, the answer received back, or the terminal
+     * result sent back. The incoming-task leg (a) reuses the USER_MESSAGE slot, so it
+     * is NOT one of these. Persisted so reopening a delegated session from history
+     * shows the full conversation, not just the task + the agent's work.
+     */
+    DELEGATION_CARD,
 }
+
+/** Kind of delegation conversation card (which leg of the narration). */
+@Serializable
+enum class DelegationCardKind { ASKED, ANSWERED, RESULT }
+
+/**
+ * Payload for a [UiSay.DELEGATION_CARD] message. The "other side" on IDE-B's panel
+ * is always the delegator's repo ([delegatorRepo]) — never "IDE-A"/"IDE-B".
+ *
+ * - [DelegationCardKind.ASKED]   — (b) question routed to the delegator (text + options).
+ * - [DelegationCardKind.ANSWERED] — (c) answer received from the delegator (answer text).
+ * - [DelegationCardKind.RESULT]  — (d) terminal result sent back ([resultStatus] + [durationSeconds] + summary/reason).
+ */
+@Serializable
+data class DelegationCardData(
+    val kind: DelegationCardKind,
+    val delegatorRepo: String,
+    /** Correlation id: ASKED carries the question id; the matching ANSWERED flips it. */
+    val questionId: String? = null,
+    /** Question text (ASKED) or answer text (ANSWERED) or result summary (RESULT). */
+    val text: String = "",
+    /** Suggested options for an ASKED card; empty otherwise. */
+    val options: List<String> = emptyList(),
+    /** Set on ANSWERED cards (and used to flip the matching ASKED card to resolved). */
+    val answered: Boolean = false,
+    /** RESULT card: terminal status string (COMPLETED / FAILED / CANCELED / REJECTED). */
+    val resultStatus: String? = null,
+    /** RESULT card: wall-clock duration of the delegated session. */
+    val durationSeconds: Long = 0,
+    /** RESULT card: failure/cancel reason, if any. */
+    val reason: String? = null,
+)
 
 @Serializable
 enum class ApprovalStatus { PENDING, APPROVED, REJECTED }
@@ -148,6 +190,7 @@ data class UiMessage(
     val questionData: QuestionWizardData? = null,
     val subagentData: SubagentCardData? = null,
     val toolCallData: ToolCallData? = null,
+    val delegationCardData: DelegationCardData? = null,
     val completionData: CompletionData? = null,
     val planApprovalData: PlanApprovalData? = null,
     /**

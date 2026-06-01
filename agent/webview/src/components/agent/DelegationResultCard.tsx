@@ -1,0 +1,1 @@
+export { DelegationResultCard } from './DelegationConversationCards';

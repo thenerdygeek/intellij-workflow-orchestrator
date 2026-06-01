@@ -78,13 +78,20 @@ class AgentControllerSessionActiveSourceTest {
     fun `primary executeTask call forwards onHandoffProposed`() {
         // handleUserMessage's executeTask call must pass the handoff render callback,
         // or a new_task in a normal session renders no card and deadlocks.
-        // Bound on the unique comment that immediately follows the call's closing paren —
-        // substringBefore(")") would stop at the first paren inside an early lambda arg.
+        // Post-SessionUiCallbacks refactor: the primary call forwards `onHandoffProposed =
+        // ui.onHandoffProposed` from the bundle, and the `::onHandoffProposed` method reference
+        // lives in the buildSessionUiCallbacks() SSOT. Both links must be present.
         val call = src.substringAfter("currentJob = service.executeTask(")
             .substringBefore("// Start 30s Haiku phrase timer")
         assertTrue(
-            call.contains("onHandoffProposed = ::onHandoffProposed"),
-            "primary executeTask call must forward onHandoffProposed"
+            call.contains("onHandoffProposed = ui.onHandoffProposed"),
+            "primary executeTask call must forward onHandoffProposed from the SessionUiCallbacks bundle"
+        )
+        val builder = src.substringAfter("fun buildSessionUiCallbacks(")
+            .substringBefore("\n    private fun ")
+        assertTrue(
+            builder.contains("onHandoffProposed = ::onHandoffProposed"),
+            "buildSessionUiCallbacks must wire onHandoffProposed = ::onHandoffProposed (the SSOT)"
         )
     }
 

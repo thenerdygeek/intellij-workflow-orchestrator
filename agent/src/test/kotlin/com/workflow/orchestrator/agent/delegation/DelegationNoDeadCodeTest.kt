@@ -24,16 +24,19 @@ class DelegationNoDeadCodeTest {
         )
     }
 
-    @Test fun `the old ide_b_busy FAILED shortcut is gone (replaced by the top-bar accept window)`() {
+    @Test fun `the old fake-FAILED busy shortcut is gone (replaced by the top-bar accept window)`() {
         val s = src("com/workflow/orchestrator/agent/delegation/DelegationInboundService.kt")
-        // Scope to handleConnect: that's where the old fake-FAILED busy shortcut lived. Fix 3's
-        // handleChannelResume legitimately uses an ide_b_busy SessionClosed reason for the
-        // resurrection busy-decline (a distinct path), so a whole-file match would over-trigger.
+        // Scope to handleConnect: that's where the old fake-FAILED busy shortcut lived (it replied a
+        // synthetic DelegationMessage.Result(FAILED, reason="ide_b_busy...") that bypassed the top-bar
+        // accept window). The busy case must instead surface the top-bar incoming-delegation button and,
+        // on expiry, reply AcceptResult(accepted=false) with a self-describing ide_b_busy reason composed
+        // by composeBusyDeclineReason (PART 2). Pin that the FAILED shortcut is gone WITHOUT forbidding
+        // the new ide_b_busy reason wording, which legitimately lives on the AcceptResult decline.
         val handleConnectBody = s.substringAfter("private suspend fun handleConnect(")
             .substringBefore("internal suspend fun runInboundReadLoop(")
         assertFalse(
-            handleConnectBody.contains("ide_b_busy"),
-            "the busy case must surface the top-bar incoming-delegation button (declined_timeout on expiry), not reply a fake FAILED",
+            Regex("""ResultStatus\.FAILED[\s\S]{0,120}ide_b_busy""").containsMatchIn(handleConnectBody),
+            "the busy case must surface the top-bar incoming-delegation button (AcceptResult decline on expiry), not reply a fake FAILED Result",
         )
     }
 }

@@ -308,7 +308,9 @@ class AskQuestionsTool : AgentTool {
                     tokenEstimate = TokenEstimator.estimate(content),
                 )
             } catch (e: CancellationException) {
-                ToolResult.error("Delegated session ended while waiting for an answer from IDE-A")
+                val delegatorRepo = sessionState.delegated?.delegatorRepo
+                val fromLabel = delegatorRepo ?: "the delegating repo"
+                ToolResult.error("Delegated session ended while waiting for an answer from $fromLabel")
             } catch (e: Exception) {
                 ToolResult.error("Failed to route question over delegation IPC: ${e.message}")
             }

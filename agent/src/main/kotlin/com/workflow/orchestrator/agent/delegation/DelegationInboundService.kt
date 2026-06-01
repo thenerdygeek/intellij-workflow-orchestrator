@@ -45,6 +45,12 @@ fun interface DelegatedSessionStarter {
         replyWith: suspend (DelegationMessage) -> Unit,
         onResult: suspend (DelegationMessage.Result) -> Unit,
         onSessionStarted: ((String) -> Unit)?,
+        /**
+         * PART 2 — fired on a busy decline with the in-flight task descriptor, so
+         * [DelegationInboundService.handleConnect] can compose a self-describing `ide_b_busy:`
+         * reason naming what IDE-B was busy with. Null/absent → generic fallback wording.
+         */
+        onBusy: ((com.workflow.orchestrator.agent.ui.BusyInfo) -> Unit)?,
     ): DelegatedStartOutcome
 }
 
@@ -69,7 +75,57 @@ fun interface DelegatedResumeStarter {
         replyWith: suspend (DelegationMessage) -> Unit,
         onResult: suspend (DelegationMessage.Result) -> Unit,
         onSessionStarted: ((String) -> Unit)?,
+        /**
+         * PART 2 — fired on a busy decline with the in-flight task descriptor, so
+         * [DelegationInboundService.handleChannelResume] can compose a self-describing
+         * `ide_b_busy:` reason. Null/absent → generic fallback wording.
+         */
+        onBusy: ((com.workflow.orchestrator.agent.ui.BusyInfo) -> Unit)?,
     ): DelegatedStartOutcome
+}
+
+/**
+ * PART 2 — busy-enrichment. Composes the SINGLE coherent `ide_b_busy:` reason token IDE-B sends
+ * when it declines an incoming delegation because its agent tab is busy.
+ *
+ * The reason NAMES the in-flight task and — critically — echoes the in-flight task's delegator
+ * session id, so IDE-A can recognize the blocker as ITS OWN earlier task (matching it against
+ * `list_handles`' `bSessionId`, or the delegator session id it sent with task-1).
+ *
+ * Wording (when the descriptor is available):
+ *   - in-flight task is itself delegated:
+ *       `ide_b_busy: agent tab is busy running session <sid> ('<title>'), delegated by <repo>
+ *        session <delegatorSessionId>; user did not click Start within <N>s`
+ *   - in-flight task is a LOCAL (non-delegated) session — omit the delegator clause:
+ *       `ide_b_busy: agent tab is busy running session <sid> ('<title>'); user did not click
+ *        Start within <N>s`
+ *   - descriptor null (e.g. resume path with no captured info) → [genericFallback].
+ *
+ * Leads with `ide_b_busy:` and the in-flight task identity so the trailing accept-window note is
+ * not misread as "you had <N>s and ignored it". The literal "user did not click Start within <N>s"
+ * is the actual mechanism (busy tab → Start prompt → not clicked within `ACCEPT_WINDOW_MS`); the
+ * real `ACCEPT_WINDOW_MS` value is used, never a hardcoded number.
+ *
+ * `ide_b_busy` is a clean PEER reason token (see [classifyResumeCloseReason]'s known-token set) —
+ * it must NOT be conflated with `session_closed:` / `declined_timeout:`.
+ */
+internal fun composeBusyDeclineReason(
+    busyInfo: com.workflow.orchestrator.agent.ui.BusyInfo?,
+    genericFallback: String = "ide_b_busy: agent tab is busy with another task; " +
+        "the user did not accept the takeover within ${com.workflow.orchestrator.agent.ui.AgentController.ACCEPT_WINDOW_MS / 1000}s",
+): String {
+    if (busyInfo == null) return genericFallback
+    val windowSeconds = com.workflow.orchestrator.agent.ui.AgentController.ACCEPT_WINDOW_MS / 1000
+    val sessionPart = busyInfo.inFlightSessionId?.let { sid ->
+        val titlePart = busyInfo.inFlightTitle?.takeIf { it.isNotBlank() }?.let { " ('$it')" } ?: ""
+        "session $sid$titlePart"
+    } ?: return genericFallback
+    val delegatorClause = if (busyInfo.inFlightDelegatorSessionId != null) {
+        val repo = busyInfo.inFlightDelegatorRepo ?: "unknown"
+        ", delegated by $repo session ${busyInfo.inFlightDelegatorSessionId}"
+    } else ""
+    return "ide_b_busy: agent tab is busy running $sessionPart$delegatorClause; " +
+        "the user did not accept the takeover within ${windowSeconds}s"
 }
 
 /**
@@ -366,8 +422,8 @@ class DelegationInboundService(
                 com.workflow.orchestrator.agent.ui.AgentControllerRegistry.getInstance(project).controller
             }
             controller?.let { c ->
-                DelegatedSessionStarter { request, md, reply, onResult, onStarted ->
-                    c.startDelegatedSession(request, md, reply, onResult, onStarted)
+                DelegatedSessionStarter { request, md, reply, onResult, onStarted, onBusy ->
+                    c.startDelegatedSession(request, md, reply, onResult, onStarted, onBusy)
                 }
             }
         }
@@ -395,6 +451,9 @@ class DelegationInboundService(
         // for both the AcceptResult bSessionId and the inbound read-loop.
         val sessionIdHolder = java.util.concurrent.atomic.AtomicReference<String>()
         val sessionIdReady = CompletableDeferred<String>()
+        // PART 2: capture the in-flight descriptor handed up by the busy gate so the decline reply
+        // can name what IDE-B was busy with (and echo the in-flight task's delegator session id).
+        val busyInfoHolder = java.util.concurrent.atomic.AtomicReference<com.workflow.orchestrator.agent.ui.BusyInfo?>()
         // startDelegatedSession is a suspend fun: for an idle tab it returns STARTED promptly;
         // for a busy tab it surfaces a top-bar prompt and SUSPENDS HERE for up to
         // AgentController.ACCEPT_WINDOW_MS (< IDE-A's connectAndAwaitAccept timeout) waiting for
@@ -417,6 +476,7 @@ class DelegationInboundService(
                     sessionIdHolder.set(sid)
                     sessionIdReady.complete(sid)
                 },
+                onBusy = { info -> busyInfoHolder.set(info) },
             )
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -435,13 +495,14 @@ class DelegationInboundService(
             // Busy tab, human did not click Start within the accept window. Decline cleanly so
             // IDE-A's accept-await resolves (rather than hanging on a session that never starts).
             // onSessionStarted never fired, so do NOT await sessionIdReady.
-            // Bug B: name the specific cause so IDE-A (and the next debugger) isn't blind — a bare
-            // "declined_timeout" gave no signal about WHAT timed out.
+            // PART 2 — busy-enrichment: compose a SINGLE coherent `ide_b_busy:` reason FROM the
+            // in-flight descriptor so IDE-A can recognize the blocker as its OWN earlier task (it
+            // echoes the in-flight task's delegator session id). Falls back to the generic string
+            // when the descriptor is unavailable, so nothing regresses.
             replyWith(
                 DelegationMessage.AcceptResult(
                     accepted = false,
-                    reason = "declined_timeout: IDE-B agent tab busy; user did not click Start " +
-                        "within ${com.workflow.orchestrator.agent.ui.AgentController.ACCEPT_WINDOW_MS / 1000}s",
+                    reason = composeBusyDeclineReason(busyInfoHolder.get()),
                 )
             )
             closeChannel()
@@ -646,6 +707,8 @@ class DelegationInboundService(
         val delegatorRepo = project.getService(AgentService::class.java)
             .findDelegationMetadata(sessionId)?.delegatorRepo
         notifyDelegationQuestionPending(sessionId, active = true, delegatorRepo = delegatorRepo)
+        // Leg (b): narrate "↗ Asked {delegatorRepo}" on IDE-B's own panel as a delegation card.
+        notifyDelegatedQuestionAsked(sessionId, questionId, delegatorRepo, question, options)
 
         sc.replyWith(DelegationMessage.Question(questionId, question, options))
         return deferred.await()
@@ -662,6 +725,11 @@ class DelegationInboundService(
         if (resolved) {
             // Plan 4 §5.5: clear the input banner once the question is answered.
             notifyDelegationQuestionPending(sessionId, active = false, delegatorRepo = null)
+            // Leg (c): narrate "↘ {delegatorRepo} answered" on IDE-B's own panel + flip the
+            // matching ASKED card to resolved.
+            val delegatorRepo = project.getService(AgentService::class.java)
+                .findDelegationMetadata(sessionId)?.delegatorRepo
+            notifyDelegatedAnswer(sessionId, questionId, delegatorRepo, answer)
         }
         return resolved
     }
@@ -971,8 +1039,8 @@ class DelegationInboundService(
                 com.workflow.orchestrator.agent.ui.AgentControllerRegistry.getInstance(project).controller
             }
             controller?.let { c ->
-                DelegatedResumeStarter { sid, turn, md, reply, onResult, onStarted ->
-                    c.resumeDelegatedSession(sid, turn, md, reply, onResult, onStarted)
+                DelegatedResumeStarter { sid, turn, md, reply, onResult, onStarted, onBusy ->
+                    c.resumeDelegatedSession(sid, turn, md, reply, onResult, onStarted, onBusy)
                 }
             }
         }
@@ -992,6 +1060,7 @@ class DelegationInboundService(
         // ChannelResumed before this returns STARTED + delivers a sid, or IDE-A would treat a busy /
         // failed resume as success.
         val sessionIdReady = CompletableDeferred<String>()
+        val busyInfoHolder = java.util.concurrent.atomic.AtomicReference<com.workflow.orchestrator.agent.ui.BusyInfo?>()
         val outcome = try {
             starter.resume(
                 sessionId = sessionId,
@@ -1004,6 +1073,7 @@ class DelegationInboundService(
                     closeChannel()
                 },
                 onSessionStarted = { sid -> sessionIdReady.complete(sid) },
+                onBusy = { info -> busyInfoHolder.set(info) },
             )
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -1022,10 +1092,16 @@ class DelegationInboundService(
         if (outcome == DelegatedStartOutcome.DECLINED_TIMEOUT) {
             // IDE-B is busy running another task — decline gracefully (never hijack). onSessionStarted
             // never fired, so do NOT await it. IDE-A maps this to a clear "busy" error.
+            // PART 2 — busy-enrichment: name the in-flight task (and echo its delegator session id)
+            // via the shared composer, so IDE-A can recognize the blocker as its own earlier task.
+            // The resume path's generic fallback also names that the resume in particular failed.
             replyWith(
                 DelegationMessage.SessionClosed(
                     sessionId = sessionId,
-                    closeReason = "ide_b_busy: agent tab is running another task; could not resume",
+                    closeReason = composeBusyDeclineReason(
+                        busyInfoHolder.get(),
+                        genericFallback = "ide_b_busy: the agent tab is running another task; could not resume",
+                    ),
                 )
             )
             closeChannel()
@@ -1081,6 +1157,46 @@ class DelegationInboundService(
             controller?.pushDelegationQuestionPending(sessionId, active, delegatorRepo)
         } catch (e: Exception) {
             LOG.warn("notifyDelegationQuestionPending: controller push failed", e)
+        }
+    }
+
+    /**
+     * Leg (b): narrate a question routed to the delegator on IDE-B's OWN panel.
+     * Routes through [com.workflow.orchestrator.agent.ui.AgentController.pushDelegatedQuestionAsked].
+     * Null-safe when the controller is absent (tests/headless).
+     */
+    fun notifyDelegatedQuestionAsked(
+        sessionId: String,
+        questionId: String,
+        delegatorRepo: String?,
+        question: String,
+        options: List<String>,
+    ) {
+        try {
+            val controller = com.workflow.orchestrator.agent.ui.AgentControllerRegistry
+                .getInstance(project).controller
+            controller?.pushDelegatedQuestionAsked(sessionId, questionId, delegatorRepo, question, options)
+        } catch (e: Exception) {
+            LOG.warn("notifyDelegatedQuestionAsked: controller push failed", e)
+        }
+    }
+
+    /**
+     * Leg (c): narrate the answer received from the delegator on IDE-B's OWN panel.
+     * Routes through [com.workflow.orchestrator.agent.ui.AgentController.pushDelegatedAnswer].
+     */
+    fun notifyDelegatedAnswer(
+        sessionId: String,
+        questionId: String,
+        delegatorRepo: String?,
+        answer: String,
+    ) {
+        try {
+            val controller = com.workflow.orchestrator.agent.ui.AgentControllerRegistry
+                .getInstance(project).controller
+            controller?.pushDelegatedAnswer(sessionId, questionId, delegatorRepo, answer)
+        } catch (e: Exception) {
+            LOG.warn("notifyDelegatedAnswer: controller push failed", e)
         }
     }
 

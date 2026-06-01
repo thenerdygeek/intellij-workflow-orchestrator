@@ -76,7 +76,7 @@ class DelegationReuseE2ETest {
         // Fake the controller leg via the seam: deliver the sid through onSessionStarted (so
         // handleConnect emits AcceptResult(accepted=true, bSessionId=sid)), fire onResult with the
         // verbose COMPLETED Result, return STARTED.
-        inbound.testDelegatedSessionStarter = DelegatedSessionStarter { request, _md, _reply, onResult, onSessionStarted ->
+        inbound.testDelegatedSessionStarter = DelegatedSessionStarter { request, _md, _reply, onResult, onSessionStarted, _onBusy ->
             capturedRequest.set(request)
             onSessionStarted?.invoke(deliveredSid)
             scopeB.launch {

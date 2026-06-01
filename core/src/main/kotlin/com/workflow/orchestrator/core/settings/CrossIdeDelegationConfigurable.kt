@@ -64,8 +64,8 @@ class CrossIdeDelegationConfigurable(private val project: Project) : Configurabl
                     checkBox("Auto-approve Agent-A's answers to delegated-session questions")
                         .bindSelected({ autoApprove }, { autoApprove = it })
                         .comment(
-                            "When on, Agent-A's drafted answers to questions raised by remote " +
-                                "delegated sessions are sent without an IDE-A confirmation prompt. " +
+                            "When on, the delegating agent's drafted answers to questions raised by remote " +
+                                "delegated sessions are sent without prompting you to confirm on this side. " +
                                 "Default off — leaves the human as the verification step."
                         )
                 }

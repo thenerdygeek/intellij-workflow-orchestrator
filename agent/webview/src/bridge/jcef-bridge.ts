@@ -1110,4 +1110,48 @@ export function initBridge(storeAccessors: StoreAccessors): void {
       console.error('[bridge] _setActiveSessionDelegated: bad payload', e);
     }
   };
+
+  // ── Delegation conversation narration cards (IDE-B panel, cross-IDE 2026-06-01) ──
+  // Pushed by Kotlin's AgentController so IDE-B's OWN chat narrates the full
+  // delegation conversation as cards (not just the agent's work). The "other
+  // side" is always the delegator's repo name (delegatorRepo) — never IDE-A/IDE-B.
+  window._appendDelegatedQuestion = (json: string) => {
+    try {
+      const p = JSON.parse(json) as {
+        questionId: string;
+        delegatorRepo: string;
+        text: string;
+        options?: string[];
+      };
+      stores?.getChatStore().appendDelegatedQuestion(p.questionId, p.delegatorRepo, p.text, p.options ?? []);
+    } catch (e) {
+      console.error('[bridge] _appendDelegatedQuestion: bad payload', e);
+    }
+  };
+
+  window._appendDelegatedAnswer = (json: string) => {
+    try {
+      const p = JSON.parse(json) as { questionId: string; delegatorRepo: string; text: string };
+      stores?.getChatStore().appendDelegatedAnswer(p.questionId, p.delegatorRepo, p.text);
+    } catch (e) {
+      console.error('[bridge] _appendDelegatedAnswer: bad payload', e);
+    }
+  };
+
+  window._appendDelegatedResult = (json: string) => {
+    try {
+      const p = JSON.parse(json) as {
+        delegatorRepo: string;
+        status: string;
+        durationSeconds?: number;
+        summary?: string;
+        reason?: string | null;
+      };
+      stores
+        ?.getChatStore()
+        .appendDelegatedResult(p.delegatorRepo, p.status, p.durationSeconds ?? 0, p.summary ?? '', p.reason ?? null);
+    } catch (e) {
+      console.error('[bridge] _appendDelegatedResult: bad payload', e);
+    }
+  };
 }

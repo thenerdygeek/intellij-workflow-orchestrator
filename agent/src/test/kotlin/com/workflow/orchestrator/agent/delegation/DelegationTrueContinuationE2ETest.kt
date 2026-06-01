@@ -131,7 +131,7 @@ class DelegationTrueContinuationE2ETest {
         bSessionId: String,
         delegatorSessionId: String,
     ): String {
-        ideB.inbound.testDelegatedSessionStarter = DelegatedSessionStarter { _req, _md, _reply, onResult, onStarted ->
+        ideB.inbound.testDelegatedSessionStarter = DelegatedSessionStarter { _req, _md, _reply, onResult, onStarted, _onBusy ->
             onStarted?.invoke(bSessionId)
             ideB.scope.launch {
                 delay(20)
@@ -230,7 +230,7 @@ class DelegationTrueContinuationE2ETest {
             val resumedSessionId = AtomicReference<String?>(null)
             val resumedUserTurn = AtomicReference<String?>(null)
             ideB.inbound.testDelegatedResumeStarter =
-                DelegatedResumeStarter { sessionId, userTurnText, _md, _reply, onResult, onStarted ->
+                DelegatedResumeStarter { sessionId, userTurnText, _md, _reply, onResult, onStarted, _onBusy ->
                     resumedSessionId.set(sessionId)
                     resumedUserTurn.set(userTurnText)
                     onStarted?.invoke(sessionId)
@@ -424,8 +424,18 @@ class DelegationTrueContinuationE2ETest {
             // starter returns DECLINED_TIMEOUT (busy-gate decline). It MUST NOT hijack a session.
             val starterInvoked = AtomicReference(false)
             ideB.inbound.testDelegatedResumeStarter =
-                DelegatedResumeStarter { _sessionId, _userTurnText, _md, _reply, _onResult, _onStarted ->
+                DelegatedResumeStarter { _sessionId, _userTurnText, _md, _reply, _onResult, _onStarted, onBusy ->
                     starterInvoked.set(true)
+                    // PART 2: the busy gate hands up the in-flight descriptor; the in-flight task is
+                    // itself delegated by another delegator session, which the reason must echo.
+                    onBusy?.invoke(
+                        com.workflow.orchestrator.agent.ui.BusyInfo(
+                            inFlightSessionId = "b-other-inflight",
+                            inFlightTitle = "Other delegated work",
+                            inFlightDelegatorSessionId = "a-other-delegator",
+                            inFlightDelegatorRepo = "frontend",
+                        )
+                    )
                     DelegatedStartOutcome.DECLINED_TIMEOUT
                 }
 
@@ -440,8 +450,14 @@ class DelegationTrueContinuationE2ETest {
             assertTrue(ex is DelegationException.Expired, "busy decline must surface as Expired, got $ex")
             val reason = (ex as DelegationException.Expired).expireReason ?: ""
             assertTrue(
-                reason.contains("busy", ignoreCase = true) || reason.contains("session_closed"),
-                "busy decline must produce a busy/closed reason, got: $reason",
+                reason.contains("ide_b_busy", ignoreCase = true),
+                "busy decline must produce an ide_b_busy reason, got: $reason",
+            )
+            // PART 2: the reason names the in-flight task and echoes ITS delegator session id.
+            assertTrue(reason.contains("b-other-inflight"), "must name the in-flight session, got: $reason")
+            assertTrue(
+                reason.contains("a-other-delegator"),
+                "must echo the in-flight task's delegator session id, got: $reason",
             )
         } finally {
             ideB.inbound.stop()
@@ -470,7 +486,7 @@ class DelegationTrueContinuationE2ETest {
             // Here we model "session genuinely gone" by replying SessionNotFound from the seam:
             // the inbound resume handler maps a null/failed resume to a clear error.
             ideB.inbound.testDelegatedResumeStarter =
-                DelegatedResumeStarter { _sessionId, _userTurnText, _md, _reply, _onResult, _onStarted ->
+                DelegatedResumeStarter { _sessionId, _userTurnText, _md, _reply, _onResult, _onStarted, _onBusy ->
                     // The controller path returns DECLINED_TIMEOUT for busy; a missing/locked session
                     // is signalled by the resume returning null from AgentService.resumeDelegatedSession,
                     // which the inbound handler translates into a SessionClosed("resume_failed: ...").

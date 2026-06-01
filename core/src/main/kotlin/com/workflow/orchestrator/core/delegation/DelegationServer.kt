@@ -122,13 +122,7 @@ class DelegationServer(
             val msg = withContext(Dispatchers.IO) { DelegationFraming.readFramed(client, json) }
             when (msg) {
                 is DelegationMessage.Ping -> {
-                    withContext(Dispatchers.IO) {
-                        DelegationFraming.writeFramed(
-                            client,
-                            DelegationMessage.Pong(projectPath = projectPath),
-                            json,
-                        )
-                    }
+                    writeFramedTolerant(client, DelegationMessage.Pong(projectPath = projectPath), "Pong")
                     try { client.close() } catch (_: Exception) {}
                 }
                 is DelegationMessage.Connect -> {
@@ -141,7 +135,7 @@ class DelegationServer(
                     val writeMutex = Mutex()
                     val replyWith: suspend (DelegationMessage) -> Unit = { reply ->
                         writeMutex.withLock {
-                            withContext(Dispatchers.IO) { DelegationFraming.writeFramed(client, reply, json) }
+                            writeFramedTolerant(client, reply, reply::class.simpleName ?: "reply")
                         }
                     }
                     val readMessage: suspend () -> DelegationMessage = {
@@ -164,7 +158,7 @@ class DelegationServer(
                     val writeMutex = Mutex()
                     val replyWith: suspend (DelegationMessage) -> Unit = { reply ->
                         writeMutex.withLock {
-                            withContext(Dispatchers.IO) { DelegationFraming.writeFramed(client, reply, json) }
+                            writeFramedTolerant(client, reply, reply::class.simpleName ?: "reply")
                         }
                     }
                     val readMessage: suspend () -> DelegationMessage = {
@@ -186,6 +180,38 @@ class DelegationServer(
         } catch (e: Exception) {
             LOG.warn("connection handler failed", e)
             try { client.close() } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Best-effort framed-reply delivery: writes [msg] on [Dispatchers.IO] and tolerates a
+     * disconnected peer.
+     *
+     * If the write throws and [DelegationFraming.isPeerDisconnect] classifies it as a benign
+     * "peer hung up, nothing to deliver" condition (IDE-A closed its end of the socket — closed
+     * the handle / let a `wait` lapse / cancelled), it is logged at INFO and the call returns
+     * normally. This is the root fix for the spurious `ClosedChannelException` that the
+     * detached terminal-result delivery used to raise after a successful delegated session.
+     *
+     * Everything else propagates: notably [DelegationFraming.FrameSizeExceeded] (thrown BEFORE
+     * the write loop — a genuine producer error) is NOT swallowed, and [CancellationException]
+     * is always re-thrown so structured cancellation is never broken.
+     */
+    private suspend fun writeFramedTolerant(
+        client: SocketChannel,
+        msg: DelegationMessage,
+        messageType: String,
+    ) {
+        try {
+            withContext(Dispatchers.IO) { DelegationFraming.writeFramed(client, msg, json) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (DelegationFraming.isPeerDisconnect(e)) {
+                LOG.info("peer disconnected before reply could be delivered; dropping $messageType")
+            } else {
+                throw e
+            }
         }
     }
 
