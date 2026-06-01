@@ -203,7 +203,24 @@ class SourcegraphChatClient(
     private fun xmlBlocksToToolCalls(blocks: List<ToolUseContent>): List<ToolCall> =
         blocks.map { block ->
             val argsJson = kotlinx.serialization.json.buildJsonObject {
-                block.params.forEach { (k, v) -> put(k, kotlinx.serialization.json.JsonPrimitive(v)) }
+                block.params.forEach { (k, v) ->
+                    // XML tool-call param values arrive as raw strings (AssistantMessageParser).
+                    // A value that is itself JSON-shaped (object/array) — e.g. the jira `transition`
+                    // tool's `fields`, runtime_config `env_vars`, run_maven_goal `modules` — must be
+                    // emitted as a JSON element, not a JSON string, or the downstream tool's
+                    // `.jsonObject`/`.jsonArray` read throws and the param is SILENTLY DROPPED.
+                    // Scalars stay string primitives (tools read them via .jsonPrimitive.content /
+                    // contentOrNull, a contract this preserves).
+                    val trimmed = v.trim()
+                    val element: JsonElement =
+                        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+                            runCatching { json.parseToJsonElement(trimmed) }
+                                .getOrElse { kotlinx.serialization.json.JsonPrimitive(v) }
+                        } else {
+                            kotlinx.serialization.json.JsonPrimitive(v)
+                        }
+                    put(k, element)
+                }
             }.toString()
             ToolCall(
                 id = "xmltool_${xmlToolIdCounter.incrementAndGet()}",

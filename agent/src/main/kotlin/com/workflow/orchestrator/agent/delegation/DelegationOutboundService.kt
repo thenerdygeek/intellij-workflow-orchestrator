@@ -157,6 +157,15 @@ class DelegationOutboundService(
      */
     private val lastSeenAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
+    /**
+     * Item 3 fix: handle ids whose channel is being closed INTENTIONALLY by the local agent/user
+     * (via [close] / [cancelAllForSession]), as opposed to a genuine IPC failure. The outbound
+     * reader's catch consumes this (atomic remove) to record CANCELED instead of FAILED and to
+     * suppress the spurious `ipc_read_failed: null` nudge a locally-closed channel would synthesise.
+     */
+    private val intentionallyClosing: MutableSet<String> =
+        java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+
     val openChannelCount: Int get() = activeChannels.size
 
     /**
@@ -535,23 +544,34 @@ class DelegationOutboundService(
                 }
             }
         } catch (e: Exception) {
-            LOG.warn("Result read failed for ${handle.id}", e)
-            val failed = DelegationMessage.Result(
-                status = DelegationMessage.ResultStatus.FAILED,
-                reason = "ipc_read_failed: ${e.message}",
-            )
-            // Fix A: a socket EOF / read error is a terminal FAILED state — record it before the
-            // finally's close() snapshots the RetainedHandle, so `status` doesn't show "RUNNING".
-            recordTerminalState(handle.id, DelegationMessage.ResultStatus.FAILED)
-            // BUG #1 fix — same exactly-once arbitration as the Result branch: a waiter already
-            // claimed by its own timeout (complete() == false) must not swallow the FAILED result;
-            // it falls back to the async onResult nudge.
-            val waiter = pendingResultWaiters.remove(handle.id)
-            val delivered = waiter?.complete(
-                DelegationWaitOutcome.Completed(failed, handle.targetRepoName)
-            ) == true
-            if (!delivered) {
-                onResult(handle, failed)
+            // Item 3 fix: a locally-initiated close() (LLM/user `close`, or a cancel cascade)
+            // unblocks readFramed with an EOF / closed-channel exception. That is NOT a remote
+            // failure — record terminal CANCELED and SUPPRESS the spurious `ipc_read_failed: null`
+            // FAILED nudge (the agent already knows it closed the channel).
+            if (intentionallyClosing.remove(handle.id)) {
+                LOG.info("Outbound channel for ${handle.id} closed locally — recording CANCELED")
+                recordTerminalState(handle.id, DelegationMessage.ResultStatus.CANCELED)
+                pendingResultWaiters.remove(handle.id)
+                    ?.complete(DelegationWaitOutcome.NotActive("channel_closed_locally"))
+            } else {
+                LOG.warn("Result read failed for ${handle.id}", e)
+                val failed = DelegationMessage.Result(
+                    status = DelegationMessage.ResultStatus.FAILED,
+                    reason = "ipc_read_failed: ${e.message ?: "channel closed"}",
+                )
+                // Fix A: a socket EOF / read error is a terminal FAILED state — record it before the
+                // finally's close() snapshots the RetainedHandle, so `status` doesn't show "RUNNING".
+                recordTerminalState(handle.id, DelegationMessage.ResultStatus.FAILED)
+                // BUG #1 fix — same exactly-once arbitration as the Result branch: a waiter already
+                // claimed by its own timeout (complete() == false) must not swallow the FAILED result;
+                // it falls back to the async onResult nudge.
+                val waiter = pendingResultWaiters.remove(handle.id)
+                val delivered = waiter?.complete(
+                    DelegationWaitOutcome.Completed(failed, handle.targetRepoName)
+                ) == true
+                if (!delivered) {
+                    onResult(handle, failed)
+                }
             }
         } finally {
             // Safety net: unblock any wait() still pending (e.g. unknown-message drop path)
@@ -583,6 +603,10 @@ class DelegationOutboundService(
      * [PersistentHandleStore.save] will write an empty list.
      */
     fun close(handleId: String): Boolean {
+        // Item 3: mark this as a LOCAL/intentional close so the reader's catch records CANCELED
+        // (not FAILED) and suppresses the spurious ipc_read_failed nudge when the ch.close() below
+        // unblocks its blocked readFramed. Consumed by the reader catch via atomic remove.
+        intentionallyClosing.add(handleId)
         val sessionId: String? = handleToSessionId[handleId]
         val wasFound: Boolean = synchronized(this) {
             // Retain the metadata needed to serve a post-completion fetch_transcript / status
@@ -619,6 +643,9 @@ class DelegationOutboundService(
         }
         // Plan 4: persist updated (possibly empty) handle list after removal.
         if (sessionId != null) persistHandlesForSession(sessionId)
+        // Item 3: if there was no active channel, no reader will run its catch to consume the
+        // intentional-close marker — clear it here so it can't linger.
+        if (!wasFound) intentionallyClosing.remove(handleId)
         return wasFound
     }
 
