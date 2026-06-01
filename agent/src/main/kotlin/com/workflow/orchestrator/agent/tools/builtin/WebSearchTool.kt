@@ -55,7 +55,7 @@ PROPRIETARY IDENTIFIERS: do NOT include internal hostnames (e.g. jenkins.acme.co
             val msg = "WEB_SEARCH_DISABLED: web_search is disabled in Workflow Orchestrator settings"
             return errorResult(msg)
         }
-        val planMode = AgentService.planModeActive.get()
+        val planMode = project.service<AgentService>().isPlanModeActive()
         val planAllow = settings.webPlanModeAllow
 
         val svc = ServiceLookup.webSearch(project) ?: return ServiceLookup.notConfigured("Web Search")

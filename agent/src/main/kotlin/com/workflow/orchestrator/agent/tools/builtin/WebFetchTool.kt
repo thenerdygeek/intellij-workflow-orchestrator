@@ -52,7 +52,7 @@ Common error responses: UNLISTED_DOMAIN means the host isn't on the user's allow
             val msg = "WEB_FETCH_DISABLED: web_fetch is disabled in Workflow Orchestrator settings"
             return errorResult(msg)
         }
-        val planMode = AgentService.planModeActive.get()
+        val planMode = project.service<AgentService>().isPlanModeActive()
         val planAllow = settings.webPlanModeAllow
         val maxBytes = params["max_bytes"]?.jsonPrimitive?.int
         val extractionPrompt = params["prompt"]?.jsonPrimitive?.contentOrNull

@@ -3,6 +3,7 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.core.model.web.AllowlistDecision
 import com.workflow.orchestrator.core.model.web.SanitizerVerdict
 import com.workflow.orchestrator.core.model.web.WebPage
@@ -94,6 +95,13 @@ class WebFetchToolTest {
         }
         every { stubSettings.state } returns stubState
         every { project.getService(PluginSettings::class.java) } returns stubSettings
+        // WebFetchTool reads plan-mode via project.service<AgentService>().isPlanModeActive()
+        // (per-session state since the cross-IDE Plan 0 refactor; the old app-scoped
+        // AgentService.planModeActive companion AtomicBoolean was removed). A relaxed
+        // AgentService mock returns isPlanModeActive()=false + activeMessageStateHandler=null.
+        val stubAgentService = mockk<AgentService>(relaxed = true)
+        every { stubAgentService.isPlanModeActive() } returns false
+        every { project.getService(AgentService::class.java) } returns stubAgentService
     }
 
     @AfterEach

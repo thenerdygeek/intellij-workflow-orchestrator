@@ -3,6 +3,7 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.core.model.web.SearchHit
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -72,6 +73,12 @@ class WebSearchToolTest {
         }
         every { stubSettings.state } returns stubState
         every { project.getService(PluginSettings::class.java) } returns stubSettings
+        // WebSearchTool reads plan-mode via project.service<AgentService>().isPlanModeActive()
+        // (per-session state since the cross-IDE Plan 0 refactor; the old app-scoped
+        // AgentService.planModeActive companion AtomicBoolean was removed).
+        val stubAgentService = mockk<AgentService>(relaxed = true)
+        every { stubAgentService.isPlanModeActive() } returns false
+        every { project.getService(AgentService::class.java) } returns stubAgentService
     }
 
     @AfterEach
