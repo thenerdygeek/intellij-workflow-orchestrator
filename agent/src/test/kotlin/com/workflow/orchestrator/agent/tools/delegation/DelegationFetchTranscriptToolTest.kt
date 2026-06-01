@@ -45,11 +45,11 @@ class DelegationFetchTranscriptToolTest {
     }
 
     @Test
-    fun `returns DelegationExpired when not_found`() = runBlocking {
+    fun `returns DelegationHandleNotFound for an unknown handle`() = runBlocking {
         val outbound = mockk<DelegationOutboundService>(relaxed = true)
         coEvery {
             outbound.fetchTranscript(any())
-        } returns FetchTranscriptResult.NotFound("pruned")
+        } returns FetchTranscriptResult.NotFound("handle_not_found", FetchTranscriptResult.NotFoundKind.HANDLE_UNKNOWN)
 
         val project = mockk<Project>(relaxed = true)
         every { project.getService(DelegationOutboundService::class.java) } returns outbound
@@ -58,7 +58,34 @@ class DelegationFetchTranscriptToolTest {
         val result = tool.executeFetchTranscriptRaw(project = project, handleId = "h-gone")
 
         assertTrue(result.isError)
-        assertTrue(result.summary.contains("expired") || result.summary.contains("not_found") ||
-                   result.summary.contains("Expired"))
+        // Fix (2026-06-01): an unknown/pruned handle is now consistently DelegationHandleNotFound
+        // across all five handle-reading actions (was DelegationExpired only for fetch_transcript).
+        assertTrue(
+            (result.content + result.summary).contains("DelegationHandleNotFound"),
+            "unknown handle must map to DelegationHandleNotFound; got: ${result.summary}",
+        )
+    }
+
+    @Test
+    fun `returns DelegationExpired for a genuine transcript-unreachable condition`() = runBlocking {
+        val outbound = mockk<DelegationOutboundService>(relaxed = true)
+        coEvery {
+            outbound.fetchTranscript(any())
+        } returns FetchTranscriptResult.NotFound(
+            "no conversation history on disk for session sess-b",
+            FetchTranscriptResult.NotFoundKind.TRANSCRIPT_UNREACHABLE,
+        )
+
+        val project = mockk<Project>(relaxed = true)
+        every { project.getService(DelegationOutboundService::class.java) } returns outbound
+
+        val tool = DelegationTool()
+        val result = tool.executeFetchTranscriptRaw(project = project, handleId = "h-known")
+
+        assertTrue(result.isError)
+        assertTrue(
+            (result.content + result.summary).contains("DelegationExpired"),
+            "a genuine transcript-unreachable condition stays DelegationExpired; got: ${result.summary}",
+        )
     }
 }

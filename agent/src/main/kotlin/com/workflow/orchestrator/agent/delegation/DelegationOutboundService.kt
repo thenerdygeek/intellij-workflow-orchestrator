@@ -614,11 +614,38 @@ class DelegationOutboundService(
             val bSid = handleToBSessionId[handleId]
             val tPath = handleToTargetPath[handleId]
             if (bSid != null && tPath != null) {
+                // Option (a) — author the terminal state HERE, race-free. When this close is
+                // intentional AND the channel is still live (activeChannels still holds it) AND no
+                // terminal Result has been recorded yet, the close itself IS the cancellation: the
+                // reader will unblock from readFramed and record CANCELED (~line 553) — but its
+                // write to handleToLastSeenState is NOT synchronized against this block and lands
+                // AFTER we've already removed the live map and snapshotted the RetainedHandle, so
+                // it can never reach this snapshot. We therefore seed lastState = CANCELED directly
+                // here (matching the terminal token the reader's intentional-close branch records),
+                // so `status`/`handleState` agree with the nudge.
+                //
+                // Discriminator vs. natural completion / socket-error: the reader records the real
+                // terminal Result (COMPLETED/FAILED) into handleToLastSeenState BEFORE its
+                // finally→close(), so a state that is ALREADY a terminal ResultStatus reads through
+                // unchanged. Any non-terminal value (the "RUNNING" seed at :242 or an intermediate
+                // progress `currentState`) means no terminal Result arrived → the live close is a
+                // cancellation. NOTE: the finally-driven close() also adds the handle to
+                // intentionallyClosing, so the marker alone can't distinguish the two paths — the
+                // already-recorded terminal state is the discriminator.
+                val seenState = handleToLastSeenState[handleId]
+                val alreadyTerminal = seenState != null &&
+                    DelegationMessage.ResultStatus.entries.any { it.name == seenState }
+                val closingLiveRunningChannel = intentionallyClosing.contains(handleId) &&
+                    activeChannels.containsKey(handleId) &&
+                    !alreadyTerminal
                 retainedHandles[handleId] = RetainedHandle(
                     bSessionId = bSid,
                     targetProjectPath = tPath,
                     repoName = handleToRepoName[handleId] ?: handleId.take(8),
-                    lastState = handleToLastSeenState[handleId] ?: "closed",
+                    lastState = when {
+                        closingLiveRunningChannel -> DelegationMessage.ResultStatus.CANCELED.name
+                        else -> seenState ?: "closed"
+                    },
                     capturedAt = System.currentTimeMillis(),
                 )
             }
@@ -731,7 +758,8 @@ class DelegationOutboundService(
             // truth `status` / `answer` use so the three actions can't disagree (Fix A). A
             // closed-but-retained handle is REATTACHED (Fix 3 — true continuation): we RESURRECT the
             // completed IDE-B conversation and continue it. A truly-unknown/pruned handle yields a
-            // bare `handle_not_found` (distinct error).
+            // `HandleNotFound` — the SAME error TYPE status/answer/wait/fetch_transcript surface for an
+            // unknown handle (2026-06-01 consistency fix), NOT the old `Expired("handle_not_found")`.
             when (handleState(handleId)) {
                 is HandleState.ClosedRetained -> {
                     // Fix 3: the channel was wiped on close(); dial a fresh socket to IDE-B, resurrect
@@ -739,7 +767,7 @@ class DelegationOutboundService(
                     // running handle on success; throws a DISTINCT error on busy / gone / locked.
                     return resurrectAndContinue(handleId, request, delegatorSessionId)
                 }
-                else -> throw DelegationException.Expired("handle_not_found")
+                else -> throw DelegationException.HandleNotFound(handleId)
             }
         }
         if (sessionId != delegatorSessionId) {
@@ -1275,7 +1303,15 @@ class DelegationOutboundService(
         val bSessionId = handleToBSessionId[handleId] ?: retained?.bSessionId
         val targetPath = handleToTargetPath[handleId] ?: retained?.targetProjectPath
         if (bSessionId == null || targetPath == null) {
-            return FetchTranscriptResult.NotFound("handle_not_found")
+            // No coordinates anywhere. Classify the existence error through the SAME single source
+            // of truth status/answer/wait/send-continuation use, so an unknown/pruned handle is
+            // reported as HANDLE_UNKNOWN (→ DelegationHandleNotFound at the tool layer) rather than
+            // the old bare reason the tool mapped to DelegationExpired. A dead-but-persisted handle
+            // that is neither Active nor ClosedRetained is also Unknown here — same classification.
+            return FetchTranscriptResult.NotFound(
+                reason = "handle_not_found",
+                kind = FetchTranscriptResult.NotFoundKind.HANDLE_UNKNOWN,
+            )
         }
         return readRemoteTranscript(handleId, bSessionId, targetPath)
     }
@@ -1290,8 +1326,11 @@ class DelegationOutboundService(
                 ?: DelegationPaths.agentDirForDelegation(targetProjectPath)
             val historyFile = remoteAgentDir.resolve("sessions/$bSessionId/api_conversation_history.json")
             if (!java.nio.file.Files.exists(historyFile)) {
+                // The handle IS known (coordinates resolved) but its transcript is not on disk.
+                // This is a genuine transcript-unreachable expiry — distinct from an unknown handle.
                 return@withContext FetchTranscriptResult.NotFound(
-                    "no conversation history on disk for session $bSessionId"
+                    reason = "no conversation history on disk for session $bSessionId",
+                    kind = FetchTranscriptResult.NotFoundKind.TRANSCRIPT_UNREACHABLE,
                 )
             }
             // Copy into IDE-A's reachable storage (tier 3) so read_file can open the full file.
@@ -1304,7 +1343,11 @@ class DelegationOutboundService(
             FetchTranscriptResult.Ok(dest.toAbsolutePath().toString())
         } catch (e: Exception) {
             LOG.warn("readRemoteTranscript failed for $handleId", e)
-            FetchTranscriptResult.NotFound("io_error: ${e.message}")
+            // Known handle, transport/IO failure reading the transcript → genuine unreachable expiry.
+            FetchTranscriptResult.NotFound(
+                reason = "io_error: ${e.message}",
+                kind = FetchTranscriptResult.NotFoundKind.TRANSCRIPT_UNREACHABLE,
+            )
         }
     }
 
@@ -1491,5 +1534,28 @@ sealed class DelegationWaitOutcome {
  */
 sealed class FetchTranscriptResult {
     data class Ok(val transcriptPath: String) : FetchTranscriptResult()
-    data class NotFound(val reason: String) : FetchTranscriptResult()
+
+    /**
+     * The transcript could not be returned. [kind] distinguishes the two conceptually-different
+     * causes so the [DelegationTool] layer can map them to the CORRECT error type, consistently
+     * with the other handle-reading actions (status/wait/answer/send-continuation):
+     *  - [NotFoundKind.HANDLE_UNKNOWN] → the handle never existed or its retention window elapsed
+     *    (routed through the [handleState] SSOT). Maps to `DelegationHandleNotFound`.
+     *  - [NotFoundKind.TRANSCRIPT_UNREACHABLE] → the handle IS known but the persisted transcript
+     *    is genuinely unreachable (not on disk yet, or an IO failure). Maps to `DelegationExpired`.
+     *
+     * Default is [NotFoundKind.HANDLE_UNKNOWN] — the predominant case and the one that must agree
+     * with the rest of the actions.
+     */
+    data class NotFound(
+        val reason: String,
+        val kind: NotFoundKind = NotFoundKind.HANDLE_UNKNOWN,
+    ) : FetchTranscriptResult()
+
+    enum class NotFoundKind {
+        /** Unknown / pruned handle — the conceptual "handle doesn't exist" error. */
+        HANDLE_UNKNOWN,
+        /** Known handle, but its transcript is genuinely not reachable (missing-on-disk / IO). */
+        TRANSCRIPT_UNREACHABLE,
+    }
 }

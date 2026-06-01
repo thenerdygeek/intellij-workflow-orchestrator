@@ -83,11 +83,38 @@ class DelegationSendToolContinueWithTest {
     }
 
     @Test
-    fun `delegation send with handle on dead handle returns DelegationExpired`() = runBlocking {
+    fun `delegation send-continuation on a genuinely-unreachable known handle returns DelegationExpired`() = runBlocking {
+        // A KNOWN-but-closed handle whose resurrection/reattach fails (target IDE down) keeps the
+        // distinct DelegationExpired type with a specific reason.
         val outbound = mockk<DelegationOutboundService>(relaxed = true)
         coEvery {
             outbound.sendContinuation(any(), any(), any())
-        } throws DelegationException.Expired("handle_not_found")
+        } throws DelegationException.Expired("ide_b_not_running")
+
+        val project = makeProject(outbound)
+        val tool = DelegationTool()
+        val params: JsonObject = buildJsonObject {
+            put("action", JsonPrimitive("send"))
+            put("handle", JsonPrimitive("h-known"))
+            put("request", JsonPrimitive("anything"))
+        }
+        val result = tool.execute(params, project)
+
+        assertTrue(result.isError)
+        assertTrue(
+            result.summary.contains("Expired") || result.summary.contains("expired"),
+            "Expected 'Expired'/'expired' in: ${result.summary}"
+        )
+    }
+
+    @Test
+    fun `delegation send-continuation on an unknown handle returns DelegationHandleNotFound`() = runBlocking {
+        // Fix (2026-06-01): a truly-unknown/pruned handle is now DelegationHandleNotFound — the same
+        // error TYPE status/answer/wait/fetch_transcript surface — NOT DelegationExpired.
+        val outbound = mockk<DelegationOutboundService>(relaxed = true)
+        coEvery {
+            outbound.sendContinuation(any(), any(), any())
+        } throws DelegationException.HandleNotFound("h-gone")
 
         val project = makeProject(outbound)
         val tool = DelegationTool()
@@ -100,8 +127,8 @@ class DelegationSendToolContinueWithTest {
 
         assertTrue(result.isError)
         assertTrue(
-            result.summary.contains("Expired") || result.summary.contains("expired"),
-            "Expected 'Expired'/'expired' in: ${result.summary}"
+            (result.content + result.summary).contains("DelegationHandleNotFound"),
+            "Expected 'DelegationHandleNotFound' in: ${result.summary}"
         )
     }
 }

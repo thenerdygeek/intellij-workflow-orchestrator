@@ -393,11 +393,14 @@ class DelegationTrueContinuationE2ETest {
                     delegatorSessionId = "a-sess-x",
                 )
             }.exceptionOrNull()
-            assertTrue(ex is DelegationException.Expired, "unknown handle must throw Expired, got $ex")
+            // 2026-06-01 consistency fix: a genuinely-unknown handle now throws HandleNotFound (the
+            // same error TYPE status/answer/wait/fetch_transcript surface), NOT Expired("handle_not_found").
+            // Expired is reserved for a KNOWN-but-closed handle whose resurrection/reattach fails.
+            assertTrue(ex is DelegationException.HandleNotFound, "unknown handle must throw HandleNotFound, got $ex")
             assertEquals(
-                "handle_not_found",
-                (ex as DelegationException.Expired).expireReason,
-                "a genuinely unknown handle reports handle_not_found (distinct from a closed-retained one)",
+                "never-existed",
+                (ex as DelegationException.HandleNotFound).handleId,
+                "HandleNotFound carries the unknown handle id",
             )
         } finally {
             ideA.scope.cancel()

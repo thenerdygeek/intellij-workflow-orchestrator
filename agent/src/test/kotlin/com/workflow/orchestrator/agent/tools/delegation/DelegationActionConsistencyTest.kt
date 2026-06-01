@@ -4,6 +4,8 @@ import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.delegation.DelegationException
 import com.workflow.orchestrator.agent.delegation.DelegationOutboundService
 import com.workflow.orchestrator.agent.delegation.DelegationStatusResult
+import com.workflow.orchestrator.agent.delegation.DelegationWaitOutcome
+import com.workflow.orchestrator.agent.delegation.FetchTranscriptResult
 import com.workflow.orchestrator.agent.delegation.HandleState
 import com.workflow.orchestrator.agent.testutil.installReadActionInlineShim
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -47,6 +49,13 @@ class DelegationActionConsistencyTest {
         every { settings.state } returns state
         every { PluginSettings.getInstance(any()) } returns settings
         every { project.getService(DelegationOutboundService::class.java) } returns outbound
+
+        // The `send` action resolves AgentService to read the delegator session id; stub it so the
+        // continuation branch reaches sendContinuation (where the HandleNotFound mapping lives).
+        val agentService = mockk<com.workflow.orchestrator.agent.AgentService>(relaxed = true)
+        every { agentService.currentSessionState() } returns
+            com.workflow.orchestrator.agent.session.PerSessionAgentState("sess-a-test")
+        every { project.getService(com.workflow.orchestrator.agent.AgentService::class.java) } returns agentService
     }
 
     @AfterEach fun tearDown() { unmockkAll() }
@@ -113,6 +122,79 @@ class DelegationActionConsistencyTest {
             (answer.content + answer.summary).contains("DelegationHandleNotFound"),
             "unknown handle answer must be DelegationHandleNotFound",
         )
+    }
+
+    @Test
+    fun `all five handle-reading actions surface DelegationHandleNotFound for the same unknown handle`() = runBlocking {
+        val handle = "phantom"
+        // Single source of truth says Unknown for every existence check.
+        every { outbound.handleState(handle) } returns HandleState.Unknown
+        every { outbound.statusOf(handle) } returns DelegationStatusResult.Unknown
+        // send-continuation throws HandleNotFound for the unknown case (service-layer fix).
+        coEvery { outbound.sendContinuation(handle, any(), any()) } throws
+            DelegationException.HandleNotFound(handle)
+        // fetch_transcript classifies the unknown handle as HANDLE_UNKNOWN.
+        coEvery { outbound.fetchTranscript(handle) } returns
+            FetchTranscriptResult.NotFound("handle_not_found", FetchTranscriptResult.NotFoundKind.HANDLE_UNKNOWN)
+        // wait → NotActive with a non-"already_completed" reason (truly unknown).
+        coEvery { outbound.awaitResult(handle, any()) } returns
+            DelegationWaitOutcome.NotActive("handle_not_found")
+
+        fun typeOf(r: com.workflow.orchestrator.agent.tools.ToolResult): String =
+            r.content + " " + r.summary
+
+        val status = tool.execute(params("status", handle), project)
+        val wait = tool.execute(params("wait", handle), project)
+        val answer = tool.execute(params("answer", handle, mapOf("question_id" to "q", "answer" to "x")), project)
+        val fetch = tool.execute(params("fetch_transcript", handle), project)
+        val send = tool.execute(params("send", handle, mapOf("request" to "follow up")), project)
+
+        for ((name, r) in listOf("status" to status, "wait" to wait, "answer" to answer, "fetch_transcript" to fetch, "send" to send)) {
+            assertTrue(r.isError, "$name must be an error for an unknown handle")
+            assertTrue(
+                typeOf(r).contains("DelegationHandleNotFound"),
+                "$name must surface DelegationHandleNotFound for an unknown handle; got: ${typeOf(r)}",
+            )
+            assertFalse(
+                typeOf(r).contains("DelegationExpired"),
+                "$name must NOT surface DelegationExpired for an unknown handle; got: ${typeOf(r)}",
+            )
+        }
+    }
+
+    @Test
+    fun `fetch_transcript still returns the transcript for a closed-but-retained handle`() = runBlocking {
+        val handle = "h-retained"
+        coEvery { outbound.fetchTranscript(handle) } returns
+            FetchTranscriptResult.Ok(transcriptPath = "/tmp/delegation-transcript-$handle.json")
+
+        val result = tool.executeFetchTranscriptRaw(project, handle)
+        // Ok path attempts to read the (non-existent) file head but is NOT a handle-not-found error;
+        // the path is surfaced regardless.
+        assertTrue(
+            (result.content + result.summary).contains("/tmp/delegation-transcript-$handle.json"),
+            "closed-but-retained fetch must surface the transcript path; got: ${result.content}",
+        )
+        assertFalse(
+            (result.content + result.summary).contains("DelegationHandleNotFound"),
+            "a retained transcript must not be reported as not-found",
+        )
+    }
+
+    @Test
+    fun `fetch_transcript maps a genuine transcript-unreachable expiry to DelegationExpired`() = runBlocking {
+        val handle = "h-known-no-disk"
+        coEvery { outbound.fetchTranscript(handle) } returns
+            FetchTranscriptResult.NotFound(
+                "no conversation history on disk for session sess-b",
+                FetchTranscriptResult.NotFoundKind.TRANSCRIPT_UNREACHABLE,
+            )
+
+        val result = tool.executeFetchTranscriptRaw(project, handle)
+        assertTrue(result.isError)
+        val text = result.content + result.summary
+        assertTrue(text.contains("DelegationExpired"), "genuine transcript-unreachable must map to DelegationExpired; got: $text")
+        assertFalse(text.contains("DelegationHandleNotFound"))
     }
 
     // ── active: answer proceeds to the write ───────────────────────────────────

@@ -126,7 +126,7 @@ present:
 | Branch | Trigger | Behavior |
 |---|---|---|
 | Fresh send | no `handle` | `DelegationOutboundService.send` opens the target **picker**, runs the inbound-consent handshake on the chosen target, creates a new channel, and registers the result nudge. |
-| Continuation | `handle` present | `sendContinuation` skips the picker *and* the Accept dialog and writes a fresh `UserTurn` onto the existing session — **even if that session already COMPLETED.** Within the ~30 min retention window it sources `bSessionId` + `targetPath` from the retained handle (the live maps are wiped on close), dials IDE-B with `ChannelResume`, and IDE-B **resurrects the persisted session** (its TASK RESUMPTION / `initiateTaskLoop` machinery), re-registers the channel, and resumes from where it left off. |
+| Continuation | `handle` present | `sendContinuation` skips the picker *and* the Accept dialog and writes a fresh `UserTurn` onto the existing session — **even if that session already COMPLETED** (this requires the remote IDE to still be OPEN — only the session completed, not the IDE; a closed IDE returns `ide_b_not_running`). Within the ~30 min retention window it sources `bSessionId` + `targetPath` from the retained handle (the live maps are wiped on close), dials IDE-B with `ChannelResume`, and IDE-B **resurrects the persisted session** (its TASK RESUMPTION / `initiateTaskLoop` machinery), re-registers the channel, and resumes from where it left off. |
 
 The continuation branch is the correct way to send a *follow-up* to a delegation,
 whether it is still running or has already finished. Opening a fresh `send` for a
@@ -136,8 +136,10 @@ context the remote agent already has.
 **This is the campaign's big new capability.** Continuation used to require a
 still-live channel; reattach-after-completion (IDE-A re-dials from the retained
 handle, IDE-B resurrects the persisted session) means a `COMPLETED` delegation is no
-longer a dead end within the retention window. If the remote session is genuinely
-gone the continuation fails with a *specific* `DelegationExpired` reason (see the
+longer a dead end within the retention window — provided the remote IDE is still
+OPEN (only the agent session completed, not the IDE process; a fully-closed IDE
+returns `ide_b_not_running`). If the remote session is genuinely gone or the IDE is
+closed, the continuation fails with a *specific* `DelegationExpired` reason (see the
 taxonomy below) rather than a vague "expired".
 
 ## Reachability is ambiguous by construction
@@ -172,9 +174,9 @@ nudge from the remote session. Note the reply parameter is **`answer`**, not
 - **on:** the answer is forwarded directly without interrupting the loop.
 
 `answer` routes its existence check through the **same** retained-aware
-`handleState` lookup `status` and `send`-continuation use, so the three now agree
-about whether a handle exists, and it distinguishes **three** failure shapes so
-recovery differs:
+`handleState` lookup `status`, `wait`, `fetch_transcript`, and `send`-continuation
+use, so all five now agree about whether a handle exists, and it distinguishes
+**three** failure shapes so recovery differs:
 
 - `DelegationHandleClosed` — the handle is **closed-but-retained**: the remote
   session has already COMPLETED (you can see its terminal state). You can't answer a
@@ -188,6 +190,9 @@ recovery differs:
 This three-way split is part of Fix A: before it, `status`, `send`-continuation, and
 `answer` could give three contradictory answers about the same handle (one read
 `retainedHandles`, another the wiped `handleToSessionId`, a third `activeChannels`).
+The 2026-06-01 follow-up extended the agreement to `fetch_transcript` and
+`send`-continuation's *type* mapping: an unknown handle now surfaces
+`DelegationHandleNotFound` (not `DelegationExpired: handle_not_found`) on all five.
 
 ## `fetch_transcript`: path + bounded preview
 
@@ -205,8 +210,13 @@ shared filesystem** (Unix sockets ⇒ same host) using the channel's own
 disk" (wrong session id sent) and "handle_not_found ~83 s post-completion" (handle
 torn down on result arrival) bugs. It **still works after completion**: `close()`
 snapshots a `RetainedHandle` kept for `TRANSCRIPT_RETENTION_MILLIS` (~30 min), so the
-transcript stays reachable in that window. Past it, `NotFound` maps to
-`DelegationExpired`.
+transcript stays reachable in that window. Past it (or for a handle that never
+existed) `fetch_transcript` routes its existence check through the same
+`handleState` single-source-of-truth the other actions use and returns
+**`DelegationHandleNotFound`** — consistent with `status` / `wait` / `answer` /
+`send`-continuation. `DelegationExpired` is reserved here for the distinct case of a
+**known** handle whose transcript is genuinely unreachable (not on disk yet, or an IO
+read failed).
 
 ## `list_targets`: read-only, never throws
 
@@ -245,18 +255,30 @@ Closing or completing a delegation does **not** immediately invalidate its handl
 terminal `lastState`) into `retainedHandles`, kept for
 `TRANSCRIPT_RETENTION_MILLIS` (~30 min) and swept by `pruneRetainedHandles()`.
 
-Within that retention window, all three handle-reading actions keep working and
-**agree** on the handle's existence:
+Within that retention window, all the handle-reading actions keep working and
+**agree** on the handle's existence (a closed-but-retained handle):
 
 - `status` → `closed` with the terminal `last_state`.
 - `fetch_transcript` → the persisted transcript (read off disk).
-- `send`-continuation → resurrects and resumes the persisted remote session.
+- `send`-continuation → resurrects and resumes the persisted remote session (requires the remote IDE to still be OPEN; a closed IDE returns `ide_b_not_running`).
+- `answer` → `DelegationHandleClosed` (you can't answer a finished session; resume
+  it with `send` or read it with `fetch_transcript`).
+- `wait` → reports `already_completed`.
 
-`answer` also consults the same source: a closed-but-retained handle is consistently
-`DelegationHandleClosed`; a pruned/unknown handle is consistently
-`DelegationHandleNotFound`. After the window elapses the handle is uniformly "not
-found" everywhere. (Fix A made these reads share one source of truth — see the
-`answer` section above for the pre-fix divergence.)
+After the window elapses (or for a handle that never existed) the handle is uniformly
+**`DelegationHandleNotFound`** across **all five** handle-reading actions —
+`status` / `wait` / `answer` / `fetch_transcript` / `send`-continuation — with the
+same message. They share one single-source-of-truth existence check
+(`DelegationOutboundService.handleState`), so they can never disagree about whether a
+handle is known. (The 2026-06-01 consistency fix folded `fetch_transcript` and
+`send`-continuation into this agreement: both previously reported the unknown case as
+`DelegationExpired: handle_not_found` while the others said `DelegationHandleNotFound`.)
+
+`DelegationExpired` is now reserved for a genuinely **distinct** condition on a
+**known** handle: a `send`-continuation whose resurrection/reattach fails
+(`ide_b_not_running` / `ide_b_busy` / `session_closed` / `session_not_found` /
+`resume_failed`), or a `fetch_transcript` whose persisted transcript is unreachable
+(not on disk yet / IO error). It is **not** used for an unknown/pruned handle.
 
 ## Cold launch of a closed target
 
@@ -283,9 +305,9 @@ don't retry blindly.
 | `DelegationTargetNotReachable` | send | socket unreachable — usually inbound disabled on target | Ask user to enable "Accept incoming delegations" on the target IDE. |
 | `DelegationLimitReached` | send | `MAX_CHANNELS` already open | `close` an existing channel, then resend. |
 | `DelegationDeclined` / `DelegationRejected` | send | target user declined consent / tab busy (`declined_timeout: IDE-B agent tab busy; user did not click Start within 55s`) | Surface to user; for a busy tab, retry once it's free. |
-| `DelegationExpired` | send (continuation), fetch_transcript | handle/session gone. On continuation the reason is specific: `session_closed` / `session_not_found` (remote session gone or pruned), `ide_b_not_running` (target IDE down), `ide_b_busy` (target tab busy), `resume_failed` (session locked/missing on disk) | `ide_b_busy` → retry shortly; `ide_b_not_running` → reopen/send fresh; `session_not_found`/`resume_failed` → fresh `send`. |
+| `DelegationExpired` | send (continuation), fetch_transcript | a **known** handle whose continuation/transcript is genuinely unreachable. On continuation the reason is specific: `session_closed` / `session_not_found` (remote session gone or pruned), `ide_b_not_running` (target IDE down), `ide_b_busy` (target tab busy), `resume_failed` (session locked/missing on disk). On fetch_transcript: the transcript is not on disk yet or an IO read failed. **Not** used for an unknown/pruned handle. | `ide_b_busy` → retry shortly; `ide_b_not_running` → reopen/send fresh; `session_not_found`/`resume_failed` → fresh `send`; transcript-unreachable → retry shortly. |
 | `DelegationHandleClosed` | answer | closed-but-retained: the session already COMPLETED | Continue it with `send` (same handle resumes it), or `fetch_transcript`; don't retry `answer`. |
-| `DelegationHandleNotFound` | answer, status, wait | handle unknown or its ~30 min retention elapsed | Start a fresh `send`. |
+| `DelegationHandleNotFound` | **status, wait, answer, fetch_transcript, send (continuation)** | handle unknown or its ~30 min retention elapsed. Consistent type **and** message across all five handle-reading actions (shared `handleState` SSOT). | Start a fresh `send`. |
 | `DelegationWriteFailed` | send (continuation), answer | IPC write rejected | Retry, or fall back to a fresh `send`. |
 
 ## Counterfactual: dropping `delegation`

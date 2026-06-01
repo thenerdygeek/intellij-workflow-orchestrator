@@ -76,12 +76,23 @@ class DelegationHandleConsistencyTest {
         assertEquals(DelegationStatusResult.Unknown, svc.statusOf("ghost"))
         // answer existence check → not open
         assertTrue(!svc.hasOpenChannel("ghost"))
-        // send-continuation → Expired(handle_not_found), distinct from a retained-closed handle
+        // send-continuation → HandleNotFound for the truly-unknown case (consistent error TYPE
+        // with status/answer/wait/fetch_transcript). DelegationException.Expired is reserved for a
+        // genuinely-distinct condition (resurrection/reattach failure on a KNOWN-but-closed handle).
         val ex = runCatching {
             runBlocking { svc.sendContinuation("ghost", "follow up", "sess-a") }
         }.exceptionOrNull()
-        val expired = assertInstanceOf(DelegationException.Expired::class.java, ex)
-        assertEquals("handle_not_found", expired.expireReason)
+        val notFound = assertInstanceOf(DelegationException.HandleNotFound::class.java, ex)
+        assertEquals("ghost", notFound.handleId)
+    }
+
+    @Test
+    fun `fetchTranscript classifies an unknown handle as HANDLE_UNKNOWN (not a transcript-unreachable expiry)`() {
+        val svc = newService()
+        val result = runBlocking { svc.fetchTranscript("ghost") }
+        val nf = assertInstanceOf(FetchTranscriptResult.NotFound::class.java, result)
+        assertEquals(FetchTranscriptResult.NotFoundKind.HANDLE_UNKNOWN, nf.kind)
+        assertEquals("handle_not_found", nf.reason)
     }
 
     // ── (1) Closed-but-retained handle: all three agree it is "closed/known" ───
@@ -199,6 +210,38 @@ class DelegationHandleConsistencyTest {
             // statusOf surfaces the same terminal state to the tool layer.
             val status = assertInstanceOf(DelegationStatusResult.Closed::class.java, w.svc.statusOf(w.handleId))
             assertEquals("COMPLETED", status.lastState)
+        } finally { cleanup(w) }
+    }
+
+    @Test
+    fun `close on a still-RUNNING channel records the terminal CANCELED state (not stale RUNNING)`(@TempDir tmp: Path) = runBlocking {
+        val w = wire(tmp)
+        try {
+            // The handle is live/RUNNING — no terminal frame has arrived; the reader is blocked in readFramed.
+            assertInstanceOf(HandleState.Active::class.java, w.svc.handleState(w.handleId))
+
+            // LLM-initiated close on the LIVE channel: this unblocks the reader's readFramed with an EOF,
+            // whose catch records CANCELED — but close() must author the retained snapshot's terminal
+            // state itself, because its snapshot is taken while the reader is still blocked.
+            w.svc.close(w.handleId)
+
+            // Wait for the handle to settle into the retained (closed) snapshot.
+            var hs = w.svc.handleState(w.handleId)
+            val deadline = System.currentTimeMillis() + 5_000
+            while (hs !is HandleState.ClosedRetained && System.currentTimeMillis() < deadline) {
+                delay(10)
+                hs = w.svc.handleState(w.handleId)
+            }
+            val closed = assertInstanceOf(HandleState.ClosedRetained::class.java, hs)
+            assertEquals(
+                "CANCELED",
+                closed.lastState,
+                "close-while-running must seed the retained lastState as the terminal CANCELED state, not stale RUNNING",
+            )
+
+            // statusOf surfaces the same terminal CANCELED state to the tool layer (status + nudge agree).
+            val status = assertInstanceOf(DelegationStatusResult.Closed::class.java, w.svc.statusOf(w.handleId))
+            assertEquals("CANCELED", status.lastState)
         } finally { cleanup(w) }
     }
 

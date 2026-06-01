@@ -223,15 +223,16 @@ class DelegationDoorbellServiceTest {
     // ── security boundary ────────────────────────────────────────────────────────
 
     @Test
-    fun `a non-Knock doorbell message starts no session`() {
-        // The accept loop's handleConnection dispatch only acts on Knock; everything else is
-        // dropped. We assert the security contract by source-text: there is no path from a
-        // non-Knock message to startDelegatedSession / DelegationInboundService.
+    fun `non-Knock non-Ping doorbell message starts no session`() {
+        // The accept loop's handleConnection dispatch acts on Ping (liveness) and Knock (consent);
+        // everything else is dropped. We assert the security contract by source-text: there is no
+        // path from an unknown message to startDelegatedSession / DelegationInboundService.
         val src = Path.of(
             "src/main/kotlin/com/workflow/orchestrator/agent/delegation/DelegationDoorbellService.kt",
         ).toFile().readText()
-        // The only message branch that does work is `is DelegationMessage.Knock`.
-        assertTrue(src.contains("is DelegationMessage.Knock"))
+        // The two valid message branches.
+        assertTrue(src.contains("is DelegationMessage.Ping"), "Ping→Pong liveness branch must exist")
+        assertTrue(src.contains("is DelegationMessage.Knock"), "Knock→KnockAck branch must exist")
         // The else branch logs + closes and never starts a session.
         assertTrue(src.contains("Unexpected message on doorbell socket"))
         assertFalse(src.contains("startDelegatedSession"))

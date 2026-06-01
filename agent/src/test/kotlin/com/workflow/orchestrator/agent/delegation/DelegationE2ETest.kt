@@ -283,6 +283,12 @@ class DelegationE2ETest {
         }
         val scopeB = CoroutineScope(Job())
         val inbound = DelegationInboundService(projectB, scopeB)
+        // A transient ("Allow once") bind now stays bound for a post-completion RETENTION window
+        // (so IDE-A can continue the same session) before unbinding. Shrink it here so the
+        // teardown assertion below observes the eventual unbind without a 30-min wait. The
+        // 2026-06-01 transient-retention fix changed the contract from "unbind instantly at session
+        // end" to "unbind after the retention window with no further activity".
+        inbound.transientRetentionMillis = 150
         val doorbell = DelegationDoorbellService(projectB, scopeB)
 
         // Verbose completion text — the delegated session may produce a long, multi-line
@@ -389,13 +395,15 @@ class DelegationE2ETest {
                 "the controller seam must have been driven with the delegated request")
             assertEquals(0, launchCount.get(), "doorbell answered → no launcher spawn")
 
-            // (b) transient teardown unbound IDE B's delegation socket.
-            // The real stopIfTransientAndIdle(0) closed the transient DelegationServer.
+            // (b) transient teardown unbound IDE B's delegation socket AFTER the retention window.
+            // stopIfTransientAndIdle(0) now schedules a delayed unbind (transientRetentionMillis,
+            // shrunk to 150ms above) rather than tearing down instantly, so the socket survives the
+            // continuation window and then unbinds. The 5s poll comfortably covers the 150ms window.
             val unbound = withTimeoutOrNull(5_000) {
                 while (DelegationClient.ping(doorSocket, timeoutMillis = 200) != null) delay(100)
                 true
             }
-            assertEquals(true, unbound, "transient door socket must be torn down after the session ends")
+            assertEquals(true, unbound, "transient door socket must be torn down after the retention window")
 
             // (c) inbound setting stayed false throughout.
             assertFalse(

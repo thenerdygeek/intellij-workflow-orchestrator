@@ -134,13 +134,17 @@ class DelegationTool(
           DelegationRejected / DelegationDeclined — send-specific picker / connection / quota /
           consent failures (declined_timeout is now specific: "IDE-B agent tab busy; user did
           not click Start within 55s").
-          DelegationExpired — handle/session gone. On a send-continuation it carries the
-          specific reason: session_closed / session_not_found (remote session genuinely
-          gone or pruned), ide_b_not_running (target IDE down), ide_b_busy (target tab busy
-          with another task — try again), resume_failed (session locked/missing on disk).
+          DelegationExpired — a KNOWN handle's continuation/transcript is genuinely unreachable.
+          On a send-continuation it carries the specific reason: session_closed / session_not_found
+          (remote session genuinely gone or pruned), ide_b_not_running (target IDE down), ide_b_busy
+          (target tab busy with another task — try again), resume_failed (session locked/missing on
+          disk). On fetch_transcript it means the handle is known but its transcript is not on disk
+          yet or an IO read failed. NOT used for an unknown/pruned handle — that is HandleNotFound.
           DelegationHandleClosed — answer on a closed-but-retained handle (the session
           completed; start a new send or fetch_transcript instead).
-          DelegationHandleNotFound — handle is unknown or pruned (answer / status / wait).
+          DelegationHandleNotFound — handle is unknown or retention-pruned. CONSISTENT across ALL
+          handle-reading actions: status / wait / answer / fetch_transcript / send-continuation all
+          surface this same type (and the same message) for an unknown handle.
           DelegationWriteFailed — IPC write failed (send continuation / answer).
     """.trimIndent()
 
@@ -318,7 +322,7 @@ class DelegationTool(
                 onFailure("cannot connect to the target IDE", "DelegationTargetNotReachable — most often the target has inbound delegation disabled (looks identical to 'not running'). Ask the user to enable 'Accept incoming delegations' on the target first.")
                 onFailure("too many open channels", "DelegationLimitReached — DelegationOutboundService.MAX_CHANNELS concurrent delegations already open; close one before sending another.")
                 onFailure("target user declines the consent prompt", "DelegationDeclined / DelegationRejected — the target IDE's user said no. Surface to the user; don't retry blindly.")
-                onFailure("continuation handle expired or write failed", "DelegationExpired carries a specific reason — session_closed / session_not_found (remote session genuinely gone or pruned), ide_b_not_running (target IDE down), ide_b_busy (target tab busy — try again), resume_failed (session locked/missing on disk); or DelegationWriteFailed (IPC write failed). For ide_b_busy, retry; for session_not_found, start a new send.")
+                onFailure("continuation handle unknown / expired / write failed", "DelegationHandleNotFound when the handle is unknown or retention-pruned (same type as status/answer/wait/fetch_transcript) — start a fresh send. DelegationExpired carries a specific reason on a KNOWN handle — session_closed / session_not_found (remote session gone or pruned), ide_b_not_running (target IDE down), ide_b_busy (target tab busy — try again), resume_failed (session locked/missing on disk). DelegationWriteFailed — IPC write failed. For ide_b_busy, retry; for HandleNotFound/session_not_found, start a new send.")
                 example("fresh delegation") {
                     param("action", "send")
                     param("request", "Implement the /orders endpoint per the spec in docs/api.md and open a PR.")
@@ -413,8 +417,11 @@ class DelegationTool(
             action("fetch_transcript") {
                 description {
                     technical(
-                        "DelegationOutboundService.fetchTranscript writes/locates transcript-export.json on the TARGET IDE's filesystem " +
-                            "and returns its path, byte size, a token estimate, and the first 2 KiB. NotFound maps to DelegationExpired."
+                        "DelegationOutboundService.fetchTranscript reads the TARGET IDE's api_conversation_history.json " +
+                            "and returns its local path, byte size, a token estimate, and the first 2 KiB. An UNKNOWN/pruned " +
+                            "handle (routed through the handleState SSOT) maps to DelegationHandleNotFound — the same type " +
+                            "status/wait/answer/send-continuation use; a KNOWN handle whose transcript is genuinely " +
+                            "unreachable (not on disk yet / IO error) maps to DelegationExpired."
                     )
                     plain(
                         "Peek at the full conversation happening in the other window. Returns where the transcript file lives plus the " +
@@ -431,7 +438,8 @@ class DelegationTool(
                     }
                 }
                 onSuccess("Returns `transcript_path`, `size_bytes`, `token_estimate`, and the first 2 KiB under `head`. If the file exceeds 2 KiB, a truncation marker tells the LLM to read_file the path for the rest.")
-                onFailure("handle gone / session pruned", "DelegationExpired with a reason — the channel has timed out or the remote IDE closed; the transcript is no longer reachable.")
+                onFailure("handle unknown or retention-pruned", "DelegationHandleNotFound — the handle never existed or its ~30 min retention window elapsed (consistent with status/wait/answer/send-continuation). Start a fresh send.")
+                onFailure("handle known but transcript unreachable", "DelegationExpired — the remote session is known but its transcript is not on disk yet or an IO read failed; possibly transient, retry shortly.")
                 example("inspect a finished delegation") {
                     param("action", "fetch_transcript")
                     param("handle", "d3f9a1b2-...")
@@ -645,7 +653,13 @@ class DelegationTool(
                     summary = "Continuation sent to ${handle.targetRepoName} ($shortId) — awaiting result",
                     tokenEstimate = 30,
                 )
+            } catch (e: DelegationException.HandleNotFound) {
+                // Consistency fix (2026-06-01): a truly-unknown/pruned handle on a send-continuation
+                // surfaces the SAME error TYPE + message as status/answer/wait/fetch_transcript, not Expired.
+                ToolResult.error(HANDLE_NOT_FOUND_MESSAGE(e.handleId))
             } catch (e: DelegationException.Expired) {
+                // Reserved for a genuinely-distinct condition on a KNOWN handle: resurrection/reattach
+                // failure (ide_b_not_running / ide_b_busy / session_closed / session_not_found / io_error).
                 ToolResult.error("DelegationExpired: ${e.expireReason ?: "no_reason"}")
             } catch (e: DelegationException.WriteFailed) {
                 ToolResult.error("DelegationWriteFailed: ${e.ioReason}")
@@ -755,24 +769,32 @@ class DelegationTool(
         val outboundService = project.getService(DelegationOutboundService::class.java)
             ?: return ToolResult.error("delegation: DelegationOutboundService unavailable")
 
+        // Snapshot the state BEFORE closing so we can warn the caller when we abort live work.
+        val wasRunning = outboundService.handleState(handle) is HandleState.Active
+
         val closed = outboundService.close(handle)
 
         val shortId = handle.take(8)
-        val summary = if (closed) {
-            "Closed delegation $shortId"
+
+        LOG.debug("[DelegationClose] handle=$shortId closed=$closed wasRunning=$wasRunning")
+
+        return if (wasRunning) {
+            // The handle was actively RUNNING — closing it aborted in-flight work on IDE-B.
+            ToolResult(
+                content = """{"closed":$closed,"handle":"$handle","was_running":true}""" +
+                    "\n\nClosed delegation $shortId. It was still RUNNING — the in-flight work was " +
+                    "aborted (state is now CANCELED).",
+                summary = "Closed delegation $shortId — was RUNNING, in-flight work aborted",
+                tokenEstimate = 20,
+            )
         } else {
-            "Handle $shortId already closed"
+            val summary = if (closed) "Closed delegation $shortId" else "Handle $shortId already closed"
+            ToolResult(
+                content = """{"closed":$closed,"handle":"$handle"}""",
+                summary = summary,
+                tokenEstimate = 15,
+            )
         }
-
-        val content = """{"closed":$closed,"handle":"$handle"}"""
-
-        LOG.debug("[DelegationClose] handle=$shortId closed=$closed")
-
-        return ToolResult(
-            content = content,
-            summary = summary,
-            tokenEstimate = 15,
-        )
     }
 
     // ── Action: answer ───────────────────────────────────────────────────────
@@ -825,10 +847,7 @@ class DelegationTool(
                     "You cannot answer a closed session — use delegation with action=send to start a new one, or " +
                     "action=fetch_transcript to read what it did."
             )
-            HandleState.Unknown -> return ToolResult.error(
-                "DelegationHandleNotFound: $handleId — the handle is unknown or already closed. " +
-                    "The delegated session may have already terminated; use delegation with action=send to start a new one."
-            )
+            HandleState.Unknown -> return ToolResult.error(HANDLE_NOT_FOUND_MESSAGE(handleId))
         }
 
         val sent = outboundService.sendAnswer(handleId, questionId, finalAnswer)
@@ -875,10 +894,7 @@ class DelegationTool(
                     tokenEstimate = 30,
                 )
             }
-            DelegationStatusResult.Unknown -> ToolResult.error(
-                "DelegationHandleNotFound: $handleId — unknown handle, or its retention window has elapsed. " +
-                    "Use delegation with action=send to start a new delegation."
-            )
+            DelegationStatusResult.Unknown -> ToolResult.error(HANDLE_NOT_FOUND_MESSAGE(handleId))
         }
     }
 
@@ -889,17 +905,30 @@ class DelegationTool(
             ?: return ToolResult.error("delegation: 'handle' is required")
         val outbound = project.getService(DelegationOutboundService::class.java)
             ?: return ToolResult.error("delegation: DelegationOutboundService unavailable")
-        val timeoutSeconds = (params["timeout_seconds"]?.jsonPrimitive?.intOrNull ?: DEFAULT_WAIT_SECONDS)
+        val rawTimeoutSeconds = params["timeout_seconds"]?.jsonPrimitive?.intOrNull
+        val timeoutSeconds = (rawTimeoutSeconds ?: DEFAULT_WAIT_SECONDS)
             .coerceIn(MIN_WAIT_SECONDS, MAX_WAIT_SECONDS)
+        // Build a one-line clamp note when the caller supplied an out-of-range value.
+        val clampNote: String? = if (rawTimeoutSeconds != null && rawTimeoutSeconds != timeoutSeconds) {
+            "Note: requested timeout_seconds=$rawTimeoutSeconds was out of range and clamped to ${timeoutSeconds}s " +
+                "(allowed $MIN_WAIT_SECONDS–$MAX_WAIT_SECONDS).\n"
+        } else null
         val shortId = handleId.take(8)
         return when (val outcome = outbound.awaitResult(handleId, timeoutSeconds * 1000L)) {
             is DelegationWaitOutcome.Completed -> ToolResult(
-                content = buildNudgeText(outcome.repoName, handleId, outcome.result),
-                summary = "Delegation $shortId (${outcome.repoName}) finished: ${outcome.result.status}",
+                content = buildString {
+                    if (clampNote != null) append(clampNote)
+                    append(buildNudgeText(outcome.repoName, handleId, outcome.result))
+                },
+                summary = buildString {
+                    if (clampNote != null) append("[timeout clamped] ")
+                    append("Delegation $shortId (${outcome.repoName}) finished: ${outcome.result.status}")
+                },
                 tokenEstimate = 60,
             )
             is DelegationWaitOutcome.Question -> ToolResult(
                 content = buildString {
+                    if (clampNote != null) appendLine(clampNote)
                     appendLine("The delegated session ${outcome.repoName} ($shortId) is asking a clarifying question:")
                     appendLine()
                     appendLine(outcome.question.text)
@@ -912,14 +941,22 @@ class DelegationTool(
                             "question_id=\"${outcome.question.questionId}\", answer=\"…\"), then wait again if needed."
                     )
                 },
-                summary = "Delegation $shortId asked a clarifying question",
+                summary = buildString {
+                    if (clampNote != null) append("[timeout clamped] ")
+                    append("Delegation $shortId asked a clarifying question")
+                },
                 tokenEstimate = 40,
             )
             is DelegationWaitOutcome.TimedOut -> ToolResult(
-                content = "Delegation ${outcome.repoName} ($shortId) is still running after ${timeoutSeconds}s. " +
-                    "This is not a failure — it will deliver its result automatically when done (your session " +
-                    "auto-resumes). You may continue with other work, call delegation(action=\"status\") to " +
-                    "check, or delegation(action=\"wait\") again.",
+                content = buildString {
+                    if (clampNote != null) append(clampNote)
+                    append(
+                        "Delegation ${outcome.repoName} ($shortId) is still running after ${timeoutSeconds}s. " +
+                            "This is not a failure — it will deliver its result automatically when done (your session " +
+                            "auto-resumes). You may continue with other work, call delegation(action=\"status\") to " +
+                            "check, or delegation(action=\"wait\") again."
+                    )
+                },
                 summary = "Delegation $shortId still running (waited ${timeoutSeconds}s)",
                 tokenEstimate = 30,
             )
@@ -931,10 +968,7 @@ class DelegationTool(
                     tokenEstimate = 20,
                 )
             } else {
-                ToolResult.error(
-                    "DelegationHandleNotFound: $handleId — unknown handle or never opened. " +
-                        "Use delegation with action=send to start one."
-                )
+                ToolResult.error(HANDLE_NOT_FOUND_MESSAGE(handleId))
             }
         }
     }
@@ -985,9 +1019,17 @@ class DelegationTool(
                     tokenEstimate = tokenEstimate.coerceAtLeast(ToolResult.ERROR_TOKEN_ESTIMATE),
                 )
             }
-            is FetchTranscriptResult.NotFound -> ToolResult.error(
-                "DelegationExpired: ${outcome.reason}"
-            )
+            is FetchTranscriptResult.NotFound -> when (outcome.kind) {
+                // Consistency fix (2026-06-01): an unknown/pruned handle surfaces the SAME error TYPE
+                // as status/answer/wait/send-continuation, instead of the old DelegationExpired.
+                FetchTranscriptResult.NotFoundKind.HANDLE_UNKNOWN ->
+                    ToolResult.error(HANDLE_NOT_FOUND_MESSAGE(handleId))
+                // Reserved: the handle is KNOWN but the persisted transcript is genuinely unreachable
+                // (not on disk yet, or an IO failure). This is a distinct, possibly-transient condition.
+                FetchTranscriptResult.NotFoundKind.TRANSCRIPT_UNREACHABLE -> ToolResult.error(
+                    "DelegationExpired: ${outcome.reason}"
+                )
+            }
         }
     }
 
@@ -1045,6 +1087,17 @@ class DelegationTool(
         const val DEFAULT_WAIT_SECONDS = 300
         const val MIN_WAIT_SECONDS = 5
         const val MAX_WAIT_SECONDS = 1800
+
+        /**
+         * Single consistent message for the conceptual "this handle does not exist" error, surfaced
+         * IDENTICALLY by every handle-reading action — status / wait / answer / fetch_transcript /
+         * send-continuation — for an unknown or retention-pruned handle (2026-06-01 consistency fix).
+         * Keeping one message shape removes the gratuitous per-action wording differences the actions
+         * used to emit ("never opened" vs "already closed" vs "retention window elapsed").
+         */
+        internal fun HANDLE_NOT_FOUND_MESSAGE(handleId: String): String =
+            "DelegationHandleNotFound: $handleId — unknown handle, or its retention window has elapsed. " +
+                "Start a fresh delegation with action=send (no handle)."
 
         private fun canon(p: String): String =
             try { Path.of(p).toAbsolutePath().normalize().toString() } catch (_: Exception) { p }

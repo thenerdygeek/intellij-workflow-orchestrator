@@ -14,7 +14,11 @@ import com.workflow.orchestrator.core.settings.CrossIdeDelegationSettingsListene
 import com.workflow.orchestrator.core.settings.PluginSettings
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import com.workflow.orchestrator.agent.ui.DelegatedStartOutcome
@@ -108,6 +112,27 @@ class DelegationInboundService(
     @Volatile
     private var transient: Boolean = false
 
+    /**
+     * Post-completion retention window for a transient ("Allow once") bind. When the last
+     * delegated session on a transient socket completes, the socket is NOT torn down
+     * immediately — it stays bound for this long so IDE-A can CONTINUE the same session
+     * (resurrectAndContinue → ChannelResume) within the continuation window even though
+     * IDE-B accepted the original delegation transiently. Mirrors the outbound
+     * [DelegationOutboundService.TRANSCRIPT_RETENTION_MILLIS] (~30 min) — kept as a
+     * separate (non-`const`) field so tests can inject a short value AND so we never inline
+     * a cross-class `const` that a test reads (the Gradle build-cache `NoSuchMethodError`
+     * trap). Test-settable; production uses the 30-min default.
+     */
+    internal var transientRetentionMillis: Long = DEFAULT_TRANSIENT_RETENTION_MILLIS
+
+    /**
+     * The scheduled-unbind coroutine for a transient bind whose last session has completed.
+     * Non-null only during the retention window. Cancelled (window reset) when a new delegated
+     * session starts before expiry, and cancelled + cleared on immediate teardown (project close
+     * or inbound setting turned OFF). Guarded by the instance lock (`@Synchronized`).
+     */
+    private var pendingTransientUnbind: kotlinx.coroutines.Job? = null
+
     /** Record a consented preauth nonce. The matching Connect skips the Accept dialog once. */
     fun recordPreauth(nonce: String) {
         preauthNonces.add(nonce)
@@ -199,19 +224,81 @@ class DelegationInboundService(
 
     @Synchronized
     fun stop() {
+        // Immediate teardown also cancels any in-flight retention window so a scheduled
+        // unbind can't fire after the socket is already gone (idempotent stop()).
+        pendingTransientUnbind?.cancel()
+        pendingTransientUnbind = null
         server?.stop()
         server = null
+        transient = false
     }
 
     /**
-     * Tear down a transient (consent "Allow once") bind once no delegated sessions
-     * remain (Plan 6 Task 4). No-op for a persistent (setting-on) bind. Wired from
-     * AgentService's delegated-session terminal callback in Task 8.
+     * A transient ("Allow once") bind whose last delegated session has just completed must NOT be
+     * torn down immediately: IDE-A may continue the SAME session (resurrectAndContinue →
+     * ChannelResume) within the continuation window even though IDE-B accepted the original
+     * delegation transiently. Tearing the socket down at session end is the bug the tester hit
+     * (`ide_b_not_running` despite IDE-B being alive).
+     *
+     * Instead, when a transient bind goes idle (`activeSessionCount == 0`) we keep the socket bound
+     * and schedule an unbind [transientRetentionMillis] later. If a new delegated session starts (or
+     * a continuation arrives) before the window expires, the pending unbind is cancelled and the
+     * window resets — see [registerSessionChannel] and the `count > 0` branch below.
+     *
+     * SECURITY: keeping the socket bound does NOT widen the consent surface. The still-bound socket
+     * routes a fresh [DelegationMessage.Connect] through [handleConnect], which is gated exactly as
+     * before — it requires a consumed preauth nonce OR the human's Accept dialog; we record no new
+     * preauth here. Only a [DelegationMessage.ChannelResume] of an already-known/retained session is
+     * accepted without a dialog (via [handleChannelResume]), which is the intended continuation. A
+     * brand-new, un-consented delegation is still forced back through the doorbell.
+     *
+     * No-op for a persistent (setting-on) bind. Wired from AgentService's delegated-session terminal
+     * callback (Plan 6 Task 8).
      */
     @Synchronized
     fun stopIfTransientAndIdle(activeSessionCount: Int) {
-        if (transient && activeSessionCount == 0) {
-            stop()
+        if (!transient) return
+        if (activeSessionCount > 0) {
+            // New/ongoing activity: cancel any pending unbind and keep the socket bound.
+            pendingTransientUnbind?.cancel()
+            pendingTransientUnbind = null
+            return
+        }
+        // activeSessionCount == 0: keep the socket bound for the retention window, then unbind
+        // unless new activity resets it. Cancel any prior pending unbind so we don't stack timers.
+        pendingTransientUnbind?.cancel()
+        val retention = transientRetentionMillis
+        // Self-identifying job: it only tears down if it is STILL the current pending window when it
+        // fires (guards against a cancel()+reschedule that raced past this job's delay).
+        lateinit var thisJob: kotlinx.coroutines.Job
+        thisJob = cs.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            kotlinx.coroutines.delay(retention)
+            unbindTransientAfterRetention(thisJob)
+        }
+        pendingTransientUnbind = thisJob
+        thisJob.start()
+    }
+
+    /** Cancel and clear any pending transient-unbind window (new activity resets the window). */
+    @Synchronized
+    private fun cancelPendingTransientUnbind() {
+        pendingTransientUnbind?.cancel()
+        pendingTransientUnbind = null
+    }
+
+    /**
+     * Scheduled-unbind body invoked when the retention window elapses. Re-checks under the lock
+     * that [expiringJob] is still the active pending window (a later
+     * [stopIfTransientAndIdle]/[registerSessionChannel]/[stop] may have cancelled it and scheduled
+     * a fresh one, or cleared it) and that the bind is still transient before tearing down.
+     */
+    @Synchronized
+    private fun unbindTransientAfterRetention(expiringJob: kotlinx.coroutines.Job) {
+        if (pendingTransientUnbind !== expiringJob) return
+        pendingTransientUnbind = null
+        if (transient) {
+            server?.stop()
+            server = null
             transient = false
         }
     }
@@ -494,6 +581,9 @@ class DelegationInboundService(
         sessionId: String,
         replyWith: suspend (DelegationMessage) -> Unit,
     ): PendingQuestionToken {
+        // A new (or continuation) delegated session arriving before a transient retention window
+        // expires must cancel the pending unbind so the socket isn't torn down out from under it.
+        cancelPendingTransientUnbind()
         val token = PendingQuestionToken()
         // Build the closed flag first so the HeartbeatScheduler can reference it via
         // the isClosed lambda before the SessionChannel itself is in the map.
@@ -612,6 +702,12 @@ class DelegationInboundService(
                 channel.pendingToken.cancel(qid, "project_closed")
             }
         }
+        // Project close must unbind a transient socket IMMEDIATELY (no retention) — the retention
+        // window only exists to bridge IDE-A's reconnect while THIS IDE-B project stays open. Once
+        // the project closes there is nothing to continue. stop() is a no-op for a persistent bind
+        // beyond clearing the (absent) pending window, but the persistent socket is torn down by
+        // the platform's service disposal, not here. Cancel + unbind transient now.
+        if (transient) stop() else cancelPendingTransientUnbind()
     }
 
     /**
@@ -990,5 +1086,17 @@ class DelegationInboundService(
 
     companion object {
         private val LOG = Logger.getInstance(DelegationInboundService::class.java)
+
+        /**
+         * Default post-completion retention for a transient ("Allow once") inbound bind: 30 min.
+         * Deliberately mirrors [DelegationOutboundService.TRANSCRIPT_RETENTION_MILLIS] (the outbound
+         * retained-handle window) so the continuation window is symmetric on both sides — IDE-A keeps
+         * its [DelegationOutboundService] RetainedHandle for 30 min and IDE-B keeps the transient
+         * work socket bound for the same 30 min. Declared as a non-`const` `val` (not `const val`) so
+         * a Gradle compile-avoidance build-cache `NoSuchMethodError` can't surface if a test ever
+         * inlines it — tests inject [transientRetentionMillis] directly instead.
+         */
+        @JvmField
+        val DEFAULT_TRANSIENT_RETENTION_MILLIS: Long = 30L * 60_000L
     }
 }

@@ -151,6 +151,25 @@ class DelegationDoorbellService(
         try {
             val msg = withContext(Dispatchers.IO) { DelegationFraming.readFramed(client, json) }
             when (msg) {
+                is DelegationMessage.Ping -> {
+                    // Pure liveness probe — reply immediately with no side effects.
+                    // The doorbell is always bound regardless of the inbound setting, so a
+                    // Pong here correctly signals "IDE is open and the doorbell is listening"
+                    // to the caller (DelegationClient.ping → TargetStatusResolver.dualProbeStatus).
+                    // This makes doorbellReachable=true → TargetStatus.AVAILABLE for a running
+                    // IDE that has inbound delegation OFF, fixing the CLOSED mis-classification.
+                    //
+                    // No consent dialog, no knock handling — Ping is intentionally side-effect-free.
+                    val basePath = project.basePath ?: ""
+                    withContext(Dispatchers.IO) {
+                        DelegationFraming.writeFramed(
+                            client,
+                            DelegationMessage.Pong(projectPath = basePath),
+                            json,
+                        )
+                    }
+                    try { client.close() } catch (_: Exception) {}
+                }
                 is DelegationMessage.Knock -> {
                     // REVIEW FIX N2: reply KnockAck BEFORE showing/blocking on the dialog,
                     // so IDE-A's knock() returns promptly without waiting on the human.
@@ -165,8 +184,8 @@ class DelegationDoorbellService(
                     try { client.close() } catch (_: Exception) {}
                 }
                 else -> {
-                    // Security boundary: the doorbell only handles Knock. Anything else is
-                    // dropped — it can NEVER start a session or accept work.
+                    // Security boundary: the doorbell only handles Ping (liveness) and Knock
+                    // (consent). Anything else is dropped — it can NEVER start a session or accept work.
                     LOG.warn("Unexpected message on doorbell socket (dropped): ${msg::class.simpleName}")
                     try { client.close() } catch (_: Exception) {}
                 }
