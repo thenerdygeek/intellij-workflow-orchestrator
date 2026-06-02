@@ -175,9 +175,11 @@ class WebFetchEngine(
          */
         internal fun mapFetchException(e: Throwable, url: String): WebError = when (e) {
             is java.net.UnknownHostException -> WebError.HttpDnsError(url)
+            is java.net.NoRouteToHostException -> WebError.HttpConnectError(url)
             is java.net.ConnectException -> WebError.HttpConnectError(url)
             is javax.net.ssl.SSLException -> WebError.HttpTlsError(url)
             is java.net.SocketTimeoutException ->
+                // null message → read timeout (safe default; connect timeouts carry "connect" on OkHttp/JDK)
                 if ((e.message ?: "").contains("connect", ignoreCase = true))
                     WebError.HttpConnectError(url)
                 else

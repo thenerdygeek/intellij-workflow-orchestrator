@@ -17,6 +17,9 @@ class WebFetchErrorMappingTest {
     @Test fun `connect exception maps to connect failed`() =
         assertEquals("HTTP_CONNECT_FAILED", code(ConnectException("refused")))
 
+    @Test fun `no route to host maps to connect failed`() =
+        assertEquals("HTTP_CONNECT_FAILED", code(java.net.NoRouteToHostException("unreachable")))
+
     @Test fun `connect-stage timeout maps to connect failed`() =
         assertEquals("HTTP_CONNECT_FAILED", code(SocketTimeoutException("connect timed out")))
 
