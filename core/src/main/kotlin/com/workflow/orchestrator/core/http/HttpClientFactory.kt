@@ -42,6 +42,12 @@ class HttpClientFactory(
             // Callers that need redirect support must open a new request themselves.
             .followRedirects(false)
             .followSslRedirects(false)
+            // IdeTrust: validate server certs against the OS / IDE truststore (corporate
+            // SSL-inspection CAs live there) in addition to the JBR cacerts, matching the
+            // rest of the IDE's networking. ConfirmingTrustManager is a superset of the JVM
+            // default trust, so hosts that validated before still validate. No-op when the
+            // platform is unavailable (tests).
+            .let { IdeTrust.applyTo(it) }
             .addInterceptor(NetworkStateReportingInterceptor())
             .addInterceptor(RetryInterceptor())
             .addNetworkInterceptor(SensitiveEndpointNoCacheInterceptor())

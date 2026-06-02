@@ -4,6 +4,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.http.IdeProxy
+import com.workflow.orchestrator.core.http.IdeTrust
 import com.workflow.orchestrator.core.model.web.WebPage
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -62,6 +63,9 @@ class WebFetchServiceImpl(
             .readTimeout(Duration.ofSeconds(state.webReadTimeoutSec.toLong()))
             .proxySelector(IdeProxy.selector())
             .proxyAuthenticator(IdeProxy.proxyAuthenticator())
+            // IdeTrust: honour the OS / IDE truststore (corporate SSL-inspection CAs) so
+            // external HTTPS doesn't fail the handshake on inspecting networks — no keytool.
+            .let { IdeTrust.applyTo(it) }
             .addInterceptor(StripAuthHeadersInterceptor())
             .build()
 
@@ -75,6 +79,7 @@ class WebFetchServiceImpl(
             .readTimeout(Duration.ofSeconds(5))
             .proxySelector(IdeProxy.selector())
             .proxyAuthenticator(IdeProxy.proxyAuthenticator())
+            .let { IdeTrust.applyTo(it) }
             .addInterceptor(StripAuthHeadersInterceptor())
             .build()
 

@@ -42,8 +42,12 @@ sealed class WebError(
     )
     class HttpTlsError(url: String) : WebError(
         "HTTP_TLS_FAILED",
-        "TLS/certificate failure for $url. A corporate SSL-inspection proxy may require its " +
-        "root CA to be trusted by the IDE's JVM.",
+        "TLS/certificate failure for $url. This usually means a corporate SSL-inspection proxy " +
+        "is presenting a certificate signed by a root CA the IDE doesn't yet trust. The IDE " +
+        "normally prompts to accept such certificates the first time it sees them — open this " +
+        "host in the IDE's browser or retry, and accept the certificate when asked. If your " +
+        "organisation distributes the root CA, importing it via Settings -> Tools -> Server " +
+        "Certificates also resolves this. No manual keytool changes are required.",
         recoverable = true,
     )
     /** Read-stage (response body) timeout. Distinct from [HttpTimeout], which covers connect/redirect stages via a dynamic code. */

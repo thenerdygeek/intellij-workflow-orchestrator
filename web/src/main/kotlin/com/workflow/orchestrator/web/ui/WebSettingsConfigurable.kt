@@ -13,6 +13,7 @@ import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.dsl.builder.*
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.http.IdeProxy
+import com.workflow.orchestrator.core.http.IdeTrust
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -554,6 +555,8 @@ class WebSettingsConfigurable(private val project: Project) : Configurable {
         .readTimeout(Duration.ofSeconds(15))
         .proxySelector(IdeProxy.selector())
         .proxyAuthenticator(IdeProxy.proxyAuthenticator())
+        // IdeTrust: so the Test button validates over the same trust the real probes use.
+        .let { IdeTrust.applyTo(it) }
         .build()
 
     /** Load API key from PasswordSafe in background and push into the password field. */

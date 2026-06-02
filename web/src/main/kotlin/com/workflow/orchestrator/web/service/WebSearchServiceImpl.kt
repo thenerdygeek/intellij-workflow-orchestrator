@@ -6,6 +6,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.core.http.IdeProxy
+import com.workflow.orchestrator.core.http.IdeTrust
 import com.workflow.orchestrator.core.model.web.SearchHit
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.ConnectionSettings
@@ -65,6 +66,9 @@ class WebSearchServiceImpl(
             .readTimeout(Duration.ofSeconds(state.webReadTimeoutSec.toLong()))
             .proxySelector(IdeProxy.selector())
             .proxyAuthenticator(IdeProxy.proxyAuthenticator())
+            // IdeTrust: same OS / IDE truststore the rest of the IDE uses, so search
+            // providers behind a corporate SSL-inspection proxy don't fail the handshake.
+            .let { IdeTrust.applyTo(it) }
             .build()
 
         val sanitizerSubagent = SanitizerSubagent(
