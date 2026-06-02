@@ -166,6 +166,24 @@ class WebFetchEngine(
         /** Test-only accessor — see [com.workflow.orchestrator.web.service.AllowlistMatchTest]. */
         internal fun matchesDomainForTesting(host: String, pattern: String): Boolean =
             matchesDomainImpl(host, pattern)
+
+        /**
+         * Maps a fetch-stage exception to a specific [WebError]. Distinguishes DNS,
+         * connect (incl. connect-stage timeout -- the corporate-proxy case), TLS, and
+         * read-stage timeout from a generic fallback. Replaces the old catch-all that
+         * relabeled every failure as HTTP_TIMEOUT_connect.
+         */
+        internal fun mapFetchException(e: Throwable, url: String): WebError = when (e) {
+            is java.net.UnknownHostException -> WebError.HttpDnsError(url)
+            is java.net.ConnectException -> WebError.HttpConnectError(url)
+            is javax.net.ssl.SSLException -> WebError.HttpTlsError(url)
+            is java.net.SocketTimeoutException ->
+                if ((e.message ?: "").contains("connect", ignoreCase = true))
+                    WebError.HttpConnectError(url)
+                else
+                    WebError.HttpReadTimeout(url)
+            else -> WebError.HttpError(url, e.javaClass.name)
+        }
     }
 
     private val pipeline: UrlPipeline by lazy { UrlPipeline(shortenerResolver, resolver) }
@@ -287,8 +305,8 @@ class WebFetchEngine(
         } catch (e: kotlinx.coroutines.CancellationException) {
             // I13 — re-throw, never swallow. Per agent/CLAUDE.md contract.
             throw e
-        } catch (_: Exception) {
-            return failure(WebError.HttpTimeout("connect"), start, pass.finalUrl)
+        } catch (e: Exception) {
+            return failure(mapFetchException(e, pass.finalUrl), start, pass.finalUrl)
         }
 
         resp.use {
