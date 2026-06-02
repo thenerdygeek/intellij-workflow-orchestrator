@@ -34,14 +34,16 @@ usable, de-identified query.
 5. Both screeners use the **cheapest available model** by default.
 6. No new third-party trust boundary — screeners reuse the existing
    `SubagentSpawner` (Sourcegraph), which the agent already uses.
+7. **Web HTTP clients route through IntelliJ's configured proxy**, and fetch errors
+   report the **actual** failure (DNS / connect / TLS / refused) with proxy/firewall
+   guidance — fixing the `HTTP_TIMEOUT_connect`-on-everything symptom on corporate/VPN
+   networks.
 
 ## Non-Goals
 
 - LLM-based URL screening before fetch (deterministic SSRF/scheme/allowlist checks
   are reliable and zero-latency; the real payload risk is in content, already screened).
 - Changes to the search-provider choice / onboarding (tracked separately).
-- The `web_fetch` proxy + error-message fixes (related, tracked separately — see
-  "Related work" below).
 
 ## Architecture
 
@@ -84,6 +86,39 @@ main agent → web_fetch(url)
 - No LLM on the URL. Content screen is the mandatory LLM layer; it already exists
   and is always invoked — this spec only makes its fail-closed behavior unconditional.
 
+### Connectivity — proxy routing + accurate errors
+
+Root cause of the field report (`web_fetch` → `HTTP_TIMEOUT_connect` for
+`docs.spring.io`, `httpbin.org`): the web module builds raw `OkHttpClient.Builder()`
+instances (fetch template, shortener, search) with **no proxy selector**, so on a
+corporate/VPN network the TCP connect to external hosts times out (internal hosts
+like Jira/Bamboo are directly reachable, so they work — masking the gap). DNS already
+resolves (the SSRF stage would reject otherwise), confirming it's egress/proxy, not
+DNS or target handling. Secondly, `WebFetchEngine` wraps the fetch in a catch-all
+`catch (_: Exception) { HttpTimeout("connect") }` (line ~291), so **every** failure
+(DNS, TLS/cert, connection-refused, proxy) is mislabeled as a connect timeout.
+
+Fix:
+
+1. **New shared helper in `:core`** — `core/http/IdeProxy.kt` exposing the IDE's
+   proxy `ProxySelector` (and proxy `Authenticator`) from
+   `com.intellij.util.net.JdkProxyProvider` (2025.1+ platform API). Placed in `:core`
+   so the existing `HttpClientFactory` can adopt it later without duplication
+   (`:web → :core` direction preserved).
+2. **Apply it to all three web clients** — the fetch template + shortener
+   (`WebFetchServiceImpl`) and the search client (`WebSearchServiceImpl`) call
+   `.proxySelector(IdeProxy.selector())` (+ proxy auth) on their builders.
+3. **Replace the catch-all** in `WebFetchEngine` with specific mapping:
+   - `UnknownHostException` → `HttpDnsError` ("DNS resolution failed — check connectivity/DNS")
+   - `ConnectException` / connect-stage `SocketTimeoutException` → `HttpConnectError`
+     with **proxy/firewall guidance** ("connect timed out — if behind a corporate
+     proxy/VPN, configure it in Settings → HTTP Proxy; check firewall egress")
+   - `SSLException` / cert errors → `HttpTlsError` ("TLS/certificate failure — a
+     corporate MITM proxy may require its CA")
+   - read-stage `SocketTimeoutException` → `HttpReadTimeout`
+   - other → generic `HttpError` carrying the exception class name
+   (`CancellationException` still re-thrown, never swallowed.)
+
 ### Cheap model
 
 Both screeners resolve to the **cheapest available model** by default (today
@@ -103,6 +138,10 @@ still be configured to override.
 | `WebFetchEngine` | Stage 8 sanitizer already mandatory; remove the `webSanitizerFailClosed` branch — always fail closed on `TIMEOUT`. |
 | `PluginSettings.State` | Remove `webEgressLlmScreenerEnabled` and `webSanitizerFailClosed`. Keep `webEgressDenyListJson` (now substitution seed), `webEgressIncludeAutoDerivedTerms`, `webEgressTimeoutMs`, provider/allowlist/cache fields. |
 | `WebSettingsConfigurable` | Remove the two toggles' UI rows; add a short note that egress rewrite + content screening are always-on. |
+| `core/http/IdeProxy.kt` (new) | Shared helper exposing the IDE proxy `ProxySelector` + proxy `Authenticator` via `JdkProxyProvider`. |
+| `WebFetchServiceImpl` / `WebSearchServiceImpl` | Apply `IdeProxy` selector (+ proxy auth) to the fetch template, shortener, and search client builders. |
+| `WebFetchEngine` | Replace the catch-all `HttpTimeout("connect")` with specific `UnknownHostException` / `ConnectException` / `SocketTimeoutException` (connect vs read) / `SSLException` / generic mapping, each with actionable guidance. |
+| `WebError` | Add `HttpDnsError`, `HttpConnectError`, `HttpTlsError`, `HttpReadTimeout`, generic `HttpError(detail)`; messages include proxy/firewall guidance where relevant. |
 
 ## Error handling
 
@@ -111,6 +150,9 @@ still be configured to override.
 - Content sanitizer `TIMEOUT` → existing `SanitizerTimeout` block (now unconditional).
 - All decisions audited via `WebAuditLog` (queries masked; rewritten queries record
   the post-rewrite form, never the raw sensitive original beyond masked audit).
+- Fetch network failures → specific `WebError` per the connectivity section
+  (DNS / connect+proxy / TLS / read-timeout / generic), each recoverable with
+  actionable guidance; the catch-all `HttpTimeout("connect")` is removed.
 
 ## Testing
 
@@ -122,11 +164,14 @@ still be configured to override.
 - Cheapest-model selection for both screeners.
 - Update/remove existing tests that set `webEgressLlmScreenerEnabled` /
   `webSanitizerFailClosed`.
+- **Connectivity:** `IdeProxy` returns the IDE proxy selector; the three web client
+  builders apply it; `WebFetchEngine` maps `UnknownHostException` / `ConnectException`
+  / connect- vs read-stage `SocketTimeoutException` / `SSLException` to the correct
+  `WebError` with the expected guidance string (no more blanket `HTTP_TIMEOUT_connect`).
+  Proxy wiring is verified by a source/contract test (builder calls `.proxySelector`),
+  since live-proxy behavior can't be unit-tested.
 
 ## Related work (separate, not in this spec)
 
-- `web_fetch` does not route through IntelliJ's HTTP proxy → `HTTP_TIMEOUT_connect`
-  on corporate/VPN networks; and the catch-all in `WebFetchEngine` mislabels all
-  fetch exceptions as `HTTP_TIMEOUT_connect`. Tracked for a companion change.
 - Search-provider onboarding / default-provider posture (Tavily/Brave/SearXNG +
   DPA/ZDR guidance) — tracked separately.
