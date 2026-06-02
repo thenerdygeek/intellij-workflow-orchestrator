@@ -12,6 +12,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.dsl.builder.*
 import com.workflow.orchestrator.core.auth.CredentialStore
+import com.workflow.orchestrator.core.http.IdeProxy
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -706,6 +707,8 @@ class WebSettingsConfigurable(private val project: Project) : Configurable {
     private fun buildTestClient(): OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(Duration.ofSeconds(10))
         .readTimeout(Duration.ofSeconds(15))
+        .proxySelector(IdeProxy.selector())
+        .proxyAuthenticator(IdeProxy.proxyAuthenticator())
         .build()
 
     /** Load API key from PasswordSafe in background and push into the password field. */
