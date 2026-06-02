@@ -41,6 +41,8 @@ class WebErrorTest {
         assertEquals("HTTP_TLS_FAILED", WebError.HttpTlsError("https://x.test").code)
         assertEquals("HTTP_READ_TIMEOUT", WebError.HttpReadTimeout("https://x.test").code)
         assertEquals("HTTP_ERROR", WebError.HttpError("https://x.test", "java.io.IOException").code)
+        assertTrue(WebError.HttpTlsError("https://x.test").recoverable)
+        assertTrue(WebError.HttpReadTimeout("https://x.test").recoverable)
     }
 
     @Test

@@ -42,15 +42,17 @@ sealed class WebError(
     )
     class HttpTlsError(url: String) : WebError(
         "HTTP_TLS_FAILED",
-        "TLS/certificate failure for $url. A corporate MITM proxy may require its " +
+        "TLS/certificate failure for $url. A corporate SSL-inspection proxy may require its " +
         "root CA to be trusted by the IDE's JVM.",
         recoverable = true,
     )
+    /** Read-stage (response body) timeout. Distinct from [HttpTimeout], which covers connect/redirect stages via a dynamic code. */
     class HttpReadTimeout(url: String) : WebError(
         "HTTP_READ_TIMEOUT",
         "Timed out reading the response from $url (server too slow or stalled).",
         recoverable = true,
     )
+    /** Catch-all for unclassified transport failures; prefer the specific subtypes above. */
     class HttpError(url: String, detail: String) : WebError(
         "HTTP_ERROR",
         "HTTP request to $url failed: $detail",
