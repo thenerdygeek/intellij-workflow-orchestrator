@@ -55,8 +55,8 @@ class WebSearchServiceImpl(
         val state = settings.state
 
         // Search client: basic GET client. Auth-stripping is intentionally ABSENT here.
-        // Search providers (Brave, CustomHttp) authenticate via outgoing headers such as
-        // X-Subscription-Token, X-API-Key, and Authorization. Installing StripAuthHeadersInterceptor
+        // Search providers (e.g. CustomHttp) may authenticate via outgoing headers such as
+        // X-API-Key or Authorization. Installing StripAuthHeadersInterceptor
         // would silently strip those headers after the provider adds them, causing every
         // authenticated call to 401. Plan rev R5: auth-stripping is fetch-only — the fetch client
         // in WebFetchServiceImpl carries StripAuthHeadersInterceptor; this search client does not.

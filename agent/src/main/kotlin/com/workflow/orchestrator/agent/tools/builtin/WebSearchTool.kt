@@ -24,7 +24,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class WebSearchTool : AgentTool {
     override val name = "web_search"
-    override val description = """Search the web and get a list of result hits. Returns title + URL + sanitized snippet + screener-flag badges for each result, wrapped in <external_search query='...' provider='SearXNG|Brave|Tavily|...' count='N'>...</external_search> tags. Use when you don't know the URL but need to find documentation, libraries, or recent information.
+    override val description = """Search the web and get a list of result hits. Returns title + URL + sanitized snippet + screener-flag badges for each result, wrapped in <external_search query='...' provider='SearXNG|Custom HTTP' count='N'>...</external_search> tags. Use when you don't know the URL but need to find documentation, libraries, or recent information.
 
 Workflow: typical pattern is web_search (find URLs) → pick the most relevant result → web_fetch (read that one URL). Don't fetch every result — pick the best one or two. Search is cheap (~1 second, 1 LLM batch call); fetch is expensive (~2-3 seconds per URL).
 
@@ -100,7 +100,7 @@ PROPRIETARY IDENTIFIERS: do NOT include internal hostnames (e.g. jenkins.acme.co
             technical(
                 "Runs a query through a 5-stage search pipeline (query token-redaction → outbound egress filter → " +
                     "provider resolution + provider-URL SSRF screen → provider search → per-hit URL screen + batch " +
-                    "sanitization) against a pluggable provider (SearXNG / Brave / Tavily / Custom HTTP) and returns " +
+                    "sanitization) against a pluggable provider (SearXNG / Custom HTTP) and returns " +
                     "ranked title + URL + sanitized snippet + screener-flag badges, wrapped in `<external_search …>`."
             )
             plain(
@@ -169,7 +169,7 @@ PROPRIETARY IDENTIFIERS: do NOT include internal hostnames (e.g. jenkins.acme.co
         }
         related("web_fetch", Relationship.COMPLEMENT, "The standard next step: search to find the URL, then fetch the best result to read it.")
         related("search_code", Relationship.ALTERNATIVE, "Use instead when searching the project's own code — web_search is for the public internet.")
-        downside("Quality depends entirely on the configured provider. SearXNG needs a running instance; Brave/Tavily need an API key in PasswordSafe under ServiceType.WEB_SEARCH.")
+        downside("Quality depends entirely on the configured provider. SearXNG needs a running instance (a shared internal one is recommended for teams); Custom HTTP points at your own search endpoint and may need an API key in PasswordSafe under ServiceType.WEB_SEARCH.")
         downside("The egress filter can false-positive on a legitimate query that happens to look like an internal identifier (QUERY_BLOCKED_SENSITIVE) — rephrase with more generic terms.")
         downside("Snippets are provider-supplied teasers, sanitized but shallow — they are for ranking which result to fetch, not for answering the question directly.")
         downside("A single hostile snippet can't poison the whole result set: a forged `</external_search>` close tag in any title/url/snippet is escaped (not refused), unlike web_fetch which refuses the whole page.")
