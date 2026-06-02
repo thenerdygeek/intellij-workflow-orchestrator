@@ -307,6 +307,26 @@ class WebFetchPipelineE2ETest {
         assertTrue(rr.summary.contains("SANITIZER_REFUSED"), "summary was: ${rr.summary}")
     }
 
+    @Test
+    fun `sanitizer TIMEOUT always fails closed (mandatory, no toggle)`() = runTest {
+        // Task 9: the content sanitizer is mandatory and always fail-closed -- a TIMEOUT
+        // never passes the structurally-sanitized text through; it errors with SANITIZER_TIMEOUT.
+        gate.next = ApprovalGate.Decision.AllowOnce
+        coEvery { spawner.runSanitizer(any(), any(), any(), any(), any()) } returns
+            SubagentSpawner.SanitizerResult(SubagentSpawner.Verdict.TIMEOUT, "", null)
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .addHeader("Content-Type", "text/html")
+                .setBody("<html><body><p>content</p></body></html>")
+        )
+
+        val rr = engine.fetch(WebFetchService.WebFetchRequest(server.url("/").toString()))
+
+        assertTrue(rr.isError, "sanitizer timeout must fail the fetch, was: ${rr.summary}")
+        assertTrue(rr.summary.contains("SANITIZER_TIMEOUT"), "summary was: ${rr.summary}")
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Test 6 (R3): redirect to 169.254.169.254 blocked by SSRF literal check
     //
