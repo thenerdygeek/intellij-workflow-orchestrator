@@ -9,6 +9,7 @@ import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.lang.reflect.Method
@@ -111,12 +112,19 @@ class SubagentSpawnerAdapterTest {
     }
 
     @Test
-    fun `malformed JSON returns TIMEOUT result`() {
+    fun `malformed JSON returns UNRECOGNISED with diagnostic notes, not TIMEOUT`() {
         val raw = """{"verdict":"SAFE","cleaned_text":"incomplete"""  // missing closing }
         val result = parseResult(raw)
-        // Implementation returns TIMEOUT on any parse failure (fail-closed)
-        assertEquals(Verdict.TIMEOUT, result.verdict)
+        // A parse failure is NOT a timeout — mislabeling it TIMEOUT made truncated/garbled
+        // output surface as SANITIZER_TIMEOUT. UNRECOGNISED is the fail-closed bucket for
+        // "couldn't read the output", and the notes must say why.
+        assertEquals(Verdict.UNRECOGNISED, result.verdict)
         assertEquals("", result.cleanedText)
+        assertNotNull(result.notes)
+        assertTrue(
+            result.notes!!.contains("unparseable", ignoreCase = true),
+            "notes must diagnose the parse failure, was: ${result.notes}",
+        )
     }
 
     @Test
@@ -172,5 +180,37 @@ class SubagentSpawnerAdapterTest {
         val malformed = """not-json-at-all"""
         val results = parseBatchResult(malformed, 2)
         assertNull(results, "Expected null for malformed batch JSON so caller can fall back")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // outputBudgetForInput — the sanitizer echoes input verbatim, so its output
+    // token budget must EXCEED the input it has to reproduce. A fixed 8000-token
+    // cap truncated large pages (webMaxExtractedChars=32768 ≈ 10k+ tokens) →
+    // incomplete JSON → parse failure surfaced as SANITIZER_TIMEOUT.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `output budget for small input keeps the floor`() {
+        val budget = SubagentSpawnerAdapter.outputBudgetForInput(500)
+        assertEquals(8_000, budget, "small inputs keep the 8000-token floor")
+    }
+
+    @Test
+    fun `output budget for max extract exceeds its token estimate`() {
+        // webMaxExtractedChars default. Verbatim echo ≈ chars/4 tokens ≈ 8192; the budget
+        // must be comfortably larger so the JSON wrapper + echo fit without truncation.
+        val budget = SubagentSpawnerAdapter.outputBudgetForInput(32_768)
+        val inputTokenEstimate = 32_768 / 4
+        assertTrue(
+            budget > inputTokenEstimate,
+            "budget ($budget) must exceed input token estimate ($inputTokenEstimate)",
+        )
+        assertTrue(budget > 8_000, "budget for a 32K-char page must exceed the old fixed 8000 cap")
+    }
+
+    @Test
+    fun `output budget is capped for absurdly large input`() {
+        val budget = SubagentSpawnerAdapter.outputBudgetForInput(10_000_000)
+        assertTrue(budget <= 32_000, "budget must be capped to a sane maximum, was $budget")
     }
 }

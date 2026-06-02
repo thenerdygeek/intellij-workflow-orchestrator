@@ -68,7 +68,32 @@ sealed class WebError(
         : WebError("UNSUPPORTED_CONTENT_TYPE", "Content-Type not allowed: $ct", false)
 
     // Sanitizer -------------------------------------------------------------
-    object SanitizerTimeout : WebError("SANITIZER_TIMEOUT", "Sanitizer subagent timed out", true)
+    /**
+     * The sanitizer subagent exceeded its time budget. [detail] carries the subagent's
+     * diagnostic notes (e.g. "timed out after 60000ms") so the user can tell a genuine
+     * timeout apart from other sanitizer failures.
+     */
+    class SanitizerTimeout(detail: String? = null)
+        : WebError(
+            "SANITIZER_TIMEOUT",
+            "Sanitizer subagent timed out" + (detail?.let { " — $it" } ?: ""),
+            true,
+        )
+
+    /**
+     * The sanitizer produced output that could not be parsed (truncated, garbled, or not
+     * the expected JSON). Distinct from [SanitizerTimeout] (no timeout occurred) and from
+     * [SanitizerRefused] (which is a deliberate, non-recoverable refusal of malicious
+     * content). Unreadable output is typically transient, so this is recoverable — retrying
+     * or fetching a smaller slice usually succeeds.
+     */
+    class SanitizerUnreadable(detail: String? = null)
+        : WebError(
+            "SANITIZER_UNREADABLE",
+            "Sanitizer output could not be read" + (detail?.let { ": $it" } ?: ""),
+            true,
+        )
+
     class SanitizerRefused(notes: String)
         : WebError("SANITIZER_REFUSED", "Sanitizer refused content: $notes", false)
 

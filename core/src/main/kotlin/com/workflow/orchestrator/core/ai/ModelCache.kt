@@ -68,7 +68,7 @@ object ModelCache {
 
     fun pickBest(models: List<ModelInfo>): ModelInfo? {
         if (models.isEmpty()) return null
-        val anthropic = models.filter { it.provider == "anthropic" }
+        val anthropic = models.anthropicFamily()
 
         // 1. Latest Opus with thinking
         anthropic.filter { it.isOpusClass && it.isThinkingModel }
@@ -91,7 +91,7 @@ object ModelCache {
 
     /** Pick Sonnet thinking model for text generation (commit messages, PR descriptions). */
     fun pickSonnetThinking(models: List<ModelInfo>): ModelInfo? {
-        val anthropic = models.filter { it.provider == "anthropic" }
+        val anthropic = models.anthropicFamily()
         // Prefer Sonnet with thinking/reasoning
         anthropic.filter { it.modelName.lowercase().contains("sonnet") && it.isThinkingModel }
             .maxByOrNull { it.created }?.let { return it }
@@ -103,7 +103,7 @@ object ModelCache {
 
     /** Pick latest non-thinking Sonnet — used as the sub-agent default tier. */
     fun pickSonnetNonThinking(models: List<ModelInfo>): ModelInfo? {
-        val anthropic = models.filter { it.provider == "anthropic" }
+        val anthropic = models.anthropicFamily()
         anthropic.filter { it.modelName.lowercase().contains("sonnet") && !it.isThinkingModel }
             .maxByOrNull { it.created }?.let { return it }
         // Fall back to any Sonnet (including thinking) so callers still get a Sonnet-class model.
@@ -114,7 +114,7 @@ object ModelCache {
 
     /** Pick the latest Haiku model — cheapest tier, for lightweight single-shot tasks. */
     fun pickHaiku(models: List<ModelInfo>): ModelInfo? {
-        val anthropic = models.filter { it.provider == "anthropic" }
+        val anthropic = models.anthropicFamily()
         return anthropic.filter { it.modelName.lowercase().contains("haiku") }
             .maxByOrNull { it.created }
     }
@@ -122,7 +122,7 @@ object ModelCache {
     /** Pick the cheapest available model (Haiku > Sonnet > anything) for lightweight tasks. */
     fun pickCheapest(models: List<ModelInfo>): ModelInfo? {
         if (models.isEmpty()) return null
-        val anthropic = models.filter { it.provider == "anthropic" }
+        val anthropic = models.anthropicFamily()
 
         // 1. Haiku (cheapest Anthropic)
         anthropic.filter { it.modelName.lowercase().contains("haiku") }
@@ -143,7 +143,7 @@ object ModelCache {
      * Picks the latest (by created timestamp) model per tier.
      */
     fun buildFallbackChain(models: List<ModelInfo>): List<String> {
-        val anthropic = models.filter { it.provider == "anthropic" }
+        val anthropic = models.anthropicFamily()
         val chain = mutableListOf<String>()
 
         // Tier 1: Opus thinking
@@ -169,4 +169,28 @@ object ModelCache {
         models = emptyList()
         lastFetchMs = 0
     }
+
+    /**
+     * Anthropic-family models, identified robustly by model NAME rather than the
+     * `provider` id-prefix.
+     *
+     * `ModelInfo.provider` is parsed as `id.substringBefore("::")`, so it only equals
+     * "anthropic" when the id is in the strict `anthropic::apiVersion::modelName` form.
+     * On an Anthropic-Vertex Sourcegraph instance the prefix differs (e.g.
+     * `anthropic-vertex::…`), and some instances return ids with no `::` at all (provider
+     * then resolves to "unknown"). A `provider == "anthropic"` gate silently returns null
+     * for ALL models there, which made `pickHaiku`/`pickSonnet*` fall through to the heavy
+     * configured model (e.g. for the web-content sanitizer). The family names
+     * claude/haiku/sonnet/opus are Anthropic-exclusive and `modelName` falls back to the
+     * full id, so name-matching is correct AND format-robust. A `provider` substring match
+     * is kept as a belt-and-braces accept.
+     */
+    private fun List<ModelInfo>.anthropicFamily(): List<ModelInfo> =
+        filter { m ->
+            m.provider.contains("anthropic", ignoreCase = true) ||
+                m.modelName.lowercase().let { n ->
+                    n.contains("claude") || n.contains("haiku") ||
+                        n.contains("sonnet") || n.contains("opus")
+                }
+        }
 }

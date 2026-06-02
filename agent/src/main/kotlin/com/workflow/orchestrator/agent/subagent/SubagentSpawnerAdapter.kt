@@ -36,6 +36,30 @@ class SubagentSpawnerAdapter(private val project: Project) : SubagentSpawner {
 
     private val LOG = Logger.getInstance(SubagentSpawnerAdapter::class.java)
 
+    companion object {
+        /** Floor — never give the sanitizer less output room than this. */
+        private const val MIN_OUTPUT_TOKENS = 8_000
+        /** Cap — guard against an absurd allocation on a pathologically large page. */
+        private const val MAX_OUTPUT_TOKENS = 32_000
+        /** Conservative chars→tokens divisor (real ratio ~3.5–4); /3 over-allocates = safe. */
+        private const val CHARS_PER_TOKEN = 3
+        /** Headroom for the JSON wrapper + notes around the verbatim echo. */
+        private const val WRAPPER_TOKENS = 2_000
+
+        /**
+         * Output-token budget for a verbatim-echo sanitize of [inputChars] characters.
+         *
+         * The sanitizer reproduces its input character-for-character, so the response must
+         * be able to hold the whole input plus the JSON wrapper. A fixed 8000-token cap
+         * truncated large pages (`webMaxExtractedChars` defaults to 32768 ≈ 10k+ tokens) →
+         * the JSON never closed → parse failure surfaced as `SANITIZER_TIMEOUT`. Sizing the
+         * budget to the input removes that structural truncation.
+         */
+        fun outputBudgetForInput(inputChars: Int): Int =
+            (inputChars / CHARS_PER_TOKEN + WRAPPER_TOKENS)
+                .coerceIn(MIN_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS)
+    }
+
     private val lenientJson = Json { ignoreUnknownKeys = true; isLenient = true }
 
     override suspend fun runSanitizer(
@@ -62,7 +86,8 @@ class SubagentSpawnerAdapter(private val project: Project) : SubagentSpawner {
             maxIterations = 1,               // single-shot: LLM produces JSON output once
             planMode = false,
             contextBudget = 16_000,
-            maxOutputTokens = 8_000,
+            // Verbatim echo: output budget must hold the whole input + JSON wrapper.
+            maxOutputTokens = outputBudgetForInput(userPrompt.length),
         )
 
         val result = withTimeoutOrNull(timeoutMs) {
@@ -109,7 +134,8 @@ class SubagentSpawnerAdapter(private val project: Project) : SubagentSpawner {
             maxIterations = 1,
             planMode = false,
             contextBudget = 32_000,
-            maxOutputTokens = 16_000,
+            // Batch echoes every snippet verbatim — size the budget to the combined input.
+            maxOutputTokens = outputBudgetForInput(userPrompt.length),
         )
 
         val result = withTimeoutOrNull(timeoutMs) {
@@ -187,12 +213,16 @@ class SubagentSpawnerAdapter(private val project: Project) : SubagentSpawner {
      *
      * Expected shape: `{"verdict": "SAFE|STRIPPED|REFUSED", "cleaned_text": "...", "notes": "..."}`
      *
-     * Any parse failure or unrecognised verdict defaults to [Verdict.TIMEOUT] (fail-closed)
-     * so the calling code can handle it gracefully.
+     * Any parse failure or unrecognised verdict returns [Verdict.UNRECOGNISED] (fail-closed,
+     * carrying diagnostic notes). It is deliberately NOT [Verdict.TIMEOUT] — a parse failure
+     * is not a timeout, and mislabeling it as one made truncated/garbled output surface to
+     * the user as a misleading SANITIZER_TIMEOUT with no diagnostic. The true-timeout path
+     * (the `withTimeoutOrNull` null branch in [runSanitizer]) is the only producer of
+     * [Verdict.TIMEOUT].
      */
     private fun parseResult(rawText: String): SanitizerResult {
         val json = extractJsonObject(rawText) ?: return SanitizerResult(
-            verdict = Verdict.TIMEOUT,
+            verdict = Verdict.UNRECOGNISED,
             cleanedText = "",
             notes = "Sanitizer returned unparseable output: ${rawText.take(200)}",
         )
@@ -216,7 +246,7 @@ class SubagentSpawnerAdapter(private val project: Project) : SubagentSpawner {
         } catch (e: Exception) {
             LOG.warn("SubagentSpawnerAdapter: failed to extract fields from sanitizer JSON", e)
             SanitizerResult(
-                verdict = Verdict.TIMEOUT,
+                verdict = Verdict.UNRECOGNISED,
                 cleanedText = "",
                 notes = "Sanitizer JSON field extraction failed: ${e.message}",
             )

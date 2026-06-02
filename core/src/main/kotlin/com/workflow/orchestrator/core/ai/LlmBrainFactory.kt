@@ -105,8 +105,15 @@ object LlmBrainFactory {
         )
         val models = ModelCache.getModels(client)
 
+        // Prefer Haiku, then non-thinking Sonnet. As a last resort use pickCheapest
+        // (Haiku > Sonnet > anything) — NOT create(project): the configured model is
+        // typically the heavy Opus-thinking orchestrator model, whose latency + thinking
+        // overhead blow the sanitizer's 60s budget and whose reasoning tokens crowd out the
+        // verbatim echo, surfacing as SANITIZER_TIMEOUT. Only when no model is resolvable at
+        // all do we fall through to the configured model.
         val pick = ModelCache.pickHaiku(models)
             ?: ModelCache.pickSonnetNonThinking(models)
+            ?: ModelCache.pickCheapest(models)
         if (pick != null) {
             LOG.info("LlmBrainFactory: using ${pick.id} for web content sanitization")
             return OpenAiCompatBrain(
@@ -115,8 +122,8 @@ object LlmBrainFactory {
                 model = pick.id
             )
         }
-        // Fall back to the user's configured model
-        LOG.info("LlmBrainFactory: Haiku/Sonnet not available, falling back to configured model for sanitization")
+        // No model resolvable from the catalog — fall back to the user's configured model.
+        LOG.info("LlmBrainFactory: no catalog model available, falling back to configured model for sanitization")
         return create(project)
     }
 

@@ -373,10 +373,13 @@ class WebFetchEngine(
                     )
                 SubagentSpawner.Verdict.TIMEOUT ->
                     // Mandatory fail-closed: a sanitizer timeout never passes raw content.
-                    return failure(WebError.SanitizerTimeout, start, pass.finalUrl)
+                    // Surface the subagent's notes so a true timeout is distinguishable.
+                    return failure(WebError.SanitizerTimeout(san.notes), start, pass.finalUrl)
                 SubagentSpawner.Verdict.UNRECOGNISED ->
+                    // Output we couldn't parse / an unknown verdict — fail-closed but
+                    // recoverable, carrying the diagnostic notes (e.g. "unparseable output: …").
                     return failure(
-                        WebError.SanitizerRefused("sanitizer returned unrecognised verdict"),
+                        WebError.SanitizerUnreadable(san.notes ?: "unrecognised verdict"),
                         start,
                         pass.finalUrl,
                     )

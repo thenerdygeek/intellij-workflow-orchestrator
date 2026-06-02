@@ -614,7 +614,9 @@ class WebFetchPipelineE2ETest {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // I1: sanitizer UNRECOGNISED verdict must bubble to SANITIZER_REFUSED error
+    // I1: sanitizer UNRECOGNISED verdict must bubble to a fail-closed error.
+    // UNRECOGNISED now maps to SANITIZER_UNREADABLE (recoverable, carries notes),
+    // distinct from SANITIZER_REFUSED (deliberate, non-recoverable refusal).
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
@@ -633,8 +635,12 @@ class WebFetchPipelineE2ETest {
 
         assertTrue(rr.isError, "UNRECOGNISED verdict must produce an error")
         assertTrue(
-            rr.summary.contains("SANITIZER_REFUSED"),
-            "Expected SANITIZER_REFUSED but got: ${rr.summary}"
+            rr.summary.contains("SANITIZER_UNREADABLE"),
+            "Expected SANITIZER_UNREADABLE but got: ${rr.summary}"
+        )
+        assertTrue(
+            rr.summary.contains("jailbreak attempt"),
+            "Diagnostic notes must be surfaced; got: ${rr.summary}"
         )
     }
 

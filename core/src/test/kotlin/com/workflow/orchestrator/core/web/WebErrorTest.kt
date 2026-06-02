@@ -50,4 +50,23 @@ class WebErrorTest {
         assertEquals("EGRESS_SCREENER_UNAVAILABLE", WebError.EgressScreenerUnavailable.code)
         assertTrue(WebError.EgressScreenerUnavailable.recoverable)
     }
+
+    @Test
+    fun `sanitizer timeout surfaces diagnostic detail`() {
+        val e = WebError.SanitizerTimeout("timed out after 60000ms")
+        assertEquals("SANITIZER_TIMEOUT", e.code)
+        assertTrue(e.recoverable)
+        assertTrue(
+            e.message.contains("timed out after 60000ms"),
+            "timeout detail must be surfaced to the user, was: ${e.message}",
+        )
+    }
+
+    @Test
+    fun `sanitizer unreadable is a recoverable distinct error carrying detail`() {
+        val e = WebError.SanitizerUnreadable("Sanitizer returned unparseable output: <prose>")
+        assertEquals("SANITIZER_UNREADABLE", e.code)
+        assertTrue(e.recoverable, "unparseable/garbled output is retryable, not a hard refusal")
+        assertTrue(e.message.contains("unparseable", ignoreCase = true))
+    }
 }
