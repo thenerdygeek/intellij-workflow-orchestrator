@@ -6,76 +6,69 @@ import com.workflow.orchestrator.core.web.QueryEgressFilter
 /**
  * Production implementation of [QueryEgressFilter].
  *
- * Constructor-injected for testability:
- *  - [denyListSupplier] — called on every [screen] invocation (cheap; recomputed so settings
- *    changes take effect without an engine restart). Production wiring calls
- *    `PluginSettings.getWebEgressDenyList()` + (optionally) [AutoDenyListSource].
- *  - [llmScreenerEnabled] — toggles Stage 1 (LLM screener) on/off.
- *  - [llmScreener] — suspend function that takes the post-Stage-0 query and returns the
- *    LLM decision. Wired in B7 to the real `SubagentSpawner`-backed screener.
+ * The egress screener is MANDATORY and rewrite-first — it never blocks in normal
+ * operation; it sanitizes the outbound query so proprietary data does not reach the
+ * third-party search provider. Two stages, both always run:
  *
- * Stage 0 (this class): deterministic deny-list. Substring matches case-insensitively;
- * entries prefixed `re:` are compiled as case-insensitive regex (malformed regexes are
- * skipped silently — surfaced via [com.intellij.openapi.diagnostic.Logger] WARN).
- * Stage 1 (this class): delegates to [llmScreener] when [llmScreenerEnabled] is true.
+ *  - Stage 0 — deterministic deny-list FORCE-SUBSTITUTION. Every configured deny-list
+ *    term found in the query is replaced with `[redacted]` (case-insensitive; entries
+ *    prefixed `re:` are case-insensitive regex; malformed regexes are skipped with a
+ *    WARN). This guarantees known-sensitive terms are gone even if the LLM misses them.
+ *    It never blocks.
+ *  - Stage 1 — mandatory LLM sanitizing rewrite. The post-Stage-0 query is always handed
+ *    to [llmScreener], which replaces remaining proprietary data with neutral dummy
+ *    values (preserving search intent) and returns Safe / Rewritten, or — only when the
+ *    screener itself is unavailable — a fail-closed Blocked.
+ *
+ * Constructor-injected for testability:
+ *  - [denyListSupplier] — called on every [screen] invocation (cheap; recomputed so
+ *    settings changes take effect without an engine restart). Production wiring calls
+ *    `PluginSettings.getWebEgressDenyList()` + (optionally) [AutoDenyListSource].
+ *  - [llmScreener] — suspend function that takes the post-Stage-0 query and returns the
+ *    LLM decision (the real `SubagentSpawner`-backed screener in production).
  */
 class QueryEgressFilterImpl(
     private val denyListSupplier: () -> Set<String>,
-    private val llmScreenerEnabled: Boolean,
     private val llmScreener: suspend (String) -> QueryEgressFilter.Decision,
 ) : QueryEgressFilter {
 
     override suspend fun screen(project: Project, query: String): QueryEgressFilter.Decision {
-        // Stage 0: deterministic deny-list
-        val denyMatch = matchDenyList(query, denyListSupplier())
-        if (denyMatch != null) {
-            return QueryEgressFilter.Decision.Blocked(
-                reason = "DENYLIST",
-                maskedTerm = mask(denyMatch),
+        // Stage 0: deterministic deny-list -- FORCE-SUBSTITUTE every matched term with a
+        // masked dummy (never blocks; guarantees known-sensitive terms are gone even if
+        // the LLM misses them). The cleaned query is then handed to the mandatory LLM.
+        var working = query
+        var substituted = false
+        for (entry in denyListSupplier()) {
+            val masked = substituteDenyTerm(working, entry)
+            if (masked != working) { working = masked; substituted = true }
+        }
+        // Stage 1: mandatory LLM sanitizing rewrite -- always runs.
+        val llmDecision = llmScreener(working)
+        // If the deny-list already changed the text, ensure the caller learns about it.
+        return if (substituted && llmDecision is QueryEgressFilter.Decision.Safe) {
+            QueryEgressFilter.Decision.Rewritten(
+                query = llmDecision.query,
+                original = query,
+                note = "removed configured sensitive term(s)",
             )
-        }
-        // Stage 1: optional LLM screener
-        if (llmScreenerEnabled) {
-            return llmScreener(query)
-        }
-        return QueryEgressFilter.Decision.Safe(query)
+        } else llmDecision
     }
 
-    /**
-     * Returns the offending substring (the actual matched chars from the query, not the
-     * pattern) so [mask] can show "first 3 of what we saw". For regex matches, returns
-     * the matched group. Returns null when nothing matched.
-     */
-    private fun matchDenyList(query: String, entries: Set<String>): String? {
-        for (entry in entries) {
-            val matched = when {
-                entry.startsWith("re:") -> {
-                    val pattern = entry.removePrefix("re:")
-                    try {
-                        Regex(pattern, RegexOption.IGNORE_CASE).find(query)?.value
-                    } catch (e: Exception) {
-                        log.warn("Skipping malformed regex deny-list entry: '$entry' (${e.message})")
-                        null
-                    }
-                }
-                else -> {
-                    val idx = query.indexOf(entry, ignoreCase = true)
-                    if (idx >= 0) query.substring(idx, idx + entry.length) else null
+    /** Replaces deny-list matches in [query] with `[redacted]`. `re:` prefix = regex. */
+    private fun substituteDenyTerm(query: String, entry: String): String =
+        when {
+            entry.startsWith("re:") -> {
+                val pattern = entry.removePrefix("re:")
+                try {
+                    Regex(pattern, RegexOption.IGNORE_CASE).replace(query, "[redacted]")
+                } catch (e: Exception) {
+                    log.warn("Skipping malformed regex deny-list entry: '$entry' (${e.message})")
+                    query
                 }
             }
-            if (matched != null) return matched
+            entry.isBlank() -> query
+            else -> query.replace(entry, "[redacted]", ignoreCase = true)
         }
-        return null
-    }
-
-    /**
-     * Masks the offending term for audit/error display. Length >= 6 → keep first 3 chars,
-     * replace rest with `***`. Length < 6 → fully `***`. Examples:
-     *   "acme.corp" -> "acm***"
-     *   "Foo42"     -> "***"
-     */
-    private fun mask(term: String): String =
-        if (term.length >= 6) term.take(3) + "***" else "***"
 
     private companion object {
         private val log = com.intellij.openapi.diagnostic.Logger.getInstance(QueryEgressFilterImpl::class.java)

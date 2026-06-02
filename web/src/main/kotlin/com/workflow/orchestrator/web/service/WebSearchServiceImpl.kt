@@ -96,19 +96,15 @@ class WebSearchServiceImpl(
                 } else emptySet<String>()
                 user + auto
             },
-            llmScreenerEnabled = state.webEgressLlmScreenerEnabled,
-            llmScreener = if (state.webEgressLlmScreenerEnabled) {
+            llmScreener = run {
+                // Mandatory: the egress LLM screener ALWAYS runs. brainId=null -> cheapest
+                // available model (resolveSanitizerBrainId returns null when unset).
                 val llm = com.workflow.orchestrator.web.service.egress.QueryEgressLlmScreener(
                     spawner = project.service<com.workflow.orchestrator.core.web.SubagentSpawner>(),
                     brainId = settings.resolveSanitizerBrainId(),
                     timeoutMs = state.webEgressTimeoutMs.toLong(),
                 )
                 ;{ q -> llm.screen(project, q) }
-            } else {
-                { _ -> com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Safe("") }
-                // Guard: the impl only calls this lambda when llmScreenerEnabled=true.
-                // Returning Safe("") here is unreachable in practice — see B5's
-                // 'LLM screener is NOT invoked when deny-list already blocked' test.
             },
         )
 
