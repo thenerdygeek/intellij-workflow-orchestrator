@@ -27,6 +27,35 @@ sealed class WebError(
     class HttpStatus(status: Int, url: String)
         : WebError("HTTP_$status", "HTTP $status for $url", status in 500..599)
     class HttpTimeout(stage: String) : WebError("HTTP_TIMEOUT_$stage", "HTTP timeout in stage $stage", true)
+    class HttpDnsError(url: String) : WebError(
+        "HTTP_DNS_FAILED",
+        "DNS resolution failed for $url. Check your network/DNS connectivity.",
+        recoverable = true,
+    )
+    class HttpConnectError(url: String) : WebError(
+        "HTTP_CONNECT_FAILED",
+        "Could not connect to $url (connection timed out or refused). " +
+        "If you are behind a corporate proxy or VPN, configure it in " +
+        "Settings -> Appearance & Behavior -> System Settings -> HTTP Proxy, " +
+        "and check that firewall egress to this host is allowed.",
+        recoverable = true,
+    )
+    class HttpTlsError(url: String) : WebError(
+        "HTTP_TLS_FAILED",
+        "TLS/certificate failure for $url. A corporate MITM proxy may require its " +
+        "root CA to be trusted by the IDE's JVM.",
+        recoverable = true,
+    )
+    class HttpReadTimeout(url: String) : WebError(
+        "HTTP_READ_TIMEOUT",
+        "Timed out reading the response from $url (server too slow or stalled).",
+        recoverable = true,
+    )
+    class HttpError(url: String, detail: String) : WebError(
+        "HTTP_ERROR",
+        "HTTP request to $url failed: $detail",
+        recoverable = true,
+    )
     class ResponseTooLarge(bytes: Long, capBytes: Long)
         : WebError("RESPONSE_TOO_LARGE", "Response $bytes bytes exceeds cap $capBytes", false)
     class UnsupportedContentType(ct: String)
@@ -55,6 +84,14 @@ sealed class WebError(
         "Search query blocked by egress filter ($reason): contains \"$maskedTerm\". " +
         "Rewrite the query without internal identifiers (hostnames, class names, project " +
         "names, file paths) and try again.",
+        recoverable = true,
+    )
+    /** The mandatory egress LLM screener could not be reached (timeout/error/unparseable).
+     *  Fail-closed: the search is not sent, because safety cannot be guaranteed. */
+    object EgressScreenerUnavailable : WebError(
+        "EGRESS_SCREENER_UNAVAILABLE",
+        "The mandatory query-egress screener was unavailable, so the search was not " +
+        "sent (fail-closed). Retry in a moment.",
         recoverable = true,
     )
 
