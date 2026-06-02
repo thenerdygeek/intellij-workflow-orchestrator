@@ -3,6 +3,7 @@ package com.workflow.orchestrator.web.service
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.http.IdeProxy
 import com.workflow.orchestrator.core.model.web.WebPage
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.core.settings.PluginSettings
@@ -59,6 +60,8 @@ class WebFetchServiceImpl(
             .followSslRedirects(false)
             .connectTimeout(Duration.ofSeconds(state.webConnectTimeoutSec.toLong()))
             .readTimeout(Duration.ofSeconds(state.webReadTimeoutSec.toLong()))
+            .proxySelector(IdeProxy.selector())
+            .proxyAuthenticator(IdeProxy.proxyAuthenticator())
             .addInterceptor(StripAuthHeadersInterceptor())
             .build()
 
@@ -70,6 +73,8 @@ class WebFetchServiceImpl(
             .followRedirects(false)
             .connectTimeout(Duration.ofSeconds(state.webConnectTimeoutSec.toLong()))
             .readTimeout(Duration.ofSeconds(5))
+            .proxySelector(IdeProxy.selector())
+            .proxyAuthenticator(IdeProxy.proxyAuthenticator())
             .addInterceptor(StripAuthHeadersInterceptor())
             .build()
 
