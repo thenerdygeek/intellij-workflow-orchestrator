@@ -14,9 +14,9 @@ import java.util.UUID
  * Maps SubagentSpawner verdicts onto egress decisions:
  *   SAFE         → Decision.Safe(originalQuery)
  *   STRIPPED     → Decision.Rewritten(newQuery, originalQuery, note)
- *   REFUSED      → Decision.Blocked("LLM_REFUSED", maskFirstToken(originalQuery))
- *   TIMEOUT      → Decision.Blocked("LLM_TIMEOUT", maskFirstToken(originalQuery))   // fail-closed
- *   UNRECOGNISED → Decision.Blocked("LLM_REFUSED", ...)                              // fail-closed
+ *   REFUSED      → Decision.Blocked("EGRESS_SCREENER_UNAVAILABLE", maskFirstToken(originalQuery))
+ *   TIMEOUT      → Decision.Blocked("EGRESS_SCREENER_UNAVAILABLE", maskFirstToken(originalQuery))  // fail-closed
+ *   UNRECOGNISED → Decision.Blocked("EGRESS_SCREENER_UNAVAILABLE", ...)                            // fail-closed
  *
  * The persona uses verdict labels SAFE/STRIPPED/REFUSED (matching SubagentSpawner.Verdict)
  * even though the egress concept-words are "safe/rewritten/blocked" — keeps the parser path
@@ -48,12 +48,10 @@ class QueryEgressLlmScreener(
                 original = query,
                 note = result.notes.orEmpty().ifBlank { "rewritten by egress screener" },
             )
-            SubagentSpawner.Verdict.REFUSED ->
-                QueryEgressFilter.Decision.Blocked("LLM_REFUSED", maskFirstToken(query))
-            SubagentSpawner.Verdict.TIMEOUT ->
-                QueryEgressFilter.Decision.Blocked("LLM_TIMEOUT", maskFirstToken(query))
+            SubagentSpawner.Verdict.REFUSED,
+            SubagentSpawner.Verdict.TIMEOUT,
             SubagentSpawner.Verdict.UNRECOGNISED ->
-                QueryEgressFilter.Decision.Blocked("LLM_REFUSED", maskFirstToken(query))
+                QueryEgressFilter.Decision.Blocked("EGRESS_SCREENER_UNAVAILABLE", maskFirstToken(query))
         }
     }
 

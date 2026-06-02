@@ -56,7 +56,7 @@ class QueryEgressLlmScreenerTest {
         val decision = screener.screen(mockk<Project>(), "InternalPaymentsService.foo MyComp.class jenkins.acme.corp")
         assertTrue(decision is QueryEgressFilter.Decision.Blocked)
         decision as QueryEgressFilter.Decision.Blocked
-        assertEquals("LLM_REFUSED", decision.reason)
+        assertEquals("EGRESS_SCREENER_UNAVAILABLE", decision.reason)
         // Masking for LLM-refused: there is no single matched term, so mask the
         // first whitespace-delimited token of the input (first 3 chars when len >= 6).
         assertEquals("Int***", decision.maskedTerm)
@@ -71,7 +71,19 @@ class QueryEgressLlmScreenerTest {
         val screener = QueryEgressLlmScreener(spawner = spawner, brainId = null, timeoutMs = 5_000)
         val decision = screener.screen(mockk<Project>(), "any query")
         assertTrue(decision is QueryEgressFilter.Decision.Blocked)
-        assertEquals("LLM_TIMEOUT", (decision as QueryEgressFilter.Decision.Blocked).reason)
+        assertEquals("EGRESS_SCREENER_UNAVAILABLE", (decision as QueryEgressFilter.Decision.Blocked).reason)
+    }
+
+    @Test
+    fun `timeout fails closed with screener-unavailable reason`() = runTest {
+        val spawner = mockk<SubagentSpawner>()
+        coEvery { spawner.runSanitizer(any(), any(), any(), any(), any()) } returns
+            SubagentSpawner.SanitizerResult(SubagentSpawner.Verdict.TIMEOUT, "", null)
+
+        val screener = QueryEgressLlmScreener(spawner = spawner, brainId = null, timeoutMs = 1000L)
+        val d = screener.screen(mockk(relaxed = true), "anything")
+        assertTrue(d is QueryEgressFilter.Decision.Blocked)
+        assertEquals("EGRESS_SCREENER_UNAVAILABLE", (d as QueryEgressFilter.Decision.Blocked).reason)
     }
 
     @Test
