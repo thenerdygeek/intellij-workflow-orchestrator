@@ -214,10 +214,10 @@ class WebSearchEngine(
             elapsedMs = elapsed,
         )
         val summary = if (egressNote != null) {
-            "Found ${hits.size} results for: $queryAfterEgress " +
-            "(egress filter rewrote query: ${(egressDecision as com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Rewritten).note})"
+            "Found ${hits.size} results. Searched (sanitized): \"$queryAfterEgress\" " +
+            "— egress filter rewrote your query: ${(egressDecision as com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Rewritten).note}"
         } else {
-            "Found ${hits.size} results for: $queryAfterEgress"
+            "Found ${hits.size} results. Searched (sanitized): \"$queryAfterEgress\""
         }
         return ToolResult.success(data = hits, summary = summary)
     }
