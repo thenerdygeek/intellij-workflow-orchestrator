@@ -33,7 +33,7 @@ Common error responses: UNLISTED_DOMAIN means the host isn't on the user's allow
     override val parameters = FunctionParameters(
         properties = mapOf(
             "url" to ParameterProperty(type = "string", description = "The URL to fetch (https:// required by default)."),
-            "max_bytes" to ParameterProperty(type = "integer", description = "Optional cap on bytes read; capped at the configured global maximum."),
+            "max_bytes" to ParameterProperty(type = "integer", description = "Optional override of the download cap for this fetch (raise it for large pages); bounded by a 10 MB ceiling."),
             "prompt" to ParameterProperty(type = "string", description = "Optional extraction prompt. When set, a 2nd LLM call answers this question using the page's cleaned text and returns the answer instead of the full page. Use this when you only need a targeted fact ('what version of X does this support?', 'what's the rate limit?'). Skip for general reading. Costs ~2x but returns far less content."),
         ),
         required = listOf("url"),
@@ -172,15 +172,15 @@ Common error responses: UNLISTED_DOMAIN means the host isn't on the user's allow
                 example("https://raw.githubusercontent.com/square/okhttp/master/README.md")
             }
             optional("max_bytes", "integer") {
-                llmSeesIt("Optional cap on bytes read; capped at the configured global maximum.")
+                llmSeesIt("Optional override of the download cap for this fetch (raise it for large pages); bounded by a 10 MB ceiling.")
                 humanReadable(
-                    "A ceiling on how much of the page to download — useful for very large pages. The plugin's " +
-                        "global cap always wins if it is smaller."
+                    "How much of the page to download for this request. Overrides the configured default " +
+                        "(can be larger or smaller), up to a 10 MB hard ceiling."
                 )
-                whenPresent("The HTTP body read is capped at min(max_bytes, global cap); exceeding it returns RESPONSE_TOO_LARGE.")
-                whenAbsent("Uses the configured global maximum (settings.webMaxBytes).")
-                constraint("hard-capped at the global maximum regardless of the requested value")
-                example("100000")
+                whenPresent("The HTTP body read is capped at min(max_bytes, 10 MB); exceeding it returns RESPONSE_TOO_LARGE.")
+                whenAbsent("Uses the configured default (settings.webMaxBytes, 2 MB).")
+                constraint("bounded by a 10 MB absolute ceiling")
+                example("4000000")
             }
             optional("prompt", "string") {
                 llmSeesIt("Optional extraction prompt. When set, a 2nd LLM call answers this question using the page's cleaned text and returns the answer instead of the full page. Use this when you only need a targeted fact ('what version of X does this support?', 'what's the rate limit?'). Skip for general reading. Costs ~2x but returns far less content.")

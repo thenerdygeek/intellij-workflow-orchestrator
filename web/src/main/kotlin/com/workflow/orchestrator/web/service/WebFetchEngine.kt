@@ -99,6 +99,9 @@ class WebFetchEngine(
     )
 
     companion object {
+        /** Absolute ceiling on a single fetch's raw download, regardless of max_bytes. */
+        private const val ABSOLUTE_MAX_BYTES = 10L * 1024 * 1024  // 10 MB
+
         private const val USER_AGENT =
             "WorkflowOrchestratorPlugin/1.0 (+https://github.com/workflow-orchestrator)"
         private const val ACCEPT =
@@ -173,6 +176,23 @@ class WebFetchEngine(
          * read-stage timeout from a generic fallback. Replaces the old catch-all that
          * relabeled every failure as HTTP_TIMEOUT_connect.
          */
+        /**
+         * Resolves a redirect `Location` header against the URL that produced it.
+         *
+         * `Location` may be absolute (`https://…`), protocol-relative (`//host/path`),
+         * root-relative (`/path`), or path-relative (`sub/path`) per RFC 7231 §7.1.2.
+         * The redirect walker must resolve it to an absolute URL before re-screening —
+         * otherwise a relative value (e.g. `spring.io/guides` → `Location: /guides/`) was
+         * screened bare and rejected as `MALFORMED_URL`. Falls back to the raw [location]
+         * if resolution throws, so the screener still produces a sensible rejection.
+         */
+        internal fun resolveLocation(baseUrl: String, location: String): String =
+            try {
+                java.net.URI(baseUrl).resolve(location).toString()
+            } catch (_: Exception) {
+                location
+            }
+
         internal fun mapFetchException(e: Throwable, url: String): WebError = when (e) {
             is java.net.UnknownHostException -> WebError.HttpDnsError(url)
             is java.net.NoRouteToHostException -> WebError.HttpConnectError(url)
@@ -292,8 +312,11 @@ class WebFetchEngine(
             }
         }
 
-        // Stage 6: HTTP GET with manual redirect walking + streaming size cap
-        val maxBytes = (request.maxBytes ?: state.webMaxBytes).toLong()
+        // Stage 6: HTTP GET with manual redirect walking + streaming size cap.
+        // max_bytes OVERRIDES the configured default (it may raise OR lower it), bounded
+        // only by an absolute safety ceiling so a caller can't request an unbounded download.
+        val maxBytes = (request.maxBytes?.toLong() ?: state.webMaxBytes.toLong())
+            .coerceAtMost(ABSOLUTE_MAX_BYTES)
         val resp: Response = try {
             fetchWithSafeRedirects(pass.finalUrl, correlationId, state, callClient)
         } catch (e: RedirectBlockedException) {
@@ -474,12 +497,16 @@ class WebFetchEngine(
                 return resp
             }
             resp.close()
+            // Resolve the (possibly relative) Location against the current URL before
+            // re-screening — a relative `Location: /path` would otherwise be screened bare
+            // and rejected as MALFORMED_URL (the spring.io/guides field report).
+            val resolvedLoc = resolveLocation(url, loc)
             // Re-screen redirect destination (no shortener resolution on hop)
             // Note: allowLoopback is NOT propagated here — redirect destinations are
             // always screened with the production-safe allowLoopback=false regardless
             // of the test setting, because redirect injection attacks must always be blocked.
             val rescreen = pipeline.run(
-                url = loc,
+                url = resolvedLoc,
                 httpsRequired = state.webRequireHttps,
                 allowIpLiteral = state.webAllowIpLiteral,
                 resolveShorteners = false,

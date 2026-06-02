@@ -468,7 +468,11 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var webApprovalTimeoutSec by property(60)
 
         // fetch — content limits
-        var webMaxBytes by property(262_144)
+        // Raw download cap. 2 MB: modern article pages (e.g. Baeldung) routinely exceed the
+        // old 256 KB cap with bloated HTML, hitting RESPONSE_TOO_LARGE before extraction.
+        // What the LLM sees is bounded separately by webMaxExtractedChars after jsoup strips
+        // scripts/styles/nav; this only governs the bytes pulled off the socket.
+        var webMaxBytes by property(2_097_152)
         var webMaxExtractedChars by property(32_768)
         var webConnectTimeoutSec by property(10)
         var webReadTimeoutSec by property(30)

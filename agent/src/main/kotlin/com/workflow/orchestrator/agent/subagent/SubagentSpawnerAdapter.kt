@@ -5,9 +5,12 @@ package com.workflow.orchestrator.agent.subagent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.agent.tools.subagent.SubagentRunner
-import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
+import com.workflow.orchestrator.core.ai.LlmBrain
+// SubagentRunner is intentionally NOT used: the sanitizer is a single brain.chat()
+// completion, not an agentic loop (see class KDoc).
 import com.workflow.orchestrator.core.ai.LlmBrainFactory
+import com.workflow.orchestrator.core.ai.dto.ChatMessage
+import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.web.SubagentSpawner
 import com.workflow.orchestrator.core.web.SubagentSpawner.SanitizerResult
 import com.workflow.orchestrator.core.web.SubagentSpawner.Verdict
@@ -20,21 +23,69 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * Adapts [com.workflow.orchestrator.core.web.SubagentSpawner] to the real
- * [SubagentRunner] so the `:web` module can spawn a sanitizer sub-agent without
- * taking a compile-time dependency on `:agent`.
+ * Implements [com.workflow.orchestrator.core.web.SubagentSpawner] for the `:web` module
+ * (so it can sanitize fetched content without a compile-time dependency on `:agent`).
  *
  * Registered as a project service with the [SubagentSpawner] interface so IntelliJ DI
  * delivers it anywhere `:core`'s interface is consumed.
  *
- * Each [runSanitizer] call constructs a fresh one-shot, tool-less [SubagentRunner]
- * (maxIterations=1, coreTools=empty) so the sanitizer LLM cannot execute any side
- * effects — it can only return text in its final output.
+ * The sanitizer is a **single-shot, text-in/text-out** generator: its persona returns a
+ * raw JSON object and never calls a tool. It therefore runs as ONE [LlmBrain.chat]
+ * completion, NOT through the agentic [com.workflow.orchestrator.agent.tools.subagent.SubagentRunner]
+ * / `AgentLoop`. The loop only emits a completed result when the LLM calls a terminal tool
+ * (`task_report`); a text-only response with `maxIterations=1` failed with
+ * "Exceeded maximum iterations (1)", surfacing as `SANITIZER_UNREADABLE` on even trivial
+ * pages. A direct completion has no loop, no tools, and no iteration cap — exactly the
+ * pattern `HaikuPhraseGenerator` uses for one-shot text generation.
  */
 @Service(Service.Level.PROJECT)
 class SubagentSpawnerAdapter(private val project: Project) : SubagentSpawner {
 
     private val LOG = Logger.getInstance(SubagentSpawnerAdapter::class.java)
+
+    /**
+     * Brain factory seam — `(project, brainId) -> LlmBrain`. Production resolves the cheap
+     * sanitization model via [LlmBrainFactory.createForSanitization]; tests inject a fake
+     * brain. `brainId` is reserved for future per-id lookup (not yet supported).
+     */
+    internal var brainFactory: suspend (Project, String?) -> LlmBrain = { p, _ ->
+        LlmBrainFactory.createForSanitization(p)
+    }
+
+    /** Outcome of one sanitizer completion: either the raw assistant text or a failure. */
+    private sealed interface ChatOutcome {
+        data class Text(val raw: String) : ChatOutcome
+        data class Fail(val verdict: Verdict, val note: String) : ChatOutcome
+    }
+
+    /** One sanitizer LLM completion (no loop, no tools, no iteration cap). */
+    private suspend fun runOnce(
+        brainId: String?,
+        systemPrompt: String,
+        userPrompt: String,
+        timeoutMs: Long,
+    ): ChatOutcome {
+        val brain = brainFactory(project, brainId)
+        val messages = listOf(
+            ChatMessage(role = "system", content = systemPrompt),
+            ChatMessage(role = "user", content = userPrompt),
+        )
+        val resp = withTimeoutOrNull(timeoutMs) {
+            brain.chat(messages, maxTokens = outputBudgetForInput(userPrompt.length))
+        } ?: return ChatOutcome.Fail(Verdict.TIMEOUT, "Sanitizer timed out after ${timeoutMs}ms")
+        return when (resp) {
+            is ApiResult.Success -> {
+                val text = resp.data.choices.firstOrNull()?.message?.content
+                if (text.isNullOrBlank()) {
+                    ChatOutcome.Fail(Verdict.UNRECOGNISED, "Sanitizer returned an empty response")
+                } else {
+                    ChatOutcome.Text(text)
+                }
+            }
+            is ApiResult.Error ->
+                ChatOutcome.Fail(Verdict.UNRECOGNISED, "Sanitizer LLM error: ${resp.type} ${resp.message}")
+        }
+    }
 
     companion object {
         /** Floor — never give the sanitizer less output room than this. */
@@ -69,42 +120,10 @@ class SubagentSpawnerAdapter(private val project: Project) : SubagentSpawner {
         userPrompt: String,
         timeoutMs: Long,
     ): SanitizerResult {
-        // TODO: when arbitrary-brainId lookup is supported, resolve brain by brainId here.
-        // For now we always use createForSanitization (Haiku > Sonnet fallback).
-        val brain = if (!brainId.isNullOrBlank()) {
-            LOG.info("SubagentSpawnerAdapter: brainId='$brainId' requested but per-ID lookup not yet supported; using sanitization model")
-            LlmBrainFactory.createForSanitization(project)
-        } else {
-            LlmBrainFactory.createForSanitization(project)
+        return when (val outcome = runOnce(brainId, systemPrompt, userPrompt, timeoutMs)) {
+            is ChatOutcome.Text -> parseResult(outcome.raw)
+            is ChatOutcome.Fail -> SanitizerResult(outcome.verdict, "", outcome.note)
         }
-
-        val runner = SubagentRunner(
-            brain = brain,
-            coreTools = emptyMap(),          // read-only sanitizer — no tool access
-            systemPrompt = systemPrompt,
-            project = project,
-            maxIterations = 1,               // single-shot: LLM produces JSON output once
-            planMode = false,
-            contextBudget = 16_000,
-            // Verbatim echo: output budget must hold the whole input + JSON wrapper.
-            maxOutputTokens = outputBudgetForInput(userPrompt.length),
-        )
-
-        val result = withTimeoutOrNull(timeoutMs) {
-            runner.run(
-                prompt = userPrompt,
-                agentId = "web-sanitizer",
-                label = "Web content sanitizer",
-                onProgress = { _: SubagentProgressUpdate -> },  // no UI surfacing for sanitizer
-            )
-        } ?: return SanitizerResult(
-            verdict = Verdict.TIMEOUT,
-            cleanedText = "",
-            notes = "Sanitizer subagent timed out after ${timeoutMs}ms",
-        )
-
-        val rawText = result.result ?: result.error ?: ""
-        return parseResult(rawText)
     }
 
     override suspend fun runSanitizerBatch(
@@ -119,42 +138,12 @@ class SubagentSpawnerAdapter(private val project: Project) : SubagentSpawner {
             SanitizerResult(verdict = Verdict.STRIPPED, cleanedText = "", notes = "batch parse failed")
         }
 
-        val brain = if (!brainId.isNullOrBlank()) {
-            LOG.info("SubagentSpawnerAdapter: brainId='$brainId' requested but per-ID lookup not yet supported; using sanitization model")
-            LlmBrainFactory.createForSanitization(project)
-        } else {
-            LlmBrainFactory.createForSanitization(project)
+        return when (val outcome = runOnce(brainId, systemPrompt, userPrompt, timeoutMs)) {
+            is ChatOutcome.Text -> parseBatchResult(outcome.raw, expectedCount) ?: failAll
+            is ChatOutcome.Fail -> List(expectedCount) {
+                SanitizerResult(outcome.verdict, "", outcome.note)
+            }
         }
-
-        val runner = SubagentRunner(
-            brain = brain,
-            coreTools = emptyMap(),
-            systemPrompt = systemPrompt,
-            project = project,
-            maxIterations = 1,
-            planMode = false,
-            contextBudget = 32_000,
-            // Batch echoes every snippet verbatim — size the budget to the combined input.
-            maxOutputTokens = outputBudgetForInput(userPrompt.length),
-        )
-
-        val result = withTimeoutOrNull(timeoutMs) {
-            runner.run(
-                prompt = userPrompt,
-                agentId = "web-sanitizer-batch",
-                label = "Web content sanitizer (batch)",
-                onProgress = { _: SubagentProgressUpdate -> },
-            )
-        } ?: return List(expectedCount) {
-            SanitizerResult(
-                verdict = Verdict.TIMEOUT,
-                cleanedText = "",
-                notes = "Sanitizer batch subagent timed out after ${timeoutMs}ms",
-            )
-        }
-
-        val rawText = result.result ?: result.error ?: ""
-        return parseBatchResult(rawText, expectedCount) ?: failAll
     }
 
     /**

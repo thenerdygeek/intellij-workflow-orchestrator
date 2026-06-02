@@ -3,9 +3,17 @@
 package com.workflow.orchestrator.agent.subagent
 
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.core.ai.dto.ChatCompletionResponse
+import com.workflow.orchestrator.core.ai.dto.ChatMessage
+import com.workflow.orchestrator.core.ai.dto.Choice
+import com.workflow.orchestrator.core.ai.LlmBrain
+import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.core.web.SubagentSpawner
 import com.workflow.orchestrator.core.web.SubagentSpawner.Verdict
+import io.mockk.coEvery
 import io.mockk.mockk
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
@@ -212,5 +220,48 @@ class SubagentSpawnerAdapterTest {
     fun `output budget is capped for absurdly large input`() {
         val budget = SubagentSpawnerAdapter.outputBudgetForInput(10_000_000)
         assertTrue(budget <= 32_000, "budget must be capped to a sane maximum, was $budget")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // runSanitizer must be a SINGLE brain completion, not a ReAct loop. The
+    // sanitizer persona returns raw JSON and never calls task_report, so running
+    // it through SubagentRunner(maxIterations=1) failed with "Exceeded maximum
+    // iterations (1)" → SANITIZER_UNREADABLE on even example.com. A direct
+    // brain.chat() returns the JSON text, which parseResult handles.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private fun brainReturning(content: String?): LlmBrain {
+        val brain = mockk<LlmBrain>()
+        coEvery { brain.chat(any(), any(), any(), any()) } returns ApiResult.Success(
+            ChatCompletionResponse(
+                id = "test",
+                choices = listOf(Choice(index = 0, message = ChatMessage(role = "assistant", content = content))),
+            )
+        )
+        return brain
+    }
+
+    @Test
+    fun `runSanitizer parses a single brain completion without a ReAct loop`() = runBlocking {
+        val json = """{"verdict":"SAFE","cleaned_text":"Example Domain","notes":"ok"}"""
+        adapter.brainFactory = { _, _ -> brainReturning(json) }
+
+        val result = adapter.runSanitizer(project, null, "sys", "Example Domain", 60_000)
+
+        assertEquals(Verdict.SAFE, result.verdict, "must parse the JSON verdict, not fail on iterations")
+        assertEquals("Example Domain", result.cleanedText)
+    }
+
+    @Test
+    fun `runSanitizer maps a brain API error to UNRECOGNISED with notes`() {
+        val brain = mockk<LlmBrain>()
+        coEvery { brain.chat(any(), any(), any(), any()) } returns
+            ApiResult.Error(ErrorType.NETWORK_ERROR, "boom")
+        adapter.brainFactory = { _, _ -> brain }
+
+        val result = runBlocking { adapter.runSanitizer(project, null, "sys", "x", 60_000) }
+
+        assertEquals(Verdict.UNRECOGNISED, result.verdict)
+        assertNotNull(result.notes)
     }
 }
