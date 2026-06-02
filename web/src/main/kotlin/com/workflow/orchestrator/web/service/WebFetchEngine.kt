@@ -372,10 +372,8 @@ class WebFetchEngine(
                         pass.finalUrl,
                     )
                 SubagentSpawner.Verdict.TIMEOUT ->
-                    if (state.webSanitizerFailClosed)
-                        return failure(WebError.SanitizerTimeout, start, pass.finalUrl)
-                    else
-                        SanitizerVerdict.STRUCTURAL_ONLY to struct.extractedText
+                    // Mandatory fail-closed: a sanitizer timeout never passes raw content.
+                    return failure(WebError.SanitizerTimeout, start, pass.finalUrl)
                 SubagentSpawner.Verdict.UNRECOGNISED ->
                     return failure(
                         WebError.SanitizerRefused("sanitizer returned unrecognised verdict"),
