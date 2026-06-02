@@ -79,7 +79,7 @@ class CredentialStore(
             ServiceType.BITBUCKET -> s.bitbucketUrl
             ServiceType.SONARQUBE -> s.sonarUrl
             ServiceType.SOURCEGRAPH -> s.sourcegraphUrl
-            // WEB_SEARCH stores a single provider-agnostic API key (Brave/Tavily/Custom)
+            // WEB_SEARCH stores a single provider-agnostic API key (Custom HTTP)
             // with no canonical service URL in ConnectionSettings — fall back to the
             // empty-string key documented above (no URL available).
             ServiceType.WEB_SEARCH -> ""

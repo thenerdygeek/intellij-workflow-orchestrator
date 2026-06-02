@@ -72,15 +72,6 @@ open class SearchProviderRegistry(
                 baseUrl = conn.webSearchSearxngUrl,
                 allowLoopback = true,  // SearXNG is commonly self-hosted on localhost
             )
-            "BRAVE" -> ResolvedProvider(
-                provider = BraveProvider(
-                    baseUrl = conn.webSearchBraveUrl,
-                    apiKey = creds.getToken(ServiceType.WEB_SEARCH),
-                    client = client,
-                ),
-                baseUrl = conn.webSearchBraveUrl,
-                allowLoopback = false,
-            )
             "CUSTOM_HTTP" -> ResolvedProvider(
                 provider = CustomHttpProvider(
                     urlTemplate = conn.webSearchCustomUrl,
@@ -96,15 +87,6 @@ open class SearchProviderRegistry(
                 ),
                 // Strip the {query} placeholder so UrlPipeline can parse the host cleanly.
                 baseUrl = conn.webSearchCustomUrl.replace("{query}", "PLACEHOLDER"),
-                allowLoopback = false,
-            )
-            "TAVILY" -> ResolvedProvider(
-                provider = TavilyProvider(
-                    baseUrl = conn.webSearchTavilyUrl,
-                    apiKey = creds.getToken(ServiceType.WEB_SEARCH),
-                    client = client,
-                ),
-                baseUrl = conn.webSearchTavilyUrl,
                 allowLoopback = false,
             )
             else -> null

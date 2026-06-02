@@ -10,8 +10,8 @@ import okhttp3.Response
  *
  * This interceptor is added to the fetch-only OkHttpClient in [WebFetchServiceImpl].
  * The search-provider client in [WebSearchServiceImpl] does NOT carry this interceptor
- * because providers like BraveProvider authenticate via X-Subscription-Token and similar
- * headers that must reach the upstream API. Plan rev R5: auth-stripping is fetch-only.
+ * because providers like CustomHttpProvider authenticate via custom headers
+ * that must reach the upstream API. Plan rev R5: auth-stripping is fetch-only.
  */
 class StripAuthHeadersInterceptor : Interceptor {
 

@@ -46,7 +46,6 @@ class SearchProviderRegistryTest {
         pluginState = PluginSettings.State()
         connState = ConnectionSettings.State().apply {
             webSearchSearxngUrl = "http://searxng.local"
-            webSearchBraveUrl = "https://api.search.brave.com/res/v1/web/search"
             webSearchCustomUrl = "https://custom.example.com/api?q={query}"
             webSearchCustomMethod = "GET"
             webSearchCustomHeaderName = "X-Api-Key"
@@ -54,7 +53,6 @@ class SearchProviderRegistryTest {
             webSearchCustomTitlePath = "$.title"
             webSearchCustomUrlPath = "$.url"
             webSearchCustomSnippetPath = "$.snippet"
-            webSearchTavilyUrl = "https://api.tavily.com"
         }
         val settings = mockk<PluginSettings>(relaxed = true)
         every { settings.state } returns pluginState
@@ -70,11 +68,6 @@ class SearchProviderRegistryTest {
             override fun resolve(): ResolvedProvider? {
                 val provider = when (providerType) {
                     "SEARXNG" -> SearXNGProvider(capturedConnState.webSearchSearxngUrl, client)
-                    "BRAVE" -> BraveProvider(
-                        baseUrl = capturedConnState.webSearchBraveUrl,
-                        apiKey = capturedApiKey,
-                        client = client,
-                    )
                     "CUSTOM_HTTP" -> CustomHttpProvider(
                         urlTemplate = capturedConnState.webSearchCustomUrl,
                         method = capturedConnState.webSearchCustomMethod,
@@ -85,11 +78,6 @@ class SearchProviderRegistryTest {
                         titlePath = capturedConnState.webSearchCustomTitlePath,
                         urlPath = capturedConnState.webSearchCustomUrlPath,
                         snippetPath = capturedConnState.webSearchCustomSnippetPath,
-                        client = client,
-                    )
-                    "TAVILY" -> TavilyProvider(
-                        baseUrl = capturedConnState.webSearchTavilyUrl,
-                        apiKey = capturedApiKey,
                         client = client,
                     )
                     else -> null
@@ -116,21 +104,9 @@ class SearchProviderRegistryTest {
     }
 
     @Test
-    fun `BRAVE returns BraveProvider`() {
-        val resolved = registryFor("BRAVE", apiKey = "test-brave-key").resolve()
-        assertInstanceOf(BraveProvider::class.java, resolved?.provider, "Expected BraveProvider")
-    }
-
-    @Test
     fun `CUSTOM_HTTP returns CustomHttpProvider`() {
         val resolved = registryFor("CUSTOM_HTTP", apiKey = "test-custom-key").resolve()
         assertInstanceOf(CustomHttpProvider::class.java, resolved?.provider, "Expected CustomHttpProvider")
-    }
-
-    @Test
-    fun `TAVILY returns TavilyProvider`() {
-        val resolved = registryFor("TAVILY", apiKey = "tvly-test-key").resolve()
-        assertInstanceOf(TavilyProvider::class.java, resolved?.provider, "Expected TavilyProvider")
     }
 
     @Test

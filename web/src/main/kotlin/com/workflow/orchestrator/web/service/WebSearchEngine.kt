@@ -118,7 +118,7 @@ class WebSearchEngine(
 
         // Stage 2a: provider base-URL SSRF screening (spec §4 Stage 2).
         // Screens the configured endpoint against UrlSafetyGuard to block SSRF attacks via a
-        // misconfigured/attacker-controlled SearXNG/Brave/CustomHttp URL field.
+        // misconfigured/attacker-controlled SearXNG/CustomHttp URL field.
         // SearXNG gets allowLoopback=true because local instances are a first-class deployment;
         // all other providers are remote APIs and get allowLoopback=false.
         val ssrfCheck = UrlSafetyGuard.isUrlSafe(

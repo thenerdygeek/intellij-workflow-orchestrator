@@ -21,10 +21,8 @@ import com.workflow.orchestrator.core.settings.getWebEgressDenyList
 import com.workflow.orchestrator.core.settings.setWebAllowlist
 import com.workflow.orchestrator.core.settings.setWebEgressDenyList
 import com.workflow.orchestrator.core.web.AgentToolRegistrationRefresher
-import com.workflow.orchestrator.web.service.search.BraveProvider
 import com.workflow.orchestrator.web.service.search.CustomHttpProvider
 import com.workflow.orchestrator.web.service.search.SearXNGProvider
-import com.workflow.orchestrator.web.service.search.TavilyProvider
 import okhttp3.OkHttpClient
 import java.awt.CardLayout
 import java.time.Duration
@@ -41,7 +39,7 @@ import javax.swing.JPanel
  *  2. Fetch — Allowlist — [AllowlistEditorPanel] + unlisted-domain policy + approval timeout
  *  3. Fetch — Content limits — bytes cap, text cap, timeouts, HTTPS, IP literal, shortener
  *  4. Fetch — Sanitizer — brain ID (content + egress screening are mandatory, always fail-closed)
- *  5. Search — Provider — SearXNG / Brave / Custom HTTP provider config
+ *  5. Search — Provider — SearXNG / Custom HTTP provider config
  */
 class WebSettingsConfigurable(private val project: Project) : Configurable {
 
@@ -61,9 +59,7 @@ class WebSettingsConfigurable(private val project: Project) : Configurable {
     private var isInitializing = true
 
     // Password field refs (needed for reset() to repopulate from PasswordSafe)
-    private var braveApiKeyField: JBPasswordField? = null
     private var customApiKeyField: JBPasswordField? = null
-    private var tavilyApiKeyField: JBPasswordField? = null
 
     override fun getDisplayName(): String = "Web"
 
@@ -82,15 +78,11 @@ class WebSettingsConfigurable(private val project: Project) : Configurable {
         val cardContainer = JPanel(CardLayout())
         val nonePanel = JPanel().also { it.isOpaque = false }
         val searxngPanel = buildSearXNGPanel()
-        val bravePanel = buildBravePanel()
         val customPanel = buildCustomPanel()
-        val tavilyPanel = buildTavilyPanel()
 
         cardContainer.add(nonePanel, "NONE")
         cardContainer.add(searxngPanel, "SEARXNG")
-        cardContainer.add(bravePanel, "BRAVE")
         cardContainer.add(customPanel, "CUSTOM_HTTP")
-        cardContainer.add(tavilyPanel, "TAVILY")
 
         fun showCard(providerType: String) {
             (cardContainer.layout as CardLayout).show(cardContainer, providerType)
@@ -233,7 +225,7 @@ class WebSettingsConfigurable(private val project: Project) : Configurable {
             // ── Group 5: Search — Provider ────────────────────────────────────
             group("Search — Provider") {
                 row("Provider:") {
-                    val providerItems = listOf("NONE", "SEARXNG", "BRAVE", "CUSTOM_HTTP", "TAVILY")
+                    val providerItems = listOf("NONE", "SEARXNG", "CUSTOM_HTTP")
                     comboBox(providerItems)
                         .bindItem(
                             { settings.state.webSearchProviderType ?: "NONE" },
@@ -246,10 +238,9 @@ class WebSettingsConfigurable(private val project: Project) : Configurable {
                         }
                         .comment(
                             "<b>None</b> — web_search disabled. " +
-                                "<b>SearXNG</b> — self-hosted meta-search (no API key). " +
-                                "<b>Brave</b> — Brave Search API (paid key required). " +
-                                "<b>Custom HTTP</b> — any JSON endpoint. " +
-                                "<b>Tavily</b> — LLM-agent-optimised search API (paid key required)."
+                                "<b>SearXNG</b> (recommended) — self-hosted meta-search, no API key; " +
+                                "queries stay inside your network. " +
+                                "<b>Custom HTTP</b> — point at your own internal search API (any JSON endpoint)."
                         )
                 }
                 row {
@@ -366,7 +357,12 @@ class WebSettingsConfigurable(private val project: Project) : Configurable {
                         { connSettings.state.webSearchSearxngUrl },
                         { connSettings.state.webSearchSearxngUrl = it.trim() }
                     )
-                    .comment("e.g. http://localhost:8080 — no auth required for internal instances.")
+                    .comment(
+                        "Recommended for teams: point at a shared internal SearXNG instance your " +
+                            "infra hosts once (e.g. https://searx.internal.example) — queries never leave " +
+                            "your network and there's no per-user setup. For individual/trial use, run " +
+                            "SearXNG locally (e.g. http://localhost:8080). No API key required."
+                    )
                 button("Test") {
                     val url = connSettings.state.webSearchSearxngUrl.trim()
                     val client = buildTestClient()
@@ -397,81 +393,6 @@ class WebSettingsConfigurable(private val project: Project) : Configurable {
                                     project,
                                     searchResult.exceptionOrNull()?.message ?: "Search failed",
                                     "SearXNG Test"
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        panel.add(inner)
-        return panel
-    }
-
-    private fun buildBravePanel(): JPanel {
-        val panel = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 4))
-        panel.isOpaque = false
-        var apiKeyFieldRef: JBPasswordField? = null
-        val inner = com.intellij.ui.dsl.builder.panel {
-            row("Brave Search URL:") {
-                textField()
-                    .columns(40)
-                    .bindText(
-                        { connSettings.state.webSearchBraveUrl },
-                        { connSettings.state.webSearchBraveUrl = it.trim() }
-                    )
-                    .comment("Default: https://api.search.brave.com/res/v1/web/search")
-            }
-            row("API key:") {
-                cell(JBPasswordField().also { f ->
-                    apiKeyFieldRef = f
-                    braveApiKeyField = f
-                    f.columns = 40
-                    f.addPropertyChangeListener("document") {
-                        if (!isInitializing) {
-                            pendingWebSearchApiKey = String(f.password)
-                        }
-                    }
-                    // Also wire key listener for immediate change detection
-                    f.document.addDocumentListener(object : javax.swing.event.DocumentListener {
-                        override fun insertUpdate(e: javax.swing.event.DocumentEvent) { onApiKeyChanged(f) }
-                        override fun removeUpdate(e: javax.swing.event.DocumentEvent) { onApiKeyChanged(f) }
-                        override fun changedUpdate(e: javax.swing.event.DocumentEvent) { onApiKeyChanged(f) }
-                    })
-                })
-                .comment("Stored in OS keychain (PasswordSafe). Never written to project files.")
-                button("Test") {
-                    val url = connSettings.state.webSearchBraveUrl.trim()
-                    val apiKey = apiKeyFieldRef?.let { String(it.password) }
-                        ?: credentialStore.getToken(ServiceType.WEB_SEARCH)
-                    val client = buildTestClient()
-                    runBackgroundableTask("Testing Brave Search", project, false) {
-                        val provider = BraveProvider(url, apiKey, client)
-                        val validResult = runBlockingCancellable { provider.validate() }
-                        if (validResult.isFailure) {
-                            invokeLater {
-                                Messages.showErrorDialog(
-                                    project,
-                                    validResult.exceptionOrNull()?.message ?: "Validation failed",
-                                    "Brave Search Test"
-                                )
-                            }
-                            return@runBackgroundableTask
-                        }
-                        val searchResult = runBlockingCancellable { provider.search("test", 1) }
-                        invokeLater {
-                            if (searchResult.isSuccess) {
-                                val hits = searchResult.getOrDefault(emptyList())
-                                Messages.showInfoMessage(
-                                    project,
-                                    "Brave Search OK — returned ${hits.size} result(s).",
-                                    "Brave Search Test"
-                                )
-                            } else {
-                                Messages.showErrorDialog(
-                                    project,
-                                    searchResult.exceptionOrNull()?.message ?: "Search failed",
-                                    "Brave Search Test"
                                 )
                             }
                         }
@@ -619,75 +540,6 @@ class WebSettingsConfigurable(private val project: Project) : Configurable {
         return panel
     }
 
-    private fun buildTavilyPanel(): JPanel {
-        val panel = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 4))
-        panel.isOpaque = false
-        var apiKeyFieldRef: JBPasswordField? = null
-        val inner = com.intellij.ui.dsl.builder.panel {
-            row("Tavily API URL:") {
-                textField()
-                    .columns(40)
-                    .bindText(
-                        { connSettings.state.webSearchTavilyUrl },
-                        { connSettings.state.webSearchTavilyUrl = it.trim() }
-                    )
-                    .comment("Default: https://api.tavily.com — change only if using a self-hosted or proxy endpoint.")
-            }
-            row("API key:") {
-                cell(JBPasswordField().also { f ->
-                    apiKeyFieldRef = f
-                    tavilyApiKeyField = f
-                    f.columns = 40
-                    f.document.addDocumentListener(object : javax.swing.event.DocumentListener {
-                        override fun insertUpdate(e: javax.swing.event.DocumentEvent) { onApiKeyChanged(f) }
-                        override fun removeUpdate(e: javax.swing.event.DocumentEvent) { onApiKeyChanged(f) }
-                        override fun changedUpdate(e: javax.swing.event.DocumentEvent) { onApiKeyChanged(f) }
-                    })
-                })
-                .comment("Tavily API key (tvly-...). Stored in OS keychain (PasswordSafe). Never written to project files.")
-                button("Test") {
-                    val url = connSettings.state.webSearchTavilyUrl.trim()
-                    val apiKey = apiKeyFieldRef?.let { String(it.password).ifBlank { null } }
-                        ?: credentialStore.getToken(ServiceType.WEB_SEARCH)
-                    val client = buildTestClient()
-                    runBackgroundableTask("Testing Tavily Search", project, false) {
-                        val provider = TavilyProvider(url, apiKey, client)
-                        val validResult = runBlockingCancellable { provider.validate() }
-                        if (validResult.isFailure) {
-                            invokeLater {
-                                Messages.showErrorDialog(
-                                    project,
-                                    validResult.exceptionOrNull()?.message ?: "Validation failed",
-                                    "Tavily Test"
-                                )
-                            }
-                            return@runBackgroundableTask
-                        }
-                        val searchResult = runBlockingCancellable { provider.search("test", 1) }
-                        invokeLater {
-                            if (searchResult.isSuccess) {
-                                val hits = searchResult.getOrDefault(emptyList())
-                                Messages.showInfoMessage(
-                                    project,
-                                    "Tavily OK — returned ${hits.size} result(s).",
-                                    "Tavily Test"
-                                )
-                            } else {
-                                Messages.showErrorDialog(
-                                    project,
-                                    searchResult.exceptionOrNull()?.message ?: "Search failed",
-                                    "Tavily Test"
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        panel.add(inner)
-        return panel
-    }
-
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun onApiKeyChanged(field: JBPasswordField) {
@@ -711,9 +563,7 @@ class WebSettingsConfigurable(private val project: Project) : Configurable {
             if (token.isNotBlank()) {
                 invokeLater {
                     isInitializing = true
-                    braveApiKeyField?.text = token
                     customApiKeyField?.text = token
-                    tavilyApiKeyField?.text = token
                     isInitializing = false
                 }
             }
@@ -765,8 +615,6 @@ class WebSettingsConfigurable(private val project: Project) : Configurable {
     override fun disposeUIResources() {
         dialogPanel = null
         allowlistPanel = null
-        braveApiKeyField = null
         customApiKeyField = null
-        tavilyApiKeyField = null
     }
 }

@@ -38,12 +38,9 @@ class ConnectionSettings : PersistentStateComponent<ConnectionSettings.State> {
         // ── Web search provider connection settings ───────────────────────────
         // API keys live in PasswordSafe under ServiceType.WEB_SEARCH.
         var webSearchSearxngUrl: String = "",
-        var webSearchBraveUrl: String = "https://api.search.brave.com/res/v1/web/search",
         var webSearchCustomUrl: String = "",
         var webSearchCustomMethod: String = "GET",
         var webSearchCustomHeaderName: String = "",
-        // Tavily provider settings (LangChain-ecosystem default agent search)
-        var webSearchTavilyUrl: String = "https://api.tavily.com",
         // JSONPath expressions for custom provider response mapping
         var webSearchCustomResultsPath: String = "$.results",
         var webSearchCustomTitlePath: String = "$.title",

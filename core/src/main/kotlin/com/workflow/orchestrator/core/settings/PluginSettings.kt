@@ -455,7 +455,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var webPlanModeAllow by property(false)
 
         // Search-specific
-        /** Which search provider to use. One of: NONE | SEARXNG | BRAVE | CUSTOM_HTTP */
+        /** Which search provider to use. One of: NONE | SEARXNG | CUSTOM_HTTP */
         var webSearchProviderType by string("NONE")
         /** Maximum snippet length (chars) returned per search hit after sanitization. */
         var webSearchSnippetMaxChars by property(500)

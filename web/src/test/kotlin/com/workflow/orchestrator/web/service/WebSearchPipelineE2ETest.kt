@@ -283,18 +283,18 @@ class WebSearchPipelineE2ETest {
     }
 
     /**
-     * B3: A Brave provider configured with a private-LAN URL must be rejected.
-     * allowLoopback=false for Brave, so private LAN ranges are blocked.
+     * B3: A Custom HTTP provider configured with a private-LAN URL must be rejected.
+     * allowLoopback=false for Custom HTTP, so private LAN ranges are blocked.
      */
     @Test
-    fun `Brave provider configured with private-LAN URL is rejected as PROVIDER_URL_UNSAFE`() = runTest {
+    fun `Custom HTTP provider configured with private-LAN URL is rejected as PROVIDER_URL_UNSAFE`() = runTest {
         val privateLanResolver = UrlSafetyGuard.Resolver { _ ->
-            arrayOf(InetAddress.getByName("192.168.1.1"))
+            arrayOf(InetAddress.getByName("10.0.0.5"))
         }
         engine = buildEngine(
             provider = StubSearchProvider(),
-            baseUrl = "http://192.168.1.1/api",
-            allowLoopback = false,  // Brave — remote provider, no loopback exception
+            baseUrl = "http://10.0.0.5/search?q=PLACEHOLDER",
+            allowLoopback = false,  // Custom HTTP — remote provider, no loopback exception
             ssrfResolver = privateLanResolver,
         )
 
