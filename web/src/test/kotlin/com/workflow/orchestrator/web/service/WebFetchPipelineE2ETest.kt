@@ -88,7 +88,6 @@ class WebFetchPipelineE2ETest {
             webAllowIpLiteral = true        // allow 127.x.x.x through UrlScreener IP literal check
             webUnlistedPolicy = "PROMPT"
             webAllowlistJson = allowlistJson
-            webSanitizerFailClosed = true
             webApprovalTimeoutSec = 60
             webConnectTimeoutSec = 10
             webReadTimeoutSec = 30

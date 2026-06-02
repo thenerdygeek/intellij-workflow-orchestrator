@@ -178,6 +178,11 @@ class WebSearchPipelineE2ETest {
         assertEquals("clean two", hits[1].snippet)
         assertEquals("clean three", hits[2].snippet)
         assertTrue(result.summary.contains("3 results"))
+        // Task 11: the result must surface the sanitized query that was actually sent.
+        assertTrue(
+            result.summary.contains("Searched (sanitized):"),
+            "summary should label the sanitized query sent, was: ${result.summary}",
+        )
     }
 
     @Test
@@ -333,24 +338,27 @@ class WebSearchPipelineE2ETest {
      * "provider was not called" is the load-bearing security property.
      */
     @Test
-    fun `E2E - deny-list blocks query before provider HTTP call`() = runTest {
-        val providerCalled = java.util.concurrent.atomic.AtomicBoolean(false)
+    fun `E2E - deny-list substitutes term before provider HTTP call (never blocks)`() = runTest {
+        var sentToProvider: String? = null
         val engine = buildEngineWithEgressFilter(
             egressFilter = com.workflow.orchestrator.web.service.egress.QueryEgressFilterImpl(
                 denyListSupplier = { setOf("acme.corp") },
-                llmScreenerEnabled = false,
-                llmScreener = { error("LLM should not run") },
+                // LLM is mandatory now; the stub passes through whatever the deny-list produced.
+                llmScreener = { q -> com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Safe(q) },
             ),
-            providerSearchHook = { providerCalled.set(true); Result.success(emptyList()) },
+            providerSearchHook = { q -> sentToProvider = q; Result.success(emptyList()) },
         )
         val result = engine.search(
             com.workflow.orchestrator.core.web.WebSearchService.WebSearchRequest(
                 query = "Why did jenkins.acme.corp restart"
             )
         )
-        assertTrue(result.isError, "Expected error but got success: ${result.summary}")
-        assertTrue(result.summary.contains("QUERY_BLOCKED_SENSITIVE"), "summary: ${result.summary}")
-        assertFalse(providerCalled.get(), "provider must not be called when egress blocks")
+        // New contract: deny-list SUBSTITUTES (never blocks), so the search proceeds with
+        // the matched term redacted out of what reaches the provider.
+        assertFalse(result.isError, "deny-list substitutes, never blocks; got: ${result.summary}")
+        assertTrue(sentToProvider != null, "provider should be called with the sanitized query")
+        assertFalse(sentToProvider!!.contains("acme.corp"), "deny term leaked to provider: $sentToProvider")
+        assertTrue(sentToProvider!!.contains("[redacted]"), "deny term should be substituted: $sentToProvider")
     }
 
     /**
@@ -364,7 +372,6 @@ class WebSearchPipelineE2ETest {
         val engine = buildEngineWithEgressFilter(
             egressFilter = com.workflow.orchestrator.web.service.egress.QueryEgressFilterImpl(
                 denyListSupplier = { emptySet() },
-                llmScreenerEnabled = true,
                 llmScreener = { q ->
                     com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Rewritten(
                         query = "Why does Jenkins restart",
@@ -396,7 +403,6 @@ class WebSearchPipelineE2ETest {
         val engine = buildEngineWithEgressFilter(
             egressFilter = com.workflow.orchestrator.web.service.egress.QueryEgressFilterImpl(
                 denyListSupplier = { emptySet() },
-                llmScreenerEnabled = true,
                 llmScreener = { _ ->
                     com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Blocked(
                         "EGRESS_SCREENER_UNAVAILABLE", "Int***"
