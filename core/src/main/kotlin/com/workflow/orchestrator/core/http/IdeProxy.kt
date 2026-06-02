@@ -38,6 +38,9 @@ object IdeProxy {
      */
     fun proxyAuthenticator(): Authenticator = Authenticator { route, response ->
         if (response.request.header("Proxy-Authorization") != null) return@Authenticator null
+        // Only answer a Basic challenge; never hand credentials to an NTLM/Digest proxy.
+        response.challenges().firstOrNull { it.scheme.equals("Basic", ignoreCase = true) }
+            ?: return@Authenticator null
         val addr = route?.proxy?.address() as? InetSocketAddress ?: return@Authenticator null
         val ideAuth = try {
             com.intellij.util.net.JdkProxyProvider.getInstance().authenticator
@@ -55,8 +58,10 @@ object IdeProxy {
             response.request.url.toUrl(),
             java.net.Authenticator.RequestorType.PROXY,
         ) ?: return@Authenticator null
+        val pw = pa.password
+        val header = try { Credentials.basic(pa.userName, String(pw)) } finally { pw.fill(' ') }
         response.request.newBuilder()
-            .header("Proxy-Authorization", Credentials.basic(pa.userName, String(pa.password)))
+            .header("Proxy-Authorization", header)
             .build()
     }
 
