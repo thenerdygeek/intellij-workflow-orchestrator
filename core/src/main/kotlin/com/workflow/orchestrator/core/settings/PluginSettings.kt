@@ -478,16 +478,17 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
 
         // fetch — sanitizer
         var webSanitizerBrainId by string("")        // blank = use cheapest available
-        var webSanitizerFailClosed by property(true)
+        // Note: content-sanitizer fail-closed is now mandatory (no toggle) — a sanitizer
+        // timeout always blocks the content rather than passing it raw.
 
         // fetch/search — egress filter (added 2026-05-24)
-        /** JSON-encoded `List<String>` of user-supplied deny-list entries. */
+        /** JSON-encoded `List<String>` of user-supplied deny-list entries (force-substituted). */
         var webEgressDenyListJson by string("[]")
-        /** When true, an LLM screener runs after the deny-list (Stage 1 of egress filter). */
-        var webEgressLlmScreenerEnabled by property(false)
+        // Note: the LLM egress screener is now mandatory (no toggle) — it always runs on
+        // every web_search query and rewrites sensitive data to dummy values.
         /** When true, auto-derived terms (service hostnames, module names) augment the deny-list. */
         var webEgressIncludeAutoDerivedTerms by property(true)
-        /** Per-call timeout for the LLM screener; only consulted when [webEgressLlmScreenerEnabled]. */
+        /** Per-call timeout for the mandatory LLM egress screener. */
         var webEgressTimeoutMs by property(15_000)
 
         // fetch — response cache (added 2026-05-24)

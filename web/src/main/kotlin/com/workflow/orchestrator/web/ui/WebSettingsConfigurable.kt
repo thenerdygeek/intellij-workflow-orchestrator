@@ -222,16 +222,11 @@ class WebSettingsConfigurable(private val project: Project) : Configurable {
                         )
                 }
                 row {
-                    checkBox("Fail closed if the sanitizer subagent times out (recommended)")
-                        .bindSelected(
-                            { settings.state.webSanitizerFailClosed },
-                            { settings.state.webSanitizerFailClosed = it }
-                        )
-                        .comment(
-                            "When checked (default), a sanitizer timeout causes the entire fetch to fail " +
-                                "with <code>SANITIZER_TIMEOUT</code>. When unchecked, the structurally-sanitized " +
-                                "text is passed directly to the agent without LLM-level semantic filtering."
-                        )
+                    comment(
+                        "Content screening and query-egress screening are always on and " +
+                            "fail closed — they cannot be disabled. A sanitizer timeout fails the " +
+                            "fetch with <code>SANITIZER_TIMEOUT</code> rather than passing unscreened content."
+                    )
                 }
             }
 
@@ -289,15 +284,13 @@ class WebSettingsConfigurable(private val project: Project) : Configurable {
                         )
                 }
                 row {
-                    checkBox("Enable LLM egress screener (~\$0.0005 per search, ~700ms latency)")
-                        .bindSelected(
-                            { settings.state.webEgressLlmScreenerEnabled },
-                            { settings.state.webEgressLlmScreenerEnabled = it },
-                        )
-                        .comment(
-                            "Catches paraphrase/synonym leaks the deny-list misses. " +
-                                "Fail-closed on timeout (errs on the side of blocking)."
-                        )
+                    comment(
+                        "An LLM egress screener runs on <b>every</b> search (mandatory, " +
+                            "~\$0.0005 + ~700ms per search): it rewrites proprietary data to neutral " +
+                            "dummy values, preserving search intent, and the sanitized query is shown " +
+                            "in the result. It fails closed if the screener is unavailable. " +
+                            "Deny-list terms below are force-substituted before the screener runs."
+                    )
                 }
                 row("Deny-list entries (one per line; prefix with 're:' for regex):") {}
                 row {
