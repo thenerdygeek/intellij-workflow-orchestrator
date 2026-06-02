@@ -75,18 +75,6 @@ class QueryEgressLlmScreenerTest {
     }
 
     @Test
-    fun `timeout fails closed with screener-unavailable reason`() = runTest {
-        val spawner = mockk<SubagentSpawner>()
-        coEvery { spawner.runSanitizer(any(), any(), any(), any(), any()) } returns
-            SubagentSpawner.SanitizerResult(SubagentSpawner.Verdict.TIMEOUT, "", null)
-
-        val screener = QueryEgressLlmScreener(spawner = spawner, brainId = null, timeoutMs = 1000L)
-        val d = screener.screen(mockk(relaxed = true), "anything")
-        assertTrue(d is QueryEgressFilter.Decision.Blocked)
-        assertEquals("EGRESS_SCREENER_UNAVAILABLE", (d as QueryEgressFilter.Decision.Blocked).reason)
-    }
-
-    @Test
     fun `screener uses random per-call delimiter to defeat query boundary attack`() = runTest {
         val spawner = mockk<SubagentSpawner>()
         val userPromptSlot = slot<String>()

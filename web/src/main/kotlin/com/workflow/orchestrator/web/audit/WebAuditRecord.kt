@@ -20,7 +20,7 @@ data class WebAuditRecord(
     val queryBeforeFilter: String? = null,
     /**
      * The egress-filter outcome string. One of: "SAFE" / "DENYLIST_BLOCKED" /
-     * "LLM_REWRITTEN" / "LLM_BLOCKED" / "LLM_TIMEOUT". Null when the egress filter did
+     * "LLM_REWRITTEN" / "LLM_SCREENER_UNAVAILABLE". Null when the egress filter did
      * not run (fetch operations, search before egress filter shipped).
      */
     val egressDecision: String? = null,

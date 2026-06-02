@@ -318,8 +318,7 @@ class WebSearchEngine(
                 queryBeforeFilter = queryBeforeFilter,
                 egressDecision = when (decision.reason) {
                     "DENYLIST" -> "DENYLIST_BLOCKED"
-                    "LLM_REFUSED" -> "LLM_BLOCKED"
-                    "LLM_TIMEOUT" -> "LLM_TIMEOUT"
+                    "EGRESS_SCREENER_UNAVAILABLE" -> "LLM_SCREENER_UNAVAILABLE"
                     else -> "BLOCKED_${decision.reason}"
                 },
                 provider = null,

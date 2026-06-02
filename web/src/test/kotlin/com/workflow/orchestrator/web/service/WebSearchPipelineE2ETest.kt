@@ -399,7 +399,7 @@ class WebSearchPipelineE2ETest {
                 llmScreenerEnabled = true,
                 llmScreener = { _ ->
                     com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Blocked(
-                        "LLM_REFUSED", "Int***"
+                        "EGRESS_SCREENER_UNAVAILABLE", "Int***"
                     )
                 },
             ),
