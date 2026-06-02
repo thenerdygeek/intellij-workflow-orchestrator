@@ -4,16 +4,18 @@ import com.intellij.openapi.project.Project
 
 /**
  * Outbound query screener for the web_search pipeline. Runs after [UrlScreener.screenQuery]
- * (token redaction) and before the provider dispatch. Blocks or rewrites queries that contain
- * proprietary identifiers from leaving the user's organization.
+ * (token redaction) and before the provider dispatch. Rewrites queries so proprietary
+ * identifiers do not leave the user's organization. Mandatory — never disabled.
  *
- * Three layers in the production impl, all behind this one interface:
+ * Both layers in the production impl run on every query, behind this one interface:
  *  - Stage 0 — deterministic deny-list (user-supplied + auto-derived from configured service
- *    URLs and project module names). Hard block, ~µs.
- *  - Stage 1 — opt-in LLM screener (~700ms, ~$0.0005/call). Catches paraphrase / synonym
- *    leaks the deny-list cannot. Returns SAFE / REWRITTEN / BLOCKED.
- *  - Stage 2 — system-prompt hint baked into [WebSearchTool.description]. Lives in :agent, not
- *    behind this interface.
+ *    URLs and project module names). Force-substitutes matched terms with `[redacted]`
+ *    (never blocks), ~µs.
+ *  - Stage 1 — MANDATORY LLM screener (~700ms, ~$0.0005/call). Rewrites remaining proprietary
+ *    data to neutral dummy values, preserving intent. Returns SAFE / Rewritten, or — only when
+ *    the screener itself is unavailable — a fail-closed Blocked.
+ *  - (A system-prompt hint also lives in [WebSearchTool.description] in :agent, not behind
+ *    this interface.)
  *
  * The `:web` module registers the production impl as a project service. Tests construct
  * [QueryEgressFilterImpl] directly with mocked deps.

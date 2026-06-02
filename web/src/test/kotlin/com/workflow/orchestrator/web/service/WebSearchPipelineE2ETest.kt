@@ -394,11 +394,12 @@ class WebSearchPipelineE2ETest {
     }
 
     /**
-     * B13-c: When the LLM screener blocks the query, the engine returns
-     * QUERY_BLOCKED_SENSITIVE with the masked term and must NOT call the provider.
+     * Fail-closed: when the mandatory egress screener is UNAVAILABLE (its only Blocked path),
+     * the engine returns EGRESS_SCREENER_UNAVAILABLE with retry guidance and must NOT call the
+     * provider. (The screener never blocks for "proprietary content" anymore — it rewrites.)
      */
     @Test
-    fun `E2E - LLM block returns QUERY_BLOCKED_SENSITIVE and never calls provider`() = runTest {
+    fun `E2E - screener-unavailable block returns EGRESS_SCREENER_UNAVAILABLE and never calls provider`() = runTest {
         val providerCalled = java.util.concurrent.atomic.AtomicBoolean(false)
         val engine = buildEngineWithEgressFilter(
             egressFilter = com.workflow.orchestrator.web.service.egress.QueryEgressFilterImpl(
@@ -417,8 +418,7 @@ class WebSearchPipelineE2ETest {
             )
         )
         assertTrue(result.isError, "Expected error but got success: ${result.summary}")
-        assertTrue(result.summary.contains("QUERY_BLOCKED_SENSITIVE"), "summary: ${result.summary}")
-        assertTrue(result.summary.contains("Int***"), "masked term missing from summary: ${result.summary}")
+        assertTrue(result.summary.contains("EGRESS_SCREENER_UNAVAILABLE"), "summary: ${result.summary}")
         assertFalse(providerCalled.get(), "provider must not be called when egress blocks")
     }
 

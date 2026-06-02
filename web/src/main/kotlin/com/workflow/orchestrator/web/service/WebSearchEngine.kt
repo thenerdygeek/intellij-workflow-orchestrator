@@ -82,10 +82,10 @@ class WebSearchEngine(
         }
         val cleaned = (screenResult as QueryScreenResult.Pass).cleaned
 
-        // Stage 1.5: outbound egress filter — block proprietary identifiers from leaving
-        // the user's machine. Deterministic deny-list (always on) + optional LLM screener.
-        // Runs AFTER UrlScreener.screenQuery (which already redacted tokens) and BEFORE
-        // provider.search dispatches the HTTP call. spec: 2026-05-24-web-sanitization-rebalance.
+        // Stage 1.5: outbound egress filter — sanitize proprietary identifiers out before
+        // they leave the machine. Deterministic deny-list substitution (always on) + a
+        // MANDATORY LLM rewrite screener. Runs AFTER UrlScreener.screenQuery (tokens already
+        // redacted) and BEFORE provider.search dispatches the HTTP call.
         val egressDecision = egressFilter.screen(project, cleaned)
         val queryAfterEgress: String
         val egressNote: String?
@@ -99,10 +99,18 @@ class WebSearchEngine(
                 egressNote = "Egress filter rewrote your query: ${egressDecision.note}"
             }
             is com.workflow.orchestrator.core.web.QueryEgressFilter.Decision.Blocked -> {
-                val err = com.workflow.orchestrator.core.web.WebError.QueryBlockedSensitive(
-                    reason = egressDecision.reason,
-                    maskedTerm = egressDecision.maskedTerm,
-                )
+                // The only Blocked reason produced today is the fail-closed screener-outage
+                // case — surface it with retry guidance, not the "rewrite your query" message
+                // (the user can't fix an outage by rewriting). Any other reason falls back to
+                // the proprietary-identifier guidance.
+                val err = if (egressDecision.reason == "EGRESS_SCREENER_UNAVAILABLE") {
+                    com.workflow.orchestrator.core.web.WebError.EgressScreenerUnavailable
+                } else {
+                    com.workflow.orchestrator.core.web.WebError.QueryBlockedSensitive(
+                        reason = egressDecision.reason,
+                        maskedTerm = egressDecision.maskedTerm,
+                    )
+                }
                 auditEgressBlocked(cleaned, egressDecision, start)
                 return failure(err)
             }

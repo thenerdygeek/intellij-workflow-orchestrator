@@ -40,7 +40,7 @@ import javax.swing.JPanel
  *  1. Top toggles — enable_web_fetch / enable_web_search / allow in plan mode
  *  2. Fetch — Allowlist — [AllowlistEditorPanel] + unlisted-domain policy + approval timeout
  *  3. Fetch — Content limits — bytes cap, text cap, timeouts, HTTPS, IP literal, shortener
- *  4. Fetch — Sanitizer — brain ID, fail-closed toggle
+ *  4. Fetch — Sanitizer — brain ID (content + egress screening are mandatory, always fail-closed)
  *  5. Search — Provider — SearXNG / Brave / Custom HTTP provider config
  */
 class WebSettingsConfigurable(private val project: Project) : Configurable {
