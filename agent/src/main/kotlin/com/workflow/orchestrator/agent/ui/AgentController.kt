@@ -2602,6 +2602,9 @@ class AgentController(
             kotlinx.serialization.json.Json.parseToJsonElement(args).jsonObject
         } catch (_: Exception) { null }
 
+        val approvalPath = parsedArgs?.get("path")?.jsonPrimitive?.content
+            ?: parsedArgs?.get("file_path")?.jsonPrimitive?.content
+
         // Upstream edit_file preview: pre-validate (path/file/match/ambiguity) and compute the
         // real file-anchored diff. ValidationFailed → return APPROVED immediately so execute()
         // runs, fails with the precise error, and surfaces it to the LLM — without bothering
@@ -2705,6 +2708,7 @@ class AgentController(
                 allowSessionApproval = allowSessionApproval,
                 originAgentId = originAgentId,
                 originLabel = originLabel,
+                path = approvalPath,
             )
         }
 

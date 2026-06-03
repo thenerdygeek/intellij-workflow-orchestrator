@@ -25,6 +25,7 @@ import type {
 } from '../bridge/types';
 import { answerToDisplay } from '../util/question-answer';
 import { splitThinkingSegments } from '../util/thinking-segments';
+import { approvalTitle } from '@/lib/approvalTitle';
 
 // ── Internal ID generator ──
 let _idCounter = 0;
@@ -555,7 +556,7 @@ interface ChatState {
   dismissToast(id: string): void;
   receiveMentionResults(query: string, results: MentionSearchResult[]): void;
   setPendingMentionQuery(query: string): void;
-  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval?: boolean, originAgentId?: string | null, originLabel?: string | null): void;
+  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval?: boolean, originAgentId?: string | null, originLabel?: string | null, path?: string): void;
   resolveApproval(decision: 'approve' | 'deny' | 'allowForSession'): void;
   showProcessInput(processId: string, description: string, prompt: string, command: string): void;
   resolveProcessInput(input: string): void;
@@ -1751,12 +1752,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ pendingMentionQuery: query });
   },
 
-  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval: boolean = true, originAgentId?: string | null, originLabel?: string | null) {
+  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval: boolean = true, originAgentId?: string | null, originLabel?: string | null, path?: string) {
     set(state => {
       const approval: PendingApproval = {
         toolName,
         riskLevel,
-        title: `Approve ${toolName}? (${riskLevel} risk)`,
+        title: approvalTitle(toolName, riskLevel, path),
         description,
         metadata,
         diffContent,

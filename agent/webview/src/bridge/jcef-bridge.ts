@@ -452,6 +452,7 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     allowSessionApproval?: boolean,
     originAgentId?: string | null,
     originLabel?: string | null,
+    path?: string | null,
   ) {
     // Preload diff2html immediately so the module is ready (or nearly ready) by the time
     // ApprovalView mounts and DiffHtml's useEffect fires — eliminates the loading skeleton.
@@ -475,6 +476,7 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
       allowSessionApproval ?? true,
       originAgentId ?? undefined,
       originLabel ?? undefined,
+      path ?? undefined,
     );
   },
   showProcessInput(processId: string, description: string, prompt: string, command: string) {

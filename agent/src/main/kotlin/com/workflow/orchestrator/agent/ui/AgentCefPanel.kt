@@ -1531,11 +1531,13 @@ class AgentCefPanel(
         allowSessionApproval: Boolean = true,
         originAgentId: String? = null,
         originLabel: String? = null,
+        path: String? = null,
     ) {
         val diffArg = if (diffContent != null) JsEscape.toJsString(diffContent) else "null"
         val previewArg = if (commandPreviewJson != null) JsEscape.toJsString(commandPreviewJson) else "null"
         val originAgentIdArg = if (originAgentId != null) JsEscape.toJsString(originAgentId) else "null"
         val originLabelArg = if (originLabel != null) JsEscape.toJsString(originLabel) else "null"
+        val pathArg = if (path != null) JsEscape.toJsString(path) else "null"
         callJs(
             "showApproval(" +
                 "${JsEscape.toJsString(toolName)}," +
@@ -1546,7 +1548,8 @@ class AgentCefPanel(
                 "$previewArg," +
                 "$allowSessionApproval," +
                 "$originAgentIdArg," +
-                "$originLabelArg" +
+                "$originLabelArg," +
+                "$pathArg" +
                 ")"
         )
     }
