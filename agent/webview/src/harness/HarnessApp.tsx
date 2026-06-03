@@ -8,6 +8,8 @@ import { CommandPreview } from '@/components/agent/CommandPreview';
 import { CopyButton } from '@/components/ui/copy-button';
 import { MessageList } from '@/components/chat/MessageList';
 import { ToolCallChain } from '@/components/agent/ToolCallChain';
+import { ApprovalView } from '@/components/agent/ApprovalView';
+import { approvalTitle } from '@/lib/approvalTitle';
 import type { ToolCall } from '@/bridge/types';
 
 // Copy-button fixtures: a short string and a long multi-line string (~15K chars)
@@ -329,6 +331,45 @@ function ToolOverlapSection() {
   );
 }
 
+// §10 — Memory approval card. Verifies the Section-5 `approvalTitle` wiring renders
+// the memory verb ("Updating memory · prefs") and that a memory write omits the
+// "Allow for session" affordance (onAllowForSession undefined), contrasted with a
+// normal file edit that keeps it and uses the default title.
+const MEMORY_EDIT_PATH =
+  '/home/u/.workflow-orchestrator/proj-abc123/agent/memory/user_prefs.md';
+
+function MemoryApprovalSection() {
+  return (
+    <section data-testid="section-memory-approval" className="space-y-4">
+      <h2 className="text-sm font-semibold">
+        §10 Memory approval card — verb title + no allow-for-session
+      </h2>
+      <div data-testid="memory-approval-host">
+        <ApprovalView
+          toolName="edit_file"
+          riskLevel="LOW"
+          title={approvalTitle('edit_file', 'LOW', MEMORY_EDIT_PATH)}
+          description="Apply this change to your memory file."
+          onApprove={() => {}}
+          onDeny={() => {}}
+          onAllowForSession={undefined}
+        />
+      </div>
+      <div data-testid="nonmemory-approval-host">
+        <ApprovalView
+          toolName="edit_file"
+          riskLevel="LOW"
+          title={approvalTitle('edit_file', 'LOW', '/home/u/proj/src/Main.kt')}
+          description="Apply this change."
+          onApprove={() => {}}
+          onDeny={() => {}}
+          onAllowForSession={() => {}}
+        />
+      </div>
+    </section>
+  );
+}
+
 export function HarnessApp() {
   // Section-level controls
   const [usedK, setUsedK] = useState(0);
@@ -607,6 +648,8 @@ export function HarnessApp() {
       <ScrollCheckSection />
 
       <ToolOverlapSection />
+
+      <MemoryApprovalSection />
 
       {/* ─────────── §6 CommandPreview shell-aware formatting ─────────── */}
       <section data-testid="section-command-preview" className="space-y-4">
