@@ -221,51 +221,7 @@ class WebFetchEngine(
     private class RedirectBlockedException(val webError: WebError) : RuntimeException()
     private class TooManyRedirectsException : RuntimeException()
 
-    // ════════════════════════════════════════════════════════════════════════
-    // TEMP DEBUG (web-fetch-timing): records elapsed per stage. Open-span design —
-    // [begin] closes the previous span and starts a new one, so a stage that throws
-    // or returns mid-way (timeout!) still has its time recorded when [report] closes
-    // the open span. ⚠ REMOVE BEFORE MERGE — see memory `project_web_fetch_timing_debug`.
-    // ════════════════════════════════════════════════════════════════════════
-    private class StageTimer {
-        private val elapsed = LinkedHashMap<String, Long>()
-        private var openName: String? = null
-        private var openStart = 0L
-        fun begin(stage: String) {
-            close()
-            openName = stage
-            openStart = System.currentTimeMillis()
-        }
-        private fun close() {
-            val n = openName ?: return
-            elapsed[n] = (elapsed[n] ?: 0L) + (System.currentTimeMillis() - openStart)
-            openName = null
-        }
-        fun report(): String {
-            close()
-            return elapsed.entries.joinToString(", ") { "${it.key}=${it.value}ms" }
-        }
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // TEMP DEBUG (web-fetch-timing): per-stage timing breakdown appended to the
-    // tool result summary, so a timeout shows WHICH stage was slow.
-    // ⚠ REMOVE BEFORE MERGING ANYWHERE — see memory note `project_web_fetch_timing_debug`.
-    // Deletion footprint: this wrapper, the `timer`/`StageTimer` plumbing, and every
-    // `timer.begin(...)` call (all grep-able by the marker "web-fetch-timing").
-    // ════════════════════════════════════════════════════════════════════════
     suspend fun fetch(request: WebFetchService.WebFetchRequest): ToolResult<WebPage> {
-        val timer = StageTimer()                                   // web-fetch-timing
-        val result = fetchInstrumented(request, timer)             // web-fetch-timing
-        val timings = timer.report()                               // web-fetch-timing
-        return if (timings.isEmpty()) result                       // web-fetch-timing
-        else result.copy(summary = result.summary + "  | ⏱ stages: $timings")  // web-fetch-timing
-    }
-
-    private suspend fun fetchInstrumented(
-        request: WebFetchService.WebFetchRequest,
-        timer: StageTimer,                                         // web-fetch-timing
-    ): ToolResult<WebPage> {
         val start = System.currentTimeMillis()
         val correlationId = UUID.randomUUID().toString()
         val state = settings.state
@@ -283,7 +239,6 @@ class WebFetchEngine(
         }
 
         // Stages 1 + 2 + 3: URL screening, shortener resolution, SSRF guard
-        timer.begin("screen+ssrf")                                 // web-fetch-timing
         val piped = pipeline.run(
             url = request.url,
             httpsRequired = state.webRequireHttps,
@@ -296,8 +251,7 @@ class WebFetchEngine(
         }
         val pass = piped as UrlPipeline.Result.Pass
 
-        // Stage 4 + 5: allowlist check + approval gate
-        timer.begin("allowlist+approval")                          // web-fetch-timing
+        // Stage 4: allowlist check
         val allowlist = settings.getWebAllowlist()
         val isAllowlisted = allowlist.any { matchesDomain(pass.host, it.domain) }
 
@@ -340,7 +294,6 @@ class WebFetchEngine(
         // ── Cache lookup ────────────────────────────────────────────────────
         // After URL screening, SSRF, allowlist, and approval pass — but BEFORE the network.
         // A hit skips the HTTP call, jsoup, and the sanitizer subagent.
-        timer.begin("cache")                                       // web-fetch-timing
         val cacheKey = fetchCache?.let {
             com.workflow.orchestrator.web.service.cache.WebFetchCache.Key(
                 url = pass.finalUrl,
@@ -364,7 +317,6 @@ class WebFetchEngine(
         // only by an absolute safety ceiling so a caller can't request an unbounded download.
         val maxBytes = (request.maxBytes?.toLong() ?: state.webMaxBytes.toLong())
             .coerceAtMost(ABSOLUTE_MAX_BYTES)
-        timer.begin("http")                                        // web-fetch-timing
         val resp: Response = try {
             fetchWithSafeRedirects(pass.finalUrl, correlationId, state, callClient)
         } catch (e: RedirectBlockedException) {
@@ -394,7 +346,6 @@ class WebFetchEngine(
                 ?: return failure(WebError.HttpStatus(204, pass.finalUrl), start, pass.finalUrl)
 
             // Streaming read with size cap
-            timer.begin("download")                                // web-fetch-timing
             val buf = okio.Buffer()
             var read = 0L
             while (!source.exhausted()) {
@@ -419,7 +370,6 @@ class WebFetchEngine(
             }
 
             // Stage 7: structural sanitization
-            timer.begin("jsoup")                                   // web-fetch-timing
             val struct = sanitizer.sanitize(
                 rawBytes = rawBytes,
                 contentType = ct,
@@ -428,7 +378,6 @@ class WebFetchEngine(
             )
 
             // Stage 8: semantic sanitization via subagent
-            timer.begin("sanitize-llm")                            // web-fetch-timing
             val san = sanitizerSubagent.sanitize(
                 project = project,
                 extractedText = struct.extractedText,
@@ -475,7 +424,6 @@ class WebFetchEngine(
             // re-extracts from the cached clean text).
             val extractionPrompt = request.extractionPrompt
             val (deliveredText, extractionNote) = if (extractionPrompt != null && promptExtractor != null) {
-                timer.begin("extract-llm")                         // web-fetch-timing
                 when (val ex = promptExtractor.extract(project, finalText, extractionPrompt)) {
                     is com.workflow.orchestrator.web.service.extract.PromptExtractor.Result.Complete ->
                         ex.answer to "extractor: complete"

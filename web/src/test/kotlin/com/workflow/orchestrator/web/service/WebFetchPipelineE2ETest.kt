@@ -224,13 +224,6 @@ class WebFetchPipelineE2ETest {
         val page = rr.data!!
         assertEquals(AllowlistDecision.APPROVED_AUTO, page.allowlistDecision)
         assertEquals(SanitizerVerdict.SAFE, page.sanitizerVerdict)
-
-        // TEMP DEBUG (web-fetch-timing): per-stage timing breakdown appended to the
-        // summary. ⚠ REMOVE this assertion with the feature — see memory note.
-        assertTrue(
-            rr.summary.contains("⏱ stages:") && rr.summary.contains("sanitize-llm="),
-            "expected per-stage timings in summary, was: ${rr.summary}",
-        )
     }
 
     // ─────────────────────────────────────────────────────────────────────────
