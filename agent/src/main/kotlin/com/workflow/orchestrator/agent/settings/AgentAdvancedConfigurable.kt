@@ -185,6 +185,20 @@ class AgentAdvancedConfigurable(
                 }
             }
 
+            group("Memory") {
+                row {
+                    checkBox("Nudge the agent to update memory after completing a task")
+                        .bindSelected(agentSettings.state::proactiveMemoryUpdatesEnabled)
+                        .comment(
+                            "When enabled, the agent is asked — right before it finishes a task — " +
+                            "whether anything it learned is worth saving to its file-based memory " +
+                            "(<code>MEMORY.md</code> and per-topic files). It saves with " +
+                            "<code>create_file</code>/<code>edit_file</code>, then re-confirms completion. " +
+                            "Off by default; the agent rarely updates memory unprompted."
+                        )
+                }
+            }
+
             group("Sub-agents") {
                 row {
                     checkBox("Enable research sub-agent")

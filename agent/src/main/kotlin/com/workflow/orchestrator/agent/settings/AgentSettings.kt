@@ -75,6 +75,14 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
          * Feedback is appended to ~/.workflow-orchestrator/feedback.md.
          */
         var agentFeedbackEnabled by property(false)
+
+        /**
+         * When true, after [AttemptCompletionTool] the agent receives a one-shot nudge —
+         * BEFORE the feedback nudge — asking whether anything it learned this session is
+         * worth saving to file-based memory. Satisfied by re-issuing `attempt_completion`.
+         * Off by default; the agent rarely updates memory unprompted.
+         */
+        var proactiveMemoryUpdatesEnabled by property(false)
     }
 
     companion object {
