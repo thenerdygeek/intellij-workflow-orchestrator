@@ -12,6 +12,7 @@ import com.workflow.orchestrator.agent.hooks.HookEvent
 import com.workflow.orchestrator.agent.loop.completion.CompletionGateChain
 import com.workflow.orchestrator.agent.loop.completion.FeedbackGate
 import com.workflow.orchestrator.agent.loop.completion.MemoryReviewGate
+import com.workflow.orchestrator.agent.memory.MemoryWriteClassifier
 import com.workflow.orchestrator.agent.observability.AgentFileLogger
 import com.workflow.orchestrator.agent.observability.SessionMetrics
 import com.workflow.orchestrator.agent.hooks.HookManager
@@ -471,6 +472,12 @@ class AgentLoop(
     private val proactiveMemoryUpdatesEnabled: Boolean = false,
     /** Absolute path to this session's memory dir; injected into [MemoryReviewGate]'s nudge. Null in sub-agents/tests. */
     private val memoryDirPath: String? = null,
+    /**
+     * When true, memory write operations bypass the approval gate. When false (default),
+     * memory create/edit/delete are forced to per-invocation approval (no allow-for-session)
+     * and ignore any prior session approval. Read from [AgentSettings.autoApproveMemoryOperations].
+     */
+    private val autoApproveMemoryOperations: Boolean = false,
     /**
      * Optional callback that lets the loop push a streaming `edit_file` diff into
      * the chat panel while the LLM is still emitting `<new_string>`. When non-null,
@@ -1866,36 +1873,45 @@ class AgentLoop(
             }
 
             // Approval gate (ported from Cline's approval flow).
-            // Write tools require user approval unless already allowed for this session.
-            // The gate suspends the coroutine (not blocking a thread) until the user responds.
-            // Per-tool policy: run_command never gets session-wide approval because each
-            // command is arbitrarily different — approving `ls` shouldn't auto-approve `rm -rf /`.
-            val policy = ApprovalPolicy.forTool(toolName)
-            if (policy.requiresApproval && approvalGate != null && !sessionApprovalStore.isApproved(toolName)) {
-                val riskLevel = assessRisk(toolName, call.function.arguments)
-                val result = approvalGate.invoke(toolName, call.function.arguments, riskLevel, policy.allowSessionApproval)
-                when (result) {
-                    ApprovalResult.DENIED -> {
-                        val deniedMsg = "Tool execution denied by user."
-                        fileLogger?.logToolCall(
-                            sessionId = sessionId ?: "",
-                            toolName = toolName,
-                            durationMs = 0,
-                            isError = true,
-                            errorMessage = deniedMsg,
-                            tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                        )
-                        sessionMetrics?.recordToolCall(toolName, 0, true)
-                        reportToolError(call, startTime, deniedMsg)
-                        continue
-                    }
-                    ApprovalResult.ALLOWED_FOR_SESSION -> {
-                        if (policy.allowSessionApproval) {
-                            sessionApprovalStore.approve(toolName)
+            // Memory writes (create/edit/delete under the agent memory dir) are special:
+            //  - autoApproveMemoryOperations ON  → bypass the gate entirely.
+            //  - OFF → force per-invocation approval (no allow-for-session) AND ignore any
+            //    prior session approval, so a generic "Allow for session" on edit_file cannot
+            //    silence memory writes.
+            val isMemoryWrite = MemoryWriteClassifier.isMemoryWrite(toolName, call.function.arguments, memoryDirPath)
+            if (!(isMemoryWrite && autoApproveMemoryOperations)) {
+                val policy = if (isMemoryWrite) {
+                    ApprovalPolicy(requiresApproval = true, allowSessionApproval = false)
+                } else {
+                    ApprovalPolicy.forTool(toolName)
+                }
+                val sessionApproved = !isMemoryWrite && sessionApprovalStore.isApproved(toolName)
+                if (policy.requiresApproval && approvalGate != null && !sessionApproved) {
+                    val riskLevel = assessRisk(toolName, call.function.arguments)
+                    val result = approvalGate.invoke(toolName, call.function.arguments, riskLevel, policy.allowSessionApproval)
+                    when (result) {
+                        ApprovalResult.DENIED -> {
+                            val deniedMsg = "Tool execution denied by user."
+                            fileLogger?.logToolCall(
+                                sessionId = sessionId ?: "",
+                                toolName = toolName,
+                                durationMs = 0,
+                                isError = true,
+                                errorMessage = deniedMsg,
+                                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                            )
+                            sessionMetrics?.recordToolCall(toolName, 0, true)
+                            reportToolError(call, startTime, deniedMsg)
+                            continue
                         }
-                        // If policy doesn't allow session approval, treat as single APPROVED
+                        ApprovalResult.ALLOWED_FOR_SESSION -> {
+                            if (policy.allowSessionApproval) {
+                                sessionApprovalStore.approve(toolName)
+                            }
+                            // If policy doesn't allow session approval, treat as single APPROVED
+                        }
+                        ApprovalResult.APPROVED -> { /* proceed with this single execution */ }
                     }
-                    ApprovalResult.APPROVED -> { /* proceed with this single execution */ }
                 }
             }
 
