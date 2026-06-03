@@ -57,8 +57,16 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     /** Test-only seam: when set, used instead of the shared client so unit tests need no DI. */
     internal var testClient: SonarApiClient? = null
 
-    private val client: SonarApiClient?
-        get() = testClient ?: SonarDataService.getInstance(project).getSharedApiClient()
+    /**
+     * Resolves the shared [SonarApiClient] through the SUSPEND resolver so agent/tool
+     * paths get a freshly-initialized client regardless of UI state. The former getter
+     * used the non-suspend `getSharedApiClient()`, which returned a cache that is only
+     * primed as a side-effect of a Quality-dashboard refresh — so a tool invoked before
+     * that tab was ever opened wrongly reported "SonarQube not configured" even when the
+     * connection was fully set up in Settings. Agent tools must never depend on tab state.
+     */
+    private suspend fun resolveClient(): SonarApiClient? =
+        testClient ?: SonarDataService.getInstance(project).resolveApiClientForSharedUse()
 
     // Session cache for the issues-action preflight (`/api/components/show`). Keyed on
     // (sonarUrl, projectKey) so a mid-session URL change in settings doesn't return
@@ -90,7 +98,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         repoName: String?,
         inNewCodePeriod: Boolean
     ): ToolResult<List<SonarIssueData>> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = emptyList(),
             summary = "SonarQube not configured. Cannot fetch issues.",
             isError = true,
@@ -178,7 +186,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     }
 
     override suspend fun getQualityGateStatus(projectKey: String, branch: String?, repoName: String?): ToolResult<QualityGateData> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = QualityGateData(status = "ERROR"),
             summary = "SonarQube not configured. Cannot fetch quality gate status.",
             isError = true,
@@ -227,7 +235,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     }
 
     override suspend fun getCoverage(projectKey: String, branch: String?, repoName: String?): ToolResult<CoverageData> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = CoverageData(
                 lineCoverage = 0.0, branchCoverage = 0.0,
                 totalLines = 0, coveredLines = 0
@@ -284,7 +292,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     }
 
     override suspend fun searchProjects(query: String): ToolResult<List<SonarProjectData>> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = emptyList(),
             summary = "SonarQube not configured. Cannot search projects.",
             isError = true,
@@ -314,7 +322,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     }
 
     override suspend fun getAnalysisTasks(projectKey: String, repoName: String?): ToolResult<List<SonarAnalysisTaskData>> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = emptyList(),
             summary = "SonarQube not configured. Cannot fetch analysis tasks.",
             isError = true,
@@ -365,7 +373,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     }
 
     override suspend fun getCeTaskStatus(taskId: String): ToolResult<String> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = "UNKNOWN",
             summary = "SonarQube not configured. Cannot poll CE task.",
             isError = true
@@ -385,7 +393,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     }
 
     override suspend fun testConnection(): ToolResult<Unit> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = Unit,
             summary = "SonarQube not configured.",
             isError = true,
@@ -417,7 +425,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     }
 
     override suspend fun getBranches(projectKey: String, repoName: String?): ToolResult<List<SonarBranchData>> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = emptyList(),
             summary = "SonarQube not configured. Cannot fetch branches.",
             isError = true,
@@ -467,7 +475,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         branch: String?,
         repoName: String?
     ): ToolResult<ProjectMeasuresData> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = ProjectMeasuresData(null, null, null, null, null, null, null),
             summary = "SonarQube not configured. Cannot fetch project measures.",
             isError = true,
@@ -531,7 +539,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         branch: String?,
         repoName: String?
     ): ToolResult<List<SourceLineData>> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = emptyList(),
             summary = "SonarQube not configured. Cannot fetch source lines.",
             isError = true,
@@ -593,7 +601,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         repoName: String?,
         inNewCodePeriod: Boolean
     ): ToolResult<PagedIssuesData> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = PagedIssuesData(emptyList(), 0, page, pageSize),
             summary = "SonarQube not configured. Cannot fetch issues.",
             isError = true,
@@ -673,7 +681,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         branch: String?,
         repoName: String?
     ): ToolResult<List<SecurityHotspotData>> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = emptyList(),
             summary = "SonarQube not configured. Cannot fetch security hotspots.",
             isError = true,
@@ -731,7 +739,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         branch: String?,
         repoName: String?
     ): ToolResult<DuplicationData> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = DuplicationData(emptyList()),
             summary = "SonarQube not configured. Cannot fetch duplications.",
             isError = true,
@@ -779,7 +787,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     }
 
     override suspend fun getRule(ruleKey: String, repoName: String?): ToolResult<SonarRuleData> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = SonarRuleData(ruleKey = ruleKey, name = "", description = "", remediation = null),
             summary = "SonarQube not configured. Cannot fetch rule details.",
             isError = true,
@@ -826,7 +834,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         branch: String?,
         repoName: String?
     ): ToolResult<List<SonarFileComponent>> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = emptyList(),
             summary = "SonarQube not configured. Cannot list file components.",
             isError = true,
@@ -866,7 +874,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         maxFiles: Int,
         repoName: String?
     ): ToolResult<BranchQualityReportData> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = BranchQualityReportData(
                 branch = branch,
                 qualityGate = QualityGateData(status = "ERROR"),
@@ -1278,7 +1286,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     }
 
     override suspend fun getHotspotDetail(hotspotKey: String, repoName: String?): ToolResult<HotspotDetailData> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = HotspotDetailData(
                 key = hotspotKey, componentKey = "", componentPath = "", projectKey = "",
                 ruleKey = "", ruleName = "", securityCategory = "", vulnerabilityProbability = "",
@@ -1348,7 +1356,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
         facets: String,
         repoName: String?
     ): ToolResult<IssueFacetsData> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = IssueFacetsData(total = 0, facets = emptyList()),
             summary = "SonarQube not configured. Cannot fetch issue facets.",
             isError = true,
@@ -1392,7 +1400,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     }
 
     override suspend fun getCurrentUser(): ToolResult<SonarCurrentUserData> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = SonarCurrentUserData(
                 login = "", name = "", email = null, groups = emptyList(),
                 globalPermissions = emptyList(), externalProvider = null, isLoggedIn = false
@@ -1437,7 +1445,7 @@ class SonarServiceImpl(private val project: Project) : SonarService {
     }
 
     override suspend fun listQualityGates(): ToolResult<SonarQualityGateListData> {
-        val api = client ?: return ToolResult(
+        val api = resolveClient() ?: return ToolResult(
             data = SonarQualityGateListData(emptyList()),
             summary = "SonarQube not configured. Cannot list quality gates.",
             isError = true,
