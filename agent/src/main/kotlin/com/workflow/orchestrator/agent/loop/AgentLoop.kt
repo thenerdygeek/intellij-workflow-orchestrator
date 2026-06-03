@@ -9,6 +9,9 @@ import com.workflow.orchestrator.core.ai.ToolUseContent
 import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.hooks.HookEvent
+import com.workflow.orchestrator.agent.loop.completion.CompletionGateChain
+import com.workflow.orchestrator.agent.loop.completion.FeedbackGate
+import com.workflow.orchestrator.agent.loop.completion.MemoryReviewGate
 import com.workflow.orchestrator.agent.observability.AgentFileLogger
 import com.workflow.orchestrator.agent.observability.SessionMetrics
 import com.workflow.orchestrator.agent.hooks.HookManager
@@ -453,13 +456,21 @@ class AgentLoop(
      */
     private val attachmentStoreProvider: () -> AttachmentStore? = { null },
     /**
-     * When true, the loop does not exit immediately on [AttemptCompletionTool].
-     * Instead it injects a single user message asking the LLM to call the `feedback`
-     * tool, then exits as [LoopResult.Completed] once feedback has been submitted
-     * (or if the LLM skips it). The `feedback` tool must also be registered in the
-     * active tool set (done by [AgentService] when [AgentSettings.agentFeedbackEnabled]).
+     * When true, the loop does not exit immediately on [AttemptCompletionTool]. Instead a
+     * [FeedbackGate] is armed: a nudge asks the LLM to call the `feedback` tool, then the
+     * loop exits once feedback fires (or the LLM re-issues attempt_completion). The
+     * `feedback` tool must also be registered (done by [AgentService] under the same flag).
      */
     private val feedbackEnabled: Boolean = false,
+    /**
+     * When true, a [MemoryReviewGate] is armed BEFORE the feedback gate: a one-shot nudge
+     * asks the LLM whether anything it learned is worth saving to file-based memory, cleared
+     * by re-issuing attempt_completion. Requires [memoryDirPath] to be non-null. Orchestrator
+     * only — sub-agents never reach the Completion branch.
+     */
+    private val proactiveMemoryUpdatesEnabled: Boolean = false,
+    /** Absolute path to this session's memory dir; injected into [MemoryReviewGate]'s nudge. Null in sub-agents/tests. */
+    private val memoryDirPath: String? = null,
     /**
      * Optional callback that lets the loop push a streaming `edit_file` diff into
      * the chat panel while the LLM is still emitting `<new_string>`. When non-null,
@@ -521,13 +532,20 @@ class AgentLoop(
     /** Loop detector: tracks repeated identical tool calls (from Cline). */
     private val loopDetector = LoopDetector(exemptTools = setOf("read_document"))
 
-    // ── Feedback flow state ───────────────────────────────────────────────
-    // When feedbackEnabled=true: after attempt_completion the loop does NOT
-    // return immediately. It stores the pending result here, injects a message
-    // asking the LLM to call `feedback`, then returns pendingCompletion once
-    // the feedback tool fires (or the loop exits by other means).
-    private var awaitingFeedback = false
-    private var pendingCompletion: LoopResult.Completed? = null
+    // ── Completion gates ──────────────────────────────────────────────────
+    // Ordered post-attempt_completion chain. buildList order == chain order:
+    // memory review first (if enabled), then feedback (if enabled). An empty
+    // chain finishes on the first attempt_completion (the normal fast path).
+    private val completionGates: CompletionGateChain = CompletionGateChain(
+        buildList {
+            if (proactiveMemoryUpdatesEnabled && memoryDirPath != null) {
+                add(MemoryReviewGate(memoryDirPath))
+            }
+            if (feedbackEnabled) {
+                add(FeedbackGate())
+            }
+        }
+    )
 
     /**
      * Set by [executeToolCalls] when a real user message arrives via [userInputChannel]
@@ -2230,77 +2248,52 @@ class AgentLoop(
                     toolResult.completionData?.let { sessionMetrics?.recordCompletion(it.kind) }
                     sessionMetrics?.recordIterationEnd()
 
-                    if (feedbackEnabled && !awaitingFeedback) {
-                        // Collapse now so the attempt_completion pair doesn't dangle
-                        // in history while the feedback turn runs.
-                        contextManager.collapseLastCompletionToolPair()
-                        messageStateHandler?.collapseLastCompletionToolPair()
-                        // Save result for after feedback is submitted.
-                        pendingCompletion = LoopResult.Completed(
-                            summary = toolResult.content,
-                            iterations = iteration,
-                            tokensUsed = totalTokensUsed,
-                            completionData = toolResult.completionData,
-                            inputTokens = totalInputTokens,
-                            outputTokens = totalOutputTokens,
-                            filesModified = filesModifiedList(),
-                            linesAdded = totalLinesAdded,
-                            linesRemoved = totalLinesRemoved
-                        )
-                        awaitingFeedback = true
-                        contextManager.addNudgeMessage(
-                            "Use the `feedback` tool to share any feedback about the tools you used during this task. " +
-                            "Report tools that did not work as expected, had confusing or contradictory parameters, " +
-                            "returned incorrect results, or failed unexpectedly. " +
-                            "If you have no feedback, call it with an empty string."
-                        )
-                        // Symmetric pre-exit drain: mirror the non-feedback else branch
-                        // below. The drain lands after the feedback nudge so the steering
-                        // is the most recent user turn — the LLM treats it as a follow-up
-                        // and addresses it; if it calls attempt_completion again instead
-                        // of feedback, that re-entry goes through this same Completion
-                        // branch with awaitingFeedback=true → falls through to else,
-                        // returning the new Completed and superseding pendingCompletion.
-                        // Without this drain, Stage 0.5 of the next iteration still picks
-                        // up the message, but the UI pill stays orphaned for an extra
-                        // iteration and history-ordering is brittle to future refactors.
-                        if (drainSteeringIntoContextOnExit()) {
-                            userInputReceivedInToolCall = true
+                    val fresh = LoopResult.Completed(
+                        summary = toolResult.content,
+                        iterations = iteration,
+                        tokensUsed = totalTokensUsed,
+                        completionData = toolResult.completionData,
+                        inputTokens = totalInputTokens,
+                        outputTokens = totalOutputTokens,
+                        filesModified = filesModifiedList(),
+                        linesAdded = totalLinesAdded,
+                        linesRemoved = totalLinesRemoved
+                    )
+                    when (val outcome = completionGates.onCompletionAttempt(fresh)) {
+                        is CompletionGateChain.Outcome.Arm -> {
+                            // A gate is armed: collapse the dangling attempt_completion pair so it
+                            // doesn't merge with the next user turn (see the long-standing
+                            // sanitizeMessages note), inject the gate's nudge, then continue.
+                            contextManager.collapseLastCompletionToolPair()
+                            messageStateHandler?.collapseLastCompletionToolPair()
+                            contextManager.addNudgeMessage(outcome.nudge)
+                            // Symmetric pre-exit steering drain: land any mid-stream user message
+                            // after the nudge so the LLM treats it as the most recent turn.
+                            if (drainSteeringIntoContextOnExit()) {
+                                userInputReceivedInToolCall = true
+                            }
+                            // Loop continues — LLM sees the gate's nudge next turn.
                         }
-                        // Loop continues — LLM sees the feedback request next turn.
-                    } else {
-                        // Collapse the just-persisted [assistant w/ completion tool_call,
-                        // tool_result] pair into a single plain assistant text turn. Without
-                        // this, the next user turn (typed message or `next_step` hint accept)
-                        // gets merged with the prior tool result via sanitizeMessages's
-                        // tool→user conversion + same-role merging — the LLM sees "TOOL
-                        // RESULT: <prior summary>\n\n<user prompt>" and re-issues
-                        // attempt_completion. Resume of the session also auto-iterates on
-                        // the dangling tool result. Both bugs disappear once the trailing
-                        // pair becomes a single plain assistant turn.
-                        contextManager.collapseLastCompletionToolPair()
-                        messageStateHandler?.collapseLastCompletionToolPair()
-                        // Pre-exit steering drain: if the user typed mid-final-stream
-                        // (between the iteration-start drain and this completion), do NOT
-                        // exit. Inject their text as a user turn after the just-collapsed
-                        // assistant text and let the LLM address the follow-up on the next
-                        // iteration. Mirrors the feedbackEnabled branch above which also
-                        // defers the exit instead of dropping the queued message.
-                        if (drainSteeringIntoContextOnExit()) {
-                            userInputReceivedInToolCall = true
-                            return null
+                        is CompletionGateChain.Outcome.Finish -> {
+                            // Chain exhausted (or no gates). Collapse the just-persisted
+                            // [assistant w/ completion tool_call, tool_result] pair into a single
+                            // plain assistant text turn — otherwise the next user turn merges with
+                            // the prior tool result via sanitizeMessages's tool→user conversion +
+                            // same-role merging and the LLM re-issues attempt_completion (resume
+                            // also auto-iterates on the dangling tool result).
+                            contextManager.collapseLastCompletionToolPair()
+                            messageStateHandler?.collapseLastCompletionToolPair()
+                            // Pre-exit steering drain: if the user typed mid-final-stream, do NOT
+                            // exit — inject their text and let the LLM address it next iteration.
+                            if (drainSteeringIntoContextOnExit()) {
+                                userInputReceivedInToolCall = true
+                                return null
+                            }
+                            return outcome.result
                         }
-                        return LoopResult.Completed(
-                            summary = toolResult.content,
-                            iterations = iteration,
-                            tokensUsed = totalTokensUsed,
-                            completionData = toolResult.completionData,
-                            inputTokens = totalInputTokens,
-                            outputTokens = totalOutputTokens,
-                            filesModified = filesModifiedList(),
-                            linesAdded = totalLinesAdded,
-                            linesRemoved = totalLinesRemoved
-                        )
+                        CompletionGateChain.Outcome.Ignore -> {
+                            // Unreachable: onCompletionAttempt never returns Ignore. No-op.
+                        }
                     }
                 }
                 is ToolResultType.SessionHandoff -> {
@@ -2423,11 +2416,12 @@ class AgentLoop(
                     )
                 }
                 is ToolResultType.Standard, is ToolResultType.Error -> {
-                    // Feedback gate: if the LLM called `feedback` in response to our
-                    // post-completion prompt, return the saved pending completion now.
-                    if (awaitingFeedback && toolName == "feedback") {
-                        awaitingFeedback = false
-                        return pendingCompletion!!
+                    // Completion gates: a satisfying tool (e.g. `feedback`) may clear the armed
+                    // gate. Finish returns the parked completion; Arm injects the next gate's nudge.
+                    when (val outcome = completionGates.onToolUsed(toolName)) {
+                        is CompletionGateChain.Outcome.Finish -> return outcome.result
+                        is CompletionGateChain.Outcome.Arm -> contextManager.addNudgeMessage(outcome.nudge)
+                        CompletionGateChain.Outcome.Ignore -> { /* not gate-relevant */ }
                     }
                 }
             }
