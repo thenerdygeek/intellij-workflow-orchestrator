@@ -83,6 +83,13 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
          * Off by default; the agent rarely updates memory unprompted.
          */
         var proactiveMemoryUpdatesEnabled by property(false)
+
+        /**
+         * When true, memory write operations (create/edit/delete under the agent memory dir)
+         * bypass the approval gate entirely. When false (default), every memory write requires
+         * per-invocation approval — see [com.workflow.orchestrator.agent.loop.AgentLoop].
+         */
+        var autoApproveMemoryOperations by property(false)
     }
 
     companion object {
