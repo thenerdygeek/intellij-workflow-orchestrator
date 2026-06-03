@@ -140,19 +140,37 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             }
             is ApiResult.Error -> {
                 log.warn("[BambooService] Failed to trigger build for $chainKey: ${result.message}")
+                // Bamboo rejects a trigger with a 400 (mapped to SERVER_ERROR by postForm,
+                // which carries the server body) when a build is already running/queued and
+                // the plan allows only one concurrent build. The raw "max 1 concurrent build
+                // is possible" body paired with the generic "check connection" hint confused
+                // the agent — surface an explicit, actionable message instead.
+                val msg = result.message
+                val alreadyRunning = msg.contains("concurrent", ignoreCase = true) ||
+                    (msg.contains("already", ignoreCase = true) &&
+                        (msg.contains("running", ignoreCase = true) ||
+                            msg.contains("queued", ignoreCase = true) ||
+                            msg.contains("in progress", ignoreCase = true)))
                 ToolResult(
                     data = BuildTriggerData(buildKey = "", buildNumber = 0, link = ""),
-                    summary = "Error triggering build for $chainKey: ${result.message}",
+                    summary = if (alreadyRunning)
+                        "Cannot trigger build for $chainKey: a build is already running or queued, and this plan allows only one concurrent build."
+                    else
+                        "Error triggering build for $chainKey: $msg",
                     isError = true,
-                    hint = when (result.type) {
-                        ErrorType.AUTH_FAILED ->
+                    hint = when {
+                        alreadyRunning ->
+                            "A build is already in progress or queued for $chainKey, and this Bamboo plan permits only one " +
+                            "concurrent build. Wait for it to finish or stop it first (bamboo_builds stop_build), then retry. " +
+                            "Check current state via bamboo_builds(action=get_running_builds) or build_status."
+                        result.type == ErrorType.AUTH_FAILED ->
                             "Check your Bamboo token in Settings."
-                        ErrorType.FORBIDDEN ->
+                        result.type == ErrorType.FORBIDDEN ->
                             "You may not have permission to trigger this plan."
-                        ErrorType.NOT_FOUND ->
+                        result.type == ErrorType.NOT_FOUND ->
                             "Verify the plan key is correct (e.g., PROJ-PLAN)."
-                        ErrorType.VALIDATION_ERROR ->
-                            result.message
+                        result.type == ErrorType.VALIDATION_ERROR ->
+                            msg
                         else -> "Check Bamboo connection in Settings."
                     },
                     // Carry the structured ErrorType so QueueService can distinguish

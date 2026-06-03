@@ -145,4 +145,64 @@ class BambooBuildsToolTest {
         assertFalse(result.isError)
         assertTrue(result.content.contains("(none)"), "content must reference '(none)' when the commit list is empty")
     }
+
+    // ── build_status surfaces in-progress/queued builds ───────────────────────
+
+    @Test
+    fun `build_status surfaces a running build the latest endpoint cannot see`() = runTest {
+        val service = mockk<BambooService>()
+        // /latest only returns the most recent FINISHED build (here #2, failed).
+        coEvery { service.getLatestBuild("PLAN-X") } returns ToolResult(
+            data = BuildResultData(
+                planKey = "PLAN-X",
+                buildNumber = 2,
+                state = "Failed",
+                durationSeconds = 90L,
+                buildResultKey = "PLAN-X-2",
+                lifeCycleState = "Finished"
+            ),
+            summary = "PLAN-X #2: Failed",
+            isError = false
+        )
+        // ...while #3 is actually building right now.
+        coEvery { service.getRunningBuilds("PLAN-X", repoName = null) } returns ToolResult(
+            data = listOf(
+                BuildResultData(
+                    planKey = "PLAN-X",
+                    buildNumber = 3,
+                    state = "Unknown",
+                    durationSeconds = 0L,
+                    buildResultKey = "PLAN-X-3",
+                    lifeCycleState = "InProgress"
+                )
+            ),
+            summary = "Found 1 running/queued build(s) for PLAN-X",
+            isError = false
+        )
+
+        val result = tool.executeBuildStatusForTest("PLAN-X", service)
+
+        assertFalse(result.isError)
+        assertTrue(result.content.contains("#3"), "must surface the in-progress build #3, got: ${result.content}")
+        assertTrue(result.content.contains("InProgress"), "must show the live lifecycle state")
+        assertTrue(result.content.contains("#2") && result.content.contains("Failed"),
+            "must still show the latest finished build #2")
+    }
+
+    @Test
+    fun `build_status falls back to latest finished build when nothing is running`() = runTest {
+        val service = mockk<BambooService>()
+        coEvery { service.getLatestBuild("PLAN-X") } returns buildResult()
+        coEvery { service.getRunningBuilds("PLAN-X", repoName = null) } returns ToolResult(
+            data = emptyList(),
+            summary = "Found 0 running/queued build(s) for PLAN-X",
+            isError = false
+        )
+
+        val result = tool.executeBuildStatusForTest("PLAN-X", service)
+
+        assertFalse(result.isError)
+        assertFalse(result.content.contains("IN PROGRESS"), "no live-build banner when nothing is running")
+        assertTrue(result.content.contains("#42"), "shows the latest finished build")
+    }
 }

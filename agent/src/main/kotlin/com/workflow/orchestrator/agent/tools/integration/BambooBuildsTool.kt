@@ -854,7 +854,7 @@ description optional: for approval dialog on trigger/stop/cancel.
                 } else {
                     planKey
                 }
-                service.getLatestBuild(chainKey).toAgentToolResult()
+                executeBuildStatusForTest(chainKey, service)
             }
 
             "get_build" -> {
@@ -986,6 +986,50 @@ description optional: for approval dialog on trigger/stop/cancel.
                 summary = "Unknown action '$action'",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
                 isError = true
+            )
+        }
+    }
+
+    /**
+     * Composes `build_status` output. Bamboo's `/result/{key}/latest` endpoint
+     * (behind [BambooService.getLatestBuild]) only returns the most recent
+     * *finished* build — a build that is currently in progress or queued is
+     * invisible to it. That made the agent report a stale FAILED/SUCCESSFUL state
+     * while a newer build was actually running. To give an honest "current CI
+     * state" we additionally fetch in-progress/queued builds (which use
+     * `includeAllStates=true`) and surface them above the latest finished result.
+     *
+     * Extracted as an `internal` seam so it can be unit-tested with a mock
+     * [BambooService] without IntelliJ infrastructure (mirrors
+     * [executeGetBuildForTest]).
+     */
+    internal suspend fun executeBuildStatusForTest(
+        chainKey: String,
+        service: com.workflow.orchestrator.core.services.BambooService
+    ): ToolResult = coroutineScope {
+        val latestDeferred = async { service.getLatestBuild(chainKey) }
+        val runningDeferred = async { service.getRunningBuilds(chainKey) }
+        val latest = latestDeferred.await().toAgentToolResult()
+        val running = runningDeferred.await()
+        val active = if (running.isError) emptyList() else running.data.orEmpty()
+        if (active.isEmpty()) {
+            latest
+        } else {
+            val notice = buildString {
+                append("⚠ ${active.size} build(s) currently IN PROGRESS or QUEUED for $chainKey ")
+                append("(not returned by the latest-build endpoint — the most recent FINISHED build is shown below):\n")
+                active.forEach { b ->
+                    val lifeState = b.lifeCycleState.ifBlank { b.state }.ifBlank { "InProgress" }
+                    append("  • #${b.buildNumber} [$lifeState] ${b.buildResultKey}\n")
+                }
+                append("\n— Most recent FINISHED build —\n")
+            }
+            val combined = notice + latest.content
+            ToolResult(
+                combined,
+                "${active.size} in-progress/queued + latest finished for $chainKey",
+                TokenEstimator.estimate(combined),
+                isError = latest.isError
             )
         }
     }
