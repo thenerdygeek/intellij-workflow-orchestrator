@@ -468,6 +468,7 @@ try {
 ## Tool Approval
 
 - **ApprovalPolicy**: Per-tool approval rules. Three policies: `ALWAYS_APPROVE` (trust, no gate), `ALLOW_FOR_SESSION` (user can grant once-per-session), `ALWAYS_PER_INVOCATION` (must approve every time). `run_command` is hardcoded to `ALWAYS_PER_INVOCATION` — it can never be allowed for session.
+- **Memory writes are gated specially.** `create_file`/`edit_file`/`delete_file` whose path is under the agent memory dir (`MemoryWriteClassifier.isMemoryWrite`, checked in `AgentLoop`'s approval block) are forced to **per-invocation** approval (no "Allow for session") and **ignore any prior session approval** — so a generic "Allow for session" on `edit_file` cannot silence memory writes. The `AgentSettings.autoApproveMemoryOperations` toggle (Settings → Tools → Workflow Orchestrator → AI Agent → Advanced → "Memory") bypasses the gate entirely for memory writes. The approval card shows the memory verb ("Updating memory · {topic}") via the webview `approvalTitle`/`describeMemoryOp` helpers. Reads are never gated. Pinned by `MemoryWriteClassifierTest`, `AgentLoopMemoryApprovalTest`, `approvalTitle.test.ts`.
 - **SessionApprovalStore**: Holds the set of tools the user has approved for the current session. Lives at `AgentController` level (not `AgentLoop`), so approvals persist across loop restarts within the same session. Cleared on new chat.
 - **Pre-execution guard errors**: Logged to `fileLogger` + `sessionMetrics` so they appear in traces and are counted in the scorecard.
 
