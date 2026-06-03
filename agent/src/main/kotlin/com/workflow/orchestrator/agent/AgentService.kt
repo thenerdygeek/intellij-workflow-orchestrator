@@ -2528,6 +2528,8 @@ class AgentService(
                     // BrainRouter routes through.
                     attachmentStoreProvider = { activeAttachmentStore },
                     feedbackEnabled = agentSettings.state.agentFeedbackEnabled,
+                    proactiveMemoryUpdatesEnabled = agentSettings.state.proactiveMemoryUpdatesEnabled,
+                    memoryDirPath = memoryDirPath.toAbsolutePath().toString(),
                     checkpointStore = checkpointStore,
                     currentUserMessageTsProvider = { userMessageTs },
                     streamingEditCallback = streamingEditCallback,
