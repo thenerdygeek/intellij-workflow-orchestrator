@@ -2530,6 +2530,7 @@ class AgentService(
                     feedbackEnabled = agentSettings.state.agentFeedbackEnabled,
                     proactiveMemoryUpdatesEnabled = agentSettings.state.proactiveMemoryUpdatesEnabled,
                     memoryDirPath = memoryDirPath.toAbsolutePath().toString(),
+                    autoApproveMemoryOperations = agentSettings.state.autoApproveMemoryOperations,
                     checkpointStore = checkpointStore,
                     currentUserMessageTsProvider = { userMessageTs },
                     streamingEditCallback = streamingEditCallback,
