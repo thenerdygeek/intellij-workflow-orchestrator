@@ -197,6 +197,14 @@ class AgentAdvancedConfigurable(
                             "Off by default; the agent rarely updates memory unprompted."
                         )
                 }
+                row {
+                    checkBox("Auto-approve memory writes (skip the approval prompt for create/update/delete in memory)")
+                        .bindSelected(agentSettings.state::autoApproveMemoryOperations)
+                        .comment(
+                            "When OFF (default), every memory create/update/delete asks for approval each time. " +
+                            "When ON, memory writes are applied without prompting. Non-memory file edits are unaffected."
+                        )
+                }
             }
 
             group("Sub-agents") {
