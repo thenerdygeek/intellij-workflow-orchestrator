@@ -424,7 +424,7 @@ Proactive, filter-driven event push into the ReAct loop — the complement to pa
 
 ### `monitor` tool
 
-Deferred, registered under category `"Utilities"` in `AgentService.registerAllTools()`. Actions: `start | list | stop`. Phase 1: `source=shell` only. Parameters: `command` (shell command to run), `filter` (regex), `description` (label), `monitor_id` (for stop). `allowedWorkers = {ORCHESTRATOR, CODER}`. `validateStart()` is a pure companion method (unit-testable). On `start`, a UUID-prefixed `shell-{8char}` id is generated and returned to the LLM.
+Deferred, registered under category `"Utilities"` in `AgentService.registerAllTools()`. Actions: `start | list | stop | status`. Phase 1: `source=shell` only. Parameters: `command` (shell command to run), `filter` (regex — **case-sensitive by default; `(?i)` prefix for case-insensitive**), `description` (label), `monitor_id` (for stop/status). `allowedWorkers = {ORCHESTRATOR, CODER}`. `validateStart()` is a pure companion method (unit-testable). `renderStatus(handle)` is a pure companion method that formats one monitor's state + buffered matched-event lines (used by `action=status`). On `start`, a UUID-prefixed `shell-{8char}` id is generated and returned to the LLM. A monitor auto-removes on process exit, so `stop`/`status` on an already-exited monitor returns `No monitor with id …` (expected).
 
 ### Guardrails and tunables
 

@@ -26,17 +26,23 @@ class MonitorTool(
     override val description =
         "Watch a long-running source and get proactive notifications when matching events occur. " +
         "Phase 1: source=shell runs a command and notifies on stdout lines matching `filter` (regex). " +
-        "Make the filter failure-inclusive (e.g. 'done|ERROR|FAILED') — silence is not success."
+        "Make the filter failure-inclusive (e.g. 'done|ERROR|FAILED') — silence is not success. " +
+        "Use action=status with a monitor_id to inspect one monitor's state plus its buffered matched lines. " +
+        "Note: a monitor auto-removes itself when its process exits, so stopping/inspecting an already-exited " +
+        "monitor returns 'No monitor with id …' (expected); its final 'process exited' notification may still " +
+        "arrive shortly after due to async delivery."
     override val parameters = FunctionParameters(
         properties = linkedMapOf(
             "action" to ParameterProperty(type = "string",
-                description = "start | list | stop", enumValues = listOf("start", "list", "stop")),
+                description = "start | list | stop | status", enumValues = listOf("start", "list", "stop", "status")),
             "source" to ParameterProperty(type = "string",
                 description = "[start] Event source. Phase 1 supports only 'shell'.", enumValues = listOf("shell")),
             "command" to ParameterProperty(type = "string", description = "[start/shell] Command to run."),
-            "filter" to ParameterProperty(type = "string", description = "[start/shell] Regex; matching stdout lines notify."),
+            "filter" to ParameterProperty(type = "string",
+                description = "[start/shell] Regex; matching stdout lines notify. Matching is CASE-SENSITIVE by " +
+                    "default — prefix with '(?i)' for case-insensitive (e.g. '(?i)error|failed')."),
             "description" to ParameterProperty(type = "string", description = "[start] Short label shown in every notification."),
-            "monitor_id" to ParameterProperty(type = "string", description = "[stop] The id returned by start."),
+            "monitor_id" to ParameterProperty(type = "string", description = "[stop/status] The id returned by start."),
         ),
         required = emptyList(),
     )
@@ -58,7 +64,13 @@ class MonitorTool(
                 if (pool.stop(sessionId, id)) {
                     project.service<AgentService>().forgetMonitor(sessionId, id)
                     ok("Stopped monitor $id")
-                } else err("No monitor with id $id")
+                } else err("No monitor with id $id (it may have already exited and been auto-removed — use action=list to see active monitors)")
+            }
+            "status" -> {
+                val id = params["monitor_id"]?.jsonPrimitive?.content ?: return err("status requires monitor_id")
+                val handle = pool.get(sessionId, id)
+                    ?: return err("No monitor with id $id (it may have already exited and been auto-removed — use action=list to see active monitors)")
+                ok(renderStatus(handle))
             }
             "start" -> {
                 val source = params["source"]?.jsonPrimitive?.content ?: "shell"
@@ -99,6 +111,18 @@ class MonitorTool(
 
     companion object {
         private val ALLOWED_SOURCES = setOf("shell")
+
+        /**
+         * Render a single monitor's status: id, label, current state, and its buffered
+         * matched-event lines (the ring buffer — matched stdout lines + the exit line, not
+         * the process's full stdout). Pure for unit testing.
+         */
+        fun renderStatus(handle: MonitorHandle, tailLines: Int = 20): String {
+            val out = handle.readOutput(tailLines = tailLines)
+            val body = if (out.content.isBlank()) "(no matching events yet)" else out.content
+            val note = if (out.truncated) "\n… (showing last $tailLines event lines)" else ""
+            return "${handle.bgId} — ${handle.label} (${handle.state()})\n$body$note"
+        }
 
         /** Pure validation for `action=start`. Returns an error string, or null when valid. */
         fun validateStart(source: String?, command: String?, filter: String?): String? {
