@@ -2545,6 +2545,10 @@ class AgentLoop(
      * All call sites already live in suspending coroutine contexts.
      */
     private suspend fun withEnvDetails(message: String): String {
+        // Dedup: strip stale env blocks from prior history BEFORE this turn appends a fresh
+        // one, so only the latest <environment_details> ever survives. Runs only on user
+        // turns (human-paced), so the full-history rewrite cost is bounded.
+        contextManager.stripStaleEnvironmentDetails()
         // Real user turns ALWAYS carry the full datetime, retained even after env dedup.
         val timeStamp = contextManager.userTimeStamp()
         val envDetails = environmentDetailsProvider?.invoke()

@@ -171,6 +171,9 @@ class ContextManager(
     internal var clockMillis: () -> Long = { System.currentTimeMillis() }
     private var lastStampedEpochMinute: Long = Long.MIN_VALUE
 
+    /** Matches a full `<environment_details>…</environment_details>` block plus leading blank lines. */
+    private val ENV_DETAILS_REGEX = Regex("(?s)\\n*<environment_details>.*?</environment_details>")
+
     private fun formatTimeLine(epochMillis: Long): String {
         val zdt = java.time.Instant.ofEpochMilli(epochMillis).atZone(java.time.ZoneId.systemDefault())
         val formatted = zdt.format(java.time.format.DateTimeFormatter.ofPattern("M/d/yyyy, h:mm:ss a"))
@@ -199,6 +202,38 @@ class ContextManager(
         if (minute <= lastStampedEpochMinute) return null
         lastStampedEpochMinute = minute
         return formatTimeLine(now)
+    }
+
+    /**
+     * Removes `<environment_details>…</environment_details>` blocks from ALL existing
+     * messages, retaining the surrounding user text + time stamp. Called right before a new
+     * user turn appends a fresh env block, so only the latest block ever survives in history
+     * (dedup). Persists the edit via [onHistoryOverwrite] (full rewrite, same as compaction);
+     * indices are unchanged (content edit, not removal), so ui_messages mapping stays valid.
+     * No-op (no persist) when nothing carried an env block.
+     */
+    suspend fun stripStaleEnvironmentDetails() {
+        var changed = false
+        for (i in messages.indices) {
+            val m = messages[i]
+            val newContent = stripEnvBlock(m.content)
+            val newParts = m.parts?.map { p ->
+                if (p is ContentPart.Text) ContentPart.Text(stripEnvBlock(p.text) ?: "") else p
+            }
+            if (newContent != m.content || newParts != m.parts) {
+                messages[i] = m.copy(content = newContent, parts = newParts)
+                changed = true
+            }
+        }
+        if (changed) onHistoryOverwrite?.invoke(messages.toList(), 0 to 0)
+    }
+
+    /** Strips env blocks from [text]; returns the original if it had none, or null in/out. */
+    private fun stripEnvBlock(text: String?): String? {
+        if (text == null || "<environment_details>" !in text) return text
+        val stripped = ENV_DETAILS_REGEX.replace(text, "").trimEnd()
+        // Defensive: never blank out a message entirely (user turns always have text + time).
+        return if (stripped.isBlank()) text else stripped
     }
 
     fun addUserMessageWithParts(parts: List<ContentPart>) {
