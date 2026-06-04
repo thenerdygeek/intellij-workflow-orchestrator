@@ -3296,6 +3296,8 @@ class AgentController(
             if (choice != com.intellij.openapi.ui.Messages.YES) return false
         }
         pool.killAll(leavingSessionId)
+        // Task 8 — drop the leaving session's monitor coordinator + kill its live monitor sources.
+        service.disposeMonitorsForSession(leavingSessionId)
         return true
     }
 

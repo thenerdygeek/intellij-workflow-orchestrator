@@ -47,6 +47,12 @@ import com.workflow.orchestrator.agent.session.ResumeHelper
 import com.workflow.orchestrator.agent.session.toChatMessage
 import com.workflow.orchestrator.agent.session.toApiMessage
 import com.workflow.orchestrator.agent.settings.AgentSettings
+import com.workflow.orchestrator.agent.monitor.MonitorBridge
+import com.workflow.orchestrator.agent.monitor.MonitorConfig
+import com.workflow.orchestrator.agent.monitor.MonitorManager
+import com.workflow.orchestrator.agent.monitor.MonitorPool
+import com.workflow.orchestrator.agent.monitor.wakeOutcomeFor
+import com.workflow.orchestrator.agent.tools.builtin.MonitorTool
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolOutputSpiller
 import com.workflow.orchestrator.agent.tools.ToolRegistry
@@ -207,6 +213,39 @@ class AgentService(
      */
     fun setAutoWakeListener(listener: ((String, String) -> Unit)?) {
         this.autoWakeListener = listener
+    }
+
+    /**
+     * Task 8 — per-session [MonitorManager] coordinators. Created lazily on first event
+     * for a session, dropped via [disposeMonitorsForSession] when the session is left.
+     */
+    private val monitorManagers = java.util.concurrent.ConcurrentHashMap<String, MonitorManager>()
+
+    /**
+     * Build (or fetch) the [MonitorManager] for [sessionId]. All side effects are injected
+     * so monitor routing reuses the live-loop steering path and the shared idle-waker
+     * (guard cap/cooldown honoured across background + delegation + monitor wakes).
+     */
+    private fun monitorManagerFor(sessionId: String): MonitorManager =
+        monitorManagers.computeIfAbsent(sessionId) {
+            val st = AgentSettings.getInstance(project).state
+            MonitorManager(
+                config = MonitorConfig(
+                    coalesceWindowMs = st.monitorCoalesceWindowMs,
+                    wakeBudgetPerMonitor = st.monitorWakeBudgetPerMonitor,
+                    floodThresholdPerMin = st.monitorFloodThresholdPerMin,
+                ),
+                clock = { System.currentTimeMillis() },
+                isLoopLive = { activeLoopForSession(sessionId) != null },
+                deliverToLoop = { text -> activeLoopForSession(sessionId)?.enqueueSteeringMessage(text) },
+                wakeIdle = { text -> wakeOutcomeFor(idleWaker.wake(sessionId, text, "monitor")) },
+            )
+        }
+
+    /** Drop a session's [MonitorManager] and kill its live monitor sources. */
+    fun disposeMonitorsForSession(sessionId: String) {
+        monitorManagers.remove(sessionId)
+        MonitorPool.getInstance(project).killAll(sessionId)
     }
 
     /**
@@ -407,6 +446,20 @@ class AgentService(
                 }
             },
         )
+
+        // Task 8 — route MonitorBridge events into the per-session MonitorManager and
+        // drive a single flush loop (coalesce window expiry → steering / idle-wake) on the
+        // service scope. Cleaned up per-session via disposeMonitorsForSession.
+        MonitorBridge.setRouter(project) { sessionId, event ->
+            monitorManagerFor(sessionId).onEvent(event)
+        }
+        cs.launch(Dispatchers.IO) {
+            while (isActive) {
+                runCatching { monitorManagers.values.forEach { it.flushDue() } }
+                    .onFailure { log.warn("monitor flush failed: ${it.message}", it) }
+                delay(200)
+            }
+        }
     }
 
     /**
@@ -1300,6 +1353,7 @@ class AgentService(
         safeRegisterDeferred("Utilities") { ProjectContextTool() }
         safeRegisterDeferred("Utilities") { CurrentTimeTool() }
         safeRegisterDeferred("Utilities") { AskUserInputTool() }
+        safeRegisterDeferred("Utilities") { MonitorTool({ currentSessionId }, cs) }
 
         // Cross-IDE delegation meta-tool — registered only when outbound is enabled.
         // §3.3 of the spec: when off, the LLM does not see the tool at all.
