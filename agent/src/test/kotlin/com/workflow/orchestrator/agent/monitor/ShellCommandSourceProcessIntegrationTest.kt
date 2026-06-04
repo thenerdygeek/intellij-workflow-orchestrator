@@ -63,27 +63,34 @@ class ShellCommandSourceProcessIntegrationTest {
     }
 
     @org.junit.jupiter.api.Test
-    fun `stop halts delivery promptly even when a child process holds the pipe`() {
+    fun `stop terminates the entire process subtree`() {
         val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
-        val events = java.util.concurrent.ConcurrentLinkedQueue<MonitorEvent>()
-        // Nested shell: the bash wrapper spawns `sh -c` which runs the emitting loop in a CHILD.
-        // Killing only the direct process orphans the child, which keeps emitting — this reproduces the bug.
+        val started = java.util.concurrent.CountDownLatch(1)
+        // `& wait` makes the bash wrapper a compound command (no exec-collapse): process=bash with a
+        // backgrounded `sh` child (+ `sleep` grandchild). At stop() the bash parent is alive, so
+        // process.descendants() includes the `sh`/`sleep` subtree. Killing only the parent (old
+        // behavior) leaves orphans alive past the poll on Linux/CI; killing the tree (the fix) reaps them.
         val src = ShellCommandSource(
-            monitorId = "stop-test", description = "stop",
-            command = "sh -c 'while true; do echo tick-match; sleep 0.2; done'",
+            monitorId = "tree-test", description = "tree",
+            command = "sh -c 'while true; do echo tick-match; sleep 0.2; done' & wait",
             filter = Regex("match"), workingDir = null, cs = scope, project = null,
         )
         try {
-            src.start { events.add(it) }
-            val deadline = System.currentTimeMillis() + 5000
-            while (events.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(50)
-            org.junit.jupiter.api.Assertions.assertTrue(events.isNotEmpty(), "expected at least one event before stop")
+            src.start { started.countDown() }
+            org.junit.jupiter.api.Assertions.assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS), "process never emitted")
+            Thread.sleep(300) // let the sh/sleep descendants spawn
+            val handle = src.processHandleForTest()
+            org.junit.jupiter.api.Assertions.assertTrue(handle != null && handle.isAlive, "expected a live tracked process")
+            val descendants = handle!!.descendants().toList()  // snapshot before stop
+            org.junit.jupiter.api.Assertions.assertTrue(descendants.isNotEmpty(), "expected a child subtree (& wait should not exec-collapse)")
             src.stop()
-            val countAtStop = events.size
-            Thread.sleep(2000)   // ~10 more ticks would arrive if the tree weren't killed
-            val leaked = events.toList().drop(countAtStop).map { it.line }
-            org.junit.jupiter.api.Assertions.assertEquals(countAtStop, events.size,
-                "no events should arrive after stop; leaked: $leaked")
+            // Poll up to 3s for the tracked process AND every snapshotted descendant to die.
+            val deadline = System.currentTimeMillis() + 3000
+            fun allDead() = !handle.isAlive && descendants.none { it.isAlive }
+            while (!allDead() && System.currentTimeMillis() < deadline) Thread.sleep(50)
+            org.junit.jupiter.api.Assertions.assertTrue(allDead(),
+                "stop must terminate the whole subtree; still alive: " +
+                    (listOf(handle).filter { it.isAlive }.map { it.pid() } + descendants.filter { it.isAlive }.map { it.pid() }))
         } finally { src.stop(); scope.cancel() }
     }
 

@@ -70,6 +70,9 @@ class ShellCommandSource(
         runCatching { p.destroyForcibly() }
     }
 
+    /** TEST-ONLY: exposes the tracked process handle so tests can snapshot the descendant subtree before stop(). */
+    internal fun processHandleForTest(): java.lang.ProcessHandle? = process?.toHandle()
+
     companion object {
         private val LOG = Logger.getInstance(ShellCommandSource::class.java)
 
