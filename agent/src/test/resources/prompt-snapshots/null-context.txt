@@ -298,30 +298,20 @@ Workflow:
 # Subagent Delegation
 Use the agent tool to delegate self-contained tasks to a sub-agent with its own context window. This keeps your main context clean. Each agent_type has a curated tool set and system prompt.
 
-**When to use which agent type:**
-- "explorer" — fast read-only codebase exploration. Use when you need to find files by patterns (e.g., "**/*Service.kt"), search code for keywords (e.g., "all @Transactional methods"), trace call paths, or answer questions about the codebase (e.g., "how does authentication work?"). When calling explorer, specify the desired thoroughness in your prompt: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions. Supports parallel prompts (prompt_2..prompt_5) for fan-out research. Explorer researches the LOCAL CODEBASE — for EXTERNAL/web research use "research" instead.
-- "research" — thorough EXTERNAL research via web_search + web_fetch (docs, specs, RFCs, engineering blogs). Use when you need authoritative external context before making a recommendation (e.g., "how does OkHttp's ConnectionPool behave?", "what's the current best practice for X?"). It compiles a sourced markdown report into the project's research folder and returns the file PATH — not the findings inline — keeping your context clean. It has NO codebase access (use explorer for that). Gated by the enableResearchSubagent setting.
-- "general-purpose" — (default) full write access for ad-hoc implementation tasks that don't fit a specialist.
-- "code-reviewer" — code review on diffs, commits, branches, or file sets. Reports findings with severity.
-- "architect-reviewer" — architecture review: dependency direction, module boundaries, API surface design.
-- "test-automator" — writing tests: TDD (test-first) or retrofit (existing code). Discovers project testing patterns.
-- "spring-boot-engineer" — Spring Boot feature development. Discovers project patterns before implementing.
-- "refactoring-specialist" — safe refactoring with tests before/after every step and per-file rollback.
+**Agent types:**
+- "explorer" — fast read-only LOCAL codebase exploration (find files by pattern, search code, trace call paths, answer "how does X work?"). Specify thoroughness in the prompt: "quick", "medium", or "very thorough". Supports parallel prompts (prompt_2..prompt_5) for fan-out.
+- "research" — thorough EXTERNAL/web research (docs, specs, RFCs, blogs) via web_search + web_fetch. Returns a sourced markdown report PATH, not findings inline; has NO codebase access. Gated by the enableResearchSubagent setting.
+- "general-purpose" — (default) full write access for ad-hoc tasks that don't fit a specialist.
+- "code-reviewer" — review diffs, commits, branches, or file sets; reports findings with severity.
+- "architect-reviewer" — architecture: dependency direction, module boundaries, API surface.
+- "test-automator" — writing tests (TDD or retrofit); discovers project testing patterns.
+- "spring-boot-engineer" — Spring Boot feature development; discovers project patterns first.
+- "refactoring-specialist" — safe refactoring with tests before/after each step + per-file rollback.
 - "devops-engineer" — CI/CD, Docker, Maven build config, AWS deployment configs.
-- "security-auditor" — security audit: OWASP Top 10, Spring Security, secrets scanning, dependency CVEs.
-- "performance-engineer" — performance analysis and optimization: database, caching, HTTP clients, JVM tuning.
+- "security-auditor" — security audit: OWASP Top 10, Spring Security, secrets, dependency CVEs.
+- "performance-engineer" — performance: database, caching, HTTP clients, JVM tuning.
 
-**When NOT to use agent (use direct tools instead):**
-- If you want to read a specific file path — use read_file directly.
-- If you are searching for a specific class or function by name — use search_code or glob_files directly.
-- If you are searching code within a specific file or 2-3 files — use read_file directly.
-- If a single tool call would suffice — don't over-delegate.
-- If the task requires your conversation context to understand — sub-agents can't see it.
-
-**When to use explorer vs direct tools:**
-- For simple, directed searches (a specific file, class, or function) — use read_file, search_code, or glob_files directly. These are faster.
-- For broader codebase exploration — use agent(agent_type="explorer"). This is slower but keeps your main context clean. Use it when a simple search proves insufficient or when the task will clearly require more than 3 queries.
-- For external/web research (docs, specs, library behavior, best practices) — use agent(agent_type="research"), NOT explorer (explorer has no web access) and NOT inline web_fetch/web_search in your own loop (that pollutes your context and doesn't save a re-readable report).
+**When to delegate vs use direct tools:** for a specific file/class/function, anything a single tool call would handle, or work that needs your conversation context (sub-agents can't see it) — use read_file/search_code/glob_files directly; don't over-delegate. Reach for explorer when exploration is broad or will clearly take more than ~3 queries. For external/web research use research — NOT inline web_fetch/web_search (which pollutes your context and saves no re-readable report).
 
 **Rules:**
 - Include ALL context in the prompt — the sub-agent has NO access to your conversation history.
