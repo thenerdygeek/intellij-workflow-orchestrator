@@ -24,7 +24,7 @@ class MonitorHandle(
 
     private val lines = ArrayDeque<String>()
     private val bytes = AtomicLong(0)
-    @Volatile private var killed = false
+    private val killed = java.util.concurrent.atomic.AtomicBoolean(false)
 
     @Synchronized
     fun appendLine(line: String) {
@@ -33,11 +33,19 @@ class MonitorHandle(
         while (lines.size > maxLines) lines.removeFirst()
     }
 
-    override fun state(): BackgroundState = if (killed) BackgroundState.KILLED else BackgroundState.RUNNING
+    override fun state(): BackgroundState = if (killed.get()) BackgroundState.KILLED else BackgroundState.RUNNING
     override fun exitCode(): Int? = null
     override fun runtimeMs(): Long = 0
     override fun outputBytes(): Long = bytes.get()
 
+    /**
+     * Reads the recent-event ring buffer.
+     *
+     * Ring semantics: [sinceOffset] is intentionally IGNORED — a bounded ring buffer has
+     * no stable byte offsets (old lines are evicted), so there is no meaningful "resume from
+     * offset N" position. [truncated] is true when the returned window is smaller than the
+     * current buffer (i.e. [tailLines] clipped some retained lines).
+     */
     @Synchronized
     override fun readOutput(sinceOffset: Long, tailLines: Int?): OutputChunk {
         val all = lines.toList()
@@ -50,8 +58,7 @@ class MonitorHandle(
         AttachResult.Idle(reason = "MONITOR_NO_ATTACH", lastOutput = readOutput(tailLines = 20).content)
 
     override fun kill(): Boolean {
-        if (killed) return false
-        killed = true
+        if (!killed.compareAndSet(false, true)) return false
         runCatching { source.stop() }
         return true
     }

@@ -30,4 +30,31 @@ class MonitorHandleTest {
         h.kill()
         assertEquals(BackgroundState.KILLED, h.state())
     }
+
+    @Test
+    fun `kill is idempotent — second call returns false and stops source once`() {
+        var stops = 0
+        val src = object : MonitorSource {
+            override val monitorId = "m1"; override val description = "fake"
+            override fun start(emit: (MonitorEvent) -> Unit) {}
+            override fun stop() { stops++ }
+        }
+        val h = MonitorHandle(src, "s1", 0)
+        assertEquals(true, h.kill())
+        assertEquals(false, h.kill())
+        assertEquals(1, stops)
+    }
+
+    @Test
+    fun `ring buffer evicts oldest beyond maxLines`() {
+        val src = object : MonitorSource {
+            override val monitorId = "m1"; override val description = "fake"
+            override fun start(emit: (MonitorEvent) -> Unit) {}; override fun stop() {}
+        }
+        val h = MonitorHandle(src, "s1", 0, maxLines = 3)
+        listOf("a", "b", "c", "d").forEach { h.appendLine(it) }
+        val content = h.readOutput().content
+        assertEquals(false, content.contains("a"))   // evicted
+        assertTrue(content.contains("b") && content.contains("c") && content.contains("d"))
+    }
 }

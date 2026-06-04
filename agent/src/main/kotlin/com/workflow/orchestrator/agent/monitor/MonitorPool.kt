@@ -17,6 +17,7 @@ import kotlinx.coroutines.sync.withLock
 @Service(Service.Level.PROJECT)
 class MonitorPool(
     private val project: Project,
+    // reserved for future async ops; required by the @Service constructor-injection contract (mirrors BackgroundPool)
     private val cs: CoroutineScope,
 ) : Disposable {
     private val pools = ConcurrentHashMap<String, ConcurrentHashMap<String, MonitorHandle>>()
@@ -42,6 +43,7 @@ class MonitorPool(
 
     fun stop(sessionId: String, id: String): Boolean {
         val h = pools[sessionId]?.remove(id) ?: return false
+        // TODO(Task 7/8): also call MonitorManager.forget(id) so a re-registered monitor with the same id starts clean (else stale dormant/autoStopped/flood state leaks).
         h.kill(); return true
     }
 
