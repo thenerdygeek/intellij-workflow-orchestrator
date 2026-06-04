@@ -23,7 +23,7 @@ import kotlin.coroutines.coroutineContext
 
 class SearchCodeTool : AgentTool {
     override val name = "search_code"
-    override val description = "Perform a regex search across files in a specified directory OR within a single file, providing context-rich results. This tool searches for patterns or specific content, displaying each match with encapsulating context. Use this for finding code patterns, function definitions, imports, error messages, or any text content across the codebase — or for grepping inside one specific file (e.g. a spilled tool-output dump). The path may also point under the agent's data directory (~/.workflow-orchestrator/) to grep through spilled tool output (look under sessions/{id}/tool-output/); matches outside the project are emitted as absolute canonical paths. Supports three output modes: 'files' (paths only — default, lightweight), 'content' (matching lines with context), 'count' (match counts per file)."
+    override val description = "Regex search across files in a directory OR within a single file, with context-rich results. Use for finding code patterns, definitions, imports, error messages, or grepping one specific file (e.g. a spilled tool-output dump under the agent data dir ~/.workflow-orchestrator/sessions/{id}/tool-output/). Output modes: 'files' (paths only — default, lightweight), 'content' (matching lines + context), 'count' (per-file counts)."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "pattern" to ParameterProperty(type = "string", description = "The regular expression pattern to search for. Uses standard regex syntax. Literal strings are also accepted and will be auto-escaped if they contain invalid regex."),

@@ -653,16 +653,24 @@ class SpawnAgentToolTest {
 
         @Test
         fun `description includes usage guidance`() {
-            assertTrue(tool.description.contains("Use this when"), "Description should include when to use")
-            assertTrue(tool.description.contains("Do NOT use this when"), "Description should include when not to use")
-            assertTrue(tool.description.contains("Tips"), "Description should include tips")
+            // Trimmed in rank-4 (the verbose "Use this when / Do NOT / Tips" prose duplicated
+            // Rules §7 Subagent Delegation). Pin the essentials that must remain.
+            assertTrue(
+                tool.description.contains("CANNOT see your conversation history"),
+                "Description must warn the sub-agent gets a fresh context"
+            )
+            assertTrue(
+                tool.description.contains("over-delegate"),
+                "Description must keep the don't-over-delegate steering"
+            )
         }
 
         @Test
         fun `description includes parallel execution guidance`() {
             assertTrue(
-                tool.description.contains("Parallel execution"),
-                "Description should include parallel execution section"
+                tool.description.contains("Parallel fan-out", ignoreCase = true) ||
+                    tool.description.contains("parallel", ignoreCase = true),
+                "Description should include the parallel fan-out section"
             )
             assertTrue(
                 tool.description.contains("prompt_2"),

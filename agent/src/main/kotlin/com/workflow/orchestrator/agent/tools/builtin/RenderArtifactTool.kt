@@ -19,44 +19,19 @@ import java.util.UUID
 
 class RenderArtifactTool : AgentTool {
     override val name = "render_artifact"
-    override val description = """Render an interactive React component in the chat as a visual artifact. Use alongside your text response when a visualization would help the user understand architecture, flows, hierarchies, or data comparisons.
+    override val description = """Render an interactive React component in the chat as a visual artifact, alongside your text, when a visualization helps (architecture, flows, hierarchies, data comparisons, dashboards).
 
-The component renders in a sandboxed iframe with these scope variables (use directly — NOT as imports, NOT as props):
+It renders in a sandboxed iframe. These are in-scope globals — use directly, NO import statements (they error), NOT as props:
+- React + hooks (useState/useEffect/useMemo/useRef/useCallback/useReducer/useLayoutEffect/useId/useTransition/Fragment); bridge (navigateToFile, isDark, colors, projectName)
+- shadcn-style UI primitives: Card, Button, Badge, Alert, Progress, Tooltip, Tabs, Accordion, Breadcrumb, Dialog, Sheet, Popover, HoverCard, DropdownMenu, Select, Input, Label, Textarea, Switch, Checkbox, Slider, Avatar, ScrollArea, Skeleton, Separator, Toggle (plus their sub-parts)
+- Recharts (all chart + polar types); all Lucide icons by name; motion/AnimatePresence (Framer Motion); d3 (full namespace)
+- React Flow / xyflow (ReactFlowCanvas, Background, Controls, MiniMap, Handle … — for diagrams/graphs/state machines); @tanstack/react-table (headless); date-fns; colord; createGlobe (cobe); react-simple-maps; rough (roughjs)
 
-React: React, useState, useEffect, useCallback, useMemo, useRef, useReducer, useLayoutEffect, useId, useTransition, Fragment
-Bridge: bridge.navigateToFile(path, line), bridge.isDark, bridge.colors, bridge.projectName
+If you reference a symbol the sandbox doesn't have, the tool returns the full available-scope list so you can swap to an equivalent — you don't need to memorize every export.
 
-UI (shadcn/ui compatible):
-- Layout: Card/CardHeader/CardTitle/CardDescription/CardContent/CardFooter, Separator, ScrollArea/ScrollBar, Skeleton
-- Actions: Button (variants: default/primary/destructive/outline/secondary/ghost/link; sizes: default/sm/lg/icon), Badge (variants), Toggle
-- Feedback: Alert/AlertTitle/AlertDescription (variants: default/destructive/success/warning/info), Progress (variants), Tooltip/TooltipProvider
-- Navigation & Disclosure: Tabs/TabsList/TabsTrigger/TabsContent, Accordion/AccordionItem/AccordionTrigger/AccordionContent, Breadcrumb/BreadcrumbList/BreadcrumbItem/BreadcrumbLink/BreadcrumbPage/BreadcrumbSeparator
-- Overlays: Dialog/DialogTrigger/DialogContent/DialogHeader/DialogFooter/DialogTitle/DialogDescription/DialogClose, Sheet/SheetTrigger/SheetContent/SheetHeader/SheetFooter/SheetTitle/SheetDescription (side: top/bottom/left/right), Popover/PopoverTrigger/PopoverContent, HoverCard/HoverCardTrigger/HoverCardContent, DropdownMenu/DropdownMenuTrigger/DropdownMenuContent/DropdownMenuItem/DropdownMenuLabel/DropdownMenuSeparator/DropdownMenuShortcut
-- Forms: Input, Label, Textarea, Select/SelectTrigger/SelectValue/SelectContent/SelectItem/SelectLabel/SelectSeparator/SelectGroup, Switch, Checkbox, Slider
-- Data: Avatar/AvatarImage/AvatarFallback
+Rules: the source must export a default function component; all data inline; use Tailwind classes, not inline styles. Load the frontend-design skill (use_skill("frontend-design")) first for component APIs and design guidelines.
 
-Recharts: BarChart, Bar, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, RechartsTooltip, Legend, ResponsiveContainer, RadialBarChart, RadialBar, ComposedChart, Scatter, ScatterChart, Treemap, FunnelChart, Funnel, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, LabelList
-Icons: All Lucide icons by name (Globe, FileCode, Server, Shield, Zap, Database, GitBranch, etc.)
-Animation: motion, AnimatePresence, useMotionValue, useTransform, useSpring, useInView, useScroll, useAnimation
-D3: d3 (full namespace — d3.scaleLinear, d3.arc, d3.geoPath, etc.)
-Globe: createGlobe (cobe library — renders globe on canvas)
-Maps: ComposableMap, Geographies, Geography, Marker, MapLine, ZoomableGroup, Graticule, Sphere
-Hand-drawn: rough (roughjs — rough.canvas(canvasEl).rectangle(...))
-
-Node/edge graphs (xyflow/react): ReactFlow namespace + shortcut identifiers ReactFlowCanvas, Background, Controls, MiniMap, Handle, Position, MarkerType, useNodesState, useEdgesState, useReactFlow, addEdge, applyNodeChanges, applyEdgeChanges, ReactFlowProvider. Use for architecture diagrams, dependency graphs, flow charts, state machines.
-
-Tables (@tanstack/react-table, headless): ReactTable namespace + useReactTable, getCoreRowModel, getSortedRowModel, getFilteredRowModel, getPaginationRowModel, getGroupedRowModel, getExpandedRowModel, flexRender, createColumnHelper. You write the <table>/<thead>/<tbody> markup yourself; the hooks provide state + row models.
-
-Date/time (date-fns): dateFns namespace + shortcut identifiers format, formatDistance, formatDistanceToNow, formatRelative, parseISO, addDays, subDays, addHours, subHours, differenceInDays/Hours/Minutes, isAfter, isBefore, isSameDay, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth.
-
-Colors (colord): colord(value) factory for color manipulation — e.g. colord('#6366f1').lighten(0.1).toHex(). Plus colordExtend for plugins.
-
-Use when: 3+ entities with relationships, multi-step flows, data comparisons as charts, dashboards with tables/metrics/timelines, or user explicitly asked for a visual.
-Do NOT use when: short text answers, fewer than 3 items, yes/no questions, or text is sufficient.
-
-The source must export a default function component. All scope variables are available directly (do NOT write import statements — they cause errors). All data must be inline. Use Tailwind CSS classes, not inline styles.
-
-Before calling render_artifact, load the frontend-design skill via use_skill("frontend-design") for component APIs and design guidelines."""
+Use when: 3+ related entities, multi-step flows, charts/dashboards, or the user asked for a visual. Do NOT use for short text answers, fewer than 3 items, or yes/no questions."""
 
     override val parameters = FunctionParameters(
         properties = mapOf(

@@ -64,35 +64,20 @@ class BuildTool : AgentTool {
     override val name = "build"
 
     override val description = """
-Build system intelligence — Maven, Gradle, pip, Poetry, uv, and pytest.
+Build system intelligence — Maven, Gradle, pip, Poetry, uv, pytest. Use instead of running these via run_command.
 
-Actions and their parameters:
-- maven_dependencies(module?, scope?, search?) → Maven dependencies (scope: compile|test|runtime|provided)
-- maven_properties(module?, search?) → POM properties
-- maven_plugins(module?) → Build plugins
-- maven_profiles(module?) → Build profiles
-- maven_dependency_tree(module?, artifact?) → Transitive dependency tree (artifact to filter paths)
-- maven_effective_pom(module?, plugin?) → Effective POM (plugin to filter by artifactId)
-- gradle_dependencies(module?, configuration?, search?) → Gradle deps (configuration: implementation|api|testImplementation|...)
-- gradle_tasks(module?, search?) → Gradle tasks
-- gradle_properties(module?, search?) → Gradle properties
-- project_modules() → List all IntelliJ modules
-- module_dependency_graph(module?, transitive?, include_libraries?, detect_cycles?) → Module dependency graph
-- pip_list(search?) → Installed pip packages
-- pip_outdated() → Outdated pip packages with available updates
-- pip_show(package) → Detailed info for a specific pip package
-- pip_dependencies(search?) → Declared dependencies from requirements.txt/setup.cfg/setup.py/pyproject.toml
-- poetry_list(search?) → Installed Poetry packages
-- poetry_outdated() → Outdated Poetry packages
-- poetry_show(package) → Detailed info for a specific Poetry package
-- poetry_lock_status() → Poetry lock file status and stats
-- poetry_scripts() → Scripts defined in pyproject.toml [tool.poetry.scripts]
-- uv_list(search?) → Installed uv packages
-- uv_outdated() → Outdated uv packages
-- uv_lock_status() → uv lock file status and stats
-- pytest_discover(path?) → Discover tests via pytest --collect-only
-- pytest_run(path?, pattern?, markers?) → Run pytest with optional filters
-- pytest_fixtures(path?) → List available pytest fixtures
+Actions (params in parens; '?' = optional):
+- maven_dependencies(module?, scope?, search?) — scope: compile|test|runtime|provided
+- maven_properties(module?, search?), maven_plugins(module?), maven_profiles(module?)
+- maven_dependency_tree(module?, artifact?) — artifact filters paths
+- maven_effective_pom(module?, plugin?) — plugin filters by artifactId
+- gradle_dependencies(module?, configuration?, search?) — configuration: implementation|api|testImplementation|…
+- gradle_tasks(module?, search?), gradle_properties(module?, search?)
+- project_modules(), module_dependency_graph(module?, transitive?, include_libraries?, detect_cycles?)
+- pip_list(search?), pip_outdated(), pip_show(package), pip_dependencies(search?) — declared from requirements/setup.cfg/setup.py/pyproject
+- poetry_list(search?), poetry_outdated(), poetry_show(package), poetry_lock_status(), poetry_scripts()
+- uv_list(search?), uv_outdated(), uv_lock_status()
+- pytest_discover(path?), pytest_run(path?, pattern?, markers?), pytest_fixtures(path?)
 """.trimIndent()
 
     override val parameters = FunctionParameters(

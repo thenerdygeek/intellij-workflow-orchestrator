@@ -128,32 +128,9 @@ class SpawnAgentTool(
 
     override val description: String
         get() {
-            val base = """Launch a focused sub-agent to handle a task in its own context window. Each sub-agent gets its own prompt and returns a comprehensive result. Use this for broad exploration when reading many files would consume your main context window, or to delegate self-contained implementation work. You do not need to launch multiple sub-agents every time — using one sub-agent is valid when it avoids unnecessary context usage for focused work.
+            val base = """Launch a focused sub-agent in its own fresh context window for a self-contained task (broad exploration, or delegated implementation) without consuming your main context. The sub-agent CANNOT see your conversation history — include ALL needed context in the prompt: file paths, class names, what to change and why. Don't over-delegate: a single tool call doesn't need a sub-agent, and sub-agents can't ask you questions. (When to delegate vs use direct tools is covered in the Subagent Delegation rules.)
 
-The sub-agent gets a FRESH context — it cannot see your conversation history. You MUST include all necessary context in the prompt: file paths, class names, what to look for or change, and why.
-
-Use this when:
-- A task is self-contained and you want to keep your context clean
-- You need to explore/research code without polluting your main context
-- You want to delegate implementation work (edit files, write tests, run builds)
-- You need a focused agent for a specific sub-task of a larger plan
-
-Do NOT use this when:
-- The task requires your conversation context to understand
-- A single tool call would suffice (don't over-delegate)
-- You need interactive back-and-forth (sub-agents can't ask you questions)
-
-Parallel execution (read-only agents only):
-- For read-only agents (like "explorer"), you can provide up to 5 prompts (prompt, prompt_2, ..., prompt_5).
-- Each prompt runs as a separate parallel subagent with its own context.
-- Pair each extra prompt with a matching description (description_2 for prompt_2, description_3 for prompt_3, etc.) so each worker gets a unique 3-5 word UI label. If a description_N is omitted, the primary description is reused.
-- Use this to fan out multiple research questions simultaneously.
-- For agents with write tools, only the primary prompt is used (sequential).
-
-Tips:
-- Be specific in the prompt. "Fix the bug in UserService" is bad. "In src/main/kotlin/com/example/UserService.kt, the login() method at line 45 throws NPE when email is null. Add a null check and return an error result." is good.
-- Include file paths. The sub-agent starts with zero context.
-- For implementation tasks, tell the agent to verify its work (run tests, check compilation)."""
+Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (prompt, prompt_2..prompt_5), each a separate parallel sub-agent; pair each with description_N for its UI label (falls back to the primary description). Write-capable agents use only the primary prompt (sequential). Be specific and include file paths; tell implementation agents to verify their work."""
 
             val configs = configLoader?.getFilteredConfigs(ideContext)
             if (configs.isNullOrEmpty()) return base
@@ -163,7 +140,10 @@ Tips:
                 appendLine()
                 appendLine("Available agent types (use with agent_type parameter):")
                 for (config in configs.sortedBy { it.name }) {
-                    appendLine("- \"${config.name}\": ${config.description}")
+                    // Short blurb only — the full persona description lives in the agent's own
+                    // system prompt (loaded on spawn) and the Subagent Delegation rules.
+                    val blurb = config.description.substringBefore(". ").take(90).trim()
+                    appendLine("- \"${config.name}\": $blurb")
                 }
             }
             return base + suffix.trimEnd()
