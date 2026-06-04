@@ -12,13 +12,13 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.estimateTokens
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 class MonitorTool(
     private val sessionIdProvider: () -> String?,
-    private val cs: CoroutineScope = CoroutineScope(SupervisorJob()),
+    /** Lifecycle-bound scope; AgentService injects its own managed scope when registering this tool (Task 8). */
+    private val cs: CoroutineScope,
 ) : AgentTool {
     override val name = "monitor"
     override val description =
@@ -61,11 +61,16 @@ class MonitorTool(
                 val filter = params["filter"]?.jsonPrimitive?.content
                 validateStart(source, command, filter)?.let { return err(it) }
                 val desc = params["description"]?.jsonPrimitive?.content ?: command!!.take(40)
-                val id = "shell-" + Integer.toHexString(command.hashCode())
+                val id = "shell-" + java.util.UUID.randomUUID().toString().take(8)
                 val workingDir = project.basePath?.let { java.io.File(it) }
                 val src = ShellCommandSource(id, desc, command!!, Regex(filter!!), workingDir, cs, project)
                 val handle = MonitorHandle(src, sessionId, System.currentTimeMillis())
-                pool.register(sessionId, handle)
+                try {
+                    pool.register(sessionId, handle)
+                } catch (e: MonitorPool.MaxConcurrentReached) {
+                    src.stop()
+                    return err(e.message ?: "Too many monitors")
+                }
                 // Capture sessionId in the sink so events reach the right MonitorManager (later task).
                 src.start { event -> handle.appendLine(event.formatLine()); MonitorBridge.emit(project, sessionId, event) }
                 ok("Started monitor $id. Matching lines will be delivered as notifications.")
