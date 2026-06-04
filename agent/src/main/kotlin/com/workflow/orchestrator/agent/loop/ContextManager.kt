@@ -131,6 +131,21 @@ class ContextManager(
     }
 
     /**
+     * Per-background-process read cursor (byte offset) for environment_details. Lets the
+     * "Actively Running Processes" section surface only the NEW output produced since the
+     * previous turn. Session-scoped (this ContextManager is per-session).
+     */
+    private val backgroundOutputCursors = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** Last byte offset already surfaced for [bgId] in environment_details (0 if never). */
+    fun backgroundOutputCursor(bgId: String): Long = backgroundOutputCursors[bgId] ?: 0L
+
+    /** Records the byte offset surfaced for [bgId] so the next turn shows only the delta. */
+    fun setBackgroundOutputCursor(bgId: String, offset: Long) {
+        backgroundOutputCursors[bgId] = offset
+    }
+
+    /**
      * Snapshot of non-deleted tasks for environment_details injection.
      */
     fun currentTasks(): List<Task> {

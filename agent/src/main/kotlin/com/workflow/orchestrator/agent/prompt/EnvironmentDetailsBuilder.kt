@@ -14,6 +14,17 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
+ * Render data for one still-running background process surfaced in environment_details.
+ * [newOutput] is the delta (last N lines) produced since the previous turn — may be blank.
+ */
+data class RunningProcessInfo(
+    val bgId: String,
+    val label: String,
+    val runtimeMs: Long,
+    val newOutput: String,
+)
+
+/**
  * Builds lightweight environment_details appended to every user message.
  * Port of Cline's getEnvironmentDetails() — only instant, local data.
  * No network calls, no heavy IO.
@@ -28,6 +39,12 @@ object EnvironmentDetailsBuilder {
         activeTicketSummary: String? = null,
         defaultTargetBranch: String? = null,
         repoBranches: List<Pair<String, String>> = emptyList(),
+        /**
+         * Session id, used to surface this session's still-running background processes
+         * (and their new output since the last turn). Null (sub-agents, legacy callers,
+         * tests) omits the "Actively Running Processes" section entirely.
+         */
+        sessionId: String? = null,
     ): String {
         val sb = StringBuilder()
         sb.appendLine("<environment_details>")
@@ -51,6 +68,10 @@ object EnvironmentDetailsBuilder {
 
         // 6. Context Window Usage
         sb.appendContextUsage(contextManager)
+
+        // 6b. Actively Running Processes (Cline's "Actively Running Terminals" analogue) —
+        //     this session's still-running background processes + new output since last turn.
+        sb.appendRunningProcesses(project, sessionId, contextManager)
 
         // 7. Active Plan
         val planPath = contextManager?.getActivePlanPath()
@@ -104,6 +125,69 @@ object EnvironmentDetailsBuilder {
         appendLine("Interaction mode: ${s.interactionMode}")
         appendLine("</workflow_context>")
         appendLine()
+    }
+
+    /** Max lines of new output surfaced per running process per turn (bounds tokens). */
+    private const val MAX_PROCESS_OUTPUT_LINES = 15
+
+    /**
+     * Gathers this session's still-RUNNING background processes and the new output each
+     * has produced since the previous environment_details build. The per-process read
+     * cursor (byte offset) is stored on [ContextManager] (session-scoped) and advanced
+     * here, so each turn shows only the delta — mirroring Cline's "Actively Running
+     * Terminals + new output since last turn". Guarded: any failure (no pool, no session)
+     * simply omits the section.
+     */
+    private fun StringBuilder.appendRunningProcesses(
+        project: Project,
+        sessionId: String?,
+        contextManager: ContextManager?,
+    ) {
+        if (sessionId == null) return
+        val infos: List<RunningProcessInfo> = try {
+            val pool = com.workflow.orchestrator.agent.tools.background.BackgroundPool.getInstance(project)
+            pool.list(sessionId)
+                .filter { it.state() == com.workflow.orchestrator.agent.tools.background.BackgroundState.RUNNING }
+                .map { h ->
+                    val cursor = contextManager?.backgroundOutputCursor(h.bgId) ?: 0L
+                    val chunk = h.readOutput(sinceOffset = cursor, tailLines = MAX_PROCESS_OUTPUT_LINES)
+                    contextManager?.setBackgroundOutputCursor(h.bgId, chunk.nextOffset)
+                    RunningProcessInfo(h.bgId, h.label, h.runtimeMs(), chunk.content.trim())
+                }
+        } catch (_: Exception) {
+            return
+        }
+        append(renderRunningProcessesSection(infos))
+    }
+
+    /**
+     * Pure formatter for the "Actively Running Processes" section. Empty input → "".
+     * Internal for unit testing without a live BackgroundPool.
+     */
+    internal fun renderRunningProcessesSection(procs: List<RunningProcessInfo>): String {
+        if (procs.isEmpty()) return ""
+        val sb = StringBuilder()
+        sb.appendLine("# Actively Running Processes")
+        for (p in procs) {
+            sb.appendLine("- ${p.bgId} `${p.label}` (running ${humanizeMs(p.runtimeMs)})")
+            if (p.newOutput.isBlank()) {
+                sb.appendLine("  (no new output since last check)")
+            } else {
+                sb.appendLine("  new output since last check:")
+                p.newOutput.lineSequence().forEach { sb.appendLine("    $it") }
+            }
+        }
+        sb.appendLine()
+        return sb.toString()
+    }
+
+    private fun humanizeMs(ms: Long): String {
+        val s = ms / 1000
+        return when {
+            s < 60 -> "${s}s"
+            s < 3600 -> "${s / 60}m ${s % 60}s"
+            else -> "${s / 3600}h ${(s % 3600) / 60}m"
+        }
     }
 
     private fun StringBuilder.appendTasks(contextManager: ContextManager?) {

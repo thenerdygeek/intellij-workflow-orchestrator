@@ -2513,6 +2513,9 @@ class AgentService(
                             // Convert empty-string sentinel back to null for the caller.
                             defaultTargetBranch = resolvedDefaultBranch.get()?.ifEmpty { null },
                             repoBranches = repoBranches,
+                            // Surfaces this session's still-running background processes
+                            // + their new output since last turn.
+                            sessionId = sid,
                         )
                     },
                     steeringQueue = steeringQueue,

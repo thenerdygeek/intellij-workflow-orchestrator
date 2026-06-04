@@ -74,6 +74,44 @@ class EnvironmentDetailsBuilderTest {
         assertTrue(result.endsWith("</environment_details>"))
     }
 
+    // ---- Actively Running Processes section (pure renderer) ----
+
+    @Test
+    fun `running processes section is empty when no processes`() {
+        assertEquals("", EnvironmentDetailsBuilder.renderRunningProcessesSection(emptyList()))
+    }
+
+    @Test
+    fun `running process renders bgId, command label, and new output delta`() {
+        val section = EnvironmentDetailsBuilder.renderRunningProcessesSection(
+            listOf(
+                RunningProcessInfo(
+                    bgId = "bg_a1b2c3d4",
+                    label = "npm run dev",
+                    runtimeMs = 134_000,
+                    newOutput = "Compiled successfully\nListening on :3000",
+                )
+            )
+        )
+        assertTrue(section.startsWith("# Actively Running Processes"), "section header present")
+        assertTrue(section.contains("bg_a1b2c3d4"), "bgId present")
+        assertTrue(section.contains("npm run dev"), "command label present")
+        assertTrue(section.contains("2m 14s"), "humanized runtime present")
+        assertTrue(section.contains("Listening on :3000"), "new output delta present")
+        assertTrue(section.contains("new output"), "new-output marker present")
+    }
+
+    @Test
+    fun `running process with no new output shows a no-new-output marker`() {
+        val section = EnvironmentDetailsBuilder.renderRunningProcessesSection(
+            listOf(RunningProcessInfo("bg_x", "gradle build", 8_000, ""))
+        )
+        assertTrue(section.contains("bg_x"))
+        assertTrue(section.contains("gradle build"))
+        assertTrue(section.contains("no new output"), "blank delta must render the no-new-output marker")
+        assertFalse(section.contains("new output:\n"), "must not emit an empty output block")
+    }
+
     @Test
     fun `single-repo project keeps the unlabelled branch form`() = runTest {
         val result = EnvironmentDetailsBuilder.build(
