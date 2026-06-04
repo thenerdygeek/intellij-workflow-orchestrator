@@ -72,12 +72,12 @@ class BambooMonitorSourceTest {
     @Test
     fun `branch set resolves chainKey via getPlanBranches then polls getLatestBuild resolved key`() = runTest {
         val bamboo = mockk<BambooService>()
-        coEvery { bamboo.getPlanBranches("PROJ-PLAN", null) } returns okBranches("PROJ-PLAN-123" to "feature/foo")
+        coEvery { bamboo.getPlanBranches("PROJ-PLAN") } returns okBranches("PROJ-PLAN-123" to "feature/foo")
         coEvery { bamboo.getLatestBuild("PROJ-PLAN-123") } returns okResult(okBuild("Failed", "Finished"))
         val src = source(bamboo, planKey = "PROJ-PLAN", branch = "feature/foo", scope = this)
         val events = mutableListOf<MonitorEvent>()
         src.pollOnce { events.add(it) }
-        coVerify { bamboo.getPlanBranches("PROJ-PLAN", null) }
+        coVerify { bamboo.getPlanBranches("PROJ-PLAN") }
         coVerify { bamboo.getLatestBuild("PROJ-PLAN-123") }
         // First poll terminal state → should emit
         assertEquals(1, events.size)
@@ -87,7 +87,7 @@ class BambooMonitorSourceTest {
     @Test
     fun `getPlanBranches error results in fetch returning null and pollOnce false, no events`() = runTest {
         val bamboo = mockk<BambooService>()
-        coEvery { bamboo.getPlanBranches("PROJ-PLAN", null) } returns ToolResult(data = null, summary = "err", isError = true)
+        coEvery { bamboo.getPlanBranches("PROJ-PLAN") } returns ToolResult(data = null, summary = "err", isError = true)
         val src = source(bamboo, planKey = "PROJ-PLAN", branch = "mybranch", scope = this)
         val events = mutableListOf<MonitorEvent>()
         val changed = src.pollOnce { events.add(it) }

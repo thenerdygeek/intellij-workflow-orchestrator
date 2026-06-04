@@ -96,6 +96,14 @@ class BambooDiffTest {
     }
 
     @Test
+    fun `STAGE first poll with terminal Failed state emits one ALERT`() {
+        val cur = build("Failed", "Finished", listOf(stage("Build", "Failed")))
+        val events = BambooDiff.diff("m1", BambooDiff.Level.STAGE, "Build", null, null, cur)
+        assertEquals(1, events.size)
+        assertEquals(Severity.ALERT, events[0].severity)
+    }
+
+    @Test
     fun `STAGE stageName not present in current returns empty`() {
         val prev = build("Unknown", "InProgress", listOf(stage("Build", "Unknown")))
         val cur = build("Failed", "Finished", emptyList())

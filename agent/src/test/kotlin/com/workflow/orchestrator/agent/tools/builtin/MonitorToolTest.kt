@@ -98,6 +98,12 @@ class MonitorToolTest {
     }
 
     @Test
+    fun `validateBambooStart level job with stage_name but no job_name returns job_name error`() {
+        val err = MonitorTool.validateBambooStart(planKey = "P", level = "job", stageName = "s", jobName = null)
+        assertTrue(err != null && err.contains("job_name"), "expected job_name-required error, got: $err")
+    }
+
+    @Test
     fun `validateBambooStart valid build returns null`() {
         val err = MonitorTool.validateBambooStart(planKey = "PROJ-PLAN", level = "build", stageName = null, jobName = null)
         assertEquals(null, err, "valid build params should pass, got: $err")

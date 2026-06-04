@@ -53,7 +53,7 @@ class MonitorTool(
                 description = "[start/shell] Regex; matching stdout lines notify. Matching is CASE-SENSITIVE by " +
                     "default — prefix with '(?i)' for case-insensitive (e.g. '(?i)error|failed')."),
             "plan_key" to ParameterProperty(type = "string", description = "[start/bamboo] Bamboo plan key (e.g. PROJ-PLAN)."),
-            "branch" to ParameterProperty(type = "string", description = "[start/bamboo] Branch name to watch (omit for main plan)."),
+            "branch" to ParameterProperty(type = "string", description = "[start] Branch to watch (for sources that support branches, e.g. bamboo; sonar/PR add support in later phases)."),
             "level" to ParameterProperty(type = "string",
                 description = "[start/bamboo] Granularity: build | stage | job (default: build).",
                 enumValues = listOf("build", "stage", "job")),
@@ -159,7 +159,7 @@ class MonitorTool(
         }
         val branch = params["branch"]?.jsonPrimitive?.content
         val id = "bamboo-" + java.util.UUID.randomUUID().toString().take(8)
-        val defaultDesc = "bamboo ${planKey!!} ${branch ?: ""} $level".trim()
+        val defaultDesc = "bamboo ${planKey!!} ${branch ?: ""} ${level.name.lowercase()}".trim()
         val desc = params["description"]?.jsonPrimitive?.content ?: defaultDesc
 
         val src = BambooMonitorSource(id, desc, bamboo, planKey, branch, level, stageName, jobName, cs)
@@ -167,6 +167,10 @@ class MonitorTool(
         try {
             pool.register(sessionId, handle)
         } catch (e: MonitorPool.MaxConcurrentReached) {
+            // Invariant: register BEFORE start; on register failure stop the source so future
+            // EventBus/polling sources (Phase 3+) copy the correct cleanup template. Harmless today
+            // (no SmartPoller running before start), but prevents a leaked subscription/poller.
+            src.stop()
             return err(e.message ?: "Too many monitors")
         }
         project.service<AgentService>().ensureMonitorManager(sessionId)
