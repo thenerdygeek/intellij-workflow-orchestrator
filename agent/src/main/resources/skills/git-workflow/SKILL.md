@@ -1,6 +1,6 @@
 ---
 name: git-workflow
-description: Enterprise git workflow best practices for branch management, code review, and change investigation. Use whenever the task involves git operations or version control — this includes working with branches, comparing changes, reviewing commits, investigating ticket-related changes, preparing merges, or understanding file history. Trigger phrases include "branch", "commit", "diff", "blame", "who changed", "what changed", "merge", "rebase", "cherry-pick", "stash", "history", "log", "compare branches", "review changes", "check the diff", and "shelve". For example, if the user asks "What changed on this branch?", "Who modified this file?", or "Compare my branch with main", load this skill first. It provides structured workflows for safe branching strategies, thorough change investigation using blame and history, clean commit practices, and proper merge/rebase procedures that avoid common pitfalls in enterprise codebases.
+description: Enterprise git workflow for branch management, code review, and change investigation. Triggers: branch, commit, diff, blame, 'who/what changed', merge, rebase, cherry-pick, stash, history, log, 'compare branches', 'review changes', 'check the diff', shelve. Provides safe branching, blame/history investigation, clean commits, and merge/rebase procedures.
 user-invocable: true
 preferred-tools: [run_command, changelist_shelve]
 ---

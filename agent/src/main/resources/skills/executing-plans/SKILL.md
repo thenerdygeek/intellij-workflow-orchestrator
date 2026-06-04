@@ -1,6 +1,6 @@
 ---
 name: executing-plans
-description: Execute an approved implementation plan in the current session, sequentially, with verification gates after each task and queued-bug discipline. Load this skill when the user clicks "2. Direct Execution" on the writing-plans Execution Handoff, when the plan has only 1-2 tasks where subagent dispatch overhead isn't worth it, or when consecutive tasks share heavy file state that would force subagent-driven to serialize anyway. You the orchestrator implement each task yourself, run diagnostics + compile + tests after every task, commit before moving on, queue unrelated bugs instead of inline-fixing them, triage those queued bugs after the plan completes, and call attempt_completion exactly once at the end. For plans with 3+ mostly-independent tasks, switch to subagent-driven instead.
+description: Execute an approved plan in the CURRENT session, sequentially, with verification gates after each task. Load when the user picks '2. Direct Execution' on the writing-plans handoff, when the plan has only 1-2 tasks, or when tasks share heavy file state. You implement each task, run diagnostics+compile+tests after each, commit before moving on, queue unrelated bugs (triage after), and call attempt_completion once. For 3+ mostly-independent tasks, use subagent-driven instead.
 ---
 
 # Executing Plans
