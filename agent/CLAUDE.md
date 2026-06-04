@@ -409,6 +409,49 @@ Users can send messages while the agent is working. Messages are injected at ite
 4. Drained messages added to `ContextManager` as user messages
 5. LLM sees the steering context on the next call and adjusts its approach
 
+## Monitor Framework
+
+Proactive, filter-driven event push into the ReAct loop — the complement to passive `environment_details`. When a watched source matches an event, it is delivered at the next iteration boundary if the agent loop is live (steering path), or routed through the existing `IdleSessionWaker` to wake the idle session (budget-guarded). This is fundamentally different from `environment_details`, which is always-injected ambient context.
+
+### Units
+
+- **`MonitorSource`** (`monitor/MonitorSource.kt`) — interface; one instance per watched thing. `start(emit)` begins watching; `stop()` cancels (idempotent). Every emitted `MonitorEvent` carries `monitorId`, `Severity` (`INFO`/`NOTABLE`/`ALERT`), and a human-readable `line`. `INFO` never spends wake budget (`wakeEligible = false`); `NOTABLE`/`ALERT` may wake an idle session.
+- **`ShellCommandSource`** (Phase 1 implementation) — runs a long-lived shell command via `ShellResolver` (platform-aware; `redirectErrorStream=true` so failures reach the filter). Each stdout line matching the caller's `Regex` becomes a `NOTABLE` event; lines additionally matching `FAILURE_SIGNATURES` (`Traceback|Exception|ERROR|FAILED|Killed|OOM|panic:`) escalate to `ALERT`. `classify()` is a pure static function — unit-testable without a process.
+- **`MonitorManager`** (`monitor/MonitorManager.kt`, per-session) — pure coordinator; all side effects injected (`clock`, `isLoopLive`, `deliverToLoop`, `wakeIdle`). Responsibilities: coalesce window (batches events for up to `coalesceWindowMs` before routing), per-monitor wake budget (every `WakeOutcome.WOKE` decrements the counter; at 0 the monitor goes `dormant` and stop routing wake calls), flood auto-stop (> `floodThresholdPerMin` events in the trailing 60 s → monitor auto-stopped). `flushDue()` is called from the AgentService 200 ms timer loop. `wakeOutcomeFor(IdleWakeRoute)` maps the shared idle-waker's enum to `WakeOutcome`.
+- **`MonitorPool`** (`@Service(PROJECT)`) — session-scoped `MonitorHandle` registry, **separate from `BackgroundPool`** so monitors don't consume the background-process cap or appear in `background_process(list)`. Cap: `MAX_PER_SESSION = 5`. `getInstance(project)` via `project.service()`.
+- **`MonitorHandle : BackgroundHandle`** — presents a monitor as a background unit so `EnvironmentDetailsBuilder` can surface it passively in `# Active Monitors`. Internally holds a 50-line ring-buffer of recent event lines (written by `src.start { event -> handle.appendLine(...); MonitorBridge.emit(...) }`). `sinceOffset` is ignored (ring buffer has no stable offsets). `kill()` delegates to `source.stop()`. Monitors never self-complete (`onComplete` is a no-op).
+- **`MonitorBridge`** (`monitor/MonitorBridge.kt`) — project-scoped `object`; maps `(Project, sessionId)` → `MonitorManager`. `AgentService` calls `setRouter` on init and `clearRouter` on dispose.
+
+### `monitor` tool
+
+Deferred, registered under category `"Utilities"` in `AgentService.registerAllTools()`. Actions: `start | list | stop`. Phase 1: `source=shell` only. Parameters: `command` (shell command to run), `filter` (regex), `description` (label), `monitor_id` (for stop). `allowedWorkers = {ORCHESTRATOR, CODER}`. `validateStart()` is a pure companion method (unit-testable). On `start`, a UUID-prefixed `shell-{8char}` id is generated and returned to the LLM.
+
+### Guardrails and tunables
+
+| Setting (`AgentSettings.State`) | Default | Description |
+|---|---|---|
+| `monitorCoalesceWindowMs` | 2000 | Batch events for this window before routing |
+| `monitorWakeBudgetPerMonitor` | 3 | Max idle wakes per monitor before going dormant |
+| `monitorFloodThresholdPerMin` | 20 | Auto-stop threshold (exclusive) per trailing minute |
+
+`INFO` severity never wakes (severity gate in `MonitorEvent.wakeEligible`). Wake calls route through `IdleSessionWaker` + `AutoWakeGuardState` (shared global guard — same guard honored by background-process completions and delegation results). `wakeOutcomeFor` maps `IdleWakeRoute → WakeOutcome`.
+
+### Lifecycle
+
+Session-scoped. `AgentService.monitorManagerFor(sessionId)` lazily constructs each `MonitorManager`. On session transition: `AgentController.killBackgroundsOnTransition` calls `AgentService.disposeMonitorsForSession(sessionId)` → `MonitorPool.killAll(sessionId)` + `monitorManagers.remove(sessionId)`. On explicit `monitor(action=stop)`: `pool.stop` + `AgentService.forgetMonitor` → `MonitorManager.forget(id)`. On `AgentService.dispose()`: `MonitorBridge.clearRouter(project)`.
+
+### Passive surfacing
+
+`EnvironmentDetailsBuilder.renderActiveMonitors(handles)` produces a `# Active Monitors` section (id, label, state, last event lines) injected passively into each `environment_details` block. Empty list → section omitted.
+
+### Phasing
+
+Phase 1 = framework + shell source. Bamboo/PR/Jira/Sonar domain sources are follow-on. Design spec: `docs/superpowers/specs/2026-06-04-agent-monitor-framework-design.md`.
+
+### Pinning tests
+
+`MonitorEventTest`, `MonitorSourceContractTest`, `MonitorManagerTest`, `MonitorWakeRoutingTest`, `ShellCommandSourceTest`, `MonitorHandleTest`, `MonitorSettingsDefaultsTest`, `MonitorToolTest`, `EnvironmentDetailsMonitorSectionTest`.
+
 ## Run/Test Tool Disposal — RunInvocation Pattern
 
 `java_runtime_exec.run_tests` and `coverage.run_with_coverage` route all per-launch IntelliJ listener/descriptor/connection tracking through `RunInvocation` (`agent/tools/runtime/RunInvocation.kt`) — a per-launch `Disposable` parented to the current session. Every run starts with:
