@@ -5,6 +5,14 @@ import java.util.concurrent.ConcurrentHashMap
 /** Outcome the injected idle-waker reports back, mirroring IdleWakeRoute semantics. */
 enum class WakeOutcome { WOKE, SKIPPED, DEFERRED }
 
+/** Maps an [com.workflow.orchestrator.agent.tools.background.IdleWakeRoute] onto the manager's [WakeOutcome]. */
+fun wakeOutcomeFor(route: com.workflow.orchestrator.agent.tools.background.IdleWakeRoute): WakeOutcome =
+    when (route) {
+        com.workflow.orchestrator.agent.tools.background.IdleWakeRoute.WAKE -> WakeOutcome.WOKE
+        com.workflow.orchestrator.agent.tools.background.IdleWakeRoute.SKIP_GUARD -> WakeOutcome.SKIPPED
+        else -> WakeOutcome.DEFERRED
+    }
+
 data class MonitorConfig(
     val coalesceWindowMs: Long = 2_000,
     val wakeBudgetPerMonitor: Int = 3,
