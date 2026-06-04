@@ -1356,6 +1356,17 @@ class AgentLoop(
                 // Pass CURRENT context usage (promptTokens = how full the context window is now)
                 // not cumulative totals — the UI shows "X / maxInputTokens" as a progress bar.
                 onTokenUpdate?.invoke(usage.promptTokens, usage.completionTokens)
+                // RANK-1 MEASUREMENT (perf/token-context-optimization): log prompt+completion
+                // against the effective input window. If sum routinely approaches the window the
+                // gateway caps input+output together (input cuts free thinking budget); if only
+                // prompt is bounded, input cuts merely delay the 88% compaction trigger.
+                val effMaxIn = contextManager.effectiveMaxInputTokens()
+                LOG.info(
+                    "[TokenWindow] iter=$iteration prompt=${usage.promptTokens} " +
+                        "completion=${usage.completionTokens} " +
+                        "sum=${usage.promptTokens + usage.completionTokens} effMaxInput=$effMaxIn " +
+                        "inFill=${"%.1f".format(usage.promptTokens * 100.0 / effMaxIn.coerceAtLeast(1))}%"
+                )
                 val apiLatencyMs = System.currentTimeMillis() - iterationStartTime
                 fileLogger?.logApiCall(sessionId ?: "", apiLatencyMs, usage.promptTokens, usage.completionTokens, null)
                 sessionMetrics?.recordApiCall(apiLatencyMs, usage.promptTokens, usage.completionTokens)

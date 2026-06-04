@@ -2215,7 +2215,18 @@ class AgentService(
                     if (defsHash != lastXmlToolDefsHash) {
                         lastXmlToolDefsHash = defsHash
                         val markdown = com.workflow.orchestrator.core.ai.ToolPromptBuilder.build(defs)
-                        ctx.setSystemPrompt(systemPromptBuilder(markdown))
+                        val fullPrompt = systemPromptBuilder(markdown)
+                        // RANK-1 MEASUREMENT (perf/token-context-optimization): size the
+                        // first-message baseline so prompt-trim work targets real numbers.
+                        // Tool-defs (§6c) is the largest unmeasured line item; the full prompt
+                        // is the figure the user sees as ~45-50K. ~4 chars/token rough estimate.
+                        // Fires on every rebuild: first message, plan-mode toggle, deferred load.
+                        log.info(
+                            "[PromptSize] tools=${defs.size} planMode=$isPlanMode " +
+                                "toolDefs=${markdown.length}ch(~${markdown.length / 4}tok) " +
+                                "systemPrompt=${fullPrompt.length}ch(~${fullPrompt.length / 4}tok)"
+                        )
+                        ctx.setSystemPrompt(fullPrompt)
                     }
 
                     defs
