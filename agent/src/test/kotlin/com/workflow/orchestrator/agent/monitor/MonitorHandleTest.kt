@@ -57,4 +57,20 @@ class MonitorHandleTest {
         assertEquals(false, content.contains("a"))   // evicted
         assertTrue(content.contains("b") && content.contains("c") && content.contains("d"))
     }
+
+    @Test
+    fun `markExited transitions state to EXITED and stores the code`() {
+        val h = MonitorHandle(fakeSource("m1"), "s1", 0)
+        h.markExited(3)
+        assertEquals(BackgroundState.EXITED, h.state())
+        assertEquals(3, h.exitCode())
+    }
+
+    @Test
+    fun `explicit kill takes precedence over a prior exit`() {
+        val h = MonitorHandle(fakeSource("m1"), "s1", 0)
+        h.markExited(0)
+        h.kill()
+        assertEquals(BackgroundState.KILLED, h.state())
+    }
 }

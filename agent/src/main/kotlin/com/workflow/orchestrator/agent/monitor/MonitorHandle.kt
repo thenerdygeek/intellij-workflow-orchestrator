@@ -25,6 +25,8 @@ class MonitorHandle(
     private val lines = ArrayDeque<String>()
     private val bytes = AtomicLong(0)
     private val killed = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val exited = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var exitCodeValue: Int? = null
 
     @Synchronized
     fun appendLine(line: String) {
@@ -33,8 +35,17 @@ class MonitorHandle(
         while (lines.size > maxLines) lines.removeFirst()
     }
 
-    override fun state(): BackgroundState = if (killed.get()) BackgroundState.KILLED else BackgroundState.RUNNING
-    override fun exitCode(): Int? = null
+    /** Mark this monitor as having exited naturally. KILLED takes precedence if kill() is called after. */
+    fun markExited(code: Int?) {
+        if (exited.compareAndSet(false, true)) exitCodeValue = code
+    }
+
+    override fun state(): BackgroundState = when {
+        killed.get() -> BackgroundState.KILLED
+        exited.get() -> BackgroundState.EXITED
+        else -> BackgroundState.RUNNING
+    }
+    override fun exitCode(): Int? = exitCodeValue
     override fun runtimeMs(): Long = 0
     override fun outputBytes(): Long = bytes.get()
 

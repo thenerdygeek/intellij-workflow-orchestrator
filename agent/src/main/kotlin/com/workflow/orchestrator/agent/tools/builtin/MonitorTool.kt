@@ -85,7 +85,7 @@ class MonitorTool(
                               else com.workflow.orchestrator.agent.monitor.Severity.ALERT
                     MonitorBridge.emit(project, sessionId,
                         com.workflow.orchestrator.agent.monitor.MonitorEvent(id, sev, "process exited (code=${code ?: "unknown"})"))
-                    pool.deregister(sessionId, id)
+                    pool.markExited(sessionId, id, code)
                 }
                 val src = ShellCommandSource(id, desc, command!!, Regex(filter!!), workingDir, cs, project, onExit)
                 val handle = MonitorHandle(src, sessionId, System.currentTimeMillis())
@@ -121,7 +121,9 @@ class MonitorTool(
             val out = handle.readOutput(tailLines = tailLines)
             val body = if (out.content.isBlank()) "(no matching events yet)" else out.content
             val note = if (out.truncated) "\n… (showing last $tailLines event lines)" else ""
-            return "${handle.bgId} — ${handle.label} (${handle.state()})\n$body$note"
+            val stateStr = if (handle.state() == com.workflow.orchestrator.agent.tools.background.BackgroundState.EXITED)
+                "EXITED code=${handle.exitCode()}" else handle.state().name
+            return "${handle.bgId} — ${handle.label} ($stateStr)\n$body$note"
         }
 
         /** Pure validation for `action=start`. Returns an error string, or null when valid. */

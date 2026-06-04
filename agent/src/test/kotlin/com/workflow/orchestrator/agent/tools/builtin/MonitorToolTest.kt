@@ -74,4 +74,14 @@ class MonitorToolTest {
         val err = MonitorTool.validateStart(source = "shell", command = "tail -f log", filter = "(")
         assertTrue(err!!.contains("regex"))
     }
+
+    @Test
+    fun `renderStatus shows EXITED state and exit code for a finished monitor`() {
+        val h = handleWith("shell-z", "watch build", "compiling…", "BUILD FAILED")
+        h.markExited(1)
+        val s = MonitorTool.renderStatus(h)
+        assertTrue(s.contains("EXITED"), "status should show EXITED state: $s")
+        assertTrue(s.contains("code=1") || s.contains("(1)"), "status should surface the exit code: $s")
+        assertTrue(s.contains("BUILD FAILED"), "status should still show buffered matched lines: $s")
+    }
 }
