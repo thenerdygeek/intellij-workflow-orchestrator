@@ -72,6 +72,14 @@ object EnvironmentDetailsBuilder {
         //     this session's still-running background processes + new output since last turn.
         sb.appendRunningProcesses(project, sessionId, contextManager)
 
+        // 6c. Active Monitors — session-scoped passive watchers (builds, CI, etc.).
+        if (sessionId != null) {
+            val monitors = try {
+                com.workflow.orchestrator.agent.monitor.MonitorPool.getInstance(project).list(sessionId)
+            } catch (_: Exception) { emptyList() }
+            renderActiveMonitors(monitors).takeIf { it.isNotEmpty() }?.let { sb.append(it) }
+        }
+
         // 7. Active Plan
         val planPath = contextManager?.getActivePlanPath()
         if (planPath != null) {
@@ -175,6 +183,21 @@ object EnvironmentDetailsBuilder {
                 sb.appendLine("  new output since last check:")
                 p.newOutput.lineSequence().forEach { sb.appendLine("    $it") }
             }
+        }
+        sb.appendLine()
+        return sb.toString()
+    }
+
+    /**
+     * Pure formatter for the "Active Monitors" section. Empty input → "".
+     * Internal for unit testing without a live MonitorPool.
+     */
+    internal fun renderActiveMonitors(handles: List<com.workflow.orchestrator.agent.monitor.MonitorHandle>): String {
+        if (handles.isEmpty()) return ""
+        val sb = StringBuilder("# Active Monitors\n")
+        for (h in handles) {
+            val tail = h.readOutput(tailLines = 5).content.lineSequence().lastOrNull { it.isNotBlank() } ?: ""
+            sb.append("- ${h.bgId} (${h.label}) — last: ${tail.take(120)}\n")
         }
         sb.appendLine()
         return sb.toString()
