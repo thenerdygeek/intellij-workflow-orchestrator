@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.monitor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -59,5 +60,48 @@ class ShellCommandSourceProcessIntegrationTest {
             src.stop(); scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
         }
         assertEquals(0, events.size, "no lines match the filter; got: ${events.toList().map { it.line }}")
+    }
+
+    @org.junit.jupiter.api.Test
+    fun `stop halts delivery promptly even when a child process holds the pipe`() {
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
+        val events = java.util.concurrent.ConcurrentLinkedQueue<MonitorEvent>()
+        // Nested shell: the bash wrapper spawns `sh -c` which runs the emitting loop in a CHILD.
+        // Killing only the direct process orphans the child, which keeps emitting — this reproduces the bug.
+        val src = ShellCommandSource(
+            monitorId = "stop-test", description = "stop",
+            command = "sh -c 'while true; do echo tick-match; sleep 0.2; done'",
+            filter = Regex("match"), workingDir = null, cs = scope, project = null,
+        )
+        try {
+            src.start { events.add(it) }
+            val deadline = System.currentTimeMillis() + 5000
+            while (events.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(50)
+            org.junit.jupiter.api.Assertions.assertTrue(events.isNotEmpty(), "expected at least one event before stop")
+            src.stop()
+            val countAtStop = events.size
+            Thread.sleep(2000)   // ~10 more ticks would arrive if the tree weren't killed
+            val leaked = events.toList().drop(countAtStop).map { it.line }
+            org.junit.jupiter.api.Assertions.assertEquals(countAtStop, events.size,
+                "no events should arrive after stop; leaked: $leaked")
+        } finally { src.stop(); scope.cancel() }
+    }
+
+    @org.junit.jupiter.api.Test
+    fun `natural process exit fires onExit with the exit code`() {
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
+        val exitLatch = java.util.concurrent.CountDownLatch(1)
+        val exitCode = java.util.concurrent.atomic.AtomicReference<Int?>(null)
+        val src = ShellCommandSource(
+            monitorId = "exit-test", description = "exit",
+            command = "echo go-match; exit 3",
+            filter = Regex("match"), workingDir = null, cs = scope, project = null,
+            onExit = { code -> exitCode.set(code); exitLatch.countDown() },
+        )
+        try {
+            src.start { }
+            org.junit.jupiter.api.Assertions.assertTrue(exitLatch.await(10, java.util.concurrent.TimeUnit.SECONDS), "onExit was not called on natural exit")
+            org.junit.jupiter.api.Assertions.assertEquals(3, exitCode.get())
+        } finally { src.stop(); scope.cancel() }
     }
 }

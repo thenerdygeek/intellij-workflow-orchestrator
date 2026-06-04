@@ -47,6 +47,9 @@ class MonitorPool(
         h.kill(); return true
     }
 
+    /** Remove a monitor from the session pool WITHOUT killing it (used when the source exits on its own). */
+    fun deregister(sessionId: String, id: String): Boolean = pools[sessionId]?.remove(id) != null
+
     fun killAll(sessionId: String) {
         pools.remove(sessionId)?.values?.forEach { runCatching { it.kill() } }
     }

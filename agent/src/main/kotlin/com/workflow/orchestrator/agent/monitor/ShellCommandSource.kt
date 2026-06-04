@@ -24,14 +24,17 @@ class ShellCommandSource(
     private val workingDir: java.io.File?,
     private val cs: CoroutineScope,
     private val project: Project?,
+    private val onExit: (exitCode: Int?) -> Unit = {},
 ) : MonitorSource {
 
     @Volatile private var job: Job? = null
     @Volatile private var process: Process? = null
+    @Volatile private var stopped = false
 
     override fun start(emit: (MonitorEvent) -> Unit) {
         // TODO(Phase 2): gate `command` through DefaultCommandFilter for parity with RunCommandTool.
         job = cs.launch(Dispatchers.IO) {
+            var exit: Int? = null
             runCatching {
                 // Platform-aware shell selection (Windows: Git Bash → PowerShell → cmd; Unix: /bin/bash → $SHELL → /bin/sh).
                 // ShellResolver tolerates a null project, but fall back to /bin/bash -lc if resolution fails.
@@ -43,18 +46,28 @@ class ShellCommandSource(
                 }.redirectErrorStream(true)
                 if (workingDir != null) pb.directory(workingDir)
                 val p = pb.start().also { process = it }
+                if (stopped) { killTree(p); return@launch }   // start-after-stop race guard
                 p.inputStream.bufferedReader().use { r: BufferedReader ->
-                    r.lineSequence().forEach { line ->
+                    for (line in r.lineSequence()) {
+                        if (stopped) break
                         classify(monitorId, line, filter)?.let(emit)
                     }
                 }
+                exit = runCatching { p.waitFor() }.getOrNull()
             }.onFailure { LOG.warn("[ShellCommandSource:$monitorId] failed: ${it.message}", it) }
+            if (!stopped) onExit(exit)   // natural exit only — explicit stop suppresses the exit notification
         }
     }
 
     override fun stop() {
-        runCatching { process?.destroyForcibly() }
+        stopped = true
+        process?.let { killTree(it) }
         job?.cancel(); job = null
+    }
+
+    private fun killTree(p: Process) {
+        runCatching { p.descendants().forEach { runCatching { it.destroyForcibly() } } }  // snapshot taken before parent dies
+        runCatching { p.destroyForcibly() }
     }
 
     companion object {

@@ -68,7 +68,14 @@ class MonitorTool(
                 val desc = params["description"]?.jsonPrimitive?.content ?: command!!.take(40)
                 val id = "shell-" + java.util.UUID.randomUUID().toString().take(8)
                 val workingDir = project.basePath?.let { java.io.File(it) }
-                val src = ShellCommandSource(id, desc, command!!, Regex(filter!!), workingDir, cs, project)
+                val onExit: (Int?) -> Unit = { code ->
+                    val sev = if (code == 0) com.workflow.orchestrator.agent.monitor.Severity.NOTABLE
+                              else com.workflow.orchestrator.agent.monitor.Severity.ALERT
+                    MonitorBridge.emit(project, sessionId,
+                        com.workflow.orchestrator.agent.monitor.MonitorEvent(id, sev, "process exited (code=${code ?: "unknown"})"))
+                    pool.deregister(sessionId, id)
+                }
+                val src = ShellCommandSource(id, desc, command!!, Regex(filter!!), workingDir, cs, project, onExit)
                 val handle = MonitorHandle(src, sessionId, System.currentTimeMillis())
                 try {
                     pool.register(sessionId, handle)
