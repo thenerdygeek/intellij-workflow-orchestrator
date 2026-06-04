@@ -76,7 +76,11 @@ object EnvironmentDetailsBuilder {
         if (sessionId != null) {
             val monitors = try {
                 com.workflow.orchestrator.agent.monitor.MonitorPool.getInstance(project).list(sessionId)
-            } catch (_: Exception) { emptyList() }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                emptyList()
+            }
             renderActiveMonitors(monitors).takeIf { it.isNotEmpty() }?.let { sb.append(it) }
         }
 

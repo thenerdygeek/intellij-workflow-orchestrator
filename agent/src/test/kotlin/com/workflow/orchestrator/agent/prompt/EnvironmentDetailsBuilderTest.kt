@@ -113,6 +113,17 @@ class EnvironmentDetailsBuilderTest {
     }
 
     @Test
+    fun `active monitors section absent when sessionId is null`() = runTest {
+        val result = EnvironmentDetailsBuilder.build(
+            project = project,
+            planModeEnabled = false,
+            contextManager = null,
+            sessionId = null
+        )
+        assertFalse(result.contains("# Active Monitors"), "monitor section must be skipped when sessionId is null")
+    }
+
+    @Test
     fun `single-repo project keeps the unlabelled branch form`() = runTest {
         val result = EnvironmentDetailsBuilder.build(
             project = project,
