@@ -32,7 +32,6 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import org.jetbrains.idea.maven.execution.MavenRunnerParameters
 
@@ -92,9 +91,7 @@ internal suspend fun executeRunMavenGoal(
                 "Check for unbalanced quotes or invalid escape sequences."
         )
     }
-    val modules: List<String> = params["modules"]?.jsonArray
-        ?.mapNotNull { it.jsonPrimitive.content.takeIf { s -> s.isNotBlank() } }
-        ?: emptyList()
+    val modules: List<String> = parseModules(params["modules"])
     val offline: Boolean = params["offline"]?.jsonPrimitive?.booleanOrNull ?: false
 
     val approvalArgs = buildString {
@@ -161,6 +158,40 @@ internal suspend fun executeRunMavenGoal(
 
 internal fun tokenizeExtraArgs(raw: String): List<String> =
     if (raw.isBlank()) emptyList() else ParametersListUtil.parse(raw)
+
+/**
+ * Parse the `modules` param into a clean module list.
+ *
+ * The XML-in-content tool path (the only path post-2026-05-13) serializes every parsed param
+ * value as a [kotlinx.serialization.json.JsonPrimitive] **string** (see `BrainRouter`), so
+ * `modules` never arrives as a real JSON array even though its schema type is "array". This
+ * helper accepts every form the LLM realistically emits without throwing:
+ *  - a native [JsonArray] (defensive — e.g. a future native-tool-call path or test input),
+ *  - a JSON-array literal carried inside a string (`["core","api"]`),
+ *  - a comma- or whitespace-separated string (`core,api` / `core api`).
+ * Blank/`null` → empty list. Pure for unit testing.
+ */
+internal fun parseModules(element: kotlinx.serialization.json.JsonElement?): List<String> {
+    fun clean(values: List<String>): List<String> =
+        values.map { it.trim().trim('"') }.filter { it.isNotEmpty() }
+    return when (element) {
+        null -> emptyList()
+        is kotlinx.serialization.json.JsonArray ->
+            clean(element.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content })
+        is kotlinx.serialization.json.JsonPrimitive -> {
+            val s = element.content.trim()
+            when {
+                s.isEmpty() -> emptyList()
+                s.startsWith("[") -> runCatching {
+                    (kotlinx.serialization.json.Json.parseToJsonElement(s) as kotlinx.serialization.json.JsonArray)
+                        .mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+                }.getOrElse { s.removePrefix("[").removeSuffix("]").split(',') }.let(::clean)
+                else -> clean(s.split(',', ' ', '\n', '\t'))
+            }
+        }
+        else -> emptyList()
+    }
+}
 
 /**
  * Locale-independent lookup. The id "MavenRunConfiguration" is registered by

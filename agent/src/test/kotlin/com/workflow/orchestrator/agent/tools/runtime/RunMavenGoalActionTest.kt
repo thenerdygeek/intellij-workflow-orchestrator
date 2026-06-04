@@ -11,6 +11,9 @@ import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkAll
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.AfterEach
@@ -145,6 +148,38 @@ class RunMavenGoalActionTest {
             offline = true
         )
         assertEquals(listOf("verify", "-o"), tokens)
+    }
+
+    // ── parseModules: the XML-in-content path delivers `modules` as a STRING ──
+    // BrainRouter serializes every parsed XML param as a JsonPrimitive string, so
+    // `modules` never arrives as a real JSON array. parseModules must accept the
+    // string forms the LLM actually emits without throwing.
+
+    @Test
+    fun `parseModules splits a comma-separated string from the XML param path`() {
+        assertEquals(listOf("core", "api"), parseModules(JsonPrimitive("core, api")))
+    }
+
+    @Test
+    fun `parseModules splits a space-separated string`() {
+        assertEquals(listOf("core", "api"), parseModules(JsonPrimitive("core api")))
+    }
+
+    @Test
+    fun `parseModules parses a JSON-array literal emitted as text`() {
+        assertEquals(listOf("core", "api"), parseModules(JsonPrimitive("""["core","api"]""")))
+    }
+
+    @Test
+    fun `parseModules accepts a native JSON array`() {
+        assertEquals(listOf("core", "api"), parseModules(buildJsonArray { add("core"); add("api") }))
+    }
+
+    @Test
+    fun `parseModules returns empty for null or blank`() {
+        assertEquals(emptyList<String>(), parseModules(null))
+        assertEquals(emptyList<String>(), parseModules(JsonPrimitive("")))
+        assertEquals(emptyList<String>(), parseModules(JsonPrimitive("  ")))
     }
 
     @Test

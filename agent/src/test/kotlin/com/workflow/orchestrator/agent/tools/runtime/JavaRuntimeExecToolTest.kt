@@ -85,6 +85,24 @@ class JavaRuntimeExecToolTest {
         assertTrue(result.content.startsWith("INVALID_ARGS:"))
     }
 
+    // ── compile_module timeout (#2): configurable + actionable message ──
+
+    @Test
+    fun `compile_module timeout defaults to 300s and is clamped between 30 and 900`() {
+        assertEquals(300L, resolveCompileTimeoutSeconds(buildJsonObject { }), "default should be 300s")
+        assertEquals(600L, resolveCompileTimeoutSeconds(buildJsonObject { put("timeout", 600) }), "explicit value honored")
+        assertEquals(900L, resolveCompileTimeoutSeconds(buildJsonObject { put("timeout", 5000) }), "clamped to 900s max")
+        assertEquals(30L, resolveCompileTimeoutSeconds(buildJsonObject { put("timeout", 1) }), "clamped to 30s min")
+    }
+
+    @Test
+    fun `compile timeout message states the timeout and gives actionable next steps`() {
+        val msg = compileTimeoutMessage("core", 300L)
+        assertTrue(msg.contains("300"), "message must state the actual timeout used. Got: $msg")
+        assertTrue(msg.contains("timeout", ignoreCase = true), "message should suggest raising the timeout. Got: $msg")
+        assertTrue(msg.contains("module", ignoreCase = true), "message should suggest compiling a single module. Got: $msg")
+    }
+
     @Test
     fun `description mentions JUnit TestNG and CompilerManager territory`() {
         val desc = tool.description

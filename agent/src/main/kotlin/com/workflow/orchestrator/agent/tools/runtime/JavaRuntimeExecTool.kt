@@ -89,6 +89,30 @@ internal const val MAX_METHODS_PER_RUN = 50
  */
 internal val METHOD_NAME_REGEX: Regex = Regex("""^[A-Za-z_$][A-Za-z0-9_$]*$""")
 
+/** Floor for the compile_module timeout — a sub-30s compile cap is never useful. */
+internal const val COMPILE_MIN_TIMEOUT_SECONDS = 30L
+
+/**
+ * Resolve the compile_module timeout (seconds). Defaults to [RUN_TESTS_DEFAULT_TIMEOUT] (300s,
+ * up from the old hard-coded 120s — large modules routinely exceed two minutes) and is clamped
+ * to [[COMPILE_MIN_TIMEOUT_SECONDS], [RUN_TESTS_MAX_TIMEOUT]] (30..900s). Pure for unit testing.
+ */
+internal fun resolveCompileTimeoutSeconds(params: JsonObject): Long =
+    (params["timeout"]?.jsonPrimitive?.intOrNull?.toLong() ?: RUN_TESTS_DEFAULT_TIMEOUT)
+        .coerceIn(COMPILE_MIN_TIMEOUT_SECONDS, RUN_TESTS_MAX_TIMEOUT)
+
+/**
+ * Actionable compile_module timeout message — states the actual timeout used and the concrete
+ * levers (raise `timeout`, narrow to a single `module`, inspect the Build tool window) instead
+ * of the old uninformative "The build may be stuck.". Pure for unit testing.
+ */
+internal fun compileTimeoutMessage(target: String, timeoutSeconds: Long): String =
+    "Compilation of $target timed out after ${timeoutSeconds}s. This usually means a very large " +
+        "compile scope or a build stuck on an unresponsive annotation processor / external task. " +
+        "Next steps: pass a larger `timeout` (up to ${RUN_TESTS_MAX_TIMEOUT}s), narrow the scope by " +
+        "compiling a single `module` instead of the whole project, or check the IDE Build tool " +
+        "window for a hung task."
+
 /**
  * Java/Kotlin-specific runtime execution — runs JUnit/TestNG tests and compiles modules
  * via IntelliJ's CompilerManager. Registered only when the Java plugin is present
@@ -114,7 +138,7 @@ Java/Kotlin runtime execution — JUnit/TestNG test running, module compilation,
 
 Actions and their parameters:
 - run_tests(class_name, method?, timeout?, use_native_runner?) → Run tests for a specific Java/Kotlin class via IntelliJ's JUnit/TestNG runner, with Maven/Gradle shell fallback (timeout default 300s, max 900s). class_name is required and must be fully qualified — use test_finder to discover test classes first. `method` accepts a single name ('testFoo') or a comma-separated list ('testFoo,testBar,testBaz') to run several methods from the same class in one launch; output is aggregated into a single result.
-- compile_module(module?, check_dependents?, refresh_maven_first?) → Compile a Java/Kotlin module via CompilerManager. If `module` is omitted, compiles the entire project. When `module` is given and `check_dependents=true`, also recompiles modules that depend on it (catches downstream ABI breakage after editing an upstream module). Default check_dependents is false. Set `refresh_maven_first=true` after a CLI `mvn install` to trigger MavenProjectsManager reimport (~30s) before compiling so newly-published artifacts are picked up.
+- compile_module(module?, check_dependents?, refresh_maven_first?, timeout?) → Compile a Java/Kotlin module via CompilerManager. If `module` is omitted, compiles the entire project. When `module` is given and `check_dependents=true`, also recompiles modules that depend on it (catches downstream ABI breakage after editing an upstream module). Default check_dependents is false. Set `refresh_maven_first=true` after a CLI `mvn install` to trigger MavenProjectsManager reimport (~30s) before compiling so newly-published artifacts are picked up. `timeout` (seconds, default 300, max 900) raises the kill window for very large modules.
 - rerun_failed_tests(session_id?) → Re-run only the failed/errored tests from the last test session. Resolves the most-recent test run via RunContentManager (or the session matching session_id if provided). Returns NO_PRIOR_TEST_SESSION if no test session exists, or an informational message if all tests passed.
 - run_maven_goal(goals, modules?, offline?, extra_args?) → Execute Maven goals via IntelliJ's Maven plugin runner (appears in Run tool window; honors IDE-configured Maven home/JRE/settings.xml/VM options). `goals` is space-separated (e.g., "clean install", "dependency:tree"). `modules` prepends -pl <csv> -am for multi-module scoping. `extra_args` is free-form Maven flags (-DskipTests, -Pdev, -T 4, -U). 20 minute timeout.
 
@@ -141,7 +165,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             ),
             "timeout" to ParameterProperty(
                 type = "integer",
-                description = "Seconds before test process is killed (default: 300, max: 900) — for run_tests"
+                description = "Seconds before the test run or module compile is killed (default: 300, max: 900) — for run_tests and compile_module"
             ),
             "use_native_runner" to ParameterProperty(
                 type = "boolean",
@@ -166,6 +190,24 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             "session_id" to ParameterProperty(
                 type = "string",
                 description = "Name or partial name of the prior test session to rerun failures from — for rerun_failed_tests. Defaults to most-recent test session when omitted."
+            ),
+            "goals" to ParameterProperty(
+                type = "string",
+                description = "Space-separated Maven goals (required for run_maven_goal), e.g. \"clean install\" or \"dependency:tree\". " +
+                    "Maven flags like -DskipTests may be appended here or passed via extra_args."
+            ),
+            "modules" to ParameterProperty(
+                type = "array",
+                description = "Optional Maven module list — for run_maven_goal. Prepends -pl <csv> -am to scope a multi-module build to these modules and their dependencies.",
+                items = ParameterProperty(type = "string", description = "Module artifactId or :module-name")
+            ),
+            "offline" to ParameterProperty(
+                type = "boolean",
+                description = "When true, runs Maven offline (-o) — for run_maven_goal. Default: false."
+            ),
+            "extra_args" to ParameterProperty(
+                type = "string",
+                description = "Free-form Maven flags appended after the goals — for run_maven_goal (e.g. \"-DskipTests -Pdev -T 4 -U\"). Tokenized respecting quotes."
             )
         ),
         required = listOf("action")
@@ -236,9 +278,9 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 "will throw and the native runner will fall back to shell — which is safe but silently downgrades the UX."
         )
         downside(
-            "compile_module has a hard 120s timeout enforced by withTimeoutOrNull. Very large projects (millions of " +
-                "source lines) may time out even on a fast machine. No incremental-only option — CompilerManager.make " +
-                "always runs whatever the compiler decides is dirty."
+            "compile_module's timeout (default 300s, raisable to 900s via the `timeout` param) is enforced by " +
+                "withTimeoutOrNull. Very large projects (millions of source lines) may still time out even at 900s. " +
+                "No incremental-only option — CompilerManager.make always runs whatever the compiler decides is dirty."
         )
         downside(
             "rerun_failed_tests resolves descriptors from RunContentManager.allDescriptors, which includes tabs the " +
@@ -283,7 +325,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                         example("testFoo,testBar,testBaz")
                     }
                     optional("timeout", "integer") {
-                        llmSeesIt("Seconds before test process is killed (default: 300, max: 900) — for run_tests")
+                        llmSeesIt("Seconds before the test run or module compile is killed (default: 300, max: 900) — for run_tests and compile_module")
                         humanReadable("Wall-clock cap on the test run.")
                         whenPresent("Test process is killed after this many seconds.")
                         whenAbsent("Defaults to 300s.")
@@ -359,6 +401,14 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                         whenAbsent("Defaults to false — compiles against IntelliJ's current in-memory model, which can be stale after a CLI Maven build.")
                         example("true")
                     }
+                    optional("timeout", "integer") {
+                        llmSeesIt("Seconds before the test run or module compile is killed (default: 300, max: 900) — for run_tests and compile_module")
+                        humanReadable("Wall-clock cap on the compile, in seconds.")
+                        whenPresent("CompilerManager.make is abandoned after this many seconds.")
+                        whenAbsent("Defaults to 300s (raise for very large modules).")
+                        constraint("clamped to [30, 900]")
+                        example("600")
+                    }
                     optional("description", "string") {
                         llmSeesIt("Brief description of what this action does and why (shown to user in approval dialog) — for run_tests, compile_module, rerun_failed_tests")
                         humanReadable("Short reason shown in the user's approval dialog.")
@@ -370,7 +420,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 onSuccess("Returns 'Compilation of <target> successful' (with warning count when non-zero), or per-file compile errors via formatCompileErrors when errors > 0.")
                 onFailure("module name does not match any module", "Returns 'Module \\'<name>\\' not found.' with the available module names.")
                 onFailure("compilation aborted", "Returns 'Compilation of <target> was aborted.' with isError=true.")
-                onFailure("compile takes longer than 120s", "Returns 'Compilation timed out after 120 seconds. The build may be stuck.' with isError=true.")
+                onFailure("compile exceeds the timeout (default 300s, max 900s)", "Returns an actionable 'Compilation of <target> timed out after Ns' message with next steps (raise timeout, narrow to one module, check the Build tool window); isError=true.")
                 example("compile a single module") {
                     param("action", "compile_module")
                     param("module", "myapp.core")
@@ -434,6 +484,64 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                             "the FAILED/ERROR subset rather than the full class. The alternative is manually listing " +
                             "failed methods and passing them as a comma-separated 'method' string to run_tests, " +
                             "which the LLM often gets wrong under long-context pressure.",
+                        VerdictSeverity.NORMAL
+                    )
+                }
+            }
+            action("run_maven_goal") {
+                description {
+                    technical("Executes Maven goals through IntelliJ's Maven plugin runner (MavenRunConfiguration). The run appears in the Run tool window and honors the IDE-configured Maven home / JRE / settings.xml / VM options. Builds an ephemeral, transient run configuration, launches it via the IDE Run executor, captures process output through the descriptor's ProcessHandler, and disposes everything through a RunInvocation. 20-minute timeout.")
+                    plain("Runs `mvn <goals>` the way the IDE's Maven tool window would — using your configured Maven home, JDK, and settings.xml — instead of shelling out to the `mvn` on PATH.")
+                }
+                whenLLMUses("To run Maven goals (clean, install, dependency:tree, etc.) so they use the IDE's Maven config and show up in the Run tool window. Prefer over run_command(\"mvn ...\") for goal execution.")
+                params {
+                    required("goals", "string") {
+                        llmSeesIt("Space-separated Maven goals (required for run_maven_goal), e.g. \"clean install\" or \"dependency:tree\". " +
+                            "Maven flags like -DskipTests may be appended here or passed via extra_args.")
+                        humanReadable("The Maven goals to run, e.g. \"clean install\".")
+                        whenPresent("Tokenized on whitespace and passed to the Maven runner as the goal list.")
+                        constraint("must contain at least one goal — an empty goal list silently produces a misleading BUILD SUCCESS")
+                        example("clean install")
+                        example("dependency:tree")
+                    }
+                    optional("modules", "array") {
+                        llmSeesIt("Optional Maven module list — for run_maven_goal. Prepends -pl <csv> -am to scope a multi-module build to these modules and their dependencies.")
+                        humanReadable("Restrict the build to these modules (and what they depend on).")
+                        whenPresent("Prepends -pl <csv> -am so only the named modules and their dependencies build.")
+                        whenAbsent("Builds the whole reactor.")
+                        example("core")
+                    }
+                    optional("offline", "boolean") {
+                        llmSeesIt("When true, runs Maven offline (-o) — for run_maven_goal. Default: false.")
+                        humanReadable("Run Maven in offline mode (-o).")
+                        whenPresent("Appends -o so Maven never reaches the network.")
+                        whenAbsent("Defaults to false — Maven may resolve from remote repositories.")
+                        example("true")
+                    }
+                    optional("extra_args", "string") {
+                        llmSeesIt("Free-form Maven flags appended after the goals — for run_maven_goal (e.g. \"-DskipTests -Pdev -T 4 -U\"). Tokenized respecting quotes.")
+                        humanReadable("Extra Maven command-line flags, e.g. \"-DskipTests -Pdev\".")
+                        whenPresent("Tokenized respecting quotes and appended after the goals.")
+                        whenAbsent("No extra flags are added.")
+                        example("-DskipTests -Pdev")
+                    }
+                }
+                onSuccess("Returns a header (goals, modules, working dir, Maven home, exit code, duration) followed by the Maven output; large output spills to disk with a preview.")
+                onFailure("goals is blank", "Returns INVALID_ARGS — provide at least one goal.")
+                onFailure("project is not Mavenized", "Returns NOT_A_MAVEN_PROJECT — use run_command ./gradlew for Gradle, or import the pom.xml first.")
+                onFailure("build exits non-zero", "Returns BUILD_FAILURE with the exit code and the Maven output.")
+                onFailure("build exceeds 20 minutes", "Returns TIMEOUT — narrow scope (modules, -DskipTests, -T <n>).")
+                example("clean install skipping tests") {
+                    param("action", "run_maven_goal")
+                    param("goals", "clean install")
+                    param("extra_args", "-DskipTests")
+                    outcome("Runs `mvn clean install -DskipTests` via the IDE Maven runner; result appears in the Run tool window.")
+                }
+                verdict {
+                    keep(
+                        "Running Maven goals through the IDE runner (not a raw `mvn` shell) is the only path that honors " +
+                            "the user's configured Maven home, JRE, settings.xml, and VM options, and surfaces the run in the " +
+                            "Run tool window. run_command(\"mvn ...\") silently uses whatever `mvn` is on PATH.",
                         VerdictSeverity.NORMAL
                     )
                 }
@@ -1980,6 +2088,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         val moduleName = params["module"]?.jsonPrimitive?.content
         val checkDependents = params["check_dependents"]?.jsonPrimitive?.booleanOrNull ?: false
         val refreshMavenFirst = params["refresh_maven_first"]?.jsonPrimitive?.booleanOrNull ?: false
+        val timeoutSeconds = resolveCompileTimeoutSeconds(params)
 
         // Feedback #7 (2026-05-17): after `run_command mvn install`, IntelliJ's in-memory
         // project model holds the previously-resolved JAR paths and versions. compile_module
@@ -2012,7 +2121,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         } else ""
 
         return try {
-            val result = withTimeoutOrNull(120_000L) {
+            val result = withTimeoutOrNull(timeoutSeconds * 1000) {
                 suspendCancellableCoroutine { cont ->
                     cont.invokeOnCancellation { }
                     ApplicationManager.getApplication().invokeLater {
@@ -2080,8 +2189,8 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             }
 
             result ?: ToolResult(
-                "Compilation timed out after 120 seconds. The build may be stuck.",
-                "Compile timeout", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
+                compileTimeoutMessage(moduleName ?: "project", timeoutSeconds),
+                "Compile timeout (${timeoutSeconds}s)", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true
             )
         } catch (e: Exception) {
             ToolResult("Compilation error: ${e.message}", "Compilation error", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)

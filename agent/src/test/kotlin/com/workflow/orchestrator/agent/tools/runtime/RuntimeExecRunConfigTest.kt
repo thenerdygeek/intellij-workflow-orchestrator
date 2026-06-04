@@ -911,6 +911,14 @@ class RuntimeExecRunConfigTest {
             result.content.contains("1") || result.content.contains("exit"),
             "Content should include exit code. Got: ${result.content}"
         )
+        // #3 fix: the process tail output carries the real crash cause (e.g. a
+        // "connection refused" / "failed to bind port" line). It must be surfaced —
+        // mirroring TIMEOUT_WAITING_FOR_READY — so the LLM can diagnose the crash
+        // without issuing a second get_run_output call.
+        assertTrue(
+            result.content.contains("failed to bind port 8080"),
+            "EXITED_BEFORE_READY must include the process tail output. Got: ${result.content}"
+        )
     }
 
     // ═══════════════════════════════════════════════════════════════════════

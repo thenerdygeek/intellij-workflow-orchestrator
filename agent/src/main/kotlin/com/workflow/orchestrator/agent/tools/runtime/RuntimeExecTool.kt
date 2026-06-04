@@ -1333,7 +1333,10 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
 
             // Check for immediate launch failure
             if (processStartFailed.get()) {
-                val msg = processStartFailedMsg.get() ?: "PROCESS_START_FAILED: Unknown launch failure."
+                val baseMsg = processStartFailedMsg.get() ?: "PROCESS_START_FAILED: Unknown launch failure."
+                // A process that exits before ready often has its crash cause in the tail
+                // (e.g. "connection refused"); surface it like TIMEOUT_WAITING_FOR_READY does.
+                val msg = withTailOutput(baseMsg, logBuffer.toString(), tailLines)
                 return ToolResult(msg, "Launch failed", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
             }
 
@@ -1478,7 +1481,12 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
                 }
 
                 if (processStartFailed.get()) {
-                    val msg = processStartFailedMsg.get() ?: "EXITED_BEFORE_READY"
+                    val baseMsg = processStartFailedMsg.get() ?: "EXITED_BEFORE_READY"
+                    // Surface the process tail output — the crash cause (e.g. "connection
+                    // refused", "failed to bind port") is almost always in the last lines.
+                    // Mirrors the TIMEOUT_WAITING_FOR_READY branch below so the LLM can
+                    // diagnose without a second get_run_output call.
+                    val msg = withTailOutput(baseMsg, logBuffer.toString(), tailLines)
                     return ToolResult(msg, "Process failed before ready", ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
                 }
 
@@ -2080,6 +2088,17 @@ To run tests or compile: use java_runtime_exec (on IntelliJ with Java plugin) or
     }
 
     companion object {
+        /**
+         * Append the process tail output to a launch-/readiness-failure message so the
+         * crash cause (e.g. "connection refused", "failed to bind port") rides along with
+         * the error category. Mirrors the TIMEOUT_WAITING_FOR_READY "Last output:" framing.
+         * Pure + internal for unit testing.
+         */
+        internal fun withTailOutput(baseMsg: String, logOutput: String, tailLines: Int): String {
+            val tail = logOutput.lines().takeLast(tailLines).joinToString("\n").trim()
+            return if (tail.isEmpty()) baseMsg else "$baseMsg\nLast output:\n$tail"
+        }
+
         // get_run_output constants
         private const val RUN_OUTPUT_DEFAULT_LINES = 200
         private const val RUN_OUTPUT_MAX_LINES = 1000
