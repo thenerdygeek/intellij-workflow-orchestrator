@@ -84,4 +84,20 @@ class MonitorToolTest {
         assertTrue(s.contains("code=1") || s.contains("(1)"), "status should surface the exit code: $s")
         assertTrue(s.contains("BUILD FAILED"), "status should still show buffered matched lines: $s")
     }
+
+    @Test
+    fun `renderStatus shows code=0 for a clean exit`() {
+        val h = handleWith("shell-ok", "watch build", "BUILD SUCCESSFUL")
+        h.markExited(0)
+        val s = MonitorTool.renderStatus(h)
+        assertTrue(s.contains("code=0"), "status should surface a clean exit code: $s")
+    }
+
+    @Test
+    fun `renderStatus handles unknown (null) exit code`() {
+        val h = handleWith("shell-unknown", "watch build", "something")
+        h.markExited(null)
+        val s = MonitorTool.renderStatus(h)
+        assertTrue(s.contains("EXITED"), "status should render EXITED without crashing on a null code: $s")
+    }
 }

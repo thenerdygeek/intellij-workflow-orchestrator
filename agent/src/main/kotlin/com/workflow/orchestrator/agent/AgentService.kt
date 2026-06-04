@@ -474,6 +474,9 @@ class AgentService(
         MonitorBridge.setRouter(project) { sessionId, event ->
             monitorManagers[sessionId]?.onEvent(event)
         }
+        // When MonitorPool prunes an old EXITED handle, forget its per-id MonitorManager state
+        // (pending/wakeBudget/dormant/autoStopped/recentTimestamps) so the slot doesn't leak.
+        MonitorPool.getInstance(project).forgetCallback = { sid, id -> forgetMonitor(sid, id) }
         cs.launch(Dispatchers.IO) {
             while (isActive) {
                 // Per-manager isolation: one bad manager's flush must not starve the others.

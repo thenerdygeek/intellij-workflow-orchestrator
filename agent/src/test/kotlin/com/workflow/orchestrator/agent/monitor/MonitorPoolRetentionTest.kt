@@ -12,6 +12,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
@@ -126,5 +127,33 @@ class MonitorPoolRetentionTest {
         // The newest exited handles should still be present
         val newestId = "e${maxExited + 2}"
         assertNotNull(pool.get(sid, newestId), "newest exited handle $newestId should be retained")
+    }
+
+    /**
+     * Pruning invokes forgetCallback for each pruned id (so the MonitorManager per-id state is
+     * forgotten), and NOT for the retained ids.
+     */
+    @Test
+    fun `pruning invokes forgetCallback for each pruned id and not for retained ids`() = runBlocking {
+        val sid = "s1"
+        val maxExited = MonitorPool.MAX_EXITED_RETAINED
+        val forgotten = mutableListOf<Pair<String, String>>()
+        pool.forgetCallback = { s, id -> forgotten.add(s to id) }
+
+        for (i in 1..(maxExited + 2)) {
+            pool.register(sid, fakeHandle("e$i", sid, startedAt = i.toLong()))
+            pool.markExited(sid, "e$i", i)
+        }
+
+        // The two oldest (e1, e2) must have been pruned → forgetCallback invoked for them.
+        assertEquals(2, forgotten.size, "exactly the 2 over-cap oldest ids should be forgotten: $forgotten")
+        assertEquals(setOf(sid to "e1", sid to "e2"), forgotten.toSet(),
+            "forgetCallback should receive the pruned ids: $forgotten")
+
+        // Retained ids must NOT appear in the forgotten list.
+        val forgottenIds = forgotten.map { it.second }.toSet()
+        for (i in 3..(maxExited + 2)) {
+            assertTrue("e$i" !in forgottenIds, "retained id e$i must not be forgotten")
+        }
     }
 }

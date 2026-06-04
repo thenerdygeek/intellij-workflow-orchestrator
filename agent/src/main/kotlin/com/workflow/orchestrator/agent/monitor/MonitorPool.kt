@@ -24,6 +24,15 @@ class MonitorPool(
     private val pools = ConcurrentHashMap<String, ConcurrentHashMap<String, MonitorHandle>>()
     private val mutex = Mutex()
 
+    /**
+     * Invoked for each EXITED handle dropped by [pruneExited] so the owner (AgentService) can
+     * forget that monitor's per-id MonitorManager state (pending/wakeBudget/dormant/autoStopped/
+     * recentTimestamps). Wired in AgentService init to `forgetMonitor`. NOT invoked by
+     * [markExited] itself — forgetting at exit time would clear the just-emitted 'process exited'
+     * notification from the manager's pending queue before the 200 ms flush delivers it.
+     */
+    @Volatile var forgetCallback: ((sessionId: String, id: String) -> Unit)? = null
+
     companion object {
         const val MAX_PER_SESSION = 5
         /** Maximum number of EXITED handles retained per session for post-exit inspection. */
@@ -47,27 +56,39 @@ class MonitorPool(
 
     fun stop(sessionId: String, id: String): Boolean {
         val h = pools[sessionId]?.remove(id) ?: return false
-        // TODO(Task 7/8): also call MonitorManager.forget(id) so a re-registered monitor with the same id starts clean (else stale dormant/autoStopped/flood state leaks).
+        // Manager-forget on explicit stop is handled at the tool layer (MonitorTool.stop calls
+        // AgentService.forgetMonitor); prune-forget is handled here via forgetCallback.
         h.kill(); return true
     }
 
-    /** Remove a monitor from the session pool WITHOUT killing it (used when the source exits on its own). */
-    fun deregister(sessionId: String, id: String): Boolean = pools[sessionId]?.remove(id) != null
-
     /**
      * Mark a monitor EXITED (kept in the pool so status/list can inspect it), then prune old exited.
-     * Non-suspend: called from the onExit callback which runs outside a coroutine.
+     *
+     * Intentionally lock-free (called from the onExit callback, which runs outside a coroutine).
+     * Consequence: the RUNNING-count cap in [register] is a SOFT bound — a concurrent markExited
+     * can cause at most a transient ±1 drift in the cap, which self-corrects on the next register.
+     * No data-loss/crash risk: CHM ops are atomic and ids are unique UUIDs.
      */
     fun markExited(sessionId: String, id: String, code: Int?) {
         val sp = pools[sessionId] ?: return
         sp[id]?.markExited(code)
-        pruneExited(sp)
+        pruneExited(sessionId, sp)
     }
 
-    private fun pruneExited(sp: ConcurrentHashMap<String, MonitorHandle>) {
-        val exitedHandles = sp.values.filter { it.state() == BackgroundState.EXITED }.sortedBy { it.startedAt }
+    /**
+     * Drop the oldest EXITED handles beyond [MAX_EXITED_RETAINED] (RUNNING handles are never
+     * pruned), invoking [forgetCallback] for each dropped id so its MonitorManager per-id state
+     * is forgotten. Deterministic ordering via (startedAt, bgId) so two handles sharing a
+     * millisecond startedAt prune in a stable order. Lock-free — see [markExited].
+     */
+    private fun pruneExited(sessionId: String, sp: ConcurrentHashMap<String, MonitorHandle>) {
+        val exitedHandles = sp.values.filter { it.state() == BackgroundState.EXITED }
+            .sortedWith(compareBy({ it.startedAt }, { it.bgId }))
         val toRemove = exitedHandles.size - MAX_EXITED_RETAINED
-        if (toRemove > 0) exitedHandles.take(toRemove).forEach { sp.remove(it.bgId) }
+        if (toRemove > 0) exitedHandles.take(toRemove).forEach {
+            sp.remove(it.bgId)
+            forgetCallback?.invoke(sessionId, it.bgId)
+        }
     }
 
     fun killAll(sessionId: String) {

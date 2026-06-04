@@ -73,4 +73,13 @@ class MonitorHandleTest {
         h.kill()
         assertEquals(BackgroundState.KILLED, h.state())
     }
+
+    @Test
+    fun `kill before markExited keeps KILLED state but still records the exit code`() {
+        val h = MonitorHandle(fakeSource("m1"), "s1", 0)
+        h.kill()
+        h.markExited(2)
+        assertEquals(BackgroundState.KILLED, h.state())
+        assertEquals(2, h.exitCode())
+    }
 }

@@ -35,7 +35,11 @@ class MonitorHandle(
         while (lines.size > maxLines) lines.removeFirst()
     }
 
-    /** Mark this monitor as having exited naturally. KILLED takes precedence if kill() is called after. */
+    /**
+     * Mark this monitor as having exited naturally. KILLED takes precedence in [state] if [kill]
+     * ran first (killed wins in the `when`), but we still record [exitCodeValue] here — exposing
+     * the process's real exit code on a KILLED handle is intentional and useful, not a contradiction.
+     */
     fun markExited(code: Int?) {
         if (exited.compareAndSet(false, true)) exitCodeValue = code
     }
