@@ -98,6 +98,15 @@ object GradleSonarKeyDetector {
 
             log.debug("[Sonar:Detect:T2.5] No Gradle project matched repo path: $repoRootPath")
             null
+        } catch (e: LinkageError) {
+            // The Gradle plugin (org.jetbrains.plugins.gradle) is NOT a declared dependency,
+            // so its classes (GradleSettings, ExternalProject…) are unavailable at runtime
+            // whenever that plugin isn't loaded — touching them throws NoClassDefFoundError,
+            // a LinkageError (NOT an Exception). Degrade to null instead of crashing the
+            // AutoDetect coroutine. To actually enable Gradle detection, declare an optional
+            // dependency on org.jetbrains.plugins.gradle in plugin.xml.
+            log.debug("[Sonar:Detect:T2.5] Gradle plugin classes unavailable; skipping Gradle tier: ${e.message}")
+            null
         } catch (e: Exception) {
             log.warn("[Sonar:Detect:T2.5] Detection failed", e)
             null

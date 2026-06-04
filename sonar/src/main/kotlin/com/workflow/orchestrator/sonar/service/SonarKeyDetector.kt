@@ -96,6 +96,13 @@ class SonarKeyDetector(private val project: Project) : SonarKeyDetectorService {
 
             log.debug("[Sonar:Detect] No tier matched repo path: $repoRootPath")
             null
+        } catch (e: LinkageError) {
+            // Defense-in-depth: an external-system tier (Maven/Gradle) may reference plugin
+            // classes that are absent when that plugin is disabled/unloaded — NoClassDefFoundError
+            // is a LinkageError, not an Exception, so it would otherwise crash the AutoDetect
+            // coroutine. Degrade to null.
+            log.debug("[Sonar:Detect] external-system plugin classes unavailable for $repoRootPath: ${e.message}")
+            null
         } catch (e: Exception) {
             log.warn("[Sonar:Detect] detectForPath failed for $repoRootPath", e)
             null

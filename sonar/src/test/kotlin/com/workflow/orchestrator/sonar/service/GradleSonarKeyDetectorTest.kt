@@ -68,6 +68,21 @@ class GradleSonarKeyDetectorTest {
         GradleSonarKeyDetector.dataSource = GradleSonarKeyDetector.DefaultGradleSonarDataSource
     }
 
+    // ── Robustness: Gradle plugin classes absent at runtime ──
+
+    @Test
+    fun `detect returns null (no crash) when Gradle plugin classes are unavailable`() {
+        // Simulates the production NoClassDefFoundError: GradleSettings — a LinkageError, not
+        // an Exception — raised when org.jetbrains.plugins.gradle is not a declared dependency.
+        GradleSonarKeyDetector.dataSource = object : GradleSonarKeyDetector.GradleSonarDataSource {
+            override fun linkedProjectPaths(project: Project): Collection<String> =
+                throw NoClassDefFoundError("org/jetbrains/plugins/gradle/settings/GradleSettings")
+            override fun rootExternalProject(project: Project, rootProjectPath: String): ExternalProject? = null
+        }
+
+        assertNull(GradleSonarKeyDetector.detect(project, "/any/repo/path"))
+    }
+
     // ── Tier 2.5a: explicit sonar.projectKey from gradle.properties ──
 
     @Test
