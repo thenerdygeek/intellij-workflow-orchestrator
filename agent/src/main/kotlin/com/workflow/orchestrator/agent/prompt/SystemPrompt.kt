@@ -392,22 +392,17 @@ Key rules:
 
     private fun outputFormatting(): String = """OUTPUT FORMATTING
 
-When mentioning code or work items in prose, ALWAYS format the mention as a markdown link with one of the custom URL schemes below. The chat UI renders these as clickable navigation; a plain-text mention is dead text the user cannot click.
+In prose, ALWAYS format a mention of a file, code symbol, or Jira ticket as a markdown link with one of the custom URL schemes below — NEVER as plain text (the chat UI renders these as clickable navigation; plain text is dead). Unresolvable symbols fall back to plain text automatically.
 
 Schemes:
-- Files: [path/to/Foo.kt](file:path/to/Foo.kt)
-- Files with a line: [Foo.kt:42](file:path/to/Foo.kt:42)
-- Files with a line range: [Foo.kt:42-58](file:path/to/Foo.kt:42-58)
-- Code symbols (class, method, field, enum constant) — any language: [Foo](symbol:com.example.Foo) for a type, [Foo#run](symbol:com.example.Foo#run) for a member. Always use the fully qualified name; bare names may not resolve. Symbols the IDE can't resolve fall back to plain text automatically.
+- Files: [path/to/Foo.kt](file:path/to/Foo.kt) — with a line [Foo.kt:42](file:path/to/Foo.kt:42) or range [Foo.kt:42-58](file:path/to/Foo.kt:42-58)
+- Code symbols (any language): [Foo](symbol:com.example.Foo) for a type, [Foo#run](symbol:com.example.Foo#run) for a member. Always use the fully qualified name; bare names may not resolve.
 - Jira tickets: [PROJ-1234](jira:PROJ-1234)
 - External URLs: standard markdown link
 
-EXAMPLE (well-formatted response in prose):
-I traced the bug to [AgentService#run](symbol:com.workflow.orchestrator.agent.service.AgentService#run) at [AgentService.kt:142-156](file:agent/src/main/kotlin/AgentService.kt:142-156). It's a regression from the work tracked in [WORK-1234](jira:WORK-1234). The fix is one line at [FileLinkResolver.kt:88](file:core/src/main/kotlin/FileLinkResolver.kt:88).
+EXAMPLE: I traced the bug to [AgentService#run](symbol:com.workflow.orchestrator.agent.service.AgentService#run) at [AgentService.kt:142-156](file:agent/src/main/kotlin/AgentService.kt:142-156), a regression from [WORK-1234](jira:WORK-1234).
 
-NEGATIVE RULE: in prose, NEVER mention a file, class, method, or Jira ticket as plain text. If you write `AgentService.kt` in a sentence, wrap it as `[AgentService.kt](file:...)`. If you write `WORK-1234`, wrap it as `[WORK-1234](jira:WORK-1234)`.
-
-CARVE-OUT: inside fenced code blocks (triple backticks) and inline code spans (single backticks), do NOT linkify. Code must remain verbatim so it can be copied. Hyperlink formatting applies to prose only."""
+CARVE-OUT: inside fenced code blocks and inline code spans, do NOT linkify — code must stay verbatim so it can be copied. Hyperlink formatting applies to prose only."""
 
     /**
      * Section 4: Act vs Plan Mode
@@ -549,27 +544,12 @@ In each user message, the environment_details will specify the current mode. The
         appendLine()
         appendLine("### Background Processes")
         appendLine()
-        appendLine("When run_command is called with background: true, the command starts in the")
-        appendLine("background and returns immediately with a bgId. The ReAct loop continues")
-        appendLine("without waiting.")
-        appendLine()
-        appendLine("Management tool: background_process")
-        appendLine("- background_process() — list all background processes in this session")
-        appendLine("- background_process(id=\"bg_xxx\") — status of one process")
-        appendLine("- background_process(id=\"bg_xxx\", action=\"output\", tail_lines=50) — read output")
-        appendLine("- background_process(id=\"bg_xxx\", action=\"attach\") — wait for exit (monitor loop)")
-        appendLine("- background_process(id=\"bg_xxx\", action=\"send_stdin\", input=\"yes\\n\")")
-        appendLine("- background_process(id=\"bg_xxx\", action=\"kill\") — the ONLY way to terminate a")
-        appendLine("  background process; there is no separate dedicated termination tool.")
-        appendLine()
-        appendLine("Background processes are session-scoped — automatically killed when the")
-        appendLine("user starts a new chat, switches sessions, deletes this session, or closes")
-        appendLine("the IDE. When a background process exits you automatically receive a system")
-        appendLine("message with the outcome, either at the next iteration or as a new resumed")
-        appendLine("turn if the loop had ended.")
-        appendLine()
-        appendLine("Typical uses: trigger an HTTP endpoint that will hit a breakpoint you plan")
-        appendLine("to inspect; start a long-running build or dev server while doing other work.")
+        appendLine("run_command with background: true returns immediately with a bgId; manage it")
+        appendLine("via the background_process tool (see its schema for actions — output, attach,")
+        appendLine("send_stdin, kill). kill is the ONLY way to terminate one. Background processes")
+        appendLine("are session-scoped (auto-killed on new chat / session switch / IDE close), and")
+        appendLine("when one exits you automatically receive a system message with the outcome —")
+        appendLine("at the next iteration, or as a newly resumed turn if the loop had ended.")
 
         // Task-to-tool hints — helps the LLM prefer specialized tools over generic fallbacks
         appendLine()
@@ -913,16 +893,7 @@ In each user message, the environment_details will specify the current mode. The
             appendLine("- Prefer existing knowledge before reaching for web_search. Only search when you don't already know the answer or when the user explicitly asks for the latest.")
             appendLine("- Two-step pattern: web_search to discover URLs → pick the single best result → web_fetch on that URL. Don't fetch every result.")
             appendLine("- If the user gives you a specific URL, web_fetch directly without searching.")
-            appendLine()
-            appendLine("Recovery from web tool errors:")
-            appendLine("- UNLISTED_DOMAIN / NO_PROVIDER_CONFIGURED — the user must configure the tool. Use ask_followup_question to ask if they want to add the domain to the allowlist or set up a provider. Don't retry the same call until config changes.")
-            appendLine("- APPROVAL_DENIED — the user explicitly said no to that URL. Don't fetch it again; try a different source or ask the user.")
-            appendLine("- APPROVAL_TIMEOUT — the user didn't respond in 60s. Move on; don't retry immediately.")
-            appendLine("- SANITIZER_REFUSED — content was too dangerous to relay. Try a different URL or report to the user.")
-            appendLine("- SHORTENER_UNRESOLVED — the URL shortener didn't redirect. Ask the user for the direct URL.")
-            appendLine("- HTTP_4xx (non-recoverable) — fix the URL or accept the failure. HTTP_5xx — retry once with backoff, then move on.")
-            appendLine("- PLAN_MODE_BLOCKED — you're in plan mode, web tools are restricted. Use plan_mode_respond to surface your plan.")
-            appendLine("- WEB_FETCH_DISABLED / WEB_SEARCH_DISABLED — the user disabled the tool in Settings. Tell them and stop trying.")
+            appendLine("- On a web tool error, read the error's CATEGORY/code and act on it (e.g. ask the user to configure an unlisted domain or provider; don't re-fetch a denied URL; don't retry a disabled tool). Do not retry the same call blindly.")
             appendLine()
         }
 
