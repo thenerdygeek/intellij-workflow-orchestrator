@@ -706,4 +706,75 @@ class AskFollowupQuestionFlowTest {
             job.join()
         }
     }
+
+    // ════════════════════════════════════════════
+    //  Image attachments on a question-answer reach the LLM
+    //  (regression: a simple ask_followup_question answered with an
+    //   attached image silently dropped the image — "I don't see a
+    //   new image in your current message")
+    // ════════════════════════════════════════════
+
+    @Nested
+    @DisplayName("[Multimodal] answer attachments are forwarded to the LLM")
+    inner class AnswerAttachments {
+
+        @Test
+        fun `image attached to a simple answer is returned as imageRefs on the result`() = runTest {
+            tool.showSimpleQuestionCallback = { _, _ -> }
+
+            var result: com.workflow.orchestrator.agent.tools.ToolResult? = null
+            val job = launch {
+                result = tool.execute(buildJsonObject {
+                    put("question", "Can you see this image?")
+                }, project)
+            }
+
+            kotlinx.coroutines.yield()
+            assertNotNull(tool.pendingQuestions, "Deferred must be set while waiting")
+
+            // Mirror AgentController routing an answer that carried an image.
+            tool.pendingAnswerImageRefs = listOf(
+                com.workflow.orchestrator.core.services.ToolResult.ImageRefData(
+                    sha256 = "8fdbc1376773aabbccddeeff",
+                    mime = "image/png",
+                    size = 129690L,
+                    originalFilename = "screenshot.png",
+                )
+            )
+            tool.pendingQuestions?.complete("Yes, attached")
+            job.join()
+
+            assertNotNull(result, "execute must return a result")
+            assertEquals(
+                1, result!!.imageRefs.size,
+                "the image attached to the answer must reach the LLM via ToolResult.imageRefs",
+            )
+            assertEquals("8fdbc1376773aabbccddeeff", result!!.imageRefs.first().sha256)
+        }
+
+        @Test
+        fun `pendingAnswerImageRefs is cleared after the answer is consumed`() = runTest {
+            tool.showSimpleQuestionCallback = { _, _ -> }
+
+            val job = launch {
+                tool.execute(buildJsonObject {
+                    put("question", "See it?")
+                }, project)
+            }
+
+            kotlinx.coroutines.yield()
+            tool.pendingAnswerImageRefs = listOf(
+                com.workflow.orchestrator.core.services.ToolResult.ImageRefData(
+                    sha256 = "deadbeef", mime = "image/png", size = 1L, originalFilename = null,
+                )
+            )
+            tool.pendingQuestions?.complete("answer")
+            job.join()
+
+            assertTrue(
+                tool.pendingAnswerImageRefs.isEmpty(),
+                "image refs must not leak into the next question turn",
+            )
+        }
+    }
 }

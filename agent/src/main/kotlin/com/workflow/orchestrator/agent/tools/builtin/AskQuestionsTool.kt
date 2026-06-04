@@ -221,6 +221,23 @@ class AskQuestionsTool : AgentTool {
     var pendingQuestions: CompletableDeferred<String>? = null
 
     /**
+     * Image attachments the user added to a question-answer reply, set by
+     * [com.workflow.orchestrator.agent.ui.AgentController] immediately before it
+     * completes [pendingQuestions]. The answering [executeSimple]/[executeWizard]
+     * call drains this into the returned [ToolResult.imageRefs] so the loop emits
+     * `ContentBlock.ImageRef` blocks and the turn routes to the vision endpoint —
+     * the same path user-pasted images take. Cleared on every resolution so an
+     * image can't leak into the next question turn.
+     *
+     * The answer transport ([pendingQuestions]) is text-only by type; this sibling
+     * field carries the structured attachments alongside it. The agent loop
+     * serializes tool calls, so a single-slot field is safe (same invariant the
+     * single-slot [pendingQuestions] already relies on).
+     */
+    @Volatile
+    var pendingAnswerImageRefs: List<com.workflow.orchestrator.core.services.ToolResult.ImageRefData> = emptyList()
+
+    /**
      * Set to true by the UI layer (JCEF bridge round-trip) when the question
      * has been successfully rendered. Checked by [executeSimple]/[executeWizard]
      * after [UI_RENDER_GRACE_MS] to detect silent UI failures.
@@ -389,6 +406,14 @@ class AskQuestionsTool : AgentTool {
         watchdogTimer.cancel()
         pendingQuestions = null
 
+        // Drain any image attachments the user added to this answer (set by
+        // AgentController just before completing the deferred). Cleared here on
+        // EVERY resolution path — cancel/skip/render-fail/answer — so an image
+        // can never leak into a later question turn. Only a real answer forwards
+        // them (below) as ToolResult.imageRefs.
+        val answerImages = pendingAnswerImageRefs
+        pendingAnswerImageRefs = emptyList()
+
         if (answer.contains("\"cancelled\":true")) {
             // User explicitly dismissed the question — stop the agent loop.
             throw CancellationException("Task stopped: user cancelled the question")
@@ -435,7 +460,8 @@ class AskQuestionsTool : AgentTool {
         return ToolResult(
             content = content,
             summary = "User answered: ${answer.take(200)}",
-            tokenEstimate = TokenEstimator.estimate(content)
+            tokenEstimate = TokenEstimator.estimate(content),
+            imageRefs = answerImages,
         )
     }
 
@@ -481,6 +507,10 @@ class AskQuestionsTool : AgentTool {
         watchdogTimer.cancel()
         pendingQuestions = null
 
+        // Same drain-and-clear contract as executeSimple (see comment there).
+        val answerImages = pendingAnswerImageRefs
+        pendingAnswerImageRefs = emptyList()
+
         if (answersJson.contains("\"cancelled\":true")) {
             // User explicitly dismissed the wizard — stop the agent loop.
             throw CancellationException("Task stopped: user cancelled the question wizard")
@@ -499,7 +529,8 @@ class AskQuestionsTool : AgentTool {
         return ToolResult(
             content = content,
             summary = "ask_followup_question: user responded",
-            tokenEstimate = TokenEstimator.estimate(content)
+            tokenEstimate = TokenEstimator.estimate(content),
+            imageRefs = answerImages,
         )
     }
 

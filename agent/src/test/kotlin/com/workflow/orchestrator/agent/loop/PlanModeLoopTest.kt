@@ -116,7 +116,8 @@ class PlanModeLoopTest {
         tools: List<AgentTool>,
         planMode: Boolean = false,
         onPlanResponse: ((String, Boolean, Boolean) -> Unit)? = null,
-        userInputChannel: Channel<String>? = null
+        userInputChannel: Channel<String>? = null,
+        pendingChannelImageRefs: (() -> List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef>)? = null
     ): AgentLoop {
         val toolMap = tools.associateBy { it.name }
         val toolDefs = tools.map { it.toToolDefinition() }
@@ -128,7 +129,8 @@ class PlanModeLoopTest {
             project = project,
             planMode = planMode,
             onPlanResponse = onPlanResponse,
-            userInputChannel = userInputChannel
+            userInputChannel = userInputChannel,
+            pendingChannelImageRefs = pendingChannelImageRefs
         )
     }
 
@@ -186,6 +188,50 @@ class PlanModeLoopTest {
             assertEquals(1, planCallbackFired.size, "plan callback should fire once")
             assertTrue(planCallbackFired[0].first.contains("Here is my plan"))
             assertFalse(planCallbackFired[0].second, "needsMoreExploration should be false")
+        }
+
+        @Test
+        fun `image attached to a plan-mode reply reaches the LLM as image parts`() = runTest {
+            val channel = Channel<String>(Channel.RENDEZVOUS)
+
+            val brain = sequenceBrain(
+                // LLM presents a plan — loop waits for the user's reply
+                toolCallResponse("plan_mode_respond" to """{"response":"Here is my plan"}"""),
+                // After the user replies (with an image), LLM completes
+                toolCallResponse("attempt_completion" to """{"result":"Done"}""")
+            )
+
+            val completionTool = fakeTool("attempt_completion", ToolResult(
+                content = "Done", summary = "Done", tokenEstimate = 5, isCompletion = true
+            ))
+            val tools = listOf(PlanModeRespondTool(), completionTool)
+
+            val loop = buildLoop(
+                brain, tools,
+                planMode = true,
+                userInputChannel = channel,
+                // The user attached an image to their plan-mode reply.
+                pendingChannelImageRefs = {
+                    listOf(
+                        com.workflow.orchestrator.agent.session.ContentBlock.ImageRef(
+                            sha256 = "abc123def456",
+                            mime = "image/png",
+                            size = 4096L,
+                            originalFilename = "diagram.png",
+                        )
+                    )
+                }
+            )
+
+            val loopJob = launch { loop.run("Plan the refactor") }
+            channel.send("Does this image match what you meant?")
+            loopJob.join()
+
+            val carriesImage = contextManager.getMessages().any { it.hasImageParts() }
+            assertTrue(
+                carriesImage,
+                "a plan-mode reply with an attached image must reach the LLM as image parts",
+            )
         }
 
         @Test

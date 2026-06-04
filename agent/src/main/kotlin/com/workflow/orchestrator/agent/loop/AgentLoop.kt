@@ -423,6 +423,16 @@ class AgentLoop(
      */
     private val onUserInputReceived: ((task: String) -> UiMessage?)? = null,
     /**
+     * Optional provider drained right after [userInputChannel] delivers a message,
+     * yielding the image attachments the user added to that reply (plan-mode reply,
+     * max-mistakes feedback, plan_mode_respond answer). When non-empty the channel
+     * message is added to context with `ContentPart.Image` parts so the turn routes
+     * to the vision endpoint — mirroring the run() attachment path. [AgentController]
+     * backs this with a single-use AtomicReference set before sending to the channel.
+     * Null (sub-agents/tests) preserves the prior text-only behaviour.
+     */
+    private val pendingChannelImageRefs: (() -> List<ContentBlock.ImageRef>)? = null,
+    /**
      * Optional callback fired after each API call with cumulative session stats.
      * Used by the UI to show model chip, token counts, and estimated cost in the TopBar.
      *
@@ -1643,7 +1653,7 @@ class AgentLoop(
                         val receivedTask = userInputChannel.receive()
                         // Persist typed UI message override if provided (e.g. PLAN_APPROVED bubble).
                         onUserInputReceived?.invoke(receivedTask)?.let { messageStateHandler?.addToClineMessages(it) }
-                        contextManager.addUserMessage(withEnvDetails(receivedTask))
+                        addReceivedUserMessageToContext(receivedTask)
                         iterationsSinceLastUser = 0
                         consecutiveMistakes = 0
                         consecutiveEmpties = 0  // reset: plan-mode chat is a genuine exchange, not a stall
@@ -1657,7 +1667,7 @@ class AgentLoop(
                         val receivedTask = userInputChannel.receive()
                         // Persist typed UI message override if provided.
                         onUserInputReceived?.invoke(receivedTask)?.let { messageStateHandler?.addToClineMessages(it) }
-                        contextManager.addUserMessage(withEnvDetails(receivedTask))
+                        addReceivedUserMessageToContext(receivedTask)
                         iterationsSinceLastUser = 0
                         consecutiveMistakes = 0
                     } else if (consecutiveMistakes >= maxConsecutiveMistakes) {
@@ -2349,7 +2359,7 @@ class AgentLoop(
                         val receivedTask = userInputChannel.receive()
                         // Persist typed UI message override if provided (e.g. PLAN_APPROVED bubble).
                         onUserInputReceived?.invoke(receivedTask)?.let { messageStateHandler?.addToClineMessages(it) }
-                        contextManager.addUserMessage(withEnvDetails(receivedTask))
+                        addReceivedUserMessageToContext(receivedTask)
                         userInputReceivedInToolCall = true
                         // Continue the loop — LLM will see the user's message and respond
                     }
@@ -2525,6 +2535,28 @@ class AgentLoop(
     private suspend fun withEnvDetails(message: String): String {
         val envDetails = environmentDetailsProvider?.invoke()
         return if (envDetails != null) "$message\n\n$envDetails" else message
+    }
+
+    /**
+     * Adds a user message delivered via [userInputChannel] (plan-mode reply,
+     * max-mistakes feedback, plan_mode_respond answer) to the in-memory context.
+     *
+     * If [pendingChannelImageRefs] yields attachments (the user attached images to
+     * the reply), they ride along as [ContentPart.Image] so `hasImageParts()` fires
+     * and the turn routes to the vision endpoint — mirroring the run() attachment
+     * path. Otherwise a plain text user message, preserving prior behaviour.
+     */
+    private suspend fun addReceivedUserMessageToContext(receivedTask: String) {
+        val imageRefs = pendingChannelImageRefs?.invoke() ?: emptyList()
+        if (imageRefs.isEmpty()) {
+            contextManager.addUserMessage(withEnvDetails(receivedTask))
+        } else {
+            val parts = buildList<ContentPart> {
+                add(ContentPart.Text(withEnvDetails(receivedTask)))
+                imageRefs.forEach { add(ContentPart.Image(sha256 = it.sha256, mime = it.mime)) }
+            }
+            contextManager.addUserMessageWithParts(parts)
+        }
     }
 
     /**

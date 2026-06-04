@@ -298,6 +298,16 @@ class AgentController(
     private val pendingUiMessageOverride = java.util.concurrent.atomic.AtomicReference<com.workflow.orchestrator.agent.session.UiMessage?>(null)
 
     /**
+     * Image attachments the user added to a plan-mode/feedback reply, set just
+     * before the typed answer is sent into [userInputChannel]. Drained once by the
+     * [AgentLoop] (via the `pendingChannelImageRefs` provider wired into
+     * [AgentService.executeTask]/[resumeSession]) when it consumes the channel
+     * message, so the reply's images reach the LLM as `ContentPart.Image` parts.
+     * Single-use: the loop's provider does `getAndSet(emptyList())`.
+     */
+    private val pendingReplyImageRefs = java.util.concurrent.atomic.AtomicReference<List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef>>(emptyList())
+
+    /**
      * Thread-safe queue for mid-turn steering messages.
      * When the user sends a message while the loop is actively running (not waiting for input),
      * the message is added here instead of cancelling the current task.
@@ -2280,11 +2290,22 @@ class AgentController(
         if (pending != null && !pending.isCompleted && currentJob?.isActive == true) {
             LOG.info("AgentController: resolving pending question with user answer — setting busy=true, steeringMode=true")
             if (attachments.isNotEmpty()) {
-                // Known limitation: attachments on a question-reply path render in
-                // the bubble but are NOT delivered to the LLM (the question
-                // completion channel only carries the typed answer). The image
-                // bytes are stored on disk so a follow-up turn could attach them.
-                LOG.warn("AgentController: ${attachments.size} attachment(s) on pending-question reply will not reach the LLM (rendered in bubble only)")
+                // Forward image attachments alongside the typed answer. The question
+                // completion deferred is text-only by type, so the structured refs
+                // ride a sibling field (drained into ToolResult.imageRefs by
+                // AskQuestionsTool). The loop then emits ContentBlock.ImageRef blocks
+                // and routes the turn to the vision endpoint — same path as a
+                // normal image-bearing message. Must be set BEFORE complete() so the
+                // awaiting tool coroutine observes it.
+                askQuestionsTool.pendingAnswerImageRefs = attachments.map {
+                    com.workflow.orchestrator.core.services.ToolResult.ImageRefData(
+                        sha256 = it.sha256,
+                        mime = it.mime,
+                        size = it.size,
+                        originalFilename = it.originalFilename,
+                    )
+                }
+                LOG.info("AgentController: ${attachments.size} attachment(s) on pending-question reply forwarded to the LLM via imageRefs")
             }
             displayUserMessage(uiText, displayMentionsJson, attachments = attachments, files = files)
             dashboard.setBusy(true)
@@ -2298,9 +2319,13 @@ class AgentController(
         if (loopWaitingForInput && channel != null && currentJob?.isActive == true) {
             LOG.info("AgentController: feeding user message into existing loop via channel — setting busy=true, steeringMode=true")
             if (attachments.isNotEmpty()) {
-                // Same limitation as the pending-question path — channel.send
-                // is text-only. Bytes remain on disk for a future turn.
-                LOG.warn("AgentController: ${attachments.size} attachment(s) on plan-mode reply will not reach the LLM (rendered in bubble only)")
+                // channel.send is text-only by type, so stash the structured refs in
+                // a single-use side-channel the loop drains when it consumes this
+                // message (pendingChannelImageRefs provider). Set BEFORE channel.send
+                // so the loop observes it. The images then ride as ContentPart.Image
+                // and the turn routes to the vision endpoint, same as a normal message.
+                pendingReplyImageRefs.set(attachments)
+                LOG.info("AgentController: ${attachments.size} attachment(s) on plan-mode reply forwarded to the LLM via channel image refs")
             }
             displayUserMessage(uiText, displayMentionsJson, uiMessageOverride, attachments, files)
             dashboard.setBusy(true)
@@ -2405,6 +2430,7 @@ class AgentController(
             onPlanModeToggled = ui.onPlanModeToggled,
             onPlanDiscarded = ui.onPlanDiscarded,
             userInputChannel = userInputChannel,
+            pendingChannelImageRefs = { pendingReplyImageRefs.getAndSet(emptyList()) },
             approvalGate = ui.approvalGate,
             sessionApprovalStore = ui.sessionApprovalStore,
             onSubagentProgress = ui.onSubagentProgress,
@@ -3227,6 +3253,7 @@ class AgentController(
         userInputChannel = null
         loopWaitingForInput = false
         pendingUiMessageOverride.set(null)
+        pendingReplyImageRefs.set(emptyList())
         steeringQueue.clear()
         clearStream()
         toolStreamBatcher.flush()   // drain any buffered output on cancel
@@ -4179,6 +4206,7 @@ class AgentController(
         userInputChannel = Channel(Channel.RENDEZVOUS)
         loopWaitingForInput = false
         pendingUiMessageOverride.set(null)
+        pendingReplyImageRefs.set(emptyList())
         taskStartTime = System.currentTimeMillis()
 
         val debugEnabled = AgentSettings.getInstance(project).state.showDebugLog
@@ -4241,6 +4269,7 @@ class AgentController(
             onPlanModeToggled = { enabled -> invokeLater { togglePlanMode(enabled) } },
             onPlanDiscarded = { invokeLater { onPlanDiscardedByLlm() } },
             userInputChannel = userInputChannel,
+            pendingChannelImageRefs = { pendingReplyImageRefs.getAndSet(emptyList()) },
             approvalGate = ::approvalGate,
             onSubagentProgress = ::onSubagentProgress,
             onTokenUpdate = ::onTokenUpdate,

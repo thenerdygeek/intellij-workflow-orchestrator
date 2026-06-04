@@ -1676,6 +1676,7 @@ class AgentService(
          * for the user to send a message, add comments, or approve.
          */
         userInputChannel: Channel<String>? = null,
+        pendingChannelImageRefs: (() -> List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef>)? = null,
         /**
          * Optional approval gate for write tool executions.
          * When set, the loop suspends before write tools and waits for user approval.
@@ -2457,6 +2458,7 @@ class AgentService(
                         onPlanDiscarded?.invoke()
                     },
                     userInputChannel = userInputChannel,
+                    pendingChannelImageRefs = pendingChannelImageRefs,
                     approvalGate = approvalGate,
                     sessionApprovalStore = sessionApprovalStore,
                     onDebugLog = onDebugLog,
@@ -2739,6 +2741,7 @@ class AgentService(
         onPlanModeToggled: ((Boolean) -> Unit)? = null,
         onPlanDiscarded: (() -> Unit)? = null,
         userInputChannel: Channel<String>? = null,
+        pendingChannelImageRefs: (() -> List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef>)? = null,
         approvalGate: (suspend (toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean) -> com.workflow.orchestrator.agent.loop.ApprovalResult)? = null,
         onSubagentProgress: ((agentId: String, update: SubagentProgressUpdate) -> Unit)? = null,
         onTokenUpdate: ((inputTokens: Int, outputTokens: Int) -> Unit)? = null,
@@ -3077,6 +3080,7 @@ class AgentService(
                 onPlanModeToggled = onPlanModeToggled,
                 onPlanDiscarded = onPlanDiscarded,
                 userInputChannel = userInputChannel,
+                pendingChannelImageRefs = pendingChannelImageRefs,
                 approvalGate = approvalGate,
                 onSubagentProgress = onSubagentProgress,
                 onTokenUpdate = onTokenUpdate,
@@ -3236,6 +3240,7 @@ class AgentService(
         onContextManagerReady: ((ContextManager) -> Unit)? = null,
         onHandoffProposed: ((context: String) -> Unit)? = null,
         userInputChannel: Channel<String>? = null,
+        pendingChannelImageRefs: (() -> List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef>)? = null,
     ): Job {
         // The handoff context becomes the task for the new session
         val preamble = "Continue from the previous session. Here is the preserved context:\n\n$handoffContext"
@@ -3251,6 +3256,7 @@ class AgentService(
             onContextManagerReady = onContextManagerReady,
             onHandoffProposed = onHandoffProposed,
             userInputChannel = userInputChannel,
+            pendingChannelImageRefs = pendingChannelImageRefs,
         )
     }
 
