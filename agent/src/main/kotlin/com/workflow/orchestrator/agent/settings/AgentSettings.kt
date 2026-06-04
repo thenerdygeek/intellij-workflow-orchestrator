@@ -67,6 +67,14 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         /** When true, skip the confirmation dialog before killing background processes
          *  on session transition. */
         var suppressBackgroundKillConfirmation by property(false)
+        /** Coalesce window (ms) for monitor event delivery.  Events arriving within this
+         *  window after the first are batched before waking the agent. */
+        var monitorCoalesceWindowMs by property(2_000L)
+        /** Maximum number of auto-wake events a single monitor handle may trigger per session. */
+        var monitorWakeBudgetPerMonitor by property(3)
+        /** Maximum number of monitor events (across all handles) allowed per minute before
+         *  the flood-gate suppresses further wakes for that monitor. */
+        var monitorFloodThresholdPerMin by property(20)
 
         /**
          * When true, the agent is asked to call the `feedback` tool immediately after
