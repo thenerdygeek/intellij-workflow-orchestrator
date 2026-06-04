@@ -1516,10 +1516,11 @@ class AgentLoop(
                     // tool-result has a matching tool_call_id to attach to. Without
                     // this the next API call would reject an orphan tool message.
                     contextManager.addAssistantMessage(assistantMessage)
-                    inFlightToolCalls.forEach { tc ->
+                    inFlightToolCalls.forEachIndexed { idx, tc ->
                         contextManager.addToolResult(
                             toolCallId = tc.id,
-                            content = nudge,
+                            // Stamp only the first synthetic result of this batch (minute-gated).
+                            content = if (idx == 0) withToolTime(nudge) else nudge,
                             isError = true,
                             toolName = tc.function.name,
                         )
@@ -2135,7 +2136,7 @@ class AgentLoop(
             )
             contextManager.addToolResult(
                 toolCallId = toolCallId,
-                content = truncatedContent,
+                content = withToolTime(truncatedContent),
                 isError = toolResult.isError,
                 toolName = toolName,
                 imageRefs = toolImageRefs,
@@ -2544,8 +2545,28 @@ class AgentLoop(
      * All call sites already live in suspending coroutine contexts.
      */
     private suspend fun withEnvDetails(message: String): String {
+        // Real user turns ALWAYS carry the full datetime, retained even after env dedup.
+        val timeStamp = contextManager.userTimeStamp()
         val envDetails = environmentDetailsProvider?.invoke()
-        return if (envDetails != null) "$message\n\n$envDetails" else message
+        return buildString {
+            append(message)
+            append("\n\n")
+            append(timeStamp)
+            if (envDetails != null) {
+                append("\n\n")
+                append(envDetails)
+            }
+        }
+    }
+
+    /**
+     * Prepend a full datetime stamp to a tool result, but ONLY when the wall-clock minute
+     * has advanced since the last stamp (user message or prior tool result). Same-minute
+     * results carry no stamp — the model already has the most recent time anchor.
+     */
+    private fun withToolTime(content: String): String {
+        val ts = contextManager.toolResultTimeStampOrNull() ?: return content
+        return "$ts\n\n$content"
     }
 
     /**

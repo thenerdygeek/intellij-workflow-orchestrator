@@ -9,9 +9,6 @@ import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.workflow.orchestrator.agent.loop.ContextManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.time.LocalDateTime
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 /**
  * Render data for one still-running background process surfaced in environment_details.
@@ -54,8 +51,10 @@ object EnvironmentDetailsBuilder {
         sb.appendLine(if (planModeEnabled) "PLAN MODE" else "ACT MODE")
         sb.appendLine()
 
-        // 2. Current Time
-        sb.appendCurrentTime()
+        // 2. Current Time — DECOUPLED: the datetime stamp is no longer part of
+        //    environment_details. It is appended separately by AgentLoop/ContextManager
+        //    (always on user messages, minute-gated on tool results) so it is RETAINED on
+        //    user turns even when stale environment_details blocks are stripped from history.
 
         // 3. VCS State (per-repo branches + dirty files)
         sb.appendVcsState(project, defaultTargetBranch, repoBranches)
@@ -207,15 +206,6 @@ object EnvironmentDetailsBuilder {
         appendLine()
     }
 
-    private fun StringBuilder.appendCurrentTime() {
-        val now = LocalDateTime.now()
-        val zone = ZoneId.systemDefault()
-        val offset = zone.rules.getOffset(now)
-        val formatted = now.format(DateTimeFormatter.ofPattern("M/d/yyyy, h:mm:ss a"))
-        appendLine("# Current Time")
-        appendLine("$formatted (${zone.id}, UTC${offset})")
-        appendLine()
-    }
 
     /**
      * Editor APIs (`caretModel`, `selectionModel`, `document`) are EDT-affine — they

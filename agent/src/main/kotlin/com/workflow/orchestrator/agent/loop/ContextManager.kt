@@ -165,6 +165,42 @@ class ContextManager(
         totalUserMessageCount++
     }
 
+    // --- Time stamping (decoupled from environment_details so it survives env dedup) ---
+
+    /** Injectable wall clock (epoch millis). Overridable in tests. */
+    internal var clockMillis: () -> Long = { System.currentTimeMillis() }
+    private var lastStampedEpochMinute: Long = Long.MIN_VALUE
+
+    private fun formatTimeLine(epochMillis: Long): String {
+        val zdt = java.time.Instant.ofEpochMilli(epochMillis).atZone(java.time.ZoneId.systemDefault())
+        val formatted = zdt.format(java.time.format.DateTimeFormatter.ofPattern("M/d/yyyy, h:mm:ss a"))
+        return "Current time: $formatted (${zdt.zone.id}, UTC${zdt.offset})"
+    }
+
+    /**
+     * Full datetime stamp for a REAL user message — always emitted and retained.
+     * Records the current wall-clock minute as the new baseline so a tool result in the
+     * same minute is not re-stamped.
+     */
+    fun userTimeStamp(): String {
+        val now = clockMillis()
+        lastStampedEpochMinute = now / 60_000
+        return formatTimeLine(now)
+    }
+
+    /**
+     * Full datetime stamp for a tool result — emitted ONLY when the wall-clock minute has
+     * advanced past the last stamp (user message or prior tool result). Returns null within
+     * the same minute, so rapid successive tool calls don't repeat the timestamp.
+     */
+    fun toolResultTimeStampOrNull(): String? {
+        val now = clockMillis()
+        val minute = now / 60_000
+        if (minute <= lastStampedEpochMinute) return null
+        lastStampedEpochMinute = minute
+        return formatTimeLine(now)
+    }
+
     fun addUserMessageWithParts(parts: List<ContentPart>) {
         val flatText = parts.filterIsInstance<ContentPart.Text>().joinToString(" ") { it.text }
         val images = parts.filterIsInstance<ContentPart.Image>()
