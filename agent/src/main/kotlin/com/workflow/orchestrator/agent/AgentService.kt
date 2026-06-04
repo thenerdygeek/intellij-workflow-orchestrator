@@ -2231,6 +2231,12 @@ class AgentService(
                                 "toolDefs=${markdown.length}ch(~${markdown.length / 4}tok) " +
                                 "systemPrompt=${fullPrompt.length}ch(~${fullPrompt.length / 4}tok)"
                         )
+                        // RANK-4 targeting: per-tool §6c size, heaviest first, so the
+                        // description trim targets the tools that actually dominate.
+                        val perTool = com.workflow.orchestrator.core.ai.ToolPromptBuilder.perToolSizes(defs)
+                        log.info(
+                            "[PromptSizeByTool] " + perTool.joinToString(" ") { (n, c) -> "$n=${c}ch" }
+                        )
                         ctx.setSystemPrompt(fullPrompt)
                     }
 

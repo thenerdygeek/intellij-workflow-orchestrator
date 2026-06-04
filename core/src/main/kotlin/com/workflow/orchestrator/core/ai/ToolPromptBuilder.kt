@@ -13,33 +13,43 @@ object ToolPromptBuilder {
     fun build(tools: List<ToolDefinition>): String = buildString {
         appendLine(FORMAT_INSTRUCTIONS)
         appendLine()
-
         for (tool in tools) {
-            val fn = tool.function
-            appendLine("## ${fn.name}")
-            appendLine("Description: ${escapeXml(fn.description)}")
-
-            val params = fn.parameters
-            if (params.properties.isNotEmpty()) {
-                appendLine("Parameters:")
-                val requiredSet = params.required.toSet()
-                for ((name, prop) in params.properties) {
-                    val req = if (name in requiredSet) "required" else "optional"
-                    appendLine("- $name: ($req) ${escapeXml(prop.description)}")
-                    if (!prop.enumValues.isNullOrEmpty()) {
-                        appendLine("    Allowed values: ${prop.enumValues.joinToString(", ")}")
-                    }
-                }
-            }
-
-            appendLine("Usage:")
-            appendLine("<${fn.name}>")
-            for ((name, _) in params.properties) {
-                appendLine("<$name>$name value here</$name>")
-            }
-            appendLine("</${fn.name}>")
+            append(sectionFor(tool))
             appendLine()
         }
+    }
+
+    /**
+     * Per-tool emitted-section size in characters (name + description + params + usage),
+     * for measuring which tools dominate the §6c tool-definitions block. Sorted descending.
+     * Diagnostic only — does not affect the prompt.
+     */
+    fun perToolSizes(tools: List<ToolDefinition>): List<Pair<String, Int>> =
+        tools.map { it.function.name to sectionFor(it).length }
+            .sortedByDescending { it.second }
+
+    private fun sectionFor(tool: ToolDefinition): String = buildString {
+        val fn = tool.function
+        appendLine("## ${fn.name}")
+        appendLine("Description: ${escapeXml(fn.description)}")
+        val params = fn.parameters
+        if (params.properties.isNotEmpty()) {
+            appendLine("Parameters:")
+            val requiredSet = params.required.toSet()
+            for ((name, prop) in params.properties) {
+                val req = if (name in requiredSet) "required" else "optional"
+                appendLine("- $name: ($req) ${escapeXml(prop.description)}")
+                if (!prop.enumValues.isNullOrEmpty()) {
+                    appendLine("    Allowed values: ${prop.enumValues.joinToString(", ")}")
+                }
+            }
+        }
+        appendLine("Usage:")
+        appendLine("<${fn.name}>")
+        for ((name, _) in params.properties) {
+            appendLine("<$name>$name value here</$name>")
+        }
+        appendLine("</${fn.name}>")
     }
 
     private fun escapeXml(text: String): String =
