@@ -223,6 +223,40 @@ class SystemPromptIdeContextTest {
     }
 
     @Test
+    fun `plan-mode gate - act mode drops full section but keeps breadcrumb`() {
+        // perf/token-context-optimization rank 3: the orchestrator passes
+        // includePlanModeSection=false in act mode + includePlanModeHintWhenGated=true.
+        val actMode = SystemPrompt.build(
+            projectName = "P",
+            projectPath = "/p",
+            includePlanModeSection = false,
+            includePlanModeHintWhenGated = true,
+        )
+        assertFalse(actMode.contains("ACT MODE V.S. PLAN MODE"), "Full Act-vs-Plan section must be gated off in act mode")
+        assertFalse(actMode.contains("## What is PLAN MODE?"), "Full Act-vs-Plan prose must be gated off in act mode")
+        assertTrue(actMode.contains("For a complex or ambiguous multi-step task"), "Breadcrumb must replace the full section")
+        assertTrue(actMode.contains("enable_plan_mode"), "Breadcrumb must keep plan mode discoverable")
+
+        // Plan mode: full section present (default flag = true path).
+        val planMode = SystemPrompt.build(
+            projectName = "P",
+            projectPath = "/p",
+            includePlanModeSection = true,
+        )
+        assertTrue(planMode.contains("ACT MODE V.S. PLAN MODE"), "Full section must appear when plan-mode section is enabled")
+
+        // Sub-agent style: gated off AND no hint opt-in → neither full section nor breadcrumb.
+        val subagent = SystemPrompt.build(
+            projectName = "P",
+            projectPath = "/p",
+            includePlanModeSection = false,
+            includePlanModeHintWhenGated = false,
+        )
+        assertFalse(subagent.contains("ACT MODE V.S. PLAN MODE"), "Sub-agents must not get the full section")
+        assertFalse(subagent.contains("For a complex or ambiguous multi-step task"), "Sub-agents must not get the breadcrumb")
+    }
+
+    @Test
     fun `section separators use four equals signs`() {
         val prompt = SystemPrompt.build(
             projectName = "TestProject",

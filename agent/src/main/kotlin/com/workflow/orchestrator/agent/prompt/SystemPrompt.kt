@@ -93,6 +93,14 @@ object SystemPrompt {
         includeOutputFormatting: Boolean = true,
         /** When false, skips section 4 (Act vs Plan Mode) entirely. Orthogonal to planModeEnabled. */
         includePlanModeSection: Boolean = true,
+        /**
+         * When [includePlanModeSection] is false, emit a one-line pointer to `enable_plan_mode`
+         * in its place so plan mode stays discoverable without the full ~1.1K-token section.
+         * Default false so sub-agents (act-only, no plan tool) and snapshot tests are unaffected —
+         * only the orchestrator passes true, and only the act-mode orchestrator (section gated off)
+         * actually renders the hint.
+         */
+        includePlanModeHintWhenGated: Boolean = false,
         /** When false, skips section 5 (Capabilities). */
         includeCapabilities: Boolean = true,
         /** When false, skips section 7 (Rules). */
@@ -211,6 +219,16 @@ object SystemPrompt {
         if (includePlanModeSection) {
             append(SECTION_SEP)
             append(actVsPlanMode(planModeEnabled))
+        } else if (includePlanModeHintWhenGated) {
+            // Act-mode orchestrator: the full Act-vs-Plan prose is omitted to save ~1.1K
+            // tokens, but keep a one-line pointer so plan mode stays discoverable. Re-appears
+            // as the full section the moment the user switches to plan mode.
+            append(SECTION_SEP)
+            append(
+                "PLAN MODE\n\nFor a complex or ambiguous multi-step task, you can call " +
+                    "`enable_plan_mode` to switch into a read-only planning mode and present an " +
+                    "implementation plan for the user to approve before making any changes."
+            )
         }
 
         // 5. CAPABILITIES
@@ -733,18 +751,9 @@ In each user message, the environment_details will specify the current mode. The
                     appendLine("- $name — $desc")
                 }
             }
-            appendLine()
-
-            // IDE-aware tool preference hint
-            val preferenceHint = when {
-                ideContext == null || ideContext.supportsJava ->
-                    "Prefer IDE tools over shell commands: diagnostics for per-file semantic checks, java_runtime_exec(compile_module) for module compilation, run_inspections over checkstyle, java_runtime_exec(run_tests) over mvn/gradle test, refactor_rename over find-and-replace. Use run_command only for tasks with no IDE equivalent (deploy, Docker, custom scripts, or Maven-authoritative cross-module builds via `mvn compile --also-make`)."
-                ideContext.supportsPython ->
-                    "Prefer IDE tools over shell commands: diagnostics for per-file syntax/import checks, run_inspections over flake8/pylint/mypy, python_runtime_exec(run_tests) over pytest, python_runtime_exec(compile_module) over python -m py_compile, refactor_rename over find-and-replace. Use run_command only for tasks with no IDE equivalent (deploy, Docker, custom scripts)."
-                else ->
-                    "Prefer IDE tools over shell commands: diagnostics for per-file semantic checks, run_inspections over external linters, runtime_exec to observe test runs, refactor_rename over find-and-replace. Use run_command only for tasks with no IDE equivalent (deploy, Docker, custom scripts)."
-            }
-            appendLine(preferenceHint)
+            // NOTE (perf/token-context-optimization rank 8): the IDE-vs-shell tool-preference
+            // hint that used to live here was near-verbatim of Rules §7 "Tool Preference"
+            // (the IDE-context-aware canonical home). Removed to avoid teaching it twice.
         }.trimEnd()
     }
 

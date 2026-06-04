@@ -2145,6 +2145,11 @@ class AgentService(
                         projectName = projectName,
                         projectPath = projectPath,
                         planModeEnabled = isPlanModeActive(),
+                        // perf/token-context-optimization rank 3: drop the full Act-vs-Plan
+                        // section in act mode (~1.1K tokens), leaving a one-line breadcrumb.
+                        // Re-included automatically when the user switches to plan mode.
+                        includePlanModeSection = isPlanModeActive(),
+                        includePlanModeHintWhenGated = true,
                         additionalContext = projectInstructions,
                         availableSkills = availableSkills,
                         activeSkillContent = ctx.getActiveSkill(),
