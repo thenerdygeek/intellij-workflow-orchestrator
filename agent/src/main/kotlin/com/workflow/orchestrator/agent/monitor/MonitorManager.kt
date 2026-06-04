@@ -38,6 +38,8 @@ class MonitorManager(
     private val isLoopLive: () -> Boolean,
     private val deliverToLoop: (String) -> Unit,
     private val wakeIdle: (String) -> WakeOutcome,
+    /** Invoked when a monitor flood-trips so the caller can actually stop the source process. */
+    private val onFloodStop: (String) -> Unit = {},
 ) {
     private data class Pending(val lines: MutableList<MonitorEvent> = mutableListOf(), var firstAt: Long = 0)
     private val pending = ConcurrentHashMap<String, Pending>()
@@ -54,7 +56,13 @@ class MonitorManager(
     fun onEvent(event: MonitorEvent) {
         val id = event.monitorId
         if (id in autoStopped) return
-        if (registerAndCheckFlood(id)) { autoStopped += id; return }
+        if (registerAndCheckFlood(id)) {
+            autoStopped += id
+            val notice = "[monitor $id] auto-stopped — flood (> ${config.floodThresholdPerMin} events/min)"
+            if (isLoopLive()) deliverToLoop(notice)   // best-effort final notice; idle case relies on env-details
+            onFloodStop(id)
+            return
+        }
         val p = pending.getOrPut(id) { Pending() }
         if (p.lines.isEmpty()) p.firstAt = clock()
         p.lines += event

@@ -11,6 +11,7 @@ class MonitorManagerTest {
         val woke = mutableListOf<String>()         // text routed via idle-wake
         var loopLive = false
         var wakeRoute = WakeOutcome.WOKE           // what the injected waker returns
+        val floodStopped = mutableListOf<String>() // monitor ids the flood-stop hook fired for
 
         val mgr = MonitorManager(
             config = MonitorConfig(coalesceWindowMs = 100, wakeBudgetPerMonitor = 2, floodThresholdPerMin = 5),
@@ -18,6 +19,7 @@ class MonitorManagerTest {
             isLoopLive = { loopLive },
             deliverToLoop = { text -> delivered += text },
             wakeIdle = { text -> woke += text; wakeRoute },
+            onFloodStop = { floodStopped += it },
         )
     }
 
@@ -70,6 +72,17 @@ class MonitorManagerTest {
             h.now += 200; h.mgr.flushDue()
         }
         assertEquals(true, h.mgr.isAutoStopped("m1"))
+    }
+
+    @Test
+    fun `flood auto-stop fires onFloodStop hook to actually stop the source`() {
+        val h = Harness(); h.loopLive = true
+        repeat(6) { i ->
+            h.mgr.onEvent(MonitorEvent("m1", Severity.INFO, "e$i"))
+            h.now += 200; h.mgr.flushDue()
+        }
+        assertEquals(true, h.mgr.isAutoStopped("m1"))
+        assertEquals(listOf("m1"), h.floodStopped)
     }
 
     @Test

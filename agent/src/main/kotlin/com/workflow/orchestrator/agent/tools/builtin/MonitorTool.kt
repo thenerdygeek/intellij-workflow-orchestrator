@@ -76,7 +76,10 @@ class MonitorTool(
                     src.stop()
                     return err(e.message ?: "Too many monitors")
                 }
-                // Capture sessionId in the sink so events reach the right MonitorManager (later task).
+                // Pre-create the manager BEFORE the source emits — the bridge router is get-only
+                // (no resurrection of a disposed session), so without this the first events drop.
+                project.service<AgentService>().ensureMonitorManager(sessionId)
+                // Capture sessionId in the sink so events reach the right MonitorManager.
                 src.start { event -> handle.appendLine(event.formatLine()); MonitorBridge.emit(project, sessionId, event) }
                 ok("Started monitor $id. Matching lines will be delivered as notifications.")
             }

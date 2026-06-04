@@ -438,7 +438,7 @@ Deferred, registered under category `"Utilities"` in `AgentService.registerAllTo
 
 ### Lifecycle
 
-Session-scoped. `AgentService.monitorManagerFor(sessionId)` lazily constructs each `MonitorManager`. On session transition: `AgentController.killBackgroundsOnTransition` calls `AgentService.disposeMonitorsForSession(sessionId)` → `MonitorPool.killAll(sessionId)` + `monitorManagers.remove(sessionId)`. On explicit `monitor(action=stop)`: `pool.stop` + `AgentService.forgetMonitor` → `MonitorManager.forget(id)`. On `AgentService.dispose()`: `MonitorBridge.clearRouter(project)`.
+Session-scoped. `AgentService.monitorManagerFor(sessionId)` lazily constructs each `MonitorManager`; `MonitorTool.start` pre-creates it via `AgentService.ensureMonitorManager(sessionId)` before the source emits. The `MonitorBridge` router is **get-only** (`monitorManagers[sessionId]?.onEvent`) so a late event from a just-killed process can't resurrect a manager for a disposed session (zombie-session resurrection). On session transition: `AgentController.killBackgroundsOnTransition` calls `AgentService.disposeMonitorsForSession(sessionId)` → `MonitorPool.killAll(sessionId)` + `monitorManagers.remove(sessionId)` (fires on BOTH the empty-bg early-return and the post-dialog path). On explicit `monitor(action=stop)`: `pool.stop` + `AgentService.forgetMonitor` → `MonitorManager.forget(id)`. On flood auto-stop: `MonitorManager.onFloodStop` → `MonitorPool.stop(sessionId, id)` + `MonitorManager.forget(id)` (actually stops the source process, not just mutes delivery). On `AgentService.dispose()`: `MonitorBridge.clearRouter(project)` (first line).
 
 ### Passive surfacing
 
@@ -447,6 +447,14 @@ Session-scoped. `AgentService.monitorManagerFor(sessionId)` lazily constructs ea
 ### Phasing
 
 Phase 1 = framework + shell source. Bamboo/PR/Jira/Sonar domain sources are follow-on. Design spec: `docs/superpowers/specs/2026-06-04-agent-monitor-framework-design.md`.
+
+### Phase 2 follow-ups
+
+Deferred from the Phase 1 integration review (not yet implemented):
+
+- **(3) Persist idle-wake notification before waking.** Mirror `onBackgroundCompletion`'s persist-first ordering so a `SKIP_GUARD` / `DEFER_ACTIVE_SESSION` / `DEFER_NO_LISTENER` route replays the monitor notification on the next resume instead of dropping it. Today the manager drops the batch on a non-`WOKE` route (`flushDue` comment: "passive surfacing is MonitorHandle's job").
+- **(4) Mark monitors dormant on loop exit.** When the loop exits via `MaxIterationsReached` / `Cancelled` / `Failed`, mark the session's monitors dormant — currently they can still idle-wake a just-exhausted session (bounded only by the per-monitor wake budget, so the blast radius is small but non-zero).
+- **(6) Settings UI for the three monitor tunables.** `monitorCoalesceWindowMs`, `monitorWakeBudgetPerMonitor`, `monitorFloodThresholdPerMin` exist in `AgentSettings.State` with defaults but have no Settings UI yet — add them under AI Agent ▸ Advanced.
 
 ### Pinning tests
 

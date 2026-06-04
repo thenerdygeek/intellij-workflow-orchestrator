@@ -241,8 +241,19 @@ class AgentService(
                 isLoopLive = { activeLoopForSession(sessionId) != null },
                 deliverToLoop = { text -> activeLoopForSession(sessionId)?.enqueueSteeringMessage(text) },
                 wakeIdle = { text -> wakeOutcomeFor(idleWaker.wake(sessionId, text, "monitor")) },
+                onFloodStop = { id ->
+                    MonitorPool.getInstance(project).stop(sessionId, id)
+                    monitorManagers[sessionId]?.forget(id)
+                },
             )
         }
+
+    /**
+     * Pre-create the [MonitorManager] for [sessionId] at monitor-start. Paired with the
+     * get-only bridge router (`monitorManagers[sessionId]?.onEvent`) so a late event from a
+     * just-killed process cannot resurrect a manager for a disposed session.
+     */
+    fun ensureMonitorManager(sessionId: String) { monitorManagerFor(sessionId) }
 
     /** Drop a session's [MonitorManager] and kill its live monitor sources. */
     fun disposeMonitorsForSession(sessionId: String) {
@@ -457,13 +468,18 @@ class AgentService(
         // Task 8 — route MonitorBridge events into the per-session MonitorManager and
         // drive a single flush loop (coalesce window expiry → steering / idle-wake) on the
         // service scope. Cleaned up per-session via disposeMonitorsForSession.
+        // Get-only: a late event for a disposed session must NOT recreate its manager
+        // (zombie-session resurrection). The manager is pre-created at monitor-start via
+        // ensureMonitorManager(); MonitorTool.start calls it before the source emits.
         MonitorBridge.setRouter(project) { sessionId, event ->
-            monitorManagerFor(sessionId).onEvent(event)
+            monitorManagers[sessionId]?.onEvent(event)
         }
         cs.launch(Dispatchers.IO) {
             while (isActive) {
-                runCatching { monitorManagers.values.forEach { it.flushDue() } }
-                    .onFailure { log.warn("monitor flush failed: ${it.message}", it) }
+                // Per-manager isolation: one bad manager's flush must not starve the others.
+                monitorManagers.values.forEach { m ->
+                    runCatching { m.flushDue() }.onFailure { log.warn("monitor flush failed: ${it.message}", it) }
+                }
                 delay(200)
             }
         }
