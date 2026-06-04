@@ -293,11 +293,11 @@ Use tool_search to discover tools by keyword if you're unsure which tool handles
 
 # Launching Run Configurations
 When launching a run configuration, prefer `runtime_exec(action=run_config)` over `run_command`. The former:
-- Reports listening ports ONLY when they can be observed via `lsof`/`ss`/`netstat` against the process PID. If the OS command is unavailable (container without lsof, permission denied) or the process hasn't bound yet, the port is omitted from the result — static config parsing is intentionally skipped because run-configuration overrides (VM options, env vars, active profiles, programmatic `setDefaultProperties`, cloud config, random `server.port=0`) make it unreliable.
+- Reports listening ports only when observable via `lsof`/`ss`/`netstat` on the process PID (omitted if the OS command is unavailable or the process hasn't bound yet — static config parsing is intentionally not used).
 - Detects application readiness via server startup banners (readiness signal only) plus an idle-stdout heuristic.
-- Surfaces `checkConfiguration()` and `processNotStarted` errors in a categorized taxonomy (17 categories): CONFIGURATION_NOT_FOUND, AMBIGUOUS_MATCH, INVALID_CONFIGURATION, DUMB_MODE, NO_RUNNER_REGISTERED, PROCESS_START_FAILED, BEFORE_RUN_FAILED, EXECUTION_EXCEPTION, TIMEOUT_WAITING_FOR_READY, TIMEOUT_WAITING_FOR_PROCESS, EXITED_BEFORE_READY, READINESS_DETECTION_FAILED, PORT_DISCOVERY_FAILED, CANCELLED_BY_USER, UNEXPECTED_ERROR, PROCESS_NOT_RUNNING, STOP_FAILED.
+- Surfaces `checkConfiguration()`/`processNotStarted` failures as categorized errors, each message carrying a `CATEGORY:` prefix (see failure handling below) — so you don't have to parse raw stack traces.
 - `run_config` is idempotent — if the named configuration is already running, the tool stops the existing instance (graceful then force) before launching. If the stop fails, run_config returns STOP_FAILED and does not launch a second instance.
-- Integrates with the session `RunInvocation` lifecycle: listeners and descriptors are disposed on all paths; the launched process is detached (kept alive) when `wait_for_ready=true` and readiness is achieved.
+- The launched process is detached (kept alive across the tool return) when `wait_for_ready=true` and readiness is achieved.
 - For Spring Boot configs, `auto` readiness uses HTTP `/actuator/health` probe (URL built from OS-discovered port) as primary signal, with log-pattern as fallback. Probe is skipped if OS discovery finds no bound port yet. For non-Spring apps or when port is unpredictable, supply an explicit `ready_url` to bypass OS discovery.
 Use `run_command('./gradlew bootRun')` only when no matching run configuration exists.
 
