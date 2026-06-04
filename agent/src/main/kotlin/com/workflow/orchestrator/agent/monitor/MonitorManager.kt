@@ -51,7 +51,10 @@ class MonitorManager(
         p.lines += event
     }
 
-    /** Route every monitor whose coalesce window has elapsed. Driven by the AgentService timer. */
+    /**
+     * Route every monitor whose coalesce window has elapsed. Driven by the AgentService timer.
+     * Batches for monitors that have gone dormant are dropped each cycle (delivery stops once dormant).
+     */
     @Synchronized
     fun flushDue() {
         val nowMs = clock()
@@ -68,7 +71,7 @@ class MonitorManager(
                         wakeBudget[id] = left
                         if (left <= 0) dormant += id
                     }
-                    WakeOutcome.SKIPPED, WakeOutcome.DEFERRED -> { /* no budget spent; held for passive surfacing */ }
+                    WakeOutcome.SKIPPED, WakeOutcome.DEFERRED -> { /* budget not spent; batch dropped here — passive surfacing is MonitorHandle's job, not the manager's */ }
                 }
             }
         }
@@ -80,6 +83,8 @@ class MonitorManager(
         val ts = recentTimestamps.getOrPut(id) { mutableListOf() }
         ts += nowMs
         ts.removeAll { nowMs - it > 60_000 }
+        // Threshold is EXCLUSIVE: returns true only when ts.size > floodThresholdPerMin, i.e.
+        // auto-stop fires on the (threshold + 1)th event within the trailing minute.
         return ts.size > config.floodThresholdPerMin
     }
 

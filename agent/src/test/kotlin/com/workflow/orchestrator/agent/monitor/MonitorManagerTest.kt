@@ -71,4 +71,31 @@ class MonitorManagerTest {
         }
         assertEquals(true, h.mgr.isAutoStopped("m1"))
     }
+
+    @Test
+    fun `coalesced batch with mixed INFO and NOTABLE events wakes idle loop`() {
+        val h = Harness(); h.loopLive = false
+        h.mgr.onEvent(MonitorEvent("m1", Severity.INFO, "tick"))
+        h.now = 50
+        h.mgr.onEvent(MonitorEvent("m1", Severity.NOTABLE, "status changed"))
+        h.now = 200; h.mgr.flushDue()
+        assertEquals(1, h.woke.size)   // NOTABLE in the batch triggers the wake despite the INFO sibling
+    }
+
+    @Test
+    fun `budget of 1 allows exactly one wake then dormant`() {
+        val h = Harness()
+        val mgr = MonitorManager(
+            config = MonitorConfig(coalesceWindowMs = 100, wakeBudgetPerMonitor = 1, floodThresholdPerMin = 5),
+            clock = { h.now },
+            isLoopLive = { h.loopLive },
+            deliverToLoop = { text -> h.delivered += text },
+            wakeIdle = { text -> h.woke += text; h.wakeRoute },
+        )
+        h.loopLive = false
+        mgr.onEvent(MonitorEvent("m1", Severity.ALERT, "e0"))
+        h.now = 200; mgr.flushDue()
+        assertEquals(1, h.woke.size)
+        assertEquals(true, mgr.isDormant("m1"))
+    }
 }
