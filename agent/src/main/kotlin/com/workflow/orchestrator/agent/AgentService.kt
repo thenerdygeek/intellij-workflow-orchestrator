@@ -236,6 +236,8 @@ class AgentService(
                     floodThresholdPerMin = st.monitorFloodThresholdPerMin,
                 ),
                 clock = { System.currentTimeMillis() },
+                // Documented TOCTOU: if the loop exits between isLoopLive() and deliverToLoop(),
+                // the `?.` drops the message safely — acceptable, the loop was terminating anyway.
                 isLoopLive = { activeLoopForSession(sessionId) != null },
                 deliverToLoop = { text -> activeLoopForSession(sessionId)?.enqueueSteeringMessage(text) },
                 wakeIdle = { text -> wakeOutcomeFor(idleWaker.wake(sessionId, text, "monitor")) },
@@ -246,6 +248,11 @@ class AgentService(
     fun disposeMonitorsForSession(sessionId: String) {
         monitorManagers.remove(sessionId)
         MonitorPool.getInstance(project).killAll(sessionId)
+    }
+
+    /** Forget a single monitor's coalesce/wake/flood state after it is stopped. */
+    fun forgetMonitor(sessionId: String, id: String) {
+        monitorManagers[sessionId]?.forget(id)
     }
 
     /**
@@ -3785,6 +3792,10 @@ class AgentService(
     // ── Dispose ────────────────────────────────────────────────────────────
 
     override fun dispose() {
+        // Task 8 — drop the process-global MonitorBridge router FIRST so neither this
+        // Project nor the capturing lambda (which retains AgentService) leaks for the
+        // IDE's lifetime.
+        MonitorBridge.clearRouter(project)
         // Close the file logger first — before cancelCurrentTask() so the final
         // "session ended" log entries are flushed and the file descriptor is released.
         // Wrapped in try/catch: a logger failure on dispose must never surface to the

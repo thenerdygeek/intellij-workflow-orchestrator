@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
+import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.monitor.MonitorBridge
@@ -53,7 +55,10 @@ class MonitorTool(
             }
             "stop" -> {
                 val id = params["monitor_id"]?.jsonPrimitive?.content ?: return err("stop requires monitor_id")
-                if (pool.stop(sessionId, id)) ok("Stopped monitor $id") else err("No monitor with id $id")
+                if (pool.stop(sessionId, id)) {
+                    project.service<AgentService>().forgetMonitor(sessionId, id)
+                    ok("Stopped monitor $id")
+                } else err("No monitor with id $id")
             }
             "start" -> {
                 val source = params["source"]?.jsonPrimitive?.content ?: "shell"

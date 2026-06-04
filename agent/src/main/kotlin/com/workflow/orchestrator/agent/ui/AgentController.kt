@@ -3275,7 +3275,13 @@ class AgentController(
     ): Boolean {
         val pool = com.workflow.orchestrator.agent.tools.background.BackgroundPool.getInstance(project)
         val running = pool.list(leavingSessionId)
-        if (running.isEmpty()) return true
+        if (running.isEmpty()) {
+            // Task 8 — a pure-monitor session (monitors but no bg processes) still leaks its
+            // MonitorManager + MonitorPool entry; clean monitors before the early return
+            // (disposeMonitorsForSession is idempotent).
+            service.disposeMonitorsForSession(leavingSessionId)
+            return true
+        }
 
         val settings = AgentSettings.getInstance(project).state
         if (!settings.suppressBackgroundKillConfirmation) {
