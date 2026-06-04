@@ -59,9 +59,54 @@ class MonitorToolTest {
     }
 
     @Test
-    fun `start rejects an unknown source in phase 1`() {
-        val err = MonitorTool.validateStart(source = "bamboo", command = "x", filter = "y")
+    fun `start rejects an unknown source`() {
+        val err = MonitorTool.validateStart(source = "kafka", command = "x", filter = "y")
         assertTrue(err!!.contains("not supported"))
+    }
+
+    @Test
+    fun `source enum includes bamboo`() {
+        val enum = tool().parameters.properties["source"]?.enumValues
+        assertTrue(enum != null && "bamboo" in enum, "source enum should include 'bamboo', was: $enum")
+    }
+
+    // ---- validateBambooStart -------------------------------------------------
+
+    @Test
+    fun `validateBambooStart missing planKey returns error`() {
+        val err = MonitorTool.validateBambooStart(planKey = null, level = "build", stageName = null, jobName = null)
+        assertTrue(err != null && err.contains("plan_key"), "expected plan_key error, got: $err")
+    }
+
+    @Test
+    fun `validateBambooStart bad level returns error`() {
+        val err = MonitorTool.validateBambooStart(planKey = "PROJ-PLAN", level = "sprint", stageName = null, jobName = null)
+        assertTrue(err != null && (err.contains("level") || err.contains("build") || err.contains("stage") || err.contains("job")),
+            "expected level error, got: $err")
+    }
+
+    @Test
+    fun `validateBambooStart level stage without stage_name returns error`() {
+        val err = MonitorTool.validateBambooStart(planKey = "PROJ-PLAN", level = "stage", stageName = null, jobName = null)
+        assertTrue(err != null && err.contains("stage_name"), "expected stage_name error, got: $err")
+    }
+
+    @Test
+    fun `validateBambooStart level job without stage_name and job_name returns error`() {
+        val err = MonitorTool.validateBambooStart(planKey = "PROJ-PLAN", level = "job", stageName = null, jobName = null)
+        assertTrue(err != null, "expected error for job without stage_name and job_name")
+    }
+
+    @Test
+    fun `validateBambooStart valid build returns null`() {
+        val err = MonitorTool.validateBambooStart(planKey = "PROJ-PLAN", level = "build", stageName = null, jobName = null)
+        assertEquals(null, err, "valid build params should pass, got: $err")
+    }
+
+    @Test
+    fun `validateBambooStart null level defaults to build and passes`() {
+        val err = MonitorTool.validateBambooStart(planKey = "PROJ-PLAN", level = null, stageName = null, jobName = null)
+        assertEquals(null, err, "null level should default to build (valid), got: $err")
     }
 
     @Test
