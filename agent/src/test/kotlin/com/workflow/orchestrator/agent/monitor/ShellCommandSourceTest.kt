@@ -23,4 +23,10 @@ class ShellCommandSourceTest {
         val e = ShellCommandSource.classify("m1", "Exception: boom FAILED", Regex("FAILED"))!!
         assertEquals(Severity.ALERT, e.severity)
     }
+
+    @Test
+    fun `line is trimmed before emitting`() {
+        val e = ShellCommandSource.classify("m1", "  output line  ", Regex("output"))!!
+        assertEquals("output line", e.line)
+    }
 }

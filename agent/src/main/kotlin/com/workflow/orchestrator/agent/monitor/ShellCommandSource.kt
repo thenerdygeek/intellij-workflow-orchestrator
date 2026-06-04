@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.agent.monitor
 
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.tools.process.ShellResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,15 +23,24 @@ class ShellCommandSource(
     private val filter: Regex,
     private val workingDir: java.io.File?,
     private val cs: CoroutineScope,
+    private val project: Project?,
 ) : MonitorSource {
 
-    private var job: Job? = null
-    private var process: Process? = null
+    @Volatile private var job: Job? = null
+    @Volatile private var process: Process? = null
 
     override fun start(emit: (MonitorEvent) -> Unit) {
+        // TODO(Phase 2): gate `command` through DefaultCommandFilter for parity with RunCommandTool.
         job = cs.launch(Dispatchers.IO) {
             runCatching {
-                val pb = ProcessBuilder("/bin/bash", "-lc", command).redirectErrorStream(true)
+                // Platform-aware shell selection (Windows: Git Bash → PowerShell → cmd; Unix: /bin/bash → $SHELL → /bin/sh).
+                // ShellResolver tolerates a null project, but fall back to /bin/bash -lc if resolution fails.
+                val pb = runCatching {
+                    val shellConfig = ShellResolver.resolve(null, project)
+                    ProcessBuilder(shellConfig.executable, *shellConfig.args.toTypedArray(), command)
+                }.getOrElse {
+                    ProcessBuilder("/bin/bash", "-lc", command)
+                }.redirectErrorStream(true)
                 if (workingDir != null) pb.directory(workingDir)
                 val p = pb.start().also { process = it }
                 p.inputStream.bufferedReader().use { r: BufferedReader ->
@@ -42,7 +53,7 @@ class ShellCommandSource(
     }
 
     override fun stop() {
-        runCatching { process?.destroy() }
+        runCatching { process?.destroyForcibly() }
         job?.cancel(); job = null
     }
 
@@ -50,7 +61,10 @@ class ShellCommandSource(
         private val LOG = Logger.getInstance(ShellCommandSource::class.java)
 
         /** Patterns that always escalate to ALERT regardless of the user's filter. */
-        val FAILURE_SIGNATURES = Regex("Traceback|Exception|\\bERROR\\b|FAILED|\\bKilled\\b|OOM|panic:", RegexOption.IGNORE_CASE)
+        val FAILURE_SIGNATURES = Regex(
+            "Traceback|Exception|\\bERROR\\b|\\bFAILED\\b|\\bKilled\\b|\\bOOM\\b|\\bpanic:",
+            RegexOption.IGNORE_CASE
+        )
 
         /** Pure: returns the event for a line, or null when the line doesn't match [filter]. */
         fun classify(monitorId: String, line: String, filter: Regex): MonitorEvent? {
