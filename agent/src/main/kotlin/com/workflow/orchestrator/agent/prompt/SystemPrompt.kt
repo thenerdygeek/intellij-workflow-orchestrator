@@ -507,12 +507,9 @@ In each user message, the environment_details will specify the current mode. The
             append(parts.joinToString(", "))
         }
         appendLine(runtimeHint)
-        appendLine("- **Understanding multi-module project layout** → build (project_modules, module_dependency_graph), project_structure (topology, module_detail, resolve_file) — use these BEFORE grepping build.gradle / pom.xml")
-        appendLine("- **Inspecting Maven/Gradle dependencies** → build (maven_dependencies, gradle_dependencies, maven_dependency_tree, maven_effective_pom)")
-        appendLine("- **Inspecting Maven/Gradle build configuration** → build (maven_properties, maven_plugins, maven_profiles, gradle_tasks, gradle_properties)")
-        appendLine("- **Fixing module configuration** → project_structure (set_module_dependency, remove_module_dependency, set_module_sdk, set_language_level, add_content_root, remove_content_root, add_source_root, list_facets, list_libraries, list_sdks, refresh_external_project)")
+        appendLine("- **Multi-module layout, dependencies & build config** → build (project_modules, module_dependency_graph, Maven/Gradle dependencies & properties), project_structure (topology, module_detail, module deps, SDK, language level, content/source roots) — use BEFORE grepping build.gradle / pom.xml (each tool's schema lists its actions)")
         if (ideContext?.supportsPython == true) {
-            appendLine("- **Python package management** → build (pip_list, pip_dependencies, pip_outdated, pip_show for pip; poetry_list, poetry_outdated, poetry_show, poetry_lock_status, poetry_scripts for Poetry; uv_list, uv_outdated, uv_lock_status for uv) — use instead of running pip/poetry/uv via run_command")
+            appendLine("- **Python package management** → build (pip / Poetry / uv: list, outdated, show) — instead of running pip/poetry/uv via run_command")
         }
         appendLine("- **Debugging** → debug_breakpoints, debug_step, debug_inspect")
         appendLine("- **Managing run/debug configurations** → runtime_config (get_run_configurations, create/modify/delete_run_config — uses [Agent] prefix for safety)")
@@ -602,14 +599,10 @@ In each user message, the environment_details will specify the current mode. The
         appendLine("| Relaunch a running configuration | runtime_exec(action=run_config, config_name=...) — idempotent: stops any existing instance of the same configuration first, then launches fresh | Manually stop then relaunch |")
         appendLine("| Smoke-test an HTTP endpoint after launch | Chain runtime_exec(run_config, ...) then run_command('curl <url>:<port>') using the returned port | Hardcoding ports or guessing |")
         if (ideContext == null || ideContext.supportsJava) {
-            appendLine("| Map module dependencies in a multi-module project | \"build\" (project_modules / module_dependency_graph) | Reading every settings.gradle / pom.xml manually |")
-            appendLine("| See effective POM or full dependency tree | \"build\" (maven_effective_pom / maven_dependency_tree) | Running `mvn` via run_command and parsing output |")
-            appendLine("| Inspect Maven build plugins or active profiles | \"build\" (maven_plugins / maven_profiles) | Reading pom.xml manually |")
-            appendLine("| List available Gradle tasks or project properties | \"build\" (gradle_tasks / gradle_properties) | Running ./gradlew tasks via run_command |")
+            appendLine("| Inspect modules, dependencies, effective POM, plugins/profiles, or Gradle tasks | \"build\" | Reading settings.gradle / pom.xml or running mvn/gradlew via run_command |")
         }
         if (ideContext?.supportsPython == true) {
-            appendLine("| Discover or run pytest tests | \"build\" (pytest_discover, pytest_run, pytest_fixtures) | Manually running pytest via run_command |")
-            appendLine("| Check installed, outdated, or declared Python packages | \"build\" (pip_list/pip_dependencies/pip_outdated, poetry_list/poetry_outdated, uv_list/uv_outdated) | Running pip list / poetry show via run_command |")
+            appendLine("| Discover/run pytest or inspect Python packages | \"build\" | Running pytest / pip / poetry / uv via run_command |")
         }
         // Cross-IDE delegation hints — only shown when outbound delegation is enabled.
         // When the tools are not registered (setting off), omitting the hints prevents

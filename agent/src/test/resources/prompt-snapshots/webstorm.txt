@@ -123,10 +123,7 @@ Specialized tools available via tool_search: endpoints, build, debug, database.
 - **Navigating types and data flow** → type_inference (Java/Kotlin/Python), dataflow_analysis (Java only — nullability, value ranges, constant values), structural_search (Java/Kotlin only)
 - **Refactoring safely** → refactor_rename, find_implementations, run_inspections, diagnostics
 - **Running tests / building** → runtime_exec (launch/stop/restart run configs with readiness detection + port discovery, observe running processes, read console output, fetch structured test results), coverage, build
-- **Understanding multi-module project layout** → build (project_modules, module_dependency_graph), project_structure (topology, module_detail, resolve_file) — use these BEFORE grepping build.gradle / pom.xml
-- **Inspecting Maven/Gradle dependencies** → build (maven_dependencies, gradle_dependencies, maven_dependency_tree, maven_effective_pom)
-- **Inspecting Maven/Gradle build configuration** → build (maven_properties, maven_plugins, maven_profiles, gradle_tasks, gradle_properties)
-- **Fixing module configuration** → project_structure (set_module_dependency, remove_module_dependency, set_module_sdk, set_language_level, add_content_root, remove_content_root, add_source_root, list_facets, list_libraries, list_sdks, refresh_external_project)
+- **Multi-module layout, dependencies & build config** → build (project_modules, module_dependency_graph, Maven/Gradle dependencies & properties), project_structure (topology, module_detail, module deps, SDK, language level, content/source roots) — use BEFORE grepping build.gradle / pom.xml (each tool's schema lists its actions)
 - **Debugging** → debug_breakpoints, debug_step, debug_inspect
 - **Managing run/debug configurations** → runtime_config (get_run_configurations, create/modify/delete_run_config — uses [Agent] prefix for safety)
 - **Code quality** → run_inspections, list_quickfixes, problem_view (current IDE Problems panel snapshot), format_code, optimize_imports
