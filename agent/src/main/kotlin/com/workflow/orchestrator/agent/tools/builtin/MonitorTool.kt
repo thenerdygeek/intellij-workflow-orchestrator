@@ -72,7 +72,8 @@ class MonitorTool(
     override val description =
         "Watch a long-running source and get proactive notifications when matching events occur. " +
         "Sources: shell (run a command, notify on stdout lines matching `filter` regex), " +
-        "bamboo (poll a Bamboo build plan, notify on build/stage/job state transitions), " +
+        "bamboo (watch a build plan through its full lifecycle — queued/running/finished — at build/stage/job level; " +
+        "sees in-flight (queued/running) builds, not just the last finished one, and notifies on each state transition and new build), " +
         "pull_request (poll a Bitbucket PR, notify on state/reviews/comments changes), " +
         "jira_ticket (poll a Jira ticket, notify on status/assignee changes), " +
         "jira_sprint (poll a Jira sprint's issue list, notify on issue status/membership changes), " +
