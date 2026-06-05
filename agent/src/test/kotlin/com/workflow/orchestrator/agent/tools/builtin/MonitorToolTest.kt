@@ -201,4 +201,42 @@ class MonitorToolTest {
         val err = MonitorTool.validatePullRequestStart(prIdRaw = "7", aspects = "reviews")
         assertEquals(null, err, "valid pr_id + single known aspect should pass, got: $err")
     }
+
+    @Test
+    fun `source enum includes jira_ticket`() {
+        val enum = tool().parameters.properties["source"]?.enumValues
+        assertTrue(enum != null && "jira_ticket" in enum, "source enum should include 'jira_ticket', was: $enum")
+    }
+
+    // ---- validateJiraTicketStart --------------------------------------------
+
+    @Test
+    fun `validateJiraTicketStart missing ticket_key returns error`() {
+        val err = MonitorTool.validateJiraTicketStart(ticketKey = null)
+        assertTrue(err != null && err.contains("ticket_key"), "expected ticket_key error, got: $err")
+    }
+
+    @Test
+    fun `validateJiraTicketStart blank ticket_key returns error`() {
+        val err = MonitorTool.validateJiraTicketStart(ticketKey = "")
+        assertTrue(err != null && err.contains("ticket_key"), "expected ticket_key error for blank, got: $err")
+    }
+
+    @Test
+    fun `validateJiraTicketStart whitespace-only ticket_key returns error`() {
+        val err = MonitorTool.validateJiraTicketStart(ticketKey = "   ")
+        assertTrue(err != null && err.contains("ticket_key"), "expected ticket_key error for whitespace, got: $err")
+    }
+
+    @Test
+    fun `validateJiraTicketStart valid key returns null`() {
+        val err = MonitorTool.validateJiraTicketStart(ticketKey = "PROJ-123")
+        assertEquals(null, err, "valid ticket key should pass, got: $err")
+    }
+
+    @Test
+    fun `validateJiraTicketStart any non-blank key is accepted`() {
+        val err = MonitorTool.validateJiraTicketStart(ticketKey = "ABC-1")
+        assertEquals(null, err, "any non-blank key should pass, got: $err")
+    }
 }

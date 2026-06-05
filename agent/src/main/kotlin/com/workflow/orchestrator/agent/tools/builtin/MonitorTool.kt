@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.monitor.BambooDiff
 import com.workflow.orchestrator.agent.monitor.BambooMonitorSource
+import com.workflow.orchestrator.agent.monitor.JiraTicketMonitorSource
 import com.workflow.orchestrator.agent.monitor.MonitorBridge
 import com.workflow.orchestrator.agent.monitor.MonitorHandle
 import com.workflow.orchestrator.agent.monitor.MonitorPool
@@ -46,6 +47,12 @@ class MonitorTool(
      */
     private val eventBusProvider: (Project) -> SharedFlow<WorkflowEvent>? =
         { project -> project.service<EventBus>().events },
+    /**
+     * Optional provider for [JiraService] — injected as a lambda for testability.
+     * Production default uses [ServiceLookup.jira]; tests can pass a fake.
+     */
+    private val jiraProvider: (Project) -> com.workflow.orchestrator.core.services.JiraService? =
+        { project -> ServiceLookup.jira(project) },
 ) : AgentTool {
     override val name = "monitor"
     override val description =
@@ -62,8 +69,8 @@ class MonitorTool(
             "action" to ParameterProperty(type = "string",
                 description = "start | list | stop | status", enumValues = listOf("start", "list", "stop", "status")),
             "source" to ParameterProperty(type = "string",
-                description = "[start] Event source: 'shell', 'bamboo', or 'pull_request'.",
-                enumValues = listOf("shell", "bamboo", "pull_request")),
+                description = "[start] Event source: 'shell', 'bamboo', 'pull_request', or 'jira_ticket'.",
+                enumValues = listOf("shell", "bamboo", "pull_request", "jira_ticket")),
             "command" to ParameterProperty(type = "string", description = "[start/shell] Command to run."),
             "filter" to ParameterProperty(type = "string",
                 description = "[start/shell] Regex; matching stdout lines notify. Matching is CASE-SENSITIVE by " +
@@ -85,6 +92,8 @@ class MonitorTool(
                     "comments=blocker count + total comment count."),
             "repo_name" to ParameterProperty(type = "string",
                 description = "[start/pull_request] Optional repository slug override (null = primary repo from settings)."),
+            "ticket_key" to ParameterProperty(type = "string",
+                description = "[start/jira_ticket] Jira ticket key, e.g. PROJ-123."),
             "description" to ParameterProperty(type = "string", description = "[start] Short label shown in every notification."),
             "monitor_id" to ParameterProperty(type = "string", description = "[stop/status] The id returned by start."),
         ),
@@ -122,7 +131,8 @@ class MonitorTool(
                     "shell" -> startShell(params, project, sessionId, pool)
                     "bamboo" -> startBamboo(params, project, sessionId, pool)
                     "pull_request" -> startPullRequest(params, project, sessionId, pool)
-                    else -> err("source '$source' is not supported (use 'shell', 'bamboo', or 'pull_request').")
+                    "jira_ticket" -> startJiraTicket(params, project, sessionId, pool)
+                    else -> err("source '$source' is not supported (use 'shell', 'bamboo', 'pull_request', or 'jira_ticket').")
                 }
             }
             else -> err("Unknown action '$action'")
@@ -237,11 +247,38 @@ class MonitorTool(
         return ok("Started monitor $id (pull_request #$prId aspects=${aspects.map { it.name.lowercase() }.sorted().joinToString(",")}). Notifications delivered on state changes.")
     }
 
+    private suspend fun startJiraTicket(
+        params: JsonObject,
+        project: Project,
+        sessionId: String,
+        pool: MonitorPool,
+    ): ToolResult {
+        val ticketKey = params["ticket_key"]?.jsonPrimitive?.content
+        validateJiraTicketStart(ticketKey)?.let { return err(it) }
+
+        val jira = jiraProvider(project) ?: return err("Jira is not configured.")
+
+        val id = "jira-" + java.util.UUID.randomUUID().toString().take(8)
+        val desc = params["description"]?.jsonPrimitive?.content ?: "jira ${ticketKey!!}"
+
+        val src = JiraTicketMonitorSource(id, desc, cs, jira, ticketKey!!)
+        val handle = MonitorHandle(src, sessionId, System.currentTimeMillis())
+        try {
+            pool.register(sessionId, handle)
+        } catch (e: MonitorPool.MaxConcurrentReached) {
+            src.stop()
+            return err(e.message ?: "Too many monitors")
+        }
+        project.service<AgentService>().ensureMonitorManager(sessionId)
+        src.start { event -> handle.appendLine(event.formatLine()); MonitorBridge.emit(project, sessionId, event) }
+        return ok("Started monitor $id (jira_ticket $ticketKey). Notifications delivered on status/assignee changes.")
+    }
+
     private fun ok(text: String) = ToolResult(content = text, summary = text.take(80), tokenEstimate = estimateTokens(text))
     private fun err(text: String) = ToolResult(content = text, summary = text.take(80), tokenEstimate = estimateTokens(text), isError = true)
 
     companion object {
-        private val ALLOWED_SOURCES = setOf("shell", "bamboo", "pull_request")
+        private val ALLOWED_SOURCES = setOf("shell", "bamboo", "pull_request", "jira_ticket")
 
         /**
          * Render a single monitor's status: id, label, current state, and its buffered
@@ -260,7 +297,7 @@ class MonitorTool(
         /** Pure validation for `action=start source=shell`. Returns an error string, or null when valid. */
         fun validateStart(source: String?, command: String?, filter: String?): String? {
             val s = source ?: "shell"
-            if (s !in ALLOWED_SOURCES) return "source '$s' is not supported (use 'shell', 'bamboo', or 'pull_request')."
+            if (s !in ALLOWED_SOURCES) return "source '$s' is not supported (use 'shell', 'bamboo', 'pull_request', or 'jira_ticket')."
             if (s != "shell") return null  // non-shell sources have their own validate
             if (command.isNullOrBlank()) return "shell monitor requires 'command'."
             if (filter.isNullOrBlank()) return "shell monitor requires 'filter' (a regex)."
@@ -311,6 +348,18 @@ class MonitorTool(
                 val bad = tokens.firstOrNull { it !in validTokens }
                 if (bad != null) return "unknown aspect '$bad'; valid values are: state, reviews, comments."
             }
+            return null
+        }
+
+        /**
+         * Pure validation for `action=start source=jira_ticket`.
+         * Returns an error string, or null when valid.
+         *
+         * Rules:
+         * - [ticketKey] is required and must be non-blank.
+         */
+        fun validateJiraTicketStart(ticketKey: String?): String? {
+            if (ticketKey.isNullOrBlank()) return "jira_ticket monitor requires 'ticket_key'."
             return null
         }
     }
