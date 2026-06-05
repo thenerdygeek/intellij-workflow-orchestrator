@@ -125,6 +125,8 @@ export interface Question {
   options: QuestionOption[];
   answer?: string | string[];
   skipped?: boolean;
+  /** Optional short tag (≤12 chars) shown as a scannable chip above the question text. */
+  header?: string;
 }
 
 // ── Session types ──

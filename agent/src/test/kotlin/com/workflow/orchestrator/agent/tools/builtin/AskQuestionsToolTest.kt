@@ -6,6 +6,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.*
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
@@ -70,6 +71,33 @@ class AskQuestionsToolTest {
             tool.allowedWorkers
         )
         assertTrue(tool.description.isNotBlank())
+    }
+
+    // ── Awareness: the LLM only ever sees `description` + each param `description`
+    // (ToolPromptBuilder.sectionFor emits nothing from documentation()). For the agent
+    // to discover multi-select / multi-question, a worked example must live in the
+    // LLM-visible `questions` param description itself. ──
+
+    @Test
+    fun `questions param description shows the LLM a concrete multi-select example`() {
+        val desc = tool.parameters.properties["questions"]!!.description
+        assertTrue(
+            desc.contains(""""type":"multiple""""),
+            "The LLM-visible 'questions' description must include a worked type:multiple example " +
+                "so the agent discovers it can ask multi-select questions. Description was: $desc"
+        )
+    }
+
+    @Test
+    fun `questions param description shows the LLM a multi-question example`() {
+        val desc = tool.parameters.properties["questions"]!!.description
+        // Two distinct question objects in the worked example prove multi-question is demonstrated.
+        val questionKeyCount = Regex(""""question"\s*:""").findAll(desc).count()
+        assertTrue(
+            questionKeyCount >= 2,
+            "The LLM-visible 'questions' description must show a 2+ question example so the agent " +
+                "discovers it can batch related decisions. Found $questionKeyCount question keys in: $desc"
+        )
     }
 
     @Test
@@ -148,6 +176,28 @@ class AskQuestionsToolTest {
         assertNotNull(result)
         assertTrue(result!!.isError)
         assertTrue(result.content.contains("too many options"))
+    }
+
+    // ── #2: optional per-question `header` short tag (scannable chip in the wizard) ──
+
+    @Test
+    fun `wizard question carries an optional per-question header`() {
+        val json = """[{"id":"q1","header":"Database","question":"Which DB?","type":"single","options":[{"id":"o1","label":"Postgres"}]}]"""
+        val questions = Json { ignoreUnknownKeys = true }.decodeFromString<List<Question>>(json)
+        assertEquals("Database", questions[0].header)
+    }
+
+    @Test
+    fun `wizard question header defaults to empty when omitted`() {
+        val json = """[{"id":"q1","question":"Which DB?","type":"single","options":[{"id":"o1","label":"Postgres"}]}]"""
+        val questions = Json { ignoreUnknownKeys = true }.decodeFromString<List<Question>>(json)
+        assertEquals("", questions[0].header)
+    }
+
+    @Test
+    fun `validation passes for a question carrying a header`() {
+        val json = """[{"id":"q1","header":"DB","question":"Which DB?","type":"single","options":[{"id":"o1","label":"Postgres"}]}]"""
+        assertNull(tool.validateQuestions(json))
     }
 
     @Test

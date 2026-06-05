@@ -396,6 +396,18 @@ export function QuestionView({ questions, activeIndex }: QuestionViewProps) {
         className="question-card rounded-xl border overflow-hidden"
         style={{ borderColor: 'var(--border)', backgroundColor: 'var(--card)' }}
       >
+        {/* Optional per-question header chip — scannable tag above the question text */}
+        {question.header ? (
+          <div className="px-4 pt-3">
+            <span
+              data-testid="question-header"
+              className="inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide"
+              style={{ color: 'var(--accent-fg, var(--fg))', backgroundColor: 'var(--accent-bg, var(--hover))' }}
+            >
+              {question.header}
+            </span>
+          </div>
+        ) : null}
         {/* Text input question */}
         {question.type === 'text' ? (
           <div className="p-4">

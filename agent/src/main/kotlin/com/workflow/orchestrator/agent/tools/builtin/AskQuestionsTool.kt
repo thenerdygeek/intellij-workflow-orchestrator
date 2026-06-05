@@ -28,7 +28,9 @@ data class Question(
     val id: String,
     val question: String,
     val type: String,
-    val options: List<QuestionOption>
+    val options: List<QuestionOption>,
+    /** Optional short tag (≤12 chars) shown as a scannable chip above the question in the wizard. */
+    val header: String = ""
 )
 
 @Serializable
@@ -63,7 +65,7 @@ class AskQuestionsTool : AgentTool {
         "Use judiciously — prefer using available tools to find information over asking the user.\n\n" +
         "Two modes:\n" +
         "- **Simple** (most common): pass 'question' with optional 'options' array. User sees the question in chat and types an answer.\n" +
-        "- **Wizard** (structured): pass 'questions' JSON array for multi-step structured questions with options."
+        "- **Wizard** (structured): pass 'questions' JSON array for 2+ related questions at once, or a single question where the user may pick MULTIPLE options (type:\"multiple\"). See the 'questions' param for a worked example."
     override val parameters = FunctionParameters(
         properties = mapOf(
             "question" to ParameterProperty(
@@ -77,8 +79,11 @@ class AskQuestionsTool : AgentTool {
             ),
             "questions" to ParameterProperty(
                 type = "string",
-                description = "JSON array of structured questions for the wizard mode. Only use this for complex multi-step decisions. " +
-                    "Format: [{\"id\":\"q1\",\"question\":\"...\",\"type\":\"single|multiple\",\"options\":[{\"id\":\"o1\",\"label\":\"...\"}]}]"
+                description = "JSON array of structured questions for the wizard mode. Use when you have 2+ related decisions to gather at once, " +
+                    "OR a single question where the user may pick more than one option (type:\"multiple\" renders checkboxes; type:\"single\" renders radios). " +
+                    "Each question may carry an optional short `header` (≤12 chars) shown as a scannable tag. " +
+                    "Example: [{\"id\":\"db\",\"header\":\"Database\",\"question\":\"Which database?\",\"type\":\"single\",\"options\":[{\"id\":\"pg\",\"label\":\"Postgres\"},{\"id\":\"my\",\"label\":\"MySQL\"}]}," +
+                    "{\"id\":\"feat\",\"header\":\"Features\",\"question\":\"Which features to enable?\",\"type\":\"multiple\",\"options\":[{\"id\":\"auth\",\"label\":\"Auth\"},{\"id\":\"cache\",\"label\":\"Caching\"}]}]"
             ),
             "title" to ParameterProperty(
                 type = "string",
@@ -132,8 +137,8 @@ class AskQuestionsTool : AgentTool {
                 example("[\"Postgres\", \"MySQL\", \"SQLite\"]")
             }
             optional("questions", "string") {
-                llmSeesIt("JSON array of structured questions for the wizard mode. Only use this for complex multi-step decisions. Format: [{\"id\":\"q1\",\"question\":\"...\",\"type\":\"single|multiple\",\"options\":[{\"id\":\"o1\",\"label\":\"...\"}]}]")
-                humanReadable("Wizard-mode payload — a JSON array of structured questions, each with its own options list. Renders as a multi-step wizard in the dashboard with back/skip/next navigation. Only worth it for genuine decision trees; for a single question use simple mode.")
+                llmSeesIt("JSON array of structured questions for the wizard mode. Use when you have 2+ related decisions to gather at once, OR a single question where the user may pick more than one option (type:\"multiple\" renders checkboxes; type:\"single\" renders radios). Each question may carry an optional short `header` (≤12 chars) shown as a scannable tag. Example: [{\"id\":\"db\",\"header\":\"Database\",\"question\":\"Which database?\",\"type\":\"single\",\"options\":[{\"id\":\"pg\",\"label\":\"Postgres\"},{\"id\":\"my\",\"label\":\"MySQL\"}]},{\"id\":\"feat\",\"header\":\"Features\",\"question\":\"Which features to enable?\",\"type\":\"multiple\",\"options\":[{\"id\":\"auth\",\"label\":\"Auth\"},{\"id\":\"cache\",\"label\":\"Caching\"}]}]")
+                humanReadable("Wizard-mode payload — a JSON array of structured questions, each with its own options list and an optional short `header` tag. Renders as a multi-step wizard in the dashboard with back/skip/next navigation. Use for 2+ related decisions or a single multi-select question; for one single-choice question, simple mode is lighter.")
                 whenPresent("Routes to executeWizard(): JSON is validated (max 20 questions, max 10 options each, unique IDs, type ∈ {single, multiple}). On validation failure returns an error ToolResult with a format example. On success, fires showQuestionsCallback to render the wizard; the agent loop suspends on a CompletableDeferred until the user submits, cancels, or the 5-min timeout fires.")
                 whenAbsent("Required-one-of with `question`. If neither is provided, execute() returns an error ToolResult.")
                 constraint("max 20 questions per wizard call; each question max 10 options")
