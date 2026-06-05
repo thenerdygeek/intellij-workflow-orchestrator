@@ -162,6 +162,13 @@ description optional: for approval dialog on trigger/stop/cancel.
             "result key). build_status is 'is CI green?' — get_build is 'what happened in build PROJ-PLAN-138?'."
         )
         llmMistake(
+            "Calls get_build or recent_builds when the user asks 'is my build running?' or 'what is the current " +
+            "CI status?' — always prefer build_status for these queries. build_status is the running-aware " +
+            "composite: it checks in-progress/queued builds FIRST, then shows the latest FINISHED build. " +
+            "get_build needs a specific build key and only returns finished builds; recent_builds shows " +
+            "history but may miss an in-flight build unless the running-notice is present."
+        )
+        llmMistake(
             "Calls get_build_log with a plan-level key (e.g. PROJ-PLAN-138) when the user wants only the failing " +
             "job's log. Prefer the job-level resultKey from get_build's stages[].jobs[].resultKey (e.g. " +
             "PROJ-PLAN-UNIT-138) to avoid a 29KB log dump when 3KB would do."
@@ -235,17 +242,26 @@ description optional: for approval dialog on trigger/stop/cancel.
             action("build_status") {
                 description {
                     technical(
-                        "Fetches the latest build result for a plan (or branch chain). Calls ChainKeyResolver to map " +
-                        "plan_key + optional branch to the Bamboo chain key, then calls service.getLatestBuild(chainKey)."
+                        "Running-aware composite CI status check. Checks in-progress/queued builds via " +
+                        "service.getRunningBuilds() FIRST (with master-plan fallback when a branch-chain key " +
+                        "may 404 the running-builds endpoint), then fetches the latest finished build via " +
+                        "service.getLatestBuild(chainKey). If any builds are in-progress/queued, they are " +
+                        "surfaced above the latest finished result. If the running-check fails, a distinct " +
+                        "warning is prepended so the partial result is never silently shown as complete. " +
+                        "Calls ChainKeyResolver to map plan_key + optional branch to the Bamboo chain key."
                     )
                     plain(
-                        "Asks 'is CI green for this plan?' — like glancing at the build status badge on the project page. " +
-                        "Optionally scoped to a branch if you only care about feature-branch builds."
+                        "The definitive 'what is CI doing right now?' check — checks running/queued builds FIRST, " +
+                        "then shows the latest finished build. Use this whenever the user asks 'is my build running', " +
+                        "'is CI green', or 'what's the current build state for PROJ-PLAN'. Optionally scoped to a branch."
                     )
                 }
                 whenLLMUses(
-                    "When the user asks 'is the build passing?', 'did CI break?', or 'what's the current build status for PROJ-PLAN?'. " +
-                    "This is the cheapest way to get a pass/fail answer — use it before get_build when only the status matters."
+                    "When the user asks 'is my build running?', 'is the build passing?', 'did CI break?', " +
+                    "'what's the current CI status for PROJ-PLAN?', or any question about the present state of " +
+                    "a Bamboo plan. This is the ONLY action that checks running/queued builds — get_build and " +
+                    "recent_builds are finished-only. Always prefer build_status over get_build or recent_builds " +
+                    "for 'current status' queries."
                 )
                 params {
                     required("plan_key", "string") {
@@ -854,7 +870,11 @@ description optional: for approval dialog on trigger/stop/cancel.
                 } else {
                     planKey
                 }
-                executeBuildStatusForTest(chainKey, service)
+                // Pass the original planKey as masterPlanKey fallback — when chainKey is a
+                // branch-chain key (e.g. PROJ-PLAN523), getRunningBuilds may 404 on it while
+                // the master plan key (PROJ-PLAN) works correctly for the running-builds query.
+                val masterPlanKey = if (chainKey != planKey) planKey else null
+                executeBuildStatusForTest(chainKey, service, masterPlanKey)
             }
 
             "get_build" -> {
@@ -966,7 +986,23 @@ description optional: for approval dialog on trigger/stop/cancel.
                 } else {
                     planKey
                 }
-                service.getRecentBuilds(chainKey, maxResults).toAgentToolResult()
+                val recentResult = service.getRecentBuilds(chainKey, maxResults).toAgentToolResult()
+                // H1: Make recent_builds running-aware so the LLM sees in-flight builds even
+                // when it picks recent_builds over build_status for "current status" queries.
+                val masterPlanKey = if (chainKey != planKey) planKey else null
+                val runningCheck = activeBuildsOrWarning(service, chainKey, masterPlanKey)
+                if (runningCheck.activeBuilds.isNotEmpty()) {
+                    val notice = buildRunningNotice(runningCheck.activeBuilds, chainKey)
+                    val combined = notice + recentResult.content
+                    ToolResult(
+                        combined,
+                        "${runningCheck.activeBuilds.size} in-progress/queued + recent builds for $chainKey",
+                        TokenEstimator.estimate(combined),
+                        isError = recentResult.isError
+                    )
+                } else {
+                    recentResult
+                }
             }
 
             "get_running_builds" -> {
@@ -991,46 +1027,136 @@ description optional: for approval dialog on trigger/stop/cancel.
     }
 
     /**
+     * Return type for the shared running-check helper [activeBuildsOrWarning].
+     *
+     * @param activeBuilds non-empty when at least one attempt succeeded and found active builds.
+     * @param bothErrored  true when EVERY attempt (chainKey + optional masterPlanKey) returned
+     *   an error — caller should emit a non-silent warning instead of silently hiding the gap.
+     * @param errorReason  human-readable reason string when [bothErrored] is true.
+     */
+    internal data class RunningCheck(
+        val activeBuilds: List<com.workflow.orchestrator.core.model.bamboo.BuildResultData>,
+        val bothErrored: Boolean,
+        val errorReason: String
+    )
+
+    /**
+     * Shared running-build check used by both [executeBuildStatusForTest] and the
+     * `recent_builds` handler.
+     *
+     * Calls `service.getRunningBuilds(chainKey)`.  If that call errors **or** returns
+     * empty AND [masterPlanKey] is non-null and different from [chainKey], retries with
+     * [masterPlanKey] — because branch-chain keys (e.g. `PROJ-PLAN523`) may 404 the
+     * `includeAllStates` endpoint while the master plan key (`PROJ-PLAN`) succeeds.
+     *
+     * Returns [RunningCheck.bothErrored] = `true` only when **every** attempt failed,
+     * so the caller can emit a distinct non-silent warning (H6 fix).
+     */
+    internal suspend fun activeBuildsOrWarning(
+        service: com.workflow.orchestrator.core.services.BambooService,
+        chainKey: String,
+        masterPlanKey: String?
+    ): RunningCheck {
+        // Primary attempt — keyed on the resolved chain key.
+        val primary = service.getRunningBuilds(chainKey)
+        if (!primary.isError) {
+            val builds = primary.data.orEmpty()
+            if (builds.isNotEmpty()) return RunningCheck(builds, bothErrored = false, errorReason = "")
+            // Primary succeeded but empty — try master plan key as a secondary source only
+            // when a distinct master key is available (branch-collection 404 case, H2).
+        }
+
+        if (masterPlanKey != null && masterPlanKey != chainKey) {
+            val secondary = service.getRunningBuilds(masterPlanKey)
+            if (!secondary.isError) {
+                val builds = secondary.data.orEmpty()
+                return RunningCheck(builds, bothErrored = false, errorReason = "")
+            }
+            // Both errored.
+            val reason = secondary.summary.ifBlank { primary.summary.ifBlank { "unknown error" } }
+            return RunningCheck(emptyList(), bothErrored = true, errorReason = reason)
+        }
+
+        // No master key available — primary was the only attempt.
+        if (primary.isError) {
+            return RunningCheck(
+                emptyList(),
+                bothErrored = true,
+                errorReason = primary.summary.ifBlank { "unknown error" }
+            )
+        }
+        // Primary succeeded but empty, no fallback needed.
+        return RunningCheck(emptyList(), bothErrored = false, errorReason = "")
+    }
+
+    /** Formats the "⚠ N build(s) IN PROGRESS or QUEUED …" notice block. */
+    private fun buildRunningNotice(
+        activeBuilds: List<com.workflow.orchestrator.core.model.bamboo.BuildResultData>,
+        chainKey: String
+    ): String = buildString {
+        append("⚠ ${activeBuilds.size} build(s) currently IN PROGRESS or QUEUED for $chainKey ")
+        append("(not returned by the latest-build endpoint — the most recent FINISHED build is shown below):\n")
+        activeBuilds.forEach { b ->
+            val lifeState = b.lifeCycleState.ifBlank { b.state }.ifBlank { "InProgress" }
+            append("  • #${b.buildNumber} [$lifeState] ${b.buildResultKey}\n")
+        }
+        append("\n— Most recent FINISHED build —\n")
+    }
+
+    /**
      * Composes `build_status` output. Bamboo's `/result/{key}/latest` endpoint
      * (behind [BambooService.getLatestBuild]) only returns the most recent
      * *finished* build — a build that is currently in progress or queued is
      * invisible to it. That made the agent report a stale FAILED/SUCCESSFUL state
      * while a newer build was actually running. To give an honest "current CI
-     * state" we additionally fetch in-progress/queued builds (which use
-     * `includeAllStates=true`) and surface them above the latest finished result.
+     * state" we additionally fetch in-progress/queued builds via [activeBuildsOrWarning]
+     * (which includes a master-plan fallback for branch keys that 404 the
+     * includeAllStates endpoint) and surface them above the latest finished result.
+     *
+     * H6 fix: if the running-check fails, prepend a DISTINCT non-silent warning so
+     * the LLM knows the result is incomplete — never silently hide the gap.
      *
      * Extracted as an `internal` seam so it can be unit-tested with a mock
-     * [BambooService] without IntelliJ infrastructure (mirrors
-     * [executeGetBuildForTest]).
+     * [BambooService] without IntelliJ infrastructure (mirrors [executeGetBuildForTest]).
+     *
+     * @param chainKey     resolved chain key (may equal [masterPlanKey] for trunk builds).
+     * @param masterPlanKey the original plan_key param, passed as a fallback when [chainKey]
+     *   is a branch-chain key (e.g. `PROJ-PLAN523`) that may 404 the running-builds endpoint.
+     *   Pass `null` when chainKey == planKey (no distinct master key exists).
      */
     internal suspend fun executeBuildStatusForTest(
         chainKey: String,
-        service: com.workflow.orchestrator.core.services.BambooService
+        service: com.workflow.orchestrator.core.services.BambooService,
+        masterPlanKey: String? = null
     ): ToolResult = coroutineScope {
         val latestDeferred = async { service.getLatestBuild(chainKey) }
-        val runningDeferred = async { service.getRunningBuilds(chainKey) }
+        val runningCheck = activeBuildsOrWarning(service, chainKey, masterPlanKey)
         val latest = latestDeferred.await().toAgentToolResult()
-        val running = runningDeferred.await()
-        val active = if (running.isError) emptyList() else running.data.orEmpty()
-        if (active.isEmpty()) {
-            latest
-        } else {
-            val notice = buildString {
-                append("⚠ ${active.size} build(s) currently IN PROGRESS or QUEUED for $chainKey ")
-                append("(not returned by the latest-build endpoint — the most recent FINISHED build is shown below):\n")
-                active.forEach { b ->
-                    val lifeState = b.lifeCycleState.ifBlank { b.state }.ifBlank { "InProgress" }
-                    append("  • #${b.buildNumber} [$lifeState] ${b.buildResultKey}\n")
-                }
-                append("\n— Most recent FINISHED build —\n")
+
+        when {
+            runningCheck.activeBuilds.isNotEmpty() -> {
+                val notice = buildRunningNotice(runningCheck.activeBuilds, chainKey)
+                val combined = notice + latest.content
+                ToolResult(
+                    combined,
+                    "${runningCheck.activeBuilds.size} in-progress/queued + latest finished for $chainKey",
+                    TokenEstimator.estimate(combined),
+                    isError = latest.isError
+                )
             }
-            val combined = notice + latest.content
-            ToolResult(
-                combined,
-                "${active.size} in-progress/queued + latest finished for $chainKey",
-                TokenEstimator.estimate(combined),
-                isError = latest.isError
-            )
+            runningCheck.bothErrored -> {
+                // H6: do NOT silently swallow the running-check error.
+                val warning = "⚠ Could not verify in-progress/queued builds (${runningCheck.errorReason}); " +
+                    "showing the latest FINISHED build only:\n\n"
+                val combined = warning + latest.content
+                ToolResult(
+                    combined,
+                    "running-check error + latest finished for $chainKey",
+                    TokenEstimator.estimate(combined),
+                    isError = latest.isError
+                )
+            }
+            else -> latest
         }
     }
 
