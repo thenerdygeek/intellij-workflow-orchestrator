@@ -49,10 +49,15 @@ import com.workflow.orchestrator.agent.session.toApiMessage
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.monitor.MonitorBridge
 import com.workflow.orchestrator.agent.monitor.MonitorConfig
+import com.workflow.orchestrator.agent.monitor.MonitorEvent
+import com.workflow.orchestrator.agent.monitor.MonitorHandle
 import com.workflow.orchestrator.agent.monitor.MonitorManager
 import com.workflow.orchestrator.agent.monitor.MonitorPersistence
 import com.workflow.orchestrator.agent.monitor.MonitorPool
+import com.workflow.orchestrator.agent.monitor.MonitorSourceFactory
+import com.workflow.orchestrator.agent.monitor.Severity
 import com.workflow.orchestrator.agent.monitor.wakeOutcomeFor
+import com.workflow.orchestrator.agent.tools.integration.ServiceLookup
 import com.workflow.orchestrator.agent.tools.builtin.MonitorTool
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolOutputSpiller
@@ -276,6 +281,106 @@ class AgentService(
 
     /** Mark all monitors for [sessionId] dormant on abnormal loop exit (max-iter/cancel/fail). */
     fun markMonitorsDormantForSession(sessionId: String) { monitorManagers[sessionId]?.markAllDormant() }
+
+    /**
+     * Clear persisted monitor specs and pending notifications for [sessionId].
+     *
+     * Called on new-chat / session-switch transitions so a fresh session does not inherit stale
+     * monitors from the previous session.  Both files are deleted idempotently; a missing file
+     * is not an error.  The whole body is runCatching-wrapped so a persistence failure never
+     * propagates to the caller (mirrors [disposeMonitorsForSession]'s silent contract).
+     */
+    fun clearPersistedMonitors(sessionId: String) {
+        runCatching {
+            monitorPersistence.clear(sessionId)
+            monitorPersistence.clearPendingNotifications(sessionId)
+        }.onFailure { e ->
+            log.warn("[AgentService] clearPersistedMonitors failed for $sessionId: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Re-arm all monitors that were persisted to [MonitorPersistence] for [sessionId].
+     *
+     * Called on session RESUME so watches that were active before the session was paused/killed
+     * continue without the LLM having to re-issue `monitor(action=start)`.  Each monitor is
+     * re-armed with the SAME id so prior `monitor stop <id>` references still resolve.
+     *
+     * The entire body is wrapped in runCatching so a re-arm failure never aborts the resume
+     * (spec contract: re-arm failure MUST NOT break resume).
+     *
+     * ### Task 6B dormancy reset
+     * Before starting the source we call `manager.forget(spec.id)` to clear any stale dormancy
+     * state that was stamped on the id during an abnormal loop exit (markAllDormant).  Without
+     * this reset a re-armed monitor would remain dormant and could never fire an idle-wake on
+     * the freshly resumed session.
+     */
+    private suspend fun reArmMonitors(sessionId: String) {
+        runCatching {
+            val specs = monitorPersistence.load(sessionId)
+            if (specs.isEmpty()) return@runCatching
+            log.info("[AgentService] reArmMonitors: re-arming ${specs.size} monitor(s) for $sessionId")
+            val pool = MonitorPool.getInstance(project)
+            // Provider lambdas mirror MonitorTool's constructor defaults exactly.
+            val bambooProvider: (Project) -> com.workflow.orchestrator.core.services.BambooService? =
+                { p -> ServiceLookup.bamboo(p) }
+            val bitbucketProvider: (Project) -> com.workflow.orchestrator.core.services.BitbucketService? =
+                { p -> ServiceLookup.bitbucket(p) }
+            val jiraProvider: (Project) -> com.workflow.orchestrator.core.services.JiraService? =
+                { p -> ServiceLookup.jira(p) }
+            val sonarProvider: (Project) -> com.workflow.orchestrator.core.services.SonarService? =
+                { p -> ServiceLookup.sonar(p) }
+            val eventBusProvider: (Project) -> kotlinx.coroutines.flow.SharedFlow<com.workflow.orchestrator.core.events.WorkflowEvent>? =
+                { p -> p.service<com.workflow.orchestrator.core.events.EventBus>().events }
+
+            for (spec in specs) {
+                // Build the shell onExit callback that mirrors MonitorTool.startShell's onExit lambda.
+                val onShellExit: (Int?) -> Unit = { code ->
+                    val sev = if (code == 0) Severity.NOTABLE else Severity.ALERT
+                    MonitorBridge.emit(
+                        project, sessionId,
+                        MonitorEvent(spec.id, sev, "process exited (code=${code ?: "unknown"})")
+                    )
+                    pool.markExited(sessionId, spec.id, code)
+                }
+                val result = MonitorSourceFactory.build(
+                    spec, project, cs,
+                    bambooProvider, bitbucketProvider, jiraProvider, sonarProvider, eventBusProvider,
+                    onShellExit = onShellExit,
+                )
+                when (result) {
+                    is MonitorSourceFactory.BuildResult.Failed -> {
+                        log.warn("[AgentService] reArmMonitors: failed to build source for ${spec.id} (${spec.sourceType}): ${result.error}")
+                        // Don't re-persist the failure; just skip this monitor.
+                    }
+                    is MonitorSourceFactory.BuildResult.Built -> {
+                        val src = result.source
+                        val handle = MonitorHandle(src, sessionId, System.currentTimeMillis())
+                        try {
+                            pool.register(sessionId, handle)
+                        } catch (e: MonitorPool.MaxConcurrentReached) {
+                            src.stop()
+                            log.warn("[AgentService] reArmMonitors: cap reached for $sessionId, skipping ${spec.id}: ${e.message}")
+                            continue
+                        }
+                        // Pre-create the manager BEFORE start so the bridge router is live.
+                        ensureMonitorManager(sessionId)
+                        // Task 6B: reset any stale dormancy state so the re-armed monitor can
+                        // wake the freshly resumed session (markAllDormant left it dormant on
+                        // the previous abnormal exit; forget() clears all per-id state).
+                        monitorManagers[sessionId]?.forget(spec.id)
+                        src.start { event ->
+                            handle.appendLine(event.formatLine())
+                            MonitorBridge.emit(project, sessionId, event)
+                        }
+                        log.info("[AgentService] reArmMonitors: re-armed ${spec.id} (${spec.sourceType}) for $sessionId")
+                    }
+                }
+            }
+        }.onFailure { e ->
+            log.warn("[AgentService] reArmMonitors failed for $sessionId — resume continues unaffected: ${e.message}", e)
+        }
+    }
 
     /**
      * Document-extraction progress sink wired by [AgentController] after construction.
@@ -3064,9 +3169,32 @@ class AgentService(
             }
         }
 
-        // Build new user content: preamble + any popped content
+        // Task 6F — append any monitor notifications that were persisted by the idle-wake path
+        // (Task 6E) while the session was paused.  Mirrors the background-completion and
+        // delegation-nudge pickup blocks above: splice into the preamble, then clear so they
+        // are delivered exactly once.  Wrapped in runCatching so a persistence failure never
+        // aborts the resume.
+        val finalPreamble = runCatching {
+            val pendingNotifications = monitorPersistence.loadPendingNotifications(sessionId)
+            if (pendingNotifications.isEmpty()) {
+                preamble
+            } else {
+                val body = pendingNotifications.joinToString("\n")
+                val notificationsPreamble = "\n\n# Monitor notifications while away\n" +
+                    "While the session was paused, the following monitor events fired:\n\n" +
+                    body + "\n"
+                monitorPersistence.clearPendingNotifications(sessionId)
+                log.info("[AgentService] resume pickup: delivered ${pendingNotifications.size} persisted monitor notification(s) for $sessionId")
+                preamble + notificationsPreamble
+            }
+        }.getOrElse { err ->
+            log.warn("[AgentService] loadPendingNotifications failed for $sessionId — using base preamble: ${err.message}", err)
+            preamble
+        }
+
+        // Build new user content: finalPreamble + any popped content
         val newUserContent = buildList {
-            add(ContentBlock.Text(preamble))
+            add(ContentBlock.Text(finalPreamble))
             addAll(popResult.poppedContent)
         }
 
@@ -3089,9 +3217,16 @@ class AgentService(
             log.warn("AgentService.resumeSession: loadPersistedHandles failed for $sessionId", e)
         }
 
-        // TASK_RESUME hook — dispatched within cs.launch (IO coroutine), NOT runBlocking (C5 fix).
-        // The hook check and dispatch happen inside the launched coroutine to avoid blocking the calling thread.
+        // TASK_RESUME hook — dispatched within cs.launch (IO coroutine), C5 fix:
+        // the hook check and dispatch happen inside the launched coroutine to avoid blocking the calling thread.
         val job = cs.launch(Dispatchers.IO) {
+            // Task 6F — re-arm persisted monitors BEFORE the TASK_RESUME hook so any monitor
+            // event that fires before the hook completes is delivered on the steering queue
+            // rather than dropped.  reArmMonitors is suspend (pool.register uses a Mutex) so
+            // it executes here inside the IO coroutine.  Its own runCatching wrapper guarantees
+            // a re-arm failure can never prevent the hook or loop from starting.
+            reArmMonitors(sessionId)
+
             // Add resume ask to UI messages
             handler.addToClineMessages(UiMessage(
                 ts = System.currentTimeMillis(),
@@ -3172,7 +3307,7 @@ class AgentService(
             // Convert ApiMessage list to ChatMessage list (lossless C2 fix)
             // Include the resumption user message so the LLM sees it on the next call
             val chatMessages = activeApiHistory.map { it.toChatMessage() } +
-                com.workflow.orchestrator.core.ai.dto.ChatMessage(role = "user", content = preamble)
+                com.workflow.orchestrator.core.ai.dto.ChatMessage(role = "user", content = finalPreamble)
             ctx.restoreMessages(chatMessages)
 
             // Belt-and-braces: strip anything that slipped through the resume-path filter
@@ -3186,7 +3321,7 @@ class AgentService(
             // We call executeTask which launches its own coroutine — we join it to
             // keep this Job alive until completion so the caller can track/cancel it.
             val innerJob = executeTask(
-                task = preamble,
+                task = finalPreamble,
                 sessionId = sessionId,
                 contextManager = ctx,
                 messageStateHandler = handler,

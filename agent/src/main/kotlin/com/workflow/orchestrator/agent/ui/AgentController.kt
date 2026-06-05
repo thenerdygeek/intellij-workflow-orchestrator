@@ -3282,6 +3282,9 @@ class AgentController(
             // MonitorManager + MonitorPool entry; clean monitors before the early return
             // (disposeMonitorsForSession is idempotent).
             service.disposeMonitorsForSession(leavingSessionId)
+            // Task 6F — clear persisted monitor specs + pending notifications so a new session
+            // does not inherit the leaving session's monitors.
+            service.clearPersistedMonitors(leavingSessionId)
             return true
         }
 
@@ -3306,6 +3309,9 @@ class AgentController(
         pool.killAll(leavingSessionId)
         // Task 8 — drop the leaving session's monitor coordinator + kill its live monitor sources.
         service.disposeMonitorsForSession(leavingSessionId)
+        // Task 6F — clear persisted monitor specs + pending notifications so a new session
+        // does not inherit the leaving session's monitors.
+        service.clearPersistedMonitors(leavingSessionId)
         return true
     }
 
