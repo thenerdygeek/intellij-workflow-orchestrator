@@ -467,20 +467,25 @@ Session-scoped. `AgentService.monitorManagerFor(sessionId)` lazily constructs ea
 
 ### Phasing
 
-Phase 1 = framework + shell source. Phase 2 = Bamboo + polling/event-bus bases. Phase 3 = pull_request (state/reviews/comments). Phase 4 = jira_ticket + jira_sprint. Phase 5 = sonar_gate + sonar_issues + ListDiff helper. Design spec: `docs/superpowers/specs/2026-06-04-agent-monitor-framework-design.md`.
+Phase 1 = framework + shell source. Phase 2 = Bamboo + polling/event-bus bases. Phase 3 = pull_request (state/reviews/comments). Phase 4 = jira_ticket + jira_sprint. Phase 5 = sonar_gate + sonar_issues + ListDiff helper. Phase 6 = settings UI, dormancy on abnormal exit, MonitorSpec persistence + resume re-arm, persist-before-wake, webview surfacing. Design spec: `docs/superpowers/specs/2026-06-04-agent-monitor-framework-design.md`.
 
-### Phase 2 follow-ups
+### Phase 6 (UI + resume + lifecycle)
 
-Deferred from the Phase 1 integration review (not yet implemented):
+Shipped in commits `09a6940d0` (settings UI), `8a390ec56` (markAllDormant), `842ae5d91` (MonitorSpec + persistence), `1cf974c6c` (MonitorSourceFactory), `8065e81a2` (persist-before-wake), `b985ec821` (resume re-arm), `4dc0bb6cb` (webview surfacing).
 
-- **(3) Persist idle-wake notification before waking.** Mirror `onBackgroundCompletion`'s persist-first ordering so a `SKIP_GUARD` / `DEFER_ACTIVE_SESSION` / `DEFER_NO_LISTENER` route replays the monitor notification on the next resume instead of dropping it. Today the manager drops the batch on a non-`WOKE` route (`flushDue` comment: "passive surfacing is MonitorHandle's job").
-- **(4) Mark monitors dormant on loop exit.** When the loop exits via `MaxIterationsReached` / `Cancelled` / `Failed`, mark the session's monitors dormant — currently they can still idle-wake a just-exhausted session (bounded only by the per-monitor wake budget, so the blast radius is small but non-zero).
-- **(6) Settings UI for the three monitor tunables.** `monitorCoalesceWindowMs`, `monitorWakeBudgetPerMonitor`, `monitorFloodThresholdPerMin` exist in `AgentSettings.State` with defaults but have no Settings UI yet — add them under AI Agent ▸ Advanced.
-- **(7) Monitor lifecycle params + terminal-state auto-stop (Phase 6 work).** The design-spec §5 `lifecycle: until_exit | persistent | timeout` + `timeout_ms` params are NOT yet implemented — every monitor runs `persistent`-style until `monitor stop` / session dispose. Separately, polling sources have **no terminal-state auto-stop**: a finished Bamboo build keeps polling (capped at SmartPoller's 300 s backoff) until the session ends, rather than stopping once it reaches a terminal `Finished/Failed/Successful` state. Both to be addressed in the Phase 6 lifecycle work.
+- **Settings UI:** `monitorCoalesceWindowMs`, `monitorWakeBudgetPerMonitor`, `monitorFloodThresholdPerMin` now have a "Monitors" group under AI Agent ▸ Advanced (`AgentAdvancedConfigurable`).
+- **Dormancy on abnormal exit:** `MonitorManager.markAllDormant()` + `AgentService.markMonitorsDormantForSession(sessionId)` called from `AgentController.onComplete` on `LoopResult.Failed`/`Cancelled` (NOT `Completed`/`SessionHandoff`) — a just-exhausted/cancelled session is not re-woken; events still surface passively.
+- **Persistence + resume re-arm:** `MonitorSpec(id, sourceType, description, params)` persisted per-session to `sessions/{id}/monitors.json` via `MonitorPersistence`. `MonitorSourceFactory.build(spec, …)` is the shared construction path for both live `monitor start` and resume re-arm. `AgentService.reArmMonitors(sessionId)` (called in `resumeSession`, `runCatching`-guarded) rebuilds sources with the SAME id so prior `monitor stop <id>` references resolve, and calls `forget` to clear stale dormancy. New chat clears `monitors.json` via `AgentService.clearPersistedMonitors` from `AgentController.killBackgroundsOnTransition`; resume does NOT clear.
+- **Persist-before-wake:** the `wakeIdle` lambda persists the notification batch to `monitor-notifications.json` BEFORE waking (mirrors `onBackgroundCompletion`). On resume, notifications are drained into the `[TASK RESUMPTION]` preamble (`# Monitor notifications while away`) then cleared — `SKIP_GUARD`/`DEFER` routes replay instead of dropping.
+- **Webview surfacing:** `MonitorPool.emitSnapshot` fires `WorkflowEvent.MonitorChanged(sessionId, snapshot: List<MonitorSnapshotDto>)` on register/stop/markExited/killAll. `AgentController.subscribeToMonitorChanges` pushes via `receiveMonitorUpdate`/`__receiveMonitorUpdate` + `_loadMonitorSnapshot` hydration → `chatStore.monitorHandles` → `<MonitorIndicator>` top-bar chip (mirrors `BackgroundIndicator`).
+
+### Remaining follow-up
+
+- **(7) Monitor lifecycle params + terminal-state auto-stop.** The design-spec §5 `lifecycle: until_exit | persistent | timeout` + `timeout_ms` params are NOT yet implemented — every monitor runs `persistent`-style until `monitor stop` / session dispose. Polling sources have **no terminal-state auto-stop**: a finished Bamboo build keeps polling (capped at SmartPoller's 300 s backoff) until the session ends, rather than stopping once it reaches a terminal state.
 
 ### Pinning tests
 
-`MonitorEventTest`, `MonitorSourceContractTest`, `MonitorManagerTest`, `MonitorWakeRoutingTest`, `ShellCommandSourceTest`, `MonitorHandleTest`, `MonitorSettingsDefaultsTest`, `MonitorToolTest`, `EnvironmentDetailsMonitorSectionTest`, `PollingSourceTest`, `EventBusSourceTest`, `BambooDiffTest`, `BambooMonitorSourceTest`, `PrStateSourceTest`, `PrReviewsSourceTest`, `PrCommentsSourcesTest`, `PullRequestMonitorSourceTest`, `JiraTicketMonitorSourceTest`, `JiraSprintMonitorSourceTest`, `ListDiffTest`, `SonarGateSourceTest`, `SonarIssuesSourceTest`.
+`MonitorEventTest`, `MonitorSourceContractTest`, `MonitorManagerTest`, `MonitorWakeRoutingTest`, `ShellCommandSourceTest`, `MonitorHandleTest`, `MonitorSettingsDefaultsTest`, `MonitorToolTest`, `EnvironmentDetailsMonitorSectionTest`, `PollingSourceTest`, `EventBusSourceTest`, `BambooDiffTest`, `BambooMonitorSourceTest`, `PrStateSourceTest`, `PrReviewsSourceTest`, `PrCommentsSourcesTest`, `PullRequestMonitorSourceTest`, `JiraTicketMonitorSourceTest`, `JiraSprintMonitorSourceTest`, `ListDiffTest`, `SonarGateSourceTest`, `SonarIssuesSourceTest`, `MonitorPersistenceTest`, `MonitorNotificationsTest`, `MonitorSourceFactoryTest`, `MonitorPoolEmitSnapshotTest`, `monitor-indicator.test.tsx`.
 
 ## Run/Test Tool Disposal — RunInvocation Pattern
 
