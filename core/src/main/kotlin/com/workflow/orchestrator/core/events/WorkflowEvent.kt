@@ -217,6 +217,16 @@ sealed class WorkflowEvent {
         val snapshot: List<BackgroundProcessSnapshotDto>,
     ) : WorkflowEvent()
 
+    /**
+     * Emitted by :agent [MonitorPool] when a monitor is registered, stopped, or exits.
+     * The [snapshot] is a full point-in-time list of all handles for the session so the
+     * webview top-bar indicator can re-render without diff-tracking.
+     */
+    data class MonitorChanged(
+        val sessionId: String,
+        val snapshot: List<MonitorSnapshotDto>,
+    ) : WorkflowEvent()
+
     enum class BuildEventStatus { SUCCESS, FAILED }
 }
 
@@ -232,4 +242,14 @@ data class BackgroundProcessSnapshotDto(
     val exitCode: Int?,
     val outputBytes: Long,
     val runtimeMs: Long,
+)
+
+/** DTO form of a [com.workflow.orchestrator.agent.monitor.MonitorHandle].
+ *  Crosses module boundaries without pulling in the handle type.
+ *  Minimal — id / label / state only; no coupling to MonitorManager dormancy. */
+@Serializable
+data class MonitorSnapshotDto(
+    val id: String,
+    val label: String,
+    val state: String,
 )

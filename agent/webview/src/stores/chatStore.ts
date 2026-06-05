@@ -23,6 +23,7 @@ import type {
   CompletionKind,
   ImageRef,
 } from '../bridge/types';
+import type { MonitorSnapshot } from '../bridge/globals';
 import { answerToDisplay } from '../util/question-answer';
 import { splitThinkingSegments } from '../util/thinking-segments';
 import { approvalTitle } from '@/lib/approvalTitle';
@@ -433,6 +434,9 @@ interface ChatState {
   // Background processes (Phase 7, Task 7.3)
   backgroundProcesses: BackgroundProcessSnapshot[];
 
+  // Active monitors (Task 6G)
+  monitorHandles: MonitorSnapshot[];
+
   // Delegation question pending banner — shown above the InputBar when IDE-B has a
   // delegated question in-flight. Cleared when the user sends an answer or the remote
   // answer arrives. Plan 4 spec §5.5.
@@ -615,6 +619,9 @@ interface ChatState {
   // Background processes (Phase 7, Task 7.3)
   setBackgroundProcesses(snapshot: BackgroundProcessSnapshot[]): void;
 
+  // Active monitors (Task 6G)
+  setMonitorHandles(snapshot: MonitorSnapshot[]): void;
+
   // Delegation question pending banner (Plan 4 §5.5)
   setDelegationQuestionPending(active: boolean, delegatorRepo?: string): void;
 
@@ -703,6 +710,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   resumeSessionId: null,
   tasks: [],
   backgroundProcesses: [],
+  monitorHandles: [],
   editorTabMode: false,
   delegationQuestionPending: { active: false },
   dropActive: false,
@@ -1419,6 +1427,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeSessionDelegated: null,
       sessionDelegatedRepo: null,
       delegationQuestionPending: { active: false },
+      monitorHandles: [],
     });
   },
 
@@ -2592,6 +2601,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // ── Background Process Actions (Phase 7, Task 7.3) ──
   setBackgroundProcesses: (snapshot) => set({ backgroundProcesses: snapshot }),
+
+  // ── Monitor Handle Actions (Task 6G) ──
+  setMonitorHandles: (snapshot) => set({ monitorHandles: snapshot }),
 
   // ── Delegation question pending banner (Plan 4 §5.5) ──
   setDelegationQuestionPending: (active, delegatorRepo) =>

@@ -5,6 +5,7 @@ import type { UiMessage } from '@/bridge/types';
 import { SessionStatsChips } from './SessionStatsChips';
 import { SessionTitle } from './SessionTitle';
 import { BackgroundIndicator } from './BackgroundIndicator';
+import { MonitorIndicator } from './MonitorIndicator';
 import { IncomingDelegationBar } from './IncomingDelegationBar';
 
 /**
@@ -200,6 +201,9 @@ export const TopBar = memo(function TopBar() {
 
         {/* Background process chip (Phase 7, Task 7.3) */}
         <BackgroundIndicator />
+
+        {/* Monitor chip (Task 6G) */}
+        <MonitorIndicator />
 
         {/* Incoming delegation pills (Plan 6 §incoming-delegation-topbar) */}
         <IncomingDelegationBar />

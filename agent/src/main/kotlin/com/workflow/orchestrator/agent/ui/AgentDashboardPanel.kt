@@ -871,6 +871,24 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.receiveBackgroundUpdate(snapshotJson) }
     }
 
+    /**
+     * Push a full monitor snapshot to the webview top-bar indicator.
+     * Calls the `window.__receiveMonitorUpdate` global registered in jcef-bridge.ts.
+     */
+    fun receiveMonitorUpdate(snapshotJson: String) {
+        runOnEdt { cefPanel?.receiveMonitorUpdate(snapshotJson) }
+        broadcast(replay = false) { it.receiveMonitorUpdate(snapshotJson) }
+    }
+
+    /**
+     * Wire the `_loadMonitorSnapshot` JCEF bridge.
+     * [handler] receives a sessionId string and must return a JSON array
+     * of [com.workflow.orchestrator.core.events.MonitorSnapshotDto].
+     */
+    fun setCefLoadMonitorSnapshotCallback(handler: (sessionId: String) -> String) {
+        cefPanel?.onLoadMonitorSnapshot = handler
+    }
+
     fun showResumeBar(sessionId: String) {
         runOnEdt { cefPanel?.showResumeBar(sessionId) }
         broadcast(replay = false) { it.showResumeBar(sessionId) }

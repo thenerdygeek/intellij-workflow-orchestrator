@@ -44,8 +44,10 @@ import com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile
 import com.workflow.orchestrator.agent.util.JsEscape
 import com.workflow.orchestrator.agent.tools.background.BackgroundPool
+import com.workflow.orchestrator.agent.monitor.MonitorPool
 import com.workflow.orchestrator.core.events.BackgroundProcessSnapshotDto
 import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.MonitorSnapshotDto
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.settings.effectiveAcceptWindowMs
 import com.workflow.orchestrator.core.util.PathLinkResolver
@@ -545,6 +547,10 @@ class AgentController(
         // stays up-to-date as processes are registered, complete, or killed.
         subscribeToBackgroundChanges()
 
+        // Subscribe to MonitorChanged events so the top-bar monitor indicator
+        // stays up-to-date as monitors are registered, stopped, or exit.
+        subscribeToMonitorChanges()
+
         // Subscribe to background-process completion events so the user sees a
         // visible status bubble in the chat when a background process finishes.
         // AgentService already routes completions into the loop's steering queue
@@ -644,6 +650,47 @@ class AgentController(
                 )
                 LOG.info("[Background] forwarding to webview — session=$active count=${event.snapshot.size} bgIds=${event.snapshot.map { it.bgId }}")
                 invokeLater { dashboard.receiveBackgroundUpdate(json) }
+            }
+        }
+    }
+
+    /** Lenient JSON instance shared by monitor-snapshot serialization. */
+    private val monitorJson = Json { ignoreUnknownKeys = true }
+
+    /**
+     * Collect [WorkflowEvent.MonitorChanged] from [EventBus] and forward the snapshot
+     * to the webview top-bar indicator via `window.__receiveMonitorUpdate`.
+     *
+     * Only events whose [WorkflowEvent.MonitorChanged.sessionId] matches the current
+     * active session are forwarded — events for other sessions are silently ignored.
+     *
+     * Mirrors [subscribeToBackgroundChanges]. Runs on [controllerScope] (cancelled in [dispose]).
+     */
+    private fun subscribeToMonitorChanges() {
+        val eventBus = project.getService(EventBus::class.java)
+        if (eventBus == null) {
+            LOG.warn("[Monitor] subscribeToMonitorChanges: EventBus service not available; monitor indicator will not update.")
+            return
+        }
+        LOG.info("[Monitor] subscribeToMonitorChanges: subscribing (currentSessionId=$currentSessionId)")
+        controllerScope.launch {
+            eventBus.events.collect { event ->
+                if (event !is WorkflowEvent.MonitorChanged) return@collect
+                val active = currentSessionId
+                if (active == null) {
+                    LOG.info("[Monitor] dropping MonitorChanged(session=${event.sessionId}, count=${event.snapshot.size}) — no active session yet")
+                    return@collect
+                }
+                if (event.sessionId != active) {
+                    LOG.info("[Monitor] dropping MonitorChanged(session=${event.sessionId}) — active session is $active")
+                    return@collect
+                }
+                val json = monitorJson.encodeToString(
+                    ListSerializer(MonitorSnapshotDto.serializer()),
+                    event.snapshot
+                )
+                LOG.info("[Monitor] forwarding to webview — session=$active count=${event.snapshot.size} ids=${event.snapshot.map { it.id }}")
+                invokeLater { dashboard.receiveMonitorUpdate(json) }
             }
         }
     }
@@ -1152,6 +1199,19 @@ class AgentController(
                 )
             }
             backgroundJson.encodeToString(ListSerializer(BackgroundProcessSnapshotDto.serializer()), snapshot)
+        }
+
+        // Monitor snapshot loader for this panel's webview top-bar monitor indicator
+        panel.setCefLoadMonitorSnapshotCallback { sessionId ->
+            val pool = MonitorPool.getInstance(project)
+            val snapshot = pool.list(sessionId).map { h ->
+                MonitorSnapshotDto(
+                    id = h.bgId,
+                    label = h.label,
+                    state = h.state().name,
+                )
+            }
+            monitorJson.encodeToString(ListSerializer(MonitorSnapshotDto.serializer()), snapshot)
         }
     }
 

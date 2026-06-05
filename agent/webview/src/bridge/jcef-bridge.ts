@@ -1009,6 +1009,20 @@ export function initBridge(storeAccessors: StoreAccessors): void {
     }).catch(() => { /* pool may not be ready yet — ignore */ });
   }
 
+  // Monitor push (Task 6G) — called by Kotlin via EventBus push
+  // when MonitorPool emits a state change for the current session.
+  window.__receiveMonitorUpdate = (snapshot: any) => {
+    const parsed = Array.isArray(snapshot) ? snapshot : [];
+    stores?.getChatStore().setMonitorHandles(parsed);
+  };
+
+  // Initial hydration: load monitors for the current session on mount.
+  if (window._loadMonitorSnapshot) {
+    window._loadMonitorSnapshot('').then((snap: any) => {
+      stores?.getChatStore().setMonitorHandles(snap || []);
+    }).catch(() => { /* pool may not be ready yet — ignore */ });
+  }
+
   // Replay any calls that arrived before stores were ready
   for (const call of pendingCalls) {
     const fn = (bridgeFunctions as Record<string, (...args: any[]) => void>)[call.name]

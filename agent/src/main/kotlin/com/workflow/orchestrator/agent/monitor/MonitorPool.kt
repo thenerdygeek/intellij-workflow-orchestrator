@@ -3,10 +3,16 @@ package com.workflow.orchestrator.agent.monitor
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.background.BackgroundState
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.MonitorSnapshotDto
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -34,6 +40,7 @@ class MonitorPool(
     @Volatile var forgetCallback: ((sessionId: String, id: String) -> Unit)? = null
 
     companion object {
+        private val LOG = Logger.getInstance(MonitorPool::class.java)
         const val MAX_PER_SESSION = 5
         /** Maximum number of EXITED handles retained per session for post-exit inspection. */
         const val MAX_EXITED_RETAINED = 10
@@ -42,13 +49,16 @@ class MonitorPool(
 
     class MaxConcurrentReached(message: String) : RuntimeException(message)
 
-    suspend fun register(sessionId: String, handle: MonitorHandle) = mutex.withLock {
-        val sp = pools.getOrPut(sessionId) { ConcurrentHashMap() }
-        val running = sp.values.count { it.state() == BackgroundState.RUNNING }
-        if (running >= MAX_PER_SESSION) {
-            throw MaxConcurrentReached("Session '$sessionId' already has $MAX_PER_SESSION running monitors. Stop one via monitor(action=stop).")
+    suspend fun register(sessionId: String, handle: MonitorHandle) {
+        mutex.withLock {
+            val sp = pools.getOrPut(sessionId) { ConcurrentHashMap() }
+            val running = sp.values.count { it.state() == BackgroundState.RUNNING }
+            if (running >= MAX_PER_SESSION) {
+                throw MaxConcurrentReached("Session '$sessionId' already has $MAX_PER_SESSION running monitors. Stop one via monitor(action=stop).")
+            }
+            sp[handle.bgId] = handle
         }
-        sp[handle.bgId] = handle
+        emitSnapshot(sessionId)
     }
 
     fun get(sessionId: String, id: String): MonitorHandle? = pools[sessionId]?.get(id)
@@ -58,7 +68,9 @@ class MonitorPool(
         val h = pools[sessionId]?.remove(id) ?: return false
         // Manager-forget on explicit stop is handled at the tool layer (MonitorTool.stop calls
         // AgentService.forgetMonitor); prune-forget is handled here via forgetCallback.
-        h.kill(); return true
+        h.kill()
+        emitSnapshot(sessionId)
+        return true
     }
 
     /**
@@ -73,6 +85,7 @@ class MonitorPool(
         val sp = pools[sessionId] ?: return
         sp[id]?.markExited(code)
         pruneExited(sessionId, sp)
+        emitSnapshot(sessionId)
     }
 
     /**
@@ -93,6 +106,36 @@ class MonitorPool(
 
     fun killAll(sessionId: String) {
         pools.remove(sessionId)?.values?.forEach { runCatching { it.kill() } }
+        emitSnapshot(sessionId)
+    }
+
+    /**
+     * Build a snapshot of all current handles for [sessionId] and emit a
+     * [WorkflowEvent.MonitorChanged] on the [EventBus]. Best-effort: if the
+     * EventBus service is unavailable (unit tests without a project container) the
+     * call is silently swallowed. Mirrors [BackgroundPool.emitSnapshot].
+     */
+    private fun emitSnapshot(sessionId: String) {
+        val snapshot = list(sessionId).map { h ->
+            MonitorSnapshotDto(
+                id = h.bgId,
+                label = h.label,
+                state = h.state().name,
+            )
+        }
+        LOG.info("[MonitorPool] emitSnapshot session=$sessionId count=${snapshot.size} ids=${snapshot.map { it.id }}")
+        cs.launch(Dispatchers.IO) {
+            runCatching {
+                val bus = project.getService(EventBus::class.java)
+                if (bus == null) {
+                    LOG.warn("[MonitorPool] EventBus service is null — event not emitted (session=$sessionId)")
+                } else {
+                    bus.emit(WorkflowEvent.MonitorChanged(sessionId, snapshot))
+                }
+            }.onFailure {
+                LOG.warn("[MonitorPool] emitSnapshot failed for session $sessionId: ${it.message}", it)
+            }
+        }
     }
 
     override fun dispose() { pools.values.forEach { sp -> sp.values.forEach { runCatching { it.kill() } } }; pools.clear() }

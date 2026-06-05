@@ -128,6 +128,7 @@ class AgentCefPanel(
     private var copyToClipboardQuery: JBCefJSQuery? = null
     private var openInsightsTabQuery: JBCefJSQuery? = null
     private var loadBackgroundSnapshotQuery: JBCefJSQuery? = null
+    private var loadMonitorSnapshotQuery: JBCefJSQuery? = null
     private var attachmentExistsQuery: JBCefJSQuery? = null
     private var contextUsageQuery: JBCefJSQuery? = null
     private var imageSettingsQuery: JBCefJSQuery? = null
@@ -357,6 +358,13 @@ class AgentCefPanel(
      * [com.workflow.orchestrator.core.events.BackgroundProcessSnapshotDto] for that session.
      */
     var onLoadBackgroundSnapshot: ((sessionId: String) -> String)? = null
+
+    /**
+     * Callback for the `_loadMonitorSnapshot` bridge.
+     * Called with the sessionId from JS; should return the serialized JSON array of
+     * [com.workflow.orchestrator.core.events.MonitorSnapshotDto] for that session.
+     */
+    var onLoadMonitorSnapshot: ((sessionId: String) -> String)? = null
 
     /**
      * Fired after the page is fully loaded and all bridges are injected.
@@ -681,6 +689,10 @@ class AgentCefPanel(
             val json = onLoadBackgroundSnapshot?.invoke(sessionId) ?: "[]"
             JBCefJSQuery.Response(json)
         }
+        loadMonitorSnapshotQuery = registerQuery(b) { sessionId ->
+            val json = onLoadMonitorSnapshot?.invoke(sessionId) ?: "[]"
+            JBCefJSQuery.Response(json)
+        }
         // Phase 5: chunked-by-sha256 upload pre-flight. The webview's
         // AttachmentManager calls this BEFORE shipping bytes so we can skip
         // the upload entirely on a hash collision (within-session dedup).
@@ -876,6 +888,16 @@ class AgentCefPanel(
                         loadBackgroundSnapshotQuery?.let { q ->
                             js(
                                 "window._loadBackgroundSnapshot = function(sessionId) {" +
+                                    " return new Promise(function(resolve, reject) {" +
+                                    " ${q.inject("sessionId", "function(r) { resolve(JSON.parse(r || '[]')); }", "function(err) { resolve([]); }")}" +
+                                    " }); };"
+                            )
+                        }
+                    }
+                    injectBridge("_loadMonitorSnapshot") {
+                        loadMonitorSnapshotQuery?.let { q ->
+                            js(
+                                "window._loadMonitorSnapshot = function(sessionId) {" +
                                     " return new Promise(function(resolve, reject) {" +
                                     " ${q.inject("sessionId", "function(r) { resolve(JSON.parse(r || '[]')); }", "function(err) { resolve([]); }")}" +
                                     " }); };"
@@ -1679,6 +1701,15 @@ class AgentCefPanel(
      */
     fun receiveBackgroundUpdate(snapshotJson: String) {
         callJs("window.__receiveBackgroundUpdate && window.__receiveBackgroundUpdate(${JsEscape.toJsString(snapshotJson)})")
+    }
+
+    /**
+     * Push a full monitor snapshot to the webview.
+     * Calls `window.__receiveMonitorUpdate(snapshotJson)` which the top-bar
+     * monitor indicator registers in jcef-bridge.ts.
+     */
+    fun receiveMonitorUpdate(snapshotJson: String) {
+        callJs("window.__receiveMonitorUpdate && window.__receiveMonitorUpdate(${JsEscape.toJsString(snapshotJson)})")
     }
 
     fun loadSessionHistory(historyItemsJson: String) {

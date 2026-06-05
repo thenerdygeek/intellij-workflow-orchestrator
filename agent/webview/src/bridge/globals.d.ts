@@ -3,11 +3,21 @@ import type { BackgroundProcessSnapshot } from '../stores/chatStore';
 
 export {};
 
+/** Minimal snapshot of a single active monitor. Mirrors MonitorSnapshotDto on the Kotlin side. */
+export interface MonitorSnapshot {
+  id: string;
+  label: string;
+  state: string;
+}
+
 declare global {
   interface Window {
     // Background process bridge (Phase 7, Task 7.3)
     _loadBackgroundSnapshot?: (sessionId: string) => Promise<BackgroundProcessSnapshot[]>;
     __receiveBackgroundUpdate?: (snapshot: BackgroundProcessSnapshot[]) => void;
+    // Monitor bridge (Task 6G)
+    _loadMonitorSnapshot?: (sessionId: string) => Promise<MonitorSnapshot[]>;
+    __receiveMonitorUpdate?: (snapshot: MonitorSnapshot[]) => void;
     _sendMessage?: (text: string) => void;
     _sendMessageWithMentions?: (payload: string) => void;
     _searchMentions?: (data: string) => void;
