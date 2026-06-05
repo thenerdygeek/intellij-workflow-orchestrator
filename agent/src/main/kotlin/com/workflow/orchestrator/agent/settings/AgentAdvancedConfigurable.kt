@@ -221,6 +221,28 @@ class AgentAdvancedConfigurable(
                 }
             }
 
+            group("Monitors") {
+                row("Coalesce window (ms):") {
+                    textField()
+                        .columns(12)
+                        .bindText(
+                            { agentSettings.state.monitorCoalesceWindowMs.toString() },
+                            { agentSettings.state.monitorCoalesceWindowMs = it.toLongOrNull() ?: 2_000L }
+                        )
+                        .comment("Batch monitor events arriving within this window before notifying the agent.")
+                }
+                row("Wake budget (per monitor):") {
+                    intTextField(0..50)
+                        .bindIntText(agentSettings.state::monitorWakeBudgetPerMonitor)
+                        .comment("Max times a single monitor may wake an idle agent before going dormant.")
+                }
+                row("Flood threshold (events/min):") {
+                    intTextField(1..1000)
+                        .bindIntText(agentSettings.state::monitorFloodThresholdPerMin)
+                        .comment("A monitor exceeding this many events/min is auto-stopped.")
+                }
+            }
+
             group("Background processes") {
                 row("Concurrent processes per session:") {
                     intTextField(1..20)

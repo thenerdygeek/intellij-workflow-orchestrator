@@ -92,7 +92,7 @@ class MonitorTool(
                 description = "[start/shell] Regex; matching stdout lines notify. Matching is CASE-SENSITIVE by " +
                     "default — prefix with '(?i)' for case-insensitive (e.g. '(?i)error|failed')."),
             "plan_key" to ParameterProperty(type = "string", description = "[start/bamboo] Bamboo plan key (e.g. PROJ-PLAN)."),
-            "branch" to ParameterProperty(type = "string", description = "[start] Branch to watch (for sources that support branches, e.g. bamboo, sonar_gate)."),
+            "branch" to ParameterProperty(type = "string", description = "[start] Branch to watch (for sources that support branches, e.g. bamboo, sonar_gate, sonar_issues)."),
             "project_key" to ParameterProperty(type = "string", description = "[start/sonar_gate|sonar_issues] Sonar project key."),
             "level" to ParameterProperty(type = "string",
                 description = "[start/bamboo] Granularity: build | stage | job (default: build).",
@@ -116,7 +116,7 @@ class MonitorTool(
             "sprint_id" to ParameterProperty(type = "string",
                 description = "[start/jira_sprint] Jira sprint id (numeric). When given, board_id is ignored and the sprint is polled directly."),
             "min_severity" to ParameterProperty(type = "string",
-                description = "[start/sonar_issues] Minimum severity to watch",
+                description = "[start/sonar_issues] Minimum severity to watch; default: all severities when omitted.",
                 enumValues = listOf("INFO", "MINOR", "MAJOR", "CRITICAL", "BLOCKER")),
             "description" to ParameterProperty(type = "string", description = "[start] Short label shown in every notification."),
             "monitor_id" to ParameterProperty(type = "string", description = "[stop/status] The id returned by start."),
