@@ -59,7 +59,7 @@ subprojects {
     // (MockK + MockWebServer + coroutine fixtures retain memory across a single
     // forked JVM). Raise it for every module's Test task. (audit 2026-05-31)
     tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
-        maxHeapSize = "2g"
+        maxHeapSize = "4g"
     }
 }
 configurations.configureEach {

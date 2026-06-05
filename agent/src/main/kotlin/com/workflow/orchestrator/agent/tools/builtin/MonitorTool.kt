@@ -10,13 +10,17 @@ import com.workflow.orchestrator.agent.monitor.BambooMonitorSource
 import com.workflow.orchestrator.agent.monitor.MonitorBridge
 import com.workflow.orchestrator.agent.monitor.MonitorHandle
 import com.workflow.orchestrator.agent.monitor.MonitorPool
+import com.workflow.orchestrator.agent.monitor.PullRequestMonitorSource
 import com.workflow.orchestrator.agent.monitor.ShellCommandSource
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.estimateTokens
 import com.workflow.orchestrator.agent.tools.integration.ServiceLookup
+import com.workflow.orchestrator.core.events.EventBus
+import com.workflow.orchestrator.core.events.WorkflowEvent
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -30,6 +34,18 @@ class MonitorTool(
      */
     private val bambooProvider: (Project) -> com.workflow.orchestrator.core.services.BambooService? =
         { project -> ServiceLookup.bamboo(project) },
+    /**
+     * Optional provider for [BitbucketService] — injected as a lambda for testability.
+     * Production default uses [ServiceLookup.bitbucket]; tests can pass a fake.
+     */
+    private val bitbucketProvider: (Project) -> com.workflow.orchestrator.core.services.BitbucketService? =
+        { project -> ServiceLookup.bitbucket(project) },
+    /**
+     * Optional provider for the EventBus [SharedFlow] — injected as a lambda for testability.
+     * Production default reads from the project-scoped [EventBus] service; tests can pass a fake.
+     */
+    private val eventBusProvider: (Project) -> SharedFlow<WorkflowEvent>? =
+        { project -> project.service<EventBus>().events },
 ) : AgentTool {
     override val name = "monitor"
     override val description =
@@ -46,8 +62,8 @@ class MonitorTool(
             "action" to ParameterProperty(type = "string",
                 description = "start | list | stop | status", enumValues = listOf("start", "list", "stop", "status")),
             "source" to ParameterProperty(type = "string",
-                description = "[start] Event source: 'shell' or 'bamboo'.",
-                enumValues = listOf("shell", "bamboo")),
+                description = "[start] Event source: 'shell', 'bamboo', or 'pull_request'.",
+                enumValues = listOf("shell", "bamboo", "pull_request")),
             "command" to ParameterProperty(type = "string", description = "[start/shell] Command to run."),
             "filter" to ParameterProperty(type = "string",
                 description = "[start/shell] Regex; matching stdout lines notify. Matching is CASE-SENSITIVE by " +
@@ -61,6 +77,14 @@ class MonitorTool(
                 description = "[start/bamboo] Stage name (required when level=stage or level=job)."),
             "job_name" to ParameterProperty(type = "string",
                 description = "[start/bamboo] Job name (required when level=job)."),
+            "pr_id" to ParameterProperty(type = "string", description = "[start/pull_request] Pull request id (numeric, e.g. '42')."),
+            "aspects" to ParameterProperty(type = "string",
+                description = "[start/pull_request] Comma list: state,reviews,comments; default all. " +
+                    "state=lifecycle transitions (merged/declined/approved); " +
+                    "reviews=participant approval-status changes; " +
+                    "comments=blocker count + total comment count."),
+            "repo_name" to ParameterProperty(type = "string",
+                description = "[start/pull_request] Optional repository slug override (null = primary repo from settings)."),
             "description" to ParameterProperty(type = "string", description = "[start] Short label shown in every notification."),
             "monitor_id" to ParameterProperty(type = "string", description = "[stop/status] The id returned by start."),
         ),
@@ -97,7 +121,8 @@ class MonitorTool(
                 when (source) {
                     "shell" -> startShell(params, project, sessionId, pool)
                     "bamboo" -> startBamboo(params, project, sessionId, pool)
-                    else -> err("source '$source' is not supported (use 'shell' or 'bamboo').")
+                    "pull_request" -> startPullRequest(params, project, sessionId, pool)
+                    else -> err("source '$source' is not supported (use 'shell', 'bamboo', or 'pull_request').")
                 }
             }
             else -> err("Unknown action '$action'")
@@ -178,11 +203,45 @@ class MonitorTool(
         return ok("Started monitor $id (bamboo $planKey level=$level). Notifications delivered on state transitions.")
     }
 
+    private suspend fun startPullRequest(
+        params: JsonObject,
+        project: Project,
+        sessionId: String,
+        pool: MonitorPool,
+    ): ToolResult {
+        val prIdRaw = params["pr_id"]?.jsonPrimitive?.content
+        val aspectsRaw = params["aspects"]?.jsonPrimitive?.content
+        validatePullRequestStart(prIdRaw, aspectsRaw)?.let { return err(it) }
+
+        val prId = prIdRaw!!.toInt()
+        val bitbucket = bitbucketProvider(project) ?: return err("Bitbucket is not configured.")
+        val flow = eventBusProvider(project) ?: return err("EventBus is not available.")
+
+        val aspects = PullRequestMonitorSource.parseAspects(aspectsRaw)
+        val repoName = params["repo_name"]?.jsonPrimitive?.content
+
+        val id = "pr-" + java.util.UUID.randomUUID().toString().take(8)
+        val defaultDesc = "pr #$prId ${aspects.map { it.name.lowercase() }.sorted().joinToString(",")}"
+        val desc = params["description"]?.jsonPrimitive?.content ?: defaultDesc
+
+        val src = PullRequestMonitorSource(id, desc, aspects, bitbucket, flow, prId, repoName, cs)
+        val handle = MonitorHandle(src, sessionId, System.currentTimeMillis())
+        try {
+            pool.register(sessionId, handle)
+        } catch (e: MonitorPool.MaxConcurrentReached) {
+            src.stop()
+            return err(e.message ?: "Too many monitors")
+        }
+        project.service<AgentService>().ensureMonitorManager(sessionId)
+        src.start { event -> handle.appendLine(event.formatLine()); MonitorBridge.emit(project, sessionId, event) }
+        return ok("Started monitor $id (pull_request #$prId aspects=${aspects.map { it.name.lowercase() }.sorted().joinToString(",")}). Notifications delivered on state changes.")
+    }
+
     private fun ok(text: String) = ToolResult(content = text, summary = text.take(80), tokenEstimate = estimateTokens(text))
     private fun err(text: String) = ToolResult(content = text, summary = text.take(80), tokenEstimate = estimateTokens(text), isError = true)
 
     companion object {
-        private val ALLOWED_SOURCES = setOf("shell", "bamboo")
+        private val ALLOWED_SOURCES = setOf("shell", "bamboo", "pull_request")
 
         /**
          * Render a single monitor's status: id, label, current state, and its buffered
@@ -201,7 +260,7 @@ class MonitorTool(
         /** Pure validation for `action=start source=shell`. Returns an error string, or null when valid. */
         fun validateStart(source: String?, command: String?, filter: String?): String? {
             val s = source ?: "shell"
-            if (s !in ALLOWED_SOURCES) return "source '$s' is not supported (use 'shell' or 'bamboo')."
+            if (s !in ALLOWED_SOURCES) return "source '$s' is not supported (use 'shell', 'bamboo', or 'pull_request')."
             if (s != "shell") return null  // non-shell sources have their own validate
             if (command.isNullOrBlank()) return "shell monitor requires 'command'."
             if (filter.isNullOrBlank()) return "shell monitor requires 'filter' (a regex)."
@@ -226,6 +285,27 @@ class MonitorTool(
             if (lvl == "job") {
                 if (stageName.isNullOrBlank()) return "level=job requires 'stage_name'."
                 if (jobName.isNullOrBlank()) return "level=job requires 'job_name'."
+            }
+            return null
+        }
+
+        /**
+         * Pure validation for `action=start source=pull_request`.
+         * Returns an error string, or null when valid.
+         *
+         * Rules:
+         * - [prIdRaw] is required and must be a numeric string (parseable as [Int]).
+         * - [aspects] (if non-blank) may only contain tokens from {state, reviews, comments}
+         *   (case-insensitive, comma-separated, trimmed); any unknown token is an error.
+         */
+        fun validatePullRequestStart(prIdRaw: String?, aspects: String?): String? {
+            if (prIdRaw.isNullOrBlank()) return "pull_request monitor requires numeric 'pr_id'."
+            if (prIdRaw.toIntOrNull() == null) return "pull_request monitor requires numeric 'pr_id' (got '$prIdRaw')."
+            if (!aspects.isNullOrBlank()) {
+                val validTokens = setOf("state", "reviews", "comments")
+                val tokens = aspects.split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+                val bad = tokens.firstOrNull { it !in validTokens }
+                if (bad != null) return "unknown aspect '$bad'; valid values are: state, reviews, comments."
             }
             return null
         }

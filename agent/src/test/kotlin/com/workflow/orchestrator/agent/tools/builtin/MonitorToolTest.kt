@@ -70,6 +70,12 @@ class MonitorToolTest {
         assertTrue(enum != null && "bamboo" in enum, "source enum should include 'bamboo', was: $enum")
     }
 
+    @Test
+    fun `source enum includes pull_request`() {
+        val enum = tool().parameters.properties["source"]?.enumValues
+        assertTrue(enum != null && "pull_request" in enum, "source enum should include 'pull_request', was: $enum")
+    }
+
     // ---- validateBambooStart -------------------------------------------------
 
     @Test
@@ -150,5 +156,49 @@ class MonitorToolTest {
         h.markExited(null)
         val s = MonitorTool.renderStatus(h)
         assertTrue(s.contains("EXITED"), "status should render EXITED without crashing on a null code: $s")
+    }
+
+    // ---- validatePullRequestStart --------------------------------------------
+
+    @Test
+    fun `validatePullRequestStart missing pr_id returns error`() {
+        val err = MonitorTool.validatePullRequestStart(prIdRaw = null, aspects = null)
+        assertTrue(err != null && err.contains("pr_id"), "expected pr_id error, got: $err")
+    }
+
+    @Test
+    fun `validatePullRequestStart blank pr_id returns error`() {
+        val err = MonitorTool.validatePullRequestStart(prIdRaw = "", aspects = null)
+        assertTrue(err != null && err.contains("pr_id"), "expected pr_id error for blank, got: $err")
+    }
+
+    @Test
+    fun `validatePullRequestStart non-numeric pr_id returns error`() {
+        val err = MonitorTool.validatePullRequestStart(prIdRaw = "abc", aspects = null)
+        assertTrue(err != null && err.contains("pr_id"), "expected numeric pr_id error, got: $err")
+    }
+
+    @Test
+    fun `validatePullRequestStart unknown aspect token returns error naming the bad token`() {
+        val err = MonitorTool.validatePullRequestStart(prIdRaw = "42", aspects = "state,bogus")
+        assertTrue(err != null && err.contains("bogus"), "expected error naming the bad aspect token, got: $err")
+    }
+
+    @Test
+    fun `validatePullRequestStart valid pr_id with no aspects returns null`() {
+        val err = MonitorTool.validatePullRequestStart(prIdRaw = "42", aspects = null)
+        assertEquals(null, err, "valid numeric pr_id with no aspects should pass, got: $err")
+    }
+
+    @Test
+    fun `validatePullRequestStart valid pr_id with valid aspects returns null`() {
+        val err = MonitorTool.validatePullRequestStart(prIdRaw = "42", aspects = "state,reviews,comments")
+        assertEquals(null, err, "valid pr_id + known aspects should pass, got: $err")
+    }
+
+    @Test
+    fun `validatePullRequestStart valid pr_id with single valid aspect returns null`() {
+        val err = MonitorTool.validatePullRequestStart(prIdRaw = "7", aspects = "reviews")
+        assertEquals(null, err, "valid pr_id + single known aspect should pass, got: $err")
     }
 }
