@@ -131,4 +131,43 @@ class BambooDiffTest {
         val events = BambooDiff.diff("m1", BambooDiff.Level.JOB, "Build", "Compile", null, cur)
         assertTrue(events.isEmpty())
     }
+
+    // ---- buildNumber transition tests ----------------------------------------
+
+    @Test
+    fun `BUILD same state different buildNumber emits one NOTABLE event`() {
+        // Successful #6 → Successful #7: same state/lifeCycle but new buildNumber → should emit
+        val prev = build("Successful", "Finished").copy(buildNumber = 6)
+        val cur = build("Successful", "Finished").copy(buildNumber = 7)
+        val events = BambooDiff.diff("m1", BambooDiff.Level.BUILD, null, null, prev, cur)
+        assertEquals(1, events.size)
+        assertEquals(Severity.NOTABLE, events[0].severity)
+    }
+
+    @Test
+    fun `BUILD true no-op same buildNumber and state emits nothing`() {
+        // Exactly the same snapshot: no event
+        val prev = build("Successful", "Finished").copy(buildNumber = 7)
+        val cur = build("Successful", "Finished").copy(buildNumber = 7)
+        val events = BambooDiff.diff("m1", BambooDiff.Level.BUILD, null, null, prev, cur)
+        assertTrue(events.isEmpty())
+    }
+
+    @Test
+    fun `BUILD lifeCycleState change with same buildNumber emits event`() {
+        // Queued → InProgress (same buildNumber, lifeCycle changed)
+        val prev = build("Unknown", "Queued").copy(buildNumber = 5)
+        val cur = build("Unknown", "InProgress").copy(buildNumber = 5)
+        val events = BambooDiff.diff("m1", BambooDiff.Level.BUILD, null, null, prev, cur)
+        assertEquals(1, events.size)
+        assertEquals(Severity.NOTABLE, events[0].severity)
+    }
+
+    @Test
+    fun `BUILD same buildNumber Failed same state emits nothing`() {
+        val prev = build("Failed", "Finished").copy(buildNumber = 10)
+        val cur = build("Failed", "Finished").copy(buildNumber = 10)
+        val events = BambooDiff.diff("m1", BambooDiff.Level.BUILD, null, null, prev, cur)
+        assertTrue(events.isEmpty())
+    }
 }

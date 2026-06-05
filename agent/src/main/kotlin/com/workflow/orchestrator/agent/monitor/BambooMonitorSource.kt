@@ -15,6 +15,21 @@ import kotlinx.coroutines.CoroutineScope
  * The [chainKey] is resolved lazily: when [branch] is null the [planKey] itself is used as the
  * chain key; when [branch] is non-null the first matching `PlanBranchData.name` or `.shortName`
  * (case-insensitive) from [BambooService.getPlanBranches] is used.
+ *
+ * ## Composite poll (running-first, finished-fallback)
+ *
+ * Bamboo's `/result/{key}/latest` endpoint returns ONLY the most-recent FINISHED build — a build
+ * that is currently queued or in progress is invisible to it.  To let the monitor observe the full
+ * Queued → InProgress → Finished lifecycle, `fetch()` uses the following strategy:
+ *
+ * 1. Call [BambooService.getRunningBuilds] on the resolved chain key.
+ * 2. If that returns an error OR an empty list, AND a distinct master plan key exists (i.e.
+ *    [branch] is non-null so `chainKey != planKey`), retry [BambooService.getRunningBuilds]
+ *    with the master plan key (branch-chain keys can 404 the `includeAllStates` endpoint).
+ * 3. If a live build was found, return the one with the highest `buildNumber` (most-recent
+ *    in-flight build) so BambooDiff sees Queued / InProgress and the eventual Finished transition.
+ * 4. Otherwise fall back to [BambooService.getLatestBuild] (most-recent finished build).
+ *    Returns null on error so SmartPoller backs off without resetting the snapshot.
  */
 class BambooMonitorSource(
     monitorId: String,
@@ -32,8 +47,43 @@ class BambooMonitorSource(
 
     override suspend fun fetch(): BuildResultData? {
         val ck = chainKey ?: resolveChainKey()?.also { chainKey = it } ?: return null
+
+        // masterPlanKey is non-null only when chainKey is a branch-chain key (e.g. PROJ-PLAN523);
+        // for trunk builds chainKey == planKey so there is no distinct master to retry.
+        val masterPlanKey = if (ck != planKey) planKey else null
+
+        pickRunningBuild(ck, masterPlanKey)?.let { return it }
+
+        // No live build — fall back to the most-recent finished build.
         val res = bamboo.getLatestBuild(ck)
         return if (res.isError) null else res.data
+    }
+
+    /**
+     * Returns the running/queued build with the highest `buildNumber`, or null when none exist.
+     *
+     * Mirrors the `activeBuildsOrWarning` composite in `BambooBuildsTool`:
+     * - Primary attempt on [chainKey].
+     * - If that errors OR is empty and [masterPlanKey] is non-null, retry on [masterPlanKey].
+     * - Running errors do NOT propagate — a null return lets `fetch()` fall back to
+     *   `getLatestBuild` so a transient endpoint failure never breaks the poll.
+     */
+    internal suspend fun pickRunningBuild(chainKey: String, masterPlanKey: String?): BuildResultData? {
+        val primary = bamboo.getRunningBuilds(chainKey)
+        if (!primary.isError) {
+            val builds = primary.data.orEmpty()
+            if (builds.isNotEmpty()) return builds.maxByOrNull { it.buildNumber }
+        }
+
+        if (masterPlanKey != null && masterPlanKey != chainKey) {
+            val secondary = bamboo.getRunningBuilds(masterPlanKey)
+            if (!secondary.isError) {
+                val builds = secondary.data.orEmpty()
+                if (builds.isNotEmpty()) return builds.maxByOrNull { it.buildNumber }
+            }
+        }
+
+        return null
     }
 
     private suspend fun resolveChainKey(): String? {

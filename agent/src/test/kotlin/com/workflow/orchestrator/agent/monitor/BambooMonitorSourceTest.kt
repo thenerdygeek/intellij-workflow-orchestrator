@@ -19,9 +19,14 @@ import org.junit.jupiter.api.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class BambooMonitorSourceTest {
 
-    private fun okBuild(state: String = "Successful", lifeCycle: String = "Finished") = BuildResultData(
-        planKey = "PROJ-PLAN",
-        buildNumber = 1,
+    private fun okBuild(
+        state: String = "Successful",
+        lifeCycle: String = "Finished",
+        buildNumber: Int = 1,
+        planKey: String = "PROJ-PLAN",
+    ) = BuildResultData(
+        planKey = planKey,
+        buildNumber = buildNumber,
         state = state,
         durationSeconds = 10L,
         lifeCycleState = lifeCycle,
@@ -32,6 +37,15 @@ class BambooMonitorSourceTest {
 
     private fun errResult() =
         ToolResult<BuildResultData>(data = null, summary = "error", isError = true)
+
+    private fun okRunningResult(builds: List<BuildResultData>) =
+        ToolResult(data = builds, summary = "ok", isError = false)
+
+    private fun errRunningResult() =
+        ToolResult<List<BuildResultData>>(data = null, summary = "error", isError = true)
+
+    private fun emptyRunningResult() =
+        ToolResult(data = emptyList<BuildResultData>(), summary = "ok", isError = false)
 
     private fun okBranches(vararg pairs: Pair<String, String>) =
         ToolResult(
@@ -58,14 +72,18 @@ class BambooMonitorSourceTest {
         cs = scope,
     )
 
+    // -------------------------------------------------------------------------
+    // Original tests (unchanged)
+    // -------------------------------------------------------------------------
+
     @Test
     fun `branch null uses planKey as chainKey directly`() = runTest {
         val bamboo = mockk<BambooService>()
+        coEvery { bamboo.getRunningBuilds("PROJ-PLAN") } returns emptyRunningResult()
         coEvery { bamboo.getLatestBuild("PROJ-PLAN") } returns okResult(okBuild())
         val src = source(bamboo, planKey = "PROJ-PLAN", branch = null, scope = this)
         val events = mutableListOf<MonitorEvent>()
         src.pollOnce { events.add(it) }
-        coVerify(exactly = 1) { bamboo.getLatestBuild("PROJ-PLAN") }
         coVerify(exactly = 0) { bamboo.getPlanBranches(any(), any()) }
     }
 
@@ -73,6 +91,8 @@ class BambooMonitorSourceTest {
     fun `branch set resolves chainKey via getPlanBranches then polls getLatestBuild resolved key`() = runTest {
         val bamboo = mockk<BambooService>()
         coEvery { bamboo.getPlanBranches("PROJ-PLAN") } returns okBranches("PROJ-PLAN-123" to "feature/foo")
+        coEvery { bamboo.getRunningBuilds("PROJ-PLAN-123") } returns emptyRunningResult()
+        coEvery { bamboo.getRunningBuilds("PROJ-PLAN") } returns emptyRunningResult()
         coEvery { bamboo.getLatestBuild("PROJ-PLAN-123") } returns okResult(okBuild("Failed", "Finished"))
         val src = source(bamboo, planKey = "PROJ-PLAN", branch = "feature/foo", scope = this)
         val events = mutableListOf<MonitorEvent>()
@@ -98,6 +118,7 @@ class BambooMonitorSourceTest {
     @Test
     fun `getLatestBuild error results in fetch null and no events`() = runTest {
         val bamboo = mockk<BambooService>()
+        coEvery { bamboo.getRunningBuilds("PROJ-PLAN") } returns emptyRunningResult()
         coEvery { bamboo.getLatestBuild("PROJ-PLAN") } returns errResult()
         val src = source(bamboo, planKey = "PROJ-PLAN", branch = null, scope = this)
         val events = mutableListOf<MonitorEvent>()
@@ -109,20 +130,105 @@ class BambooMonitorSourceTest {
     @Test
     fun `state transition across two pollOnce calls emits BambooDiff ALERT event`() = runTest {
         val bamboo = mockk<BambooService>()
-        // First poll: InProgress (non-terminal → no event)
-        coEvery { bamboo.getLatestBuild("PROJ-PLAN") } returnsMany listOf(
-            okResult(okBuild("Unknown", "InProgress")),
-            okResult(okBuild("Failed", "Finished")),
+        // First poll: InProgress running build (buildNumber 1)
+        // Second poll: no running builds → latest finished Failed
+        coEvery { bamboo.getRunningBuilds("PROJ-PLAN") } returnsMany listOf(
+            okRunningResult(listOf(okBuild("Unknown", "InProgress", buildNumber = 1))),
+            emptyRunningResult(),
         )
+        coEvery { bamboo.getLatestBuild("PROJ-PLAN") } returns okResult(okBuild("Failed", "Finished", buildNumber = 1))
         val src = source(bamboo, planKey = "PROJ-PLAN", branch = null, scope = this)
         val events = mutableListOf<MonitorEvent>()
+        // First poll: running InProgress (non-terminal → no event)
         val changed1 = src.pollOnce { events.add(it) }
         assertFalse(changed1)
         assertTrue(events.isEmpty())
-        // Second poll: Failed → ALERT
+        // Second poll: no running → getLatestBuild returns Failed → ALERT
         val changed2 = src.pollOnce { events.add(it) }
         assertTrue(changed2)
         assertEquals(1, events.size)
         assertEquals(Severity.ALERT, events[0].severity)
+    }
+
+    // -------------------------------------------------------------------------
+    // New composite-poll tests
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `fetch prefers running build over finished - getLatestBuild not consulted when running build exists`() = runTest {
+        val bamboo = mockk<BambooService>()
+        val runningBuild = okBuild("Unknown", "InProgress", buildNumber = 7)
+        coEvery { bamboo.getRunningBuilds("PROJ-PLAN") } returns okRunningResult(listOf(runningBuild))
+        // getLatestBuild should NOT be called when a running build exists
+        val src = source(bamboo, planKey = "PROJ-PLAN", branch = null, scope = this)
+        val events = mutableListOf<MonitorEvent>()
+        src.pollOnce { events.add(it) }
+        coVerify(exactly = 0) { bamboo.getLatestBuild(any()) }
+    }
+
+    @Test
+    fun `fetch fallback to masterPlanKey when chainKey running empty - branch scenario`() = runTest {
+        val bamboo = mockk<BambooService>()
+        // Branch resolves to PROJ-PLAN-42 (chainKey != planKey → masterPlanKey = "PROJ-PLAN")
+        coEvery { bamboo.getPlanBranches("PROJ-PLAN") } returns okBranches("PROJ-PLAN-42" to "feature/bar")
+        // chainKey returns empty running builds → should fall back to masterPlanKey
+        coEvery { bamboo.getRunningBuilds("PROJ-PLAN-42") } returns emptyRunningResult()
+        val masterRunning = okBuild("Unknown", "InProgress", buildNumber = 5, planKey = "PROJ-PLAN")
+        coEvery { bamboo.getRunningBuilds("PROJ-PLAN") } returns okRunningResult(listOf(masterRunning))
+        // getLatestBuild should NOT be called because fallback running build was found
+        val src = source(bamboo, planKey = "PROJ-PLAN", branch = "feature/bar", scope = this)
+        val events = mutableListOf<MonitorEvent>()
+        src.pollOnce { events.add(it) }
+        coVerify(exactly = 1) { bamboo.getRunningBuilds("PROJ-PLAN-42") }
+        coVerify(exactly = 1) { bamboo.getRunningBuilds("PROJ-PLAN") }
+        coVerify(exactly = 0) { bamboo.getLatestBuild(any()) }
+    }
+
+    @Test
+    fun `fetch falls back to getLatestBuild when no running builds found`() = runTest {
+        val bamboo = mockk<BambooService>()
+        val finishedBuild = okBuild("Successful", "Finished", buildNumber = 6)
+        coEvery { bamboo.getRunningBuilds("PROJ-PLAN") } returns emptyRunningResult()
+        coEvery { bamboo.getLatestBuild("PROJ-PLAN") } returns okResult(finishedBuild)
+        val src = source(bamboo, planKey = "PROJ-PLAN", branch = null, scope = this)
+        val events = mutableListOf<MonitorEvent>()
+        src.pollOnce { events.add(it) }
+        coVerify(exactly = 1) { bamboo.getLatestBuild("PROJ-PLAN") }
+    }
+
+    @Test
+    fun `getRunningBuilds error on both attempts falls back to getLatestBuild gracefully`() = runTest {
+        val bamboo = mockk<BambooService>()
+        // Branch resolves so chainKey != planKey → masterPlanKey is non-null
+        coEvery { bamboo.getPlanBranches("PROJ-PLAN") } returns okBranches("PROJ-PLAN-99" to "bugfix/x")
+        coEvery { bamboo.getRunningBuilds("PROJ-PLAN-99") } returns errRunningResult()
+        coEvery { bamboo.getRunningBuilds("PROJ-PLAN") } returns errRunningResult()
+        val finishedBuild = okBuild("Successful", "Finished", buildNumber = 3)
+        coEvery { bamboo.getLatestBuild("PROJ-PLAN-99") } returns okResult(finishedBuild)
+        val src = source(bamboo, planKey = "PROJ-PLAN", branch = "bugfix/x", scope = this)
+        val events = mutableListOf<MonitorEvent>()
+        src.pollOnce { events.add(it) }
+        // Running errors should NOT prevent fetching latest finished build
+        coVerify(exactly = 1) { bamboo.getLatestBuild("PROJ-PLAN-99") }
+    }
+
+    @Test
+    fun `fetch picks highest buildNumber when multiple running builds returned`() = runTest {
+        val bamboo = mockk<BambooService>()
+        val build5 = okBuild("Unknown", "InProgress", buildNumber = 5)
+        val build8 = okBuild("Unknown", "InProgress", buildNumber = 8)
+        val build3 = okBuild("Unknown", "Queued", buildNumber = 3)
+        coEvery { bamboo.getRunningBuilds("PROJ-PLAN") } returns okRunningResult(listOf(build5, build8, build3))
+        val src = source(bamboo, planKey = "PROJ-PLAN", branch = null, scope = this)
+        // Capture the snapshot by watching what diff sees — poll will see build8 as prev=null
+        // InProgress is non-terminal so first-poll emits nothing; but we confirm getLatestBuild not called
+        val events = mutableListOf<MonitorEvent>()
+        src.pollOnce { events.add(it) }
+        coVerify(exactly = 0) { bamboo.getLatestBuild(any()) }
+        // Second poll: still running build8 — no change → no event
+        coEvery { bamboo.getRunningBuilds("PROJ-PLAN") } returns okRunningResult(listOf(build8))
+        val events2 = mutableListOf<MonitorEvent>()
+        src.pollOnce { events2.add(it) }
+        assertTrue(events2.isEmpty()) // same buildNumber + state + lifeCycle → no event
     }
 }

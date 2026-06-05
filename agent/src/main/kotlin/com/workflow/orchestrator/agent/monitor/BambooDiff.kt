@@ -44,6 +44,7 @@ object BambooDiff {
         current: BuildResultData,
     ): List<MonitorEvent> {
         val changed = previous == null
+            || previous.buildNumber != current.buildNumber
             || previous.state != current.state
             || previous.lifeCycleState != current.lifeCycleState
 
