@@ -75,7 +75,8 @@ class BambooMonitorSource(
             if (builds.isNotEmpty()) return builds.maxByOrNull { it.buildNumber }
         }
 
-        if (masterPlanKey != null && masterPlanKey != chainKey) {
+        // masterPlanKey is pre-guaranteed distinct from chainKey by the caller (set only when ck != planKey).
+        if (masterPlanKey != null) {
             val secondary = bamboo.getRunningBuilds(masterPlanKey)
             if (!secondary.isError) {
                 val builds = secondary.data.orEmpty()

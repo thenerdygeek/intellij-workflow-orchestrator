@@ -85,6 +85,8 @@ class BambooMonitorSourceTest {
         val events = mutableListOf<MonitorEvent>()
         src.pollOnce { events.add(it) }
         coVerify(exactly = 0) { bamboo.getPlanBranches(any(), any()) }
+        // No running builds → getLatestBuild is consulted exactly once on the planKey.
+        coVerify(exactly = 1) { bamboo.getLatestBuild("PROJ-PLAN") }
     }
 
     @Test
