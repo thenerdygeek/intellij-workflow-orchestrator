@@ -288,4 +288,33 @@ class BambooBuildsToolRunningVisibilityTest {
         assertFalse(check.bothErrored)
         coVerify(exactly = 1) { service.getRunningBuilds(any()) }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Regression NIT: a CLEAN empty-success running-check must emit NEITHER the
+    // "IN PROGRESS or QUEUED" notice NOR the "Could not verify" warning — output is
+    // exactly the latest finished build. Pins that success≠failure for empty results.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `build_status - clean empty running-check shows only finished build with no notice and no warning`() = runTest {
+        val service = mockk<BambooService>()
+        coEvery { service.getLatestBuild("PLAN-X") } returns latestFinished()
+        coEvery { service.getRunningBuilds("PLAN-X") } returns emptyRunning()
+
+        val result = tool.executeBuildStatusForTest("PLAN-X", service, masterPlanKey = null)
+
+        assertFalse(result.isError)
+        assertFalse(
+            result.content.contains("IN PROGRESS or QUEUED"),
+            "clean empty running-check must NOT emit the running-build notice, got:\n${result.content}"
+        )
+        assertFalse(
+            result.content.contains("Could not verify"),
+            "a SUCCESSFUL empty running-check must NOT emit the failure warning, got:\n${result.content}"
+        )
+        assertTrue(
+            result.content.contains("#2"),
+            "must show the latest finished build, got:\n${result.content}"
+        )
+    }
 }

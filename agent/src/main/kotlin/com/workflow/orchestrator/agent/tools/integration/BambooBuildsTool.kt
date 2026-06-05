@@ -991,17 +991,31 @@ description optional: for approval dialog on trigger/stop/cancel.
                 // when it picks recent_builds over build_status for "current status" queries.
                 val masterPlanKey = if (chainKey != planKey) planKey else null
                 val runningCheck = activeBuildsOrWarning(service, chainKey, masterPlanKey)
-                if (runningCheck.activeBuilds.isNotEmpty()) {
-                    val notice = buildRunningNotice(runningCheck.activeBuilds, chainKey)
-                    val combined = notice + recentResult.content
-                    ToolResult(
-                        combined,
-                        "${runningCheck.activeBuilds.size} in-progress/queued + recent builds for $chainKey",
-                        TokenEstimator.estimate(combined),
-                        isError = recentResult.isError
-                    )
-                } else {
-                    recentResult
+                when {
+                    runningCheck.activeBuilds.isNotEmpty() -> {
+                        val notice = buildRunningNotice(runningCheck.activeBuilds, chainKey)
+                        val combined = notice + recentResult.content
+                        ToolResult(
+                            combined,
+                            "${runningCheck.activeBuilds.size} in-progress/queued + recent builds for $chainKey",
+                            TokenEstimator.estimate(combined),
+                            isError = recentResult.isError
+                        )
+                    }
+                    runningCheck.bothErrored -> {
+                        // Symmetry with build_status (H6): a FAILED running-check must not be
+                        // silently swallowed — prepend the same non-silent warning above the list.
+                        val warning = buildRunningCheckFailureWarning(runningCheck.errorReason)
+                        val combined = warning + recentResult.content
+                        ToolResult(
+                            combined,
+                            "running-check error + recent builds for $chainKey",
+                            TokenEstimator.estimate(combined),
+                            isError = recentResult.isError
+                        )
+                    }
+                    // Clean empty-success (no running builds, no error) stays silent.
+                    else -> recentResult
                 }
             }
 
@@ -1089,6 +1103,15 @@ description optional: for approval dialog on trigger/stop/cancel.
         return RunningCheck(emptyList(), bothErrored = false, errorReason = "")
     }
 
+    /**
+     * Formats the distinct, non-silent warning prepended when the running-check
+     * FAILED on every attempt (H6). Shared by `build_status` and `recent_builds`
+     * so both surface a failed check identically instead of silently hiding it.
+     */
+    private fun buildRunningCheckFailureWarning(errorReason: String): String =
+        "⚠ Could not verify in-progress/queued builds ($errorReason); " +
+            "showing the latest FINISHED build only:\n\n"
+
     /** Formats the "⚠ N build(s) IN PROGRESS or QUEUED …" notice block. */
     private fun buildRunningNotice(
         activeBuilds: List<com.workflow.orchestrator.core.model.bamboo.BuildResultData>,
@@ -1146,8 +1169,7 @@ description optional: for approval dialog on trigger/stop/cancel.
             }
             runningCheck.bothErrored -> {
                 // H6: do NOT silently swallow the running-check error.
-                val warning = "⚠ Could not verify in-progress/queued builds (${runningCheck.errorReason}); " +
-                    "showing the latest FINISHED build only:\n\n"
+                val warning = buildRunningCheckFailureWarning(runningCheck.errorReason)
                 val combined = warning + latest.content
                 ToolResult(
                     combined,
