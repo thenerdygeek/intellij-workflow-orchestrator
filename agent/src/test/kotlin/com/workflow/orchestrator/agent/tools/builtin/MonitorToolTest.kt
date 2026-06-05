@@ -329,4 +329,56 @@ class MonitorToolTest {
         val err = MonitorTool.validateSonarGateStart(projectKey = "com.example:my-app")
         assertEquals(null, err, "any non-blank key should pass, got: $err")
     }
+
+    @Test
+    fun `source enum includes sonar_issues`() {
+        val enum = tool().parameters.properties["source"]?.enumValues
+        assertTrue(enum != null && "sonar_issues" in enum, "source enum should include 'sonar_issues', was: $enum")
+    }
+
+    // ---- validateSonarIssuesStart -------------------------------------------
+
+    @Test
+    fun `validateSonarIssuesStart missing project_key returns error`() {
+        val err = MonitorTool.validateSonarIssuesStart(projectKey = null, minSeverity = null)
+        assertTrue(err != null && err.contains("project_key"), "expected project_key error, got: $err")
+    }
+
+    @Test
+    fun `validateSonarIssuesStart blank project_key returns error`() {
+        val err = MonitorTool.validateSonarIssuesStart(projectKey = "", minSeverity = null)
+        assertTrue(err != null && err.contains("project_key"), "expected project_key error for blank, got: $err")
+    }
+
+    @Test
+    fun `validateSonarIssuesStart whitespace-only project_key returns error`() {
+        val err = MonitorTool.validateSonarIssuesStart(projectKey = "   ", minSeverity = null)
+        assertTrue(err != null && err.contains("project_key"), "expected project_key error for whitespace, got: $err")
+    }
+
+    @Test
+    fun `validateSonarIssuesStart valid project_key with no min_severity returns null`() {
+        val err = MonitorTool.validateSonarIssuesStart(projectKey = "my-sonar-project", minSeverity = null)
+        assertEquals(null, err, "valid project key with no min_severity should pass, got: $err")
+    }
+
+    @Test
+    fun `validateSonarIssuesStart valid project_key with valid min_severity returns null`() {
+        for (sev in listOf("INFO", "MINOR", "MAJOR", "CRITICAL", "BLOCKER")) {
+            val err = MonitorTool.validateSonarIssuesStart(projectKey = "proj", minSeverity = sev)
+            assertEquals(null, err, "valid project key + severity $sev should pass, got: $err")
+        }
+    }
+
+    @Test
+    fun `validateSonarIssuesStart invalid min_severity returns error`() {
+        val err = MonitorTool.validateSonarIssuesStart(projectKey = "proj", minSeverity = "UNKNOWN")
+        assertTrue(err != null && err.contains("UNKNOWN"), "expected error for invalid severity, got: $err")
+    }
+
+    @Test
+    fun `validateSonarIssuesStart blank min_severity is treated as absent (returns null)`() {
+        val err = MonitorTool.validateSonarIssuesStart(projectKey = "proj", minSeverity = "")
+        assertEquals(null, err, "blank min_severity should be treated as absent, got: $err")
+    }
 }
