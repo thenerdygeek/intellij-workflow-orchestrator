@@ -96,38 +96,34 @@ object JiraSprintDiff {
     ): List<MonitorEvent> {
         if (previous == null) return emptyList()   // first poll = baseline only
 
-        val prevByKey = previous.associateBy { it.key }
-        val curByKey  = current.associateBy { it.key }
-
+        val changes = ListDiff.byKey(previous, current) { it.key }
         val out = mutableListOf<MonitorEvent>()
 
         // Issues added to the sprint
-        for (key in curByKey.keys - prevByKey.keys) {
+        for (item in changes.added) {
             out += MonitorEvent(
                 monitorId = monitorId,
                 severity  = Severity.NOTABLE,
-                line      = "sprint: $key added (${curByKey[key]!!.status})",
+                line      = "sprint: ${item.key} added (${item.status})",
             )
         }
 
         // Issues removed from the sprint
-        for (key in prevByKey.keys - curByKey.keys) {
+        for (item in changes.removed) {
             out += MonitorEvent(
                 monitorId = monitorId,
                 severity  = Severity.NOTABLE,
-                line      = "sprint: $key removed",
+                line      = "sprint: ${item.key} removed",
             )
         }
 
         // Status changes on retained issues
-        for (key in curByKey.keys intersect prevByKey.keys) {
-            val p = prevByKey[key]!!
-            val c = curByKey[key]!!
+        for ((p, c) in changes.retained) {
             if (!p.status.equals(c.status, ignoreCase = true)) {
                 out += MonitorEvent(
                     monitorId = monitorId,
                     severity  = Severity.NOTABLE,
-                    line      = "sprint: $key status ${p.status} → ${c.status}",
+                    line      = "sprint: ${p.key} status ${p.status} → ${c.status}",
                 )
             }
         }
