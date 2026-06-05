@@ -3107,6 +3107,7 @@ class AgentController(
                 }
 
                 is LoopResult.Failed -> {
+                    currentSessionId?.let { service.markMonitorsDormantForSession(it) }
                     dashboard.appendError(result.error)
                     if (result.inputTokens > 0 || result.outputTokens > 0) {
                         val inputK = formatTokenCount(result.inputTokens)
@@ -3138,6 +3139,7 @@ class AgentController(
                 }
 
                 is LoopResult.Cancelled -> {
+                    currentSessionId?.let { service.markMonitorsDormantForSession(it) }
                     dashboard.appendStatus("Task cancelled.", RichStreamingPanel.StatusType.INFO)
                     dashboard.completeSession(
                         tokensUsed = result.tokensUsed,

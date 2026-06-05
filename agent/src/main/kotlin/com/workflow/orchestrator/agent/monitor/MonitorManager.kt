@@ -105,6 +105,14 @@ class MonitorManager(
         return ts.size > config.floodThresholdPerMin
     }
 
+    /**
+     * Mark every known monitor dormant (no further idle-wakes) without tearing them down — used on
+     * abnormal loop exit so a just-exhausted/cancelled session isn't re-woken. Events still surface
+     * passively via environment_details (MonitorHandle ring buffer). A monitor that never emitted an
+     * event can't wake anyway, so only event-seen ids need marking.
+     */
+    @Synchronized fun markAllDormant() { dormant.addAll(pending.keys); dormant.addAll(wakeBudget.keys); dormant.addAll(recentTimestamps.keys) }
+
     /** Drop all per-monitor state for [id] (called on stop/kill). */
     @Synchronized
     fun forget(id: String) {

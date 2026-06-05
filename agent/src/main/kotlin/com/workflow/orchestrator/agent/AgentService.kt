@@ -266,6 +266,9 @@ class AgentService(
         monitorManagers[sessionId]?.forget(id)
     }
 
+    /** Mark all monitors for [sessionId] dormant on abnormal loop exit (max-iter/cancel/fail). */
+    fun markMonitorsDormantForSession(sessionId: String) { monitorManagers[sessionId]?.markAllDormant() }
+
     /**
      * Document-extraction progress sink wired by [AgentController] after construction.
      *

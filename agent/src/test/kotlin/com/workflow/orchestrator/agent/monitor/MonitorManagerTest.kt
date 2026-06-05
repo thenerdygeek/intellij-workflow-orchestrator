@@ -111,4 +111,45 @@ class MonitorManagerTest {
         assertEquals(1, h.woke.size)
         assertEquals(true, mgr.isDormant("m1"))
     }
+
+    // ── markAllDormant tests ─────────────────────────────────────────────────
+
+    @Test
+    fun `markAllDormant after NOTABLE event prevents idle-wake on subsequent flushDue`() {
+        val h = Harness(); h.loopLive = false
+        // Buffer a NOTABLE event so the id lands in `pending`
+        h.mgr.onEvent(MonitorEvent("m1", Severity.NOTABLE, "alert line"))
+        // Mark dormant BEFORE the coalesce window expires
+        h.mgr.markAllDormant()
+        // Now advance past the coalesce window and flush
+        h.now = 200; h.mgr.flushDue()
+        // Dormant — wakeIdle must NOT have been called
+        assertEquals(0, h.woke.size)
+        assertEquals(true, h.mgr.isDormant("m1"))
+    }
+
+    @Test
+    fun `markAllDormant with no prior events is a no-op and does not crash`() {
+        val h = Harness()
+        // Should not throw
+        h.mgr.markAllDormant()
+        // Nothing to wake, nothing dormant by id
+        assertEquals(0, h.woke.size)
+    }
+
+    @Test
+    fun `monitor dormant via markAllDormant drops events from wake path same as budget-exhausted dormancy`() {
+        val h = Harness(); h.loopLive = false
+        // Seed two NOTABLE events so the id enters pending AND wakeBudget maps
+        h.mgr.onEvent(MonitorEvent("m2", Severity.NOTABLE, "first"))
+        h.now = 200; h.mgr.flushDue()           // first flush — wakes once (budget decremented to 1)
+        assertEquals(1, h.woke.size)
+        // Now mark all dormant (simulating abnormal loop exit)
+        h.mgr.markAllDormant()
+        assertEquals(true, h.mgr.isDormant("m2"))
+        // A subsequent NOTABLE event and flush should NOT invoke wakeIdle
+        h.mgr.onEvent(MonitorEvent("m2", Severity.NOTABLE, "second"))
+        h.now = 400; h.mgr.flushDue()
+        assertEquals(1, h.woke.size)             // still 1 — no additional wakes
+    }
 }
