@@ -393,24 +393,36 @@ class MonitorReArmIntegrationTest {
         )
 
         // ─── (a) reArmMonitors call-site ordering ────────────────────────────────
-        // Each landmark must appear in the source, in the correct relative order.
-        val loadIdx          = agentServiceText.indexOf("monitorPersistence.load(")
-        val buildIdx         = agentServiceText.indexOf("MonitorSourceFactory.build(")
-        val registerIdx      = agentServiceText.indexOf(".register(", buildIdx)
-        val ensureManagerIdx = agentServiceText.indexOf("ensureMonitorManager(", registerIdx)
-        val forgetIdx        = agentServiceText.indexOf("forget(", ensureManagerIdx)
-        val startIdx         = agentServiceText.indexOf(".start {", forgetIdx)
+        // Bound the search to the reArmMonitors function BODY so the landmarks pin the
+        // calls INSIDE reArmMonitors — not an earlier `forget(`/`ensureMonitorManager(` that
+        // appears elsewhere in the file (e.g. forgetMonitor()'s body, the ensureMonitorManager
+        // declaration, or a code comment). Slice from the declaration to the next top-level
+        // member declaration after it.
+        val reArmDeclIdx = agentServiceText.indexOf("fun reArmMonitors(")
+        assertTrue(reArmDeclIdx >= 0, "AgentService must declare reArmMonitors(")
+        val afterDecl = reArmDeclIdx + "fun reArmMonitors(".length
+        val nextMemberRel = Regex("\\n    (private |internal |public )?(suspend )?fun ")
+            .find(agentServiceText, afterDecl)?.range?.first ?: agentServiceText.length
+        val body = agentServiceText.substring(reArmDeclIdx, nextMemberRel)
+
+        // Each landmark must appear in the function body, in the correct relative order.
+        val loadIdx          = body.indexOf("monitorPersistence.load(")
+        val buildIdx         = body.indexOf("MonitorSourceFactory.build(")
+        val registerIdx      = body.indexOf(".register(", buildIdx.coerceAtLeast(0))
+        val ensureManagerIdx = body.indexOf("ensureMonitorManager(", registerIdx.coerceAtLeast(0))
+        val forgetIdx        = body.indexOf("forget(", ensureManagerIdx.coerceAtLeast(0))
+        val startIdx         = body.indexOf(".start {", forgetIdx.coerceAtLeast(0))
 
         assertTrue(loadIdx >= 0,
-            "AgentService.reArmMonitors must call monitorPersistence.load(")
+            "reArmMonitors body must call monitorPersistence.load(")
         assertTrue(buildIdx > loadIdx,
-            "MonitorSourceFactory.build( must appear after monitorPersistence.load(")
+            "MonitorSourceFactory.build( must appear after monitorPersistence.load( in reArmMonitors")
         assertTrue(registerIdx > buildIdx,
-            ".register( must appear after MonitorSourceFactory.build(")
+            ".register( must appear after MonitorSourceFactory.build( in reArmMonitors")
         assertTrue(ensureManagerIdx > registerIdx,
-            "ensureMonitorManager( must appear after .register(")
+            "ensureMonitorManager( must appear after .register( in reArmMonitors")
         assertTrue(forgetIdx > ensureManagerIdx,
-            "forget( must appear after ensureMonitorManager(")
+            "forget( must appear after ensureMonitorManager( in reArmMonitors")
         assertTrue(startIdx > forgetIdx,
             ".start { must appear after forget( in reArmMonitors")
 
