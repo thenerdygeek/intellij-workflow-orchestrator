@@ -1,10 +1,23 @@
 package com.workflow.orchestrator.agent.tools.builtin
 
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.monitor.MonitorEvent
 import com.workflow.orchestrator.agent.monitor.MonitorHandle
+import com.workflow.orchestrator.agent.monitor.MonitorPersistence
+import com.workflow.orchestrator.agent.monitor.MonitorPool
 import com.workflow.orchestrator.agent.monitor.MonitorSource
+import com.workflow.orchestrator.agent.monitor.MonitorSpec
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.slot
+import io.mockk.verify
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -380,5 +393,93 @@ class MonitorToolTest {
     fun `validateSonarIssuesStart blank min_severity is treated as absent (returns null)`() {
         val err = MonitorTool.validateSonarIssuesStart(projectKey = "proj", minSeverity = "")
         assertEquals(null, err, "blank min_severity should be treated as absent, got: $err")
+    }
+
+    // ─── persist-assertion tests ───────────────────────────────────────────────
+    //
+    // These tests inject a recording MonitorPersistence mock and verify that:
+    // (A) MonitorPersistence.add(sessionId, spec) is called when a shell monitor starts
+    //     successfully, and the spec.id matches the id returned in the tool result.
+    // (B) MonitorPersistence.remove(sessionId, id) is called when action=stop succeeds.
+    //
+    // We stub both `project.getService(MonitorPool::class.java)` and
+    // `project.getService(AgentService::class.java)` so the test runs headless (no
+    // IntelliJ Application required — the project mock itself services all calls).
+
+    @Test
+    fun `persist - MonitorPersistence add is called on successful shell monitor start with matching id`() = runTest {
+        val persistence = mockk<MonitorPersistence>(relaxed = true)
+        val pool = mockk<MonitorPool>(relaxed = true)
+        val agentService = mockk<AgentService>(relaxed = true)
+
+        coEvery { pool.register(any(), any()) } returns Unit   // no MaxConcurrentReached
+
+        val project = mockk<Project>(relaxed = true) {
+            every { getService(MonitorPool::class.java)  } returns pool
+            every { getService(AgentService::class.java) } returns agentService
+            every { basePath } returns "/tmp/test-project"
+        }
+
+        val specSlot = slot<MonitorSpec>()
+        every { persistence.add("s1", capture(specSlot)) } returns Unit
+
+        val tool = MonitorTool(
+            sessionIdProvider = { "s1" },
+            cs = CoroutineScope(SupervisorJob()),
+            monitorPersistenceProvider = { _ -> persistence },
+        )
+
+        val result = tool.execute(
+            params = buildJsonObject {
+                put("action", "start")
+                put("source", "shell")
+                put("command", "tail -f app.log")
+                put("filter", "ERROR")
+            },
+            project = project,
+        )
+
+        // Tool result must not be an error
+        assertTrue(!result.isError, "expected success: ${result.content}")
+
+        // Persistence.add must have been called once
+        verify(exactly = 1) { persistence.add("s1", any()) }
+
+        // The spec.id captured must appear in the result message
+        val capturedId = specSlot.captured.id
+        assertTrue(result.content.contains(capturedId),
+            "result content '$result.content' should contain the monitor id '$capturedId'")
+    }
+
+    @Test
+    fun `persist - MonitorPersistence remove is called on successful monitor stop`() = runTest {
+        val persistence = mockk<MonitorPersistence>(relaxed = true)
+        val pool = mockk<MonitorPool>(relaxed = true)
+        val agentService = mockk<AgentService>(relaxed = true)
+
+        // pool.stop returns true (monitor was found and stopped)
+        every { pool.stop("s1", "shell-test1234") } returns true
+
+        val project = mockk<Project>(relaxed = true) {
+            every { getService(MonitorPool::class.java)  } returns pool
+            every { getService(AgentService::class.java) } returns agentService
+        }
+
+        val tool = MonitorTool(
+            sessionIdProvider = { "s1" },
+            cs = CoroutineScope(SupervisorJob()),
+            monitorPersistenceProvider = { _ -> persistence },
+        )
+
+        val result = tool.execute(
+            params = buildJsonObject {
+                put("action", "stop")
+                put("monitor_id", "shell-test1234")
+            },
+            project = project,
+        )
+
+        assertTrue(!result.isError, "expected success: ${result.content}")
+        verify(exactly = 1) { persistence.remove("s1", "shell-test1234") }
     }
 }

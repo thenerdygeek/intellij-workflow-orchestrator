@@ -6,16 +6,13 @@ import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.monitor.BambooDiff
-import com.workflow.orchestrator.agent.monitor.BambooMonitorSource
-import com.workflow.orchestrator.agent.monitor.JiraSprintMonitorSource
-import com.workflow.orchestrator.agent.monitor.JiraTicketMonitorSource
 import com.workflow.orchestrator.agent.monitor.MonitorBridge
 import com.workflow.orchestrator.agent.monitor.MonitorHandle
+import com.workflow.orchestrator.agent.monitor.MonitorPersistence
 import com.workflow.orchestrator.agent.monitor.MonitorPool
+import com.workflow.orchestrator.agent.monitor.MonitorSpec
+import com.workflow.orchestrator.agent.monitor.MonitorSourceFactory
 import com.workflow.orchestrator.agent.monitor.PullRequestMonitorSource
-import com.workflow.orchestrator.agent.monitor.ShellCommandSource
-import com.workflow.orchestrator.agent.monitor.SonarGateSource
-import com.workflow.orchestrator.agent.monitor.SonarIssuesSource
 import com.workflow.orchestrator.agent.tools.integration.sonar.IssueSeverity
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -24,6 +21,7 @@ import com.workflow.orchestrator.agent.tools.estimateTokens
 import com.workflow.orchestrator.agent.tools.integration.ServiceLookup
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
+import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.serialization.json.JsonObject
@@ -63,6 +61,12 @@ class MonitorTool(
      */
     private val sonarProvider: (Project) -> com.workflow.orchestrator.core.services.SonarService? =
         { project -> ServiceLookup.sonar(project) },
+    /**
+     * Optional provider for [MonitorPersistence] — injected as a lambda for testability.
+     * Production default constructs from [ProjectIdentifier.agentDir]; tests can pass a fake.
+     */
+    private val monitorPersistenceProvider: (Project) -> MonitorPersistence =
+        { project -> MonitorPersistence(ProjectIdentifier.agentDir(project.basePath!!).toPath()) },
 ) : AgentTool {
     override val name = "monitor"
     override val description =
@@ -140,6 +144,7 @@ class MonitorTool(
                 val id = params["monitor_id"]?.jsonPrimitive?.content ?: return err("stop requires monitor_id")
                 if (pool.stop(sessionId, id)) {
                     project.service<AgentService>().forgetMonitor(sessionId, id)
+                    monitorPersistenceProvider(project).remove(sessionId, id)
                     ok("Stopped monitor $id")
                 } else err("No monitor with id $id (it may have already exited and been auto-removed — use action=list to see active monitors)")
             }
@@ -173,11 +178,15 @@ class MonitorTool(
         pool: MonitorPool,
     ): ToolResult {
         val command = params["command"]?.jsonPrimitive?.content
-        val filter = params["filter"]?.jsonPrimitive?.content
+        val filter  = params["filter"]?.jsonPrimitive?.content
         validateStart("shell", command, filter)?.let { return err(it) }
         val desc = params["description"]?.jsonPrimitive?.content ?: command!!.take(40)
         val id = "shell-" + java.util.UUID.randomUUID().toString().take(8)
-        val workingDir = project.basePath?.let { java.io.File(it) }
+        val specParams = buildMap {
+            put("command", command!!)
+            put("filter", filter!!)
+        }
+        val spec = MonitorSpec(id, "shell", desc, specParams)
         val onExit: (Int?) -> Unit = { code ->
             val sev = if (code == 0) com.workflow.orchestrator.agent.monitor.Severity.NOTABLE
                       else com.workflow.orchestrator.agent.monitor.Severity.ALERT
@@ -185,7 +194,11 @@ class MonitorTool(
                 com.workflow.orchestrator.agent.monitor.MonitorEvent(id, sev, "process exited (code=${code ?: "unknown"})"))
             pool.markExited(sessionId, id, code)
         }
-        val src = ShellCommandSource(id, desc, command!!, Regex(filter!!), workingDir, cs, project, onExit)
+        val result = MonitorSourceFactory.build(spec, project, cs, bambooProvider, bitbucketProvider, jiraProvider, sonarProvider, eventBusProvider, onShellExit = onExit)
+        val src = when (result) {
+            is MonitorSourceFactory.BuildResult.Failed -> return err(result.error)
+            is MonitorSourceFactory.BuildResult.Built  -> result.source
+        }
         val handle = MonitorHandle(src, sessionId, System.currentTimeMillis())
         try {
             pool.register(sessionId, handle)
@@ -196,6 +209,7 @@ class MonitorTool(
         // Pre-create the manager BEFORE the source emits — the bridge router is get-only
         // (no resurrection of a disposed session), so without this the first events drop.
         project.service<AgentService>().ensureMonitorManager(sessionId)
+        monitorPersistenceProvider(project).add(sessionId, spec)
         src.start { event -> handle.appendLine(event.formatLine()); MonitorBridge.emit(project, sessionId, event) }
         return ok("Started monitor $id. Matching lines will be delivered as notifications.")
     }
@@ -206,13 +220,11 @@ class MonitorTool(
         sessionId: String,
         pool: MonitorPool,
     ): ToolResult {
-        val planKey = params["plan_key"]?.jsonPrimitive?.content
-        val levelStr = params["level"]?.jsonPrimitive?.content
+        val planKey   = params["plan_key"]?.jsonPrimitive?.content
+        val levelStr  = params["level"]?.jsonPrimitive?.content
         val stageName = params["stage_name"]?.jsonPrimitive?.content
-        val jobName = params["job_name"]?.jsonPrimitive?.content
+        val jobName   = params["job_name"]?.jsonPrimitive?.content
         validateBambooStart(planKey, levelStr, stageName, jobName)?.let { return err(it) }
-
-        val bamboo = bambooProvider(project) ?: return err("Bamboo is not configured.")
 
         val level = when ((levelStr ?: "build").lowercase()) {
             "stage" -> BambooDiff.Level.STAGE
@@ -224,7 +236,19 @@ class MonitorTool(
         val defaultDesc = "bamboo ${planKey!!} ${branch ?: ""} ${level.name.lowercase()}".trim()
         val desc = params["description"]?.jsonPrimitive?.content ?: defaultDesc
 
-        val src = BambooMonitorSource(id, desc, bamboo, planKey, branch, level, stageName, jobName, cs)
+        val specParams = buildMap {
+            put("plan_key", planKey)
+            put("level", (levelStr ?: "build").lowercase())
+            if (branch != null) put("branch", branch)
+            if (stageName != null) put("stage_name", stageName)
+            if (jobName != null) put("job_name", jobName)
+        }
+        val spec = MonitorSpec(id, "bamboo", desc, specParams)
+        val result = MonitorSourceFactory.build(spec, project, cs, bambooProvider, bitbucketProvider, jiraProvider, sonarProvider, eventBusProvider)
+        val src = when (result) {
+            is MonitorSourceFactory.BuildResult.Failed -> return err(result.error)
+            is MonitorSourceFactory.BuildResult.Built  -> result.source
+        }
         val handle = MonitorHandle(src, sessionId, System.currentTimeMillis())
         try {
             pool.register(sessionId, handle)
@@ -236,6 +260,7 @@ class MonitorTool(
             return err(e.message ?: "Too many monitors")
         }
         project.service<AgentService>().ensureMonitorManager(sessionId)
+        monitorPersistenceProvider(project).add(sessionId, spec)
         src.start { event -> handle.appendLine(event.formatLine()); MonitorBridge.emit(project, sessionId, event) }
         return ok("Started monitor $id (bamboo $planKey level=$level). Notifications delivered on state transitions.")
     }
@@ -246,22 +271,29 @@ class MonitorTool(
         sessionId: String,
         pool: MonitorPool,
     ): ToolResult {
-        val prIdRaw = params["pr_id"]?.jsonPrimitive?.content
+        val prIdRaw    = params["pr_id"]?.jsonPrimitive?.content
         val aspectsRaw = params["aspects"]?.jsonPrimitive?.content
         validatePullRequestStart(prIdRaw, aspectsRaw)?.let { return err(it) }
 
-        val prId = prIdRaw!!.toInt()
-        val bitbucket = bitbucketProvider(project) ?: return err("Bitbucket is not configured.")
-        val flow = eventBusProvider(project) ?: return err("EventBus is not available.")
-
-        val aspects = PullRequestMonitorSource.parseAspects(aspectsRaw)
+        val prId     = prIdRaw!!.toInt()
+        val aspects  = PullRequestMonitorSource.parseAspects(aspectsRaw)
         val repoName = params["repo_name"]?.jsonPrimitive?.content
 
         val id = "pr-" + java.util.UUID.randomUUID().toString().take(8)
         val defaultDesc = "pr #$prId ${aspects.map { it.name.lowercase() }.sorted().joinToString(",")}"
         val desc = params["description"]?.jsonPrimitive?.content ?: defaultDesc
 
-        val src = PullRequestMonitorSource(id, desc, aspects, bitbucket, flow, prId, repoName, cs)
+        val specParams = buildMap {
+            put("pr_id", prIdRaw)
+            if (aspectsRaw != null) put("aspects", aspectsRaw)
+            if (repoName != null) put("repo_name", repoName)
+        }
+        val spec = MonitorSpec(id, "pull_request", desc, specParams)
+        val result = MonitorSourceFactory.build(spec, project, cs, bambooProvider, bitbucketProvider, jiraProvider, sonarProvider, eventBusProvider)
+        val src = when (result) {
+            is MonitorSourceFactory.BuildResult.Failed -> return err(result.error)
+            is MonitorSourceFactory.BuildResult.Built  -> result.source
+        }
         val handle = MonitorHandle(src, sessionId, System.currentTimeMillis())
         try {
             pool.register(sessionId, handle)
@@ -270,6 +302,7 @@ class MonitorTool(
             return err(e.message ?: "Too many monitors")
         }
         project.service<AgentService>().ensureMonitorManager(sessionId)
+        monitorPersistenceProvider(project).add(sessionId, spec)
         src.start { event -> handle.appendLine(event.formatLine()); MonitorBridge.emit(project, sessionId, event) }
         return ok("Started monitor $id (pull_request #$prId aspects=${aspects.map { it.name.lowercase() }.sorted().joinToString(",")}). Notifications delivered on state changes.")
     }
@@ -283,12 +316,16 @@ class MonitorTool(
         val ticketKey = params["ticket_key"]?.jsonPrimitive?.content
         validateJiraTicketStart(ticketKey)?.let { return err(it) }
 
-        val jira = jiraProvider(project) ?: return err("Jira is not configured.")
-
         val id = "jira-ticket-" + java.util.UUID.randomUUID().toString().take(8)
         val desc = params["description"]?.jsonPrimitive?.content ?: "jira ${ticketKey!!}"
 
-        val src = JiraTicketMonitorSource(id, desc, cs, jira, ticketKey!!)
+        val specParams = mapOf("ticket_key" to ticketKey!!)
+        val spec = MonitorSpec(id, "jira_ticket", desc, specParams)
+        val result = MonitorSourceFactory.build(spec, project, cs, bambooProvider, bitbucketProvider, jiraProvider, sonarProvider, eventBusProvider)
+        val src = when (result) {
+            is MonitorSourceFactory.BuildResult.Failed -> return err(result.error)
+            is MonitorSourceFactory.BuildResult.Built  -> result.source
+        }
         val handle = MonitorHandle(src, sessionId, System.currentTimeMillis())
         try {
             pool.register(sessionId, handle)
@@ -300,6 +337,7 @@ class MonitorTool(
             return err(e.message ?: "Too many monitors")
         }
         project.service<AgentService>().ensureMonitorManager(sessionId)
+        monitorPersistenceProvider(project).add(sessionId, spec)
         src.start { event -> handle.appendLine(event.formatLine()); MonitorBridge.emit(project, sessionId, event) }
         return ok("Started monitor $id (jira_ticket $ticketKey). Notifications delivered on status/assignee changes.")
     }
@@ -314,8 +352,6 @@ class MonitorTool(
         val sprintIdRaw = params["sprint_id"]?.jsonPrimitive?.content
         validateJiraSprintStart(boardIdRaw, sprintIdRaw)?.let { return err(it) }
 
-        val jira = jiraProvider(project) ?: return err("Jira is not configured.")
-
         val boardId  = boardIdRaw?.toIntOrNull()
         val sprintId = sprintIdRaw?.toIntOrNull()
 
@@ -323,7 +359,16 @@ class MonitorTool(
         val desc = params["description"]?.jsonPrimitive?.content
             ?: "jira sprint ${sprintId ?: "board:$boardId"}"
 
-        val src = JiraSprintMonitorSource(id, desc, cs, jira, boardId, sprintId)
+        val specParams = buildMap {
+            if (boardIdRaw != null) put("board_id", boardIdRaw)
+            if (sprintIdRaw != null) put("sprint_id", sprintIdRaw)
+        }
+        val spec = MonitorSpec(id, "jira_sprint", desc, specParams)
+        val result = MonitorSourceFactory.build(spec, project, cs, bambooProvider, bitbucketProvider, jiraProvider, sonarProvider, eventBusProvider)
+        val src = when (result) {
+            is MonitorSourceFactory.BuildResult.Failed -> return err(result.error)
+            is MonitorSourceFactory.BuildResult.Built  -> result.source
+        }
         val handle = MonitorHandle(src, sessionId, System.currentTimeMillis())
         try {
             pool.register(sessionId, handle)
@@ -335,6 +380,7 @@ class MonitorTool(
             return err(e.message ?: "Too many monitors")
         }
         project.service<AgentService>().ensureMonitorManager(sessionId)
+        monitorPersistenceProvider(project).add(sessionId, spec)
         src.start { event -> handle.appendLine(event.formatLine()); MonitorBridge.emit(project, sessionId, event) }
         return ok("Started monitor $id (jira_sprint ${sprintId ?: "board:$boardId"}). Notifications delivered on issue status/membership changes.")
     }
@@ -348,15 +394,21 @@ class MonitorTool(
         val projectKey = params["project_key"]?.jsonPrimitive?.content
         validateSonarGateStart(projectKey)?.let { return err(it) }
 
-        val sonar = sonarProvider(project) ?: return err("Sonar is not configured.")
-        val flow = eventBusProvider(project) ?: return err("EventBus is not available.")
-
         val branch = params["branch"]?.jsonPrimitive?.content
         val id = "sonar-gate-" + java.util.UUID.randomUUID().toString().take(8)
         val defaultDesc = "sonar gate ${projectKey!!} ${branch ?: ""}".trim()
         val desc = params["description"]?.jsonPrimitive?.content ?: defaultDesc
 
-        val src = SonarGateSource(id, desc, cs, flow, sonar, projectKey, branch)
+        val specParams = buildMap {
+            put("project_key", projectKey)
+            if (branch != null) put("branch", branch)
+        }
+        val spec = MonitorSpec(id, "sonar_gate", desc, specParams)
+        val result = MonitorSourceFactory.build(spec, project, cs, bambooProvider, bitbucketProvider, jiraProvider, sonarProvider, eventBusProvider)
+        val src = when (result) {
+            is MonitorSourceFactory.BuildResult.Failed -> return err(result.error)
+            is MonitorSourceFactory.BuildResult.Built  -> result.source
+        }
         val handle = MonitorHandle(src, sessionId, System.currentTimeMillis())
         try {
             pool.register(sessionId, handle)
@@ -365,6 +417,7 @@ class MonitorTool(
             return err(e.message ?: "Too many monitors")
         }
         project.service<AgentService>().ensureMonitorManager(sessionId)
+        monitorPersistenceProvider(project).add(sessionId, spec)
         src.start { event -> handle.appendLine(event.formatLine()); MonitorBridge.emit(project, sessionId, event) }
         return ok("Started monitor $id (sonar_gate $projectKey). Notifications delivered on quality gate changes.")
     }
@@ -375,18 +428,26 @@ class MonitorTool(
         sessionId: String,
         pool: MonitorPool,
     ): ToolResult {
-        val projectKey = params["project_key"]?.jsonPrimitive?.content
+        val projectKey  = params["project_key"]?.jsonPrimitive?.content
         val minSeverity = params["min_severity"]?.jsonPrimitive?.content
         validateSonarIssuesStart(projectKey, minSeverity)?.let { return err(it) }
-
-        val sonar = sonarProvider(project) ?: return err("Sonar is not configured.")
 
         val branch = params["branch"]?.jsonPrimitive?.content
         val id = "sonar-issues-" + java.util.UUID.randomUUID().toString().take(8)
         val defaultDesc = "sonar issues ${projectKey!!} ${branch ?: ""} ${minSeverity ?: ""}".trim()
         val desc = params["description"]?.jsonPrimitive?.content ?: defaultDesc
 
-        val src = SonarIssuesSource(id, desc, cs, sonar, projectKey, branch, minSeverity)
+        val specParams = buildMap {
+            put("project_key", projectKey)
+            if (branch != null) put("branch", branch)
+            if (minSeverity != null) put("min_severity", minSeverity)
+        }
+        val spec = MonitorSpec(id, "sonar_issues", desc, specParams)
+        val result = MonitorSourceFactory.build(spec, project, cs, bambooProvider, bitbucketProvider, jiraProvider, sonarProvider, eventBusProvider)
+        val src = when (result) {
+            is MonitorSourceFactory.BuildResult.Failed -> return err(result.error)
+            is MonitorSourceFactory.BuildResult.Built  -> result.source
+        }
         val handle = MonitorHandle(src, sessionId, System.currentTimeMillis())
         try {
             pool.register(sessionId, handle)
@@ -395,6 +456,7 @@ class MonitorTool(
             return err(e.message ?: "Too many monitors")
         }
         project.service<AgentService>().ensureMonitorManager(sessionId)
+        monitorPersistenceProvider(project).add(sessionId, spec)
         src.start { event -> handle.appendLine(event.formatLine()); MonitorBridge.emit(project, sessionId, event) }
         return ok("Started monitor $id (sonar_issues $projectKey${if (minSeverity != null) " min=$minSeverity" else ""}). Notifications delivered on new/resolved issues.")
     }
