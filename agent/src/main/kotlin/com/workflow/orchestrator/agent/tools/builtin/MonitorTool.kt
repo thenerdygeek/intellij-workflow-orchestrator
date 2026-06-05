@@ -297,6 +297,10 @@ class MonitorTool(
          * - [prIdRaw] is required and must be a numeric string (parseable as [Int]).
          * - [aspects] (if non-blank) may only contain tokens from {state, reviews, comments}
          *   (case-insensitive, comma-separated, trimmed); any unknown token is an error.
+         *
+         * **Intentional asymmetry with [PullRequestMonitorSource.parseAspects]:** this function is
+         * STRICTER — unknown aspect tokens are rejected (fail-closed at the LLM tool boundary), whereas
+         * [PullRequestMonitorSource.parseAspects] silently ignores unknown tokens (post-validation default path).
          */
         fun validatePullRequestStart(prIdRaw: String?, aspects: String?): String? {
             if (prIdRaw.isNullOrBlank()) return "pull_request monitor requires numeric 'pr_id'."

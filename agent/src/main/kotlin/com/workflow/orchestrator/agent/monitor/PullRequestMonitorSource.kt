@@ -82,7 +82,7 @@ class PullRequestMonitorSource(
          * - If every token is unknown (empty set after ignoring), default to all three.
          */
         fun parseAspects(raw: String?): Set<Aspect> {
-            if (raw.isNullOrBlank()) return Aspect.values().toSet()
+            if (raw.isNullOrBlank()) return Aspect.entries.toSet()
             val parsed = raw.split(",")
                 .map { it.trim().uppercase() }
                 .filter { it.isNotEmpty() }
@@ -90,7 +90,7 @@ class PullRequestMonitorSource(
                     runCatching { Aspect.valueOf(token) }.getOrNull()
                 }
                 .toSet()
-            return if (parsed.isEmpty()) Aspect.values().toSet() else parsed
+            return if (parsed.isEmpty()) Aspect.entries.toSet() else parsed
         }
     }
 }

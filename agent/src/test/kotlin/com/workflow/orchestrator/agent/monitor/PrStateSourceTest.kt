@@ -131,6 +131,7 @@ class PrStateSourceTest {
 
             val sink = mutableListOf<MonitorEvent>()
             source.start { sink.add(it) }
+            testScheduler.advanceUntilIdle()
             source.stop()
 
             assertEquals(1, sink.size)
@@ -157,6 +158,7 @@ class PrStateSourceTest {
 
             val sink = mutableListOf<MonitorEvent>()
             source.start { sink.add(it) }
+            testScheduler.advanceUntilIdle()
             source.stop()
 
             assertEquals(1, sink.size)
@@ -183,6 +185,7 @@ class PrStateSourceTest {
 
             val sink = mutableListOf<MonitorEvent>()
             source.start { sink.add(it) }
+            testScheduler.advanceUntilIdle()
             source.stop()
 
             assertTrue(sink.isEmpty(), "OPEN state must not emit any hydration event")
@@ -207,6 +210,7 @@ class PrStateSourceTest {
 
             val sink = mutableListOf<MonitorEvent>()
             source.start { sink.add(it) }
+            testScheduler.advanceUntilIdle()
             source.stop()
 
             assertTrue(sink.isEmpty(), "Error result must not emit any hydration event")
