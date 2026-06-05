@@ -291,4 +291,42 @@ class MonitorToolTest {
         val err = MonitorTool.validateJiraSprintStart(boardIdRaw = "7", sprintIdRaw = "100")
         assertEquals(null, err, "valid numeric board_id and sprint_id should pass, got: $err")
     }
+
+    @Test
+    fun `source enum includes sonar_gate`() {
+        val enum = tool().parameters.properties["source"]?.enumValues
+        assertTrue(enum != null && "sonar_gate" in enum, "source enum should include 'sonar_gate', was: $enum")
+    }
+
+    // ---- validateSonarGateStart --------------------------------------------
+
+    @Test
+    fun `validateSonarGateStart missing project_key returns error`() {
+        val err = MonitorTool.validateSonarGateStart(projectKey = null)
+        assertTrue(err != null && err.contains("project_key"), "expected project_key error, got: $err")
+    }
+
+    @Test
+    fun `validateSonarGateStart blank project_key returns error`() {
+        val err = MonitorTool.validateSonarGateStart(projectKey = "")
+        assertTrue(err != null && err.contains("project_key"), "expected project_key error for blank, got: $err")
+    }
+
+    @Test
+    fun `validateSonarGateStart whitespace-only project_key returns error`() {
+        val err = MonitorTool.validateSonarGateStart(projectKey = "   ")
+        assertTrue(err != null && err.contains("project_key"), "expected project_key error for whitespace, got: $err")
+    }
+
+    @Test
+    fun `validateSonarGateStart valid project_key returns null`() {
+        val err = MonitorTool.validateSonarGateStart(projectKey = "my-sonar-project")
+        assertEquals(null, err, "valid project key should pass, got: $err")
+    }
+
+    @Test
+    fun `validateSonarGateStart any non-blank key is accepted`() {
+        val err = MonitorTool.validateSonarGateStart(projectKey = "com.example:my-app")
+        assertEquals(null, err, "any non-blank key should pass, got: $err")
+    }
 }

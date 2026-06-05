@@ -14,6 +14,7 @@ import com.workflow.orchestrator.agent.monitor.MonitorHandle
 import com.workflow.orchestrator.agent.monitor.MonitorPool
 import com.workflow.orchestrator.agent.monitor.PullRequestMonitorSource
 import com.workflow.orchestrator.agent.monitor.ShellCommandSource
+import com.workflow.orchestrator.agent.monitor.SonarGateSource
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
@@ -54,6 +55,12 @@ class MonitorTool(
      */
     private val jiraProvider: (Project) -> com.workflow.orchestrator.core.services.JiraService? =
         { project -> ServiceLookup.jira(project) },
+    /**
+     * Optional provider for [SonarService] — injected as a lambda for testability.
+     * Production default uses [ServiceLookup.sonar]; tests can pass a fake.
+     */
+    private val sonarProvider: (Project) -> com.workflow.orchestrator.core.services.SonarService? =
+        { project -> ServiceLookup.sonar(project) },
 ) : AgentTool {
     override val name = "monitor"
     override val description =
@@ -62,7 +69,8 @@ class MonitorTool(
         "bamboo (poll a Bamboo build plan, notify on build/stage/job state transitions), " +
         "pull_request (poll a Bitbucket PR, notify on state/reviews/comments changes), " +
         "jira_ticket (poll a Jira ticket, notify on status/assignee changes), " +
-        "jira_sprint (poll a Jira sprint's issue list, notify on issue status/membership changes). " +
+        "jira_sprint (poll a Jira sprint's issue list, notify on issue status/membership changes), " +
+        "sonar_gate (subscribe to Sonar quality gate results for a project key). " +
         "Make the shell filter failure-inclusive (e.g. 'done|ERROR|FAILED') — silence is not success. " +
         "Shell filter matching is CASE-SENSITIVE by default — prefix with '(?i)' for case-insensitive. " +
         "Use action=status with a monitor_id to inspect one monitor's state plus its buffered matched lines. " +
@@ -74,14 +82,15 @@ class MonitorTool(
             "action" to ParameterProperty(type = "string",
                 description = "start | list | stop | status", enumValues = listOf("start", "list", "stop", "status")),
             "source" to ParameterProperty(type = "string",
-                description = "[start] Event source: 'shell', 'bamboo', 'pull_request', 'jira_ticket', or 'jira_sprint'.",
-                enumValues = listOf("shell", "bamboo", "pull_request", "jira_ticket", "jira_sprint")),
+                description = "[start] Event source: 'shell', 'bamboo', 'pull_request', 'jira_ticket', 'jira_sprint', or 'sonar_gate'.",
+                enumValues = listOf("shell", "bamboo", "pull_request", "jira_ticket", "jira_sprint", "sonar_gate")),
             "command" to ParameterProperty(type = "string", description = "[start/shell] Command to run."),
             "filter" to ParameterProperty(type = "string",
                 description = "[start/shell] Regex; matching stdout lines notify. Matching is CASE-SENSITIVE by " +
                     "default — prefix with '(?i)' for case-insensitive (e.g. '(?i)error|failed')."),
             "plan_key" to ParameterProperty(type = "string", description = "[start/bamboo] Bamboo plan key (e.g. PROJ-PLAN)."),
-            "branch" to ParameterProperty(type = "string", description = "[start] Branch to watch (for sources that support branches, e.g. bamboo; sonar/PR add support in later phases)."),
+            "branch" to ParameterProperty(type = "string", description = "[start] Branch to watch (for sources that support branches, e.g. bamboo, sonar_gate)."),
+            "project_key" to ParameterProperty(type = "string", description = "[start/sonar_gate|sonar_issues] Sonar project key."),
             "level" to ParameterProperty(type = "string",
                 description = "[start/bamboo] Granularity: build | stage | job (default: build).",
                 enumValues = listOf("build", "stage", "job")),
@@ -142,7 +151,8 @@ class MonitorTool(
                     "pull_request" -> startPullRequest(params, project, sessionId, pool)
                     "jira_ticket" -> startJiraTicket(params, project, sessionId, pool)
                     "jira_sprint" -> startJiraSprint(params, project, sessionId, pool)
-                    else -> err("source '$source' is not supported (use 'shell', 'bamboo', 'pull_request', 'jira_ticket', or 'jira_sprint').")
+                    "sonar_gate" -> startSonarGate(params, project, sessionId, pool)
+                    else -> err("source '$source' is not supported (use 'shell', 'bamboo', 'pull_request', 'jira_ticket', 'jira_sprint', or 'sonar_gate').")
                 }
             }
             else -> err("Unknown action '$action'")
@@ -322,11 +332,41 @@ class MonitorTool(
         return ok("Started monitor $id (jira_sprint ${sprintId ?: "board:$boardId"}). Notifications delivered on issue status/membership changes.")
     }
 
+    private suspend fun startSonarGate(
+        params: JsonObject,
+        project: Project,
+        sessionId: String,
+        pool: MonitorPool,
+    ): ToolResult {
+        val projectKey = params["project_key"]?.jsonPrimitive?.content
+        validateSonarGateStart(projectKey)?.let { return err(it) }
+
+        val sonar = sonarProvider(project) ?: return err("Sonar is not configured.")
+        val flow = eventBusProvider(project) ?: return err("EventBus is not available.")
+
+        val branch = params["branch"]?.jsonPrimitive?.content
+        val id = "sonar-gate-" + java.util.UUID.randomUUID().toString().take(8)
+        val defaultDesc = "sonar gate ${projectKey!!} ${branch ?: ""}".trim()
+        val desc = params["description"]?.jsonPrimitive?.content ?: defaultDesc
+
+        val src = SonarGateSource(id, desc, cs, flow, sonar, projectKey, branch)
+        val handle = MonitorHandle(src, sessionId, System.currentTimeMillis())
+        try {
+            pool.register(sessionId, handle)
+        } catch (e: MonitorPool.MaxConcurrentReached) {
+            src.stop()
+            return err(e.message ?: "Too many monitors")
+        }
+        project.service<AgentService>().ensureMonitorManager(sessionId)
+        src.start { event -> handle.appendLine(event.formatLine()); MonitorBridge.emit(project, sessionId, event) }
+        return ok("Started monitor $id (sonar_gate $projectKey). Notifications delivered on quality gate changes.")
+    }
+
     private fun ok(text: String) = ToolResult(content = text, summary = text.take(80), tokenEstimate = estimateTokens(text))
     private fun err(text: String) = ToolResult(content = text, summary = text.take(80), tokenEstimate = estimateTokens(text), isError = true)
 
     companion object {
-        private val ALLOWED_SOURCES = setOf("shell", "bamboo", "pull_request", "jira_ticket", "jira_sprint")
+        private val ALLOWED_SOURCES = setOf("shell", "bamboo", "pull_request", "jira_ticket", "jira_sprint", "sonar_gate")
 
         /**
          * Render a single monitor's status: id, label, current state, and its buffered
@@ -345,7 +385,7 @@ class MonitorTool(
         /** Pure validation for `action=start source=shell`. Returns an error string, or null when valid. */
         fun validateStart(source: String?, command: String?, filter: String?): String? {
             val s = source ?: "shell"
-            if (s !in ALLOWED_SOURCES) return "source '$s' is not supported (use 'shell', 'bamboo', 'pull_request', 'jira_ticket', or 'jira_sprint')."
+            if (s !in ALLOWED_SOURCES) return "source '$s' is not supported (use 'shell', 'bamboo', 'pull_request', 'jira_ticket', 'jira_sprint', or 'sonar_gate')."
             if (s != "shell") return null  // non-shell sources have their own validate
             if (command.isNullOrBlank()) return "shell monitor requires 'command'."
             if (filter.isNullOrBlank()) return "shell monitor requires 'filter' (a regex)."
@@ -425,6 +465,18 @@ class MonitorTool(
             if (!hasBoardId && !hasSprintId) return "jira_sprint monitor requires at least one of 'board_id' or 'sprint_id'."
             if (hasBoardId  && boardIdRaw!!.toIntOrNull() == null)  return "jira_sprint monitor requires numeric 'board_id' (got '$boardIdRaw')."
             if (hasSprintId && sprintIdRaw!!.toIntOrNull() == null) return "jira_sprint monitor requires numeric 'sprint_id' (got '$sprintIdRaw')."
+            return null
+        }
+
+        /**
+         * Pure validation for `action=start source=sonar_gate`.
+         * Returns an error string, or null when valid.
+         *
+         * Rules:
+         * - [projectKey] is required and must be non-blank.
+         */
+        fun validateSonarGateStart(projectKey: String?): String? {
+            if (projectKey.isNullOrBlank()) return "sonar_gate monitor requires 'project_key'."
             return null
         }
     }
