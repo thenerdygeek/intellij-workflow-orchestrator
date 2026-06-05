@@ -52,7 +52,7 @@ Actions and their parameters:
 - get_artifacts(build_key) → List build artifacts
 - download_artifact(artifact_url, target_path?) → Download build artifact to local file
 - recent_builds(plan_key, branch?, repo_name?, max_results?) → Recent builds (default 10)
-- get_running_builds(plan_key, repo_name?) → Currently running builds
+- get_running_builds(plan_key, branch?, repo_name?) → Currently running builds (branch REQUIRED to see a build on a feature branch)
 
 build_key: Bamboo build result key (e.g. PROJ-PLAN-123) — used across all actions that operate on a single build.
 description optional: for approval dialog on trigger/stop/cancel.
@@ -79,7 +79,11 @@ description optional: for approval dialog on trigger/stop/cancel.
             ),
             "branch" to ParameterProperty(
                 type = "string",
-                description = "Optional branch name — for build_status, recent_builds. Use project_context tool to discover current branch."
+                description = "Optional branch name — for build_status, recent_builds, get_running_builds. " +
+                    "Resolved to the branch plan key via ChainKeyResolver. " +
+                    "REQUIRED for get_running_builds to see a build running on a feature branch " +
+                    "(feature-branch builds run under the branch plan key, e.g. PROJ-PLAN42, not the master plan key). " +
+                    "Use project_context tool to discover current branch."
             ),
             "repo_name" to ParameterProperty(
                 type = "string",
@@ -774,19 +778,24 @@ description optional: for approval dialog on trigger/stop/cancel.
             action("get_running_builds") {
                 description {
                     technical(
-                        "Returns currently executing builds for a plan. Optional repo_name for multi-repo disambiguation. " +
-                        "Delegates to service.getRunningBuilds(planKey, repoName). Useful for confirming state before " +
-                        "calling stop_build or cancel_build."
+                        "Returns currently executing builds for a plan (or branch chain). Optional branch for " +
+                        "feature-branch scoping — calls ChainKeyResolver to map plan_key + branch to the Bamboo " +
+                        "branch-chain key (e.g. PROJ-PLAN42), because a feature-branch build runs under the branch " +
+                        "plan key, NOT the master plan key. Without branch, queries the master plan key directly. " +
+                        "Optional repo_name for multi-repo disambiguation. Delegates to " +
+                        "service.getRunningBuilds(chainKey, repoName)."
                     )
                     plain(
                         "Shows what's currently running on a Bamboo plan — like the 'currently building' indicator " +
-                        "in the Bamboo dashboard. Use this to check whether a build is active before trying to stop it."
+                        "in the Bamboo dashboard. Use this to check whether a build is active before trying to stop it. " +
+                        "Pass branch when checking for a feature-branch build — without it, only master-plan builds " +
+                        "are visible and the feature-branch build will appear missing."
                     )
                 }
                 whenLLMUses(
                     "When the user says 'is a build running right now?' or before calling stop_build / cancel_build " +
                     "to confirm the build is in the expected state. Also useful after trigger_build to confirm the " +
-                    "new build started."
+                    "new build started. Always pass branch when the user is working on a feature branch."
                 )
                 params {
                     required("plan_key", "string") {
@@ -795,6 +804,23 @@ description optional: for approval dialog on trigger/stop/cancel.
                         whenPresent("Validated by ToolValidation.validateBambooPlanKey.")
                         constraint("must be a valid Bamboo plan key")
                         example("PROJ-BACKEND")
+                    }
+                    optional("branch", "string") {
+                        llmSeesIt(
+                            "Optional branch name — for build_status, recent_builds, get_running_builds. " +
+                            "Resolved to the branch plan key via ChainKeyResolver. " +
+                            "REQUIRED for get_running_builds to see a build running on a feature branch " +
+                            "(feature-branch builds run under the branch plan key, e.g. PROJ-PLAN42, not the master plan key). " +
+                            "Use project_context tool to discover current branch."
+                        )
+                        humanReadable(
+                            "Scope the running-builds check to a specific branch. " +
+                            "REQUIRED when checking for a feature-branch build — without it only master-plan builds are visible."
+                        )
+                        whenPresent("ChainKeyResolver maps plan_key + branch to the Bamboo branch-chain key. Fails with an error if the branch has never been built in Bamboo.")
+                        whenAbsent("Queries the master plan key directly (trunk builds only). Feature-branch builds will NOT appear.")
+                        example("feature/PROJ-999-auth-refactor")
+                        example("main")
                     }
                     optional("repo_name", "string") {
                         llmSeesIt("Repository name for multi-repo projects — for build_status, recent_builds, get_running_builds")
@@ -805,13 +831,21 @@ description optional: for approval dialog on trigger/stop/cancel.
                     }
                 }
                 precondition("plan_key must exist in Bamboo.")
+                precondition("If branch is supplied, it must have been built at least once in Bamboo (chain key must exist).")
                 onSuccess("Returns a list of in-progress builds (build key, state, start time, elapsed). Empty list if nothing is running.")
                 onFailure("401 Unauthorized", "Token wrong or expired.")
                 onFailure("404 Not Found", "plan_key not found.")
+                onFailure("No chain key for branch", "Branch has never been built in this plan. The user must trigger at least one build on that branch first.")
                 example("confirm a build is running before stopping") {
                     param("action", "get_running_builds")
                     param("plan_key", "PROJ-BACKEND")
                     outcome("Returns in-progress build list. LLM picks the correct build_key and calls stop_build.")
+                }
+                example("check for a running build on a feature branch") {
+                    param("action", "get_running_builds")
+                    param("plan_key", "PROJ-BACKEND")
+                    param("branch", "feature/PROJ-999-auth-refactor")
+                    outcome("ChainKeyResolver maps PROJ-BACKEND + feature/PROJ-999-auth-refactor → PROJ-BACKEND42. Returns in-progress builds for that branch chain.")
                 }
                 verdict {
                     keep("Necessary pre-flight for stop_build and cancel_build — prevents 400/no-op errors from operating on builds in the wrong state.", VerdictSeverity.NORMAL)
@@ -1027,8 +1061,21 @@ description optional: for approval dialog on trigger/stop/cancel.
                         "Connections > Bamboo."
                     )
                 ToolValidation.validateBambooPlanKey(planKey)?.let { return it }
+                val branch = params["branch"]?.jsonPrimitive?.content
+                val chainKey = if (branch != null) {
+                    ChainKeyResolver.getInstance()?.resolveChainKey(project, planKey, branch)
+                        ?: return ToolResult(
+                            content = "No Bamboo branch chain for '$branch' in plan $planKey. " +
+                                "Verify the branch has been built in Bamboo at least once.",
+                            summary = "No chain key for $planKey/$branch",
+                            tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                            isError = true
+                        )
+                } else {
+                    planKey
+                }
                 val repoName = params["repo_name"]?.jsonPrimitive?.contentOrNull
-                service.getRunningBuilds(planKey, repoName = repoName).toAgentToolResult()
+                executeGetRunningBuildsForTest(chainKey, repoName, service)
             }
 
             else -> ToolResult(
@@ -1202,6 +1249,23 @@ description optional: for approval dialog on trigger/stop/cancel.
             ToolResult(combined, "${buildAgent.summary} · ${changes.summary}", TokenEstimator.estimate(combined))
         }
     }
+
+    /**
+     * Extracted as an `internal` seam so `get_running_builds` can be unit-tested
+     * with a mock [BambooService] and a pre-resolved [chainKey], without IntelliJ
+     * infrastructure (mirrors [executeBuildStatusForTest]).
+     *
+     * @param chainKey  resolved chain key — either the master plan key (when no
+     *   branch was supplied) or the branch-chain key returned by [ChainKeyResolver]
+     *   (e.g. `PROJ-PLAN42` for a feature branch).
+     * @param repoName  optional repository name for multi-repo disambiguation.
+     * @param service   [BambooService] instance already resolved from [ServiceLookup].
+     */
+    internal suspend fun executeGetRunningBuildsForTest(
+        chainKey: String,
+        repoName: String?,
+        service: com.workflow.orchestrator.core.services.BambooService
+    ): ToolResult = service.getRunningBuilds(chainKey, repoName = repoName).toAgentToolResult()
 
     private fun formatBuildCommits(commits: List<BuildChangeData>): String {
         if (commits.isEmpty()) return "Commits: (none)"
