@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
 import com.workflow.orchestrator.agent.monitor.BambooDiff
 import com.workflow.orchestrator.agent.monitor.BambooMonitorSource
+import com.workflow.orchestrator.agent.monitor.JiraSprintMonitorSource
 import com.workflow.orchestrator.agent.monitor.JiraTicketMonitorSource
 import com.workflow.orchestrator.agent.monitor.MonitorBridge
 import com.workflow.orchestrator.agent.monitor.MonitorHandle
@@ -69,8 +70,8 @@ class MonitorTool(
             "action" to ParameterProperty(type = "string",
                 description = "start | list | stop | status", enumValues = listOf("start", "list", "stop", "status")),
             "source" to ParameterProperty(type = "string",
-                description = "[start] Event source: 'shell', 'bamboo', 'pull_request', or 'jira_ticket'.",
-                enumValues = listOf("shell", "bamboo", "pull_request", "jira_ticket")),
+                description = "[start] Event source: 'shell', 'bamboo', 'pull_request', 'jira_ticket', or 'jira_sprint'.",
+                enumValues = listOf("shell", "bamboo", "pull_request", "jira_ticket", "jira_sprint")),
             "command" to ParameterProperty(type = "string", description = "[start/shell] Command to run."),
             "filter" to ParameterProperty(type = "string",
                 description = "[start/shell] Regex; matching stdout lines notify. Matching is CASE-SENSITIVE by " +
@@ -94,6 +95,10 @@ class MonitorTool(
                 description = "[start/pull_request] Optional repository slug override (null = primary repo from settings)."),
             "ticket_key" to ParameterProperty(type = "string",
                 description = "[start/jira_ticket] Jira ticket key, e.g. PROJ-123."),
+            "board_id" to ParameterProperty(type = "string",
+                description = "[start/jira_sprint] Jira board id (numeric). Provide board_id OR sprint_id (or both)."),
+            "sprint_id" to ParameterProperty(type = "string",
+                description = "[start/jira_sprint] Jira sprint id (numeric). When given, board_id is ignored and the sprint is polled directly."),
             "description" to ParameterProperty(type = "string", description = "[start] Short label shown in every notification."),
             "monitor_id" to ParameterProperty(type = "string", description = "[stop/status] The id returned by start."),
         ),
@@ -132,7 +137,8 @@ class MonitorTool(
                     "bamboo" -> startBamboo(params, project, sessionId, pool)
                     "pull_request" -> startPullRequest(params, project, sessionId, pool)
                     "jira_ticket" -> startJiraTicket(params, project, sessionId, pool)
-                    else -> err("source '$source' is not supported (use 'shell', 'bamboo', 'pull_request', or 'jira_ticket').")
+                    "jira_sprint" -> startJiraSprint(params, project, sessionId, pool)
+                    else -> err("source '$source' is not supported (use 'shell', 'bamboo', 'pull_request', 'jira_ticket', or 'jira_sprint').")
                 }
             }
             else -> err("Unknown action '$action'")
@@ -274,11 +280,43 @@ class MonitorTool(
         return ok("Started monitor $id (jira_ticket $ticketKey). Notifications delivered on status/assignee changes.")
     }
 
+    private suspend fun startJiraSprint(
+        params: JsonObject,
+        project: Project,
+        sessionId: String,
+        pool: MonitorPool,
+    ): ToolResult {
+        val boardIdRaw  = params["board_id"]?.jsonPrimitive?.content
+        val sprintIdRaw = params["sprint_id"]?.jsonPrimitive?.content
+        validateJiraSprintStart(boardIdRaw, sprintIdRaw)?.let { return err(it) }
+
+        val jira = jiraProvider(project) ?: return err("Jira is not configured.")
+
+        val boardId  = boardIdRaw?.toIntOrNull()
+        val sprintId = sprintIdRaw?.toIntOrNull()
+
+        val id = "jira-" + java.util.UUID.randomUUID().toString().take(8)
+        val desc = params["description"]?.jsonPrimitive?.content
+            ?: "jira sprint ${sprintId ?: "board:$boardId"}"
+
+        val src = JiraSprintMonitorSource(id, desc, cs, jira, boardId, sprintId)
+        val handle = MonitorHandle(src, sessionId, System.currentTimeMillis())
+        try {
+            pool.register(sessionId, handle)
+        } catch (e: MonitorPool.MaxConcurrentReached) {
+            src.stop()
+            return err(e.message ?: "Too many monitors")
+        }
+        project.service<AgentService>().ensureMonitorManager(sessionId)
+        src.start { event -> handle.appendLine(event.formatLine()); MonitorBridge.emit(project, sessionId, event) }
+        return ok("Started monitor $id (jira_sprint ${sprintId ?: "board:$boardId"}). Notifications delivered on issue status/membership changes.")
+    }
+
     private fun ok(text: String) = ToolResult(content = text, summary = text.take(80), tokenEstimate = estimateTokens(text))
     private fun err(text: String) = ToolResult(content = text, summary = text.take(80), tokenEstimate = estimateTokens(text), isError = true)
 
     companion object {
-        private val ALLOWED_SOURCES = setOf("shell", "bamboo", "pull_request", "jira_ticket")
+        private val ALLOWED_SOURCES = setOf("shell", "bamboo", "pull_request", "jira_ticket", "jira_sprint")
 
         /**
          * Render a single monitor's status: id, label, current state, and its buffered
@@ -297,7 +335,7 @@ class MonitorTool(
         /** Pure validation for `action=start source=shell`. Returns an error string, or null when valid. */
         fun validateStart(source: String?, command: String?, filter: String?): String? {
             val s = source ?: "shell"
-            if (s !in ALLOWED_SOURCES) return "source '$s' is not supported (use 'shell', 'bamboo', 'pull_request', or 'jira_ticket')."
+            if (s !in ALLOWED_SOURCES) return "source '$s' is not supported (use 'shell', 'bamboo', 'pull_request', 'jira_ticket', or 'jira_sprint')."
             if (s != "shell") return null  // non-shell sources have their own validate
             if (command.isNullOrBlank()) return "shell monitor requires 'command'."
             if (filter.isNullOrBlank()) return "shell monitor requires 'filter' (a regex)."
@@ -360,6 +398,23 @@ class MonitorTool(
          */
         fun validateJiraTicketStart(ticketKey: String?): String? {
             if (ticketKey.isNullOrBlank()) return "jira_ticket monitor requires 'ticket_key'."
+            return null
+        }
+
+        /**
+         * Pure validation for `action=start source=jira_sprint`.
+         * Returns an error string, or null when valid.
+         *
+         * Rules:
+         * - At least one of [boardIdRaw] or [sprintIdRaw] must be present and non-blank.
+         * - Each provided value must be parseable as a positive integer ([toIntOrNull] != null).
+         */
+        fun validateJiraSprintStart(boardIdRaw: String?, sprintIdRaw: String?): String? {
+            val hasBoardId  = !boardIdRaw.isNullOrBlank()
+            val hasSprintId = !sprintIdRaw.isNullOrBlank()
+            if (!hasBoardId && !hasSprintId) return "jira_sprint monitor requires at least one of 'board_id' or 'sprint_id'."
+            if (hasBoardId  && boardIdRaw!!.toIntOrNull() == null)  return "jira_sprint monitor requires numeric 'board_id' (got '$boardIdRaw')."
+            if (hasSprintId && sprintIdRaw!!.toIntOrNull() == null) return "jira_sprint monitor requires numeric 'sprint_id' (got '$sprintIdRaw')."
             return null
         }
     }

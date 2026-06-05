@@ -239,4 +239,56 @@ class MonitorToolTest {
         val err = MonitorTool.validateJiraTicketStart(ticketKey = "ABC-1")
         assertEquals(null, err, "any non-blank key should pass, got: $err")
     }
+
+    @Test
+    fun `source enum includes jira_sprint`() {
+        val enum = tool().parameters.properties["source"]?.enumValues
+        assertTrue(enum != null && "jira_sprint" in enum, "source enum should include 'jira_sprint', was: $enum")
+    }
+
+    // ---- validateJiraSprintStart --------------------------------------------
+
+    @Test
+    fun `validateJiraSprintStart neither board_id nor sprint_id returns error`() {
+        val err = MonitorTool.validateJiraSprintStart(boardIdRaw = null, sprintIdRaw = null)
+        assertTrue(err != null, "expected error when neither id is provided, got: $err")
+        assertTrue(err!!.contains("board_id") || err.contains("sprint_id"),
+            "error should mention at least one of board_id/sprint_id: $err")
+    }
+
+    @Test
+    fun `validateJiraSprintStart both blank returns error`() {
+        val err = MonitorTool.validateJiraSprintStart(boardIdRaw = "", sprintIdRaw = "")
+        assertTrue(err != null, "expected error when both are blank, got: $err")
+    }
+
+    @Test
+    fun `validateJiraSprintStart non-numeric board_id returns error`() {
+        val err = MonitorTool.validateJiraSprintStart(boardIdRaw = "abc", sprintIdRaw = null)
+        assertTrue(err != null && err.contains("board_id"), "expected numeric board_id error, got: $err")
+    }
+
+    @Test
+    fun `validateJiraSprintStart non-numeric sprint_id returns error`() {
+        val err = MonitorTool.validateJiraSprintStart(boardIdRaw = null, sprintIdRaw = "notanumber")
+        assertTrue(err != null && err.contains("sprint_id"), "expected numeric sprint_id error, got: $err")
+    }
+
+    @Test
+    fun `validateJiraSprintStart valid board_id only returns null`() {
+        val err = MonitorTool.validateJiraSprintStart(boardIdRaw = "5", sprintIdRaw = null)
+        assertEquals(null, err, "valid numeric board_id only should pass, got: $err")
+    }
+
+    @Test
+    fun `validateJiraSprintStart valid sprint_id only returns null`() {
+        val err = MonitorTool.validateJiraSprintStart(boardIdRaw = null, sprintIdRaw = "42")
+        assertEquals(null, err, "valid numeric sprint_id only should pass, got: $err")
+    }
+
+    @Test
+    fun `validateJiraSprintStart valid board_id and sprint_id both present returns null`() {
+        val err = MonitorTool.validateJiraSprintStart(boardIdRaw = "7", sprintIdRaw = "100")
+        assertEquals(null, err, "valid numeric board_id and sprint_id should pass, got: $err")
+    }
 }
