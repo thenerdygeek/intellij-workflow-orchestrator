@@ -80,7 +80,7 @@ class SonarGateSourceTest {
     fun `hydrate - status ERROR returns ALERT synthetic event`() =
         runTest(UnconfinedTestDispatcher()) {
             val sonar = makeSonar()
-            coEvery { sonar.getQualityGateStatus(watchedProjectKey, null) } returns okGateResult("ERROR")
+            coEvery { sonar.getQualityGateStatus(projectKey = watchedProjectKey, branch = null) } returns okGateResult("ERROR")
 
             val flow = MutableSharedFlow<WorkflowEvent>(extraBufferCapacity = 8)
             val source = SonarGateSource(
@@ -108,7 +108,7 @@ class SonarGateSourceTest {
     fun `hydrate - status OK returns NOTABLE synthetic event`() =
         runTest(UnconfinedTestDispatcher()) {
             val sonar = makeSonar()
-            coEvery { sonar.getQualityGateStatus(watchedProjectKey, null) } returns okGateResult("OK")
+            coEvery { sonar.getQualityGateStatus(projectKey = watchedProjectKey, branch = null) } returns okGateResult("OK")
 
             val flow = MutableSharedFlow<WorkflowEvent>(extraBufferCapacity = 8)
             val source = SonarGateSource(
@@ -136,7 +136,7 @@ class SonarGateSourceTest {
     fun `hydrate - isError returns null (no hydration event)`() =
         runTest(UnconfinedTestDispatcher()) {
             val sonar = makeSonar()
-            coEvery { sonar.getQualityGateStatus(watchedProjectKey, null) } returns errGateResult()
+            coEvery { sonar.getQualityGateStatus(projectKey = watchedProjectKey, branch = null) } returns errGateResult()
 
             val flow = MutableSharedFlow<WorkflowEvent>(extraBufferCapacity = 8)
             val source = SonarGateSource(
@@ -161,7 +161,7 @@ class SonarGateSourceTest {
     fun `hydrate - unknown status returns null (no hydration event)`() =
         runTest(UnconfinedTestDispatcher()) {
             val sonar = makeSonar()
-            coEvery { sonar.getQualityGateStatus(watchedProjectKey, null) } returns okGateResult("WARN")
+            coEvery { sonar.getQualityGateStatus(projectKey = watchedProjectKey, branch = null) } returns okGateResult("WARN")
 
             val flow = MutableSharedFlow<WorkflowEvent>(extraBufferCapacity = 8)
             val source = SonarGateSource(
@@ -186,7 +186,7 @@ class SonarGateSourceTest {
     fun `hydrate - lowercase 'error' status is treated case-insensitively and returns ALERT`() =
         runTest(UnconfinedTestDispatcher()) {
             val sonar = makeSonar()
-            coEvery { sonar.getQualityGateStatus(watchedProjectKey, null) } returns okGateResult("error")
+            coEvery { sonar.getQualityGateStatus(projectKey = watchedProjectKey, branch = null) } returns okGateResult("error")
 
             val flow = MutableSharedFlow<WorkflowEvent>(extraBufferCapacity = 8)
             val source = SonarGateSource(
@@ -215,7 +215,7 @@ class SonarGateSourceTest {
         runTest(UnconfinedTestDispatcher()) {
             val sonar = makeSonar()
             // Gate is already ERROR when we subscribe → hydration ALERT expected first
-            coEvery { sonar.getQualityGateStatus(watchedProjectKey, null) } returns okGateResult("ERROR")
+            coEvery { sonar.getQualityGateStatus(projectKey = watchedProjectKey, branch = null) } returns okGateResult("ERROR")
 
             val flow = MutableSharedFlow<WorkflowEvent>(extraBufferCapacity = 8)
             val sink = mutableListOf<MonitorEvent>()
