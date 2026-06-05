@@ -50,6 +50,7 @@ import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.monitor.MonitorBridge
 import com.workflow.orchestrator.agent.monitor.MonitorConfig
 import com.workflow.orchestrator.agent.monitor.MonitorManager
+import com.workflow.orchestrator.agent.monitor.MonitorPersistence
 import com.workflow.orchestrator.agent.monitor.MonitorPool
 import com.workflow.orchestrator.agent.monitor.wakeOutcomeFor
 import com.workflow.orchestrator.agent.tools.builtin.MonitorTool
@@ -240,7 +241,14 @@ class AgentService(
                 // the `?.` drops the message safely — acceptable, the loop was terminating anyway.
                 isLoopLive = { activeLoopForSession(sessionId) != null },
                 deliverToLoop = { text -> activeLoopForSession(sessionId)?.enqueueSteeringMessage(text) },
-                wakeIdle = { text -> wakeOutcomeFor(idleWaker.wake(sessionId, text, "monitor")) },
+                wakeIdle = { text ->
+                    // Task 6E — persist FIRST (mirror onBackgroundCompletion's persist-then-wake ordering).
+                    // The notification survives even when the wake route is SKIP_GUARD or DEFER
+                    // (global guard hit / another session active) — Task 6F replays it on resume.
+                    runCatching { monitorPersistence.appendPendingNotification(sessionId, text) }
+                        .onFailure { log.warn("[AgentService] monitorPersistence.appendPendingNotification failed for $sessionId: ${it.message}", it) }
+                    wakeOutcomeFor(idleWaker.wake(sessionId, text, "monitor"))
+                },
                 onFloodStop = { id ->
                     MonitorPool.getInstance(project).stop(sessionId, id)
                     monitorManagers[sessionId]?.forget(id)
@@ -306,6 +314,14 @@ class AgentService(
 
     private var debugController: AgentDebugController? = null
     private lateinit var agentDir: java.io.File
+
+    /**
+     * Lazy [MonitorPersistence] over [agentDir]. Constructed on first access so it is
+     * always available after [registerAllTools] has set [agentDir]. Mirrors the
+     * [BackgroundPersistence] pattern: [agentDir].toPath() is the sessions base dir.
+     */
+    private val monitorPersistence: MonitorPersistence by lazy { MonitorPersistence(agentDir.toPath()) }
+
     private val failedRegistrations = mutableListOf<String>()
 
     /**
