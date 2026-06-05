@@ -272,6 +272,9 @@ class MonitorTool(
         try {
             pool.register(sessionId, handle)
         } catch (e: MonitorPool.MaxConcurrentReached) {
+            // Invariant: register BEFORE start; on register failure stop the source so future
+            // EventBus/polling sources (Phase 3+) copy the correct cleanup template. Harmless today
+            // (no SmartPoller running before start), but prevents a leaked subscription/poller.
             src.stop()
             return err(e.message ?: "Too many monitors")
         }
@@ -304,6 +307,9 @@ class MonitorTool(
         try {
             pool.register(sessionId, handle)
         } catch (e: MonitorPool.MaxConcurrentReached) {
+            // Invariant: register BEFORE start; on register failure stop the source so future
+            // EventBus/polling sources (Phase 3+) copy the correct cleanup template. Harmless today
+            // (no SmartPoller running before start), but prevents a leaked subscription/poller.
             src.stop()
             return err(e.message ?: "Too many monitors")
         }
@@ -407,7 +413,7 @@ class MonitorTool(
          *
          * Rules:
          * - At least one of [boardIdRaw] or [sprintIdRaw] must be present and non-blank.
-         * - Each provided value must be parseable as a positive integer ([toIntOrNull] != null).
+         * - Each provided value must be parseable as a numeric ([toIntOrNull] != null).
          */
         fun validateJiraSprintStart(boardIdRaw: String?, sprintIdRaw: String?): String? {
             val hasBoardId  = !boardIdRaw.isNullOrBlank()
