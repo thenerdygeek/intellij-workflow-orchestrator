@@ -193,6 +193,7 @@ class MonitorTool(
             MonitorBridge.emit(project, sessionId,
                 com.workflow.orchestrator.agent.monitor.MonitorEvent(id, sev, "process exited (code=${code ?: "unknown"})"))
             pool.markExited(sessionId, id, code)
+            monitorPersistenceProvider(project).remove(sessionId, id)
         }
         val result = MonitorSourceFactory.build(spec, project, cs, bambooProvider, bitbucketProvider, jiraProvider, sonarProvider, eventBusProvider, onShellExit = onExit)
         val src = when (result) {

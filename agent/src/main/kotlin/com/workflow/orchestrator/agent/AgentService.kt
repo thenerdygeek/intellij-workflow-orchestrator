@@ -257,6 +257,7 @@ class AgentService(
                 onFloodStop = { id ->
                     MonitorPool.getInstance(project).stop(sessionId, id)
                     monitorManagers[sessionId]?.forget(id)
+                    monitorPersistence.remove(sessionId, id)
                 },
             )
         }
@@ -342,6 +343,7 @@ class AgentService(
                         MonitorEvent(spec.id, sev, "process exited (code=${code ?: "unknown"})")
                     )
                     pool.markExited(sessionId, spec.id, code)
+                    monitorPersistence.remove(sessionId, spec.id)
                 }
                 val result = MonitorSourceFactory.build(
                     spec, project, cs,

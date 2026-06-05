@@ -451,6 +451,50 @@ class MonitorToolTest {
             "result content '$result.content' should contain the monitor id '$capturedId'")
     }
 
+    // ─── source-contract tests: remove on exit / flood-stop ───────────────────
+    //
+    // These tests assert the source TEXT of MonitorTool and AgentService contain the
+    // `remove(` call in the right lambdas — the same pattern used by RunInvocationLeakTest.
+    // A unit-level seam for onExit would require injecting MonitorSourceFactory; these
+    // source-text pins are the lightest-weight anchor that is not subject to false negatives.
+
+    @Test
+    fun `source-contract - startShell onExit lambda calls monitorPersistenceProvider remove`() {
+        val src = java.io.File("src/main/kotlin/com/workflow/orchestrator/agent/tools/builtin/MonitorTool.kt")
+            .readText()
+        // Find the onExit lambda inside startShell — it must call both markExited and remove.
+        val onExitBlock = src.substringAfter("val onExit: (Int?) -> Unit = { code ->")
+            .substringBefore("val result = MonitorSourceFactory.build")
+        assertTrue(onExitBlock.contains("pool.markExited"),
+            "onExit should call pool.markExited: $onExitBlock")
+        assertTrue(onExitBlock.contains("monitorPersistenceProvider(project).remove(sessionId, id)"),
+            "onExit should call monitorPersistenceProvider(project).remove(sessionId, id) to avoid stale re-arm: $onExitBlock")
+    }
+
+    @Test
+    fun `source-contract - AgentService reArmMonitors onShellExit calls monitorPersistence remove`() {
+        val src = java.io.File("src/main/kotlin/com/workflow/orchestrator/agent/AgentService.kt")
+            .readText()
+        val onShellExitBlock = src.substringAfter("val onShellExit: (Int?) -> Unit = { code ->")
+            .substringBefore("val result = MonitorSourceFactory.build")
+        assertTrue(onShellExitBlock.contains("pool.markExited"),
+            "onShellExit should call pool.markExited: $onShellExitBlock")
+        assertTrue(onShellExitBlock.contains("monitorPersistence.remove(sessionId, spec.id)"),
+            "onShellExit should call monitorPersistence.remove(sessionId, spec.id) to avoid re-launch on resume: $onShellExitBlock")
+    }
+
+    @Test
+    fun `source-contract - AgentService monitorManagerFor onFloodStop calls monitorPersistence remove`() {
+        val src = java.io.File("src/main/kotlin/com/workflow/orchestrator/agent/AgentService.kt")
+            .readText()
+        val onFloodStopBlock = src.substringAfter("onFloodStop = { id ->")
+            .substringBefore("},")
+        assertTrue(onFloodStopBlock.contains("MonitorPool.getInstance(project).stop(sessionId, id)"),
+            "onFloodStop should call pool.stop: $onFloodStopBlock")
+        assertTrue(onFloodStopBlock.contains("monitorPersistence.remove(sessionId, id)"),
+            "onFloodStop should call monitorPersistence.remove(sessionId, id) to avoid spurious re-arm: $onFloodStopBlock")
+    }
+
     @Test
     fun `persist - MonitorPersistence remove is called on successful monitor stop`() = runTest {
         val persistence = mockk<MonitorPersistence>(relaxed = true)
