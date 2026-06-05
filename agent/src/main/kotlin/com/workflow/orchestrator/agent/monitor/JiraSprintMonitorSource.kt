@@ -24,6 +24,9 @@ import kotlinx.coroutines.CoroutineScope
  * far calmer than dumping an entire "added" batch for every ticket in the new sprint on
  * the first cycle after a rollover. Users who need to follow a new sprint should start a
  * fresh `monitor start source=jira_sprint board_id=…` command.
+ * The same contract applies when an explicit [sprintId] is given: if that sprint closes
+ * mid-watch it keeps being polled (emits nothing new once membership is stable), and
+ * SmartPoller backs off naturally — start a fresh monitor targeting the new sprint id.
  *
  * ## Severity
  *

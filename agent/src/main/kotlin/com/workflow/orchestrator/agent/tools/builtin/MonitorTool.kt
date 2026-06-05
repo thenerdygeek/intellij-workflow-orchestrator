@@ -58,9 +58,13 @@ class MonitorTool(
     override val name = "monitor"
     override val description =
         "Watch a long-running source and get proactive notifications when matching events occur. " +
-        "source=shell runs a command and notifies on stdout lines matching `filter` (regex). " +
-        "source=bamboo polls a Bamboo build plan and notifies on state transitions (build/stage/job). " +
+        "Sources: shell (run a command, notify on stdout lines matching `filter` regex), " +
+        "bamboo (poll a Bamboo build plan, notify on build/stage/job state transitions), " +
+        "pull_request (poll a Bitbucket PR, notify on state/reviews/comments changes), " +
+        "jira_ticket (poll a Jira ticket, notify on status/assignee changes), " +
+        "jira_sprint (poll a Jira sprint's issue list, notify on issue status/membership changes). " +
         "Make the shell filter failure-inclusive (e.g. 'done|ERROR|FAILED') — silence is not success. " +
+        "Shell filter matching is CASE-SENSITIVE by default — prefix with '(?i)' for case-insensitive. " +
         "Use action=status with a monitor_id to inspect one monitor's state plus its buffered matched lines. " +
         "Note: a shell monitor auto-removes itself when its process exits, so stopping/inspecting an already-exited " +
         "monitor returns 'No monitor with id …' (expected); its final 'process exited' notification may still " +
@@ -264,7 +268,7 @@ class MonitorTool(
 
         val jira = jiraProvider(project) ?: return err("Jira is not configured.")
 
-        val id = "jira-" + java.util.UUID.randomUUID().toString().take(8)
+        val id = "jira-ticket-" + java.util.UUID.randomUUID().toString().take(8)
         val desc = params["description"]?.jsonPrimitive?.content ?: "jira ${ticketKey!!}"
 
         val src = JiraTicketMonitorSource(id, desc, cs, jira, ticketKey!!)
@@ -298,7 +302,7 @@ class MonitorTool(
         val boardId  = boardIdRaw?.toIntOrNull()
         val sprintId = sprintIdRaw?.toIntOrNull()
 
-        val id = "jira-" + java.util.UUID.randomUUID().toString().take(8)
+        val id = "jira-sprint-" + java.util.UUID.randomUUID().toString().take(8)
         val desc = params["description"]?.jsonPrimitive?.content
             ?: "jira sprint ${sprintId ?: "board:$boardId"}"
 
