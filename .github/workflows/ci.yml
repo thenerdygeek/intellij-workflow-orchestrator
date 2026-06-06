@@ -30,11 +30,14 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # --no-configuration-cache on CI: the Kotlin plugin's classpath snapshot isn't always
+      # config-cache serializable, and an ephemeral runner has no warm cache to reuse anyway.
+      # Config cache stays ON locally (gradle.properties) where it pays off.
       - name: Build
-        run: ./gradlew --no-daemon -Dorg.gradle.java.home="$JAVA_HOME" assemble
+        run: ./gradlew --no-daemon --no-configuration-cache -Dorg.gradle.java.home="$JAVA_HOME" assemble
 
       - name: Verify plugin
-        run: ./gradlew --no-daemon -Dorg.gradle.java.home="$JAVA_HOME" verifyPlugin
+        run: ./gradlew --no-daemon --no-configuration-cache -Dorg.gradle.java.home="$JAVA_HOME" verifyPlugin
 
   test:
     name: Tests
@@ -54,7 +57,7 @@ jobs:
 
       - name: Run tests (capped workers to avoid OOM)
         run: >-
-          ./gradlew --no-daemon
+          ./gradlew --no-daemon --no-configuration-cache
           -Dorg.gradle.java.home="$JAVA_HOME"
           -Dorg.gradle.workers.max=2 --max-workers=2
           test

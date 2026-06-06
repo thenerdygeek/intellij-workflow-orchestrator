@@ -13,6 +13,12 @@
               hash-verified. -->
          <trust group="idea" reason="Platform-specific IDE distribution; differs per OS/arch"/>
          <trust group="org.jetbrains.runtime" reason="Platform-specific JetBrains Runtime; differs per OS/arch"/>
+         <!-- 'bundledPlugin' and 'bundledModule' are SYNTHETIC groups the IntelliJ Platform Gradle
+              plugin fabricates locally (ivy-*.xml descriptors) from the extracted IDE. Their content
+              is generated per-machine/per-IDE-extraction, so a committed SHA-256 can never match
+              across platforms. These are derived from the already-trusted IDE distribution. -->
+         <trust group="bundledPlugin" reason="Synthetic ivy descriptors generated locally from the extracted IDE"/>
+         <trust group="bundledModule" reason="Synthetic ivy descriptors generated locally from the extracted IDE"/>
       </trusted-artifacts>
    </configuration>
    <components>
