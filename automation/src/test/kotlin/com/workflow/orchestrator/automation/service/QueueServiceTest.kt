@@ -500,13 +500,19 @@ class QueueServiceTest {
             java.sql.DriverManager.getConnection("jdbc:sqlite:$dbFile").use { conn ->
                 conn.prepareStatement("SELECT COUNT(*) FROM queue_entries WHERE id = ?").use { stmt ->
                     stmt.setString(1, "dismiss-1")
-                    stmt.executeQuery().use { rs -> rs.next(); rs.getInt(1) }
+                    stmt.executeQuery().use { rs ->
+                        rs.next()
+                        rs.getInt(1)
+                    }
                 }
             }
         try {
             runCatching { awaitState(3000) { remainingRows() == 0 } }
-            assertEquals(0, remainingRows(),
-                "dismiss() must call TagHistoryService.deleteQueueEntry so the row is removed from automation.db")
+            assertEquals(
+                0,
+                remainingRows(),
+                "dismiss() must call TagHistoryService.deleteQueueEntry so the row is removed from automation.db",
+            )
         } finally {
             tagHistory.close()
             scopeForTest.cancel()
