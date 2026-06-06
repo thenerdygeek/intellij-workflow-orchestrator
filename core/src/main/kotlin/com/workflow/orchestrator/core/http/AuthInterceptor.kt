@@ -47,7 +47,10 @@ class AuthInterceptor private constructor(
             log.debug("[Core:Auth] Adding $schemeLabelForLog auth header for request to ${originalRequest.url.host}")
             originalRequest.newBuilder().apply { credential.applyTo(this) }.build()
         } else {
-            log.warn("[Core:Auth] No credential available for $schemeLabelForLog auth, proceeding without auth header for ${originalRequest.url.host}")
+            log.warn(
+                "[Core:Auth] No credential available for $schemeLabelForLog auth, " +
+                    "proceeding without auth header for ${originalRequest.url.host}"
+            )
             originalRequest
         }
 
