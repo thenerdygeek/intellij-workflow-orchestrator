@@ -28,7 +28,7 @@ jobs:
           java-version: "21"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       # --no-configuration-cache on CI: the Kotlin plugin's classpath snapshot isn't always
       # config-cache serializable, and an ephemeral runner has no warm cache to reuse anyway.
@@ -53,7 +53,7 @@ jobs:
           java-version: "21"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Run tests (capped workers to avoid OOM)
         run: >-
@@ -82,7 +82,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
       - name: Run detekt
         run: ./gradlew --no-daemon -Dorg.gradle.java.home="$JAVA_HOME" detekt
       - name: Upload detekt reports
@@ -105,7 +105,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
       - name: Run architecture tests
         run: ./gradlew --no-daemon -Dorg.gradle.java.home="$JAVA_HOME" :konsist:test
       - name: Upload architecture test reports
@@ -132,7 +132,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
       - name: Verify coverage floor
         run: >-
           ./gradlew --no-daemon --no-configuration-cache
