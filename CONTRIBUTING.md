@@ -14,7 +14,7 @@ guide is intentionally light. Most company-specific work belongs in a **fork** â
 ## Build & test
 
 ```bash
-./gradlew :<module>:test       # core/jira/bamboo/sonar/pullrequest/automation/handover/agent
+./gradlew :<module>:test       # core/jira/bamboo/sonar/pullrequest/automation/handover/agent/document/web
 ./gradlew verifyPlugin buildPlugin
 ```
 

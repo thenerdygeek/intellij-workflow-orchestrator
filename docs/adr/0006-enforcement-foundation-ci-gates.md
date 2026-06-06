@@ -23,7 +23,7 @@ module boundaries + layering. Dependabot covers CVEs. The coverage gate is **def
 - The full suite runs on Linux for the first time, surfacing (and fixing) cross-platform
   traps (verification-metadata trust groups, hardcoded `java.home`, macOS-coupled snapshot
   tests, async races).
-- Coverage enforcement remains TODO; resume path is documented in the Phase 0 plan.
+- Coverage enforcement is deferred; the resume path is documented in the Phase 0 plan.
 
 ## Alternatives considered
 
