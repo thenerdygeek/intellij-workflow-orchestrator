@@ -83,6 +83,20 @@ subprojects {
     // `kover {}` blocks). Aggregation requires the plugin on every aggregated module, else
     // root `kover(project(":x"))` cannot resolve the module's `kover` variant.
     apply(plugin = "org.jetbrains.kotlinx.kover")
+
+    // CRITICAL: once applied, Kover instruments EVERY test task by default. That instrumentation
+    // is what breaks MockK in a handful of tests (UnsupportedOperationException / CONSTRUCT_FAILURE).
+    // Gate instrumentation on the `-Pcoverage` flag so the normal `test` task/job runs
+    // UN-instrumented (MockK intact, no `ignoreFailures` needed there) and only the dedicated
+    // coverage run (`-Pcoverage`) instruments. The plugin stays applied either way so the
+    // per-module lockfiles and root aggregation remain valid.
+    extensions.configure<kotlinx.kover.gradle.plugin.dsl.KoverProjectExtension> {
+        currentProject {
+            instrumentation {
+                disabledForAll = !project.hasProperty("coverage")
+            }
+        }
+    }
 }
 
 // ---- Static Analysis (detekt) ----
