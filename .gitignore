@@ -44,7 +44,6 @@ __pycache__/
 
 # Temporary snapshots
 /flow-snapshot.md
-/CHANGELOG.md
 
 # Test/lab result artifacts
 docs/Result_*/
