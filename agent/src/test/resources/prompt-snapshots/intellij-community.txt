@@ -331,7 +331,7 @@ SYSTEM INFORMATION
 Operating System: Linux
 IDE: IntelliJ IDEA 2025.1 Community
 Default Shell: /bin/bash
-Home Directory: /Users/subhankarhalder
+Home Directory: /home/snapshot
 Current Working Directory: /snapshot/project
 
 ====

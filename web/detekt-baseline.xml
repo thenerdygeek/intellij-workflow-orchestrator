@@ -1,0 +1,219 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ArgumentListWrapping:AllowlistEditorPanel.kt$AllowlistEditorPanel.Companion$( List::class.java, DomainAllowlistEntry::class.java )</ID>
+    <ID>ArgumentListWrapping:ApprovalDialogHelpersTest.kt$ApprovalDialogHelpersTest$("https://example.com FAKE trusted=true", ApprovalDialog.safeLabel("https://example.com\n\n\nFAKE\ttrusted=true"))</ID>
+    <ID>ArgumentListWrapping:ApprovalDialogHelpersTest.kt$ApprovalDialogHelpersTest$("https://example.com\n\n\nFAKE\ttrusted=true")</ID>
+    <ID>ArgumentListWrapping:JsoupReadabilityTest.kt$JsoupReadabilityTest$( "&lt;html>&lt;body>&lt;p>$long&lt;/p>&lt;/body>&lt;/html>".toByteArray(), "text/html", "https://example.com", maxExtractedChars = 1_000, )</ID>
+    <ID>ArgumentListWrapping:PromptExtractorTest.kt$PromptExtractorTest$(Regex("&lt;question-[a-f0-9]{8}>").containsMatchIn(prompt), "prompt must wrap the question in a per-call delimited tag: $prompt")</ID>
+    <ID>ArgumentListWrapping:PromptExtractorTest.kt$PromptExtractorTest$(Regex("&lt;source-[a-f0-9]{8}>").containsMatchIn(prompt), "prompt must wrap the source in a per-call delimited tag: $prompt")</ID>
+    <ID>ArgumentListWrapping:PromptExtractorTest.kt$PromptExtractorTest$(mockk&lt;Project>(), "X v3.4.1 was released yesterday.", "What version of X is current?")</ID>
+    <ID>ArgumentListWrapping:QueryEgressLlmScreenerTest.kt$QueryEgressLlmScreenerTest$(Regex("&lt;/query-[a-f0-9]{8}>").containsMatchIn(prompt), "screener prompt must use random per-call close delimiter")</ID>
+    <ID>ArgumentListWrapping:QueryEgressLlmScreenerTest.kt$QueryEgressLlmScreenerTest$(Regex("&lt;query-[a-f0-9]{8}>").containsMatchIn(prompt), "screener prompt must use random per-call delimiter; got: $prompt")</ID>
+    <ID>ArgumentListWrapping:SanitizerSubagent.kt$SanitizerSubagent$("""Return JSON: {"results":[{"verdict":..., "cleaned_text":..., "notes":...}, ...]} in the SAME order.""")</ID>
+    <ID>ArgumentListWrapping:SanitizerSubagentTest.kt$SanitizerSubagentTest$(prompt.contains("Amazon AWS") || prompt.contains("AWS"), "persona must reference AWS as a preservation example")</ID>
+    <ID>ArgumentListWrapping:SanitizerSubagentTest.kt$SanitizerSubagentTest$(prompt.contains("DO NOT paraphrase", ignoreCase = false), "persona must forbid paraphrase explicitly")</ID>
+    <ID>ArgumentListWrapping:SanitizerSubagentTest.kt$SanitizerSubagentTest$(prompt.contains("DO NOT rewrite", ignoreCase = false), "persona must forbid rewriting explicitly")</ID>
+    <ID>ArgumentListWrapping:SanitizerSubagentTest.kt$SanitizerSubagentTest$(prompt.contains("DO NOT summarize", ignoreCase = false), "persona must forbid summarization explicitly")</ID>
+    <ID>ArgumentListWrapping:SanitizerSubagentTest.kt$SanitizerSubagentTest$(prompt.contains("character-for-character", ignoreCase = false), "persona must require verbatim preservation")</ID>
+    <ID>ArgumentListWrapping:SanitizerSubagentTest.kt$SanitizerSubagentTest$(prompt.contains(category, ignoreCase = true), "persona must preserve '$category' explicitly")</ID>
+    <ID>ArgumentListWrapping:ShortenerResolverTest.kt$ShortenerResolverTest$("""&lt;html>&lt;head>&lt;meta http-equiv="refresh" content="0; url=https://target.example.com/x">&lt;/head>&lt;/html>""")</ID>
+    <ID>ArgumentListWrapping:WebClientProxyWiringTest.kt$WebClientProxyWiringTest$(count >= 2, "expected >=2 proxyAuthenticator(IdeProxy.proxyAuthenticator()) calls (fetch + shortener), found $count")</ID>
+    <ID>ArgumentListWrapping:WebClientProxyWiringTest.kt$WebClientProxyWiringTest$(count >= 2, "expected >=2 proxySelector(IdeProxy.selector()) calls (fetch + shortener), found $count")</ID>
+    <ID>ArgumentListWrapping:WebFetchPipelineE2ETest.kt$WebFetchPipelineE2ETest$(2, server.requestCount, "different maxBytes must use different cache slots — both must hit the network")</ID>
+    <ID>ArgumentListWrapping:WebFetchPipelineE2ETest.kt$WebFetchPipelineE2ETest.&lt;no name provided>$( io.mockk.mockk(), null, 1_000L )</ID>
+    <ID>ArgumentListWrapping:WebSearchPipelineE2ETest.kt$WebSearchPipelineE2ETest$( "EGRESS_SCREENER_UNAVAILABLE", "Int***" )</ID>
+    <ID>ArgumentListWrapping:WebSearchPipelineE2ETest.kt$WebSearchPipelineE2ETest$("Why does Jenkins restart", sentToProvider, "provider must receive the rewritten query, not the original")</ID>
+    <ID>ArgumentListWrapping:WebSearchPipelineE2ETest.kt$WebSearchPipelineE2ETest$("haiku-4-5", capturedBrainIds.first(), "runSanitizerBatch must receive the configured brainId")</ID>
+    <ID>ArgumentListWrapping:WebSearchPipelineE2ETest.kt$WebSearchPipelineE2ETest$(title = "Result 3", url = "https://example.com/3", snippet = "snippet three", rank = 2)</ID>
+    <ID>ArgumentListWrapping:WebSettingsConfigurable.kt$WebSettingsConfigurable$("Must contain &lt;code>{query}&lt;/code>, e.g. &lt;code>https://api.example.com/search?q={query}&lt;/code>")</ID>
+    <ID>ArgumentListWrapping:WebSettingsConfigurable.kt$WebSettingsConfigurable$("Reject plain &lt;code>http://&lt;/code> URLs unless overridden per-domain via the allowlist.")</ID>
+    <ID>ArgumentListWrapping:WebSettingsConfigurable.kt$WebSettingsConfigurable$("e.g. &lt;code>Authorization&lt;/code> or &lt;code>X-Api-Key&lt;/code>. Leave blank for no auth header.")</ID>
+    <ID>CommentWrapping:ApprovalDialog.kt$ApprovalDialog$/* canBeParent = */</ID>
+    <ID>CommentWrapping:WebFetchCache.kt$WebFetchCache.&lt;no name provided>$/*accessOrder=*/</ID>
+    <ID>EmptyFunctionBlock:JsoupReadability.kt$JsoupReadability.&lt;no name provided>${}</ID>
+    <ID>ImportOrdering:JsoupReadabilityTest.kt$import com.workflow.orchestrator.core.web.ContentSanitizer import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>Indentation:PromptExtractor.kt$PromptExtractor$ </ID>
+    <ID>Indentation:QueryEgressFilterImplTest.kt$QueryEgressFilterImplTest$ </ID>
+    <ID>Indentation:QueryEgressLlmScreener.kt$QueryEgressLlmScreener$ </ID>
+    <ID>Indentation:SanitizerSubagent.kt$SanitizerSubagent$ </ID>
+    <ID>Indentation:WebSearchEngine.kt$WebSearchEngine$ </ID>
+    <ID>Indentation:WebSettingsConfigurable.kt$WebSettingsConfigurable$ </ID>
+    <ID>LoopWithTooManyJumpStatements:AutoDenyListSource.kt$AutoDenyListSource$for</ID>
+    <ID>MagicNumber:AllowlistEditorPanel.kt$AllowlistEditorPanel$100</ID>
+    <ID>MagicNumber:AllowlistEditorPanel.kt$AllowlistEditorPanel$3</ID>
+    <ID>MagicNumber:AllowlistEditorPanel.kt$AllowlistEditorPanel$300</ID>
+    <ID>MagicNumber:AllowlistEditorPanel.kt$AllowlistEditorPanel$4</ID>
+    <ID>MagicNumber:AllowlistEditorPanel.kt$AllowlistEditorPanel$70</ID>
+    <ID>MagicNumber:AllowlistEditorPanel.kt$AllowlistEditorPanel$80</ID>
+    <ID>MagicNumber:CustomHttpProvider.kt$CustomHttpProvider$3</ID>
+    <ID>MagicNumber:CustomHttpProvider.kt$CustomHttpProvider$401</ID>
+    <ID>MagicNumber:JsoupReadability.kt$JsoupReadability$200</ID>
+    <ID>MagicNumber:JsoupReadability.kt$JsoupReadability$31</ID>
+    <ID>MagicNumber:PromptExtractor.kt$PromptExtractor$8</ID>
+    <ID>MagicNumber:QueryEgressLlmScreener.kt$QueryEgressLlmScreener$3</ID>
+    <ID>MagicNumber:QueryEgressLlmScreener.kt$QueryEgressLlmScreener$6</ID>
+    <ID>MagicNumber:QueryEgressLlmScreener.kt$QueryEgressLlmScreener$8</ID>
+    <ID>MagicNumber:SanitizerSubagent.kt$SanitizerSubagent$8</ID>
+    <ID>MagicNumber:SearXNGProvider.kt$SearXNGProvider$401</ID>
+    <ID>MagicNumber:ShortenerResolver.kt$ShortenerResolver$1024</ID>
+    <ID>MagicNumber:ShortenerResolver.kt$ShortenerResolver$200</ID>
+    <ID>MagicNumber:ShortenerResolver.kt$ShortenerResolver$299</ID>
+    <ID>MagicNumber:WebAuditLog.kt$WebAuditLog$1000L</ID>
+    <ID>MagicNumber:WebFetchCache.kt$WebFetchCache.&lt;no name provided>$0.75f</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x03</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x04</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x25</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x38</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x44</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x45</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x46</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x47</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x49</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x4B</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x4C</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x4D</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x4E</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x50</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x5A</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x7F</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0x89</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0xBA</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0xBE</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0xCA</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0xCE</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0xCF</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0xD8</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0xED</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0xFA</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0xFE</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$0xFF</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$1024L</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$16</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$200</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$204</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$3</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$300</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$399</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$512</ID>
+    <ID>MagicNumber:WebFetchEngine.kt$WebFetchEngine$8</ID>
+    <ID>MagicNumber:WebFetchServiceImpl.kt$WebFetchServiceImpl$5</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$10</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$10_000</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$10_485_760</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$120</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$1440</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$15</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$1_000</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$1_000_000</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$1_024</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$30</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$300</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$4</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$40</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$4_000</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$4_096</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$50</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$60</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$600</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$65_536</ID>
+    <ID>MagicNumber:WebSettingsConfigurable.kt$WebSettingsConfigurable$8</ID>
+    <ID>MaximumLineLength:ApprovalDialogHelpersTest.kt$ApprovalDialogHelpersTest$ </ID>
+    <ID>MaximumLineLength:CustomHttpProvider.kt$CustomHttpProvider$ </ID>
+    <ID>MaximumLineLength:CustomHttpProviderTest.kt$CustomHttpProviderTest$ </ID>
+    <ID>MaximumLineLength:PromptExtractorTest.kt$PromptExtractorTest$ </ID>
+    <ID>MaximumLineLength:SanitizerSubagent.kt$SanitizerSubagent$ </ID>
+    <ID>MaximumLineLength:ShortenerResolverTest.kt$ShortenerResolverTest$ </ID>
+    <ID>MaximumLineLength:WebClientProxyWiringTest.kt$WebClientProxyWiringTest$ </ID>
+    <ID>MaximumLineLength:WebFetchPipelineE2ETest.kt$WebFetchPipelineE2ETest$ </ID>
+    <ID>MaximumLineLength:WebSearchEngine.kt$WebSearchEngine$ </ID>
+    <ID>MaximumLineLength:WebSearchPipelineE2ETest.kt$WebSearchPipelineE2ETest$ </ID>
+    <ID>MaximumLineLength:WebSettingsConfigurable.kt$WebSettingsConfigurable$ </ID>
+    <ID>MultiLineIfElse:ApprovalDialog.kt$ApprovalDialog$"Content-Length: $contentLength bytes"</ID>
+    <ID>MultiLineIfElse:ApprovalDialog.kt$ApprovalDialog$"Content-Length: unknown (no pre-probe)"</ID>
+    <ID>MultiLineIfElse:PinnedDnsTest.kt$PinnedDnsTest$arrayOf(InetAddress.getByName("127.0.0.1"))</ID>
+    <ID>MultiLineIfElse:PinnedDnsTest.kt$PinnedDnsTest$arrayOf(InetAddress.getByName("203.0.113.1"))</ID>
+    <ID>MultiLineIfElse:QueryEgressFilterImpl.kt$QueryEgressFilterImpl$llmDecision</ID>
+    <ID>MultiLineIfElse:ShortenerResolver.kt$ShortenerResolver$WebError.ShortenerUnresolved(url)</ID>
+    <ID>MultiLineIfElse:ShortenerResolver.kt$ShortenerResolver$WebError.UrlBlocked(ex.reason, ex.host)</ID>
+    <ID>MultiLineIfElse:WebFetchEngine.kt$WebFetchEngine$baseWebPage</ID>
+    <ID>MultiLineIfElse:WebFetchEngine.kt$WebFetchEngine$finalText to null</ID>
+    <ID>MultiLineIfElse:WebFetchEngine.kt$WebFetchEngine.Companion$WebError.HttpConnectError(url)</ID>
+    <ID>MultiLineIfElse:WebFetchEngine.kt$WebFetchEngine.Companion$WebError.HttpReadTimeout(url)</ID>
+    <ID>MultiLineIfElse:WebFetchServiceImpl.kt$WebFetchServiceImpl$null</ID>
+    <ID>MultiLineIfElse:WebSearchPipelineE2ETest.kt$WebSearchPipelineE2ETest.StubSearchProvider$Result.failure(failWith)</ID>
+    <ID>MultiLineIfElse:WebSearchPipelineE2ETest.kt$WebSearchPipelineE2ETest.StubSearchProvider$Result.success(hits.take(maxResults))</ID>
+    <ID>MultiLineIfElse:WebSearchServiceImpl.kt$WebSearchServiceImpl$emptySet&lt;String>()</ID>
+    <ID>NoMultipleSpaces:AllowlistEditorPanel.kt$AllowlistEditorPanel.&lt;no name provided>$ </ID>
+    <ID>NoMultipleSpaces:PinnedDnsTest.kt$PinnedDnsTest$ </ID>
+    <ID>NoMultipleSpaces:SearchHttpUtil.kt$ </ID>
+    <ID>NoMultipleSpaces:SearchProviderRegistry.kt$SearchProviderRegistry$ </ID>
+    <ID>NoMultipleSpaces:ShortenerResolverTest.kt$ShortenerResolverTest$ </ID>
+    <ID>NoMultipleSpaces:UrlPipeline.kt$UrlPipeline$ </ID>
+    <ID>NoMultipleSpaces:WebAuditLog.kt$WebAuditLog$ </ID>
+    <ID>NoMultipleSpaces:WebAuditRecord.kt$WebAuditRecord$ </ID>
+    <ID>NoMultipleSpaces:WebFetchCacheTest.kt$WebFetchCacheTest$ </ID>
+    <ID>NoMultipleSpaces:WebFetchEngine.kt$WebFetchEngine$ </ID>
+    <ID>NoMultipleSpaces:WebFetchEngine.kt$WebFetchEngine.Companion$ </ID>
+    <ID>NoMultipleSpaces:WebFetchPipelineE2ETest.kt$WebFetchPipelineE2ETest$ </ID>
+    <ID>NoMultipleSpaces:WebFetchPipelineE2ETest.kt$WebFetchPipelineE2ETest.&lt;no name provided>$ </ID>
+    <ID>NoMultipleSpaces:WebSearchEngine.kt$WebSearchEngine$ </ID>
+    <ID>NoMultipleSpaces:WebSearchPipelineE2ETest.kt$WebSearchPipelineE2ETest$ </ID>
+    <ID>NoMultipleSpaces:WebSettingsConfigurable.kt$WebSettingsConfigurable$ </ID>
+    <ID>NoUnusedImports:AllowlistEditorPanel.kt$com.workflow.orchestrator.web.ui.AllowlistEditorPanel.kt</ID>
+    <ID>NoUnusedImports:CustomHttpProviderTest.kt$com.workflow.orchestrator.web.service.search.CustomHttpProviderTest.kt</ID>
+    <ID>NoUnusedImports:SearXNGProviderTest.kt$com.workflow.orchestrator.web.service.search.SearXNGProviderTest.kt</ID>
+    <ID>NoUnusedImports:StripAuthHeadersInterceptorTest.kt$com.workflow.orchestrator.web.service.StripAuthHeadersInterceptorTest.kt</ID>
+    <ID>NoUnusedImports:WebFetchErrorMappingTest.kt$com.workflow.orchestrator.web.service.WebFetchErrorMappingTest.kt</ID>
+    <ID>NoUnusedImports:WebSearchEngine.kt$com.workflow.orchestrator.web.service.WebSearchEngine.kt</ID>
+    <ID>NoUnusedImports:WebSettingsConfigurable.kt$com.workflow.orchestrator.web.ui.WebSettingsConfigurable.kt</ID>
+    <ID>NoWildcardImports:AutoDenyListSourceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:JsoupReadabilityTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:PromptExtractorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:QueryEgressFilterImplTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:QueryEgressLlmScreenerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SanitizerSubagentTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:ShortenerResolverTest.kt$import org.junit.jupiter.api.*</ID>
+    <ID>NoWildcardImports:ShortenerResolverTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:WebAuditLogTest.kt$import org.junit.jupiter.api.*</ID>
+    <ID>NoWildcardImports:WebAuditLogTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:WebFetchCacheTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:WebSettingsConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>PropertyWrapping:JsoupReadabilityTest.kt$JsoupReadabilityTest$val out = sanitize(""" &lt;html>&lt;body> &lt;nav>NAV BLOB&lt;/nav> &lt;article>Main content here&lt;/article> &lt;footer>FOOTER BLOB&lt;/footer> &lt;/body>&lt;/html> """.trimIndent())</ID>
+    <ID>SpacingAroundCurly:WebSearchServiceImpl.kt$WebSearchServiceImpl${</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:WebAuditLog.kt$WebAuditLog.Companion$/** Maximum age of the active log before rotation (24 hours in seconds). */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:WebAuditLog.kt$WebAuditLog.Companion$/** Maximum size of the active log before rotation (50 MB). */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:WebAuditLog.kt$WebAuditLog.Companion$/** Rotated siblings older than this are deleted (7 days in milliseconds). */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:WebAuditLog.kt$WebAuditLog.Companion$/** Sibling lock file used for inter-JVM coordination (FileLock target). */</ID>
+    <ID>SwallowedException:WebSettingsConfigurable.kt$WebSettingsConfigurable$e: Exception</ID>
+    <ID>UnusedParameter:WebFetchEngine.kt$WebFetchEngine$startMs: Long</ID>
+    <ID>UnusedPrivateProperty:WebFetchServiceImpl.kt$WebFetchServiceImpl$private val cs: CoroutineScope</ID>
+    <ID>UseCheckOrError:SearchHttpUtil.kt$throw IllegalStateException("PROVIDER_RESPONSE_TOO_LARGE: body exceeds $maxBytes bytes")</ID>
+    <ID>VariableNaming:StripAuthHeadersInterceptor.kt$StripAuthHeadersInterceptor$private val STRIPPED = setOf( "authorization", "cookie", "x-auth-token", "x-api-key", "x-subscription-token", "proxy-authorization", )</ID>
+    <ID>WildcardImport:AutoDenyListSourceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:JsoupReadabilityTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:PromptExtractorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:QueryEgressFilterImplTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:QueryEgressLlmScreenerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SanitizerSubagentTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:ShortenerResolverTest.kt$import org.junit.jupiter.api.*</ID>
+    <ID>WildcardImport:ShortenerResolverTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:WebAuditLogTest.kt$import org.junit.jupiter.api.*</ID>
+    <ID>WildcardImport:WebAuditLogTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:WebFetchCacheTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:WebSettingsConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>Wrapping:AllowlistEditorPanel.kt$AllowlistEditorPanel$(</ID>
+    <ID>Wrapping:ApprovalDialog.kt$ApprovalDialog$;</ID>
+    <ID>Wrapping:AutoDenyListSourceTest.kt$AutoDenyListSourceTest$(</ID>
+    <ID>Wrapping:JsoupReadabilityTest.kt$JsoupReadabilityTest$(</ID>
+    <ID>Wrapping:PromptExtractorTest.kt$PromptExtractorTest$(</ID>
+    <ID>Wrapping:QueryEgressFilterImpl.kt$QueryEgressFilterImpl$;</ID>
+    <ID>Wrapping:QueryEgressFilterImplTest.kt$QueryEgressFilterImplTest$;</ID>
+    <ID>Wrapping:QueryEgressLlmScreenerTest.kt$QueryEgressLlmScreenerTest$(</ID>
+    <ID>Wrapping:SanitizerSubagentTest.kt$SanitizerSubagentTest$(</ID>
+    <ID>Wrapping:WebSearchPipelineE2ETest.kt$WebSearchPipelineE2ETest$(</ID>
+    <ID>Wrapping:WebSearchPipelineE2ETest.kt$WebSearchPipelineE2ETest$;</ID>
+    <ID>Wrapping:WebSettingsConfigurable.kt$WebSettingsConfigurable$(</ID>
+  </CurrentIssues>
+</SmellBaseline>

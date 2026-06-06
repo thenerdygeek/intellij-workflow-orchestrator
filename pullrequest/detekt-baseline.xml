@@ -1,0 +1,462 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ArgumentListWrapping:AiReviewViewModelTest.kt$AiReviewViewModelTest$(exactly = 0)</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientCacheTest.kt$BitbucketBranchClientCacheTest$(!src.contains("@Volatile private var cachedBaseUrl"), "Old @Volatile cachedBaseUrl field must be removed")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientCacheTest.kt$BitbucketBranchClientCacheTest$(!src.contains("@Volatile private var cachedClient"), "Old @Volatile cachedClient field must be removed")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientCacheTest.kt$BitbucketBranchClientCacheTest$(firstReadAfter > cachedUrlPropIdx &amp;&amp; firstReadAfter &lt; cachedUrlPropIdx + 200, "cachedUrl must read from cached.get()?.first (the atomic snapshot)")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientCacheTest.kt$BitbucketBranchClientCacheTest$(inconsistent.isEmpty(), "All observed (url, client) pairs must be consistent; found ${inconsistent.size} inconsistencies")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientCacheTest.kt$BitbucketBranchClientCacheTest$(src.contains("AtomicReference&lt;Pair&lt;String, BitbucketBranchClient>?>"), "Cache must use AtomicReference&lt;Pair&lt;...>> for atomic (url, client) state")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientCacheTest.kt$BitbucketBranchClientCacheTest$(src.contains("compareAndSet("), "Cache slow path must use compareAndSet to atomically install new entry")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$( data = 0, summary = "Error fetching blocker count: ${result.message}", isError = true, hint = "Verify the PR exists." )</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$( data = BuildStatsData(0, 0, 0), summary = "Error fetching build stats: ${result.message}", isError = true, hint = "Verify the commit SHA." )</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$( data = PrComment(id = "", version = 0, text = "", author = emptyCommentAuthor(), createdDate = 0, updatedDate = 0, state = PrCommentState.OPEN, severity = PrCommentSeverity.NORMAL), summary = "getPrComment failed: ${result.message}", isError = true, hint = "Verify the comment ID and PR exist." )</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$( data = PrComment(id = "", version = 0, text = "", author = emptyCommentAuthor(), createdDate = 0, updatedDate = 0, state = PrCommentState.OPEN, severity = PrCommentSeverity.NORMAL), summary = result.message, isError = true, hint = "The version may be stale — re-fetch the comment and retry." )</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$( data = PrComment(id = "", version = 0, text = "", author = emptyCommentAuthor(), createdDate = 0, updatedDate = 0, state = PrCommentState.OPEN, severity = PrCommentSeverity.NORMAL), summary = result.message, isError = true, hint = "Verify the comment exists and is in a resolved state.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$( data = PrComment(id = "", version = 0, text = "", author = emptyCommentAuthor(), createdDate = 0, updatedDate = 0, state = PrCommentState.OPEN, severity = PrCommentSeverity.NORMAL), summary = result.message, isError = true, hint = "Verify the comment exists and is in an open state.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$( data = Unit, summary = "Bitbucket not configured. $detail", isError = true, hint = "Set up Bitbucket connection in Settings > Tools > Workflow Orchestrator > General." )</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$( data = Unit, summary = "Bitbucket project/repo not configured.", isError = true, hint = "Set Bitbucket project key and repo slug in Settings." )</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$( data = emptyList(), summary = "Error fetching linked Jira issues: ${result.message}", isError = true, hint = "Verify the PR exists; ignore if Jira-link plugin is not installed." )</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$( data = emptyList(), summary = "Error fetching participants: ${result.message}", isError = true, hint = "Verify the PR exists." )</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$( data = emptyList(), summary = "Error fetching required builds: ${result.message}", isError = true, hint = "Verify repo config; required-builds plugin may not be installed." )</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$( data = emptyList(), summary = "Error reverse-looking-up PRs: ${result.message}", isError = true, hint = "Verify the commit and repo configuration." )</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$( id = 0, title = title, state = "ERROR", fromBranch = fromBranch, toBranch = toBranch, link = "", authorName = null )</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$( id = id, title = title, state = state, fromBranch = fromRef?.displayId ?: "", toBranch = toRef?.displayId ?: "", link = links?.self?.firstOrNull()?.href ?: "", authorName = author?.user?.displayName ?: author?.user?.name )</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$( id = pr.id, title = pr.title, state = pr.state, fromBranch = pr.fromRef?.displayId ?: branchName, toBranch = pr.toRef?.displayId ?: "", link = pr.links.self.firstOrNull()?.href ?: "", authorName = null )</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$("[BitbucketService] Failed to reply to comment #$parentCommentId on PR #$prId: ${result.message}")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$("[BitbucketService] PR #$prId comments truncated at $maxPages pages (${allComments.size} collected)")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(8)</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(activities, "PR #$prId has ${activities.size} activit${if (activities.size == 1) "y" else "ies"}")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(api, prId, projectKey, repoSlug, "remove reviewer '$username'")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(api, prId, projectKey, repoSlug, strategy, deleteSourceBranch, commitMessage)</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(branches, "Found ${branches.size} branch(es)${if (!filter.isNullOrBlank()) " matching '$filter'" else ""}")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(conditions, "$projectKey/$repoSlug has ${conditions.size} required-build condition(s)")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = "", summary = "Error fetching PR #$prId diff: ${result.message}", isError = true, hint = "Verify the PR exists.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = "", summary = "Error fetching file $filePath: ${result.message}", isError = true, hint = "Verify the file path and ref are correct.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = BranchData(id = "", displayId = name, latestCommit = null), summary = "Error creating branch '$name': ${result.message}", isError = true, hint = "Check the start point is a valid commit or branch name.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = MergeStatusData(canMerge = false, conflicted = false, vetoes = emptyList()), summary = "Error checking merge status for PR #$prId: ${result.message}", isError = true, hint = "Verify the PR exists.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = Unit, summary = "'$username' is already a reviewer on PR #$prId.", isError = true, hint = "Use setReviewerStatus to change their review status.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = Unit, summary = "'$username' is not a reviewer on PR #$prId.", isError = true, hint = "Check the username is correct.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = Unit, summary = "Error adding comment to PR #$prId: ${result.message}", isError = true, hint = "Verify the PR exists.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = Unit, summary = "Error adding inline comment: ${result.message}", isError = true, hint = "Verify the file path and line number are valid for this PR.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = Unit, summary = "Error approving PR #$prId: ${result.message}", isError = true, hint = "You may already have approved this PR or may not be a reviewer.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = Unit, summary = "Error declining PR #$prId: ${result.message}", isError = true, hint = "The PR may already be declined or merged.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = Unit, summary = "Error fetching PR #$prId for decline: ${currentPr.message}", isError = true, hint = "Verify the PR exists.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = Unit, summary = "Error merging PR #$prId: ${result.message}", isError = true, hint = "Check merge preconditions with checkMergeStatus first.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = Unit, summary = "Error removing approval from PR #$prId: ${result.message}", isError = true, hint = "Check Bitbucket connection in Settings.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = Unit, summary = "Error replying to comment: ${result.message}", isError = true, hint = "Verify the comment ID is valid.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = Unit, summary = "Error setting reviewer status: ${result.message}", isError = true, hint = "Valid statuses: APPROVED, NEEDS_WORK, UNAPPROVED.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = Unit, summary = "Error: $opLabel — ${result.message}", isError = true, hint = "Check Bitbucket connection or refresh the PR and retry.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = Unit, summary = result.message, isError = true, hint = "The version may be stale — re-fetch the comment and retry.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = emptyList(), summary = "Error fetching PR #$prId activities: ${result.message}", isError = true, hint = "Verify the PR exists.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = emptyList(), summary = "Error fetching PR #$prId changes: ${result.message}", isError = true, hint = "Verify the PR exists.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = emptyList(), summary = "Error fetching PRs for branch: ${result.message}", isError = true, hint = "Check Bitbucket connection in Settings.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = emptyList(), summary = "Error fetching branches: ${result.message}", isError = true, hint = "Check Bitbucket connection in Settings.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = emptyList(), summary = "Error fetching build statuses: ${result.message}", isError = true, hint = "Check Bitbucket connection in Settings.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = emptyList(), summary = "Error fetching my PRs: ${result.message}", isError = true, hint = "Check Bitbucket connection in Settings.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = emptyList(), summary = "Error fetching reviewing PRs: ${result.message}", isError = true, hint = "Check Bitbucket connection in Settings.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = emptyList(), summary = "Error searching users: ${result.message}", isError = true, hint = "Check Bitbucket connection in Settings.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = emptyList(), summary = "listPrComments failed: ${result.message}", isError = true, hint = "Verify the PR exists and Bitbucket connection is configured.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data = emptyPrDetail(prId), summary = "Error fetching PR #$prId detail: ${result.message}", isError = true, hint = "Verify the PR exists.")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(id = "", version = 0, text = "", author = emptyCommentAuthor(), createdDate = 0, updatedDate = 0, state = PrCommentState.OPEN, severity = PrCommentSeverity.NORMAL)</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(id = b.id, displayId = b.displayId, latestCommit = b.latestCommit, isDefault = b.isDefault)</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(prId)</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(primary.bitbucketProjectKey!!, primary.bitbucketRepoSlug!!)</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(result.data.effectiveCount, "PR #$prId has ${result.data.effectiveCount} blocker comment(s)")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(result.data.toPrComment(), "Comment $commentId reopened on PR #$prId")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(result.data.toPrComment(), "Comment $commentId resolved on PR #$prId")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(result.data.toPrComment(), "Comment $commentId updated on PR #$prId")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(result.data.toPrComment(), "Comment ${result.data.id} on PR #$prId")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImplListPrCommentsPaginationTest.kt$BitbucketServiceImplListPrCommentsPaginationTest$(allComments.any { it.text == "Batch2 Comment" }, "Last batch's comments must be included")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImplListPrCommentsPaginationTest.kt$BitbucketServiceImplListPrCommentsPaginationTest$(batch2Req.path?.contains("start=1000") == true, "Second batch must use nextPageStart=1000 from first batch; path=${batch2Req.path}")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImplListPrCommentsPaginationTest.kt$BitbucketServiceImplListPrCommentsPaginationTest$(capPages + 1, allComments.size, "Service loop must aggregate comments from all batches")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImplListPrCommentsPaginationTest.kt$BitbucketServiceImplListPrCommentsPaginationTest$(comments.isLastPage, "listPrComments must return isLastPage=true when getPullRequestActivities completes normally")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImplListPrCommentsPaginationTest.kt$BitbucketServiceImplListPrCommentsPaginationTest$(false, page.isLastPage, "isLastPage must be false when getPullRequestActivities hits its 20-page cap")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImplListPrCommentsPaginationTest.kt$BitbucketServiceImplListPrCommentsPaginationTest$(maxPages, page.values.size, "All $maxPages comments from capped pages must be returned")</ID>
+    <ID>ArgumentListWrapping:BitbucketServiceImplListPrCommentsPaginationTest.kt$BitbucketServiceImplListPrCommentsPaginationTest$(page.nextPageStart != null, "nextPageStart must be set so the service-layer loop can continue")</ID>
+    <ID>ArgumentListWrapping:CommentsViewModelTest.kt$CommentsViewModelTest$( id = id, version = 0, text = text, author = PrCommentAuthor("u", "U"), createdDate = 1L, updatedDate = 1L, state = state, severity = PrCommentSeverity.NORMAL, )</ID>
+    <ID>ArgumentListWrapping:CreatePrDialog.kt$CreatePrDialog$( icon, icon, "Generate title with AI" )</ID>
+    <ID>ArgumentListWrapping:CreatePrDialog.kt$CreatePrDialog$( spinner, spinner, "Generating — click to cancel" )</ID>
+    <ID>ArgumentListWrapping:CreatePrDialog.kt$CreatePrDialog$("Target cannot be the same as source", targetField)</ID>
+    <ID>ArgumentListWrapping:CreatePrLauncherImpl.kt$CreatePrLauncherImpl$("[PR:Launcher] Prefetch OK — repos=${ctx.repos.size}" + " selectedIdx=${ctx.initialSelectedRepoIndex}" + " branch='$selectedBranch'" + " remoteBranches=$remoteBranchesCount" + " tickets=${ctx.initialTicketKeys}" + " reviewers=${ctx.defaultReviewers.size}")</ID>
+    <ID>ArgumentListWrapping:CreatePrPrefetch.kt$CreatePrPrefetch$("[PR:Prefetch] Prefetched repo '${config.displayLabel}': branch='$sourceBranch' remoteBranches=${remoteBranches.size} defaultTarget='$defaultTarget' repoDefaultReviewers=${repoDefaultReviewers.size}")</ID>
+    <ID>ArgumentListWrapping:CreatePrPrefetch.kt$CreatePrPrefetch$("[PR:Prefetch] commit-key scan: git log $targetBranch..$sourceBranch failed exit=${result.exitCode}")</ID>
+    <ID>ArgumentListWrapping:CreatePrPrefetch.kt$CreatePrPrefetch$("[PR:Prefetch] getDefaultReviewersForBranch exception for '${config.displayLabel}': ${e.message}")</ID>
+    <ID>ArgumentListWrapping:CreatePrPrefetch.kt$CreatePrPrefetch$("[PR:Prefetch] getDefaultReviewersForBranch failed for '${config.displayLabel}': ${r.message}")</ID>
+    <ID>ArgumentListWrapping:CreatePrPrefetch.kt$CreatePrPrefetch$("[PR:Prefetch] resolvedKeys=$keys selectedBranch='$selectedBranch' (branch=$branchKey active=$activeKey commits=$commitKeys)")</ID>
+    <ID>ArgumentListWrapping:FindingRowRenderer.kt$FindingRowRenderer$("&lt;html>${HtmlEscape.escapeHtml(value.message.take(600)).replace("\n", "&lt;br>")}&lt;/html>")</ID>
+    <ID>ArgumentListWrapping:FindingRowRenderer.kt$FindingRowRenderer$("\n", "&lt;br>")</ID>
+    <ID>ArgumentListWrapping:FindingRowRenderer.kt$FindingRowRenderer$(600)</ID>
+    <ID>ArgumentListWrapping:FindingRowRenderer.kt$FindingRowRenderer$(value.message.take(600))</ID>
+    <ID>ArgumentListWrapping:MarkdownToHtml.kt$MarkdownToHtml$("&lt;pre style='background:#f0f0f0; padding:8px; border-radius:4px; overflow-x:auto;'>&lt;code>")</ID>
+    <ID>ArgumentListWrapping:PrActionService.kt$PrActionService$("[PR:Action] Merge status for PR #$prId: canMerge=${result.data.canMerge}, vetoes=${result.data.vetoes.size}")</ID>
+    <ID>ArgumentListWrapping:PrActionServiceDeclineRetryTest.kt$PrActionServiceDeclineRetryTest$(1, server.requestCount, "Only the GET request should be made; no POST to /decline must follow a 404 pre-fetch")</ID>
+    <ID>ArgumentListWrapping:PrActionServiceDeclineRetryTest.kt$PrActionServiceDeclineRetryTest$(getResult is ApiResult.Error, "getPullRequestDetail must return ApiResult.Error on 404; got: $getResult")</ID>
+    <ID>ArgumentListWrapping:PrActionServiceModifyRetryTest.kt$PrActionServiceModifyRetryTest$(1, server.requestCount, "Only the GET request must be made; no POST to /merge must follow a 404 pre-fetch")</ID>
+    <ID>ArgumentListWrapping:PrActionServiceModifyRetryTest.kt$PrActionServiceModifyRetryTest$(put2Body.contains("Updated description after race"), "Retry PUT must keep the user-typed description; body=$put2Body")</ID>
+    <ID>ArgumentListWrapping:PrActionServiceModifyRetryTest.kt$PrActionServiceModifyRetryTest$(result is ApiResult.Error, "mergePullRequestWithRetry must propagate a 403 from the GET as an error; got: $result")</ID>
+    <ID>ArgumentListWrapping:PrActionServiceModifyRetryTest.kt$PrActionServiceModifyRetryTest$(result is ApiResult.Error, "mergePullRequestWithRetry must return an error when the GET pre-fetch returns 404; got: $result")</ID>
+    <ID>ArgumentListWrapping:PrActionServiceMutatorsTest.kt$PrActionServiceMutatorsTest$(5, secondReq.version, "Retry path: re-applying the mutator with a refetched PR must surface the new version")</ID>
+    <ID>ArgumentListWrapping:PrActionServiceMutatorsTest.kt$PrActionServiceMutatorsTest$(title = "Keep me", description = "old desc", version = 11, reviewers = listOf("alice", "bob"))</ID>
+    <ID>ArgumentListWrapping:PrActionServiceMutatorsTest.kt$PrActionServiceMutatorsTest$(title = "Old", description = "Keep me", version = 7, reviewers = listOf("alice", "bob"))</ID>
+    <ID>ArgumentListWrapping:PrDashboardPanel.kt$PrDashboardPanel$("[PR:AutoSelect] Auto-selected PR #${bestPr.id} '${bestPr.title}' (repo=${bestPr.repoName}, filter=$targetFilter)")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionGenerator.kt$PrDescriptionGenerator$("[Build:PrDesc] Chained generation produced ${outcome.text.length} chars at cap=$cap")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionGenerator.kt$PrDescriptionGenerator$("_(AI generation unavailable — please fill in the motivation behind this PR: problem being solved, why this approach, relevant prior work.)_")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionGenerator.kt$PrDescriptionGenerator$("_(Omit this section if none of breaking changes / migrations / feature flags / performance / rollback apply.)_")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionGenerator.kt$PrDescriptionGenerator$("_(Please state what kind of feedback would be most valuable — e.g. correctness of retry logic, API naming, security review.)_")</ID>
+    <ID>ArgumentListWrapping:PrDetailPanel.kt$MergeOptionsDialog$("&lt;html>&lt;b>Conflicts detected&lt;/b> — this merge may require conflict resolution.&lt;/html>")</ID>
+    <ID>ArgumentListWrapping:PrDetailPanel.kt$MergeOptionsDialog$("&lt;html>&lt;b>Warnings:&lt;/b>&lt;br>${HtmlEscape.escapeHtml(vetoText).replace("\n", "&lt;br>")}&lt;/html>")</ID>
+    <ID>ArgumentListWrapping:PrDetailPanel.kt$MergeOptionsDialog$("\n", "&lt;br>")</ID>
+    <ID>ArgumentListWrapping:PrDetailPanel.kt$MergeOptionsDialog$(vetoText)</ID>
+    <ID>ArgumentListWrapping:PrDetailPanel.kt$PrDetailPanel$( "$projectKey/$repoSlug/PR-$prId", sessionId, "running", )</ID>
+    <ID>ArgumentListWrapping:PrDetailPanel.kt$PrDetailPanel$("[PR:Detail] Open in Browser skipped — missing coordinates: url='$bitbucketUrl' project='$projectKey' repo='$repoSlug'")</ID>
+    <ID>ArgumentListWrapping:PrDetailPanel.kt$PrDetailPanel$("[PR:Detail] Open in Browser: pr=$prId repo=$projectKey/$repoSlug (pr.repoName='${currentPr?.repoName}')")</ID>
+    <ID>ArgumentListWrapping:PrDetailPanel.kt$PrDetailPanel.&lt;no name provided>$( 0f, 0f, width.toFloat(), height.toFloat(), JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat() )</ID>
+    <ID>ArgumentListWrapping:PrDetailPanel.kt$PrDetailPanel.&lt;no name provided>$("Failed to remove reviewer: ${result.message}")</ID>
+    <ID>ArgumentListWrapping:PrDetailPanel.kt$PrDetailPanel.DescriptionSubPanel$("[PR:AI] Calling generatePrDescription: diff=${diff.length} chars, ticketId=$ticketId, title=${pr.title}, from=${pr.fromRef?.displayId}, to=${pr.toRef?.displayId}")</ID>
+    <ID>ArgumentListWrapping:PrDetailPanel.kt$PrDetailPanel.DescriptionSubPanel$("[PR:AI] generatePrDescription result: ${if (enhanced == null) "NULL" else "${enhanced.length} chars"}")</ID>
+    <ID>ArgumentListWrapping:PrListPanel.kt$PrListPanel.PrListCellRenderer.&lt;no name provided>$( JBUI.scale(2).toFloat(), 0f, (width - JBUI.scale(4)).toFloat(), height.toFloat(), r, r )</ID>
+    <ID>ArgumentListWrapping:PrListPanel.kt$PrListPanel.PrListCellRenderer.RepoBadgePanel$( 0f, 0f, width.toFloat(), height.toFloat(), JBUI.scale(2).toFloat(), JBUI.scale(2).toFloat() )</ID>
+    <ID>ArgumentListWrapping:PrListPanel.kt$PrListPanel.PrListCellRenderer.StatusBadgePanel$( 0.5f, 0.5f, width.toFloat() - 1f, height.toFloat() - 1f, r, r )</ID>
+    <ID>ArgumentListWrapping:PrListService.kt$PrListService$("[PR:List] Found ${allMyPrs.size} authored PRs (dashboard, scoped to ${repoEntries.size} configured repos, state=$currentState)")</ID>
+    <ID>ArgumentListWrapping:PrListService.kt$PrListService$("[PR:List] Found ${allRepoPrsList.size} total repo PRs across ${repoEntries.size} repos (state=$currentState)")</ID>
+    <ID>ArgumentListWrapping:PrListService.kt$PrListService$("[PR:List] Found ${allReviewingPrs.size} reviewing PRs (dashboard, scoped to ${repoEntries.size} configured repos, state=$currentState)")</ID>
+    <ID>ArgumentListWrapping:PrListServiceEdtMutationTest.kt$PrListServiceEdtMutationTest$(assignIdx > edtCtxIdx &amp;&amp; assignIdx &lt; edtCtxIdx + 200, "connSettings.bitbucketUsername assignment must appear inside withContext(Dispatchers.EDT) block")</ID>
+    <ID>ArgumentListWrapping:PrListServiceEdtMutationTest.kt$PrListServiceEdtMutationTest$(edtCtxIdx >= 0, "PrListService must contain withContext(Dispatchers.EDT) for the bitbucketUsername assignment")</ID>
+    <ID>ArgumentListWrapping:PrListServiceEdtMutationTest.kt$PrListServiceEdtMutationTest$(match.range.first > edtIdx, "Every connSettings.bitbucketUsername assignment must appear after withContext(Dispatchers.EDT)")</ID>
+    <ID>ArgumentListWrapping:PrListServiceFetchDashboardTest.kt$PrListServiceFetchDashboardTest$(10, results.size, "fetchDashboardPrs must return partial results from the successfully-fetched page even on subsequent 401")</ID>
+    <ID>ArgumentListWrapping:PrListServiceFetchDashboardTest.kt$PrListServiceFetchDashboardTest$(100, results.size, "fetchDashboardPrs must return exactly 100 results and stop at the cap")</ID>
+    <ID>ArgumentListWrapping:PrListServiceFetchDashboardTest.kt$PrListServiceFetchDashboardTest$(4, server.requestCount, "Only 4 requests must be made to reach the 100-result cap; no 5th page should be fetched")</ID>
+    <ID>ArgumentListWrapping:PrListServiceFetchDashboardTest.kt$PrListServiceFetchDashboardTest$(req1.path!!.contains("start=0"), "First request must carry start=0; path=${req1.path}")</ID>
+    <ID>ArgumentListWrapping:PrListServiceFetchDashboardTest.kt$PrListServiceFetchDashboardTest$(req2.path!!.contains("start=25"), "Second request must carry start=25 (nextPageStart from first response); path=${req2.path}")</ID>
+    <ID>ArgumentListWrapping:PrListServiceSetStateContractTest.kt$PrListServiceSetStateContractTest$(assignIdx &lt; launchIdx, "currentState = state assignment must come BEFORE cs.launch so refresh sees the updated value")</ID>
+    <ID>ArgumentListWrapping:PrListServiceSetStateContractTest.kt$PrListServiceSetStateContractTest$(assignIdx > setStateFnIdx, "currentState = state assignment must appear inside setState function")</ID>
+    <ID>ArgumentListWrapping:PrListServiceSetStateContractTest.kt$PrListServiceSetStateContractTest$(launchIdx > setStateFnIdx, "cs.launch must appear inside setState function")</ID>
+    <ID>ArgumentListWrapping:PrReviewSessionRegistryTest.kt$PrReviewSessionRegistryTest$( home, ".workflow-orchestrator", "test-project-$hash", "agent", "pr-review-sessions.json" )</ID>
+    <ID>ArgumentListWrapping:TicketChipInputTest.kt$TicketChipInputTest$( 1, callCount, "Expected exactly 1 onChange call during init for 3 initialKeys, got $callCount" )</ID>
+    <ID>ChainWrapping:PrListPanel.kt$PrListPanel$||</ID>
+    <ID>ComplexCondition:PrListPanel.kt$PrListPanel$item.title.contains(text, ignoreCase = true) || item.authorName.contains(text, ignoreCase = true) || item.fromBranch.contains(text, ignoreCase = true) || item.toBranch.contains(text, ignoreCase = true) || item.repoName.contains(text, ignoreCase = true)</ID>
+    <ID>EmptyFunctionBlock:PrDashboardPanel.kt$PrDashboardPanel.&lt;no name provided>${}</ID>
+    <ID>ImportOrdering:AiReviewViewModelTest.kt$import com.workflow.orchestrator.core.prreview.FindingSeverity import com.workflow.orchestrator.core.prreview.PrReviewFinding import com.workflow.orchestrator.core.prreview.PrReviewFindingsStore import com.workflow.orchestrator.core.services.BitbucketService import com.workflow.orchestrator.core.services.ToolResult import io.mockk.coEvery import io.mockk.coVerify import io.mockk.mockk import kotlinx.coroutines.test.runTest import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>ImportOrdering:CommentsTabPanel.kt$import com.intellij.openapi.Disposable import com.intellij.openapi.application.ApplicationManager import com.intellij.openapi.project.Project import com.intellij.openapi.ui.Messages import com.workflow.orchestrator.core.events.EventBus import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBList import com.intellij.ui.components.JBPanel import com.intellij.ui.components.JBScrollPane import com.intellij.ui.components.JBTextArea import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.model.PrComment import com.workflow.orchestrator.core.model.PrCommentState import com.workflow.orchestrator.core.polling.SmartPoller import com.workflow.orchestrator.core.services.BitbucketService import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.SupervisorJob import kotlinx.coroutines.cancel import kotlinx.coroutines.launch import java.awt.BorderLayout import java.awt.Dimension import java.awt.FlowLayout import java.awt.event.ComponentAdapter import java.awt.event.ComponentEvent import javax.swing.DefaultListModel import javax.swing.JButton</ID>
+    <ID>ImportOrdering:CreatePrDialog.kt$import com.intellij.ide.BrowserUtil import com.intellij.openapi.application.ApplicationManager import com.intellij.openapi.application.ModalityState import com.intellij.openapi.application.invokeLater as platformInvokeLater import com.intellij.openapi.components.service import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.intellij.openapi.ui.DialogWrapper import com.intellij.openapi.ui.ValidationInfo import com.intellij.openapi.util.Disposer import com.intellij.openapi.util.IconLoader import com.intellij.ui.AnimatedIcon import com.intellij.ui.JBColor import com.intellij.ui.SimpleListCellRenderer import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBScrollPane import com.intellij.ui.components.JBTextArea import com.intellij.ui.components.JBTextField import com.intellij.ui.components.fields.ExtendableTextComponent import com.intellij.ui.components.fields.ExtendableTextField import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.ai.TextGenerationService import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient import com.workflow.orchestrator.core.bitbucket.BitbucketUser import com.workflow.orchestrator.core.events.EventBus import com.workflow.orchestrator.core.events.WorkflowEvent import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.jira.TransitionMeta import com.workflow.orchestrator.core.services.jira.TransitionDialogOpener import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.ui.ComboBoxWidth import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.core.ui.bindBoundedWidth import com.workflow.orchestrator.core.workflow.TicketContext import com.workflow.orchestrator.pullrequest.action.CreatePrContext import com.workflow.orchestrator.pullrequest.action.RepoPrefetch import com.workflow.orchestrator.pullrequest.service.MarkdownToHtml import com.workflow.orchestrator.pullrequest.service.PrDescriptionGenerator import git4idea.repo.GitRepositoryManager import kotlinx.coroutines.CancellationException import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.Job import kotlinx.coroutines.delay import kotlinx.coroutines.launch import kotlinx.coroutines.withContext import kotlinx.coroutines.withTimeoutOrNull import java.awt.BorderLayout import java.awt.CardLayout import java.awt.Component import java.awt.Cursor import java.awt.Dimension import java.awt.FlowLayout import java.awt.Font import java.awt.GridBagConstraints import java.awt.GridBagLayout import javax.swing.BorderFactory import javax.swing.Box import javax.swing.BoxLayout import javax.swing.JButton import javax.swing.JComboBox import javax.swing.JComponent import javax.swing.JEditorPane import javax.swing.JMenuItem import javax.swing.JPanel import javax.swing.JPopupMenu import javax.swing.JSeparator import javax.swing.ScrollPaneConstants import javax.swing.Timer import javax.swing.event.DocumentEvent import javax.swing.event.DocumentListener import javax.swing.event.HyperlinkEvent</ID>
+    <ID>ImportOrdering:CreatePrPrefetch.kt$import com.intellij.openapi.application.readAction import com.intellij.openapi.components.service import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient import com.workflow.orchestrator.core.bitbucket.BitbucketUser import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.jira.TransitionMeta import com.workflow.orchestrator.core.services.jira.TicketTransitionService import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.settings.RepoConfig import com.workflow.orchestrator.core.settings.RepoContextResolver import com.workflow.orchestrator.core.util.TicketKeyExtractor import com.workflow.orchestrator.core.workflow.JiraTicketProvider import com.workflow.orchestrator.core.workflow.TicketContext import com.workflow.orchestrator.core.bitbucket.PrService import com.workflow.orchestrator.pullrequest.service.PrDescriptionGenerator import git4idea.commands.Git import git4idea.commands.GitCommand import git4idea.commands.GitLineHandler import git4idea.repo.GitRepository import git4idea.repo.GitRepositoryManager import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.async import kotlinx.coroutines.awaitAll import kotlinx.coroutines.coroutineScope</ID>
+    <ID>ImportOrdering:PrDashboardPanel.kt$import com.intellij.icons.AllIcons import com.intellij.openapi.Disposable import com.intellij.openapi.actionSystem.* import com.intellij.openapi.application.invokeLater import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.intellij.openapi.util.Disposer import com.intellij.ui.AnimatedIcon import com.intellij.ui.JBColor import com.intellij.ui.JBSplitter import com.intellij.ui.components.JBLabel import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail import com.workflow.orchestrator.core.bitbucket.CreatePrLauncher import com.workflow.orchestrator.core.events.EventBus import com.workflow.orchestrator.core.events.WorkflowEvent import com.workflow.orchestrator.core.ui.ComboBoxWidth import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.core.ui.bindBoundedWidth import com.workflow.orchestrator.core.model.bitbucket.PrState import com.workflow.orchestrator.core.model.workflow.PrRef import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.settings.RepoContextResolver import com.workflow.orchestrator.core.workflow.WorkflowContextService import com.workflow.orchestrator.pullrequest.service.PrListService import kotlinx.coroutines.flow.filterIsInstance import com.intellij.openapi.vcs.BranchChangeListener import git4idea.repo.GitRepositoryManager import kotlinx.coroutines.* import com.workflow.orchestrator.core.ui.TimeFormatter import java.awt.BorderLayout import java.awt.FlowLayout import javax.swing.DefaultComboBoxModel import javax.swing.JComboBox import javax.swing.JPanel import javax.swing.JToggleButton import javax.swing.ButtonGroup</ID>
+    <ID>ImportOrdering:PrDetailPanel.kt$import com.intellij.diff.DiffContentFactory import com.intellij.diff.DiffManager import com.intellij.diff.requests.SimpleDiffRequest import com.intellij.icons.AllIcons import com.intellij.ide.BrowserUtil import com.intellij.openapi.Disposable import com.intellij.openapi.util.Disposer import com.intellij.openapi.application.EDT import com.intellij.openapi.application.invokeLater import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.intellij.openapi.ui.DialogWrapper import com.intellij.openapi.ui.ComboBox import com.intellij.ui.AnimatedIcon import com.intellij.ui.JBColor import com.intellij.ui.components.JBLabel import com.workflow.orchestrator.core.ui.StatusColors import com.intellij.ui.components.JBList import com.intellij.ui.components.JBScrollPane import com.intellij.ui.components.JBTextArea import com.intellij.ui.components.JBTextField import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.bitbucket.BitbucketBuildStatus import com.workflow.orchestrator.core.bitbucket.BitbucketCommit import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStatus import com.workflow.orchestrator.core.bitbucket.BitbucketMergeStrategy import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.bitbucket.PrState import com.workflow.orchestrator.core.bitbucket.BitbucketPrActivity import com.workflow.orchestrator.core.bitbucket.BitbucketPrChange import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail import com.workflow.orchestrator.core.bitbucket.BitbucketPrRef import com.workflow.orchestrator.core.ui.TimeFormatter import com.workflow.orchestrator.core.settings.ConnectionSettings import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.bitbucket.BitbucketUser import com.workflow.orchestrator.core.services.BitbucketService import com.workflow.orchestrator.core.model.workflow.InteractionMode import com.workflow.orchestrator.core.notifications.WorkflowNotificationService import com.workflow.orchestrator.core.workflow.WorkflowContextService import com.workflow.orchestrator.core.workflow.ui.ReadOnlyBanner import com.intellij.openapi.ui.Messages import com.intellij.openapi.wm.ToolWindowManager import com.workflow.orchestrator.core.ai.AgentChatRedirect import com.workflow.orchestrator.core.util.HtmlEscape import com.workflow.orchestrator.pullrequest.service.BitbucketBranchClientCache import com.workflow.orchestrator.pullrequest.service.MarkdownToHtml import com.workflow.orchestrator.pullrequest.service.PrActionService import com.workflow.orchestrator.pullrequest.service.PrDetailService import com.workflow.orchestrator.pullrequest.service.PrReviewSessionRegistry import com.workflow.orchestrator.pullrequest.service.PrReviewTaskBuilder import java.util.UUID import com.workflow.orchestrator.core.util.StringUtils import kotlinx.coroutines.* import java.awt.* import java.awt.event.FocusAdapter import java.awt.event.FocusEvent import java.awt.event.KeyAdapter import java.awt.event.KeyEvent import java.awt.event.MouseAdapter import java.awt.event.MouseEvent import java.awt.geom.RoundRectangle2D import javax.swing.* import javax.swing.event.DocumentEvent import javax.swing.event.DocumentListener import javax.swing.event.HyperlinkEvent</ID>
+    <ID>ImportOrdering:PrListService.kt$import com.intellij.openapi.application.EDT import com.intellij.openapi.components.Service import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient import com.workflow.orchestrator.core.bitbucket.BitbucketPrDetail import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.bitbucket.PrState import com.workflow.orchestrator.core.settings.ConnectionSettings import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.polling.SmartPoller import kotlinx.coroutines.* import kotlinx.coroutines.flow.MutableStateFlow import kotlinx.coroutines.flow.StateFlow import kotlinx.coroutines.flow.asStateFlow import kotlinx.coroutines.sync.Semaphore import kotlinx.coroutines.sync.withPermit</ID>
+    <ID>ImportOrdering:PrReviewSessionRegistryTest.kt$import com.intellij.openapi.project.Project import io.mockk.every import io.mockk.mockk import org.junit.jupiter.api.Test import org.junit.jupiter.api.io.TempDir import org.junit.jupiter.api.Assertions.* import java.nio.file.Path</ID>
+    <ID>ImportOrdering:PrReviewTaskBuilderTest.kt$import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>ImportOrdering:TicketChipInput.kt$import com.intellij.icons.AllIcons import com.intellij.openapi.application.ModalityState import com.intellij.openapi.application.invokeLater import com.intellij.openapi.Disposable import com.intellij.openapi.project.Project import com.intellij.ui.AnimatedIcon import com.intellij.ui.JBColor import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBTextField import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.core.util.TicketKeyExtractor import com.workflow.orchestrator.core.workflow.JiraTicketProvider import com.workflow.orchestrator.core.workflow.TicketContext import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.launch import kotlinx.coroutines.withContext import java.awt.BorderLayout import java.awt.Component import java.awt.Cursor import java.awt.FlowLayout import java.awt.Font import java.awt.datatransfer.DataFlavor import java.awt.event.FocusAdapter import java.awt.event.FocusEvent import java.awt.event.KeyAdapter import java.awt.event.KeyEvent import java.awt.event.MouseAdapter import java.awt.event.MouseEvent import javax.swing.BorderFactory import javax.swing.JMenuItem import javax.swing.JPanel import javax.swing.JPopupMenu import javax.swing.Timer import javax.swing.border.Border import javax.swing.text.AttributeSet import javax.swing.text.DocumentFilter import javax.swing.text.PlainDocument</ID>
+    <ID>LoopWithTooManyJumpStatements:MarkdownToHtml.kt$MarkdownToHtml$for</ID>
+    <ID>LoopWithTooManyJumpStatements:PrListService.kt$PrListService$while</ID>
+    <ID>LoopWithTooManyJumpStatements:PrListServiceFetchDashboardTest.kt$PrListServiceFetchDashboardTest$while</ID>
+    <ID>MagicNumber:AiReviewTabPanel.kt$AiReviewTabPanel$12</ID>
+    <ID>MagicNumber:AiReviewTabPanel.kt$AiReviewTabPanel$4</ID>
+    <ID>MagicNumber:BitbucketServiceImpl.kt$BitbucketServiceImpl$20</ID>
+    <ID>MagicNumber:BitbucketServiceImpl.kt$BitbucketServiceImpl$50</ID>
+    <ID>MagicNumber:BitbucketServiceImpl.kt$BitbucketServiceImpl$8</ID>
+    <ID>MagicNumber:CommentRowRenderer.kt$CommentRowRenderer$10f</ID>
+    <ID>MagicNumber:CommentRowRenderer.kt$CommentRowRenderer$12</ID>
+    <ID>MagicNumber:CommentRowRenderer.kt$CommentRowRenderer$500</ID>
+    <ID>MagicNumber:CommentRowRenderer.kt$CommentRowRenderer$8</ID>
+    <ID>MagicNumber:CommentsTabPanel.kt$CommentsTabPanel$10</ID>
+    <ID>MagicNumber:CommentsTabPanel.kt$CommentsTabPanel$12</ID>
+    <ID>MagicNumber:CommentsTabPanel.kt$CommentsTabPanel$4</ID>
+    <ID>MagicNumber:CommentsTabPanel.kt$CommentsTabPanel$40</ID>
+    <ID>MagicNumber:CommentsTabPanel.kt$CommentsTabPanel$600</ID>
+    <ID>MagicNumber:CommentsTabPanel.kt$CommentsTabPanel$8</ID>
+    <ID>MagicNumber:CommentsTabPanel.kt$CommentsTabPanel$800</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$10</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$11f</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$12</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$120_000</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$15</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$200</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$260</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$28</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$3</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$300</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$3000</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$320</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$4</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$40</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$50</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$580</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$6</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$620</ID>
+    <ID>MagicNumber:CreatePrDialog.kt$CreatePrDialog$8</ID>
+    <ID>MagicNumber:FindingRowRenderer.kt$FindingRowRenderer$12</ID>
+    <ID>MagicNumber:FindingRowRenderer.kt$FindingRowRenderer$600</ID>
+    <ID>MagicNumber:FindingRowRenderer.kt$FindingRowRenderer$8</ID>
+    <ID>MagicNumber:PrDashboardPanel.kt$PrDashboardPanel$0.30f</ID>
+    <ID>MagicNumber:PrDashboardPanel.kt$PrDashboardPanel$11</ID>
+    <ID>MagicNumber:PrDashboardPanel.kt$PrDashboardPanel$150</ID>
+    <ID>MagicNumber:PrDashboardPanel.kt$PrDashboardPanel$4</ID>
+    <ID>MagicNumber:PrDashboardPanel.kt$PrDashboardPanel$8</ID>
+    <ID>MagicNumber:PrDescriptionGenerator.kt$PrDescriptionGenerator$4</ID>
+    <ID>MagicNumber:PrDescriptionGenerator.kt$PrDescriptionGenerator$50</ID>
+    <ID>MagicNumber:PrDescriptionGenerator.kt$PrDescriptionGenerator$500</ID>
+    <ID>MagicNumber:PrDescriptionGenerator.kt$PrDescriptionGenerator$8</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$MergeOptionsDialog$12</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$MergeOptionsDialog$120</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$MergeOptionsDialog$4</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$MergeOptionsDialog$400</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$MergeOptionsDialog$50</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$MergeOptionsDialog$60</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$MergeOptionsDialog$8</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$MergeOptionsDialog$80</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel$11</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel$12</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel$16</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel$20</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel$200</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel$24</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel$260</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel$28</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel$32</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel$36</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel$4</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel$6</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel$60</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel$8</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.&lt;no name provided>$10</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.&lt;no name provided>$12</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.&lt;no name provided>$300</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.&lt;no name provided>$4</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.&lt;no name provided>$6</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.ActivitySubPanel$10</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.ActivitySubPanel$11</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.ActivitySubPanel$150</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.ActivitySubPanel$20</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.ActivitySubPanel$200</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.ActivitySubPanel$24</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.ActivitySubPanel$30</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.ActivitySubPanel$4</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.ActivitySubPanel$6</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.ActivitySubPanel$8</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.CommitCellRenderer$11</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.CommitCellRenderer$12</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.CommitCellRenderer$4</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.CommitCellRenderer$8</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.CommitCellRenderer$80</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.DescriptionSubPanel$12</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.DescriptionSubPanel$20</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.DescriptionSubPanel$200</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.DescriptionSubPanel$4</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.DescriptionSubPanel$8</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.FileCellRenderer$10</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.FileCellRenderer$12</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.FileCellRenderer$4</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.FileCellRenderer$8</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.FilesSubPanel$11</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.FilesSubPanel$20</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.FilesSubPanel$28</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.FilesSubPanel$4</ID>
+    <ID>MagicNumber:PrDetailPanel.kt$PrDetailPanel.FilesSubPanel$8</ID>
+    <ID>MagicNumber:PrDetailService.kt$PrDetailService$8</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel$2</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel$250</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel$3</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel$4</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel$40</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel$58</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel$6</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel$8</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel.PrListCellRenderer$0x333640</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel.PrListCellRenderer$0xE0E0E0</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel.PrListCellRenderer$10</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel.PrListCellRenderer$11</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel.PrListCellRenderer$20</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel.PrListCellRenderer$4</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel.PrListCellRenderer$45</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel.PrListCellRenderer$6</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel.PrListCellRenderer$8</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel.PrListCellRenderer.&lt;no name provided>$4</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel.PrListCellRenderer.&lt;no name provided>$8</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel.PrListCellRenderer.RepoBadgePanel$10</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel.PrListCellRenderer.RepoBadgePanel$4</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel.PrListCellRenderer.StatusBadgePanel$0.5f</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel.PrListCellRenderer.StatusBadgePanel$10</ID>
+    <ID>MagicNumber:PrListPanel.kt$PrListPanel.PrListCellRenderer.StatusBadgePanel$4</ID>
+    <ID>MagicNumber:PrListService.kt$PrListService$100</ID>
+    <ID>MagicNumber:PrListService.kt$PrListService$25</ID>
+    <ID>MagicNumber:PrListService.kt$PrListService$3</ID>
+    <ID>MagicNumber:PrReviewSessionRegistry.kt$PrReviewSessionRegistry$6</ID>
+    <ID>MagicNumber:TicketChipInput.kt$TicketChipInput$11f</ID>
+    <ID>MagicNumber:TicketChipInput.kt$TicketChipInput$15</ID>
+    <ID>MagicNumber:TicketChipInput.kt$TicketChipInput$4</ID>
+    <ID>MagicNumber:TicketChipInput.kt$TicketChipInput$6</ID>
+    <ID>MaximumLineLength:AiReviewTabPanel.kt$AiReviewTabPanel$ </ID>
+    <ID>MaximumLineLength:AiReviewViewModelTest.kt$AiReviewViewModelTest$ </ID>
+    <ID>MaximumLineLength:BitbucketServiceImpl.kt$BitbucketServiceImpl$ </ID>
+    <ID>MaximumLineLength:BitbucketServiceImplCommentFilterContractTest.kt$BitbucketServiceImplCommentFilterContractTest$ </ID>
+    <ID>MaximumLineLength:BitbucketServiceImplCommitsPaginationTest.kt$BitbucketServiceImplCommitsPaginationTest$ </ID>
+    <ID>MaximumLineLength:CreatePrDialog.kt$CreatePrDialog$ </ID>
+    <ID>MaximumLineLength:CreatePrDialogProvenanceTest.kt$CreatePrDialogProvenanceTest$ </ID>
+    <ID>MaximumLineLength:CreatePrPrefetch.kt$CreatePrPrefetch$ </ID>
+    <ID>MaximumLineLength:CreatePrPrefetchTest.kt$CreatePrPrefetchTest$ </ID>
+    <ID>MaximumLineLength:FindingRowRenderer.kt$FindingRowRenderer$ </ID>
+    <ID>MaximumLineLength:MarkdownToHtml.kt$MarkdownToHtml$ </ID>
+    <ID>MaximumLineLength:PrActionService.kt$PrActionService$ </ID>
+    <ID>MaximumLineLength:PrActionServiceModifyRetryTest.kt$PrActionServiceModifyRetryTest$ </ID>
+    <ID>MaximumLineLength:PrDashboardPanel.kt$PrDashboardPanel$ </ID>
+    <ID>MaximumLineLength:PrDescriptionGenerator.kt$PrDescriptionGenerator$ </ID>
+    <ID>MaximumLineLength:PrDetailPanel.kt$MergeOptionsDialog$ </ID>
+    <ID>MaximumLineLength:PrDetailPanel.kt$PrDetailPanel$ </ID>
+    <ID>MaximumLineLength:PrDetailPanel.kt$PrDetailPanel.&lt;no name provided>$ </ID>
+    <ID>MaximumLineLength:PrDetailPanel.kt$PrDetailPanel.DescriptionSubPanel$ </ID>
+    <ID>MaximumLineLength:PrListPanel.kt$PrListPanel.PrListCellRenderer$ </ID>
+    <ID>MaximumLineLength:PrListService.kt$PrListService$ </ID>
+    <ID>MultiLineIfElse:BitbucketServiceImpl.kt$BitbucketServiceImpl$"${v.summaryMessage}: ${v.detailedMessage}"</ID>
+    <ID>MultiLineIfElse:BitbucketServiceImpl.kt$BitbucketServiceImpl$v.summaryMessage</ID>
+    <ID>MultiLineIfElse:CommentsTabPanel.kt$CommentsTabPanel$vm.reopen(sel.id.toLong())</ID>
+    <ID>MultiLineIfElse:CommentsTabPanel.kt$CommentsTabPanel$vm.resolve(sel.id.toLong())</ID>
+    <ID>MultiLineIfElse:CreatePrDialog.kt$CreatePrDialog$null</ID>
+    <ID>MultiLineIfElse:CreatePrDialog.kt$CreatePrDialog$showDescriptionEmpty()</ID>
+    <ID>MultiLineIfElse:CreatePrDialog.kt$CreatePrDialog$showDescriptionTab("edit")</ID>
+    <ID>MultiLineIfElse:CreatePrPrefetch.kt$CreatePrPrefetch$0</ID>
+    <ID>MultiLineIfElse:CreatePrPrefetch.kt$CreatePrPrefetch$emptyList()</ID>
+    <ID>MultiLineIfElse:PrActionService.kt$PrActionService$return ApiResult.Error(ErrorType.VALIDATION_ERROR, "Bitbucket project/repo not configured")</ID>
+    <ID>MultiLineIfElse:PrDescriptionGenerator.kt$PrDescriptionGenerator$""</ID>
+    <ID>MultiLineIfElse:PrDescriptionGenerator.kt$PrDescriptionGenerator$emptyList()</ID>
+    <ID>MultiLineIfElse:PrDescriptionGenerator.kt$PrDescriptionGenerator$null</ID>
+    <ID>MultiLineIfElse:PrDetailPanel.kt$PrDetailPanel$false</ID>
+    <ID>MultiLineIfElse:PrDetailPanel.kt$PrDetailPanel.&lt;no name provided>$""</ID>
+    <ID>MultiLineIfElse:PrDetailPanel.kt$PrDetailPanel.&lt;no name provided>$Cursor.getDefaultCursor()</ID>
+    <ID>MultiLineIfElse:PrDetailPanel.kt$PrDetailPanel.&lt;no name provided>$Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)</ID>
+    <ID>MultiLineIfElse:PrDetailPanel.kt$PrDetailPanel.ActivitySubPanel$""</ID>
+    <ID>MultiLineIfElse:PrListPanel.kt$PrListPanel.PrListCellRenderer$null</ID>
+    <ID>NoBlankLineBeforeRbrace:BitbucketServiceImpl.kt$BitbucketServiceImpl$ </ID>
+    <ID>NoBlankLineBeforeRbrace:CommentRowRenderer.kt$CommentRowRenderer$ </ID>
+    <ID>NoBlankLineBeforeRbrace:FindingRowRenderer.kt$FindingRowRenderer$ </ID>
+    <ID>NoBlankLineBeforeRbrace:PrDetailPanel.kt$PrDetailPanel$ </ID>
+    <ID>NoBlankLineBeforeRbrace:PrListPanel.kt$PrListPanel.Companion$ </ID>
+    <ID>NoBlankLineBeforeRbrace:PrListService.kt$PrListService$ </ID>
+    <ID>NoBlankLineBeforeRbrace:PrListServiceFetchDashboardTest.kt$PrListServiceFetchDashboardTest$ </ID>
+    <ID>NoConsecutiveBlankLines:PrDetailPanel.kt$PrDetailPanel$ </ID>
+    <ID>NoConsecutiveBlankLines:PrListServiceFetchDashboardTest.kt$PrListServiceFetchDashboardTest$ </ID>
+    <ID>NoMultipleSpaces:BitbucketServiceImpl.kt$BitbucketServiceImpl$ </ID>
+    <ID>NoMultipleSpaces:BitbucketServiceImplListPrCommentsPaginationTest.kt$BitbucketServiceImplListPrCommentsPaginationTest$ </ID>
+    <ID>NoMultipleSpaces:CommentsViewModel.kt$CommentsViewModel$ </ID>
+    <ID>NoMultipleSpaces:CreatePrDialog.kt$CreatePrDialog$ </ID>
+    <ID>NoMultipleSpaces:CreatePrDialogProvenanceTest.kt$CreatePrDialogProvenanceTest$ </ID>
+    <ID>NoMultipleSpaces:CreatePrLauncherImpl.kt$CreatePrLauncherImpl$ </ID>
+    <ID>NoMultipleSpaces:CreatePrPrefetchTest.kt$CreatePrPrefetchTest$ </ID>
+    <ID>NoMultipleSpaces:PrActionServiceModifyRetryTest.kt$PrActionServiceModifyRetryTest$ </ID>
+    <ID>NoMultipleSpaces:PrActionServiceMutatorsTest.kt$PrActionServiceMutatorsTest$ </ID>
+    <ID>NoMultipleSpaces:PrDashboardPanel.kt$PrDashboardPanel$ </ID>
+    <ID>NoMultipleSpaces:PrDescriptionGenerator.kt$PrDescriptionGenerator$ </ID>
+    <ID>NoMultipleSpaces:PrDetailPanel.kt$PrDetailPanel$ </ID>
+    <ID>NoUnusedImports:CreatePrDialog.kt$com.workflow.orchestrator.pullrequest.ui.CreatePrDialog.kt</ID>
+    <ID>NoUnusedImports:OpenPrListerImplTest.kt$com.workflow.orchestrator.pullrequest.workflow.OpenPrListerImplTest.kt</ID>
+    <ID>NoUnusedImports:PrDashboardPanel.kt$com.workflow.orchestrator.pullrequest.ui.PrDashboardPanel.kt</ID>
+    <ID>NoWildcardImports:AiReviewViewModelTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BitbucketMonitorFieldsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BitbucketServiceImpl.kt$import com.workflow.orchestrator.core.model.bitbucket.*</ID>
+    <ID>NoWildcardImports:CommentsViewModelTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:CreatePrPrefetchTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:PrDashboardPanel.kt$import com.intellij.openapi.actionSystem.*</ID>
+    <ID>NoWildcardImports:PrDashboardPanel.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:PrDescriptionGeneratorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:PrDetailPanel.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:PrDetailPanel.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:PrDetailPanel.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:PrListPanel.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:PrListPanel.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:PrListService.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:PrReviewSessionRegistryTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:PrReviewTaskBuilderTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:RunAiReviewNullDataGuardTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>ParameterListWrapping:PrDescriptionGenerator.kt$PrDescriptionGenerator$(project: Project, repo: GitRepository, source: String, target: String)</ID>
+    <ID>ParameterListWrapping:PrDetailPanel.kt$MergeOptionsDialog.&lt;no name provided>$( list: JList&lt;*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean )</ID>
+    <ID>ParameterListWrapping:PrDetailPanel.kt$PrDetailPanel.&lt;no name provided>$( list: JList&lt;*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean )</ID>
+    <ID>ParameterListWrapping:TicketChipInput.kt$TicketChipInput.&lt;no name provided>$( fb: FilterBypass, offset: Int, length: Int, text: String?, attrs: AttributeSet? )</ID>
+    <ID>PropertyWrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$val data = BranchData(id = b.id, displayId = b.displayId, latestCommit = b.latestCommit, isDefault = b.isDefault)</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:PrDetailPanel.kt$PrDetailPanel$@Volatile private var currentPr: BitbucketPrDetail? = null</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:CreatePrDialog.kt$CreatePrDialog$/** Canonical list of selected reviewers by username — this is what the Bitbucket * create-PR payload sends. Display names are tracked separately so we can keep the * API contract while rendering friendly labels. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:CreatePrDialog.kt$CreatePrDialog$/** Incremented on every module change and generation start to detect write-after-cancel races. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:CreatePrDialog.kt$CreatePrDialog$/** username → "Display Name" for rendering. Populated from the user-search dropdown and * from repo-level default reviewers (both return full `BitbucketUser`). Settings-based * defaults only give us a username, so those chips fall back to the raw username. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:CreatePrDialog.kt$CreatePrDialog$/** username → chip component for chips that came from the current repo's Bitbucket defaults. * Used by [onModuleChanged] to swap repo-level chips without touching manual additions. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PrDashboardPanel.kt$PrDashboardPanel$/** Suppresses toggle action listeners during programmatic toggle switches. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PrDetailPanel.kt$PrDetailPanel$/** Lazily created / replaced each time a new PR is loaded. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PrDetailPanel.kt$PrDetailPanel$/** Shared client cache — reuses HTTP connections across all IO calls in this panel (ARC-2 fix). */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PrListPanel.kt$PrListPanel$/** Called when the user clicks the "Refresh" action link in the empty state. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PrListPanel.kt$PrListPanel$/** When true, repo badge is shown on each PR row (set by dashboard when multiple repos configured) */</ID>
+    <ID>StringTemplate:PrDetailPanel.kt$PrDetailPanel.DescriptionSubPanel$${currentPrId}</ID>
+    <ID>SwallowedException:CreatePrPrefetch.kt$CreatePrPrefetch$e: Exception</ID>
+    <ID>UnusedPrivateMember:BitbucketServiceImplListPrCommentsPaginationTest.kt$BitbucketServiceImplListPrCommentsPaginationTest$private fun emptyActivitiesPage(isLastPage: Boolean, nextPageStart: Int? = null): String</ID>
+    <ID>UnusedPrivateProperty:PrDetailPanel.kt$PrDetailPanel.Companion$private val BORDER_COLOR = StatusColors.BORDER</ID>
+    <ID>UnusedPrivateProperty:PrListService.kt$PrListService$val username = cachedUsername ?: ConnectionSettings.getInstance().state.bitbucketUsername.takeIf { it.isNotBlank() } ?: run { val result = client.getCurrentUsername() if (result is ApiResult.Success &amp;&amp; result.data.isNotBlank()) { cachedUsername = result.data // D2: PersistentStateComponent state must mutate on EDT to avoid corrupt // XML persistence and missed StateChanged notifications. Previously this // ran on Dispatchers.IO (audit finding pullrequest:F-3). withContext(Dispatchers.EDT) { connSettings.bitbucketUsername = result.data } log.info("[PR:List] Auto-detected Bitbucket username: ${result.data}") result.data } else { log.warn("[PR:List] Could not detect username — PR list may not filter correctly") null } }</ID>
+    <ID>UnusedPrivateProperty:TicketChipInput.kt$TicketChipInput$private val project: Project</ID>
+    <ID>WildcardImport:AiReviewViewModelTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BitbucketMonitorFieldsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BitbucketServiceImpl.kt$import com.workflow.orchestrator.core.model.bitbucket.*</ID>
+    <ID>WildcardImport:CommentsViewModelTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:CreatePrPrefetchTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:PrDashboardPanel.kt$import com.intellij.openapi.actionSystem.*</ID>
+    <ID>WildcardImport:PrDashboardPanel.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:PrDescriptionGeneratorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:PrDetailPanel.kt$import java.awt.*</ID>
+    <ID>WildcardImport:PrDetailPanel.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:PrDetailPanel.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:PrListPanel.kt$import java.awt.*</ID>
+    <ID>WildcardImport:PrListPanel.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:PrListService.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:PrReviewSessionRegistryTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:PrReviewTaskBuilderTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:RunAiReviewNullDataGuardTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>Wrapping:BitbucketBranchClientCacheTest.kt$BitbucketBranchClientCacheTest$(</ID>
+    <ID>Wrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(</ID>
+    <ID>Wrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data, buildString { append("PR #$prId merge status: ") append(if (data.canMerge) "CAN merge" else "CANNOT merge") if (data.conflicted) append(" (CONFLICTED)") if (data.vetoes.isNotEmpty()) append("\nVetoes: ${data.vetoes.joinToString("; ")}") })</ID>
+    <ID>Wrapping:BitbucketServiceImpl.kt$BitbucketServiceImpl$(data, buildString { append("PR #${data.id}: ${data.title} [${data.state}]") append("\n${data.fromBranch} -> ${data.toBranch}") if (data.reviewers.isNotEmpty()) append("\nReviewers: $reviewerSummary") })</ID>
+    <ID>Wrapping:BitbucketServiceImplCommitsPaginationTest.kt$BitbucketServiceImplCommitsPaginationTest$(</ID>
+    <ID>Wrapping:BitbucketServiceImplListPrCommentsPaginationTest.kt$BitbucketServiceImplListPrCommentsPaginationTest$"""</ID>
+    <ID>Wrapping:BitbucketServiceImplListPrCommentsPaginationTest.kt$BitbucketServiceImplListPrCommentsPaginationTest$(</ID>
+    <ID>Wrapping:CommentRowRenderer.kt$CommentRowRenderer$(</ID>
+    <ID>Wrapping:CreatePrDialog.kt$CreatePrDialog$(</ID>
+    <ID>Wrapping:CreatePrDialog.kt$CreatePrDialog$(JBLabel(labelText).apply { toolTipText = labelText // Fixed preferred/max size so long labels get clipped instead of growing // the column. Tooltip shows the full label on hover. val h = preferredSize.height preferredSize = Dimension(inputColumnWidth, h) maximumSize = Dimension(inputColumnWidth, h) }, col1Gbc)</ID>
+    <ID>Wrapping:CreatePrDialog.kt$CreatePrDialog$(JBScrollPane(content).apply { border = null verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:CreatePrDialog.kt$CreatePrDialog$(JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) add(Box.createVerticalGlue()) add(descEmptyLabel.apply { alignmentX = Component.CENTER_ALIGNMENT }) add(Box.createVerticalGlue()) }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:CreatePrDialog.kt$CreatePrDialog$(JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) add(Box.createVerticalGlue()) add(descLoadingLabel.apply { alignmentX = Component.CENTER_ALIGNMENT }) add(Box.createVerticalGlue()) }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:CreatePrDialog.kt$CreatePrDialog$(sourceBranchLabel.apply { val h = preferredSize.height maximumSize = Dimension(inputColumnWidth, h) }, col1Gbc)</ID>
+    <ID>Wrapping:CreatePrDialog.kt$CreatePrDialog$;</ID>
+    <ID>Wrapping:CreatePrDialog.kt$CreatePrDialog.&lt;no name provided>$;</ID>
+    <ID>Wrapping:CreatePrLauncherImpl.kt$CreatePrLauncherImpl$(</ID>
+    <ID>Wrapping:CreatePrPrefetch.kt$CreatePrPrefetch$(</ID>
+    <ID>Wrapping:FindingRowRenderer.kt$FindingRowRenderer$;</ID>
+    <ID>Wrapping:MarkdownToHtml.kt$MarkdownToHtml$;</ID>
+    <ID>Wrapping:PrActionService.kt$PrActionService$(</ID>
+    <ID>Wrapping:PrActionServiceDeclineRetryTest.kt$PrActionServiceDeclineRetryTest$"""</ID>
+    <ID>Wrapping:PrActionServiceDeclineRetryTest.kt$PrActionServiceDeclineRetryTest$(</ID>
+    <ID>Wrapping:PrActionServiceModifyRetryTest.kt$PrActionServiceModifyRetryTest$"""</ID>
+    <ID>Wrapping:PrActionServiceModifyRetryTest.kt$PrActionServiceModifyRetryTest$(</ID>
+    <ID>Wrapping:PrActionServiceMutatorsTest.kt$PrActionServiceMutatorsTest$(</ID>
+    <ID>Wrapping:PrDashboardPanel.kt$PrDashboardPanel$(</ID>
+    <ID>Wrapping:PrDashboardPanel.kt$PrDashboardPanel$it.repoName == repoName</ID>
+    <ID>Wrapping:PrDetailPanel.kt$PrDetailPanel$(</ID>
+    <ID>Wrapping:PrDetailPanel.kt$PrDetailPanel$(JBLabel("Select a pull request to view details.").apply { foreground = JBUI.CurrentTheme.Label.disabledForeground() horizontalAlignment = SwingConstants.CENTER verticalAlignment = SwingConstants.CENTER }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:PrDetailPanel.kt$PrDetailPanel$(JBScrollPane(userList).apply { border = JBUI.Borders.emptyTop(4) }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:PrDetailPanel.kt$PrDetailPanel$;</ID>
+    <ID>Wrapping:PrDetailPanel.kt$PrDetailPanel.&lt;no name provided>$(</ID>
+    <ID>Wrapping:PrDetailPanel.kt$PrDetailPanel.ActivitySubPanel$(</ID>
+    <ID>Wrapping:PrDetailPanel.kt$PrDetailPanel.ActivitySubPanel$(JBScrollPane(contentPanel).apply { border = JBUI.Borders.empty() isOpaque = false viewport.isOpaque = false }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:PrDetailPanel.kt$PrDetailPanel.CommitsSubPanel$(</ID>
+    <ID>Wrapping:PrDetailPanel.kt$PrDetailPanel.CommitsSubPanel$(JBScrollPane(commitList).apply { border = JBUI.Borders.empty() isOpaque = false viewport.isOpaque = false }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:PrDetailPanel.kt$PrDetailPanel.DescriptionSubPanel$(</ID>
+    <ID>Wrapping:PrDetailPanel.kt$PrDetailPanel.DescriptionSubPanel$(JBScrollPane(descriptionPane).apply { border = JBUI.Borders.empty() preferredSize = Dimension(0, JBUI.scale(200)) }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:PrDetailPanel.kt$PrDetailPanel.DescriptionSubPanel$(JBScrollPane(editArea).apply { border = JBUI.Borders.empty() preferredSize = Dimension(0, JBUI.scale(200)) }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:PrDetailPanel.kt$PrDetailPanel.FilesSubPanel$(</ID>
+    <ID>Wrapping:PrDetailPanel.kt$PrDetailPanel.FilesSubPanel$(JBScrollPane(filesList).apply { border = JBUI.Borders.empty() isOpaque = false viewport.isOpaque = false }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:PrListPanel.kt$PrListPanel$(</ID>
+    <ID>Wrapping:PrListPanel.kt$PrListPanel$(JBScrollPane(prList).apply { border = JBUI.Borders.empty() isOpaque = false viewport.isOpaque = false }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:PrListPanel.kt$PrListPanel.PrListCellRenderer.&lt;no name provided>$(</ID>
+    <ID>Wrapping:PrListPanel.kt$PrListPanel.PrListCellRenderer.RepoBadgePanel$(</ID>
+    <ID>Wrapping:PrListPanel.kt$PrListPanel.PrListCellRenderer.StatusBadgePanel$(</ID>
+    <ID>Wrapping:PrListServiceEdtMutationTest.kt$PrListServiceEdtMutationTest$(</ID>
+    <ID>Wrapping:PrListServiceFetchDashboardTest.kt$PrListServiceFetchDashboardTest$(</ID>
+    <ID>Wrapping:PrListServiceSetStateContractTest.kt$PrListServiceSetStateContractTest$(</ID>
+    <ID>Wrapping:PrReviewSessionRegistry.kt$PrReviewSessionRegistry$;</ID>
+    <ID>Wrapping:TicketChipInput.kt$TicketChipInput$(</ID>
+  </CurrentIssues>
+</SmellBaseline>

@@ -255,7 +255,7 @@ SYSTEM INFORMATION
 Operating System: Darwin
 IDE: PyCharm 2025.1 Professional
 Default Shell: /bin/bash
-Home Directory: /Users/subhankarhalder
+Home Directory: /home/snapshot
 Current Working Directory: /tmp/test
 
 ====

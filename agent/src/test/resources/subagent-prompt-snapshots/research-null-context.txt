@@ -372,7 +372,7 @@ SYSTEM INFORMATION
 Operating System: Darwin
 IDE: IntelliJ IDEA
 Default Shell: /bin/bash
-Home Directory: /Users/subhankarhalder
+Home Directory: /home/snapshot
 Current Working Directory: /tmp/test
 
 ====

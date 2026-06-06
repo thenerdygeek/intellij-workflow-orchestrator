@@ -1,0 +1,41 @@
+# Phase 0 detekt config — starts permissive, ratchet over time.
+# buildUponDefaultConfig=true in build.gradle.kts means these entries OVERRIDE defaults.
+build:
+  maxIssues: 0   # gate fails on any non-baselined issue
+
+formatting:
+  active: true
+  android: false
+  autoCorrect: false
+
+complexity:
+  LongMethod:
+    active: false
+  LongParameterList:
+    active: false
+  TooManyFunctions:
+    active: false
+  LargeClass:
+    active: false
+  CyclomaticComplexMethod:
+    active: false
+  NestedBlockDepth:
+    active: false
+
+style:
+  MaxLineLength:
+    active: false
+  WildcardImport:
+    active: true
+  ReturnCount:
+    active: false
+  ForbiddenComment:
+    active: false
+
+exceptions:
+  TooGenericExceptionCaught:
+    active: false
+  SwallowedException:
+    active: true
+  TooGenericExceptionThrown:
+    active: false

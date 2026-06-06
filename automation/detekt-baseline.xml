@@ -1,0 +1,429 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ArgumentListWrapping:AutomationConfigurable.kt$AutomationConfigurable$( planKey = key, displayName = name.ifBlank { key }, defaultStages = parsedStages, lastModified = System.currentTimeMillis() )</ID>
+    <ID>ArgumentListWrapping:AutomationConfigurable.kt$AutomationConfigurable$( this, project, listOf( ConnectionStatusBanner.Requirement.BAMBOO, ) )</ID>
+    <ID>ArgumentListWrapping:AutomationConfigurable.kt$AutomationConfigurable$("Docker Tag Key and Bamboo Plan Key are auto-detected from bamboo-specs and shown in Settings \u2192 Repositories.")</ID>
+    <ID>ArgumentListWrapping:AutomationModels.kt$TagDetectionResult.Companion$( detected = false, tag = null, buildKey = "$planKey-$buildNumber", reason = "CI build failed ($planKey #$buildNumber)" )</ID>
+    <ID>ArgumentListWrapping:AutomationModels.kt$TagDetectionResult.Companion$( detected = false, tag = null, buildKey = buildKey, reason = "Build $buildKey has no 'Unique Docker Tag' in log" )</ID>
+    <ID>ArgumentListWrapping:AutomationModels.kt$TagDetectionResult.Companion$( detected = false, tag = null, buildKey = null, reason = "Could not detect current git branch" )</ID>
+    <ID>ArgumentListWrapping:AutomationModels.kt$TagDetectionResult.Companion$( detected = false, tag = null, buildKey = null, reason = "No CI build found for branch '$branch'" )</ID>
+    <ID>ArgumentListWrapping:AutomationModels.kt$TagDetectionResult.Companion$( detected = false, tag = null, buildKey = null, reason = "Not configured — set $missing in Settings" )</ID>
+    <ID>ArgumentListWrapping:AutomationModels.kt$TagDetectionResult.Companion$( detected = false, tag = null, buildKey = resultKey, reason = "Could not fetch build log for $resultKey" )</ID>
+    <ID>ArgumentListWrapping:AutomationModels.kt$TagDetectionResult.Companion$( detected = true, tag = tag, buildKey = buildKey, reason = "Detected from build $buildKey" )</ID>
+    <ID>ArgumentListWrapping:AutomationModelsTest.kt$AutomationModelsTest$(5, terminal.size, "TERMINAL should have exactly 5 entries: COMPLETED, FAILED, CANCELLED, FAILED_TO_TRIGGER, TAG_INVALID")</ID>
+    <ID>ArgumentListWrapping:AutomationModelsTest.kt$AutomationModelsTest$(terminal.contains(QueueEntryStatus.CANCELLED), "CANCELLED must be terminal — user-initiated cancel transitions to this state")</ID>
+    <ID>ArgumentListWrapping:AutomationModelsTest.kt$AutomationModelsTest$(terminal.contains(QueueEntryStatus.COMPLETED), "COMPLETED must be terminal — Bamboo Successful or Unknown/NotBuilt")</ID>
+    <ID>ArgumentListWrapping:AutomationModelsTest.kt$AutomationModelsTest$(terminal.contains(QueueEntryStatus.FAILED), "FAILED must be terminal — Bamboo Failed outcome (PR 8)")</ID>
+    <ID>ArgumentListWrapping:AutomationModelsTest.kt$AutomationModelsTest$(terminal.contains(QueueEntryStatus.FAILED_TO_TRIGGER), "FAILED_TO_TRIGGER must be terminal — set when doTrigger fails on Bamboo")</ID>
+    <ID>ArgumentListWrapping:AutomationModelsTest.kt$AutomationModelsTest$(terminal.contains(QueueEntryStatus.TAG_INVALID), "TAG_INVALID must be terminal — pre-L3 SQLite rows must not be re-queued on recovery")</ID>
+    <ID>ArgumentListWrapping:AutomationPanel.kt$AutomationPanel$("[Automation:UI] Bamboo reconcile for $planKey (isRefresh=$isRefresh): " + "${baselineResult.diagnostics.buildsQueried} builds queried, " + "${baselineResult.diagnostics.buildsWithDockerTags} parseable, " + "selected=${baselineResult.selectedBuild?.buildNumber}")</ID>
+    <ID>ArgumentListWrapping:AutomationPanel.kt$AutomationPanel$("[Automation:UI] BuildLogReady event: planKey='${event.planKey}', chainKey='${event.chainKey}', focusedChainKey='$focusedChainKey'")</ID>
+    <ID>ArgumentListWrapping:AutomationPanel.kt$AutomationPanel$("[Automation:UI] Docker tag detection from event: detected=${tagDetection.detected}, tag=${tagDetection.tag}, reason=${tagDetection.reason}")</ID>
+    <ID>ArgumentListWrapping:AutomationPanel.kt$AutomationPanel$("[Automation:UI] Dropping stale enable result for $branchKey (suite changed to $currentSuitePlanKey)")</ID>
+    <ID>ArgumentListWrapping:AutomationPanel.kt$AutomationPanel$("[Automation:UI] Ignoring BuildLogReady for chain '${event.chainKey}' — does not match focused chain '$focusedChainKey'")</ID>
+    <ID>ArgumentListWrapping:AutomationPanel.kt$AutomationPanel$("[Automation:UI] Reconcile tag detection: chainKey='$chainKey', detected=${tagDetection?.detected}, tag=${tagDetection?.tag}")</ID>
+    <ID>ArgumentListWrapping:AutomationPanel.kt$AutomationPanel$("[Automation:UI] Run queued for suite $currentSuitePlanKey (stages=${stages ?: "all"}, branch=${selectedBranchItem?.branchKey ?: "&lt;master>"})")</ID>
+    <ID>ArgumentListWrapping:AutomationPanel.kt$AutomationPanel$("[Automation:UI] Tag detection via chainKey='$chainKey': detected=${tagDetection?.detected}, tag=${tagDetection?.tag}")</ID>
+    <ID>ArgumentListWrapping:AutomationPanel.kt$AutomationPanel$("[Automation:UI] focusBuild changed: planKey=${focusBuild?.planKey}, chainKey=${focusBuild?.chainKey}, branch=${focusBuild?.branch}")</ID>
+    <ID>ArgumentListWrapping:AutomationPanel.kt$AutomationPanel$("[Automation:UI] onTriggerDefault: no (or stale) saved default for $suitePlanKey — opening customize dialog")</ID>
+    <ID>ArgumentListWrapping:AutomationPanel.kt$AutomationPanel$("[Automation:UI] onTriggerDefault: stage fetch failed for $suitePlanKey — ${action.errorMessage}")</ID>
+    <ID>ArgumentListWrapping:AutomationPanel.kt$AutomationPanel$("[Automation:UI] onTriggerDefault: using saved default stages=${action.stages} for $suitePlanKey")</ID>
+    <ID>ArgumentListWrapping:AutomationPanel.kt$AutomationPanel$(BaselinePickerItem(run.buildNumber, run.releaseTagCount, run.totalServices, run.score))</ID>
+    <ID>ArgumentListWrapping:AutomationPanel.kt$AutomationPanel$(b.key, b.shortName.ifBlank { b.name }.ifBlank { b.key }, b.enabled)</ID>
+    <ID>ArgumentListWrapping:AutomationPanel.kt$AutomationPanel$(run.buildNumber, run.releaseTagCount, run.totalServices, run.score)</ID>
+    <ID>ArgumentListWrapping:AutomationPanelTriggerDefaultTest.kt$AutomationPanelTriggerDefaultTest$(action is TriggerDefaultAction.EnqueueWith, "Expected EnqueueWith, got $action")</ID>
+    <ID>ArgumentListWrapping:AutomationPanelTriggerDefaultTest.kt$AutomationPanelTriggerDefaultTest$(action is TriggerDefaultAction.EnqueueWith, "Must NOT enqueue when stage fetch fails — faulty fallback is worse than no data")</ID>
+    <ID>ArgumentListWrapping:AutomationPanelTriggerDefaultTest.kt$AutomationPanelTriggerDefaultTest$(action is TriggerDefaultAction.EnqueueWith, "Partial intersection → should EnqueueWith the valid subset")</ID>
+    <ID>ArgumentListWrapping:AutomationPanelTriggerDefaultTest.kt$AutomationPanelTriggerDefaultTest$(action is TriggerDefaultAction.FetchError, "Fetch failure must return FetchError, NOT EnqueueWith or OpenCustomizeDialog. Got: $action")</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsService.kt$AutomationSettingsService.SuiteConfig$(surroundWithTag = false, entryTagName = "mapping", keyAttributeName = "docker", valueAttributeName = "service")</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsService.kt$AutomationSettingsService.SuiteConfig$(surroundWithTag = false, entryTagName = "variable", keyAttributeName = "key", valueAttributeName = "value")</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceDefaultStagesTest.kt$AutomationSettingsServiceDefaultStagesTest$( planKey = "PROJ-AUTO", displayName = "E2E", lastModified = 1000L )</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceDefaultStagesTest.kt$AutomationSettingsServiceDefaultStagesTest$( planKey = "PROJ-AUTO", displayName = "E2E", lastModified = 1000L, defaultStages = null )</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceSelectedBranchTest.kt$AutomationSettingsServiceSelectedBranchTest$( planKey = "PROJ-AUTO", displayName = "E2E Suite" )</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceSelectedBranchTest.kt$AutomationSettingsServiceSelectedBranchTest$("Integration Suite", config!!.displayName, "setSuiteSelectedBranch must not overwrite displayName")</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceSelectedBranchTest.kt$AutomationSettingsServiceSelectedBranchTest$("PROJ-AUTOMATIONTEST336-3", branch, "getSuiteSelectedBranch must return the branch key set by setSuiteSelectedBranch")</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceSelectedBranchTest.kt$AutomationSettingsServiceSelectedBranchTest$("PROJ-AUTOMATIONTEST336-3", newService.getSuiteSelectedBranch("PROJ-AUTO"), "selectedBranch must survive XML state serialisation round-trip")</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceSelectedBranchTest.kt$AutomationSettingsServiceSelectedBranchTest$("PROJ-AUTOMATIONTEST336-7", service.getSuiteSelectedBranch("PROJ-AUTO"), "Second setSuiteSelectedBranch call must overwrite the first")</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceSelectedBranchTest.kt$AutomationSettingsServiceSelectedBranchTest$("smoke", config.variables["suiteType"], "setSuiteSelectedBranch must not overwrite variables")</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceSelectedBranchTest.kt$AutomationSettingsServiceSelectedBranchTest$(listOf("Build"), config.enabledStages, "setSuiteSelectedBranch must not overwrite enabledStages")</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceSelectedBranchTest.kt$AutomationSettingsServiceSelectedBranchTest$(service.getSuiteConfig("NEW-PROJ"), "setSuiteSelectedBranch must create the SuiteConfig when the plan is not yet registered")</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceSelectedBranchTest.kt$AutomationSettingsServiceSelectedBranchTest$(service.getSuiteSelectedBranch("PROJ-AUTO"), "setSuiteSelectedBranch(null) must clear the saved branch")</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceTest.kt$AutomationSettingsServiceTest$( planKey = "PROJ-A", displayName = "Suite A", variables = mutableMapOf("x" to "y"), enabledStages = mutableListOf(), serviceNameMapping = null, lastModified = 1000L )</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceTest.kt$AutomationSettingsServiceTest$( planKey = "PROJ-AUTO", displayName = "Old Name", variables = mutableMapOf(), enabledStages = mutableListOf(), serviceNameMapping = null, lastModified = 1000 )</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceTest.kt$AutomationSettingsServiceTest$( planKey = "PROJ-AUTO", displayName = "Test Suite", variables = mutableMapOf("key" to "value"), enabledStages = mutableListOf("Stage1"), serviceNameMapping = null, lastModified = 1000 )</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceTest.kt$AutomationSettingsServiceTest$( planKey = "PROJ-AUTO1", displayName = "Suite 1", variables = mutableMapOf(), enabledStages = mutableListOf(), serviceNameMapping = null, lastModified = 1000 )</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceTest.kt$AutomationSettingsServiceTest$( planKey = "PROJ-AUTO2", displayName = "Suite 2", variables = mutableMapOf(), enabledStages = mutableListOf(), serviceNameMapping = null, lastModified = 2000 )</ID>
+    <ID>ArgumentListWrapping:AutomationSettingsServiceTest.kt$AutomationSettingsServiceTest$( planKey = "PROJ-B", displayName = "Suite B", variables = mutableMapOf("m" to "n"), enabledStages = mutableListOf(), serviceNameMapping = null, lastModified = 1000L )</ID>
+    <ID>ArgumentListWrapping:BaselineCacheService.kt$BaselineCacheService$("[Automation:Cache] Ignoring cache with unknown schema version ${decoded.version} (expected $SCHEMA_VERSION); starting empty.")</ID>
+    <ID>ArgumentListWrapping:BaselineCacheService.kt$BaselineCacheService$(cacheDir, "baseline-cache.json.tmp.${System.currentTimeMillis()}.${(Math.random() * 100000).toInt()}")</ID>
+    <ID>ArgumentListWrapping:BaselineCacheServiceTest.kt$BaselineCacheServiceTest$(cacheFile.exists(), "invalidate for a non-existent key must not create the cache file (no-op early return)")</ID>
+    <ID>ArgumentListWrapping:BaselineCacheServiceTest.kt$BaselineCacheServiceTest$(inMemory, onDisk, "Disk must hold the latest in-memory snapshot, not a stale one")</ID>
+    <ID>ArgumentListWrapping:BaselineCacheServiceTest.kt$BaselineCacheServiceTest$(mapOf("svc-a" to "1.0.0", "svc-b" to "2.0.0"), readBack.selectedBuild!!.dockerTags)</ID>
+    <ID>ArgumentListWrapping:BaselineCacheServiceTest.kt$BaselineCacheServiceTest$(svc.get("NON-EXISTENT"), "get after no-op invalidate must still return null")</ID>
+    <ID>ArgumentListWrapping:BranchSelectorSettleTest.kt$BranchSelectorSettleTest$(BranchSettleAction.Ignore, action, "A second settle while the async enable is running must not stack another dialog")</ID>
+    <ID>ArgumentListWrapping:BranchSelectorSettleTest.kt$BranchSelectorSettleTest$(BranchSettleAction.Ignore, action, "If the settled branch is already the committed one, the user didn't pick a new disabled branch")</ID>
+    <ID>ArgumentListWrapping:BranchSelectorSettleTest.kt$BranchSelectorSettleTest$(BranchSettleAction.Ignore, action, "While the dropdown is open the selection is transient — must NOT prompt (the reported bug)")</ID>
+    <ID>ArgumentListWrapping:BranchSelectorSettleTest.kt$BranchSelectorSettleTest$(action is BranchSettleAction.PromptEnable, "Deliberate pick of a disabled branch should prompt, got $action")</ID>
+    <ID>ArgumentListWrapping:MonitorPanel.kt$MonitorPanel.&lt;no name provided>$( 0.5f, 0.5f, width - 1f, height - 1f, JBUI.scale(2).toFloat(), JBUI.scale(2).toFloat() )</ID>
+    <ID>ArgumentListWrapping:MonitorPanel.kt$MonitorPanel.Companion$( queueId = queueEntry.id, suiteName = suiteName, planKey = queueEntry.suitePlanKey, resultKey = "", status = "Failed to trigger", isTerminal = true, filterBucket = MonitorFilter.FAILED, errorMessage = queueEntry.errorMessage )</ID>
+    <ID>ArgumentListWrapping:MonitorPanel.kt$MonitorPanel.Companion$( queueId = queueEntry.id, suiteName = suiteName, planKey = queueEntry.suitePlanKey, resultKey = resultKey, status = "Cancelled", bambooUrl = bambooUrl, isTerminal = true, // CANCELLED bucketed under Failed — terminal-not-success. See visibleEntries() KDoc. filterBucket = MonitorFilter.FAILED )</ID>
+    <ID>ArgumentListWrapping:MonitorPanel.kt$MonitorPanel.Companion$( queueId = queueEntry.id, suiteName = suiteName, planKey = queueEntry.suitePlanKey, resultKey = resultKey, status = "Queued", bambooUrl = bambooUrl, isTerminal = false, filterBucket = MonitorFilter.QUEUED )</ID>
+    <ID>ArgumentListWrapping:MonitorPanel.kt$MonitorPanel.Companion$( queueId = queueEntry.id, suiteName = suiteName, planKey = queueEntry.suitePlanKey, resultKey = resultKey, status = "Running", bambooUrl = bambooUrl, isTerminal = false, filterBucket = MonitorFilter.RUNNING )</ID>
+    <ID>ArgumentListWrapping:MonitorPanel.kt$MonitorPanel.Companion$( queueId = queueEntry.id, suiteName = suiteName, planKey = queueEntry.suitePlanKey, resultKey = resultKey, status = "Successful", bambooUrl = bambooUrl, isTerminal = true, filterBucket = MonitorFilter.COMPLETED )</ID>
+    <ID>ArgumentListWrapping:MonitorPanel.kt$MonitorPanel.Companion$( queueId = queueEntry.id, suiteName = suiteName, planKey = queueEntry.suitePlanKey, resultKey = resultKey, status = queueEntry.status.name, bambooUrl = bambooUrl, isTerminal = queueEntry.status in QueueEntryStatus.TERMINAL, filterBucket = if (queueEntry.status in QueueEntryStatus.TERMINAL) MonitorFilter.FAILED else MonitorFilter.QUEUED )</ID>
+    <ID>ArgumentListWrapping:MonitorPanel.kt$MonitorPanel.RunListCellRenderer.&lt;no name provided>$( 0.5f, 0.5f, width - 1f, height - 1f, JBUI.scale(2).toFloat(), JBUI.scale(2).toFloat() )</ID>
+    <ID>ArgumentListWrapping:MonitorPanelRunEntryTest.kt$MonitorPanelRunEntryTest$("", runEntry.bambooUrl, "bambooUrl must be empty when bambooResultKey is null/blank")</ID>
+    <ID>ArgumentListWrapping:MonitorPanelRunEntryTest.kt$MonitorPanelRunEntryTest$("", runEntry.bambooUrl, "bambooUrl must be empty when bambooUrlBase is blank")</ID>
+    <ID>ArgumentListWrapping:MonitorPanelRunEntryTest.kt$MonitorPanelRunEntryTest$("Bamboo 401: token expired", runEntry.errorMessage, "Without errorMessage on RunEntry the detail panel cannot tell the user *why* the trigger failed")</ID>
+    <ID>ArgumentListWrapping:MonitorPanelRunEntryTest.kt$MonitorPanelRunEntryTest$("Stage 'Integration Tests' failed", runEntry.errorMessage, "FAILED entry must forward errorMessage")</ID>
+    <ID>ArgumentListWrapping:MonitorPanelRunEntryTest.kt$MonitorPanelRunEntryTest$("https://bamboo.example.com/browse/PROJ-AUTO-123", runEntry.bambooUrl, "bambooUrl must be constructed as bambooUrlBase/browse/resultKey when both are non-blank")</ID>
+    <ID>ArgumentListWrapping:MonitorPanelRunEntryTest.kt$MonitorPanelRunEntryTest$(MonitorPanel.MonitorFilter.COMPLETED, runEntry.filterBucket, "COMPLETED must map to filterBucket=COMPLETED")</ID>
+    <ID>ArgumentListWrapping:MonitorPanelRunEntryTest.kt$MonitorPanelRunEntryTest$(MonitorPanel.MonitorFilter.FAILED, runEntry.filterBucket, "CANCELLED must bucket under FAILED — there is no CANCELLED filter chip")</ID>
+    <ID>ArgumentListWrapping:MonitorPanelRunEntryTest.kt$MonitorPanelRunEntryTest$(MonitorPanel.MonitorFilter.FAILED, runEntry.filterBucket, "FAILED must map to filterBucket=FAILED")</ID>
+    <ID>ArgumentListWrapping:MonitorPanelRunEntryTest.kt$MonitorPanelRunEntryTest$(MonitorPanel.MonitorFilter.QUEUED, runEntry.filterBucket, "QUEUED_ON_BAMBOO must map to filterBucket=QUEUED")</ID>
+    <ID>ArgumentListWrapping:MonitorPanelRunEntryTest.kt$MonitorPanelRunEntryTest$(MonitorPanel.MonitorFilter.RUNNING, runEntry.filterBucket, "RUNNING must map to filterBucket=RUNNING")</ID>
+    <ID>ArgumentListWrapping:PollingLifecycleTest.kt$PollingLifecycleTest$(job, lifecycle.currentJobForTest, "tryExit must NOT clear state while work remains")</ID>
+    <ID>ArgumentListWrapping:PollingLifecycleTest.kt$PollingLifecycleTest$(null, lifecycle.currentJobForTest, "tryExit must atomically clear state so the next startIfNeeded launches")</ID>
+    <ID>ArgumentListWrapping:PollingLifecycleTest.kt$PollingLifecycleTest$(secondJob, lifecycle.currentJobForTest, "tryExit must not touch the slot when self does not match")</ID>
+    <ID>ArgumentListWrapping:QueueService.kt$QueueService$( entry.id, QueueEntryStatus.COMPLETED, resultKey )</ID>
+    <ID>ArgumentListWrapping:QueueService.kt$QueueService$( entry.id, QueueEntryStatus.FAILED_TO_TRIGGER, errorMessage = triggerResult.summary )</ID>
+    <ID>ArgumentListWrapping:QueueService.kt$QueueService$( entry.id, QueueEntryStatus.QUEUED_ON_BAMBOO, buildKey )</ID>
+    <ID>ArgumentListWrapping:QueueService.kt$QueueService$("[Automation:Queue] Auto-triggered entry ${entry.id} on Bamboo, resultKey=${triggerResult.data}")</ID>
+    <ID>ArgumentListWrapping:QueueService.kt$QueueService$("[Automation:Queue] Build finished for entry ${entry.id}, resultKey=$resultKey, passed=$passed → $terminalStatus")</ID>
+    <ID>ArgumentListWrapping:QueueService.kt$QueueService$("[Automation:Queue] Build in Unknown/NotBuilt state for entry ${entry.id}, treating as COMPLETED")</ID>
+    <ID>ArgumentListWrapping:QueueService.kt$QueueService$("[Automation:Queue] Cancelling entry $entryId (status=${entry.status}, suite='${entry.suitePlanKey}')")</ID>
+    <ID>ArgumentListWrapping:QueueService.kt$QueueService$("[Automation:Queue] Enqueued build with $serviceCount services, position: $position, suite='${entry.suitePlanKey}', entryId=${entry.id}")</ID>
+    <ID>ArgumentListWrapping:QueueService.kt$QueueService$("[Automation:Queue] Failed to auto-trigger entry ${entry.id} for suite '${entry.suitePlanKey}' (${errorType?.name ?: "no error type"}): ${triggerResult.summary}")</ID>
+    <ID>ArgumentListWrapping:QueueService.kt$QueueService$("[Automation:Queue] Failed to cancel build $resultKey on Bamboo (continuing with local CANCELLED): ${cancelResult.summary}")</ID>
+    <ID>ArgumentListWrapping:QueueService.kt$QueueService$("[Automation:Queue] Failed to stop build $resultKey on Bamboo (continuing with local CANCELLED): ${stopResult.summary}")</ID>
+    <ID>ArgumentListWrapping:QueueService.kt$QueueService$("[Automation:Queue] Fast-path trigger for entry ${entry.id} (queue was empty and Bamboo is idle)")</ID>
+    <ID>ArgumentListWrapping:QueueService.kt$QueueService$("[Automation:Queue] Queue depth limit reached for suite '${entry.suitePlanKey}' (max=$maxDepthPerSuite), rejecting entry ${entry.id}")</ID>
+    <ID>ArgumentListWrapping:QueueService.kt$QueueService$("[Automation:Queue] Transient trigger failure for entry ${entry.id} (${errorType?.name}); will retry on next poll tick: ${triggerResult.summary}")</ID>
+    <ID>ArgumentListWrapping:QueueService.kt$QueueService$("[Automation:Queue] Triggering build for entry ${entry.id}, suite='${entry.suitePlanKey}', branch='${entry.branchKey ?: "&lt;master>"}', stages=${entry.stages ?: "all"}")</ID>
+    <ID>ArgumentListWrapping:QueueService.kt$QueueService$("[Automation:Queue] dismiss($entryId) ignored — entry is non-terminal (status=${entry.status})")</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$( QueueEntryStatus.WAITING_LOCAL, state[0].status, "Non-empty getRunningBuilds must keep entry in WAITING_LOCAL — Bamboo is busy" )</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$( QueueEntryStatus.WAITING_LOCAL, state[0].status, "Transient SERVER_ERROR must NOT mark the entry FAILED_TO_TRIGGER — the poll loop should retry on the next tick" )</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$( QueueEntryStatus.WAITING_LOCAL, state[0].status, "getRunningBuilds error must keep entry in WAITING_LOCAL — should not attempt trigger" )</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$( id = "cov2a-1", suitePlanKey = "PROJ-AUTO", dockerTagsPayload = """{"auth":"1.0.0"}""", variables = emptyMap(), stages = null, enqueuedAt = Instant.now(), status = QueueEntryStatus.QUEUED_ON_BAMBOO, bambooResultKey = "PROJ-AUTO-500" )</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$( id = "f-1", suitePlanKey = "PROJ-AUTO", dockerTagsPayload = """{"auth":"1.0.0"}""", variables = emptyMap(), stages = null, enqueuedAt = Instant.now(), status = QueueEntryStatus.QUEUED_ON_BAMBOO, bambooResultKey = "PROJ-AUTO-300" )</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$( id = "u-1", suitePlanKey = "PROJ-AUTO", dockerTagsPayload = """{"auth":"1.0.0"}""", variables = emptyMap(), stages = null, enqueuedAt = Instant.now(), status = QueueEntryStatus.QUEUED_ON_BAMBOO, bambooResultKey = "PROJ-AUTO-200" )</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$( id = "x-1", suitePlanKey = "PROJ-AUTO", dockerTagsPayload = """{"auth":"1.0.0"}""", variables = emptyMap(), stages = null, enqueuedAt = Instant.now(), status = QueueEntryStatus.QUEUED_ON_BAMBOO, bambooResultKey = "PROJ-AUTO-100" )</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$( id = "x-2", suitePlanKey = "PROJ-AUTO", dockerTagsPayload = """{"auth":"1.0.0"}""", variables = emptyMap(), stages = null, enqueuedAt = Instant.now(), status = QueueEntryStatus.QUEUED_ON_BAMBOO, bambooResultKey = "PROJ-AUTO-101" )</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$("PROJ-AUTO", capturedChainKeys[0], "When entry.branchKey is null, triggerBuild must be called with suitePlanKey as chainKey")</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$("PROJ-AUTOMATIONTEST336-3", capturedChainKeys[0], "When entry.branchKey is set, triggerBuild must be called with the branch key as chainKey")</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$(0, rs.getInt(1), "dismiss() must call TagHistoryService.deleteQueueEntry so the row is removed from automation.db")</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$(0, testService.stateFlow.value.size, "Empty DB must leave stateFlow empty after restore")</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$(ErrorType.AUTH_FAILED, result.payload, "triggerNow must forward the ErrorType payload from triggerBuild")</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$(bambooResultKey = "PROJ-AUTO-100")</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$(bambooResultKey = "PROJ-AUTO-101")</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$(capturedStages[0], "doTrigger must pass null stages when entry.stages is null (run all stages)")</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$(id = "q-1", status = QueueEntryStatus.QUEUED_ON_BAMBOO)</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$(id = "q-2", status = QueueEntryStatus.QUEUED_ON_BAMBOO)</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$(stages, capturedStages[0], "doTrigger must pass entry.stages to bambooService.triggerBuild")</ID>
+    <ID>ArgumentListWrapping:QueueServiceTest.kt$QueueServiceTest$(testService.stateFlow.value.any { it.id == "ok" }, "After a swallowed exception in a prior op, subsequent enqueues must still succeed")</ID>
+    <ID>ArgumentListWrapping:SuiteConfigPanelSortTest.kt$SuiteConfigPanelSortTest$("", "PARENT", "", isSeparator = true, categoryCaption = "Project variables")</ID>
+    <ID>ArgumentListWrapping:TagBuilderService.kt$TagBuilderService$("[Automation:Tags] Build #${build.buildNumber}: ${tags.size} services, $releaseCount release tags, score=$score")</ID>
+    <ID>ArgumentListWrapping:TagBuilderService.kt$TagBuilderService$("[Automation:Tags] Build #${build.buildNumber}: ${variables.size} inline variables: ${variables.keys}")</ID>
+    <ID>ArgumentListWrapping:TagBuilderService.kt$TagBuilderService$("[Automation:Tags] Checking build #${build.buildNumber} (buildResultKey=${build.buildResultKey}, state=${build.state})")</ID>
+    <ID>ArgumentListWrapping:TagBuilderService.kt$TagBuilderService$("[Automation:Tags] Reached targetParseable=$targetParseable after walking " + "${buildsResult.data!!.indexOf(build) + 1} builds — stopping.")</ID>
+    <ID>ArgumentListWrapping:TagBuilderService.kt$TagBuilderService$("[Automation:Tags] Replacing tag for service '${context.serviceName}' with feature branch tag '${context.featureBranchTag}'")</ID>
+    <ID>ArgumentListWrapping:TagBuilderService.kt$TagBuilderService$("[Automation:Tags] Scoring runs for plan '$suitePlanKey' " + "(targetParseable=$targetParseable, maxWalk=$maxWalk)")</ID>
+    <ID>ArgumentListWrapping:TagBuilderService.kt$TagBuilderService$("[Automation:Tags] Selected baseline: build #${best.buildNumber}, ${best.releaseTagCount}/${best.totalServices} release tags, score=${best.score}")</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$("internal-registry.example.com/svc-auth", "v2.4.0-sha1234", TagSource.BASELINE, RegistryStatus.UNKNOWN, false)</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(100, "Successful", listOf("Successful"), variables = mapOf("someOtherVar" to "value"))</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(846, "Successful", listOf("Successful", "Successful"), variables = mapOf("dockerTagsAsJson" to """{"a":"1.5.0","b":"2.5.0"}"""))</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(846, "Successful", listOf("Successful", "Successful"), variables = mapOf("dockerTagsAsJson" to """{"auth":"2.3.0","payments":"2.3.1"}"""))</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(847, "Successful", listOf("Successful", "Successful"), variables = mapOf("dockerTagsAsJson" to """{"a":"2.0.0","b":"3.0.0"}"""))</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(847, "Successful", listOf("Successful", "Successful"), variables = mapOf("dockerTagsAsJson" to """{"auth":"2.4.0","payments":"2.3.1"}"""))</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(847, "Successful", listOf("Successful", "Successful", "Successful"), variables = mapOf("dockerTagsAsJson" to """{"auth":"2.4.0","payments":"2.3.1","user":"1.9.0"}"""))</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(848, "Failed", listOf("Successful", "Failed"), variables = mapOf("dockerTagsAsJson" to """{"auth":"2.4.0","payments":"feature-abc"}"""))</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(848, "Successful", listOf("Successful", "Successful"), variables = mapOf("dockerTagsAsJson" to """{"a":"2.0.0"}"""))</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(848, "Successful", listOf("Successful", "Successful"), variables = mapOf("dockerTagsAsJson" to """{"auth":"2.4.0-rc1","payments":"2.3.1-SNAPSHOT"}"""))</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(900, "Successful", listOf("Successful"), variables = mapOf("dockerTagsAsJson" to """{"auth":"1.2.3.4"}"""))</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(entries, result, "When featureBranchTag is null the original list must be returned unchanged")</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(ex!!.message!!.contains("maxWalk"), "Exception message must reference 'maxWalk'; was: ${ex.message}")</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(ex!!.message!!.contains("positive"), "Exception message must contain 'positive'; was: ${ex.message}")</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(payload.contains("internal-registry.example.com/svc-auth"), "Payload must still contain full service name")</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(payload.contains("v2.4.0-sha1234"), "Payload must still contain full tag value")</ID>
+    <ID>ArgumentListWrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(result.any { it.isCurrentRepo }, "No entry must have isCurrentRepo=true when featureBranchTag is null")</ID>
+    <ID>ArgumentListWrapping:TagDetectionPerJobTest.kt$TagDetectionPerJobTest$(name = "Build Artifacts", state = "Successful", durationSeconds = 50, resultKey = "PROJ-XYZ-JOB1-10")</ID>
+    <ID>ArgumentListWrapping:TagDetectionPerJobTest.kt$TagDetectionPerJobTest$(name = "SonarQube Analysis", state = "Successful", durationSeconds = 50, resultKey = "PROJ-XYZ-SQAN-10")</ID>
+    <ID>ArgumentListWrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$( id = "cov5-1", suitePlanKey = "PROJ-AUTO", dockerTagsPayload = "{}", variables = emptyMap(), stages = null, enqueuedAt = Instant.now(), status = QueueEntryStatus.WAITING_LOCAL, bambooResultKey = null )</ID>
+    <ID>ArgumentListWrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$( id = "q-1", suitePlanKey = "PROJ-AUTO", dockerTagsPayload = """{"auth":"2.4.0"}""", variables = mapOf("suiteType" to "regression"), stages = setOf("Build", "Unit Tests"), enqueuedAt = Instant.now(), status = QueueEntryStatus.WAITING_LOCAL, bambooResultKey = null )</ID>
+    <ID>ArgumentListWrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$( id = "q-1", suitePlanKey = "PROJ-AUTO", dockerTagsPayload = "{}", variables = emptyMap(), stages = null, enqueuedAt = Instant.now(), status = QueueEntryStatus.WAITING_LOCAL, bambooResultKey = null )</ID>
+    <ID>ArgumentListWrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$( id = "q-null", suitePlanKey = "PROJ-AUTO", dockerTagsPayload = """{}""", variables = emptyMap(), stages = null, // run all stages enqueuedAt = Instant.now(), status = QueueEntryStatus.WAITING_LOCAL, bambooResultKey = null )</ID>
+    <ID>ArgumentListWrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$( id = id, suitePlanKey = "PROJ-CONCURRENT", dockerTagsPayload = "{}", variables = emptyMap(), stages = null, enqueuedAt = Instant.now(), status = QueueEntryStatus.WAITING_LOCAL, bambooResultKey = null )</ID>
+    <ID>ArgumentListWrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$("PROJ-AUTOMATIONTEST336-3", active[0].branchKey, "Non-null branchKey must survive persistence round-trip")</ID>
+    <ID>ArgumentListWrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$("live-1", "P", "{}", emptyMap(), null, Instant.now(), QueueEntryStatus.WAITING_LOCAL, null)</ID>
+    <ID>ArgumentListWrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$("term-${status.name}", "P", "{}", emptyMap(), null, Instant.now(), status, null)</ID>
+    <ID>ArgumentListWrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$("valid-1", "PROJ", "{}", mapOf("k" to "v"), null, Instant.now(), QueueEntryStatus.WAITING_LOCAL, null)</ID>
+    <ID>ArgumentListWrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$("valid-3", "PROJ", "{}", mapOf("k" to "v"), null, Instant.now(), QueueEntryStatus.WAITING_LOCAL, null)</ID>
+    <ID>ArgumentListWrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$(1, active.size, "Only the WAITING_LOCAL row should be returned; got ${active.map { it.id to it.status }}")</ID>
+    <ID>ArgumentListWrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$(2, active.size, "Corrupt row must be skipped; only valid rows should be returned. Got: ${active.map { it.id }}")</ID>
+    <ID>ArgumentListWrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$(active[0].branchKey, "Pre-migration row must have null branchKey after upgrade (new column defaults to NULL)")</ID>
+    <ID>ArgumentListWrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$(active[0].branchKey, "null branchKey must survive persistence round-trip as null")</ID>
+    <ID>ArgumentListWrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$(coroutineCount * insertsPerCoroutine, active.size, "All ${coroutineCount * insertsPerCoroutine} entries must survive concurrent inserts")</ID>
+    <ID>ArgumentListWrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$(legacy!!.stages, "Old empty-array stages_json `[]` must rehydrate as null (run all stages), not an empty set")</ID>
+    <ID>ArgumentListWrapping:TagStagingPanel.kt$TagStagingPanel.TagTableCellRenderer$( table, value, isSelected, hasFocus, row, col )</ID>
+    <ID>EmptyFunctionBlock:AutomationPanel.kt$AutomationPanel.&lt;no name provided>${}</ID>
+    <ID>EmptyFunctionBlock:MonitorPanel.kt$MonitorPanel.&lt;no name provided>${}</ID>
+    <ID>EmptyFunctionBlock:SuiteConfigPanel.kt$SuiteConfigPanel${}</ID>
+    <ID>EmptyFunctionBlock:TagStagingPanel.kt$TagStagingPanel${}</ID>
+    <ID>Filename:BranchSelectorLogic.kt$com.workflow.orchestrator.automation.ui.BranchSelectorLogic.kt</ID>
+    <ID>Filename:TriggerDefaultLogic.kt$com.workflow.orchestrator.automation.service.TriggerDefaultLogic.kt</ID>
+    <ID>ImportOrdering:AutomationConfigurable.kt$import com.intellij.openapi.Disposable import com.intellij.openapi.application.ApplicationManager import com.intellij.openapi.application.ModalityState import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.options.SearchableConfigurable import com.intellij.openapi.project.Project import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBScrollPane import com.intellij.ui.components.JBTextField import com.intellij.ui.dsl.builder.AlignX import com.intellij.ui.dsl.builder.COLUMNS_LARGE import com.intellij.ui.dsl.builder.bindText import com.intellij.ui.dsl.builder.columns import com.intellij.ui.dsl.builder.panel import com.intellij.util.ui.JBUI import com.workflow.orchestrator.automation.service.AutomationSettingsService import com.workflow.orchestrator.core.services.BambooService import com.workflow.orchestrator.core.settings.ConnectionSettings import com.workflow.orchestrator.core.settings.ConnectionStatusBanner import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.ui.ComboBoxWidth import com.workflow.orchestrator.core.ui.bindBoundedWidth import com.workflow.orchestrator.core.ui.StatusColors import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.SupervisorJob import kotlinx.coroutines.cancel import kotlinx.coroutines.launch import kotlinx.coroutines.withTimeout import java.awt.BorderLayout import java.awt.Dimension import java.awt.FlowLayout import java.awt.Font import java.awt.GridBagConstraints import java.awt.GridBagLayout import javax.swing.BoxLayout import javax.swing.JButton import javax.swing.JComboBox import javax.swing.JComponent import javax.swing.JPanel import javax.swing.JSeparator</ID>
+    <ID>ImportOrdering:AutomationPanel.kt$import com.intellij.icons.AllIcons import com.intellij.openapi.Disposable import com.intellij.openapi.application.invokeLater import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.intellij.openapi.ui.ComboBoxWithWidePopup import com.intellij.openapi.ui.Messages import com.intellij.openapi.util.Disposer import com.intellij.ui.ColoredListCellRenderer import com.intellij.ui.ComboboxSpeedSearch import com.intellij.ui.JBColor import com.intellij.ui.SimpleTextAttributes import com.intellij.ui.components.JBLabel import com.workflow.orchestrator.core.model.workflow.BuildRef import com.workflow.orchestrator.core.ui.StatusColors import com.intellij.ui.components.JBScrollPane import com.intellij.ui.components.JBTabbedPane import com.intellij.util.ui.JBUI import com.workflow.orchestrator.automation.model.* import com.workflow.orchestrator.automation.service.* import com.workflow.orchestrator.automation.service.BaselineCacheService import com.workflow.orchestrator.automation.service.TriggerDefaultAction import com.workflow.orchestrator.bamboo.ui.ManualStageDialog import com.workflow.orchestrator.bamboo.ui.TriggerMode import com.workflow.orchestrator.core.events.EventBus import com.workflow.orchestrator.core.events.WorkflowEvent import com.workflow.orchestrator.core.services.BambooService import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.ui.ComboBoxWidth import com.workflow.orchestrator.core.ui.bindBoundedWidth import com.workflow.orchestrator.core.workflow.WorkflowContextService import kotlinx.coroutines.* import kotlinx.coroutines.flow.distinctUntilChanged import kotlinx.coroutines.flow.map import java.awt.BorderLayout import java.awt.FlowLayout import java.awt.Font import java.awt.event.FocusAdapter import java.awt.event.FocusEvent import javax.swing.* import javax.swing.event.PopupMenuEvent import javax.swing.event.PopupMenuListener</ID>
+    <ID>ImportOrdering:AutomationStatusBarWidgetFactory.kt$import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.intellij.openapi.wm.StatusBar import com.intellij.openapi.wm.StatusBarWidget import com.intellij.openapi.wm.StatusBarWidgetFactory import com.intellij.openapi.wm.ToolWindowManager import com.intellij.openapi.wm.impl.status.EditorBasedWidget import com.intellij.util.Consumer import com.workflow.orchestrator.automation.model.QueueEntryStatus import com.workflow.orchestrator.automation.service.QueueService import com.intellij.openapi.application.EDT import kotlinx.coroutines.* import kotlinx.coroutines.flow.collectLatest import java.awt.event.MouseEvent</ID>
+    <ID>ImportOrdering:MonitorPanel.kt$import com.intellij.ide.BrowserUtil import com.intellij.openapi.application.EDT import com.intellij.openapi.application.invokeLater import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.intellij.ui.components.JBLabel import com.workflow.orchestrator.automation.model.QueueEntry import com.workflow.orchestrator.automation.model.QueueEntryStatus import com.workflow.orchestrator.automation.service.AutomationSettingsService import com.workflow.orchestrator.automation.service.QueueService import com.workflow.orchestrator.core.ui.ClipboardUtil import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.core.ui.TimeFormatter import com.intellij.ui.components.JBScrollPane import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.services.BambooService import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.polling.SmartPoller import kotlinx.coroutines.* import kotlinx.coroutines.flow.collectLatest import java.awt.BorderLayout import java.awt.Color import java.awt.FlowLayout import java.awt.Font import java.awt.Graphics import java.awt.Graphics2D import java.awt.RenderingHints import java.awt.geom.RoundRectangle2D import javax.swing.*</ID>
+    <ID>ImportOrdering:QueueStatusPanel.kt$import com.intellij.openapi.Disposable import com.intellij.openapi.application.EDT import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.intellij.ui.JBColor import com.intellij.ui.components.JBLabel import com.workflow.orchestrator.automation.model.QueueEntry import com.workflow.orchestrator.automation.model.QueueEntryStatus import com.workflow.orchestrator.automation.service.QueueService import com.workflow.orchestrator.core.ui.StatusColors import com.intellij.util.ui.JBUI import kotlinx.coroutines.CancellationException import kotlinx.coroutines.CoroutineExceptionHandler import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.SupervisorJob import kotlinx.coroutines.cancel import kotlinx.coroutines.flow.collectLatest import kotlinx.coroutines.launch import kotlinx.coroutines.withContext import java.awt.BorderLayout import java.awt.FlowLayout import java.awt.Font import javax.swing.BoxLayout import javax.swing.JPanel</ID>
+    <ID>ImportOrdering:TagStagingPanel.kt$import com.intellij.openapi.Disposable import com.intellij.openapi.project.Project import com.intellij.openapi.ui.Messages import com.intellij.ui.components.JBLabel import com.workflow.orchestrator.core.ui.StatusColors import com.intellij.ui.table.JBTable import com.intellij.util.ui.JBUI import com.workflow.orchestrator.automation.model.RegistryStatus import com.workflow.orchestrator.automation.model.TagEntry import com.workflow.orchestrator.automation.model.TagSource import com.workflow.orchestrator.automation.service.TagBuilderService import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.ui.ClipboardUtil import com.intellij.ui.components.JBScrollPane import kotlinx.serialization.json.Json import kotlinx.serialization.json.JsonNull import kotlinx.serialization.json.JsonObject import kotlinx.serialization.json.jsonPrimitive import java.awt.BorderLayout import java.awt.CardLayout import java.awt.Component import java.awt.Font import java.awt.datatransfer.DataFlavor import javax.swing.* import javax.swing.table.AbstractTableModel import javax.swing.table.DefaultTableCellRenderer</ID>
+    <ID>Indentation:AutomationPanel.kt$AutomationPanel$ </ID>
+    <ID>Indentation:SuiteConfigPanel.kt$SuiteConfigPanel$ </ID>
+    <ID>Indentation:SuiteConfigPanel.kt$SuiteConfigPanel.CategoryGroupedRenderer$ </ID>
+    <ID>LoopWithTooManyJumpStatements:TagBuilderService.kt$TagBuilderService$for</ID>
+    <ID>MagicNumber:AutomationConfigurable.kt$AutomationConfigurable$0.35</ID>
+    <ID>MagicNumber:AutomationConfigurable.kt$AutomationConfigurable$0.55</ID>
+    <ID>MagicNumber:AutomationConfigurable.kt$AutomationConfigurable$0.9</ID>
+    <ID>MagicNumber:AutomationConfigurable.kt$AutomationConfigurable$12</ID>
+    <ID>MagicNumber:AutomationConfigurable.kt$AutomationConfigurable$15_000</ID>
+    <ID>MagicNumber:AutomationConfigurable.kt$AutomationConfigurable$20</ID>
+    <ID>MagicNumber:AutomationConfigurable.kt$AutomationConfigurable$200</ID>
+    <ID>MagicNumber:AutomationConfigurable.kt$AutomationConfigurable$250</ID>
+    <ID>MagicNumber:AutomationConfigurable.kt$AutomationConfigurable$28</ID>
+    <ID>MagicNumber:AutomationConfigurable.kt$AutomationConfigurable$4</ID>
+    <ID>MagicNumber:AutomationConfigurable.kt$AutomationConfigurable$56</ID>
+    <ID>MagicNumber:AutomationConfigurable.kt$AutomationConfigurable$6</ID>
+    <ID>MagicNumber:AutomationConfigurable.kt$AutomationConfigurable$8</ID>
+    <ID>MagicNumber:AutomationConfigurable.kt$AutomationConfigurable$80</ID>
+    <ID>MagicNumber:AutomationPanel.kt$AutomationPanel$0.65f</ID>
+    <ID>MagicNumber:AutomationPanel.kt$AutomationPanel$0x0969DA</ID>
+    <ID>MagicNumber:AutomationPanel.kt$AutomationPanel$0x89b4fa</ID>
+    <ID>MagicNumber:AutomationPanel.kt$AutomationPanel$11</ID>
+    <ID>MagicNumber:AutomationPanel.kt$AutomationPanel$15_000L</ID>
+    <ID>MagicNumber:AutomationPanel.kt$AutomationPanel$4</ID>
+    <ID>MagicNumber:AutomationPanel.kt$AutomationPanel$8</ID>
+    <ID>MagicNumber:AutomationTabProvider.kt$AutomationTabProvider$4</ID>
+    <ID>MagicNumber:BaselineCacheService.kt$BaselineCacheService$100000</ID>
+    <ID>MagicNumber:MonitorPanel.kt$MonitorPanel$0.3f</ID>
+    <ID>MagicNumber:MonitorPanel.kt$MonitorPanel$10</ID>
+    <ID>MagicNumber:MonitorPanel.kt$MonitorPanel$11</ID>
+    <ID>MagicNumber:MonitorPanel.kt$MonitorPanel$12</ID>
+    <ID>MagicNumber:MonitorPanel.kt$MonitorPanel$20</ID>
+    <ID>MagicNumber:MonitorPanel.kt$MonitorPanel$4</ID>
+    <ID>MagicNumber:MonitorPanel.kt$MonitorPanel$6</ID>
+    <ID>MagicNumber:MonitorPanel.kt$MonitorPanel$8</ID>
+    <ID>MagicNumber:MonitorPanel.kt$MonitorPanel.&lt;no name provided>$0.5f</ID>
+    <ID>MagicNumber:MonitorPanel.kt$MonitorPanel.RunListCellRenderer$10</ID>
+    <ID>MagicNumber:MonitorPanel.kt$MonitorPanel.RunListCellRenderer$11</ID>
+    <ID>MagicNumber:MonitorPanel.kt$MonitorPanel.RunListCellRenderer$4</ID>
+    <ID>MagicNumber:MonitorPanel.kt$MonitorPanel.RunListCellRenderer.&lt;no name provided>$0.5f</ID>
+    <ID>MagicNumber:MonitorPanel.kt$MonitorPanel.RunListCellRenderer.&lt;no name provided>$3</ID>
+    <ID>MagicNumber:MonitorPanel.kt$MonitorPanel.RunListCellRenderer.&lt;no name provided>$6</ID>
+    <ID>MagicNumber:MonitorPanel.kt$MonitorPanel.RunListCellRenderer.&lt;no name provided>$8</ID>
+    <ID>MagicNumber:QueueService.kt$QueueService$10</ID>
+    <ID>MagicNumber:QueueService.kt$QueueService$15_000L</ID>
+    <ID>MagicNumber:QueueService.kt$QueueService$3_000L</ID>
+    <ID>MagicNumber:QueueService.kt$QueueService$60_000L</ID>
+    <ID>MagicNumber:QueueStatusPanel.kt$QueueStatusPanel$10</ID>
+    <ID>MagicNumber:QueueStatusPanel.kt$QueueStatusPanel$4</ID>
+    <ID>MagicNumber:QueueStatusPanel.kt$QueueStatusPanel$8</ID>
+    <ID>MagicNumber:SuiteConfigPanel.kt$SuiteConfigPanel$0.3</ID>
+    <ID>MagicNumber:SuiteConfigPanel.kt$SuiteConfigPanel$0.6</ID>
+    <ID>MagicNumber:SuiteConfigPanel.kt$SuiteConfigPanel$11</ID>
+    <ID>MagicNumber:SuiteConfigPanel.kt$SuiteConfigPanel$160</ID>
+    <ID>MagicNumber:SuiteConfigPanel.kt$SuiteConfigPanel$28</ID>
+    <ID>MagicNumber:SuiteConfigPanel.kt$SuiteConfigPanel$4</ID>
+    <ID>MagicNumber:SuiteConfigPanel.kt$SuiteConfigPanel$8</ID>
+    <ID>MagicNumber:SuiteConfigPanel.kt$SuiteConfigPanel$99</ID>
+    <ID>MagicNumber:SuiteConfigPanel.kt$SuiteConfigPanel.CategoryGroupedRenderer$12</ID>
+    <ID>MagicNumber:SuiteConfigPanel.kt$SuiteConfigPanel.CategoryGroupedRenderer$8</ID>
+    <ID>MagicNumber:SuiteConfigPanel.kt$SuiteConfigPanel.SeparatorRow$10</ID>
+    <ID>MagicNumber:SuiteConfigPanel.kt$SuiteConfigPanel.SeparatorRow$4</ID>
+    <ID>MagicNumber:SuiteConfigPanel.kt$SuiteConfigPanel.SeparatorRow$8</ID>
+    <ID>MagicNumber:TagBuilderService.kt$TagBuilderService$10</ID>
+    <ID>MagicNumber:TagBuilderService.kt$TagBuilderService$20</ID>
+    <ID>MagicNumber:TagBuilderService.kt$TagBuilderService$5</ID>
+    <ID>MagicNumber:TagHistoryService.kt$TagHistoryService$10</ID>
+    <ID>MagicNumber:TagHistoryService.kt$TagHistoryService$11</ID>
+    <ID>MagicNumber:TagHistoryService.kt$TagHistoryService$12</ID>
+    <ID>MagicNumber:TagHistoryService.kt$TagHistoryService$3</ID>
+    <ID>MagicNumber:TagHistoryService.kt$TagHistoryService$4</ID>
+    <ID>MagicNumber:TagHistoryService.kt$TagHistoryService$5</ID>
+    <ID>MagicNumber:TagHistoryService.kt$TagHistoryService$6</ID>
+    <ID>MagicNumber:TagHistoryService.kt$TagHistoryService$7</ID>
+    <ID>MagicNumber:TagHistoryService.kt$TagHistoryService$8</ID>
+    <ID>MagicNumber:TagHistoryService.kt$TagHistoryService$9</ID>
+    <ID>MagicNumber:TagStagingPanel.kt$TagStagingPanel$10</ID>
+    <ID>MagicNumber:TagStagingPanel.kt$TagStagingPanel$11</ID>
+    <ID>MagicNumber:TagStagingPanel.kt$TagStagingPanel$120</ID>
+    <ID>MagicNumber:TagStagingPanel.kt$TagStagingPanel$150</ID>
+    <ID>MagicNumber:TagStagingPanel.kt$TagStagingPanel$250</ID>
+    <ID>MagicNumber:TagStagingPanel.kt$TagStagingPanel$28</ID>
+    <ID>MagicNumber:TagStagingPanel.kt$TagStagingPanel$4</ID>
+    <ID>MagicNumber:TagStagingPanel.kt$TagStagingPanel$40</ID>
+    <ID>MagicNumber:TagStagingPanel.kt$TagStagingPanel.&lt;no name provided>$10</ID>
+    <ID>MagicNumber:TagStagingPanel.kt$TagStagingPanel.&lt;no name provided>$4</ID>
+    <ID>MagicNumber:TagStagingPanel.kt$TagStagingPanel.&lt;no name provided>$6</ID>
+    <ID>MatchingDeclarationName:BranchSelectorLogic.kt$BranchSettleAction</ID>
+    <ID>MatchingDeclarationName:TriggerDefaultLogic.kt$TriggerDefaultAction</ID>
+    <ID>MaximumLineLength:AutomationConfigurable.kt$AutomationConfigurable$ </ID>
+    <ID>MaximumLineLength:AutomationPanel.kt$AutomationPanel$ </ID>
+    <ID>MaximumLineLength:AutomationSettingsService.kt$AutomationSettingsService.SuiteConfig$ </ID>
+    <ID>MaximumLineLength:BaselineCacheService.kt$BaselineCacheService$ </ID>
+    <ID>MaximumLineLength:BaselineCacheServiceTest.kt$BaselineCacheServiceTest$ </ID>
+    <ID>MaximumLineLength:BranchSelectorSettleTest.kt$BranchSelectorSettleTest$ </ID>
+    <ID>MaximumLineLength:MonitorPanel.kt$MonitorPanel$ </ID>
+    <ID>MaximumLineLength:QueueService.kt$QueueService$ </ID>
+    <ID>MaximumLineLength:QueueServiceTest.kt$QueueServiceTest$ </ID>
+    <ID>MaximumLineLength:SuiteConfigPanelSortTest.kt$SuiteConfigPanelSortTest$ </ID>
+    <ID>MaximumLineLength:TagBuilderService.kt$TagBuilderService$ </ID>
+    <ID>MaximumLineLength:TagDetectionPerJobTest.kt$TagDetectionPerJobTest$ </ID>
+    <ID>MaximumLineLength:TagHistoryService.kt$TagHistoryService$ </ID>
+    <ID>MaximumLineLength:TagStagingPanel.kt$TagStagingPanel$ </ID>
+    <ID>MultiLineIfElse:AutomationConfigurable.kt$AutomationConfigurable$null</ID>
+    <ID>MultiLineIfElse:AutomationConfigurable.kt$AutomationConfigurable$stagesText.split(",").map { it.trim() }.filter { it.isNotBlank() }.toMutableList()</ID>
+    <ID>MultiLineIfElse:AutomationPanel.kt$AutomationPanel$(0 until branchCombo.itemCount) .firstOrNull { (branchCombo.getItemAt(it) as BranchComboItem).branchKey == target.branchKey } ?: 0</ID>
+    <ID>MultiLineIfElse:AutomationPanel.kt$AutomationPanel$0</ID>
+    <ID>MultiLineIfElse:AutomationPanel.kt$AutomationPanel$TagDetectionResult.noTagInLog(event.resultKey)</ID>
+    <ID>MultiLineIfElse:AutomationPanel.kt$AutomationPanel$TagDetectionResult.success(tag, event.resultKey)</ID>
+    <ID>MultiLineIfElse:AutomationPanel.kt$AutomationPanel$null</ID>
+    <ID>MultiLineIfElse:MonitorPanel.kt$MonitorPanel$all</ID>
+    <ID>MultiLineIfElse:MonitorPanel.kt$MonitorPanel$all.filter { it.filterBucket == currentFilter }</ID>
+    <ID>MultiLineIfElse:MonitorPanel.kt$MonitorPanel$null</ID>
+    <ID>MultiLineIfElse:MonitorPanel.kt$MonitorPanel$showRunDetail(selected)</ID>
+    <ID>MultiLineIfElse:MonitorPanel.kt$MonitorPanel.Companion$""</ID>
+    <ID>MultiLineIfElse:MonitorPanel.kt$MonitorPanel.Companion$MonitorFilter.FAILED</ID>
+    <ID>MultiLineIfElse:MonitorPanel.kt$MonitorPanel.Companion$MonitorFilter.QUEUED</ID>
+    <ID>MultiLineIfElse:MonitorPanel.kt$MonitorPanel.RunListCellRenderer$list.selectionBackground</ID>
+    <ID>MultiLineIfElse:QueueService.kt$QueueService$it</ID>
+    <ID>MultiLineIfElse:QueueService.kt$QueueService$it.copy( status = QueueEntryStatus.QUEUED_ON_BAMBOO, bambooResultKey = triggerResult.data )</ID>
+    <ID>MultiLineIfElse:SuiteConfigPanel.kt$SuiteConfigPanel.CategoryGroupedRenderer$UIManager.getColor("List.background")</ID>
+    <ID>MultiLineIfElse:SuiteConfigPanel.kt$SuiteConfigPanel.CategoryGroupedRenderer$UIManager.getColor("List.foreground")</ID>
+    <ID>MultiLineIfElse:SuiteConfigPanel.kt$SuiteConfigPanel.CategoryGroupedRenderer$list?.selectionBackground ?: UIManager.getColor("List.background")</ID>
+    <ID>MultiLineIfElse:SuiteConfigPanel.kt$SuiteConfigPanel.CategoryGroupedRenderer$list?.selectionForeground ?: UIManager.getColor("List.foreground")</ID>
+    <ID>NoBlankLineBeforeRbrace:AutomationConfigurable.kt$AutomationConfigurable$ </ID>
+    <ID>NoBlankLineBeforeRbrace:AutomationModelsTest.kt$AutomationModelsTest$ </ID>
+    <ID>NoBlankLineBeforeRbrace:AutomationSettingsServiceTest.kt$AutomationSettingsServiceTest$ </ID>
+    <ID>NoBlankLineBeforeRbrace:QueueServiceTest.kt$QueueServiceTest$ </ID>
+    <ID>NoConsecutiveBlankLines:QueueServiceTest.kt$QueueServiceTest$ </ID>
+    <ID>NoMultipleSpaces:AutomationPanel.kt$AutomationPanel$ </ID>
+    <ID>NoMultipleSpaces:DockerTagRegexBoundTest.kt$DockerTagRegexBoundTest$ </ID>
+    <ID>NoMultipleSpaces:MonitorPanel.kt$MonitorPanel$ </ID>
+    <ID>NoMultipleSpaces:MonitorPanel.kt$MonitorPanel.RunEntry$ </ID>
+    <ID>NoMultipleSpaces:PollingLifecycleTest.kt$PollingLifecycleTest$ </ID>
+    <ID>NoMultipleSpaces:QueueServiceTest.kt$QueueServiceTest$ </ID>
+    <ID>NoMultipleSpaces:TagBuilderService.kt$TagBuilderService$ </ID>
+    <ID>NoMultipleSpaces:TagBuilderServiceTest.kt$TagBuilderServiceTest$ </ID>
+    <ID>NoMultipleSpaces:TagDetectionPerJobTest.kt$TagDetectionPerJobTest$ </ID>
+    <ID>NoMultipleSpaces:TagHistoryServiceTest.kt$TagHistoryServiceTest$ </ID>
+    <ID>NoUnusedImports:AutomationConfigurable.kt$com.workflow.orchestrator.automation.settings.AutomationConfigurable.kt</ID>
+    <ID>NoUnusedImports:TagBuilderServiceTest.kt$com.workflow.orchestrator.automation.service.TagBuilderServiceTest.kt</ID>
+    <ID>NoWildcardImports:AutomationModelsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:AutomationPanel.kt$import com.workflow.orchestrator.automation.model.*</ID>
+    <ID>NoWildcardImports:AutomationPanel.kt$import com.workflow.orchestrator.automation.service.*</ID>
+    <ID>NoWildcardImports:AutomationPanel.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:AutomationPanel.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:AutomationPanelTriggerDefaultTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:AutomationSettingsServiceDefaultStagesTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:AutomationSettingsServiceSelectedBranchTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:AutomationSettingsServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:AutomationStatusBarWidgetFactory.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:BaselineCacheServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BranchSelectorSettleTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:DockerTagsJsonParserTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:MonitorPanel.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:MonitorPanel.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:QueueServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SuiteConfigPanel.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:TagBuilderService.kt$import com.workflow.orchestrator.automation.model.*</ID>
+    <ID>NoWildcardImports:TagBuilderServiceTest.kt$import com.workflow.orchestrator.automation.model.*</ID>
+    <ID>NoWildcardImports:TagBuilderServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:TagHistoryServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:TagStagingPanel.kt$import javax.swing.*</ID>
+    <ID>ParameterListWrapping:AutomationPanel.kt$AutomationPanel.&lt;no name provided>$( list: JList&lt;out BranchComboItem>, value: BranchComboItem?, index: Int, selected: Boolean, hasFocus: Boolean )</ID>
+    <ID>ParameterListWrapping:BaselineCacheServiceTest.kt$BaselineCacheServiceTest$(@TempDir tmp: Path)</ID>
+    <ID>ParameterListWrapping:MonitorPanel.kt$MonitorPanel.RunListCellRenderer$( list: JList&lt;out RunEntry>, value: RunEntry?, index: Int, isSelected: Boolean, cellHasFocus: Boolean )</ID>
+    <ID>ParameterListWrapping:TagStagingPanel.kt$TagStagingPanel.&lt;no name provided>$( table: JTable, value: Any?, isSelected: Boolean, hasFocus: Boolean, row: Int, col: Int )</ID>
+    <ID>ParameterListWrapping:TagStagingPanel.kt$TagStagingPanel.TagTableCellRenderer$( table: JTable, value: Any?, isSelected: Boolean, hasFocus: Boolean, row: Int, col: Int )</ID>
+    <ID>PropertyWrapping:BaselineCacheService.kt$BaselineCacheService$val tmp = File(cacheDir, "baseline-cache.json.tmp.${System.currentTimeMillis()}.${(Math.random() * 100000).toInt()}")</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:AutomationModels.kt$QueueEntryStatus$TAG_INVALID</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:AutomationPanel.kt$AutomationPanel$/** * The focused build from [WorkflowContextService] — drives docker-tag detection. * Null when no PR is focused or chain-key resolution failed. */ @Volatile private var currentFocusBuild: BuildRef? = null</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:AutomationPanel.kt$AutomationPanel$/** The committed branch selection (null = default/master). Updated only when a selection is accepted. */ @Volatile private var selectedBranchItem: BranchComboItem? = null</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:AutomationModels.kt$QueueEntryStatus.TAG_INVALID$// Kept for backwards-compat with pre-L3 persisted SQLite rows.</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:AutomationPanel.kt$AutomationPanel$/** * Baseline picker (PR 7 #8) — shows the auto-selected build + all parseable * alternatives. Selecting a different entry swaps the staged tags to that * build's `dockerTagsAsJson`. Hidden until at least one parseable build is * found; populated from [BaselineLoadResult.allRanked]. * * Declared before [baselinePickerRow] / [diagnosticPanel] because Kotlin * initializes properties in declaration order and the panel references it. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:AutomationPanel.kt$AutomationPanel$/** * The focused build from [WorkflowContextService] — drives docker-tag detection. * Null when no PR is focused or chain-key resolution failed. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:AutomationPanel.kt$AutomationPanel$/** Remembered alternatives so the combo listener can resolve the picked entry. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:AutomationPanel.kt$AutomationPanel$/** The committed branch selection (null = default/master). Updated only when a selection is accepted. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:AutomationPanel.kt$AutomationPanel$/** True while a disabled-branch enable prompt/enable call is being handled, so overlapping settle events don't stack a second dialog. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:AutomationPanel.kt$AutomationPanel$// A-P1-6: monotonically incremented on each suite/branch switch so stale</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:BaselineCacheService.kt$BaselineCacheService$// Guards the in-memory [entries] map and the [writeSeq] counter. Held only</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:BaselineCacheService.kt$BaselineCacheService$// Serializes disk writes w.r.t. each other (so two puts can't interleave a</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:QueueService.kt$QueueService.Companion$/** Delegates to the canonical set on the enum — single source of truth. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:TagBuilderService.kt$TagBuilderService$// A-P2-2: reject pre-release / build-metadata suffixes so e.g. "1.2.3-rc1" or</ID>
+    <ID>StringTemplate:TagBuilderService.kt$TagBuilderService$${suitePlanKey}</ID>
+    <ID>UnusedPrivateProperty:AutomationConfigurable.kt$AutomationConfigurable$val projectName = (projectCombo.selectedItem as? AutomationProjectItem)?.name ?: ""</ID>
+    <ID>UnusedPrivateProperty:QueueServiceTest.kt$QueueServiceTest$val e1 = makeEntry(id = "q-1", status = QueueEntryStatus.QUEUED_ON_BAMBOO).copy(bambooResultKey = "PROJ-AUTO-100")</ID>
+    <ID>UnusedPrivateProperty:QueueServiceTest.kt$QueueServiceTest$val e2 = makeEntry(id = "q-2", status = QueueEntryStatus.QUEUED_ON_BAMBOO).copy(bambooResultKey = "PROJ-AUTO-101")</ID>
+    <ID>WildcardImport:AutomationModelsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:AutomationPanel.kt$import com.workflow.orchestrator.automation.model.*</ID>
+    <ID>WildcardImport:AutomationPanel.kt$import com.workflow.orchestrator.automation.service.*</ID>
+    <ID>WildcardImport:AutomationPanel.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:AutomationPanel.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:AutomationPanelTriggerDefaultTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:AutomationSettingsServiceDefaultStagesTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:AutomationSettingsServiceSelectedBranchTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:AutomationSettingsServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:AutomationStatusBarWidgetFactory.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:BaselineCacheServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BranchSelectorSettleTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:DockerTagsJsonParserTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:MonitorPanel.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:MonitorPanel.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:QueueServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SuiteConfigPanel.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:TagBuilderService.kt$import com.workflow.orchestrator.automation.model.*</ID>
+    <ID>WildcardImport:TagBuilderServiceTest.kt$import com.workflow.orchestrator.automation.model.*</ID>
+    <ID>WildcardImport:TagBuilderServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:TagHistoryServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:TagStagingPanel.kt$import javax.swing.*</ID>
+    <ID>Wrapping:AutomationConfigurable.kt$AutomationConfigurable$(</ID>
+    <ID>Wrapping:AutomationConfigurable.kt$AutomationConfigurable$( this, project, listOf( ConnectionStatusBanner.Requirement.BAMBOO, ) )</ID>
+    <ID>Wrapping:AutomationConfigurable.kt$AutomationConfigurable$(JBLabel("Default stages:").apply { font = JBUI.Fonts.smallFont() foreground = StatusColors.SECONDARY_TEXT }, gbc)</ID>
+    <ID>Wrapping:AutomationConfigurable.kt$AutomationConfigurable$(JBScrollPane(suitesContainer).apply { preferredSize = Dimension(0, JBUI.scale(200)) border = null }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:AutomationConfigurable.kt$AutomationConfigurable$;</ID>
+    <ID>Wrapping:AutomationModelsTest.kt$AutomationModelsTest$(</ID>
+    <ID>Wrapping:AutomationPanel.kt$AutomationPanel$(</ID>
+    <ID>Wrapping:AutomationPanel.kt$AutomationPanel$(currentTags, CurrentRepoContext( serviceName = dockerTagKey, featureBranchTag = tagDetection.tag ))</ID>
+    <ID>Wrapping:AutomationPanel.kt$AutomationPanel$(tags, CurrentRepoContext( serviceName = dockerTagKey, featureBranchTag = tagDetection.tag ))</ID>
+    <ID>Wrapping:AutomationPanelTriggerDefaultTest.kt$AutomationPanelTriggerDefaultTest$(</ID>
+    <ID>Wrapping:AutomationSettingsServiceDefaultStagesTest.kt$AutomationSettingsServiceDefaultStagesTest$(</ID>
+    <ID>Wrapping:AutomationSettingsServiceSelectedBranchTest.kt$AutomationSettingsServiceSelectedBranchTest$(</ID>
+    <ID>Wrapping:AutomationSettingsServiceTest.kt$AutomationSettingsServiceTest$(</ID>
+    <ID>Wrapping:BaselineCacheServiceTest.kt$BaselineCacheServiceTest$(</ID>
+    <ID>Wrapping:BranchSelectorSettleTest.kt$BranchSelectorSettleTest$(</ID>
+    <ID>Wrapping:MonitorPanel.kt$MonitorPanel$(</ID>
+    <ID>Wrapping:MonitorPanel.kt$MonitorPanel$(JBLabel(message).apply { horizontalAlignment = SwingConstants.CENTER foreground = StatusColors.SECONDARY_TEXT }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:MonitorPanel.kt$MonitorPanel$it.bambooResultKey != null &amp;&amp; it.status in BAMBOO_POLLABLE_STATUSES</ID>
+    <ID>Wrapping:MonitorPanel.kt$MonitorPanel.&lt;no name provided>$(</ID>
+    <ID>Wrapping:MonitorPanel.kt$MonitorPanel.RunListCellRenderer.&lt;no name provided>$(</ID>
+    <ID>Wrapping:MonitorPanelRunEntryTest.kt$MonitorPanelRunEntryTest$(</ID>
+    <ID>Wrapping:PollingLifecycleTest.kt$PollingLifecycleTest$(</ID>
+    <ID>Wrapping:QueueService.kt$QueueService$(</ID>
+    <ID>Wrapping:QueueService.kt$QueueService$_tagHistoryService = it</ID>
+    <ID>Wrapping:QueueServiceTest.kt$QueueServiceTest$(</ID>
+    <ID>Wrapping:SuiteConfigPanel.kt$SuiteConfigPanel$(</ID>
+    <ID>Wrapping:SuiteConfigPanel.kt$SuiteConfigPanel$(JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply { add(overrideButton) }, BorderLayout.SOUTH)</ID>
+    <ID>Wrapping:SuiteConfigPanel.kt$SuiteConfigPanel$;</ID>
+    <ID>Wrapping:SuiteConfigPanel.kt$SuiteConfigPanel.SeparatorRow$(</ID>
+    <ID>Wrapping:SuiteConfigPanel.kt$SuiteConfigPanel.SeparatorRow$(JSeparator(SwingConstants.HORIZONTAL).apply { foreground = UIManager.getColor("Separator.foreground") ?: UIManager.getColor("Component.borderColor") ?: java.awt.Color.GRAY }, BorderLayout.SOUTH)</ID>
+    <ID>Wrapping:TagBuilderService.kt$TagBuilderService$(</ID>
+    <ID>Wrapping:TagBuilderService.kt$TagBuilderService$PluginSettings.getInstance(it).state.bambooBuildVariableName ?.takeIf { v -> v.isNotBlank() }</ID>
+    <ID>Wrapping:TagBuilderServiceTest.kt$TagBuilderServiceTest$(</ID>
+    <ID>Wrapping:TagDetectionPerJobTest.kt$TagDetectionPerJobTest$bamboo.getBuildLog("PROJ-XYZ-JOB1-10")</ID>
+    <ID>Wrapping:TagHistoryService.kt$TagHistoryService$(</ID>
+    <ID>Wrapping:TagHistoryServiceTest.kt$TagHistoryServiceTest$(</ID>
+    <ID>Wrapping:TagStagingPanel.kt$TagStagingPanel$(</ID>
+  </CurrentIssues>
+</SmellBaseline>

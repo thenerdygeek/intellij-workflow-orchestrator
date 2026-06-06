@@ -7,6 +7,7 @@ plugins {
     alias(libs.plugins.intelliJPlatform)
     alias(libs.plugins.changelog)
     alias(libs.plugins.kover)
+    alias(libs.plugins.detekt)
 }
 
 group = providers.gradleProperty("pluginGroup").get()
@@ -61,6 +62,38 @@ subprojects {
     tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
         // 4g (was 2g): the growing :agent test suite (monitor framework sources + MockK/MockWebServer/coroutine fixtures retained across a single forked JVM) OOMed at 2g — 2026-06-05.
         maxHeapSize = "4g"
+    }
+}
+
+// ---- Static Analysis (detekt) ----
+// Captured at top-level script scope where the `libs` version-catalog accessor resolves;
+// `libs` is NOT available inside the subprojects {} closure, so we hoist the provider here.
+val detektFormatting = libs.detekt.formatting
+subprojects {
+    apply(plugin = "io.gitlab.arturbosch.detekt")
+
+    extensions.configure<io.gitlab.arturbosch.detekt.extensions.DetektExtension> {
+        buildUponDefaultConfig = true
+        config.setFrom(rootProject.files("config/detekt/detekt.yml"))
+        // Per-module baseline (NOT a single shared file): each module's detektBaseline task
+        // writes its own baseline, so a shared path would be overwritten last-write-wins and
+        // leave most modules un-baselined. Resolves against each subproject's projectDir.
+        baseline = file("detekt-baseline.xml")
+        parallel = true
+    }
+
+    dependencies {
+        add("detektPlugins", detektFormatting)
+    }
+
+    tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
+        jvmTarget = providers.gradleProperty("javaVersion").get()
+        reports {
+            html.required.set(true)
+            xml.required.set(false)
+            sarif.required.set(false)
+            txt.required.set(false)
+        }
     }
 }
 configurations.configureEach {

@@ -490,18 +490,30 @@ class QueueServiceTest {
         // terminal rows.  `getActiveQueueEntries` would mask the bug because
         // CANCELLED is in QueueEntryStatus.TERMINAL and therefore filtered out by
         // the SQL exclusion list regardless of whether the row still exists.
+        // dismiss() deletes the row asynchronously on Dispatchers.IO, so poll until the
+        // background DELETE commits rather than probing once. A single immediate read
+        // races the delete on slower CI hardware (this test flaked only on Linux CI, never
+        // on the faster macOS dev box). If the row is genuinely never deleted, the poll
+        // window is exhausted and the final assertion still fails with a clear message.
         Class.forName("org.sqlite.JDBC")
-        val conn = java.sql.DriverManager.getConnection("jdbc:sqlite:$dbFile")
-        try {
-            conn.prepareStatement("SELECT COUNT(*) FROM queue_entries WHERE id = ?").use { stmt ->
-                stmt.setString(1, "dismiss-1")
-                val rs = stmt.executeQuery()
-                assertTrue(rs.next())
-                assertEquals(0, rs.getInt(1),
-                    "dismiss() must call TagHistoryService.deleteQueueEntry so the row is removed from automation.db")
+        fun remainingRows(): Int =
+            java.sql.DriverManager.getConnection("jdbc:sqlite:$dbFile").use { conn ->
+                conn.prepareStatement("SELECT COUNT(*) FROM queue_entries WHERE id = ?").use { stmt ->
+                    stmt.setString(1, "dismiss-1")
+                    stmt.executeQuery().use { rs ->
+                        rs.next()
+                        rs.getInt(1)
+                    }
+                }
             }
+        try {
+            runCatching { awaitState(3000) { remainingRows() == 0 } }
+            assertEquals(
+                0,
+                remainingRows(),
+                "dismiss() must call TagHistoryService.deleteQueueEntry so the row is removed from automation.db",
+            )
         } finally {
-            conn.close()
             tagHistory.close()
             scopeForTest.cancel()
         }

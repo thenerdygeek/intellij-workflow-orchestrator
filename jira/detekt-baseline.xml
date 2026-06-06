@@ -1,0 +1,677 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ArgumentListWrapping:AttachmentDownloadService.kt$AttachmentDownloadService$("[Jira:Attachment] Thumbnail download failed for ${attachment.filename}: HTTP ${response.code}")</ID>
+    <ID>ArgumentListWrapping:BranchNameValidator.kt$BranchNameValidator$("[Jira:Branch] Validation failed: branch name '$name' does not contain a ticket ID pattern (e.g. PROJ-123)")</ID>
+    <ID>ArgumentListWrapping:BranchingService.kt$BranchingService$("[Jira:Branch] Creating remote branch '$branchName' from '$sourceBranch' for ${issue.key} in $projectKey/$repoSlug (pinned root: ${localVcsRootPath ?: "&lt;none>"})")</ID>
+    <ID>ArgumentListWrapping:BranchingService.kt$BranchingService$("[Jira:Branch] Opening transition dialog for $issueKey, pre-selecting '${target.toStatus.name}' (id=${target.id})")</ID>
+    <ID>ArgumentListWrapping:BranchingService.kt$BranchingService$("[Jira:Branch] Start Work transition prompt skipped: ticketTransitionDefaultStartWorkStatusName is empty")</ID>
+    <ID>ArgumentListWrapping:BranchingService.kt$BranchingService$("[Jira:Branch] Using existing branch '$branchName' for ${issue.key} (pinned root: ${localVcsRootPath ?: "&lt;none>"})")</ID>
+    <ID>ArgumentListWrapping:BranchingServiceTest.kt$BranchingServiceTest$( id = "10001", key = "PROJ-123", fields = JiraIssueFields( summary = "Fix login", status = JiraStatus(name = "To Do"), ), )</ID>
+    <ID>ArgumentListWrapping:BranchingServiceTest.kt$BranchingServiceTest$(1, result.size, "Fallback must return only branches whose displayId contains the ticket key; got: $result")</ID>
+    <ID>ArgumentListWrapping:BranchingServiceTest.kt$BranchingServiceTest$(result.isEmpty(), "When neither dev-status nor Bitbucket filter finds a match, result must be empty; got: $result")</ID>
+    <ID>ArgumentListWrapping:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$(branchLabel.toolTipText?.contains("+2 more matching branch") == true, "expected multi-match tooltip, got '${branchLabel.toolTipText}'")</ID>
+    <ID>ArgumentListWrapping:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$(emptyList())</ID>
+    <ID>ArgumentListWrapping:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$(host, LocateResult.Configured(emptyList()), "ABC-123", onSettingsClick = {}, onSwitchClick = {})</ID>
+    <ID>ArgumentListWrapping:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$(host, LocateResult.Configured(listOf(theRow)), "ABC-123", onSettingsClick = {}, onSwitchClick = {})</ID>
+    <ID>ArgumentListWrapping:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$(host, LocateResult.NoReposConfigured, "ABC-123", onSettingsClick = { settingsClicked += 1 }, onSwitchClick = {})</ID>
+    <ID>ArgumentListWrapping:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$(java.awt.event.MouseEvent(switchLabel, 0, 0L, 0, 0, 0, 1, false))</ID>
+    <ID>ArgumentListWrapping:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$(labels.any { it.contains("RepoA") &amp;&amp; it.contains("feature/ABC-123") &amp;&amp; it.contains("→ develop") }, "RepoA row missing: $labels")</ID>
+    <ID>ArgumentListWrapping:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$(labels.any { it.contains("RepoB") &amp;&amp; it.contains("feature/ABC-123-api") &amp;&amp; it.contains("→ main") }, "RepoB row missing: $labels")</ID>
+    <ID>ArgumentListWrapping:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$(listOf(theRow))</ID>
+    <ID>ArgumentListWrapping:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$(switchLabel, 0, 0L, 0, 0, 0, 1, false)</ID>
+    <ID>ArgumentListWrapping:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$(theRow)</ID>
+    <ID>ArgumentListWrapping:DevStatusSection.kt$DevStatusSection$("BRANCHES", bundle.branches.map { renderBranchRow(it) }, bundle.builds.isEmpty() &amp;&amp; bundle.pullRequests.isEmpty())</ID>
+    <ID>ArgumentListWrapping:DevStatusSection.kt$DevStatusSection$(12)</ID>
+    <ID>ArgumentListWrapping:DevStatusSection.kt$DevStatusSection$(DEFAULT_BADGE_BG, StatusColors.SECONDARY_TEXT, StatusColors.BORDER, StatusColors.SECONDARY_TEXT)</ID>
+    <ID>ArgumentListWrapping:DevStatusSection.kt$DevStatusSection$(badgeBg, badgeFg, deployment.state.uppercase().take(12), borderColor, deployment.displayName, StatusColors.SECONDARY_TEXT, deployment.url, envLabel)</ID>
+    <ID>ArgumentListWrapping:DevStatusSection.kt$DevStatusSection$(it)</ID>
+    <ID>ArgumentListWrapping:DevStatusSection.kt$DevStatusSection.&lt;no name provided>$(badgeText, (width - fm.stringWidth(badgeText)) / 2, (height + fm.ascent - fm.descent) / 2)</ID>
+    <ID>ArgumentListWrapping:DevStatusSectionTest.kt$DevStatusSectionTest$("abc1234abc1234abc1234abc1234abc1234abc1234", "abc1234", "fix thing", "", null, null, false)</ID>
+    <ID>ArgumentListWrapping:DevStatusSectionTest.kt$DevStatusSectionTest$("abc1234abc1234abc1234abc1234abc1234abc1234", "abc1234", "msg", "", null, null, false)</ID>
+    <ID>ArgumentListWrapping:DevStatusSectionTest.kt$DevStatusSectionTest$("def5678def5678def5678def5678def5678def5678", "def5678", "add feature", "", null, null, false)</ID>
+    <ID>ArgumentListWrapping:DevStatusSectionTest.kt$DevStatusSectionTest$(DevStatusCommitData("abc1234abc1234abc1234abc1234abc1234abc1234", "abc1234", "msg", "", null, null, false))</ID>
+    <ID>ArgumentListWrapping:EntityPickerWidgetsTest.kt$EntityPickerWidgetsTest$( "sprint", "Sprint", false, FieldSchema.SingleSelect(SelectSource.AutoCompleteUrl), emptyList(), "/rest/agile/autocomplete?query=", null )</ID>
+    <ID>ArgumentListWrapping:EntityPickerWidgetsTest.kt$EntityPickerWidgetsTest$( "sprint", "Sprint", true, FieldSchema.SingleSelect(SelectSource.AutoCompleteUrl), emptyList(), "/rest/agile/autocomplete?query=", null )</ID>
+    <ID>ArgumentListWrapping:EntityPickerWidgetsTest.kt$EntityPickerWidgetsTest$( "sprints", "Sprints", false, FieldSchema.MultiSelect(SelectSource.AutoCompleteUrl), emptyList(), "/rest/agile/autocomplete?query=", null )</ID>
+    <ID>ArgumentListWrapping:FieldWidgetFactoryTest.kt$FieldWidgetFactoryTest$( id = "labels", name = "Labels", required = false, schema = FieldSchema.Labels, allowedValues = emptyList(), autoCompleteUrl = null, defaultValue = null )</ID>
+    <ID>ArgumentListWrapping:FieldWidgetFactoryTest.kt$FieldWidgetFactoryTest$( id = "watchers", name = "Watchers", required = false, schema = FieldSchema.User(multi = true), allowedValues = emptyList(), autoCompleteUrl = null, defaultValue = null )</ID>
+    <ID>ArgumentListWrapping:JiraApiClient.kt$JiraApiClient$("/rest/agile/1.0/board/$boardId/sprint?state=closed&amp;startAt=$startAt&amp;maxResults=$maxResults")</ID>
+    <ID>ArgumentListWrapping:JiraApiClient.kt$JiraApiClient$("[Jira:API] GET /rest/agile/1.0/board/$boardId/sprint?state=closed&amp;startAt=$startAt&amp;maxResults=$maxResults")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientSameOriginTest.kt$JiraApiClientSameOriginTest$(MockResponse().setBody("""[{"id":1}]""").setResponseCode(200) .addHeader("Content-Type", "application/json"))</ID>
+    <ID>ArgumentListWrapping:JiraApiClientSameOriginTest.kt$JiraApiClientSameOriginTest$(MockResponse().setBody("""{"key":"value"}""").setResponseCode(200) .addHeader("Content-Type", "application/json"))</ID>
+    <ID>ArgumentListWrapping:JiraApiClientSameOriginTest.kt$JiraApiClientSameOriginTest$(MockResponse().setBody("""{"status":"ok"}""").setResponseCode(200) .addHeader("Content-Type", "application/json"))</ID>
+    <ID>ArgumentListWrapping:JiraApiClientSameOriginTest.kt$JiraApiClientSameOriginTest$(server.takeRequest(0, java.util.concurrent.TimeUnit.MILLISECONDS), "No HTTP request should have been issued to the mock server for a cross-host URL")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientSearchIssuesTest.kt$JiraApiClientSearchIssuesTest$(0, server.requestCount, "No HTTP request must be made when input contains a control character")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientSearchIssuesTest.kt$JiraApiClientSearchIssuesTest$(0, server.requestCount, "No HTTP request must be made when input exceeds MAX_SEARCH_TEXT_LENGTH")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientSearchIssuesTest.kt$JiraApiClientSearchIssuesTest$(1, server.requestCount, "Exactly one HTTP request must be made for text of exactly MAX_SEARCH_TEXT_LENGTH")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientSearchIssuesTest.kt$JiraApiClientSearchIssuesTest$(ErrorType.VALIDATION_ERROR, err.type, "Control character in text must map to VALIDATION_ERROR, got: ${err.type}")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientSearchIssuesTest.kt$JiraApiClientSearchIssuesTest$(ErrorType.VALIDATION_ERROR, err.type, "Oversized text must map to VALIDATION_ERROR, got: ${err.type}")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientTest.kt$JiraApiClientTest$(ErrorType.PARSE_ERROR, err.type, "Non-JSON content-type on a 200 must map to PARSE_ERROR, got: ${err.type}")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientTest.kt$JiraApiClientTest$(body.contains(""""fields":["summary","status"]"""), "Expected fields=[summary,status], got: $body")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientTest.kt$JiraApiClientTest$(body.contains(""""jql":"key in (PROJ-1,PROJ-2)""""), "Expected JQL key-in body, got: $body")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientTest.kt$JiraApiClientTest$(err.message.contains("HTML", ignoreCase = true), "Error message should mention HTML, got: ${err.message}")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientTest.kt$JiraApiClientTest$(err.message.contains("application/xml", ignoreCase = true) || err.message.contains("Content-Type", ignoreCase = true), "Error message should mention the unexpected content-type, got: ${err.message}")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientTest.kt$JiraApiClientTest$(recorded.path!!.contains("expand=groups,applicationRoles"), "Expected expand=groups,applicationRoles, got: ${recorded.path}")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientTest.kt$JiraApiClientTest$(recorded.path!!.contains("expand=renderedFields,changelog"), "Expected expand=renderedFields,changelog, got: ${recorded.path}")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientTest.kt$JiraApiClientTest$(recorded.path!!.contains("projectKey=MYPROJ"), "Expected projectKey=MYPROJ, got: ${recorded.path}")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientTest.kt$JiraApiClientTest$(recorded.path!!.contains("username=jdoe"), "Expected username=jdoe, got: ${recorded.path}")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientTest.kt$JiraApiClientTest$(recorded.path!!.startsWith("/rest/api/2/issue/PROJ-1/watchers"), "Expected watchers path, got: ${recorded.path}")</ID>
+    <ID>ArgumentListWrapping:JiraApiClientTest.kt$JiraApiClientTest$(recorded.path!!.startsWith("/rest/api/2/mypermissions"), "Expected /rest/api/2/mypermissions, got: ${recorded.path}")</ID>
+    <ID>ArgumentListWrapping:JiraFieldsCacheInvalidateTest.kt$JiraFieldsCacheInvalidateTest$(2, server.requestCount, "Second call must hit MockWebServer again after invalidateFieldsCache(); got ${server.requestCount}.")</ID>
+    <ID>ArgumentListWrapping:JiraSearchServiceImpl.kt$JiraSearchServiceImpl$(data = emptyList(), summary = "Label suggestions not available on this Jira instance.")</ID>
+    <ID>ArgumentListWrapping:JiraSearchServiceImplTest.kt$JiraSearchServiceImplTest$(0, server.requestCount - 1, "Expected exactly 1 HTTP call due to caching, but server received ${server.requestCount}")</ID>
+    <ID>ArgumentListWrapping:JiraSearchServiceImplTest.kt$JiraSearchServiceImplTest$(request.path!!.contains("&amp;query=opt"), "Expected '&amp;' separator before query, got: ${request.path}")</ID>
+    <ID>ArgumentListWrapping:JiraSearchServiceImplTest.kt$JiraSearchServiceImplTest$(request.path!!.contains("/rest/api/2/project/MYPROJ/components"), "Expected project components path, got: ${request.path}")</ID>
+    <ID>ArgumentListWrapping:JiraSearchServiceImplTest.kt$JiraSearchServiceImplTest$(request.path!!.contains("/rest/api/2/project/MYPROJ/versions"), "Expected project versions path, got: ${request.path}")</ID>
+    <ID>ArgumentListWrapping:JiraSearchServiceImplTest.kt$JiraSearchServiceImplTest$(request.path!!.contains("?query=Hi"), "Expected '?' separator before query, got: ${request.path}")</ID>
+    <ID>ArgumentListWrapping:JiraSearchServiceImplTest.kt$JiraSearchServiceImplTest$(request.path!!.contains("issueKey=ABC-1"), "Expected issueKey=ABC-1 in path: ${request.path}")</ID>
+    <ID>ArgumentListWrapping:JiraSearchServiceImplTest.kt$JiraSearchServiceImplTest$(request.path!!.contains("query=Hi"), "Expected query=Hi in request path, got: ${request.path}")</ID>
+    <ID>ArgumentListWrapping:JiraSearchServiceImplTest.kt$JiraSearchServiceImplTest$(request.path!!.contains("query=alice"), "user/search must not use query= (Cloud-only); got: ${request.path}")</ID>
+    <ID>ArgumentListWrapping:JiraSearchServiceImplTest.kt$JiraSearchServiceImplTest$(request.path!!.contains("query=jd"), "Expected query=jd in path: ${request.path}")</ID>
+    <ID>ArgumentListWrapping:JiraSearchServiceImplTest.kt$JiraSearchServiceImplTest$(request.path!!.contains("username=alice"), "Expected username=alice (Jira Server requires username=, not query=), got: ${request.path}")</ID>
+    <ID>ArgumentListWrapping:JiraSearchServiceImplTest.kt$JiraSearchServiceImplTest$(request.path!!.startsWith("/rest/api/1.0/labels/suggest"), "Expected /rest/api/1.0/labels/suggest, got: ${request.path}")</ID>
+    <ID>ArgumentListWrapping:JiraSearchServiceImplTest.kt$JiraSearchServiceImplTest$(request.path!!.startsWith("/rest/api/2/groups/picker"), "Expected /rest/api/2/groups/picker, got: ${request.path}")</ID>
+    <ID>ArgumentListWrapping:JiraSearchServiceImplTest.kt$JiraSearchServiceImplTest$(request.path!!.startsWith("/rest/api/2/user/assignable/search"), "Expected assignable search path, got: ${request.path}")</ID>
+    <ID>ArgumentListWrapping:JiraSearchServiceImplTest.kt$JiraSearchServiceImplTest$(request.path!!.startsWith("/rest/api/2/user/search"), "Expected /rest/api/2/user/search, got: ${request.path}")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImpl.kt$JiraServiceImpl$( filename = "", mimeType = null, sizeBytes = 0, content = null, filePath = "", attachmentId = attachmentId )</ID>
+    <ID>ArgumentListWrapping:JiraServiceImpl.kt$JiraServiceImpl$( key = key, summary = "", status = "ERROR", assignee = null, reporter = null, type = "", priority = null, description = null )</ID>
+    <ID>ArgumentListWrapping:JiraServiceImpl.kt$JiraServiceImpl$("[JiraService] Failed to transition $issueKey to In Progress: ${outcome.summary}")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImpl.kt$JiraServiceImpl$("[JiraService] PRs fetch failed: ${prsResult.message}")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImpl.kt$JiraServiceImpl$("[JiraService] branches fetch failed: ${branchesResult.message}")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImpl.kt$JiraServiceImpl$("[JiraService] builds fetch failed: ${buildsResult.message}")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImpl.kt$JiraServiceImpl$("[JiraService] commits fetch failed: ${commitsResult.message}")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImpl.kt$JiraServiceImpl$("[JiraService] deployments fetch failed: ${deploymentsResult.message}")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImpl.kt$JiraServiceImpl$("[JiraService] reviews fetch failed: ${reviewsResult.message}")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImpl.kt$JiraServiceImpl$(data = deployments, summary = "Found ${deployments.size} deployment(s) for issue $issueId")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImpl.kt$JiraServiceImpl$(displayName = d.displayName, url = d.url, state = d.state, environmentName = d.environment?.displayName, environmentType = d.environment?.type, lastUpdated = d.lastUpdated)</ID>
+    <ID>ArgumentListWrapping:JiraServiceImpl.kt$JiraServiceImpl$(name = b.name, url = b.url, state = b.state, lastUpdated = b.lastUpdated, description = b.description)</ID>
+    <ID>ArgumentListWrapping:JiraServiceImpl.kt$JiraServiceImpl$(name = pr.name, url = pr.url, status = pr.status, lastUpdate = pr.lastUpdate)</ID>
+    <ID>ArgumentListWrapping:JiraServiceImpl.kt$JiraServiceImpl$(name = rv.name, url = rv.url, state = rv.state, reviewerNames = rv.reviewers.map { it.name }, lastUpdated = rv.lastUpdated)</ID>
+    <ID>ArgumentListWrapping:JiraServiceImpl.kt$JiraServiceImpl$(sha = c.id, displayId = c.displayId, message = c.message, url = c.url, authorName = c.author?.name, authorTimestamp = c.authorTimestamp, merge = c.merge)</ID>
+    <ID>ArgumentListWrapping:JiraServiceImplCommentAndWorklogTest.kt$JiraServiceImplCommentAndWorklogTest$( 2, server.requestCount, "First call hits both /role and /groups/picker (=2); cached second call must add no requests." )</ID>
+    <ID>ArgumentListWrapping:JiraServiceImplSearchTicketsValidationTest.kt$JiraServiceImplSearchTicketsValidationTest$("blank", ignoreCase = true)</ID>
+    <ID>ArgumentListWrapping:JiraServiceImplSearchTicketsValidationTest.kt$JiraServiceImplSearchTicketsValidationTest$(result.summary.contains("blank", ignoreCase = true), "Summary must mention blank; got: ${result.summary}")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImplSearchTicketsValidationTest.kt$JiraServiceImplSearchTicketsValidationTest$(result.summary.contains("length", ignoreCase = true) || result.summary.contains("exceed", ignoreCase = true))</ID>
+    <ID>ArgumentListWrapping:JiraServiceImplTest.kt$JiraServiceImplTest$(1, server.requestCount, "Only one HTTP request must be issued when the first page is the last page")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImplTest.kt$JiraServiceImplTest$(2, result.data!!.permissions.size, "Deprecated keys must be filtered out; expected EDIT_ISSUES + CREATE_ISSUES only.")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImplTest.kt$JiraServiceImplTest$(2, server.requestCount, "Exactly two HTTP requests must be issued — page 1 (success) and page 2 (failure)")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImplTest.kt$JiraServiceImplTest$(3, result.data!!.size, "2 histories with 2+1 items must flatten to 3 entries.")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImplTest.kt$JiraServiceImplTest$(3, result.data!!.size, "All issues across all sections must be returned, not just one section.")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImplTest.kt$JiraServiceImplTest$(MockResponse().setHeader("Content-Type", "application/json") .setBody("""{"total":102,"worklogs":[$page1]}"""))</ID>
+    <ID>ArgumentListWrapping:JiraServiceImplTest.kt$JiraServiceImplTest$(MockResponse().setHeader("Content-Type", "application/json") .setBody("""{"total":102,"worklogs":[$page2]}"""))</ID>
+    <ID>ArgumentListWrapping:JiraServiceImplTest.kt$JiraServiceImplTest$(result.data!!.permissions.containsKey("EDIT_ISSUE"), "Deprecated EDIT_ISSUE must not be present.")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImplTest.kt$JiraServiceImplTest$(result.data.isNullOrEmpty(), "total=0 response must yield an empty list, got: ${result.data}")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImplTest.kt$JiraServiceImplTest$(result.isError, "A 401 on the second page must propagate as an error, discarding already-collected page 1 data")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImplTest.kt$JiraServiceImplTest$(result.summary.contains("PROJ-1"), "Error summary should identify the issue; got: ${result.summary}")</ID>
+    <ID>ArgumentListWrapping:JiraServiceImplTest.kt$JiraServiceImplTest$(second.summary.contains("cached", ignoreCase = true), "Cached summary should advertise the cache; got: ${second.summary}")</ID>
+    <ID>ArgumentListWrapping:JiraTicketProviderImpl.kt$JiraTicketProviderImpl$("[Jira:TicketProvider] Could not read custom field $fieldId for $issueKey: ${result.message}")</ID>
+    <ID>ArgumentListWrapping:JiraTicketProviderImplTest.kt$JiraTicketProviderImplTest$("""{"id":"10001","key":"PROJ-123","fields":{"customfield_10001":"User can log in with valid credentials."}}""")</ID>
+    <ID>ArgumentListWrapping:JiraTransitionResponseParser.kt$JiraTransitionResponseParser$( id = id, name = name, required = required, schema = schema, allowedValues = allowed, autoCompleteUrl = autoCompleteUrl, defaultValue = null )</ID>
+    <ID>ArgumentListWrapping:JiraTransitionResponseParser.kt$JiraTransitionResponseParser$(allowed, autoCompleteUrl)</ID>
+    <ID>ArgumentListWrapping:JiraTransitionResponseParser.kt$JiraTransitionResponseParser$(sourceFor(allowed, autoCompleteUrl))</ID>
+    <ID>ArgumentListWrapping:JiraWorkflowConfigurable.kt$JiraWorkflowConfigurable$( this, project, listOf(ConnectionStatusBanner.Requirement.JIRA) )</ID>
+    <ID>ArgumentListWrapping:JiraWorkflowConfigurable.kt$JiraWorkflowConfigurable$("[JiraWorkflow:Settings] Hydrated board from app-level fallback: id=$selectedBoardId name='$selectedBoardName'")</ID>
+    <ID>ArgumentListWrapping:JiraWorkflowConfigurable.kt$JiraWorkflowConfigurable$("[JiraWorkflow:Settings] Search '$searchText' returned ${boards.size} boards")</ID>
+    <ID>ArgumentListWrapping:PostCommitTransitionHandlerFactory.kt$PostCommitTransitionHandler.&lt;no name provided>$("Open transition dialog\u2026")</ID>
+    <ID>ArgumentListWrapping:PostCommitTransitionHandlerFactory.kt$PostCommitTransitionHandler.&lt;no name provided>$(project, ticketId, transitionId = null)</ID>
+    <ID>ArgumentListWrapping:SimpleWidgetsTest.kt$SimpleWidgetsTest$( id = "startDate", name = "Start Date", required = false, schema = FieldSchema.DateTime, allowedValues = emptyList(), autoCompleteUrl = null, defaultValue = null )</ID>
+    <ID>ArgumentListWrapping:SingleCallerOfTransitionIssueTest.kt$SingleCallerOfTransitionIssueTest$( 1, callers.size, "Expected exactly 1 caller (TicketTransitionServiceImpl). Found ${callers.size}: $callers" )</ID>
+    <ID>ArgumentListWrapping:SprintDashboardPanel.kt$SprintDashboardPanel$("[Jira:UI] Hydrated board from app-level fallback: id=${conn.lastJiraBoardId} name='${conn.lastJiraBoardName}'")</ID>
+    <ID>ArgumentListWrapping:SprintDashboardPanel.kt$SprintDashboardPanel.StartWorkAction$( selectedIssue, fallbackPattern, settings.state.branchMaxSummaryLength )</ID>
+    <ID>ArgumentListWrapping:SprintDashboardPanel.kt$SprintDashboardPanel.StartWorkAction$( selectedIssue, pattern, settings.state.branchMaxSummaryLength )</ID>
+    <ID>ArgumentListWrapping:SprintDashboardPanel.kt$SprintDashboardPanel.StartWorkAction$( selectedIssue, pattern, settings.state.branchMaxSummaryLength, aiSummary = slug )</ID>
+    <ID>ArgumentListWrapping:SprintDashboardPanel.kt$SprintDashboardPanel.StartWorkAction$("[Jira:StartWork] BranchNameAiGenerator found: ${generator.javaClass.name}")</ID>
+    <ID>ArgumentListWrapping:SprintDashboardPanel.kt$SprintDashboardPanel.StartWorkAction$("[Jira:StartWork] Refresh failed for ${newRepo.displayLabel}: ${fetched.message}")</ID>
+    <ID>ArgumentListWrapping:SprintDashboardPanel.kt$SprintDashboardPanel.StartWorkAction$("[Jira:StartWork] activate-only — skipping branch creation and Jira transition for ${selectedIssue.key}")</ID>
+    <ID>ArgumentListWrapping:SprintDashboardPanel.kt$SprintDashboardPanel.StartWorkAction$("[Jira:UI] Start Work failed for ${selectedIssue.key}: ${result.message}")</ID>
+    <ID>ArgumentListWrapping:SprintDashboardPanel.kt$SprintDashboardPanel.StartWorkAction$("[Jira:UI] Started work on ${selectedIssue.key}, branch: ${result.data}")</ID>
+    <ID>ArgumentListWrapping:SprintDashboardPanel.kt$SprintDashboardPanel.StartWorkAction$("[Jira:UI] Started work on ${selectedIssue.key}, existing branch: ${result.data}")</ID>
+    <ID>ArgumentListWrapping:SprintDashboardPanel.kt$SprintDashboardPanel.StartWorkAction$(branchClient, newProjectKey, newRepoSlug)</ID>
+    <ID>ArgumentListWrapping:SprintDashboardPanel.kt$SprintDashboardPanel.StartWorkAction$(repoPath, dialogResult.branchName, dialogResult.sourceBranch)</ID>
+    <ID>ArgumentListWrapping:SprintFavouritesRenderingTest.kt$SprintFavouritesRenderingTest$(SavedFiltersSection.shouldShowSection(result), "Empty favourites list must hide the section.")</ID>
+    <ID>ArgumentListWrapping:SprintFavouritesRenderingTest.kt$SprintFavouritesRenderingTest$(SavedFiltersSection.shouldShowSection(result), "Error favourites load must hide the section.")</ID>
+    <ID>ArgumentListWrapping:SprintFavouritesRenderingTest.kt$SprintFavouritesRenderingTest$(SavedFiltersSection.shouldShowSection(result), "Non-empty favourites must show the section.")</ID>
+    <ID>ArgumentListWrapping:SprintFavouritesRenderingTest.kt$SprintFavouritesRenderingTest$(SavedFiltersSection.shouldShowSection(result), "isError trumps data presence — section must stay hidden.")</ID>
+    <ID>ArgumentListWrapping:SprintServiceTest.kt$SprintServiceTest$( id = "10001", key = "PROJ-123", fields = JiraIssueFields( summary = "Fix login", status = JiraStatus(name = "To Do") ) )</ID>
+    <ID>ArgumentListWrapping:SprintServiceTest.kt$SprintServiceTest$(1, result.size, "getClosedSprints error must degrade gracefully — return only active sprint without throwing")</ID>
+    <ID>ArgumentListWrapping:SprintServiceTest.kt$SprintServiceTest$(1, sprintService.getCachedIssues().size, "getCachedIssues must be updated after loadIssuesForSprint")</ID>
+    <ID>ArgumentListWrapping:SprintServiceTest.kt$SprintServiceTest$(id = 10, name = "Sprint Active", state = "active", endDate = "2026-06-01")</ID>
+    <ID>ArgumentListWrapping:SprintServiceTest.kt$SprintServiceTest$(id = 8, name = "Sprint Old", state = "closed", endDate = "2026-04-01")</ID>
+    <ID>ArgumentListWrapping:SprintServiceTest.kt$SprintServiceTest$(id = 9, name = "Sprint Recent", state = "closed", endDate = "2026-05-01")</ID>
+    <ID>ArgumentListWrapping:SprintServiceTest.kt$SprintServiceTest$(result.isSuccess, "getActiveSprints API error must trigger fallback to board issues, not propagate as error")</ID>
+    <ID>ArgumentListWrapping:SprintServiceTest.kt$SprintServiceTest$(sprintService.activeSprint, "activeSprint must remain null after falling back from a sprint API error")</ID>
+    <ID>ArgumentListWrapping:StartWorkDialog.kt$StartWorkDialog$("[Jira:StartWork] Dialog opened in dual-mode with ${existingBranches.size} existing branches for $ticketKey")</ID>
+    <ID>ArgumentListWrapping:StartWorkDialog.kt$StartWorkDialog$("[Jira:StartWork] Repo changed to index $newIdx (${repos.getOrNull(newIdx)?.displayLabel}) — refetching branches")</ID>
+    <ID>ArgumentListWrapping:StartWorkDialog.kt$StartWorkDialog$("[Jira:StartWork] User confirmed new branch: '${r.branchName}' from '${r.sourceBranch}' on repo index $selectedRepoIdx")</ID>
+    <ID>ArgumentListWrapping:StartWorkDialog.kt$StartWorkDialog$(newIdx)</ID>
+    <ID>ArgumentListWrapping:TicketDetailPanel.kt$TicketDetailPanel$("&lt;html>${HtmlEscape.escapeHtml(StringUtils.truncate(linkedIssue.fields.summary, 50))}&lt;/html>")</ID>
+    <ID>ArgumentListWrapping:TicketDetailPanel.kt$TicketDetailPanel$("&lt;html>${HtmlEscape.escapeHtml(StringUtils.truncate(subtask.fields.summary, 50))}&lt;/html>")</ID>
+    <ID>ArgumentListWrapping:TicketDetailPanel.kt$TicketDetailPanel$("&lt;html>&lt;body style='font-size:${JBUI.scale(11)}px; color:${colorToHex(StatusColors.SECONDARY_TEXT)};'>" + HtmlEscape.escapeHtml(comment.body).replace("\n", "&lt;br>") + "&lt;/body>&lt;/html>")</ID>
+    <ID>ArgumentListWrapping:TicketDetailPanel.kt$TicketDetailPanel$(BorderLayout())</ID>
+    <ID>ArgumentListWrapping:TicketDetailPanel.kt$TicketDetailPanel$(StringUtils.truncate(linkedIssue.fields.summary, 50))</ID>
+    <ID>ArgumentListWrapping:TicketDetailPanel.kt$TicketDetailPanel$(StringUtils.truncate(subtask.fields.summary, 50))</ID>
+    <ID>ArgumentListWrapping:TicketDetailPanel.kt$TicketDetailPanel$(linkedIssue.fields.summary, 50)</ID>
+    <ID>ArgumentListWrapping:TicketDetailPanel.kt$TicketDetailPanel$(subtask.fields.summary, 50)</ID>
+    <ID>ArgumentListWrapping:TicketDetailPanel.kt$TicketDetailPanel.&lt;no name provided>$( 0f, 0f, width.toFloat(), height.toFloat(), JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat() )</ID>
+    <ID>ArgumentListWrapping:TicketDetailPanel.kt$TicketDetailPanel.&lt;no name provided>$( 0f, 0f, width.toFloat(), height.toFloat(), JBUI.scale(6).toFloat(), JBUI.scale(6).toFloat() )</ID>
+    <ID>ArgumentListWrapping:TicketDetailPanel.kt$TicketDetailPanel.&lt;no name provided>$(0.5f, 0.5f, width - 1f, height - 1f, JBUI.scale(6).toFloat(), JBUI.scale(6).toFloat())</ID>
+    <ID>ArgumentListWrapping:TicketDetailPanel.kt$TicketDetailPanel.&lt;no name provided>$(0f, 0f, width.toFloat(), height.toFloat(), JBUI.scale(6).toFloat(), JBUI.scale(6).toFloat())</ID>
+    <ID>ArgumentListWrapping:TicketKeyCache.kt$TicketKeyCache$("[Jira:KeyCache] Validated: ${validKeys.size} valid, ${uncached.size - validKeys.size} invalid")</ID>
+    <ID>ArgumentListWrapping:TicketKeyCacheTest.kt$TicketKeyCacheTest$(500, validatedCount, "After adding 501 entries, evictIfNeeded must trim cache to MAX_SIZE=500; got $validatedCount validated entries")</ID>
+    <ID>ArgumentListWrapping:TicketKeyCacheTest.kt$TicketKeyCacheTest$(cache.get("PROJ-1"), "cache.get must return null for a key whose validation API call failed")</ID>
+    <ID>ArgumentListWrapping:TicketKeyCacheTest.kt$TicketKeyCacheTest$(cache.isValidated("PROJ-1"), "A key must NOT be cached when the API call returned an error")</ID>
+    <ID>ArgumentListWrapping:TicketListCellRenderer.kt$TicketListCellRenderer$( cursorX.toFloat(), assigneeY.toFloat(), assigneeW.toFloat(), assigneeH.toFloat(), JBUI.scale(3).toFloat(), JBUI.scale(3).toFloat() )</ID>
+    <ID>ArgumentListWrapping:TicketListCellRenderer.kt$TicketListCellRenderer$( cursorX.toFloat(), pillY.toFloat(), pillW.toFloat(), pillH.toFloat(), JBUI.scale(3).toFloat(), JBUI.scale(3).toFloat() )</ID>
+    <ID>ArgumentListWrapping:TicketListCellRenderer.kt$TicketListCellRenderer$( cursorX.toFloat(), typeBadgeY.toFloat(), typeBadgeW.toFloat(), typeBadgeH.toFloat(), JBUI.scale(3).toFloat(), JBUI.scale(3).toFloat() )</ID>
+    <ID>ArgumentListWrapping:TicketListCellRenderer.kt$TicketListCellRenderer$(RoundRectangle2D.Float(x.toFloat(), y.toFloat(), w.toFloat(), h.toFloat(), cornerRadius, cornerRadius))</ID>
+    <ID>ArgumentListWrapping:TicketListCellRenderer.kt$TicketListCellRenderer$(x.toFloat(), y.toFloat(), w.toFloat(), h.toFloat(), cornerRadius, cornerRadius)</ID>
+    <ID>ArgumentListWrapping:TicketTransitionServiceImpl.kt$TicketTransitionServiceImpl$(", ")</ID>
+    <ID>ArgumentListWrapping:TicketTransitionServiceImpl.kt$TicketTransitionServiceImpl$("[TicketTransition] Could not fetch current status for $ticketKey: ${r.message} — using sentinel")</ID>
+    <ID>ArgumentListWrapping:TicketTransitionServiceImpl.kt$TicketTransitionServiceImpl$("[TicketTransition] Missing required fields for $ticketKey transition ${meta.id}: ${missing.map { it.id }}")</ID>
+    <ID>ArgumentListWrapping:TicketTransitionServiceImplTest.kt$TicketTransitionServiceImplTest$(payload is TransitionError.InvalidTransition, "Expected TransitionError.InvalidTransition but got: ${payload?.javaClass?.simpleName}")</ID>
+    <ID>ArgumentListWrapping:TicketTransitionServiceImplTest.kt$TicketTransitionServiceImplTest$(payload is TransitionError.MissingFields, "Expected TransitionError.MissingFields but got: ${payload?.javaClass?.simpleName}")</ID>
+    <ID>ArgumentListWrapping:TicketTransitionServiceImplTest.kt$TicketTransitionServiceImplTest$(result.summary.contains("missing_required_fields") || result.summary.contains("Resolution"), "Expected missing-field signal in: ${result.summary}")</ID>
+    <ID>ArgumentListWrapping:TransitionInputSerializer.kt$TransitionInputSerializer$("id", v)</ID>
+    <ID>ArgumentListWrapping:TransitionInputSerializer.kt$TransitionInputSerializer$(id)</ID>
+    <ID>ArgumentListWrapping:TransitionInputSerializerTest.kt$TransitionInputSerializerTest$("""{"transition":{"id":"31"},"fields":{"assignee":{"name":"jdoe"}}}""", json(mapOf("assignee" to FieldValue.UserRef("jdoe"))))</ID>
+    <ID>ArgumentListWrapping:TransitionInputSerializerTest.kt$TransitionInputSerializerTest$("""{"transition":{"id":"31"},"fields":{"cf":[{"id":"1"},{"id":"2"}]}}""", json(mapOf("cf" to FieldValue.Options(listOf("1", "2")))))</ID>
+    <ID>ArgumentListWrapping:TransitionInputSerializerTest.kt$TransitionInputSerializerTest$("""{"transition":{"id":"31"},"fields":{"cf":{"value":"p","child":{"value":"c"}}}}""", json(mapOf("cf" to FieldValue.Cascade("p", "c"))))</ID>
+    <ID>ArgumentListWrapping:TransitionInputSerializerTest.kt$TransitionInputSerializerTest$("""{"transition":{"id":"31"},"fields":{"cf":{"value":"p"}}}""", json(mapOf("cf" to FieldValue.Cascade("p", null))))</ID>
+    <ID>ArgumentListWrapping:TransitionInputSerializerTest.kt$TransitionInputSerializerTest$("""{"transition":{"id":"31"},"fields":{"d":"2026-04-22"}}""", json(mapOf("d" to FieldValue.Date("2026-04-22"))))</ID>
+    <ID>ArgumentListWrapping:TransitionInputSerializerTest.kt$TransitionInputSerializerTest$("""{"transition":{"id":"31"},"fields":{"fixVersions":[{"id":"100"},{"id":"101"}]}}""", json(mapOf("fixVersions" to FieldValue.VersionRefs(listOf("100", "101")))))</ID>
+    <ID>ArgumentListWrapping:TransitionInputSerializerTest.kt$TransitionInputSerializerTest$("""{"transition":{"id":"31"},"fields":{"labels":["bug","p1"]}}""", json(mapOf("labels" to FieldValue.LabelList(listOf("bug", "p1")))))</ID>
+    <ID>ArgumentListWrapping:TransitionInputSerializerTest.kt$TransitionInputSerializerTest$("""{"transition":{"id":"31"},"fields":{"priority":{"id":"1"}}}""", json(mapOf("priority" to FieldValue.Option("1"))))</ID>
+    <ID>ArgumentListWrapping:TransitionInputSerializerTest.kt$TransitionInputSerializerTest$("""{"transition":{"id":"31"},"fields":{"txt":"hi","num":3.5}}""", json(mapOf("txt" to FieldValue.Text("hi"), "num" to FieldValue.Number(3.5))))</ID>
+    <ID>ArgumentListWrapping:WorklogSection.kt$WorklogSection.&lt;no name provided>$(0f, 0f, width.toFloat(), height.toFloat(), JBUI.scale(4).toFloat(), JBUI.scale(4).toFloat())</ID>
+    <ID>CommentWrapping:IssueDetailCache.kt$IssueDetailCache.&lt;no name provided>$/* accessOrder= */</ID>
+    <ID>ComplexCondition:JiraApiClient.kt$JiraApiClient$targetUri == null || baseUri == null || !targetUri.host.equals(baseUri.host, ignoreCase = true) || targetUri.scheme != baseUri.scheme</ID>
+    <ID>DestructuringDeclarationWithTooManyEntries:DevStatusSection.kt$DevStatusSection$val (badgeBg, badgeFg, borderColor, textFg) = when (statusText) { "OPEN" -> Quad(OPEN_BADGE_BG, OPEN_BADGE_FG, OPEN_BORDER, OPEN_TEXT) "MERGED" -> Quad(MERGED_BADGE_BG, MERGED_BADGE_FG, MERGED_BORDER, MERGED_TEXT) "DECLINED" -> Quad(DECLINED_BADGE_BG, DECLINED_BADGE_FG, DECLINED_BORDER, StatusColors.ERROR) else -> Quad(DEFAULT_BADGE_BG, StatusColors.SECONDARY_TEXT, StatusColors.BORDER, StatusColors.SECONDARY_TEXT) }</ID>
+    <ID>EmptyFunctionBlock:JiraSearchContributorFactory.kt$JiraSearchContributor${}</ID>
+    <ID>EmptyFunctionBlock:TimeTrackingCheckinHandlerFactory.kt$TimeTrackingCheckinHandler.&lt;no name provided>${}</ID>
+    <ID>Filename:CacheUtils.kt$com.workflow.orchestrator.jira.service.CacheUtils.kt</ID>
+    <ID>FunctionOnlyReturningConstant:JiraSearchServiceImpl.kt$JiraSearchServiceImpl$private fun notConfigured(): String</ID>
+    <ID>ImplicitDefaultLocale:TicketDetailPanel.kt$TicketDetailPanel.Companion$String.format("#%02x%02x%02x", color.red, color.green, color.blue)</ID>
+    <ID>ImportOrdering:BranchingService.kt$import com.intellij.openapi.application.invokeLater import com.intellij.openapi.application.readAction import com.intellij.openapi.components.service import com.intellij.openapi.project.Project import com.workflow.orchestrator.core.bitbucket.BitbucketBranch import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.ErrorType import com.workflow.orchestrator.core.services.jira.TicketTransitionService import com.workflow.orchestrator.core.services.jira.TransitionDialogOpener import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.jira.api.JiraApiClient import com.workflow.orchestrator.jira.api.dto.JiraIssue import com.intellij.openapi.diagnostic.Logger import git4idea.branch.GitBrancher import git4idea.commands.Git import git4idea.repo.GitRepositoryManager</ID>
+    <ID>ImportOrdering:CollapsibleSection.kt$import com.intellij.icons.AllIcons import com.intellij.ui.components.JBLabel import com.workflow.orchestrator.core.ui.StatusColors import com.intellij.util.ui.JBUI import java.awt.BorderLayout import java.awt.Cursor import java.awt.FlowLayout import java.awt.Font import java.awt.event.MouseAdapter import java.awt.event.MouseEvent import javax.swing.JComponent import javax.swing.JPanel</ID>
+    <ID>ImportOrdering:CurrentWorkSection.kt$import com.intellij.icons.AllIcons import com.intellij.openapi.application.invokeLater import com.intellij.openapi.application.runReadAction import com.intellij.openapi.project.Project import com.intellij.openapi.ui.popup.JBPopupFactory import com.intellij.ui.JBColor import com.intellij.ui.components.JBLabel import com.workflow.orchestrator.core.ui.StatusColors import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.events.EventBus import com.workflow.orchestrator.core.events.WorkflowEvent import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.util.DefaultBranchResolver import com.workflow.orchestrator.core.workflow.TicketBranchLocator import com.workflow.orchestrator.core.workflow.ui.BranchSwitchAction import git4idea.repo.GitRepositoryManager import kotlinx.coroutines.* import java.awt.* import java.awt.geom.RoundRectangle2D import javax.swing.BoxLayout import javax.swing.JPanel import javax.swing.ListSelectionModel</ID>
+    <ID>ImportOrdering:JiraApiClient.kt$import com.workflow.orchestrator.core.http.HttpClientFactory import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.ErrorType import com.workflow.orchestrator.core.model.ServiceType import com.workflow.orchestrator.core.model.jira.TransitionInput import com.workflow.orchestrator.core.model.jira.TransitionMeta import com.workflow.orchestrator.jira.api.dto.* import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.withContext import kotlinx.serialization.json.Json import kotlinx.serialization.json.JsonNull import kotlinx.serialization.json.JsonObject import kotlinx.serialization.json.JsonPrimitive import kotlinx.serialization.json.add import kotlinx.serialization.json.buildJsonObject import kotlinx.serialization.json.jsonArray import kotlinx.serialization.json.jsonObject import kotlinx.serialization.json.jsonPrimitive import kotlinx.serialization.json.put import kotlinx.serialization.json.putJsonArray import kotlinx.serialization.json.putJsonObject import okhttp3.MediaType.Companion.toMediaType import okhttp3.OkHttpClient import okhttp3.Request import okhttp3.RequestBody.Companion.toRequestBody import okhttp3.Response import com.intellij.openapi.diagnostic.Logger import java.io.IOException import java.net.URI import java.net.URLEncoder</ID>
+    <ID>ImportOrdering:JiraSearchContributorFactory.kt$import com.intellij.ide.actions.searcheverywhere.FoundItemDescriptor import com.intellij.ide.actions.searcheverywhere.SearchEverywhereContributor import com.intellij.ide.actions.searcheverywhere.SearchEverywhereContributorFactory import com.intellij.ide.actions.searcheverywhere.WeightedSearchEverywhereContributor import com.intellij.openapi.actionSystem.AnActionEvent import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.progress.ProgressIndicator import com.intellij.openapi.progress.runBlockingCancellable import com.intellij.openapi.project.Project import com.intellij.util.Processor import com.workflow.orchestrator.core.model.jira.JiraTicketData import com.workflow.orchestrator.core.services.JiraService import com.workflow.orchestrator.jira.service.ActiveTicketService import com.workflow.orchestrator.jira.service.JiraServiceImpl import com.intellij.ui.components.JBLabel import javax.swing.JList import javax.swing.ListCellRenderer</ID>
+    <ID>ImportOrdering:JiraServiceImpl.kt$import com.intellij.openapi.components.Service import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.workflow.orchestrator.core.auth.CredentialStore import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.ServiceType import com.workflow.orchestrator.core.model.jira.AttachmentContentData import com.workflow.orchestrator.core.model.jira.BoardData import com.workflow.orchestrator.core.model.jira.CommentVisibility import com.workflow.orchestrator.core.model.jira.DevStatusBranchData import com.workflow.orchestrator.core.model.jira.DevStatusBuildData import com.workflow.orchestrator.core.model.jira.DevStatusBundle import com.workflow.orchestrator.core.model.jira.DevStatusCommitData import com.workflow.orchestrator.core.model.jira.DevStatusDeploymentData import com.workflow.orchestrator.core.model.jira.FilterData import com.workflow.orchestrator.core.model.jira.GroupOption import com.workflow.orchestrator.core.model.jira.IssueSuggestion import com.workflow.orchestrator.core.model.jira.JiraBoardSummary import com.workflow.orchestrator.core.model.jira.DevStatusPrData import com.workflow.orchestrator.core.model.jira.DevStatusReviewData import com.workflow.orchestrator.core.model.jira.JiraCommentData import com.workflow.orchestrator.core.model.jira.JiraAttachmentData import com.workflow.orchestrator.core.model.jira.JiraFieldData import com.workflow.orchestrator.core.model.jira.JiraLinkedIssueRef import com.workflow.orchestrator.core.model.jira.JiraSubtaskRef import com.workflow.orchestrator.core.model.jira.JiraTicketData import com.workflow.orchestrator.core.model.jira.FieldValue import com.workflow.orchestrator.core.model.jira.MyPermissionsData import com.workflow.orchestrator.core.model.jira.MyselfData import com.workflow.orchestrator.core.model.jira.PermissionFlag import com.workflow.orchestrator.core.model.jira.RemoteLinkData import com.workflow.orchestrator.core.model.jira.RoleOption import com.workflow.orchestrator.core.model.jira.TicketHistoryEntry import com.workflow.orchestrator.core.model.jira.TransitionError import com.workflow.orchestrator.core.model.jira.TransitionInput import com.workflow.orchestrator.core.model.jira.TransitionMeta import com.workflow.orchestrator.core.model.jira.TransitionOutcome import com.workflow.orchestrator.core.model.jira.SprintData import com.workflow.orchestrator.core.model.jira.StartWorkResultData import com.workflow.orchestrator.core.model.jira.VisibilityOptions import com.workflow.orchestrator.core.model.jira.VisibilityType import com.workflow.orchestrator.core.model.jira.WatcherUser import com.workflow.orchestrator.core.model.jira.WatchersData import com.workflow.orchestrator.core.model.jira.WorklogData import com.workflow.orchestrator.core.model.jira.WorklogEstimateAdjustment import com.workflow.orchestrator.core.services.JiraService import com.workflow.orchestrator.core.services.SessionDownloadDir import com.workflow.orchestrator.core.services.ToolResult import com.workflow.orchestrator.core.services.jira.TicketTransitionService import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.jira.api.JiraApiClient import kotlinx.coroutines.async import kotlinx.coroutines.coroutineScope import kotlinx.serialization.json.Json import kotlinx.serialization.json.JsonObject import kotlinx.serialization.json.buildJsonObject import kotlinx.serialization.json.jsonObject import kotlinx.serialization.json.jsonPrimitive import kotlinx.serialization.json.put import java.time.OffsetDateTime import java.time.format.DateTimeFormatter import java.util.concurrent.ConcurrentHashMap</ID>
+    <ID>ImportOrdering:JiraTicketProviderImpl.kt$import com.intellij.openapi.diagnostic.Logger import com.workflow.orchestrator.core.auth.CredentialStore import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.ServiceType import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.settings.ConnectionSettings import com.workflow.orchestrator.core.workflow.JiraTicketProvider import com.workflow.orchestrator.core.workflow.TicketComment import com.workflow.orchestrator.core.workflow.TicketContext import com.workflow.orchestrator.core.workflow.TicketDetails import com.workflow.orchestrator.jira.api.JiraApiClient</ID>
+    <ID>ImportOrdering:JiraWorkflowConfigurable.kt$import com.intellij.notification.NotificationType import com.intellij.notification.NotificationGroupManager import com.intellij.openapi.application.invokeLater import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.options.SearchableConfigurable import com.intellij.openapi.project.Project import com.intellij.openapi.ui.ComboBox import com.intellij.ui.components.JBScrollPane import com.intellij.ui.components.JBTextField import com.intellij.ui.dsl.builder.* import com.workflow.orchestrator.core.model.jira.JiraBoardSummary import com.workflow.orchestrator.core.model.jira.JiraFieldData import com.workflow.orchestrator.core.settings.ConnectionSettings import com.workflow.orchestrator.core.settings.ConnectionStatusBanner import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.ui.ComboBoxWidth import com.workflow.orchestrator.core.ui.bindBoundedWidth import com.workflow.orchestrator.core.workflow.WorkflowIntent import com.workflow.orchestrator.jira.service.JiraServiceImpl import com.workflow.orchestrator.jira.workflow.TransitionMapping import com.workflow.orchestrator.jira.workflow.TransitionMappingStore import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.SupervisorJob import kotlinx.coroutines.cancel import kotlinx.coroutines.isActive import kotlinx.coroutines.launch import javax.swing.JComponent import javax.swing.JLabel</ID>
+    <ID>ImportOrdering:PostCommitTransitionHandlerFactory.kt$import com.intellij.openapi.components.service import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.intellij.openapi.vcs.CheckinProjectPanel import com.intellij.openapi.vcs.changes.CommitContext import com.intellij.openapi.vcs.checkin.CheckinHandler import com.intellij.openapi.vcs.checkin.CheckinHandlerFactory import com.workflow.orchestrator.core.services.jira.TransitionDialogOpener import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.jira.service.JiraServiceImpl import com.intellij.openapi.Disposable import com.intellij.openapi.util.Disposer import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.SupervisorJob import kotlinx.coroutines.cancel import kotlinx.coroutines.launch</ID>
+    <ID>ImportOrdering:QuickCommentPanel.kt$import com.intellij.icons.AllIcons import com.intellij.openapi.application.EDT import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import javax.swing.JButton import com.intellij.ui.components.JBTextField import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.model.jira.CommentVisibility import com.workflow.orchestrator.core.model.jira.GroupOption import com.workflow.orchestrator.core.model.jira.RoleOption import com.workflow.orchestrator.core.model.jira.VisibilityType import com.workflow.orchestrator.core.notifications.WorkflowNotificationService import com.workflow.orchestrator.core.services.JiraService import com.workflow.orchestrator.core.ui.ComboBoxWidth import com.workflow.orchestrator.core.ui.bindBoundedWidth import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.SupervisorJob import kotlinx.coroutines.cancel import kotlinx.coroutines.launch import kotlinx.coroutines.withContext import java.awt.BorderLayout import java.awt.FlowLayout import javax.swing.DefaultComboBoxModel import javax.swing.JComboBox import javax.swing.JPanel</ID>
+    <ID>ImportOrdering:SprintDashboardPanel.kt$import com.intellij.icons.AllIcons import com.intellij.notification.NotificationGroupManager import com.intellij.notification.NotificationType import com.intellij.openapi.actionSystem.ActionManager import com.intellij.openapi.actionSystem.AnAction import com.intellij.openapi.actionSystem.AnActionEvent import com.intellij.openapi.actionSystem.ActionUpdateThread import com.intellij.openapi.actionSystem.DefaultActionGroup import com.intellij.openapi.Disposable import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.intellij.openapi.util.Disposer import com.intellij.ui.JBColor import com.intellij.ui.JBSplitter import com.intellij.ui.SearchTextField import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBList import com.intellij.ui.components.JBScrollPane import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.ai.BranchNameAiGenerator import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.settings.ConnectionSettings import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.events.EventBus import com.workflow.orchestrator.core.events.WorkflowEvent import com.workflow.orchestrator.core.ui.ComboBoxWidth import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.core.ui.bindBoundedWidth import com.workflow.orchestrator.core.util.DefaultBranchResolver import git4idea.repo.GitRepositoryManager import com.workflow.orchestrator.core.model.jira.FilterData import com.workflow.orchestrator.jira.api.dto.JiraIssue import com.workflow.orchestrator.jira.api.dto.JiraSprint import com.workflow.orchestrator.jira.service.JiraServiceImpl import com.workflow.orchestrator.jira.service.toTicketData import com.workflow.orchestrator.jira.service.ActiveTicketService import com.workflow.orchestrator.jira.service.BranchNameValidator import com.workflow.orchestrator.jira.service.BranchingService import com.workflow.orchestrator.jira.service.DismissedBranchStore import com.workflow.orchestrator.jira.service.SprintService import com.intellij.openapi.ui.ComboBox import com.intellij.openapi.wm.WindowManager import com.intellij.ui.AnimatedIcon import com.intellij.ui.SimpleListCellRenderer import com.intellij.openapi.application.EDT import com.intellij.openapi.application.ModalityState import com.intellij.openapi.application.asContextElement import com.intellij.openapi.application.readAction import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.SupervisorJob import kotlinx.coroutines.cancel import kotlinx.coroutines.FlowPreview import kotlinx.coroutines.channels.BufferOverflow import kotlinx.coroutines.flow.MutableSharedFlow import kotlinx.coroutines.flow.debounce import kotlinx.coroutines.launch import kotlinx.coroutines.withContext import java.awt.* import java.awt.event.MouseAdapter import java.awt.event.MouseEvent import java.awt.event.MouseMotionAdapter import javax.swing.* import javax.swing.event.DocumentEvent import javax.swing.event.DocumentListener</ID>
+    <ID>ImportOrdering:StartWorkDialog.kt$import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.intellij.openapi.ui.DialogWrapper import com.intellij.openapi.ui.ValidationInfo import com.intellij.ui.AnimatedIcon import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBTextField import com.intellij.util.ui.JBUI import com.intellij.openapi.vcs.changes.ChangeListManager import com.intellij.openapi.ui.ComboBox import com.workflow.orchestrator.core.bitbucket.BitbucketBranch import com.workflow.orchestrator.core.settings.RepoConfig import com.workflow.orchestrator.core.ui.ComboBoxWidth import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.core.ui.bindBoundedWidth import java.awt.BorderLayout import java.awt.FlowLayout import javax.swing.* import javax.swing.DefaultComboBoxModel</ID>
+    <ID>ImportOrdering:TicketDetailPanel.kt$import com.intellij.icons.AllIcons import com.intellij.ide.BrowserUtil import com.intellij.openapi.application.EDT import com.intellij.openapi.application.invokeLater import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.fileChooser.FileChooser import com.intellij.openapi.fileChooser.FileChooserDescriptor import com.intellij.openapi.fileEditor.FileEditorManager import com.intellij.openapi.vfs.LocalFileSystem import com.workflow.orchestrator.core.notifications.WorkflowNotificationService import com.intellij.ui.JBColor import javax.swing.JButton import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBScrollPane import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.services.JiraService import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.core.ui.TimeFormatter import com.workflow.orchestrator.core.util.HtmlEscape import com.workflow.orchestrator.core.util.StringUtils import com.workflow.orchestrator.jira.api.dto.JiraAttachment import com.workflow.orchestrator.jira.api.dto.JiraIssue import com.workflow.orchestrator.jira.api.dto.JiraIssueLink import com.workflow.orchestrator.jira.service.AttachmentDownloadService import com.workflow.orchestrator.jira.service.IssueDetailCache import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.Job import kotlinx.coroutines.SupervisorJob import kotlinx.coroutines.cancel import kotlinx.coroutines.delay import kotlinx.coroutines.launch import kotlinx.coroutines.withContext import java.util.concurrent.atomic.AtomicReference import java.awt.* import java.awt.event.MouseAdapter import java.awt.event.MouseEvent import java.awt.image.BufferedImage import java.io.File import javax.swing.ImageIcon import java.awt.geom.Ellipse2D import java.awt.geom.RoundRectangle2D import javax.swing.BorderFactory import javax.swing.BoxLayout import javax.swing.JMenuItem import javax.swing.JPanel import javax.swing.JPopupMenu import javax.swing.JTextPane import javax.swing.ScrollPaneConstants import javax.swing.SwingConstants</ID>
+    <ID>ImportOrdering:TimeTrackingCheckinHandlerFactory.kt$import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.intellij.openapi.vcs.CheckinProjectPanel import com.intellij.openapi.vcs.changes.CommitContext import com.intellij.openapi.vcs.checkin.CheckinHandler import com.intellij.openapi.vcs.checkin.CheckinHandlerFactory import com.intellij.openapi.vcs.ui.RefreshableOnComponent import com.intellij.ui.components.JBCheckBox import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.jira.service.JiraServiceImpl import com.intellij.openapi.Disposable import com.intellij.openapi.util.Disposer import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.SupervisorJob import kotlinx.coroutines.cancel import kotlinx.coroutines.launch import java.awt.BorderLayout import javax.swing.JComponent import javax.swing.JPanel import javax.swing.JSpinner import javax.swing.SpinnerNumberModel</ID>
+    <ID>Indentation:JiraApiClient.kt$JiraApiClient$ </ID>
+    <ID>Indentation:JiraSearchServiceImpl.kt$JiraSearchServiceImpl$ </ID>
+    <ID>Indentation:JiraServiceImpl.kt$JiraServiceImpl$ </ID>
+    <ID>Indentation:JiraServiceImplSearchBoardsTest.kt$JiraServiceImplSearchBoardsTest$ </ID>
+    <ID>Indentation:SprintDashboardPanel.kt$SprintDashboardPanel$ </ID>
+    <ID>Indentation:TicketDetailPanel.kt$TicketDetailPanel$ </ID>
+    <ID>Indentation:TicketTransitionServiceImpl.kt$TicketTransitionServiceImpl$ </ID>
+    <ID>Indentation:TransitionMappingStore.kt$TransitionMappingStore$ </ID>
+    <ID>LoopWithTooManyJumpStatements:SprintService.kt$SprintService$while</ID>
+    <ID>MagicNumber:AttachmentDownloadService.kt$AttachmentDownloadService$3</ID>
+    <ID>MagicNumber:AttachmentDownloadService.kt$AttachmentDownloadService.&lt;no name provided>$0.75f</ID>
+    <ID>MagicNumber:AttachmentDownloadService.kt$AttachmentDownloadService.&lt;no name provided>$16</ID>
+    <ID>MagicNumber:ChangelogSection.kt$ChangelogSection$11</ID>
+    <ID>MagicNumber:ChangelogSection.kt$ChangelogSection$20</ID>
+    <ID>MagicNumber:ChangelogSection.kt$ChangelogSection$4</ID>
+    <ID>MagicNumber:ChangelogSection.kt$ChangelogSection$8</ID>
+    <ID>MagicNumber:CollapsibleSection.kt$CollapsibleSection$10</ID>
+    <ID>MagicNumber:CollapsibleSection.kt$CollapsibleSection$4</ID>
+    <ID>MagicNumber:CurrentWorkChipRenderer.kt$CurrentWorkChipRenderer$10</ID>
+    <ID>MagicNumber:CurrentWorkChipRenderer.kt$CurrentWorkChipRenderer$4</ID>
+    <ID>MagicNumber:CurrentWorkChipRenderer.kt$CurrentWorkChipRenderer$9</ID>
+    <ID>MagicNumber:CurrentWorkSection.kt$CurrentWorkSection$10</ID>
+    <ID>MagicNumber:CurrentWorkSection.kt$CurrentWorkSection$11</ID>
+    <ID>MagicNumber:CurrentWorkSection.kt$CurrentWorkSection$12</ID>
+    <ID>MagicNumber:CurrentWorkSection.kt$CurrentWorkSection$18</ID>
+    <ID>MagicNumber:CurrentWorkSection.kt$CurrentWorkSection$4</ID>
+    <ID>MagicNumber:CurrentWorkSection.kt$CurrentWorkSection$6</ID>
+    <ID>MagicNumber:CurrentWorkSection.kt$CurrentWorkSection$8</ID>
+    <ID>MagicNumber:CurrentWorkSection.kt$CurrentWorkSection$9</ID>
+    <ID>MagicNumber:CurrentWorkSection.kt$CurrentWorkSection.&lt;no name provided>$0.5f</ID>
+    <ID>MagicNumber:CurrentWorkSection.kt$CurrentWorkSection.&lt;no name provided>$10</ID>
+    <ID>MagicNumber:CurrentWorkSection.kt$CurrentWorkSection.&lt;no name provided>$10f</ID>
+    <ID>MagicNumber:CurrentWorkSection.kt$CurrentWorkSection.&lt;no name provided>$4</ID>
+    <ID>MagicNumber:CurrentWorkSection.kt$CurrentWorkSection.&lt;no name provided>$4f</ID>
+    <ID>MagicNumber:CurrentWorkSection.kt$CurrentWorkSection.&lt;no name provided>$6</ID>
+    <ID>MagicNumber:CurrentWorkSection.kt$CurrentWorkSection.&lt;no name provided>$8</ID>
+    <ID>MagicNumber:DevStatusSection.kt$DevStatusSection$10</ID>
+    <ID>MagicNumber:DevStatusSection.kt$DevStatusSection$11</ID>
+    <ID>MagicNumber:DevStatusSection.kt$DevStatusSection$12</ID>
+    <ID>MagicNumber:DevStatusSection.kt$DevStatusSection$4</ID>
+    <ID>MagicNumber:DevStatusSection.kt$DevStatusSection$60</ID>
+    <ID>MagicNumber:DevStatusSection.kt$DevStatusSection$8</ID>
+    <ID>MagicNumber:DevStatusSection.kt$DevStatusSection.&lt;no name provided>$0.15f</ID>
+    <ID>MagicNumber:DevStatusSection.kt$DevStatusSection.&lt;no name provided>$0.3f</ID>
+    <ID>MagicNumber:DevStatusSection.kt$DevStatusSection.&lt;no name provided>$0.5f</ID>
+    <ID>MagicNumber:DevStatusSection.kt$DevStatusSection.&lt;no name provided>$10</ID>
+    <ID>MagicNumber:DevStatusSection.kt$DevStatusSection.&lt;no name provided>$12</ID>
+    <ID>MagicNumber:DevStatusSection.kt$DevStatusSection.&lt;no name provided>$3</ID>
+    <ID>MagicNumber:DevStatusSection.kt$DevStatusSection.&lt;no name provided>$4</ID>
+    <ID>MagicNumber:DevStatusSection.kt$DevStatusSection.&lt;no name provided>$6</ID>
+    <ID>MagicNumber:DevStatusSection.kt$DevStatusSection.&lt;no name provided>$8</ID>
+    <ID>MagicNumber:DevStatusSection.kt$DevStatusSection.&lt;no name provided>$9</ID>
+    <ID>MagicNumber:IssueDetailCache.kt$IssueDetailCache.&lt;no name provided>$0.75f</ID>
+    <ID>MagicNumber:IssueDetailCache.kt$IssueDetailCache.&lt;no name provided>$16</ID>
+    <ID>MagicNumber:JiraApiClient.kt$JiraApiClient$200</ID>
+    <ID>MagicNumber:JiraApiClient.kt$JiraApiClient$299</ID>
+    <ID>MagicNumber:JiraApiClient.kt$JiraApiClient$32</ID>
+    <ID>MagicNumber:JiraApiClient.kt$JiraApiClient$400</ID>
+    <ID>MagicNumber:JiraApiClient.kt$JiraApiClient$401</ID>
+    <ID>MagicNumber:JiraApiClient.kt$JiraApiClient$403</ID>
+    <ID>MagicNumber:JiraApiClient.kt$JiraApiClient$404</ID>
+    <ID>MagicNumber:JiraApiClient.kt$JiraApiClient$429</ID>
+    <ID>MagicNumber:JiraSearchContributorFactory.kt$JiraSearchContributor$3</ID>
+    <ID>MagicNumber:JiraSearchServiceImpl.kt$JiraSearchServiceImpl$404</ID>
+    <ID>MagicNumber:JiraSearchServiceImpl.kt$JiraSearchServiceImpl$5</ID>
+    <ID>MagicNumber:JiraSearchServiceImpl.kt$JiraSearchServiceImpl$60_000L</ID>
+    <ID>MagicNumber:JiraServiceImpl.kt$JiraServiceImpl$10_000</ID>
+    <ID>MagicNumber:JiraServiceImpl.kt$JiraServiceImpl$32</ID>
+    <ID>MagicNumber:JiraServiceImpl.kt$JiraServiceImpl$3600</ID>
+    <ID>MagicNumber:JiraServiceImpl.kt$JiraServiceImpl$5</ID>
+    <ID>MagicNumber:JiraServiceImpl.kt$JiraServiceImpl$60</ID>
+    <ID>MagicNumber:JiraServiceImpl.kt$JiraServiceImpl$60_000L</ID>
+    <ID>MagicNumber:JiraWorkflowConfigurable.kt$JiraWorkflowConfigurable$0.5f</ID>
+    <ID>MagicNumber:JiraWorkflowConfigurable.kt$JiraWorkflowConfigurable$20</ID>
+    <ID>MagicNumber:JiraWorkflowConfigurable.kt$JiraWorkflowConfigurable$30</ID>
+    <ID>MagicNumber:JiraWorkflowConfigurable.kt$JiraWorkflowConfigurable$7.0f</ID>
+    <ID>MagicNumber:LinkedDocsSection.kt$LinkedDocsSection$10</ID>
+    <ID>MagicNumber:LinkedDocsSection.kt$LinkedDocsSection$11</ID>
+    <ID>MagicNumber:LinkedDocsSection.kt$LinkedDocsSection$22</ID>
+    <ID>MagicNumber:LinkedDocsSection.kt$LinkedDocsSection$3</ID>
+    <ID>MagicNumber:LinkedDocsSection.kt$LinkedDocsSection$4</ID>
+    <ID>MagicNumber:LinkedDocsSection.kt$LinkedDocsSection$6</ID>
+    <ID>MagicNumber:LinkedDocsSection.kt$LinkedDocsSection$8</ID>
+    <ID>MagicNumber:OptionWidgets.kt$MultiSelectWidget$100</ID>
+    <ID>MagicNumber:OptionWidgets.kt$MultiSelectWidget$240</ID>
+    <ID>MagicNumber:QuickCommentPanel.kt$QuickCommentPanel$4</ID>
+    <ID>MagicNumber:QuickCommentPanel.kt$QuickCommentPanel$8</ID>
+    <ID>MagicNumber:SavedFiltersSection.kt$SavedFiltersSection$4</ID>
+    <ID>MagicNumber:SearchableChooser.kt$SearchableChooser$120</ID>
+    <ID>MagicNumber:SearchableChooser.kt$SearchableChooser$240</ID>
+    <ID>MagicNumber:SearchableChooser.kt$SearchableChooser$4</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$0.4f</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$10</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$11</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$13</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$140</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$24</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$250</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$28</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$3</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$32</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$4</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$40</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$5</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$50</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$56</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$6</ID>
+    <ID>MagicNumber:SprintDashboardPanel.kt$SprintDashboardPanel$8</ID>
+    <ID>MagicNumber:SprintService.kt$SprintService$50</ID>
+    <ID>MagicNumber:SprintTimeBar.kt$SprintTimeBar$10</ID>
+    <ID>MagicNumber:SprintTimeBar.kt$SprintTimeBar$16</ID>
+    <ID>MagicNumber:SprintTimeBar.kt$SprintTimeBar$4</ID>
+    <ID>MagicNumber:SprintTimeBar.kt$SprintTimeBar$7</ID>
+    <ID>MagicNumber:SprintTimeBar.kt$SprintTimeBar.TicketBreakdownBar$4</ID>
+    <ID>MagicNumber:SprintTimeBar.kt$SprintTimeBar.TimeProgressBar$4</ID>
+    <ID>MagicNumber:StartWorkDialog.kt$StartWorkDialog$12</ID>
+    <ID>MagicNumber:StartWorkDialog.kt$StartWorkDialog$24</ID>
+    <ID>MagicNumber:StartWorkDialog.kt$StartWorkDialog$4</ID>
+    <ID>MagicNumber:StartWorkDialog.kt$StartWorkDialog$40</ID>
+    <ID>MagicNumber:StartWorkDialog.kt$StartWorkDialog$8</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$0x3C3C3C</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$0xE8E8E8</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$10</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$1024</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$1024.0</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$11</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$12</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$13</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$14</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$16</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$20</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$200</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$26</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$28</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$4</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$50</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$6</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$60</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$8</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$80</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel$9</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel.&lt;no name provided>$0.5f</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel.&lt;no name provided>$0x2D3035</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel.&lt;no name provided>$0xE8EAED</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel.&lt;no name provided>$10</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel.&lt;no name provided>$12</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel.&lt;no name provided>$30</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel.&lt;no name provided>$32</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel.&lt;no name provided>$4</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel.&lt;no name provided>$6</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel.&lt;no name provided>$8</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel.AvatarCircle$0.45f</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel.AvatarCircle$0x7FFFFFFF</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel.AvatarCircle$24</ID>
+    <ID>MagicNumber:TicketDetailPanel.kt$TicketDetailPanel.StatusDot$8</ID>
+    <ID>MagicNumber:TicketDetectionPopup.kt$TicketDetectionPopup$10</ID>
+    <ID>MagicNumber:TicketDetectionPopup.kt$TicketDetectionPopup$11</ID>
+    <ID>MagicNumber:TicketDetectionPopup.kt$TicketDetectionPopup$12</ID>
+    <ID>MagicNumber:TicketDetectionPopup.kt$TicketDetectionPopup$16</ID>
+    <ID>MagicNumber:TicketDetectionPopup.kt$TicketDetectionPopup$4</ID>
+    <ID>MagicNumber:TicketDetectionPopup.kt$TicketDetectionPopup$6</ID>
+    <ID>MagicNumber:TicketDetectionPopup.kt$TicketDetectionPopup$8</ID>
+    <ID>MagicNumber:TicketListCellRenderer.kt$TicketListCellRenderer$10</ID>
+    <ID>MagicNumber:TicketListCellRenderer.kt$TicketListCellRenderer$12</ID>
+    <ID>MagicNumber:TicketListCellRenderer.kt$TicketListCellRenderer$200</ID>
+    <ID>MagicNumber:TicketListCellRenderer.kt$TicketListCellRenderer$3</ID>
+    <ID>MagicNumber:TicketListCellRenderer.kt$TicketListCellRenderer$4</ID>
+    <ID>MagicNumber:TicketListCellRenderer.kt$TicketListCellRenderer$5</ID>
+    <ID>MagicNumber:TicketListCellRenderer.kt$TicketListCellRenderer$6</ID>
+    <ID>MagicNumber:TicketListCellRenderer.kt$TicketListCellRenderer$8</ID>
+    <ID>MagicNumber:TicketTransitionDialog.kt$TicketTransitionDialog$3</ID>
+    <ID>MagicNumber:TicketTransitionDialog.kt$TicketTransitionDialog$340</ID>
+    <ID>MagicNumber:TicketTransitionDialog.kt$TicketTransitionDialog$4</ID>
+    <ID>MagicNumber:TicketTransitionDialog.kt$TicketTransitionDialog$40</ID>
+    <ID>MagicNumber:TicketTransitionDialog.kt$TicketTransitionDialog$460</ID>
+    <ID>MagicNumber:TicketTransitionDialog.kt$TicketTransitionDialog$8</ID>
+    <ID>MagicNumber:TicketTransitionServiceImpl.kt$TicketTransitionServiceImpl$60_000L</ID>
+    <ID>MagicNumber:TimeTrackingCheckinHandlerFactory.kt$TimeTrackingCheckinHandler$4</ID>
+    <ID>MagicNumber:TimeTrackingCheckinHandlerFactory.kt$TimeTrackingCheckinHandler$60</ID>
+    <ID>MagicNumber:TimeTrackingCheckinHandlerFactory.kt$TimeTrackingCheckinHandler$8</ID>
+    <ID>MagicNumber:TimeTrackingCheckinHandlerFactory.kt$TimeTrackingLogic$1000</ID>
+    <ID>MagicNumber:TimeTrackingCheckinHandlerFactory.kt$TimeTrackingLogic$60</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection$10</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection$11</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection$12</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection$16</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection$18</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection$24</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection$4</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection$5</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection$8</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection$80</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection.&lt;no name provided>$16</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection.&lt;no name provided>$24</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection.&lt;no name provided>$28</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection.&lt;no name provided>$3</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection.&lt;no name provided>$4</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection.&lt;no name provided>$8</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection.Companion$10</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection.Companion$60</ID>
+    <ID>MagicNumber:WorklogSection.kt$WorklogSection.Companion$8</ID>
+    <ID>MatchingDeclarationName:CacheUtils.kt$CacheEntry&lt;T></ID>
+    <ID>MaximumLineLength:ActiveTicketServiceFacadeTest.kt$ActiveTicketServiceFacadeTest$ </ID>
+    <ID>MaximumLineLength:AttachmentDownloadService.kt$AttachmentDownloadService$ </ID>
+    <ID>MaximumLineLength:BranchNameValidator.kt$BranchNameValidator$ </ID>
+    <ID>MaximumLineLength:BranchingService.kt$BranchingService$ </ID>
+    <ID>MaximumLineLength:CheckinHandlerScopeLifecycleTest.kt$CheckinHandlerScopeLifecycleTest$ </ID>
+    <ID>MaximumLineLength:CurrentWorkChipRenderer.kt$CurrentWorkChipRenderer$ </ID>
+    <ID>MaximumLineLength:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$ </ID>
+    <ID>MaximumLineLength:DevStatusSection.kt$DevStatusSection$ </ID>
+    <ID>MaximumLineLength:DevStatusSection.kt$DevStatusSection.&lt;no name provided>$ </ID>
+    <ID>MaximumLineLength:DevStatusSectionTest.kt$DevStatusSectionTest$ </ID>
+    <ID>MaximumLineLength:JiraApiClient.kt$JiraApiClient$ </ID>
+    <ID>MaximumLineLength:JiraApiClientTest.kt$JiraApiClientTest$ </ID>
+    <ID>MaximumLineLength:JiraApiClientTransitionsTest.kt$JiraApiClientTransitionsTest$ </ID>
+    <ID>MaximumLineLength:JiraSearchContributorFactory.kt$JiraSearchContributor$ </ID>
+    <ID>MaximumLineLength:JiraSearchServiceImpl.kt$JiraSearchServiceImpl$ </ID>
+    <ID>MaximumLineLength:JiraServiceImpl.kt$JiraServiceImpl$ </ID>
+    <ID>MaximumLineLength:JiraServiceImplSearchTicketsValidationTest.kt$JiraServiceImplSearchTicketsValidationTest$ </ID>
+    <ID>MaximumLineLength:JiraServiceImplTest.kt$JiraServiceImplTest$ </ID>
+    <ID>MaximumLineLength:JiraTicketProviderImpl.kt$JiraTicketProviderImpl$ </ID>
+    <ID>MaximumLineLength:JiraTicketProviderImplTest.kt$JiraTicketProviderImplTest$ </ID>
+    <ID>MaximumLineLength:JiraTransitionResponseParser.kt$JiraTransitionResponseParser$ </ID>
+    <ID>MaximumLineLength:JiraWorkflowConfigurable.kt$JiraWorkflowConfigurable$ </ID>
+    <ID>MaximumLineLength:PostCommitTransitionHandlerFactory.kt$PostCommitTransitionHandler$ </ID>
+    <ID>MaximumLineLength:PostCommitTransitionHandlerFactory.kt$PostCommitTransitionHandler.&lt;no name provided>$ </ID>
+    <ID>MaximumLineLength:SprintDashboardPanel.kt$SprintDashboardPanel$ </ID>
+    <ID>MaximumLineLength:SprintDashboardPanel.kt$SprintDashboardPanel.StartWorkAction$ </ID>
+    <ID>MaximumLineLength:SprintService.kt$SprintService$ </ID>
+    <ID>MaximumLineLength:SprintTimeBar.kt$SprintTimeBar$ </ID>
+    <ID>MaximumLineLength:StartWorkDialog.kt$StartWorkDialog$ </ID>
+    <ID>MaximumLineLength:TicketDetailPanel.kt$TicketDetailPanel$ </ID>
+    <ID>MaximumLineLength:TicketDetailPanel.kt$TicketDetailPanel$class</ID>
+    <ID>MaximumLineLength:TicketKeyCache.kt$TicketKeyCache$ </ID>
+    <ID>MaximumLineLength:TicketKeyCacheTest.kt$TicketKeyCacheTest$ </ID>
+    <ID>MaximumLineLength:TicketListCellRenderer.kt$TicketListCellRenderer$ </ID>
+    <ID>MaximumLineLength:TicketListCellRenderer.kt$TicketListCellRenderer.Companion$ </ID>
+    <ID>MaximumLineLength:TicketTransitionServiceImpl.kt$TicketTransitionServiceImpl$ </ID>
+    <ID>MaximumLineLength:TransitionInputSerializer.kt$TransitionInputSerializer$ </ID>
+    <ID>MaximumLineLength:TransitionInputSerializerTest.kt$TransitionInputSerializerTest$ </ID>
+    <ID>MultiLineIfElse:ChangelogSection.kt$ChangelogSection.Companion$"$actor assigned to $newVal$timeSuffix"</ID>
+    <ID>MultiLineIfElse:ChangelogSection.kt$ChangelogSection.Companion$"$actor cleared status$timeSuffix"</ID>
+    <ID>MultiLineIfElse:ChangelogSection.kt$ChangelogSection.Companion$"$actor set status to $newVal$timeSuffix"</ID>
+    <ID>MultiLineIfElse:ChangelogSection.kt$ChangelogSection.Companion$"$actor unassigned the issue$timeSuffix"</ID>
+    <ID>MultiLineIfElse:DevStatusSection.kt$DevStatusSection$"Could not load dev status (${bundle.fetchErrors} of 6 feeds errored)."</ID>
+    <ID>MultiLineIfElse:DevStatusSection.kt$DevStatusSection$"No linked development activity."</ID>
+    <ID>MultiLineIfElse:EntityPickerWidgets.kt$AutoCompleteWidget$"${field.name} is required"</ID>
+    <ID>MultiLineIfElse:EntityPickerWidgets.kt$AutoCompleteWidget$null</ID>
+    <ID>MultiLineIfElse:EntityPickerWidgets.kt$ComponentPickerWidget$"${field.name} is required"</ID>
+    <ID>MultiLineIfElse:EntityPickerWidgets.kt$ComponentPickerWidget$null</ID>
+    <ID>MultiLineIfElse:EntityPickerWidgets.kt$GroupPickerWidget$"${field.name} is required"</ID>
+    <ID>MultiLineIfElse:EntityPickerWidgets.kt$GroupPickerWidget$null</ID>
+    <ID>MultiLineIfElse:EntityPickerWidgets.kt$LabelPickerWidget$"${field.name} is required"</ID>
+    <ID>MultiLineIfElse:EntityPickerWidgets.kt$LabelPickerWidget$null</ID>
+    <ID>MultiLineIfElse:EntityPickerWidgets.kt$UserPickerWidget$"${field.name} is required"</ID>
+    <ID>MultiLineIfElse:EntityPickerWidgets.kt$UserPickerWidget$null</ID>
+    <ID>MultiLineIfElse:EntityPickerWidgets.kt$VersionPickerWidget$"${field.name} is required"</ID>
+    <ID>MultiLineIfElse:EntityPickerWidgets.kt$VersionPickerWidget$null</ID>
+    <ID>MultiLineIfElse:JiraApiClient.kt$JiraApiClient$"$baseUrl$path"</ID>
+    <ID>MultiLineIfElse:JiraApiClient.kt$JiraApiClient$path</ID>
+    <ID>MultiLineIfElse:JiraSearchServiceImpl.kt$JiraSearchServiceImpl$descEl.jsonPrimitive.content</ID>
+    <ID>MultiLineIfElse:JiraSearchServiceImpl.kt$JiraSearchServiceImpl$null</ID>
+    <ID>MultiLineIfElse:JiraServiceImpl.kt$JiraServiceImpl$FieldValue.Text(v.toString())</ID>
+    <ID>MultiLineIfElse:JiraServiceImpl.kt$JiraServiceImpl$FieldValue.UserRef(name.toString())</ID>
+    <ID>MultiLineIfElse:JiraServiceImpl.kt$JiraServiceImpl$adjustEstimate.name.lowercase()</ID>
+    <ID>MultiLineIfElse:JiraServiceImpl.kt$JiraServiceImpl$null</ID>
+    <ID>MultiLineIfElse:JiraServiceImpl.kt$emptyList()</ID>
+    <ID>MultiLineIfElse:JiraServiceImpl.kt$fields.attachment.map { att -> JiraAttachmentData(id = att.id, filename = att.filename, mimeType = att.mimeType, sizeBytes = att.size) }</ID>
+    <ID>MultiLineIfElse:JiraServiceImpl.kt$fields.issuelinks.mapNotNull { link -> val linked = link.inwardIssue ?: link.outwardIssue ?: return@mapNotNull null val relationship = if (link.inwardIssue != null) link.type.inward else link.type.outward JiraLinkedIssueRef( key = linked.key, summary = linked.fields.summary, status = linked.fields.status.name, relationship = relationship ) }</ID>
+    <ID>MultiLineIfElse:JiraServiceImpl.kt$fields.subtasks.map { st -> JiraSubtaskRef( key = st.key, summary = st.fields.summary, status = st.fields.status.name ) }</ID>
+    <ID>MultiLineIfElse:SearchableChooser.kt$SearchableChooser$ListSelectionModel.MULTIPLE_INTERVAL_SELECTION</ID>
+    <ID>MultiLineIfElse:SearchableChooser.kt$SearchableChooser$ListSelectionModel.SINGLE_SELECTION</ID>
+    <ID>MultiLineIfElse:SimpleWidgets.kt$NumberFieldWidget$d.toLong().toString()</ID>
+    <ID>MultiLineIfElse:SimpleWidgets.kt$NumberFieldWidget$d.toString()</ID>
+    <ID>MultiLineIfElse:SprintDashboardPanel.kt$SprintDashboardPanel$"(${allIssues.size} tickets)"</ID>
+    <ID>MultiLineIfElse:SprintDashboardPanel.kt$SprintDashboardPanel$"(${displayed.size}/${allIssues.size} tickets)"</ID>
+    <ID>MultiLineIfElse:SprintDashboardPanel.kt$SprintDashboardPanel$filter</ID>
+    <ID>MultiLineIfElse:SprintDashboardPanel.kt$SprintDashboardPanel.StartWorkAction$""</ID>
+    <ID>MultiLineIfElse:SprintDashboardPanel.kt$SprintDashboardPanel.StartWorkAction$emptyList()</ID>
+    <ID>MultiLineIfElse:TicketTransitionServiceImpl.kt$TicketTransitionServiceImpl$"none"</ID>
+    <ID>MultiLineIfElse:TicketTransitionServiceImpl.kt$TicketTransitionServiceImpl$transitions.joinToString(", ") { "${it.name} (id=${it.id})" }</ID>
+    <ID>MultiLineIfElse:WorklogSection.kt$WorklogSection.Companion$"${days}d ${remainingHours}h"</ID>
+    <ID>MultiLineIfElse:WorklogSection.kt$WorklogSection.Companion$"${days}d"</ID>
+    <ID>MultiLineIfElse:WorklogSection.kt$WorklogSection.Companion$"${totalHours}h ${remainingMinutes}m"</ID>
+    <ID>MultiLineIfElse:WorklogSection.kt$WorklogSection.Companion$"${totalHours}h"</ID>
+    <ID>NoBlankLineBeforeRbrace:JiraTicketProviderImpl.kt$JiraTicketProviderImpl$ </ID>
+    <ID>NoConsecutiveBlankLines:JiraApiClientTest.kt$JiraApiClientTest$ </ID>
+    <ID>NoConsecutiveBlankLines:OptionWidgets.kt$ </ID>
+    <ID>NoConsecutiveBlankLines:SimpleWidgets.kt$ </ID>
+    <ID>NoConsecutiveBlankLines:SprintServiceTest.kt$SprintServiceTest$ </ID>
+    <ID>NoConsecutiveBlankLines:TicketKeyCacheTest.kt$TicketKeyCacheTest$ </ID>
+    <ID>NoEmptyFirstLineInMethodBlock:FieldWidgetFactory.kt$FieldWidgetFactory$ </ID>
+    <ID>NoMultipleSpaces:CheckinHandlerScopeLifecycleTest.kt$CheckinHandlerScopeLifecycleTest$ </ID>
+    <ID>NoMultipleSpaces:EntityPickerWidgets.kt$GroupPickerWidget$ </ID>
+    <ID>NoMultipleSpaces:FieldWidgetFactory.kt$FieldWidgetFactory$ </ID>
+    <ID>NoMultipleSpaces:FieldWidgetFactoryTest.kt$FieldWidgetFactoryTest$ </ID>
+    <ID>NoMultipleSpaces:JiraDtos.kt$JiraAttachment$ </ID>
+    <ID>NoMultipleSpaces:JiraSearchServiceImplTest.kt$JiraSearchServiceImplTest$ </ID>
+    <ID>NoMultipleSpaces:JiraTicketProviderImplTest.kt$JiraTicketProviderImplTest$ </ID>
+    <ID>NoMultipleSpaces:OptionWidgetsTest.kt$OptionWidgetsTest$ </ID>
+    <ID>NoMultipleSpaces:SearchableChooserTest.kt$SearchableChooserTest$ </ID>
+    <ID>NoMultipleSpaces:SimpleWidgets.kt$DatePickerWidget$ </ID>
+    <ID>NoMultipleSpaces:SimpleWidgets.kt$DateTimePickerWidget$ </ID>
+    <ID>NoMultipleSpaces:SprintDashboardPanel.kt$SprintDashboardPanel$ </ID>
+    <ID>NoMultipleSpaces:StartWorkDialog.kt$StartWorkDialog$ </ID>
+    <ID>NoMultipleSpaces:TicketListCellRenderer.kt$TicketListCellRenderer$ </ID>
+    <ID>NoMultipleSpaces:TimeTrackingCheckinHandlerFactory.kt$TimeTrackingCheckinHandler$ </ID>
+    <ID>NoUnusedImports:EntityPickerWidgetsTest.kt$com.workflow.orchestrator.jira.ui.widgets.EntityPickerWidgetsTest.kt</ID>
+    <ID>NoUnusedImports:JiraServiceImpl.kt$com.workflow.orchestrator.jira.service.JiraServiceImpl.kt</ID>
+    <ID>NoUnusedImports:LinkedDocsSection.kt$com.workflow.orchestrator.jira.ui.LinkedDocsSection.kt</ID>
+    <ID>NoUnusedImports:OptionWidgets.kt$com.workflow.orchestrator.jira.ui.widgets.OptionWidgets.kt</ID>
+    <ID>NoUnusedImports:SearchableChooser.kt$com.workflow.orchestrator.jira.ui.widgets.SearchableChooser.kt</ID>
+    <ID>NoUnusedImports:SimpleWidgetsTest.kt$com.workflow.orchestrator.jira.ui.widgets.SimpleWidgetsTest.kt</ID>
+    <ID>NoUnusedImports:TicketTransitionServiceImplTest.kt$com.workflow.orchestrator.jira.service.TicketTransitionServiceImplTest.kt</ID>
+    <ID>NoWildcardImports:BranchNameValidatorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:CheckinHandlerScopeLifecycleTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:CurrentWorkSection.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:CurrentWorkSection.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:DevStatusSection.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:EntityPickerWidgetsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:IssueDetailCacheTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:JiraApiClient.kt$import com.workflow.orchestrator.jira.api.dto.*</ID>
+    <ID>NoWildcardImports:JiraApiClientSameOriginTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:JiraApiClientSearchIssuesTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:JiraApiClientTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:JiraDtoDeserializationTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:JiraMonitorFieldsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:JiraSearchServiceImplTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:JiraServiceImplSearchBoardsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:JiraServiceImplTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:JiraTaskMappingTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:JiraTicketProviderImplTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:JiraWorkflowConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>NoWildcardImports:OptionWidgetsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:PostCommitTransitionLogicTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SimpleWidgetsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SprintDashboardPanel.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:SprintDashboardPanel.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:SprintServiceTest.kt$import com.workflow.orchestrator.jira.api.dto.*</ID>
+    <ID>NoWildcardImports:SprintServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SprintTimeBar.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:StartWorkDialog.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:TicketDetailPanel.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:TicketKeyCacheTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:TicketListCellRenderer.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:TimeTrackingLogicTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:TransitionInputSerializer.kt$import kotlinx.serialization.json.*</ID>
+    <ID>NoWildcardImports:TransitionMappingStoreTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:WorklogSection.kt$import java.awt.*</ID>
+    <ID>ParameterListWrapping:BranchingService.kt$BranchingService$(branchClient: BitbucketBranchClient, projectKey: String, repoSlug: String)</ID>
+    <ID>ParameterListWrapping:PostCommitTransitionHandlerFactory.kt$PostCommitTransitionHandler.&lt;no name provided>$(e: com.intellij.openapi.actionSystem.AnActionEvent, notification: com.intellij.notification.Notification)</ID>
+    <ID>ParameterListWrapping:TicketDetailPanel.kt$TicketDetailPanel$(private val project: com.intellij.openapi.project.Project)</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:JiraServiceImpl.kt$JiraServiceImpl$@Volatile private var cachedBaseUrl: String? = null</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:JiraTicketProviderImpl.kt$JiraTicketProviderImpl$/** Set to true in tests to skip the ConnectionSettings lookup. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:SprintDashboardPanel.kt$SprintDashboardPanel$/** Snapshot of the sprint list so we can restore it when leaving filter view. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:SprintDashboardPanel.kt$SprintDashboardPanel$/** When non-null, the ticket list is showing JQL results from a saved filter rather than sprint data. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:StartWorkDialog.kt$StartWorkDialog$// Always build the dual-mode panel when we might show existing branches for ANY repo,</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:TicketKeyCache.kt$TicketKeyCache.Companion$/** Limit regex matches to prevent catastrophic backtracking on malicious patterns (SEC-22). */</ID>
+    <ID>StringTemplate:JiraApiClient.kt$JiraApiClient$${assigneeClause}</ID>
+    <ID>SwallowedException:JiraWorkflowConfigurable.kt$JiraWorkflowConfigurable$e: java.util.regex.PatternSyntaxException</ID>
+    <ID>UnusedPrivateMember:TicketDetailPanel.kt$TicketDetailPanel$private fun createInfoCard(title: String, contentBuilder: JPanel.() -> Unit): JPanel</ID>
+    <ID>UnusedPrivateProperty:AttachmentDownloadService.kt$AttachmentDownloadService$private val project: Project</ID>
+    <ID>UnusedPrivateProperty:CurrentWorkSection.kt$CurrentWorkSection.Companion$private val CHIP_BG = JBColor(0xE0E0E0, 0x2D3035)</ID>
+    <ID>UnusedPrivateProperty:DevStatusSection.kt$DevStatusSection$private val log = Logger.getInstance(DevStatusSection::class.java)</ID>
+    <ID>UnusedPrivateProperty:EntityPickerWidgets.kt$AutoCompleteWidget$private val onChange: (FieldValue?) -> Unit</ID>
+    <ID>UnusedPrivateProperty:EntityPickerWidgets.kt$ComponentPickerWidget$private val onChange: (FieldValue?) -> Unit</ID>
+    <ID>UnusedPrivateProperty:EntityPickerWidgets.kt$GroupPickerWidget$private val onChange: (FieldValue?) -> Unit</ID>
+    <ID>UnusedPrivateProperty:EntityPickerWidgets.kt$LabelPickerWidget$private val onChange: (FieldValue?) -> Unit</ID>
+    <ID>UnusedPrivateProperty:EntityPickerWidgets.kt$UserPickerWidget$private val onChange: (FieldValue?) -> Unit</ID>
+    <ID>UnusedPrivateProperty:EntityPickerWidgets.kt$VersionPickerWidget$private val onChange: (FieldValue?) -> Unit</ID>
+    <ID>UnusedPrivateProperty:HtmlEscapeInTicketLabelsTest.kt$HtmlEscapeInTicketLabelsTest$private val xssPayloadEscaped = "&amp;lt;script&amp;gt;alert(1)&amp;lt;/script&amp;gt;"</ID>
+    <ID>UnusedPrivateProperty:SprintDashboardPanel.kt$SprintDashboardPanel$private val activeTicketService: ActiveTicketService</ID>
+    <ID>UnusedPrivateProperty:TransitionMappingStore.kt$TransitionMappingStore$private val log = Logger.getInstance(TransitionMappingStore::class.java)</ID>
+    <ID>WildcardImport:BranchNameValidatorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:CheckinHandlerScopeLifecycleTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:CurrentWorkSection.kt$import java.awt.*</ID>
+    <ID>WildcardImport:CurrentWorkSection.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:DevStatusSection.kt$import java.awt.*</ID>
+    <ID>WildcardImport:EntityPickerWidgetsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:IssueDetailCacheTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:JiraApiClient.kt$import com.workflow.orchestrator.jira.api.dto.*</ID>
+    <ID>WildcardImport:JiraApiClientSameOriginTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:JiraApiClientSearchIssuesTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:JiraApiClientTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:JiraDtoDeserializationTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:JiraMonitorFieldsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:JiraSearchServiceImplTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:JiraServiceImplSearchBoardsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:JiraServiceImplTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:JiraTaskMappingTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:JiraTicketProviderImplTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:JiraWorkflowConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>WildcardImport:OptionWidgetsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:PostCommitTransitionLogicTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SimpleWidgetsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SprintDashboardPanel.kt$import java.awt.*</ID>
+    <ID>WildcardImport:SprintDashboardPanel.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:SprintServiceTest.kt$import com.workflow.orchestrator.jira.api.dto.*</ID>
+    <ID>WildcardImport:SprintServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SprintTimeBar.kt$import java.awt.*</ID>
+    <ID>WildcardImport:StartWorkDialog.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:TicketDetailPanel.kt$import java.awt.*</ID>
+    <ID>WildcardImport:TicketKeyCacheTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:TicketListCellRenderer.kt$import java.awt.*</ID>
+    <ID>WildcardImport:TimeTrackingLogicTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:TransitionInputSerializer.kt$import kotlinx.serialization.json.*</ID>
+    <ID>WildcardImport:TransitionMappingStoreTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:WorklogSection.kt$import java.awt.*</ID>
+    <ID>Wrapping:BranchingServiceTest.kt$BranchingServiceTest$(</ID>
+    <ID>Wrapping:ChangelogSection.kt$ChangelogSection$(</ID>
+    <ID>Wrapping:ChangelogSection.kt$ChangelogSection$(JBLabel(rowText).apply { font = font.deriveFont(Font.PLAIN, JBUI.scale(11).toFloat()) foreground = JBColor.foreground() }, BorderLayout.WEST)</ID>
+    <ID>Wrapping:ChangelogSection.kt$ChangelogSection$(JBLabel(text).apply { foreground = StatusColors.SECONDARY_TEXT border = JBUI.Borders.empty(8) }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:CheckinHandlerScopeLifecycleTest.kt$CheckinHandlerScopeLifecycleTest$</ID>
+    <ID>Wrapping:CurrentWorkChipRenderer.kt$CurrentWorkChipRenderer$(</ID>
+    <ID>Wrapping:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$</ID>
+    <ID>Wrapping:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$(</ID>
+    <ID>Wrapping:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$it.contains("RepoA") &amp;&amp; it.contains("feature/ABC-123") &amp;&amp; it.contains("→ develop")</ID>
+    <ID>Wrapping:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$it.contains("RepoB") &amp;&amp; it.contains("feature/ABC-123-api") &amp;&amp; it.contains("→ main")</ID>
+    <ID>Wrapping:CurrentWorkChipRendererTest.kt$CurrentWorkChipRendererTest$settingsClicked += 1</ID>
+    <ID>Wrapping:CurrentWorkSection.kt$CurrentWorkSection$(</ID>
+    <ID>Wrapping:DevStatusSection.kt$DevStatusSection$(</ID>
+    <ID>Wrapping:DevStatusSection.kt$DevStatusSection$(JBLabel(text).apply { foreground = StatusColors.SECONDARY_TEXT border = JBUI.Borders.empty(8) }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:DevStatusSection.kt$DevStatusSection$renderBranchRow(it)</ID>
+    <ID>Wrapping:JiraApiClient.kt$JiraApiClient$(</ID>
+    <ID>Wrapping:JiraApiClientSameOriginTest.kt$JiraApiClientSameOriginTest$(</ID>
+    <ID>Wrapping:JiraApiClientSearchIssuesTest.kt$JiraApiClientSearchIssuesTest$(</ID>
+    <ID>Wrapping:JiraApiClientTest.kt$JiraApiClientTest$(</ID>
+    <ID>Wrapping:JiraFieldsCacheInvalidateTest.kt$JiraFieldsCacheInvalidateTest$(</ID>
+    <ID>Wrapping:JiraSearchServiceImplTest.kt$JiraSearchServiceImplTest$(</ID>
+    <ID>Wrapping:JiraServiceImpl.kt$JiraServiceImpl$;</ID>
+    <ID>Wrapping:JiraServiceImpl.kt$JiraServiceImpl$it.name</ID>
+    <ID>Wrapping:JiraServiceImpl.kt$JiraServiceImpl${ log.warn("[JiraService] branches fetch failed: ${branchesResult.message}"); fetchErrors++; emptyList() }</ID>
+    <ID>Wrapping:JiraServiceImpl.kt$JiraServiceImpl${ log.warn("[JiraService] builds fetch failed: ${buildsResult.message}"); fetchErrors++; emptyList() }</ID>
+    <ID>Wrapping:JiraServiceImpl.kt$JiraServiceImpl${ log.warn("[JiraService] commits fetch failed: ${commitsResult.message}"); fetchErrors++; emptyList() }</ID>
+    <ID>Wrapping:JiraServiceImpl.kt$JiraServiceImpl${ log.warn("[JiraService] deployments fetch failed: ${deploymentsResult.message}"); fetchErrors++; emptyList() }</ID>
+    <ID>Wrapping:JiraServiceImpl.kt$JiraServiceImpl${ log.warn("[JiraService] reviews fetch failed: ${reviewsResult.message}"); fetchErrors++; emptyList() }</ID>
+    <ID>Wrapping:JiraServiceImplTest.kt$JiraServiceImplTest$(</ID>
+    <ID>Wrapping:JiraTicketProviderImpl.kt$JiraTicketProviderImpl$(</ID>
+    <ID>Wrapping:LinkedDocsSection.kt$LinkedDocsSection$(</ID>
+    <ID>Wrapping:PermissionGateTest.kt$PermissionGateTest$(</ID>
+    <ID>Wrapping:SearchableChooserTest.kt$SearchableChooserTest$;</ID>
+    <ID>Wrapping:SingleCallerOfTransitionIssueTest.kt$SingleCallerOfTransitionIssueTest$(</ID>
+    <ID>Wrapping:SprintDashboardPanel.kt$SprintDashboardPanel$(</ID>
+    <ID>Wrapping:SprintDashboardPanel.kt$SprintDashboardPanel$(JBScrollPane(ticketList).apply { border = JBUI.Borders.emptyTop(4) isOpaque = false viewport.isOpaque = false }, "list")</ID>
+    <ID>Wrapping:SprintFavouritesRenderingTest.kt$SprintFavouritesRenderingTest$(</ID>
+    <ID>Wrapping:SprintPaginationCache.kt$SprintPaginationCache$;</ID>
+    <ID>Wrapping:SprintServiceTest.kt$SprintServiceTest$(</ID>
+    <ID>Wrapping:StartWorkDialog.kt$StartWorkDialog$(</ID>
+    <ID>Wrapping:TicketDetailPanel.kt$TicketDetailPanel$(</ID>
+    <ID>Wrapping:TicketDetailPanel.kt$TicketDetailPanel$(JBLabel("${comments.size - 20} more comments — open in Jira to see all").apply { foreground = StatusColors.SECONDARY_TEXT font = font.deriveFont(JBUI.scale(10).toFloat()) border = JBUI.Borders.empty(4, 8) }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:TicketDetailPanel.kt$TicketDetailPanel$(JBLabel("Attachments (${attachments.size})").apply { font = font.deriveFont(Font.BOLD, JBUI.scale(13).toFloat()) foreground = JBColor.foreground() border = JBUI.Borders.emptyLeft(2) }, BorderLayout.WEST)</ID>
+    <ID>Wrapping:TicketDetailPanel.kt$TicketDetailPanel$(JBLabel("Loading comments...").apply { foreground = JBColor.GRAY; border = JBUI.Borders.empty(8) }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:TicketDetailPanel.kt$TicketDetailPanel$(JBLabel("No comments").apply { foreground = StatusColors.SECONDARY_TEXT border = JBUI.Borders.empty(8) }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:TicketDetailPanel.kt$TicketDetailPanel$;</ID>
+    <ID>Wrapping:TicketDetailPanel.kt$TicketDetailPanel.&lt;no name provided>$(</ID>
+    <ID>Wrapping:TicketKeyCacheTest.kt$TicketKeyCacheTest$(</ID>
+    <ID>Wrapping:TicketListCellRenderer.kt$TicketListCellRenderer$(</ID>
+    <ID>Wrapping:TicketTransitionDialog.kt$TicketTransitionDialog$;</ID>
+    <ID>Wrapping:TicketTransitionServiceImplTest.kt$TicketTransitionServiceImplTest$(</ID>
+    <ID>Wrapping:TransitionInputSerializerTest.kt$TransitionInputSerializerTest$(</ID>
+    <ID>Wrapping:TransitionMappingStore.kt$TransitionMappingStore$;</ID>
+    <ID>Wrapping:WorklogSection.kt$WorklogSection$(</ID>
+    <ID>Wrapping:WorklogSection.kt$WorklogSection$(JBLabel("Total: ${formatTimeSpent(totalSeconds)}").apply { font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat()) }, BorderLayout.WEST)</ID>
+    <ID>Wrapping:WorklogSection.kt$WorklogSection$(JBLabel(commentText).apply { font = font.deriveFont(Font.ITALIC, JBUI.scale(10).toFloat()) foreground = StatusColors.SECONDARY_TEXT }, BorderLayout.WEST)</ID>
+    <ID>Wrapping:WorklogSection.kt$WorklogSection$(JBLabel(text).apply { foreground = StatusColors.SECONDARY_TEXT border = JBUI.Borders.empty(8) }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:WorklogSection.kt$WorklogSection.&lt;no name provided>$(</ID>
+  </CurrentIssues>
+</SmellBaseline>

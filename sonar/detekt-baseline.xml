@@ -1,0 +1,436 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>AnnotationSpacing:SonarDataServiceConcurrencyTest.kt$SonarDataServiceConcurrencyTest$@OptIn(ExperimentalCoroutinesApi::class)</ID>
+    <ID>ArgumentListWrapping:BranchQualityReportTest.kt$BranchQualityReportTest$(projectKey, branch, "new_line_coverage,new_branch_coverage,new_duplicated_lines_density")</ID>
+    <ID>ArgumentListWrapping:CodeQualityConfigurable.kt$CodeQualityConfigurable$("SonarQube project key for quality analysis. Use Browse to search or Auto-detect from pom.xml.")</ID>
+    <ID>ArgumentListWrapping:CodeQualityConfigurable.kt$CodeQualityConfigurable$("com.workflow.orchestrator.sonar.ui.SonarProjectPickerDialog")</ID>
+    <ID>ArgumentListWrapping:CodeQualityConfigurable.kt$CodeQualityConfigurable$(com.intellij.openapi.project.Project::class.java)</ID>
+    <ID>ArgumentListWrapping:CodeQualityConfigurable.kt$CodeQualityConfigurable$(com.workflow.orchestrator.sonar.service.SonarKeyDetector::class.java)</ID>
+    <ID>ArgumentListWrapping:CoverageLineMarkerProvider.kt$CoverageLineMarkerProvider$(project)</ID>
+    <ID>ArgumentListWrapping:CoverageLineMarkerProvider.kt$CoverageLineMarkerProvider.Companion$("/icons/coverage-covered.svg", CoverageLineMarkerProvider::class.java)</ID>
+    <ID>ArgumentListWrapping:CoverageLineMarkerProvider.kt$CoverageLineMarkerProvider.Companion$("/icons/coverage-partial.svg", CoverageLineMarkerProvider::class.java)</ID>
+    <ID>ArgumentListWrapping:CoverageLineMarkerProvider.kt$CoverageLineMarkerProvider.Companion$("/icons/coverage-uncovered.svg", CoverageLineMarkerProvider::class.java)</ID>
+    <ID>ArgumentListWrapping:CoverageMapperTest.kt$CoverageMapperTest$(metric = "new_branch_coverage", period = SonarMeasurePeriodDto(value = "50.0"))</ID>
+    <ID>ArgumentListWrapping:CoverageMapperTest.kt$CoverageMapperTest$(metric = "new_coverage", period = SonarMeasurePeriodDto(value = "78.5"))</ID>
+    <ID>ArgumentListWrapping:CoverageMapperTest.kt$CoverageMapperTest$(metric = "new_lines_to_cover", period = SonarMeasurePeriodDto(value = "42"))</ID>
+    <ID>ArgumentListWrapping:CoverageMapperTest.kt$CoverageMapperTest$(metric = "new_uncovered_lines", period = SonarMeasurePeriodDto(value = "8"))</ID>
+    <ID>ArgumentListWrapping:CoverageTablePanel.kt$CoverageTableModel$("File", "Line %", "Branch %", "Uncovered Lines", "Uncovered Cond.", "Complexity", "Cognitive")</ID>
+    <ID>ArgumentListWrapping:CoverageTablePanel.kt$CoverageTableModel$("File", "New Coverage %", "New Branch %", "New Uncov. Lines", "New Lines", "Complexity", "Cognitive")</ID>
+    <ID>ArgumentListWrapping:CoverageThresholdsTest.kt$CoverageThresholdsTest$(CoverageThresholds.colorForGateMetric(85.0, null), "no gate condition for the metric → no opinion")</ID>
+    <ID>ArgumentListWrapping:CoverageThresholdsTest.kt$CoverageThresholdsTest$(StatusColors.SUCCESS, CoverageThresholds.colorForGateMetric(5.0, 5.0, "GT"), "boundary at threshold passes")</ID>
+    <ID>ArgumentListWrapping:CoverageThresholdsTest.kt$CoverageThresholdsTest$(StatusColors.SUCCESS, CoverageThresholds.colorForGateMetric(95.5, 95.5), "boundary value passes the gate")</ID>
+    <ID>ArgumentListWrapping:GradleSonarKeyDetectorTest.kt$GradleSonarKeyDetectorTest$("com.acme:platform:api", GradleSonarKeyDetector.detect(project, subDir.toAbsolutePath().toString()))</ID>
+    <ID>ArgumentListWrapping:GradleSonarKeyDetectorTest.kt$GradleSonarKeyDetectorTest$(project, subDir.toAbsolutePath().toString())</ID>
+    <ID>ArgumentListWrapping:IssueDetailPanel.kt$IssueDetailPanel$("Read the file, understand the context, apply a minimal fix that resolves the issue without changing behavior, and verify it compiles with diagnostics.")</ID>
+    <ID>ArgumentListWrapping:IssueListPanel.kt$IssueListPanel$( OpenFileDescriptor(project, vf, validated.line, issue.startOffset), true )</ID>
+    <ID>ArgumentListWrapping:IssueListPanel.kt$IssueListPanel$( OpenFileDescriptor(project, vf, validated.line, validated.column), true )</ID>
+    <ID>ArgumentListWrapping:IssueListPanel.kt$IssueListPanel$("Read the file, understand the context, apply a minimal fix that resolves the issue without changing behavior, and verify it compiles with diagnostics.")</ID>
+    <ID>ArgumentListWrapping:IssueMapperTest.kt$IssueMapperTest$( key = "k$i", rule = "r", severity = "MAJOR", message = "m", component = "p:k:src/F.kt", type = t )</ID>
+    <ID>ArgumentListWrapping:IssueMapperTest.kt$IssueMapperTest$( key = "k$i", rule = "r", severity = sev, message = "m", component = "p:k:src/F.kt", type = "BUG" )</ID>
+    <ID>ArgumentListWrapping:IssueMapperTest.kt$IssueMapperTest$( key = "k1", rule = "r", severity = "INFO", message = "msg", component = "p:k:src/File.kt", type = "CODE_SMELL", textRange = null )</ID>
+    <ID>ArgumentListWrapping:IssueMapperTest.kt$IssueMapperTest$( key = "k1", rule = "r", severity = "MAJOR", message = "m", component = "p:k:src/F.kt", type = "BUG" )</ID>
+    <ID>ArgumentListWrapping:IssueMapperTest.kt$IssueMapperTest$( key = "k1", rule = "r", severity = "MAJOR", message = "m", component = "p:k:src/F.kt", type = "BUG", impacts = listOf( SonarImpactDto(softwareQuality = "AVAILABILITY", severity = "EXTREME"), ), )</ID>
+    <ID>ArgumentListWrapping:IssueMapperTest.kt$IssueMapperTest$( key = "k1", rule = "r", severity = "MAJOR", message = "msg", component = "org.example:proj:src/main/java/Foo.java", type = "CODE_SMELL" )</ID>
+    <ID>ArgumentListWrapping:OverviewPanel.kt$OverviewPanel$("&lt;html>" + "Reliability: &lt;font color='${StatusColors.htmlColor(ratingColor(health.reliabilityRating))}'>${health.reliabilityRating.ifEmpty { "—" }}&lt;/font> " + "Security: &lt;font color='${StatusColors.htmlColor(ratingColor(health.securityRating))}'>${health.securityRating.ifEmpty { "—" }}&lt;/font>" + "&lt;/html>")</ID>
+    <ID>ArgumentListWrapping:OverviewPanel.kt$OverviewPanel$("&lt;html>&lt;font color='${StatusColors.htmlColor(color)}'>\u25CF&lt;/font> " + "${issue.type} &lt;font color='${StatusColors.htmlColor(color)}'>${issue.severity}&lt;/font> " + "${issue.message} — ${java.io.File(issue.filePath).name}:${issue.startLine}&lt;/html>")</ID>
+    <ID>ArgumentListWrapping:QualityDashboardPanel.kt$QualityDashboardPanel$("SonarQube project key not configured for $repoName \u2014 configure in Settings > CI/CD")</ID>
+    <ID>ArgumentListWrapping:QualityDashboardPanel.kt$QualityDashboardPanel$("SonarQube project key not configured for ${pr.repoName} \u2014 configure in Settings > CI/CD")</ID>
+    <ID>ArgumentListWrapping:QualityDashboardPanel.kt$QualityDashboardPanel$(project)</ID>
+    <ID>ArgumentListWrapping:SonarApiClient.kt$SonarApiClient$( projectKey, branch, filePath, inNewCodePeriod, effectivePage, effectivePageSize )</ID>
+    <ID>ArgumentListWrapping:SonarApiClient.kt$SonarApiClient$("[Sonar:API] $logTag: hit MAX_ISSUES_PAGES=$MAX_ISSUES_PAGES cap — returning ${allItems.size} items (project may have more)")</ID>
+    <ID>ArgumentListWrapping:SonarApiClient.kt$SonarApiClient$("[Sonar:API] $logTag: mid-pagination error on page $page — returning ${allItems.size} items collected so far")</ID>
+    <ID>ArgumentListWrapping:SonarApiClient.kt$SonarApiClient$("[Sonar:API] $path -> 403 (insufficient permissions — some endpoints require admin)")</ID>
+    <ID>ArgumentListWrapping:SonarApiClient.kt$SonarApiClient$("[Sonar:API] GET /api/hotspots/search (paginated) for project '$projectKey' branch='${branch ?: "default"}'")</ID>
+    <ID>ArgumentListWrapping:SonarApiClient.kt$SonarApiClient$("[Sonar:API] GET /api/issues/search (paginated) for project '$projectKey' branch='${branch ?: "default"}' newCode=$inNewCodePeriod")</ID>
+    <ID>ArgumentListWrapping:SonarApiClient.kt$SonarApiClient$("[Sonar:API] GET /api/issues/search for project '$projectKey' branch='${branch ?: "default"}' file='${filePath ?: "all"}' newCode=$inNewCodePeriod")</ID>
+    <ID>ArgumentListWrapping:SonarApiClient.kt$SonarApiClient$("[Sonar:API] GET /api/issues/search?facets=$facets for project '$projectKey' branch='${branch ?: "default"}' newCode=$inNewCodePeriod")</ID>
+    <ID>ArgumentListWrapping:SonarApiClient.kt$SonarApiClient$("[Sonar:API] GET /api/measures/component_tree for project '$projectKey' branch='${branch ?: "default"}'")</ID>
+    <ID>ArgumentListWrapping:SonarApiClient.kt$SonarApiClient$("[Sonar:API] GET /api/qualitygates/project_status for project '$projectKey' branch='${branch ?: "default"}'")</ID>
+    <ID>ArgumentListWrapping:SonarApiClient.kt$SonarApiClient$("[Sonar:API] GET /api/sources/lines for component '$componentKey' branch='${branch ?: "default"}' from=$from to=$to")</ID>
+    <ID>ArgumentListWrapping:SonarApiClient.kt$SonarApiClient$("[Sonar:API] Hit MAX_MEASURES_PAGES=$MAX_MEASURES_PAGES; returning ${all.size} components (project may have more)")</ID>
+    <ID>ArgumentListWrapping:SonarApiClient.kt$SonarApiClient.Companion$( SonarMetricKey.SQALE_INDEX, SonarMetricKey.SQALE_RATING, SonarMetricKey.DUPLICATED_LINES_DENSITY, SonarMetricKey.COGNITIVE_COMPLEXITY, SonarMetricKey.RELIABILITY_RATING, SonarMetricKey.SECURITY_RATING, SonarMetricKey.COVERAGE, SonarMetricKey.BRANCH_COVERAGE, )</ID>
+    <ID>ArgumentListWrapping:SonarBranchReportGateAndDupTest.kt$SonarBranchReportGateAndDupTest$("ERROR", result.data!!.qualityGate.status, "server ERROR must not be downgraded to WARN by the new-code recompute")</ID>
+    <ID>ArgumentListWrapping:SonarBranchReportGateAndDupTest.kt$SonarBranchReportGateAndDupTest$(fileReport.duplicatedLineRanges.isEmpty(), "a dup block belonging to another module's Service.kt must not be attributed to this file")</ID>
+    <ID>ArgumentListWrapping:SonarDataService.kt$SonarDataService$("[Sonar:Branches] ${b.name} (main=${b.isMain}) — gate=${b.qualityGateStatus ?: "N/A"}, analyzed=${b.analysisDate ?: "never"}")</ID>
+    <ID>ArgumentListWrapping:SonarDataService.kt$SonarDataService$("[Sonar:CE] Latest: status=${t.status}, branch=${t.branch ?: "N/A"}, time=${t.executionTimeMs ?: 0}ms")</ID>
+    <ID>ArgumentListWrapping:SonarDataService.kt$SonarDataService$("[Sonar:Health] Maintainability=${h.maintainabilityRating}, Debt=${h.formattedDebt}, " + "Reliability=${h.reliabilityRating}, Security=${h.securityRating}, " + "Duplication=${h.duplicatedLinesDensity}%, Complexity=${h.cognitiveComplexity}")</ID>
+    <ID>ArgumentListWrapping:SonarDataService.kt$SonarDataService$("[Sonar:LineCoverage] Cached ${statuses.size} line statuses for '$relativePath' (projectKey='$effectiveKey')")</ID>
+    <ID>ArgumentListWrapping:SonarDataService.kt$SonarDataService$("[Sonar:LineCoverage] Failed to fetch line coverage for '$componentKey': ${result.message}")</ID>
+    <ID>ArgumentListWrapping:SonarDataServiceConcurrencyTest.kt$SonarDataServiceConcurrencyTest$("main", state.branch, "branch must be 'main' (branch-B), not 'feature/branch-a'")</ID>
+    <ID>ArgumentListWrapping:SonarDataServiceConcurrencyTest.kt$SonarDataServiceConcurrencyTest$("proj-b", state.projectKey, "state must reflect branch-B, not stale branch-A data")</ID>
+    <ID>ArgumentListWrapping:SonarDataServiceConcurrencyTest.kt$SonarDataServiceConcurrencyTest$(1, harness.closedCount.get(), "old URL-A client closed exactly once when replaced")</ID>
+    <ID>ArgumentListWrapping:SonarDataServiceConcurrencyTest.kt$SonarDataServiceConcurrencyTest$(2, harness.createdCount.get(), "exactly one new client for URL-B — the mutex prevented extra creation")</ID>
+    <ID>ArgumentListWrapping:SonarDataServiceConcurrencyTest.kt$SonarDataServiceConcurrencyTest$(nonCommentLines.contains("scope.async"), "refreshWith must not use scope.async (would escape structured cancellation)")</ID>
+    <ID>ArgumentListWrapping:SonarDataServiceConcurrencyTest.kt$SonarDataServiceConcurrencyTest$(src.contains("activeRefreshJob"), "field activeRefreshJob must be present")</ID>
+    <ID>ArgumentListWrapping:SonarDataServiceConcurrencyTest.kt$SonarDataServiceConcurrencyTest$(src.contains("activeRefreshJob?.cancel()"), "activeRefreshJob must be cancelled when a new refresh starts")</ID>
+    <ID>ArgumentListWrapping:SonarDataServiceConcurrencyTest.kt$SonarDataServiceConcurrencyTest$(src.contains("cachedApiClient?.close()"), "must close old client before replacing (OkHttp pool eviction)")</ID>
+    <ID>ArgumentListWrapping:SonarDataServiceConcurrencyTest.kt$SonarDataServiceConcurrencyTest$(src.contains("coroutineScope {"), "refreshWith must use coroutineScope { } (not scope.async) for structured concurrency")</ID>
+    <ID>ArgumentListWrapping:SonarDataServiceHotspotsTest.kt$TestSonarDataServiceWithHotspots$( QualityGateStatus.NONE, emptyList() )</ID>
+    <ID>ArgumentListWrapping:SonarDataServiceHotspotsTest.kt$TestSonarDataServiceWithHotspots$( cond.metricKey, cond.comparator, cond.errorThreshold, cond.actualValue, cond.status == "OK" )</ID>
+    <ID>ArgumentListWrapping:SonarDataServiceHotspotsTest.kt$TestSonarDataServiceWithHotspots$(projectKey, branch, "coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions")</ID>
+    <ID>ArgumentListWrapping:SonarDataServiceTest.kt$TestSonarDataService$( QualityGateStatus.NONE, emptyList() )</ID>
+    <ID>ArgumentListWrapping:SonarDataServiceTest.kt$TestSonarDataService$( cond.metricKey, cond.comparator, cond.errorThreshold, cond.actualValue, cond.status == "OK" )</ID>
+    <ID>ArgumentListWrapping:SonarDataServiceTest.kt$TestSonarDataService$(projectKey, branch, "coverage,line_coverage,branch_coverage,uncovered_lines,uncovered_conditions")</ID>
+    <ID>ArgumentListWrapping:SonarDtoSerializationTest.kt$SonarDtoSerializationTest$(dto.permissions!!.global.isEmpty(), "probe was run with non-admin token; permissions.global should be empty")</ID>
+    <ID>ArgumentListWrapping:SonarDtoSerializationTest.kt$SonarDtoSerializationTest$(dto.rule.fixRecommendations.contains("SecureRandom"), "fixRecommendations must contain the SecureRandom Compliant Solution example")</ID>
+    <ID>ArgumentListWrapping:SonarDtoSerializationTest.kt$SonarDtoSerializationTest$(response.qualitygates.all { !it.isAiCodeSupported }, "Community Build returns isAiCodeSupported=false on every gate (R-ADD-AGENT-4)")</ID>
+    <ID>ArgumentListWrapping:SonarDtoSerializationTest.kt$SonarDtoSerializationTest$(result.facets.any { it.property == "impactSoftwareQualities" }, "expected impactSoftwareQualities facet on the probe sample")</ID>
+    <ID>ArgumentListWrapping:SonarDtoSerializationTest.kt$SonarDtoSerializationTest$(severities!!.values.any { it.value == "BLOCKER" }, "@SerialName(\"val\") must map to .value")</ID>
+    <ID>ArgumentListWrapping:SonarFixIntentionAction.kt$SonarFixIntentionAction$("Read the file, understand the surrounding code, apply a minimal fix that resolves the issue without changing behavior, and verify with diagnostics that the fix compiles.")</ID>
+    <ID>ArgumentListWrapping:SonarIssueAnnotator.kt$SonarIssueAnnotator$(project)</ID>
+    <ID>ArgumentListWrapping:SonarMonitorFieldsTest.kt$SonarMonitorFieldsTest$("""status = "OPEN"""")</ID>
+    <ID>ArgumentListWrapping:SonarMonitorFieldsTest.kt$SonarMonitorFieldsTest$("issueStatus = dto.issueStatus")</ID>
+    <ID>ArgumentListWrapping:SonarMonitorFieldsTest.kt$SonarMonitorFieldsTest$("severity = dto.severity")</ID>
+    <ID>ArgumentListWrapping:SonarMonitorFieldsTest.kt$SonarMonitorFieldsTest$(src.contains("""status = "OPEN""""), "SonarServiceImpl must set status = \"OPEN\" (unresolved-only fetch)")</ID>
+    <ID>ArgumentListWrapping:SonarMonitorFieldsTest.kt$SonarMonitorFieldsTest$(src.contains("issueStatus = dto.issueStatus"), "SonarServiceImpl must map dto.issueStatus → SonarIssueData.issueStatus")</ID>
+    <ID>ArgumentListWrapping:SonarMonitorFieldsTest.kt$SonarMonitorFieldsTest$(src.contains("severity = dto.severity"), "SonarServiceImpl must map dto.severity → SonarIssueData.severity")</ID>
+    <ID>ArgumentListWrapping:SonarQualityEmitTest.kt$TestableSonarDataService$( com.workflow.orchestrator.sonar.model.QualityGateStatus.NONE, emptyList() )</ID>
+    <ID>ArgumentListWrapping:SonarServiceImpl.kt$SonarServiceImpl$( SonarMetricKey.COVERAGE, SonarMetricKey.BRANCH_COVERAGE, SonarMetricKey.LINES_TO_COVER, SonarMetricKey.UNCOVERED_LINES, )</ID>
+    <ID>ArgumentListWrapping:SonarServiceImpl.kt$SonarServiceImpl$( SonarMetricKey.NEW_LINE_COVERAGE, SonarMetricKey.NEW_BRANCH_COVERAGE, SonarMetricKey.NEW_DUPLICATED_LINES_DENSITY, SonarMetricKey.NEW_UNCOVERED_LINES, SonarMetricKey.NEW_UNCOVERED_CONDITIONS, )</ID>
+    <ID>ArgumentListWrapping:SonarServiceImpl.kt$SonarServiceImpl$( SonarMetricKey.NEW_UNCOVERED_LINES, SonarMetricKey.NEW_LINE_COVERAGE, SonarMetricKey.NEW_BRANCH_COVERAGE, SonarMetricKey.NEW_UNCOVERED_CONDITIONS, SonarMetricKey.NEW_DUPLICATED_LINES, SonarMetricKey.NEW_DUPLICATED_LINES_DENSITY, )</ID>
+    <ID>ArgumentListWrapping:SonarServiceImpl.kt$SonarServiceImpl$( SonarMetricKey.RELIABILITY_RATING, SonarMetricKey.SECURITY_RATING, SonarMetricKey.SQALE_RATING, SonarMetricKey.COVERAGE, SonarMetricKey.DUPLICATED_LINES_DENSITY, SonarMetricKey.SQALE_DEBT_RATIO, SonarMetricKey.NCLOC, )</ID>
+    <ID>ArgumentListWrapping:SonarServiceImpl.kt$SonarServiceImpl$( api, info.componentKey, info.filePath, branch, FileQualityReportInfo( newUncoveredLines = info.newUncoveredLines, newUncoveredConditions = info.newUncoveredConditions, newLineCoverage = info.newLineCoverage, newBranchCoverage = info.newBranchCoverage, newDuplicatedLines = info.newDuplicatedLines ) )</ID>
+    <ID>ArgumentListWrapping:SonarServiceImpl.kt$SonarServiceImpl$( key = dto.key, message = dto.message, component = dto.component, line = dto.line, securityCategory = dto.securityCategory, probability = dto.vulnerabilityProbability, status = dto.status, resolution = dto.resolution )</ID>
+    <ID>ArgumentListWrapping:SonarServiceImpl.kt$SonarServiceImpl$( lineCoverage = 0.0, branchCoverage = 0.0, totalLines = 0, coveredLines = 0 )</ID>
+    <ID>ArgumentListWrapping:SonarServiceImpl.kt$SonarServiceImpl$( login = "", name = "", email = null, groups = emptyList(), globalPermissions = emptyList(), externalProvider = null, isLoggedIn = false )</ID>
+    <ID>ArgumentListWrapping:SonarServiceImpl.kt$SonarServiceImpl$("[SonarService] componentExists preflight failed (${precheck.type}: ${precheck.message}); proceeding to issues search — a flaky preflight will not block the main fetch")</ID>
+    <ID>ArgumentListWrapping:SonarServiceImpl.kt$SonarServiceImpl$(SonarMetricKey.NEW_LINE_COVERAGE, SonarMetricKey.NEW_BRANCH_COVERAGE)</ID>
+    <ID>ArgumentListWrapping:SonarServiceImpl.kt$SonarServiceImpl$(it.softwareQuality, it.severity)</ID>
+    <ID>ArgumentListWrapping:SonarServiceImpl.kt$SonarServiceImpl$(metric = c.metricKey, operator = c.comparator, value = c.actualValue, status = c.status)</ID>
+    <ID>ArgumentListWrapping:SonarServiceImpl.kt$SonarServiceImpl$(projectKey, branch = branch, filePath = filePath, inNewCodePeriod = inNewCodePeriod)</ID>
+    <ID>ChainWrapping:CoverageMapper.kt$CoverageMapper$&amp;&amp;</ID>
+    <ID>ChainWrapping:QualityDashboardPanel.kt$QualityDashboardPanel$||</ID>
+    <ID>ChainWrapping:SonarDataService.kt$SonarDataService$||</ID>
+    <ID>ChainWrapping:SonarFixIntentionAction.kt$SonarFixIntentionAction$&amp;&amp;</ID>
+    <ID>ChainWrapping:SonarIssueAnnotator.kt$SonarIssueAnnotator$&amp;&amp;</ID>
+    <ID>ImportOrdering:CoveragePreviewPanel.kt$import com.intellij.openapi.Disposable import com.intellij.openapi.application.EDT import com.intellij.openapi.fileEditor.OpenFileDescriptor import com.intellij.openapi.project.Project import com.intellij.openapi.vfs.LocalFileSystem import javax.swing.JButton import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBScrollPane import com.intellij.ui.components.JBTextArea import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.sonar.model.FileCoverageData import com.workflow.orchestrator.sonar.model.LineCoverageStatus import com.workflow.orchestrator.sonar.service.SonarDataService import kotlinx.coroutines.* import java.awt.BorderLayout import java.awt.Font import javax.swing.JPanel import javax.swing.SwingConstants</ID>
+    <ID>ImportOrdering:IssueDetailPanel.kt$import com.intellij.openapi.application.EDT import com.intellij.openapi.fileEditor.OpenFileDescriptor import com.intellij.openapi.project.Project import com.intellij.openapi.vfs.LocalFileSystem import com.intellij.ui.JBColor import javax.swing.JButton import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBScrollPane import com.intellij.ui.components.JBTextArea import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.ai.AgentChatRedirect import com.workflow.orchestrator.core.model.sonar.SonarRuleData import com.workflow.orchestrator.core.services.SonarService import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.core.ui.TimeFormatter import com.workflow.orchestrator.core.util.HtmlEscape import com.workflow.orchestrator.sonar.model.IssueSeverity import com.workflow.orchestrator.sonar.model.LineCoverageStatus import com.workflow.orchestrator.sonar.service.SonarDataService import kotlinx.coroutines.* import java.awt.* import java.io.File import java.time.Instant import java.util.concurrent.ConcurrentHashMap import javax.swing.*</ID>
+    <ID>ImportOrdering:IssueListPanel.kt$import com.intellij.openapi.application.invokeLater import com.intellij.openapi.fileEditor.FileEditorManager import com.intellij.openapi.fileEditor.OpenFileDescriptor import com.intellij.openapi.project.Project import com.intellij.openapi.util.Disposer import com.intellij.openapi.vfs.LocalFileSystem import com.intellij.ui.JBColor import com.intellij.ui.JBSplitter import com.intellij.openapi.ui.ComboBox import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBList import com.intellij.ui.components.JBScrollPane import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.ai.AgentChatRedirect import com.workflow.orchestrator.core.ai.LlmBrainFactory import com.workflow.orchestrator.core.model.sonar.SecurityHotspotData import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.core.ui.TimeFormatter import com.workflow.orchestrator.core.util.PathLinkResolver import com.workflow.orchestrator.sonar.model.* import java.awt.* import java.awt.event.MouseAdapter import java.awt.event.MouseEvent import java.time.Instant import javax.swing.*</ID>
+    <ID>ImportOrdering:OverviewPanel.kt$import com.intellij.openapi.project.Project import com.intellij.ui.JBColor import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBScrollPane import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.core.ui.TimeFormatter import com.workflow.orchestrator.sonar.model.* import com.intellij.util.ui.JBFont import java.awt.* import javax.swing.*</ID>
+    <ID>ImportOrdering:QualityDashboardPanel.kt$import com.intellij.openapi.Disposable import com.intellij.openapi.actionSystem.* import com.intellij.openapi.project.Project import com.intellij.openapi.ui.ComboBox import com.intellij.icons.AllIcons import com.intellij.ui.AnimatedIcon import com.intellij.ui.JBColor import com.intellij.ui.components.JBCheckBox import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBTabbedPane import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.model.workflow.PrRef import com.workflow.orchestrator.core.model.workflow.QualityScope import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.settings.RepoConfig import com.workflow.orchestrator.core.ui.ComboBoxWidth import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.core.ui.bindBoundedWidth import com.workflow.orchestrator.core.workflow.WorkflowContextService import com.workflow.orchestrator.core.workflow.ui.ReadOnlyBanner import com.workflow.orchestrator.sonar.model.QualityGateStatus import com.workflow.orchestrator.sonar.model.SonarState import com.workflow.orchestrator.sonar.service.SonarDataService import com.intellij.openapi.application.EDT import kotlinx.coroutines.* import kotlinx.coroutines.FlowPreview import kotlinx.coroutines.flow.debounce import kotlinx.coroutines.flow.distinctUntilChanged import kotlinx.coroutines.flow.map import java.awt.BorderLayout import java.awt.Color import java.awt.Cursor import java.awt.FlowLayout import java.awt.Font import javax.swing.JButton import javax.swing.BoxLayout import javax.swing.DefaultComboBoxModel import javax.swing.JPanel</ID>
+    <ID>ImportOrdering:SonarApiClientTest.kt$import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.ErrorType import kotlinx.coroutines.test.runTest import okhttp3.mockwebserver.MockResponse import okhttp3.mockwebserver.MockWebServer import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.Assertions.* import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import com.intellij.testFramework.LoggedErrorProcessorEnabler import okhttp3.mockwebserver.SocketPolicy import org.junit.jupiter.api.extension.ExtendWith</ID>
+    <ID>ImportOrdering:SonarDataService.kt$import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer import com.intellij.openapi.Disposable import com.intellij.openapi.components.Service import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.workflow.orchestrator.core.auth.CredentialStore import com.workflow.orchestrator.core.events.EventBus import com.workflow.orchestrator.core.events.WorkflowEvent import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.ErrorType import com.workflow.orchestrator.core.model.ServiceType import com.workflow.orchestrator.core.notifications.WorkflowNotificationService import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.workflow.WorkflowContextService import com.workflow.orchestrator.sonar.api.SonarApiClient import com.workflow.orchestrator.sonar.api.SonarMetricKey import com.workflow.orchestrator.core.model.sonar.SecurityHotspotData import com.workflow.orchestrator.sonar.model.* import com.workflow.orchestrator.sonar.util.SonarRatingUtils import kotlinx.coroutines.* import kotlinx.coroutines.flow.MutableStateFlow import kotlinx.coroutines.flow.StateFlow import kotlinx.coroutines.flow.asStateFlow import kotlinx.coroutines.flow.distinctUntilChanged import kotlinx.coroutines.flow.map import kotlinx.coroutines.sync.Mutex import kotlinx.coroutines.sync.withLock import java.time.Instant import java.util.concurrent.ConcurrentHashMap</ID>
+    <ID>ImportOrdering:SonarIssueAnnotator.kt$import com.intellij.lang.annotation.AnnotationHolder import com.intellij.lang.annotation.ExternalAnnotator import com.intellij.lang.annotation.HighlightSeverity import com.intellij.openapi.application.readAction import com.intellij.openapi.editor.Editor import com.intellij.openapi.progress.runBlockingCancellable import com.intellij.openapi.util.TextRange import com.intellij.psi.PsiFile import com.intellij.psi.PsiManager import com.intellij.psi.PsiMethod import com.intellij.psi.PsiClass import com.intellij.psi.util.PsiTreeUtil import com.workflow.orchestrator.sonar.model.IssueSeverity import com.workflow.orchestrator.sonar.model.IssueType import com.workflow.orchestrator.sonar.model.MappedIssue import com.workflow.orchestrator.sonar.model.SonarState import com.workflow.orchestrator.sonar.service.SonarDataService</ID>
+    <ID>ImportOrdering:SonarProjectPickerDialog.kt$import com.intellij.openapi.application.ModalityState import com.intellij.openapi.application.invokeLater as platformInvokeLater import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.intellij.openapi.ui.DialogWrapper import com.intellij.ui.AnimatedIcon import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBList import com.intellij.ui.components.JBScrollPane import com.intellij.ui.components.JBTextField import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.model.sonar.SonarProjectData import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.core.services.SonarService import kotlinx.coroutines.* import java.awt.BorderLayout import java.awt.FlowLayout import java.awt.event.KeyAdapter import java.awt.event.KeyEvent import javax.swing.*</ID>
+    <ID>ImportOrdering:SonarServiceImpl.kt$import com.intellij.openapi.components.Service import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.sonar.CoverageData import com.workflow.orchestrator.core.model.sonar.PagedIssuesData import com.workflow.orchestrator.core.model.sonar.ProjectMeasuresData import com.workflow.orchestrator.core.model.sonar.QualityCondition import com.workflow.orchestrator.core.model.sonar.QualityGateData import com.workflow.orchestrator.core.model.sonar.SonarAnalysisTaskData import com.workflow.orchestrator.core.model.sonar.SonarBranchData import com.workflow.orchestrator.core.model.sonar.SonarIssueData import com.workflow.orchestrator.core.model.sonar.SonarProjectData import com.workflow.orchestrator.core.model.sonar.SecurityHotspotData import com.workflow.orchestrator.core.model.sonar.DuplicationData import com.workflow.orchestrator.core.model.sonar.DuplicationBlock import com.workflow.orchestrator.core.model.sonar.DuplicationFragment import com.workflow.orchestrator.core.model.sonar.SourceLineData import com.workflow.orchestrator.core.model.sonar.SonarRuleData import com.workflow.orchestrator.core.model.sonar.BranchQualityReportData import com.workflow.orchestrator.core.model.sonar.HotspotDetailData import com.workflow.orchestrator.core.model.sonar.IssueFacet import com.workflow.orchestrator.core.model.sonar.IssueFacetValue import com.workflow.orchestrator.core.model.sonar.IssueFacetsData import com.workflow.orchestrator.core.model.sonar.SonarCurrentUserData import com.workflow.orchestrator.core.model.sonar.SonarQualityGateEntry import com.workflow.orchestrator.core.model.sonar.SonarQualityGateListData import com.workflow.orchestrator.core.model.sonar.IssueSummary import com.workflow.orchestrator.core.model.sonar.NewCodeCoverageSummary import com.workflow.orchestrator.core.model.sonar.FileQualityReport import com.workflow.orchestrator.core.model.sonar.LineRange import com.workflow.orchestrator.core.model.sonar.SonarFileComponent import com.workflow.orchestrator.core.services.SonarService import com.workflow.orchestrator.core.services.ToolResult import com.workflow.orchestrator.core.settings.ConnectionSettings import com.workflow.orchestrator.sonar.api.SonarApiClient import com.workflow.orchestrator.sonar.api.SonarMetricKey import com.workflow.orchestrator.sonar.util.SonarRatingUtils import kotlinx.coroutines.async import kotlinx.coroutines.awaitAll import kotlinx.coroutines.coroutineScope</ID>
+    <ID>Indentation:SonarApiClient.kt$SonarApiClient$ </ID>
+    <ID>Indentation:SonarDataService.kt$SonarDataService$ </ID>
+    <ID>Indentation:SonarServiceImpl.kt$SonarServiceImpl$ </ID>
+    <ID>InstanceOfCheckForException:SonarDataService.kt$SonarDataService$e is CancellationException</ID>
+    <ID>MagicNumber:CodeQualityConfigurable.kt$CodeQualityConfigurable$30</ID>
+    <ID>MagicNumber:CoveragePreviewPanel.kt$CoveragePreviewPanel$11</ID>
+    <ID>MagicNumber:CoveragePreviewPanel.kt$CoveragePreviewPanel$20</ID>
+    <ID>MagicNumber:CoveragePreviewPanel.kt$CoveragePreviewPanel$4</ID>
+    <ID>MagicNumber:CoveragePreviewPanel.kt$CoveragePreviewPanel$8</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTableModel$3</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTableModel$4</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTableModel$5</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTableModel$6</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$0.6f</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$0x6D</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$0x87</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$0xB0</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$0xB3</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$0xFA</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$10</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$11</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$15</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$20</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$24</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$25</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$3</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$4</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$40</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$50</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$500</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$7</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$8</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel$80.0</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel.&lt;no name provided>$10</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel.&lt;no name provided>$4</ID>
+    <ID>MagicNumber:CoverageTablePanel.kt$CoverageTablePanel.&lt;no name provided>$6</ID>
+    <ID>MagicNumber:GateStatusBanner.kt$GateStatusBanner$0x1A</ID>
+    <ID>MagicNumber:GateStatusBanner.kt$GateStatusBanner$0x4A</ID>
+    <ID>MagicNumber:GateStatusBanner.kt$GateStatusBanner$0xE7</ID>
+    <ID>MagicNumber:GateStatusBanner.kt$GateStatusBanner$0xE9</ID>
+    <ID>MagicNumber:GateStatusBanner.kt$GateStatusBanner$10</ID>
+    <ID>MagicNumber:GateStatusBanner.kt$GateStatusBanner$11</ID>
+    <ID>MagicNumber:GateStatusBanner.kt$GateStatusBanner$12</ID>
+    <ID>MagicNumber:GateStatusBanner.kt$GateStatusBanner$13</ID>
+    <ID>MagicNumber:GateStatusBanner.kt$GateStatusBanner$4</ID>
+    <ID>MagicNumber:GateStatusBanner.kt$GateStatusBanner$6</ID>
+    <ID>MagicNumber:ImpactRendering.kt$ImpactRendering$3</ID>
+    <ID>MagicNumber:ImpactRendering.kt$ImpactRendering$4</ID>
+    <ID>MagicNumber:ImpactRendering.kt$ImpactRendering$5</ID>
+    <ID>MagicNumber:IssueDetailPanel.kt$IssueDetailPanel$11</ID>
+    <ID>MagicNumber:IssueDetailPanel.kt$IssueDetailPanel$12</ID>
+    <ID>MagicNumber:IssueDetailPanel.kt$IssueDetailPanel$13</ID>
+    <ID>MagicNumber:IssueDetailPanel.kt$IssueDetailPanel$16</ID>
+    <ID>MagicNumber:IssueDetailPanel.kt$IssueDetailPanel$200</ID>
+    <ID>MagicNumber:IssueDetailPanel.kt$IssueDetailPanel$300</ID>
+    <ID>MagicNumber:IssueDetailPanel.kt$IssueDetailPanel$4</ID>
+    <ID>MagicNumber:IssueDetailPanel.kt$IssueDetailPanel$5</ID>
+    <ID>MagicNumber:IssueDetailPanel.kt$IssueDetailPanel$6</ID>
+    <ID>MagicNumber:IssueDetailPanel.kt$IssueDetailPanel$8</ID>
+    <ID>MagicNumber:IssueListPanel.kt$IssueListCellRenderer$4</ID>
+    <ID>MagicNumber:IssueListPanel.kt$IssueListCellRenderer$8</ID>
+    <ID>MagicNumber:IssueListPanel.kt$IssueListPanel$0.4f</ID>
+    <ID>MagicNumber:IssueListPanel.kt$IssueListPanel$10</ID>
+    <ID>MagicNumber:IssueListPanel.kt$IssueListPanel$3</ID>
+    <ID>MagicNumber:IssueListPanel.kt$IssueListPanel$4</ID>
+    <ID>MagicNumber:IssueListPanel.kt$IssueListPanel$40</ID>
+    <ID>MagicNumber:IssueListPanel.kt$IssueListPanel$5</ID>
+    <ID>MagicNumber:IssueListPanel.kt$IssueListPanel$6</ID>
+    <ID>MagicNumber:IssueListPanel.kt$IssueListPanel$7</ID>
+    <ID>MagicNumber:IssueListPanel.kt$IssueListPanel$8</ID>
+    <ID>MagicNumber:OverviewPanel.kt$CoverageProgressBar$0x3C</ID>
+    <ID>MagicNumber:OverviewPanel.kt$CoverageProgressBar$0xE0</ID>
+    <ID>MagicNumber:OverviewPanel.kt$CoverageProgressBar$100.0</ID>
+    <ID>MagicNumber:OverviewPanel.kt$CoverageProgressBar$6</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$0x1A</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$0x35</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$0x4A</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$0xE7</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$0xE9</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$0xF5</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$10</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$12</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$16</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$200</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$4</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$450</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$5</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$6</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$60</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$600</ID>
+    <ID>MagicNumber:OverviewPanel.kt$OverviewPanel$8</ID>
+    <ID>MagicNumber:QualityDashboardPanel.kt$QualityDashboardPanel$0x1e</ID>
+    <ID>MagicNumber:QualityDashboardPanel.kt$QualityDashboardPanel$0x2e</ID>
+    <ID>MagicNumber:QualityDashboardPanel.kt$QualityDashboardPanel$0x45</ID>
+    <ID>MagicNumber:QualityDashboardPanel.kt$QualityDashboardPanel$0x47</ID>
+    <ID>MagicNumber:QualityDashboardPanel.kt$QualityDashboardPanel$0x5a</ID>
+    <ID>MagicNumber:QualityDashboardPanel.kt$QualityDashboardPanel$0xE0</ID>
+    <ID>MagicNumber:QualityDashboardPanel.kt$QualityDashboardPanel$1000</ID>
+    <ID>MagicNumber:QualityDashboardPanel.kt$QualityDashboardPanel$10f</ID>
+    <ID>MagicNumber:QualityDashboardPanel.kt$QualityDashboardPanel$11f</ID>
+    <ID>MagicNumber:QualityDashboardPanel.kt$QualityDashboardPanel$12</ID>
+    <ID>MagicNumber:QualityDashboardPanel.kt$QualityDashboardPanel$300</ID>
+    <ID>MagicNumber:QualityDashboardPanel.kt$QualityDashboardPanel$4</ID>
+    <ID>MagicNumber:QualityDashboardPanel.kt$QualityDashboardPanel$8</ID>
+    <ID>MagicNumber:QualityTabProvider.kt$QualityTabProvider$3</ID>
+    <ID>MagicNumber:SonarApiClient.kt$SonarApiClient$200</ID>
+    <ID>MagicNumber:SonarApiClient.kt$SonarApiClient$299</ID>
+    <ID>MagicNumber:SonarApiClient.kt$SonarApiClient$401</ID>
+    <ID>MagicNumber:SonarApiClient.kt$SonarApiClient$403</ID>
+    <ID>MagicNumber:SonarApiClient.kt$SonarApiClient$404</ID>
+    <ID>MagicNumber:SonarApiClient.kt$SonarApiClient$429</ID>
+    <ID>MagicNumber:SonarDataService.kt$SonarDataService$500</ID>
+    <ID>MagicNumber:SonarProjectPickerDialog.kt$SonarProjectPickerDialog$11</ID>
+    <ID>MagicNumber:SonarProjectPickerDialog.kt$SonarProjectPickerDialog$30</ID>
+    <ID>MagicNumber:SonarProjectPickerDialog.kt$SonarProjectPickerDialog$300</ID>
+    <ID>MagicNumber:SonarProjectPickerDialog.kt$SonarProjectPickerDialog$4</ID>
+    <ID>MagicNumber:SonarProjectPickerDialog.kt$SonarProjectPickerDialog$400</ID>
+    <ID>MagicNumber:SonarProjectPickerDialog.kt$SonarProjectPickerDialog$500</ID>
+    <ID>MagicNumber:SonarProjectPickerDialog.kt$SonarProjectPickerDialog$8</ID>
+    <ID>MagicNumber:SonarRatingUtils.kt$SonarRatingUtils$3</ID>
+    <ID>MagicNumber:SonarRatingUtils.kt$SonarRatingUtils$4</ID>
+    <ID>MagicNumber:SonarRatingUtils.kt$SonarRatingUtils$5</ID>
+    <ID>MagicNumber:SonarServiceImpl.kt$SonarServiceImpl$0.01</ID>
+    <ID>MagicNumber:SonarServiceImpl.kt$SonarServiceImpl$10</ID>
+    <ID>MagicNumber:SonarServiceImpl.kt$SonarServiceImpl$100</ID>
+    <ID>MagicNumber:SonarServiceImpl.kt$SonarServiceImpl$20</ID>
+    <ID>MagicNumber:SonarServiceImpl.kt$SonarServiceImpl$3</ID>
+    <ID>MagicNumber:SonarServiceImpl.kt$SonarServiceImpl$5</ID>
+    <ID>MagicNumber:SonarServiceImpl.kt$SonarServiceImpl$99.0</ID>
+    <ID>MaximumLineLength:BranchQualityReportTest.kt$BranchQualityReportTest$ </ID>
+    <ID>MaximumLineLength:CodeQualityConfigurable.kt$CodeQualityConfigurable$ </ID>
+    <ID>MaximumLineLength:CoverageLineMarkerProvider.kt$CoverageLineMarkerProvider$ </ID>
+    <ID>MaximumLineLength:CoverageLineMarkerProvider.kt$CoverageLineMarkerProvider.Companion$ </ID>
+    <ID>MaximumLineLength:CoverageTablePanel.kt$CoverageTableModel$ </ID>
+    <ID>MaximumLineLength:CoverageTablePanel.kt$CoverageTablePanel$ </ID>
+    <ID>MaximumLineLength:GradleSonarKeyDetectorTest.kt$GradleSonarKeyDetectorTest$ </ID>
+    <ID>MaximumLineLength:IssueDetailPanel.kt$IssueDetailPanel$ </ID>
+    <ID>MaximumLineLength:IssueListPanel.kt$IssueListCellRenderer$ </ID>
+    <ID>MaximumLineLength:IssueListPanel.kt$IssueListPanel$ </ID>
+    <ID>MaximumLineLength:OverviewPanel.kt$OverviewPanel$ </ID>
+    <ID>MaximumLineLength:QualityDashboardPanel.kt$QualityDashboardPanel$ </ID>
+    <ID>MaximumLineLength:SonarApiClient.kt$SonarApiClient$ </ID>
+    <ID>MaximumLineLength:SonarBranchReportGateAndDupTest.kt$SonarBranchReportGateAndDupTest$ </ID>
+    <ID>MaximumLineLength:SonarDataService.kt$SonarDataService$ </ID>
+    <ID>MaximumLineLength:SonarDataServiceHotspotsTest.kt$TestSonarDataServiceWithHotspots$ </ID>
+    <ID>MaximumLineLength:SonarDataServiceTest.kt$TestSonarDataService$ </ID>
+    <ID>MaximumLineLength:SonarFixIntentionAction.kt$SonarFixIntentionAction$ </ID>
+    <ID>MaximumLineLength:SonarIssueAnnotator.kt$SonarIssueAnnotator$ </ID>
+    <ID>MaximumLineLength:SonarMonitorFieldsTest.kt$SonarMonitorFieldsTest$ </ID>
+    <ID>MaximumLineLength:SonarServiceImpl.kt$SonarServiceImpl$ </ID>
+    <ID>MultiLineIfElse:CoverageTablePanel.kt$CoverageTablePanel$null</ID>
+    <ID>MultiLineIfElse:QualityDashboardPanel.kt$QualityDashboardPanel$null</ID>
+    <ID>MultiLineIfElse:SonarApiClient.kt$SonarApiClient$""</ID>
+    <ID>MultiLineIfElse:SonarApiClient.kt$SonarApiClient$pageResult</ID>
+    <ID>MultiLineIfElse:SonarKeyDetector.kt$SonarKeyDetector$mavenManager.rootProjects.firstOrNull() ?: run { log.debug("[Sonar:Detect] No root Maven projects"); null }</ID>
+    <ID>MultiLineIfElse:SonarServiceImpl.kt$SonarServiceImpl$"${f.property}:${nonZero.joinToString("/") { "${it.value}=${it.count}" }}"</ID>
+    <ID>MultiLineIfElse:SonarServiceImpl.kt$SonarServiceImpl$"${f.property}:0"</ID>
+    <ID>MultiLineIfElse:SonarServiceImpl.kt$SonarServiceImpl$null</ID>
+    <ID>MultiLineIfElse:SonarServiceImpl.kt$SonarServiceImpl$return ToolResult( data = emptyList(), summary = "SonarQube project '$projectKey' not found.", isError = true, hint = "Verify the project key. Maven artifact keys like 'group:artifact' often map to plain 'artifact' in SonarQube — try the short form or search via the Quality dashboard." )</ID>
+    <ID>NoBlankLineBeforeRbrace:IssueMapperTest.kt$IssueMapperTest$ </ID>
+    <ID>NoBlankLineBeforeRbrace:OverviewPanel.kt$OverviewPanel$ </ID>
+    <ID>NoConsecutiveBlankLines:SonarApiClientTest.kt$SonarApiClientTest$ </ID>
+    <ID>NoEmptyFirstLineInMethodBlock:SonarServiceImpl.kt$SonarServiceImpl$ </ID>
+    <ID>NoMultipleSpaces:GradleSonarKeyDetectorTest.kt$GradleSonarKeyDetectorTest$ </ID>
+    <ID>NoMultipleSpaces:HtmlEscapeInIssueLabelsTest.kt$HtmlEscapeInIssueLabelsTest$ </ID>
+    <ID>NoMultipleSpaces:OverviewPanel.kt$OverviewPanel$ </ID>
+    <ID>NoMultipleSpaces:QualityDashboardPanel.kt$QualityDashboardPanel$ </ID>
+    <ID>NoMultipleSpaces:SonarDataService.kt$SonarDataService$ </ID>
+    <ID>NoMultipleSpaces:SonarDtos.kt$SonarCeTaskDto$ </ID>
+    <ID>NoMultipleSpaces:SonarDtos.kt$SonarHotspotDto$ </ID>
+    <ID>NoMultipleSpaces:SonarDtos.kt$SonarImpactDto$ </ID>
+    <ID>NoMultipleSpaces:SonarDtos.kt$SonarIssueDto$ </ID>
+    <ID>NoMultipleSpaces:SonarModels.kt$NewCodePeriod$ </ID>
+    <ID>NoMultipleSpaces:SonarModels.kt$ProjectHealthMetrics$ </ID>
+    <ID>NoMultipleSpaces:SonarModels.kt$SonarAnalysisTask$ </ID>
+    <ID>NoMultipleSpaces:SonarMonitorFieldsTest.kt$SonarMonitorFieldsTest$ </ID>
+    <ID>NoMultipleSpaces:SonarQualityEmitTest.kt$SonarQualityEmitTest$ </ID>
+    <ID>NoMultipleSpaces:SonarServiceImpl.kt$SonarServiceImpl$ </ID>
+    <ID>NoMultipleSpaces:SonarServiceImpl.kt$SonarServiceImpl.Companion$ </ID>
+    <ID>NoUnusedImports:SonarQualityEmitTest.kt$com.workflow.orchestrator.sonar.service.SonarQualityEmitTest.kt</ID>
+    <ID>NoWildcardImports:BranchQualityReportTest.kt$import com.workflow.orchestrator.sonar.api.dto.*</ID>
+    <ID>NoWildcardImports:BranchQualityReportTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:CoverageLineMarkerLogicTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:CoverageMapperTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:CoveragePreviewLogicTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:CoveragePreviewPanel.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:CoverageThresholdsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:GateStatusBanner.kt$import com.workflow.orchestrator.sonar.model.*</ID>
+    <ID>NoWildcardImports:GateStatusBanner.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:GateStatusBannerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:ImpactRenderingTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:IssueDetailPanel.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:IssueDetailPanel.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:IssueDetailPanel.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:IssueDetailPanelRepoRootResolverTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:IssueListPanel.kt$import com.workflow.orchestrator.sonar.model.*</ID>
+    <ID>NoWildcardImports:IssueListPanel.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:IssueListPanel.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:IssueMapperTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:OverviewPanel.kt$import com.workflow.orchestrator.sonar.model.*</ID>
+    <ID>NoWildcardImports:OverviewPanel.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:OverviewPanel.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:QualityDashboardPanel.kt$import com.intellij.openapi.actionSystem.*</ID>
+    <ID>NoWildcardImports:QualityDashboardPanel.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:QualityListItemTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SonarApiClient.kt$import com.workflow.orchestrator.sonar.api.dto.*</ID>
+    <ID>NoWildcardImports:SonarApiClientTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SonarBranchReportGateAndDupTest.kt$import com.workflow.orchestrator.sonar.api.dto.*</ID>
+    <ID>NoWildcardImports:SonarCoverageEngine.kt$import com.intellij.coverage.*</ID>
+    <ID>NoWildcardImports:SonarDataService.kt$import com.workflow.orchestrator.sonar.model.*</ID>
+    <ID>NoWildcardImports:SonarDataService.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:SonarDataServiceConcurrencyTest.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:SonarDataServiceConcurrencyTest.kt$import kotlinx.coroutines.test.*</ID>
+    <ID>NoWildcardImports:SonarDataServiceConcurrencyTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SonarDataServiceHotspotsTest.kt$import com.workflow.orchestrator.sonar.api.dto.*</ID>
+    <ID>NoWildcardImports:SonarDataServiceHotspotsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SonarDataServiceTest.kt$import com.workflow.orchestrator.sonar.api.dto.*</ID>
+    <ID>NoWildcardImports:SonarDataServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SonarDtoSerializationTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SonarFixIntentionActionTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SonarIssueAnnotatorLogicTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SonarIssueLookupTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SonarMonitorFieldsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SonarPathResolverTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SonarProjectPickerDialog.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:SonarProjectPickerDialog.kt$import kotlinx.coroutines.*</ID>
+    <ID>ParameterListWrapping:CoverageTablePanel.kt$CoverageTablePanel.&lt;no name provided>$( table: JTable, value: Any?, isSelected: Boolean, hasFocus: Boolean, row: Int, column: Int )</ID>
+    <ID>ParameterListWrapping:CoverageTablePanel.kt$CoverageTablePanel.ComplexityCellRenderer$( table: JTable, value: Any?, isSelected: Boolean, hasFocus: Boolean, row: Int, column: Int )</ID>
+    <ID>ParameterListWrapping:IssueListPanel.kt$IssueListCellRenderer$( list: JList&lt;out QualityListItem>, value: QualityListItem, index: Int, isSelected: Boolean, cellHasFocus: Boolean )</ID>
+    <ID>PropertyWrapping:CoverageTablePanel.kt$CoverageTableModel$private val newCodeColumns = arrayOf("File", "New Coverage %", "New Branch %", "New Uncov. Lines", "New Lines", "Complexity", "Cognitive")</ID>
+    <ID>PropertyWrapping:CoverageTablePanel.kt$CoverageTableModel$private val overallColumns = arrayOf("File", "Line %", "Branch %", "Uncovered Lines", "Uncovered Cond.", "Complexity", "Cognitive")</ID>
+    <ID>SpacingAroundComma:SonarApiClientTest.kt$SonarApiClientTest$,</ID>
+    <ID>SpacingAroundKeyword:SonarDataService.kt$SonarDataService$catch</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:SonarDataService.kt$SonarDataService$@Volatile private var cachedApiClient: SonarApiClient? = null</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:SonarDataService.kt$SonarDataService$@Volatile private var cachedSonarUrl: String? = null</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:CoverageLineMarkerProvider.kt$CoverageLineMarkerProvider.Companion$/** * Per-project map tracking which files have an in-flight line coverage fetch * to avoid duplicate requests. Scoped to projects so disposal is clean. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:CoveragePreviewPanel.kt$CoveragePreviewPanel$/** The owning repo's local root, captured from the row's projectKey at [showFile] time. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:QualityDashboardPanel.kt$QualityDashboardPanel$// Phase 5 T15: amber banner shown when interactionMode == ReadOnly (spec §7.1).</ID>
+    <ID>StringTemplate:IssueDetailPanel.kt$IssueDetailPanel$${cleanDesc}</ID>
+    <ID>StringTemplate:SonarApiClient.kt$SonarApiClient$${total}</ID>
+    <ID>StringTemplate:SonarDataService.kt$SonarDataService$${previousGateStatus}</ID>
+    <ID>UnusedPrivateProperty:OverviewPanel.kt$OverviewPanel$private val project: Project</ID>
+    <ID>UnusedPrivateProperty:SonarDataServiceHotspotsTest.kt$TestSonarDataServiceWithHotspots$val newCodeIssuesResult = client.getIssuesWithPaging(projectKey, branch, inNewCodePeriod = true)</ID>
+    <ID>VariableNaming:SonarDataServiceConcurrencyTest.kt$SonarDataServiceConcurrencyTest$val N = 8</ID>
+    <ID>WildcardImport:BranchQualityReportTest.kt$import com.workflow.orchestrator.sonar.api.dto.*</ID>
+    <ID>WildcardImport:BranchQualityReportTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:CoverageLineMarkerLogicTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:CoverageMapperTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:CoveragePreviewLogicTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:CoveragePreviewPanel.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:CoverageThresholdsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:GateStatusBanner.kt$import com.workflow.orchestrator.sonar.model.*</ID>
+    <ID>WildcardImport:GateStatusBanner.kt$import java.awt.*</ID>
+    <ID>WildcardImport:GateStatusBannerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:ImpactRenderingTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:IssueDetailPanel.kt$import java.awt.*</ID>
+    <ID>WildcardImport:IssueDetailPanel.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:IssueDetailPanel.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:IssueDetailPanelRepoRootResolverTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:IssueListPanel.kt$import com.workflow.orchestrator.sonar.model.*</ID>
+    <ID>WildcardImport:IssueListPanel.kt$import java.awt.*</ID>
+    <ID>WildcardImport:IssueListPanel.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:IssueMapperTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:OverviewPanel.kt$import com.workflow.orchestrator.sonar.model.*</ID>
+    <ID>WildcardImport:OverviewPanel.kt$import java.awt.*</ID>
+    <ID>WildcardImport:OverviewPanel.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:QualityDashboardPanel.kt$import com.intellij.openapi.actionSystem.*</ID>
+    <ID>WildcardImport:QualityDashboardPanel.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:QualityListItemTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SonarApiClient.kt$import com.workflow.orchestrator.sonar.api.dto.*</ID>
+    <ID>WildcardImport:SonarApiClientTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SonarBranchReportGateAndDupTest.kt$import com.workflow.orchestrator.sonar.api.dto.*</ID>
+    <ID>WildcardImport:SonarCoverageEngine.kt$import com.intellij.coverage.*</ID>
+    <ID>WildcardImport:SonarDataService.kt$import com.workflow.orchestrator.sonar.model.*</ID>
+    <ID>WildcardImport:SonarDataService.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:SonarDataServiceConcurrencyTest.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:SonarDataServiceConcurrencyTest.kt$import kotlinx.coroutines.test.*</ID>
+    <ID>WildcardImport:SonarDataServiceConcurrencyTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SonarDataServiceHotspotsTest.kt$import com.workflow.orchestrator.sonar.api.dto.*</ID>
+    <ID>WildcardImport:SonarDataServiceHotspotsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SonarDataServiceTest.kt$import com.workflow.orchestrator.sonar.api.dto.*</ID>
+    <ID>WildcardImport:SonarDataServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SonarDtoSerializationTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SonarFixIntentionActionTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SonarIssueAnnotatorLogicTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SonarIssueLookupTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SonarMonitorFieldsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SonarPathResolverTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SonarProjectPickerDialog.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:SonarProjectPickerDialog.kt$import kotlinx.coroutines.*</ID>
+    <ID>Wrapping:BranchQualityReportTest.kt$BranchQualityReportTest$(</ID>
+    <ID>Wrapping:BranchQualityReportTest.kt$BranchQualityReportTest$("OK", listOf( SonarConditionDto("OK", "new_coverage", "LT", "80", "85.0") ))</ID>
+    <ID>Wrapping:CoverageMapperTest.kt$CoverageMapperTest$(</ID>
+    <ID>Wrapping:CoverageTablePanel.kt$CoverageTablePanel$(</ID>
+    <ID>Wrapping:CoverageThresholdsTest.kt$CoverageThresholdsTest$(</ID>
+    <ID>Wrapping:ImpactRenderingTest.kt$ImpactRenderingTest$(</ID>
+    <ID>Wrapping:IssueDetailPanel.kt$IssueDetailPanel$(</ID>
+    <ID>Wrapping:IssueDetailPanel.kt$IssueDetailPanel$(JBScrollPane(centerPanel).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:IssueListPanel.kt$IssueListPanel$(</ID>
+    <ID>Wrapping:IssueListPanel.kt$IssueListPanel.&lt;no name provided>$(</ID>
+    <ID>Wrapping:OverviewPanel.kt$CoverageProgressBar$;</ID>
+    <ID>Wrapping:OverviewPanel.kt$OverviewPanel$(</ID>
+    <ID>Wrapping:OverviewPanel.kt$OverviewPanel$("COVERAGE", coverageLabel, JPanel(BorderLayout()).apply { isOpaque = false add(coverageBar, BorderLayout.NORTH) add(branchCoverageLabel, BorderLayout.CENTER) }, ACCENT_COVERAGE)</ID>
+    <ID>Wrapping:OverviewPanel.kt$OverviewPanel$(JBScrollPane(recentIssuesPanel).apply { border = JBUI.Borders.emptyTop(4) }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:QualityDashboardPanel.kt$QualityDashboardPanel$;</ID>
+    <ID>Wrapping:SonarApiClient.kt$SonarApiClient$(</ID>
+    <ID>Wrapping:SonarBranchReportGateAndDupTest.kt$SonarBranchReportGateAndDupTest$(</ID>
+    <ID>Wrapping:SonarCoverageAnnotatorLookupTest.kt$SonarCoverageAnnotatorLookupTest$(</ID>
+    <ID>Wrapping:SonarDataService.kt$SonarDataService$(</ID>
+    <ID>Wrapping:SonarDataServiceConcurrencyTest.kt$SonarDataServiceConcurrencyTest$(</ID>
+    <ID>Wrapping:SonarDataServiceTest.kt$SonarDataServiceTest$(</ID>
+    <ID>Wrapping:SonarDataServiceTest.kt$SonarDataServiceTest$("OK", listOf( SonarConditionDto("OK", "new_coverage", "LT", "80", "87.3") ))</ID>
+    <ID>Wrapping:SonarDtoSerializationTest.kt$SonarDtoSerializationTest$(</ID>
+    <ID>Wrapping:SonarFixIntentionAction.kt$SonarFixIntentionAction$(</ID>
+    <ID>Wrapping:SonarIssueAnnotator.kt$SonarIssueAnnotator$(</ID>
+    <ID>Wrapping:SonarKeyDetector.kt$SonarKeyDetector$;</ID>
+    <ID>Wrapping:SonarServiceImpl.kt$SonarServiceImpl$(</ID>
+  </CurrentIssues>
+</SmellBaseline>

@@ -1,0 +1,311 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ArgumentListWrapping:AdminRoutes.kt$("""{"message":"Scenario '$name' loaded for $serviceName"}""", ContentType.Application.Json)</ID>
+    <ID>ArgumentListWrapping:BambooMockRoutesTest.kt$BambooMockRoutesTest$("Running", body["lifeCycleState"]?.jsonPrimitive?.content, "Should return 'Running' not 'InProgress'")</ID>
+    <ID>ArgumentListWrapping:IntegrationTest.kt$IntegrationTest$("/api/measures/component_tree?component=com.example:service&amp;metricKeys=coverage,uncovered_conditions")</ID>
+    <ID>ArgumentListWrapping:JiraDataFactory.kt$JiraDataFactory$( STATUS_OPEN, STATUS_WIP, STATUS_PEER_REVIEW, STATUS_QA_TESTING, STATUS_APPROVED, STATUS_CLOSED, STATUS_BLOCKED, STATUS_INVESTIGATING, )</ID>
+    <ID>ArgumentListWrapping:JiraDataFactory.kt$JiraDataFactory$("8", "Investigating", JiraStatusCategory(6, "indeterminate", "In Progress"))</ID>
+    <ID>ArgumentListWrapping:JiraDataFactory.kt$JiraDataFactory$("PROJ-101", "Implement user authentication flow", STATUS_OPEN, "Story", "mock.user", "High", issueLinks = listOf(JiraIssueLink("relates-to", "PROJ-102", null)))</ID>
+    <ID>ArgumentListWrapping:JiraDataFactory.kt$JiraDataFactory$("PROJ-102", "Fix payment gateway timeout", STATUS_WIP, "Defect", "mock.user", "Critical", issueLinks = listOf(JiraIssueLink("blocked-by", null, "PROJ-105")))</ID>
+    <ID>ArgumentListWrapping:JiraDataFactory.kt$JiraDataFactory$("PROJ-103", "", STATUS_PEER_REVIEW, "Spike", "mock.user", "Medium")</ID>
+    <ID>ArgumentListWrapping:JiraDataFactory.kt$JiraDataFactory$("PROJ-104", "Database migration for audit tables", STATUS_QA_TESTING, "Tech Debt", "mock.user", "Low")</ID>
+    <ID>ArgumentListWrapping:JiraDataFactory.kt$JiraDataFactory$("PROJ-105", "Evaluate caching strategies", STATUS_INVESTIGATING, "Spike", "mock.user", "Medium")</ID>
+    <ID>ArgumentListWrapping:JiraDataFactory.kt$JiraDataFactory$("PROJ-106", "Update dependencies to latest", STATUS_BLOCKED, "Tech Debt", "mock.user", "Low", issueLinks = listOf(JiraIssueLink("blocked-by", null, "EXT-999")))</ID>
+    <ID>ArgumentListWrapping:JiraDataFactory.kt$JiraDataFactory$(6, "indeterminate", "In Progress")</ID>
+    <ID>ArgumentListWrapping:MockServerMain.kt$("buildCount", bambooHolder.state.builds.size)</ID>
+    <ID>ArgumentListWrapping:MockServerMain.kt$("default", "happy-path", "empty-sprint", "large-sprint", "no-active-sprint", "transition-blocked")</ID>
+    <ID>ArgumentListWrapping:MockServerMain.kt$("issueCount", jiraHolder.state.issues.size)</ID>
+    <ID>ArgumentListWrapping:MockServerMain.kt$("issueCount", sonarHolder.state.issues.size)</ID>
+    <ID>ArgumentListWrapping:MockServerMain.kt$("planCount", bambooHolder.state.plans.size)</ID>
+    <ID>ArgumentListWrapping:MockServerMain.kt$("projectCount", sonarHolder.state.projects.size)</ID>
+    <ID>ArgumentListWrapping:MockServerMain.kt$("sprintCount", jiraHolder.state.sprints.size)</ID>
+    <ID>ArgumentListWrapping:SonarMockRoutesTest.kt$SonarMockRoutesTest$("/api/measures/component_tree?component=com.example:service&amp;metricKeys=coverage,uncovered_conditions")</ID>
+    <ID>ImportOrdering:BambooDataFactoryTest.kt$import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>ImportOrdering:BambooMockRoutesTest.kt$import io.ktor.client.request.* import io.ktor.client.statement.* import io.ktor.http.* import io.ktor.serialization.kotlinx.json.* import io.ktor.server.application.* import io.ktor.server.plugins.contentnegotiation.* import io.ktor.server.routing.* import io.ktor.server.testing.* import kotlinx.serialization.json.* import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>ImportOrdering:IntegrationTest.kt$import com.workflow.orchestrator.mockserver.jira.* import com.workflow.orchestrator.mockserver.sonar.* import io.ktor.client.request.* import io.ktor.client.statement.* import io.ktor.http.* import io.ktor.serialization.kotlinx.json.* import io.ktor.server.application.* import io.ktor.server.plugins.contentnegotiation.* import io.ktor.server.routing.* import io.ktor.server.testing.* import kotlinx.serialization.json.* import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>ImportOrdering:JiraDataFactoryTest.kt$import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>ImportOrdering:JiraMockRoutesTest.kt$import io.ktor.client.request.* import io.ktor.client.statement.* import io.ktor.http.* import io.ktor.serialization.kotlinx.json.* import io.ktor.server.application.* import io.ktor.server.plugins.contentnegotiation.* import io.ktor.server.routing.* import io.ktor.server.testing.* import kotlinx.serialization.json.* import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>ImportOrdering:MockServerMain.kt$import com.workflow.orchestrator.mockserver.admin.* import com.workflow.orchestrator.mockserver.bamboo.* import com.workflow.orchestrator.mockserver.chaos.* import com.workflow.orchestrator.mockserver.config.MockConfig import com.workflow.orchestrator.mockserver.jira.* import com.workflow.orchestrator.mockserver.sonar.* import io.ktor.serialization.kotlinx.json.* import io.ktor.server.application.* import io.ktor.server.engine.* import io.ktor.server.netty.* import io.ktor.server.plugins.calllogging.* import io.ktor.server.plugins.contentnegotiation.* import io.ktor.server.plugins.statuspages.* import io.ktor.server.response.* import io.ktor.server.routing.* import io.ktor.http.* import kotlinx.coroutines.* import kotlinx.serialization.json.*</ID>
+    <ID>MagicNumber:AdminRoutes.kt$AdminState$50</ID>
+    <ID>MagicNumber:BambooState.kt$BambooState$100</ID>
+    <ID>MagicNumber:BambooState.kt$BambooState$10_000</ID>
+    <ID>MagicNumber:BambooState.kt$BambooState$30_000</ID>
+    <ID>MagicNumber:ChaosMiddleware.kt$ChaosConfig$0.2</ID>
+    <ID>MagicNumber:ChaosMiddleware.kt$ChaosConfig$10_000L</ID>
+    <ID>MagicNumber:ChaosMiddleware.kt$ChaosConfig$15_000L</ID>
+    <ID>MagicNumber:ChaosMiddleware.kt$ChaosConfig$35_000L</ID>
+    <ID>MagicNumber:ChaosMiddleware.kt$ChaosFailure.EMPTY_BODY$10</ID>
+    <ID>MagicNumber:ChaosMiddleware.kt$ChaosFailure.HTTP_429$10</ID>
+    <ID>MagicNumber:ChaosMiddleware.kt$ChaosFailure.HTTP_500$15</ID>
+    <ID>MagicNumber:ChaosMiddleware.kt$ChaosFailure.HTTP_503$15</ID>
+    <ID>MagicNumber:ChaosMiddleware.kt$ChaosFailure.MALFORMED_JSON$20</ID>
+    <ID>MagicNumber:ChaosMiddleware.kt$ChaosFailure.SLOW_RESPONSE$15</ID>
+    <ID>MagicNumber:ChaosMiddleware.kt$ChaosFailure.TIMEOUT$5</ID>
+    <ID>MagicNumber:ChaosMiddleware.kt$ChaosFailure.WRONG_CONTENT_TYPE$10</ID>
+    <ID>MagicNumber:JiraDataFactory.kt$JiraDataFactory$200</ID>
+    <ID>MagicNumber:JiraDataFactory.kt$JiraDataFactory$250</ID>
+    <ID>MagicNumber:JiraDataFactory.kt$JiraDataFactory$3</ID>
+    <ID>MagicNumber:JiraDataFactory.kt$JiraDataFactory$4</ID>
+    <ID>MagicNumber:JiraDataFactory.kt$JiraDataFactory$42</ID>
+    <ID>MagicNumber:JiraDataFactory.kt$JiraDataFactory$5</ID>
+    <ID>MagicNumber:JiraDataFactory.kt$JiraDataFactory$6</ID>
+    <ID>MagicNumber:JiraDataFactory.kt$JiraDataFactory$7</ID>
+    <ID>MagicNumber:JiraDataFactory.kt$JiraDataFactory$8</ID>
+    <ID>MagicNumber:JiraMockRoutes.kt$200</ID>
+    <ID>MagicNumber:JiraMockRoutes.kt$50</ID>
+    <ID>MagicNumber:MockConfig.kt$MockConfig$8180</ID>
+    <ID>MagicNumber:MockConfig.kt$MockConfig$8280</ID>
+    <ID>MagicNumber:MockConfig.kt$MockConfig$8380</ID>
+    <ID>MagicNumber:MockServerMain.kt$18</ID>
+    <ID>MagicNumber:SonarDataFactory.kt$SonarDataFactory$114</ID>
+    <ID>MagicNumber:SonarDataFactory.kt$SonarDataFactory$12</ID>
+    <ID>MagicNumber:SonarDataFactory.kt$SonarDataFactory$15</ID>
+    <ID>MagicNumber:SonarDataFactory.kt$SonarDataFactory$28</ID>
+    <ID>MagicNumber:SonarDataFactory.kt$SonarDataFactory$33</ID>
+    <ID>MagicNumber:SonarDataFactory.kt$SonarDataFactory$42</ID>
+    <ID>MagicNumber:SonarDataFactory.kt$SonarDataFactory$44</ID>
+    <ID>MagicNumber:SonarDataFactory.kt$SonarDataFactory$5</ID>
+    <ID>MagicNumber:SonarDataFactory.kt$SonarDataFactory$67</ID>
+    <ID>MagicNumber:SonarDataFactory.kt$SonarDataFactory$87</ID>
+    <ID>MagicNumber:SonarDataFactory.kt$SonarDataFactory$91</ID>
+    <ID>MagicNumber:SonarMockRoutes.kt$100</ID>
+    <ID>MagicNumber:SonarMockRoutes.kt$500</ID>
+    <ID>MatchingDeclarationName:MockServerMain.kt$StateHolder&lt;T></ID>
+    <ID>MaximumLineLength:AdminRoutes.kt$ </ID>
+    <ID>MaximumLineLength:IntegrationTest.kt$IntegrationTest$ </ID>
+    <ID>MaximumLineLength:JiraDataFactory.kt$JiraDataFactory$ </ID>
+    <ID>MaximumLineLength:MockServerMain.kt$ </ID>
+    <ID>MaximumLineLength:MockServerMain.kt$private</ID>
+    <ID>MaximumLineLength:SonarDataFactory.kt$SonarDataFactory$ </ID>
+    <ID>MaximumLineLength:SonarMockRoutesTest.kt$SonarMockRoutesTest$ </ID>
+    <ID>MultiLineIfElse:BambooState.kt$BambooState$"\u001B[31m[ERROR] BUILD FAILURE\u001B[0m"</ID>
+    <ID>MultiLineIfElse:BambooState.kt$BambooState$"\u001B[31m[ERROR]\u001B[0m Tests run: 128, Failures: 3, Errors: 0, Skipped: 2"</ID>
+    <ID>MultiLineIfElse:BambooState.kt$BambooState$"\u001B[32m[INFO] BUILD SUCCESS\u001B[0m"</ID>
+    <ID>MultiLineIfElse:BambooState.kt$BambooState$"\u001B[34m[INFO]\u001B[0m Tests run: 128, Failures: 0, Errors: 0, Skipped: 0"</ID>
+    <ID>NoBlankLineBeforeRbrace:MockServerMain.kt$ </ID>
+    <ID>NoEmptyFirstLineInMethodBlock:BambooMockRoutes.kt$ </ID>
+    <ID>NoEmptyFirstLineInMethodBlock:JiraMockRoutes.kt$ </ID>
+    <ID>NoEmptyFirstLineInMethodBlock:SonarMockRoutes.kt$ </ID>
+    <ID>NoMultipleSpaces:BambooDataFactory.kt$BambooDataFactory$ </ID>
+    <ID>NoMultipleSpaces:BambooState.kt$BambooBuildResult$ </ID>
+    <ID>NoMultipleSpaces:MockServerMain.kt$ </ID>
+    <ID>NoMultipleSpaces:SonarState.kt$SonarCeTask$ </ID>
+    <ID>NoMultipleSpaces:SonarState.kt$SonarHotspot$ </ID>
+    <ID>NoMultipleSpaces:SonarState.kt$SonarNewCodePeriod$ </ID>
+    <ID>NoWildcardImports:AdminRoutes.kt$import io.ktor.http.*</ID>
+    <ID>NoWildcardImports:AdminRoutes.kt$import io.ktor.server.application.*</ID>
+    <ID>NoWildcardImports:AdminRoutes.kt$import io.ktor.server.response.*</ID>
+    <ID>NoWildcardImports:AdminRoutes.kt$import io.ktor.server.routing.*</ID>
+    <ID>NoWildcardImports:AdminRoutes.kt$import kotlinx.serialization.json.*</ID>
+    <ID>NoWildcardImports:AuthMiddleware.kt$import io.ktor.http.*</ID>
+    <ID>NoWildcardImports:AuthMiddleware.kt$import io.ktor.server.application.*</ID>
+    <ID>NoWildcardImports:AuthMiddleware.kt$import io.ktor.server.response.*</ID>
+    <ID>NoWildcardImports:BambooDataFactoryTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BambooMockRoutes.kt$import io.ktor.http.*</ID>
+    <ID>NoWildcardImports:BambooMockRoutes.kt$import io.ktor.server.request.*</ID>
+    <ID>NoWildcardImports:BambooMockRoutes.kt$import io.ktor.server.response.*</ID>
+    <ID>NoWildcardImports:BambooMockRoutes.kt$import io.ktor.server.routing.*</ID>
+    <ID>NoWildcardImports:BambooMockRoutes.kt$import kotlinx.serialization.json.*</ID>
+    <ID>NoWildcardImports:BambooMockRoutesTest.kt$import io.ktor.client.request.*</ID>
+    <ID>NoWildcardImports:BambooMockRoutesTest.kt$import io.ktor.client.statement.*</ID>
+    <ID>NoWildcardImports:BambooMockRoutesTest.kt$import io.ktor.http.*</ID>
+    <ID>NoWildcardImports:BambooMockRoutesTest.kt$import io.ktor.serialization.kotlinx.json.*</ID>
+    <ID>NoWildcardImports:BambooMockRoutesTest.kt$import io.ktor.server.application.*</ID>
+    <ID>NoWildcardImports:BambooMockRoutesTest.kt$import io.ktor.server.plugins.contentnegotiation.*</ID>
+    <ID>NoWildcardImports:BambooMockRoutesTest.kt$import io.ktor.server.routing.*</ID>
+    <ID>NoWildcardImports:BambooMockRoutesTest.kt$import io.ktor.server.testing.*</ID>
+    <ID>NoWildcardImports:BambooMockRoutesTest.kt$import kotlinx.serialization.json.*</ID>
+    <ID>NoWildcardImports:BambooMockRoutesTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BambooState.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:ChaosMiddleware.kt$import io.ktor.http.*</ID>
+    <ID>NoWildcardImports:ChaosMiddleware.kt$import io.ktor.server.application.*</ID>
+    <ID>NoWildcardImports:ChaosMiddleware.kt$import io.ktor.server.response.*</ID>
+    <ID>NoWildcardImports:ChaosMiddleware.kt$import io.ktor.util.*</ID>
+    <ID>NoWildcardImports:ChaosMiddlewareTest.kt$import io.ktor.client.request.*</ID>
+    <ID>NoWildcardImports:ChaosMiddlewareTest.kt$import io.ktor.client.statement.*</ID>
+    <ID>NoWildcardImports:ChaosMiddlewareTest.kt$import io.ktor.http.*</ID>
+    <ID>NoWildcardImports:ChaosMiddlewareTest.kt$import io.ktor.server.application.*</ID>
+    <ID>NoWildcardImports:ChaosMiddlewareTest.kt$import io.ktor.server.response.*</ID>
+    <ID>NoWildcardImports:ChaosMiddlewareTest.kt$import io.ktor.server.routing.*</ID>
+    <ID>NoWildcardImports:ChaosMiddlewareTest.kt$import io.ktor.server.testing.*</ID>
+    <ID>NoWildcardImports:ChaosMiddlewareTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:IntegrationTest.kt$import com.workflow.orchestrator.mockserver.jira.*</ID>
+    <ID>NoWildcardImports:IntegrationTest.kt$import com.workflow.orchestrator.mockserver.sonar.*</ID>
+    <ID>NoWildcardImports:IntegrationTest.kt$import io.ktor.client.request.*</ID>
+    <ID>NoWildcardImports:IntegrationTest.kt$import io.ktor.client.statement.*</ID>
+    <ID>NoWildcardImports:IntegrationTest.kt$import io.ktor.http.*</ID>
+    <ID>NoWildcardImports:IntegrationTest.kt$import io.ktor.serialization.kotlinx.json.*</ID>
+    <ID>NoWildcardImports:IntegrationTest.kt$import io.ktor.server.application.*</ID>
+    <ID>NoWildcardImports:IntegrationTest.kt$import io.ktor.server.plugins.contentnegotiation.*</ID>
+    <ID>NoWildcardImports:IntegrationTest.kt$import io.ktor.server.routing.*</ID>
+    <ID>NoWildcardImports:IntegrationTest.kt$import io.ktor.server.testing.*</ID>
+    <ID>NoWildcardImports:IntegrationTest.kt$import kotlinx.serialization.json.*</ID>
+    <ID>NoWildcardImports:IntegrationTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:JiraDataFactoryTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:JiraMockRoutes.kt$import io.ktor.http.*</ID>
+    <ID>NoWildcardImports:JiraMockRoutes.kt$import io.ktor.server.request.*</ID>
+    <ID>NoWildcardImports:JiraMockRoutes.kt$import io.ktor.server.response.*</ID>
+    <ID>NoWildcardImports:JiraMockRoutes.kt$import io.ktor.server.routing.*</ID>
+    <ID>NoWildcardImports:JiraMockRoutes.kt$import kotlinx.serialization.json.*</ID>
+    <ID>NoWildcardImports:JiraMockRoutesTest.kt$import io.ktor.client.request.*</ID>
+    <ID>NoWildcardImports:JiraMockRoutesTest.kt$import io.ktor.client.statement.*</ID>
+    <ID>NoWildcardImports:JiraMockRoutesTest.kt$import io.ktor.http.*</ID>
+    <ID>NoWildcardImports:JiraMockRoutesTest.kt$import io.ktor.serialization.kotlinx.json.*</ID>
+    <ID>NoWildcardImports:JiraMockRoutesTest.kt$import io.ktor.server.application.*</ID>
+    <ID>NoWildcardImports:JiraMockRoutesTest.kt$import io.ktor.server.plugins.contentnegotiation.*</ID>
+    <ID>NoWildcardImports:JiraMockRoutesTest.kt$import io.ktor.server.routing.*</ID>
+    <ID>NoWildcardImports:JiraMockRoutesTest.kt$import io.ktor.server.testing.*</ID>
+    <ID>NoWildcardImports:JiraMockRoutesTest.kt$import kotlinx.serialization.json.*</ID>
+    <ID>NoWildcardImports:JiraMockRoutesTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import com.workflow.orchestrator.mockserver.admin.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import com.workflow.orchestrator.mockserver.bamboo.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import com.workflow.orchestrator.mockserver.chaos.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import com.workflow.orchestrator.mockserver.jira.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import com.workflow.orchestrator.mockserver.sonar.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import io.ktor.http.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import io.ktor.serialization.kotlinx.json.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import io.ktor.server.application.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import io.ktor.server.engine.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import io.ktor.server.netty.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import io.ktor.server.plugins.calllogging.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import io.ktor.server.plugins.contentnegotiation.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import io.ktor.server.plugins.statuspages.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import io.ktor.server.response.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import io.ktor.server.routing.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:MockServerMain.kt$import kotlinx.serialization.json.*</ID>
+    <ID>NoWildcardImports:SonarMockRoutes.kt$import io.ktor.http.*</ID>
+    <ID>NoWildcardImports:SonarMockRoutes.kt$import io.ktor.server.application.*</ID>
+    <ID>NoWildcardImports:SonarMockRoutes.kt$import io.ktor.server.request.*</ID>
+    <ID>NoWildcardImports:SonarMockRoutes.kt$import io.ktor.server.response.*</ID>
+    <ID>NoWildcardImports:SonarMockRoutes.kt$import io.ktor.server.routing.*</ID>
+    <ID>NoWildcardImports:SonarMockRoutes.kt$import kotlinx.serialization.json.*</ID>
+    <ID>NoWildcardImports:SonarMockRoutesTest.kt$import io.ktor.client.request.*</ID>
+    <ID>NoWildcardImports:SonarMockRoutesTest.kt$import io.ktor.client.statement.*</ID>
+    <ID>NoWildcardImports:SonarMockRoutesTest.kt$import io.ktor.http.*</ID>
+    <ID>NoWildcardImports:SonarMockRoutesTest.kt$import io.ktor.serialization.kotlinx.json.*</ID>
+    <ID>NoWildcardImports:SonarMockRoutesTest.kt$import io.ktor.server.application.*</ID>
+    <ID>NoWildcardImports:SonarMockRoutesTest.kt$import io.ktor.server.plugins.contentnegotiation.*</ID>
+    <ID>NoWildcardImports:SonarMockRoutesTest.kt$import io.ktor.server.routing.*</ID>
+    <ID>NoWildcardImports:SonarMockRoutesTest.kt$import io.ktor.server.testing.*</ID>
+    <ID>NoWildcardImports:SonarMockRoutesTest.kt$import kotlinx.serialization.json.*</ID>
+    <ID>NoWildcardImports:SonarMockRoutesTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>PropertyWrapping:JiraDataFactory.kt$JiraDataFactory$private val STATUS_INVESTIGATING = JiraStatus("8", "Investigating", JiraStatusCategory(6, "indeterminate", "In Progress"))</ID>
+    <ID>PropertyWrapping:MockServerMain.kt$private val JIRA_SCENARIOS = listOf("default", "happy-path", "empty-sprint", "large-sprint", "no-active-sprint", "transition-blocked")</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:ChaosMiddleware.kt$ChaosConfig$/** Delay in ms for TIMEOUT. Set to 0 in tests. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:ChaosMiddleware.kt$ChaosConfig$/** Delay range in ms for SLOW_RESPONSE. Set to 0..0 in tests to avoid real waits. */</ID>
+    <ID>UnusedParameter:BambooState.kt$BambooState$planKey: String</ID>
+    <ID>WildcardImport:AdminRoutes.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:AdminRoutes.kt$import io.ktor.server.application.*</ID>
+    <ID>WildcardImport:AdminRoutes.kt$import io.ktor.server.response.*</ID>
+    <ID>WildcardImport:AdminRoutes.kt$import io.ktor.server.routing.*</ID>
+    <ID>WildcardImport:AdminRoutes.kt$import kotlinx.serialization.json.*</ID>
+    <ID>WildcardImport:AuthMiddleware.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:AuthMiddleware.kt$import io.ktor.server.application.*</ID>
+    <ID>WildcardImport:AuthMiddleware.kt$import io.ktor.server.response.*</ID>
+    <ID>WildcardImport:BambooDataFactoryTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BambooMockRoutes.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:BambooMockRoutes.kt$import io.ktor.server.request.*</ID>
+    <ID>WildcardImport:BambooMockRoutes.kt$import io.ktor.server.response.*</ID>
+    <ID>WildcardImport:BambooMockRoutes.kt$import io.ktor.server.routing.*</ID>
+    <ID>WildcardImport:BambooMockRoutes.kt$import kotlinx.serialization.json.*</ID>
+    <ID>WildcardImport:BambooMockRoutesTest.kt$import io.ktor.client.request.*</ID>
+    <ID>WildcardImport:BambooMockRoutesTest.kt$import io.ktor.client.statement.*</ID>
+    <ID>WildcardImport:BambooMockRoutesTest.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:BambooMockRoutesTest.kt$import io.ktor.serialization.kotlinx.json.*</ID>
+    <ID>WildcardImport:BambooMockRoutesTest.kt$import io.ktor.server.application.*</ID>
+    <ID>WildcardImport:BambooMockRoutesTest.kt$import io.ktor.server.plugins.contentnegotiation.*</ID>
+    <ID>WildcardImport:BambooMockRoutesTest.kt$import io.ktor.server.routing.*</ID>
+    <ID>WildcardImport:BambooMockRoutesTest.kt$import io.ktor.server.testing.*</ID>
+    <ID>WildcardImport:BambooMockRoutesTest.kt$import kotlinx.serialization.json.*</ID>
+    <ID>WildcardImport:BambooMockRoutesTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BambooState.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:ChaosMiddleware.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:ChaosMiddleware.kt$import io.ktor.server.application.*</ID>
+    <ID>WildcardImport:ChaosMiddleware.kt$import io.ktor.server.response.*</ID>
+    <ID>WildcardImport:ChaosMiddleware.kt$import io.ktor.util.*</ID>
+    <ID>WildcardImport:ChaosMiddlewareTest.kt$import io.ktor.client.request.*</ID>
+    <ID>WildcardImport:ChaosMiddlewareTest.kt$import io.ktor.client.statement.*</ID>
+    <ID>WildcardImport:ChaosMiddlewareTest.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:ChaosMiddlewareTest.kt$import io.ktor.server.application.*</ID>
+    <ID>WildcardImport:ChaosMiddlewareTest.kt$import io.ktor.server.response.*</ID>
+    <ID>WildcardImport:ChaosMiddlewareTest.kt$import io.ktor.server.routing.*</ID>
+    <ID>WildcardImport:ChaosMiddlewareTest.kt$import io.ktor.server.testing.*</ID>
+    <ID>WildcardImport:ChaosMiddlewareTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:IntegrationTest.kt$import com.workflow.orchestrator.mockserver.jira.*</ID>
+    <ID>WildcardImport:IntegrationTest.kt$import com.workflow.orchestrator.mockserver.sonar.*</ID>
+    <ID>WildcardImport:IntegrationTest.kt$import io.ktor.client.request.*</ID>
+    <ID>WildcardImport:IntegrationTest.kt$import io.ktor.client.statement.*</ID>
+    <ID>WildcardImport:IntegrationTest.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:IntegrationTest.kt$import io.ktor.serialization.kotlinx.json.*</ID>
+    <ID>WildcardImport:IntegrationTest.kt$import io.ktor.server.application.*</ID>
+    <ID>WildcardImport:IntegrationTest.kt$import io.ktor.server.plugins.contentnegotiation.*</ID>
+    <ID>WildcardImport:IntegrationTest.kt$import io.ktor.server.routing.*</ID>
+    <ID>WildcardImport:IntegrationTest.kt$import io.ktor.server.testing.*</ID>
+    <ID>WildcardImport:IntegrationTest.kt$import kotlinx.serialization.json.*</ID>
+    <ID>WildcardImport:IntegrationTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:JiraDataFactoryTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:JiraMockRoutes.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:JiraMockRoutes.kt$import io.ktor.server.request.*</ID>
+    <ID>WildcardImport:JiraMockRoutes.kt$import io.ktor.server.response.*</ID>
+    <ID>WildcardImport:JiraMockRoutes.kt$import io.ktor.server.routing.*</ID>
+    <ID>WildcardImport:JiraMockRoutes.kt$import kotlinx.serialization.json.*</ID>
+    <ID>WildcardImport:JiraMockRoutesTest.kt$import io.ktor.client.request.*</ID>
+    <ID>WildcardImport:JiraMockRoutesTest.kt$import io.ktor.client.statement.*</ID>
+    <ID>WildcardImport:JiraMockRoutesTest.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:JiraMockRoutesTest.kt$import io.ktor.serialization.kotlinx.json.*</ID>
+    <ID>WildcardImport:JiraMockRoutesTest.kt$import io.ktor.server.application.*</ID>
+    <ID>WildcardImport:JiraMockRoutesTest.kt$import io.ktor.server.plugins.contentnegotiation.*</ID>
+    <ID>WildcardImport:JiraMockRoutesTest.kt$import io.ktor.server.routing.*</ID>
+    <ID>WildcardImport:JiraMockRoutesTest.kt$import io.ktor.server.testing.*</ID>
+    <ID>WildcardImport:JiraMockRoutesTest.kt$import kotlinx.serialization.json.*</ID>
+    <ID>WildcardImport:JiraMockRoutesTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import com.workflow.orchestrator.mockserver.admin.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import com.workflow.orchestrator.mockserver.bamboo.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import com.workflow.orchestrator.mockserver.chaos.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import com.workflow.orchestrator.mockserver.jira.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import com.workflow.orchestrator.mockserver.sonar.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import io.ktor.serialization.kotlinx.json.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import io.ktor.server.application.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import io.ktor.server.engine.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import io.ktor.server.netty.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import io.ktor.server.plugins.calllogging.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import io.ktor.server.plugins.contentnegotiation.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import io.ktor.server.plugins.statuspages.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import io.ktor.server.response.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import io.ktor.server.routing.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:MockServerMain.kt$import kotlinx.serialization.json.*</ID>
+    <ID>WildcardImport:SonarMockRoutes.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:SonarMockRoutes.kt$import io.ktor.server.application.*</ID>
+    <ID>WildcardImport:SonarMockRoutes.kt$import io.ktor.server.request.*</ID>
+    <ID>WildcardImport:SonarMockRoutes.kt$import io.ktor.server.response.*</ID>
+    <ID>WildcardImport:SonarMockRoutes.kt$import io.ktor.server.routing.*</ID>
+    <ID>WildcardImport:SonarMockRoutes.kt$import kotlinx.serialization.json.*</ID>
+    <ID>WildcardImport:SonarMockRoutesTest.kt$import io.ktor.client.request.*</ID>
+    <ID>WildcardImport:SonarMockRoutesTest.kt$import io.ktor.client.statement.*</ID>
+    <ID>WildcardImport:SonarMockRoutesTest.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:SonarMockRoutesTest.kt$import io.ktor.serialization.kotlinx.json.*</ID>
+    <ID>WildcardImport:SonarMockRoutesTest.kt$import io.ktor.server.application.*</ID>
+    <ID>WildcardImport:SonarMockRoutesTest.kt$import io.ktor.server.plugins.contentnegotiation.*</ID>
+    <ID>WildcardImport:SonarMockRoutesTest.kt$import io.ktor.server.routing.*</ID>
+    <ID>WildcardImport:SonarMockRoutesTest.kt$import io.ktor.server.testing.*</ID>
+    <ID>WildcardImport:SonarMockRoutesTest.kt$import kotlinx.serialization.json.*</ID>
+    <ID>WildcardImport:SonarMockRoutesTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>Wrapping:BambooMockRoutesTest.kt$BambooMockRoutesTest$(</ID>
+    <ID>Wrapping:JiraDataFactory.kt$JiraDataFactory$(</ID>
+    <ID>Wrapping:MockServerMain.kt$(</ID>
+    <ID>Wrapping:MockServerMain.kt$;</ID>
+    <ID>Wrapping:MockServerMain.kt$buildJsonObject { put("issueCount", jiraHolder.state.issues.size); put("sprintCount", jiraHolder.state.sprints.size) }</ID>
+    <ID>Wrapping:MockServerMain.kt$buildJsonObject { put("planCount", bambooHolder.state.plans.size); put("buildCount", bambooHolder.state.builds.size) }</ID>
+    <ID>Wrapping:MockServerMain.kt$buildJsonObject { put("projectCount", sonarHolder.state.projects.size); put("issueCount", sonarHolder.state.issues.size) }</ID>
+    <ID>Wrapping:MockServerMain.kt$put("issueCount", jiraHolder.state.issues.size); put("sprintCount", jiraHolder.state.sprints.size)</ID>
+    <ID>Wrapping:MockServerMain.kt$put("planCount", bambooHolder.state.plans.size); put("buildCount", bambooHolder.state.builds.size)</ID>
+    <ID>Wrapping:MockServerMain.kt$put("projectCount", sonarHolder.state.projects.size); put("issueCount", sonarHolder.state.issues.size)</ID>
+    <ID>Wrapping:MockServerMain.kt${ bambooHolder.state.shutdown(); bambooHolder.state = BambooDataFactory.createAllFailingState(); true }</ID>
+    <ID>Wrapping:MockServerMain.kt${ bambooHolder.state.shutdown(); bambooHolder.state = BambooDataFactory.createBuildProgressionState(); true }</ID>
+  </CurrentIssues>
+</SmellBaseline>

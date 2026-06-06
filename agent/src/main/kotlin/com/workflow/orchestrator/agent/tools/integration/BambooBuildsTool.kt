@@ -278,7 +278,13 @@ description optional: for approval dialog on trigger/stop/cancel.
                         example("MYAPP-BACKEND")
                     }
                     optional("branch", "string") {
-                        llmSeesIt("Optional branch name — for build_status, recent_builds. Use project_context tool to discover current branch.")
+                        llmSeesIt(
+                            "Optional branch name — for build_status, recent_builds, get_running_builds. " +
+                            "Resolved to the branch plan key via ChainKeyResolver. " +
+                            "REQUIRED for get_running_builds to see a build running on a feature branch " +
+                            "(feature-branch builds run under the branch plan key, e.g. PROJ-PLAN42, not the master plan key). " +
+                            "Use project_context tool to discover current branch."
+                        )
                         humanReadable("Scope the status check to a specific branch. If omitted, returns the default (trunk) plan's latest build.")
                         whenPresent("ChainKeyResolver maps plan_key + branch to the Bamboo branch-chain key. Fails with an error if the branch has never been built in Bamboo.")
                         whenAbsent("The default plan chain is used (trunk builds).")
@@ -737,7 +743,13 @@ description optional: for approval dialog on trigger/stop/cancel.
                         example("PROJ-BACKEND")
                     }
                     optional("branch", "string") {
-                        llmSeesIt("Optional branch name — for build_status, recent_builds. Use project_context tool to discover current branch.")
+                        llmSeesIt(
+                            "Optional branch name — for build_status, recent_builds, get_running_builds. " +
+                            "Resolved to the branch plan key via ChainKeyResolver. " +
+                            "REQUIRED for get_running_builds to see a build running on a feature branch " +
+                            "(feature-branch builds run under the branch plan key, e.g. PROJ-PLAN42, not the master plan key). " +
+                            "Use project_context tool to discover current branch."
+                        )
                         humanReadable("Scope history to a specific branch. Omit for trunk/default plan history.")
                         whenPresent("ChainKeyResolver maps to branch chain key. Branch must have been built at least once.")
                         whenAbsent("Trunk plan history is returned.")

@@ -129,6 +129,9 @@ class SubagentSystemPromptSnapshotTest {
             projectPath = "/tmp/test",
             osName = "Darwin",
             shell = "/bin/bash",
+            // Pin homeDir so snapshots are platform-independent (default reads System user.home,
+            // which differs macOS vs Linux CI and broke the golden comparison).
+            homeDir = "/home/snapshot",
             completingYourTaskSection = COMPLETING_SECTION,
         )
 
