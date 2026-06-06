@@ -44,7 +44,7 @@
     "dagre": "^0.8.5",
     "date-fns": "^4.1.0",
     "diff2html": "^3.4.56",
-    "dompurify": "^3.2.4",
+    "dompurify": "^3.4.8",
     "katex": "^0.16.40",
     "lucide-react": "^0.577.0",
     "marked": "^17.0.5",
