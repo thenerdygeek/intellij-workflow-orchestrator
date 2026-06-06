@@ -18,4 +18,5 @@ include(
     ":agent",
     ":web",
     ":mock-server",
+    ":konsist",
 )

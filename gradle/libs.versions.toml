@@ -39,6 +39,7 @@ changelog = "2.5.0"
 kover = "0.9.5"
 qodana = "2025.3.1"
 detekt = "1.23.8"
+konsist = "0.17.3"
 
 [libraries]
 # Kotlin
@@ -83,6 +84,9 @@ gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 
 # Static analysis
 detekt-formatting = { group = "io.gitlab.arturbosch.detekt", name = "detekt-formatting", version.ref = "detekt" }
+
+# Architecture tests
+konsist = { group = "com.lemonappdev", name = "konsist", version.ref = "konsist" }
 
 [plugins]
 kotlin = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
