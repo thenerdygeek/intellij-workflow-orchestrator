@@ -406,23 +406,24 @@
               "location": "QUERY",
               "type": "integer",
               "required": false,
-              "description": "Client uses 5 for the running-builds check.",
-              "example": "5"
+              "description": "Client uses 25 for the running-builds check — wide enough that live builds aren't truncated out of the window by recently-finished ones before client-side terminal-state filtering.",
+              "example": "25"
             },
             {
               "name": "expand",
               "location": "QUERY",
               "type": "string",
               "required": false,
-              "description": "Client passes `stages.stage.results.result` for active build stage detail.",
-              "example": "stages.stage.results.result"
+              "description": "Client passes `results.result.stages.stage.results.result` — the `results.result.` prefix is MANDATORY on this collection endpoint or Bamboo returns only the {size,max-result} wrapper with an empty result[] array (probe-confirmed on real DC 10.2.14).",
+              "example": "results.result.stages.stage.results.result"
             }
           ],
-          "callSite": "BambooApiClient.kt:273",
-          "provenance": "BambooApiClient.kt line 273 `getRunningAndQueuedBuilds()` → GET /rest/api/latest/result/{key}?includeAllStates=true&max-results=5&expand=stages.stage.results.result",
+          "callSite": "BambooApiClient.kt:284",
+          "provenance": "BambooApiClient.kt `getRunningAndQueuedBuilds()` → GET /rest/api/latest/result/{key}?includeAllStates=true&max-results=25&expand=results.result.stages.stage.results.result",
           "gotchas": [
             "This path is overloaded with multiple client usages via different query parameters — getRunningAndQueuedBuilds and getRecentResults both call /result/{key} with different expand strings.",
-            "Without includeAllStates=true, only FINISHED results are returned; BUILDING/QUEUED builds are invisible."
+            "Without includeAllStates=true, only FINISHED results are returned; BUILDING/QUEUED builds are invisible.",
+            "COLLECTION-EXPAND TRAP: /result/{key} returns a collection whose builds live at results.result[]. The expand path MUST be prefixed `results.result.` — the bare `stages.stage.results.result` expands stages inside a result that was never expanded, so the body comes back as just `results:{size:N}` with no result array and the client deserialises an empty list ('no running builds'). Probe evidence: bundle-repo/raw/result_running_queued.json (size:5, no array) vs result_recent.json (correct prefix, 10 entries). Fixed 2026-06-06."
           ]
         },
         {

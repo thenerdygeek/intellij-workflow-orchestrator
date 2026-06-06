@@ -287,8 +287,14 @@ class BambooApiClient(
         // can't be pushed out of the window by recently-finished ones (was 5 → silently reported
         // "none running"). Filter by EXCLUDING terminal states rather than an inclusion allowlist
         // so any live state Bamboo reports (InProgress/Queued/Pending/…) is caught.
+        //
+        // This is a COLLECTION endpoint: the expand path MUST be prefixed with `results.result.`
+        // or Bamboo returns only the {size, max-result} wrapper with an EMPTY result[] array —
+        // the same trap getRecentResults documents. The probe (bundle-repo/raw/result_running_queued.json,
+        // real DC 10.2.14) captured `results:{size:5}` with NO result array under the bare
+        // `stages.stage.results.result` expand, which made every caller report "no running builds".
         return get<BambooBuildStatusResponse>(
-            "/rest/api/latest/result/$planKey?includeAllStates=true&max-results=25&expand=stages.stage.results.result"
+            "/rest/api/latest/result/$planKey?includeAllStates=true&max-results=25&expand=results.result.stages.stage.results.result"
         ).map { response ->
             response.results.result.filter { dto ->
                 dto.lifeCycleState !in TERMINAL_LIFECYCLE_STATES

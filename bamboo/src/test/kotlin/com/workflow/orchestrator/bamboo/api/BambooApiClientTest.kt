@@ -290,6 +290,24 @@ class BambooApiClientTest {
     }
 
     @Test
+    fun `getRunningAndQueuedBuilds expands the results result collection not just nested stages`() = runTest {
+        // PROBE-GROUNDED REGRESSION (real DC 10.2.14 capture, bundle-repo/raw/result_running_queued.json):
+        // /result/{key} is a COLLECTION endpoint. Bamboo only populates results.result[] when the
+        // expand path is prefixed with `results.result.`. The bare `stages.stage.results.result`
+        // expand returns ONLY the {size, max-result} wrapper with NO result array, so the client
+        // deserialised an empty list and every caller reported "no running builds" — invisible to
+        // mocks that hand back a populated array regardless of the expand string.
+        server.enqueue(MockResponse().setBody("""{"results":{"result":[]}}"""))
+
+        client.getRunningAndQueuedBuilds("PROJ-AUTO")
+
+        val recorded = server.takeRequest()
+        assertTrue(recorded.path!!.contains("expand=results.result.stages.stage.results.result"),
+            "collection endpoint must prefix the expand with results.result. or Bamboo returns " +
+                "only the wrapper (size) with no result[] array; path=${recorded.path}")
+    }
+
+    @Test
     fun `getBuildVariables returns variable map from build result`() = runTest {
         server.enqueue(MockResponse().setBody(fixture("build-variables.json")))
 

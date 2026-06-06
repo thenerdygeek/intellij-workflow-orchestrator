@@ -32,7 +32,7 @@ Key endpoints:
 - `GET /rest/api/latest/result/{buildKey}` — specific build result + stages
 - `GET /rest/api/latest/result/{buildKey}/log` — build log
 - `POST /rest/api/latest/queue/{planKey}` — trigger build (with variables)
-- `GET /rest/api/latest/result/{planKey}` — running/queued builds
+- `GET /rest/api/latest/result/{planKey}` — running/queued builds. **COLLECTION-EXPAND TRAP (fixed 2026-06-06):** this is a *collection* endpoint — the `expand` MUST be prefixed `results.result.` (i.e. `expand=results.result.stages.stage.results.result`), exactly like `getRecentResults`. The bare `stages.stage.results.result` expands stages inside a result that was never expanded, so Bamboo returns only the `results:{size:N}` wrapper with an empty `result[]` array and the client reports "no running builds" (probe-confirmed on real DC 10.2.14: `result_running_queued.json` had `size:5` but no array; `result_recent.json` with the prefix had 10 populated entries). `getLatestResult`/`getBuildResult` are *single-result* endpoints (`/result/{key}/latest`, `/result/{resultKey}`) where the bare `stages.stage.results.result` is correct — there's no top-level collection to prefix.
 - `POST /rest/api/latest/plan/{branchPlanKey}/enable` — enable a (disabled) plan branch. A branch IS a plan, so enable its own key. `BambooApiClient.enablePlanBranch` → `postForm` (sets `X-Atlassian-Token: no-check`), surfaced as `BambooService.enablePlanBranch(branchPlanKey): ToolResult<Unit>`. ⚠ NOT probed against live DC 10.2.14 (added 2026-05-26); non-admin PATs likely get 403 (mapped to a plan-admin permission hint). Verify on a live server before relying on it.
 
 Build variables include `dockerTagsAsJson` — JSON payload of service-to-docker-tag mappings used by automation suites.

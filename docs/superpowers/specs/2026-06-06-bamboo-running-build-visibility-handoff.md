@@ -2,6 +2,24 @@
 
 **Written:** 2026-06-06 · **Branch:** `perf/token-context-optimization` (pushed through `12a1c50b5`).
 
+---
+## ✅ RESOLVED 2026-06-06 (root cause found in the probe, exactly as this handoff demanded)
+
+**Root cause = malformed `expand` param on the COLLECTION endpoint — NOT branch keys, NOT `/queue`, NOT `includeAllStates`.**
+`getRunningAndQueuedBuilds` sent `expand=stages.stage.results.result` to `/result/{key}`. Bamboo only populates the top-level `results.result[]` array when the expand is prefixed with `results.result.`; without it the server returns just `results:{size:N}` with **no array**, so the client deserialised an empty list → every caller reported "no running builds." The user's anchor was right all along: `includeAllStates=true` was fine.
+
+**Evidence (already in the committed probe bundle — no fresh probe needed):** same plan key `GWAB-S4XMTOTLPPWAXBK` on real DC 10.2.14 —
+- `bundle-repo/raw/result_running_queued.json` (bare expand) → `results:{size:5}`, **no `result` array**.
+- `bundle-repo/raw/result_recent.json` (`results.result.` prefix) → `result[]` with 10 populated entries.
+
+**Fix (TDD, one line):** expand → `results.result.stages.stage.results.result` (matches the proven-working `getRecentResults`). The single API-layer change covers all four consumers (`get_running_builds`, `build_status`, `recent_builds`, `BambooMonitorSource`) — they all route through this method. New wire-contract regression test `getRunningAndQueuedBuilds expands the results result collection not just nested stages` in `BambooApiClientTest` pins the prefix (the old mocks never asserted the expand string). `:bamboo:test` full `--rerun-tasks` = 315 tests, 0 failures. Also updated `agent/src/main/resources/api-docs/bamboo.json` provenance + COLLECTION-EXPAND-TRAP gotcha, and `bamboo/CLAUDE.md`.
+
+**REMAINING (the only open gate): live confirmation before `.9`.** Per lesson #4, passing unit tests ≠ working. Trigger a real build and ask the agent "is a build running for branch X?" (or browser-probe `…/result/{BRANCH_KEY}?includeAllStates=true&max-results=25&expand=results.result.stages.stage.results.result` and confirm the `result[]` array is now populated with the in-flight build). Only then cut `0.86.0-token-ctx.9`. `.9` is HELD pending this.
+
+Everything below is the original (pre-resolution) handoff, kept for context.
+
+---
+
 ## 0. Why this handoff exists
 The previous session **drifted from the original Bamboo probe results** while chasing this bug — repeatedly re-deriving Bamboo API behavior instead of grounding in what the probe already validated, and at one point wrongly pivoting toward the `/queue` resource. The user's correction is the anchor for the next session:
 
