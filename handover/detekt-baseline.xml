@@ -1,0 +1,264 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ArgumentListWrapping:ChecksTabTest.kt$ChecksTabTest$( "Copyright headers", "Pull request", "Build", "Quality gate", "Suite: API smoke", "Suite: API integration", "Suite: Web E2E", "Docker tags" )</ID>
+    <ID>ArgumentListWrapping:CopyrightFixCard.kt$CopyrightFixCard$("[Handover:Copyright] Fix-all aborted: copyrightTemplate is blank and at least one file is MISSING_HEADER")</ID>
+    <ID>ArgumentListWrapping:CopyrightFixCard.kt$CopyrightFixCard$("\n")</ID>
+    <ID>ArgumentListWrapping:CopyrightFixCard.kt$CopyrightFixCard$(CopyrightFixService.HEADER_SCAN_LINES)</ID>
+    <ID>ArgumentListWrapping:CopyrightFixService.kt$CopyrightFixService$("[Handover:Copyright] Year outdated in $filePath: ${yearExprMatch?.value} -> ${yearExprMatch?.let { consolidateYears(it.value, currentYear) }}")</ID>
+    <ID>ArgumentListWrapping:CopyrightFixService.kt$CopyrightFixService$(it.value, currentYear)</ID>
+    <ID>ArgumentListWrapping:HandoverAiSummaryCacheTest.kt$HandoverAiSummaryCacheTest$(catchIdx in awaitIdx..windowEnd, "catch (e: Exception) must appear within 100 chars after deferred.await()")</ID>
+    <ID>ArgumentListWrapping:HandoverAiSummaryCacheTest.kt$HandoverAiSummaryCacheTest$(removeIdx > catchIdx &amp;&amp; removeIdx &lt; catchIdx + 300, "cache.remove(key, deferred) must appear inside the catch block")</ID>
+    <ID>ArgumentListWrapping:HandoverAiSummaryCacheTest.kt$HandoverAiSummaryCacheTest$(src.contains("cache.remove(key, deferred)"), "getOrCompute must call cache.remove(key, deferred) in the catch block")</ID>
+    <ID>ArgumentListWrapping:HandoverStateService.kt$HandoverStateService$("[Handover:State] buildStatus → plan=${event.planKey} build#${event.buildNumber} status=${event.status}")</ID>
+    <ID>ArgumentListWrapping:HandoverStateService.kt$HandoverStateService$("[Handover:State] focusPr changed to ${newFocusPr?.prId ?: "&lt;cleared>"} — resetting status slices")</ID>
+    <ID>ArgumentListWrapping:HandoverStateServicePrScopingTest.kt$HandoverStateServicePrScopingTest$("lint" to false)</ID>
+    <ID>ArgumentListWrapping:HandoverStateServicePrScopingTest.kt$HandoverStateServicePrScopingTest$(WorkflowEvent.HealthCheckFinished(passed = false, results = mapOf("lint" to false), durationMs = 200L))</ID>
+    <ID>ArgumentListWrapping:HandoverStateServicePrScopingTest.kt$HandoverStateServicePrScopingTest$(passed = false, results = mapOf("lint" to false), durationMs = 200L)</ID>
+    <ID>ArgumentListWrapping:HandoverStateServiceTest.kt$HandoverStateServiceTest$(1, state.suiteResults.size, "A synthetic SuiteResult must be created when Finished arrives without Triggered")</ID>
+    <ID>ArgumentListWrapping:HandoverTemplateStore.kt$ClasspathBundledLoader$("ClasspathBundledLoader: no index.txt and unsupported URL scheme '${url.protocol}' at $dirPath")</ID>
+    <ID>ArgumentListWrapping:HandoverWikiPreviewRendererLocalTest.kt$HandoverWikiPreviewRendererLocalTest$("""&lt;p>&lt;a href="https://example.com">click&lt;/a>&lt;/p>""", render("[click|https://example.com]"))</ID>
+    <ID>ArgumentListWrapping:JiraClosureServiceTest.kt$JiraClosureServiceTest$( "PROJ-SUITE-1", "PROJ-SUITE-1-1", """{"my-service":"1.0.0"}""", true, 60_000, Instant.now(), "https://bamboo.example.com/browse/PROJ-SUITE-1-1" )</ID>
+    <ID>ArgumentListWrapping:JiraClosureServiceTest.kt$JiraClosureServiceTest$( "PROJ-SUITE-2", "PROJ-SUITE-2-1", """{"my-service":"2.0.0"}""", true, 30_000, Instant.now(), "https://bamboo.example.com/browse/PROJ-SUITE-2-1" )</ID>
+    <ID>ArgumentListWrapping:JiraClosureServiceTest.kt$JiraClosureServiceTest$("PROJ-REGR", "PROJ-REGR-42", """{"my-service":"1.2.3","auth-service":"2.0.1"}""", true, 120_000, Instant.now(), "https://bamboo.example.com/browse/PROJ-REGR-42")</ID>
+    <ID>ArgumentListWrapping:JiraClosureServiceTest.kt$JiraClosureServiceTest$("PROJ-REGR", "PROJ-REGR-42", """{"my-service":"1.2.3"}""", true, 120_000, Instant.now(), "https://bamboo.example.com/browse/PROJ-REGR-42")</ID>
+    <ID>ArgumentListWrapping:JiraClosureServiceTest.kt$JiraClosureServiceTest$("PROJ-REGR", "PROJ-REGR-42", """{"my-service":"1.2.3-build.42"}""", true, 120_000, Instant.now(), "https://bamboo.example.com/browse/PROJ-REGR-42")</ID>
+    <ID>ArgumentListWrapping:JiraClosureServiceTest.kt$JiraClosureServiceTest$("PROJ-REGR", "PROJ-REGR-42", """{}""", null, null, Instant.now(), "https://bamboo.example.com/browse/PROJ-REGR-42")</ID>
+    <ID>ArgumentListWrapping:JiraClosureServiceTest.kt$JiraClosureServiceTest$("PROJ-REGR", "PROJ-REGR-42", "not-valid-json", true, 120_000, Instant.now(), "https://bamboo.example.com/browse/PROJ-REGR-42")</ID>
+    <ID>ArgumentListWrapping:JiraClosureServiceTest.kt$JiraClosureServiceTest$("PROJ-SMOKE", "PROJ-SMOKE-18", """{"my-service":"1.2.3"}""", false, 30_000, Instant.now(), "https://bamboo.example.com/browse/PROJ-SMOKE-18")</ID>
+    <ID>ArgumentListWrapping:JiraClosureServiceTest.kt$JiraClosureServiceTest$("PROJ-SMOKE", "PROJ-SMOKE-18", """{"my-service":"1.2.3"}""", true, 60_000, Instant.now(), "https://bamboo.example.com/browse/PROJ-SMOKE-18")</ID>
+    <ID>ArgumentListWrapping:JiraClosureServiceTest.kt$JiraClosureServiceTest$("PROJ-SMOKE", "PROJ-SMOKE-18", """{"my-service":"1.2.3-build.42"}""", true, 60_000, Instant.now(), "https://bamboo.example.com/browse/PROJ-SMOKE-18")</ID>
+    <ID>ArgumentListWrapping:JiraClosureServiceTest.kt$JiraClosureServiceTest$("[CRITICAL]PROJ-REGR", "PROJ-REGR-42", "{}", true, 1_000, Instant.now(), "https://bamboo.example.com/browse/PROJ-REGR-42")</ID>
+    <ID>ArgumentListWrapping:JiraClosureServiceTest.kt$JiraClosureServiceTest$(comment.contains("| [CRITICAL]PROJ-REGR |"), "Unescaped '[' would form a broken Jira link — must be escaped")</ID>
+    <ID>ArgumentListWrapping:JiraPreviewPaneTest.kt$JiraPreviewPaneTest$(UnconfinedTestDispatcher())</ID>
+    <ID>ArgumentListWrapping:PrServiceTemplateTest.kt$PrServiceTemplateTest$("PROJ-123 (feature/PROJ-123-fix)", PrTitleRenderer.render("{ticketId} ({branch})", "PROJ-123", "Fix", "feature/PROJ-123-fix", 120))</ID>
+    <ID>ArgumentListWrapping:PrServiceTemplateTest.kt$PrServiceTemplateTest$("PROJ-123: Fix login bug", PrTitleRenderer.render("{ticketId}: {summary}", "PROJ-123", "Fix login bug", "feature/PROJ-123", 120))</ID>
+    <ID>ArgumentListWrapping:PrServiceTemplateTest.kt$PrServiceTemplateTest$("[PROJ-123] Fix login bug", PrTitleRenderer.render("[{ticketId}] {summary}", "PROJ-123", "Fix login bug", "feature/PROJ-123", 120))</ID>
+    <ID>ArgumentListWrapping:PrServiceTemplateTest.kt$PrServiceTemplateTest$("[{ticketId}] {summary}", "PROJ-123", "Fix login bug", "feature/PROJ-123", 120)</ID>
+    <ID>ArgumentListWrapping:PrServiceTemplateTest.kt$PrServiceTemplateTest$("{ticketId} ({branch})", "PROJ-123", "Fix", "feature/PROJ-123-fix", 120)</ID>
+    <ID>ArgumentListWrapping:PrServiceTemplateTest.kt$PrServiceTemplateTest$("{ticketId}: {summary}", "PROJ-123", "Fix login bug", "feature/PROJ-123", 120)</ID>
+    <ID>ArgumentListWrapping:QuickValueChipsPanel.kt$QuickValueChipsPanel$("&lt;html>&lt;a style='color:${StatusColors.htmlColor(StatusColors.LINK)}'>customise in Settings&lt;/a>&lt;/html>")</ID>
+    <ID>ArgumentListWrapping:QuickValueChipsPanel.kt$QuickValueChipsPanel$(StatusColors.LINK)</ID>
+    <ID>ArgumentListWrapping:QuickValueChipsPanelTest.kt$QuickValueChipsPanelTest$(UnconfinedTestDispatcher())</ID>
+    <ID>ArgumentListWrapping:ShareTab.kt$ShareTab.Companion$(name, action, source)</ID>
+    <ID>ArgumentListWrapping:ShareTab.kt$ShareTab.Companion$(project)</ID>
+    <ID>ArgumentListWrapping:ShareTab.kt$ShareTab.Companion$(sourceId, newName)</ID>
+    <ID>ArgumentListWrapping:ShareTabTest.kt$ShareTabTest$( id = "email/test", name = "Test Email", action = HandoverTemplateAction.EMAIL, source = source, origin = HandoverTemplateOrigin.BUNDLED, )</ID>
+    <ID>ArgumentListWrapping:ShareTabTest.kt$ShareTabTest$( id = "jira/test", name = "Test Jira", action = HandoverTemplateAction.JIRA, source = source, origin = HandoverTemplateOrigin.BUNDLED, )</ID>
+    <ID>ArgumentListWrapping:ShareTabTest.kt$ShareTabTest$(UnconfinedTestDispatcher())</ID>
+    <ID>ArgumentListWrapping:TemplatePickerTest.kt$TemplatePickerTest$( javax.swing.JList&lt;Any?>(), combo.getItemAt(0), 0, false, false )</ID>
+    <ID>FunctionOnlyReturningConstant:TemplatePickerTest.kt$private fun TemplatePicker.isDirtyVisible(): Boolean</ID>
+    <ID>ImportOrdering:EmailPreviewPaneTest.kt$import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.* import javax.swing.JEditorPane import java.awt.Container</ID>
+    <ID>ImportOrdering:HandoverOverrideBannerTest.kt$import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.* import java.awt.Container</ID>
+    <ID>ImportOrdering:HandoverTicketHeaderTest.kt$import com.workflow.orchestrator.handover.model.HandoverState import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.* import javax.swing.JLabel import java.awt.Container</ID>
+    <ID>ImportOrdering:HandoverWikiPreviewRendererLocalTest.kt$import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>ImportOrdering:JiraPreviewPaneTest.kt$import com.intellij.openapi.project.Project import com.workflow.orchestrator.handover.service.HandoverWikiPreviewRendererService import com.workflow.orchestrator.handover.service.HandoverWikiPreviewRendererService.Result import com.workflow.orchestrator.handover.service.HandoverWikiPreviewRendererService.Source import io.mockk.* import io.mockk.coEvery import io.mockk.every import kotlinx.coroutines.flow.MutableSharedFlow import kotlinx.coroutines.test.advanceUntilIdle import kotlinx.coroutines.test.runTest import kotlinx.coroutines.test.UnconfinedTestDispatcher import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.* import javax.swing.JEditorPane</ID>
+    <ID>ImportOrdering:PrServiceTemplateTest.kt$import com.workflow.orchestrator.core.bitbucket.PrTitleRenderer import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>ImportOrdering:TemplateEditorCard.kt$import com.intellij.openapi.Disposable import com.intellij.openapi.application.EDT import com.intellij.openapi.project.Project import com.intellij.ui.JBColor import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBScrollPane import com.intellij.ui.components.JBTextArea import com.workflow.orchestrator.handover.model.HandoverTemplate import com.workflow.orchestrator.handover.model.HandoverTemplateAction import com.workflow.orchestrator.handover.service.HandoverPlaceholderResolver import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.Job import kotlinx.coroutines.SupervisorJob import kotlinx.coroutines.cancel import kotlinx.coroutines.delay import kotlinx.coroutines.flow.StateFlow import kotlinx.coroutines.launch import kotlinx.coroutines.withContext import org.jetbrains.annotations.TestOnly import kotlin.coroutines.CoroutineContext import java.awt.BorderLayout import java.awt.FlowLayout import java.awt.Font import javax.swing.JButton import javax.swing.JComponent import javax.swing.JPanel import javax.swing.SwingUtilities import javax.swing.event.DocumentEvent import javax.swing.event.DocumentListener</ID>
+    <ID>ImportOrdering:TemplatePickerTest.kt$import com.workflow.orchestrator.handover.model.HandoverTemplate import com.workflow.orchestrator.handover.model.HandoverTemplateAction import com.workflow.orchestrator.handover.model.HandoverTemplateOrigin import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.* import javax.swing.JComboBox</ID>
+    <ID>ImportOrdering:TimeLogCard.kt$import com.intellij.openapi.Disposable import com.intellij.openapi.application.EDT import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBTextField import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.services.JiraService import com.workflow.orchestrator.handover.ui.cards.handoverPanelHeader import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.handover.service.HandoverStateService import com.workflow.orchestrator.handover.service.TimeTrackingService import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.SupervisorJob import kotlinx.coroutines.cancel import kotlinx.coroutines.launch import kotlinx.coroutines.withContext import java.awt.BorderLayout import java.awt.CardLayout import java.awt.FlowLayout import java.awt.GridBagConstraints import java.awt.GridBagLayout import java.time.LocalDate import java.time.LocalDateTime import java.time.OffsetDateTime import java.time.ZoneOffset import java.time.format.DateTimeParseException import javax.swing.JButton import javax.swing.JPanel import javax.swing.SwingConstants import javax.swing.event.DocumentEvent import javax.swing.event.DocumentListener</ID>
+    <ID>LoopWithTooManyJumpStatements:CopyrightFixCard.kt$CopyrightFixCard$for</ID>
+    <ID>LoopWithTooManyJumpStatements:HandoverTemplateStore.kt$HandoverTemplateStore$while</ID>
+    <ID>LoopWithTooManyJumpStatements:HandoverWikiPreviewRenderer.kt$HandoverWikiPreviewRenderer$while</ID>
+    <ID>MagicNumber:ActionsTab.kt$ActionsTab$12</ID>
+    <ID>MagicNumber:ActionsTab.kt$ActionsTab$8</ID>
+    <ID>MagicNumber:CardPanelHeader.kt$12</ID>
+    <ID>MagicNumber:CardPanelHeader.kt$6</ID>
+    <ID>MagicNumber:CardPanelHeader.kt$8</ID>
+    <ID>MagicNumber:ChecksTab.kt$ChecksTab$0.25</ID>
+    <ID>MagicNumber:ChecksTab.kt$ChecksTab$0.5</ID>
+    <ID>MagicNumber:ChecksTab.kt$ChecksTab$10</ID>
+    <ID>MagicNumber:ChecksTab.kt$ChecksTab$11</ID>
+    <ID>MagicNumber:ChecksTab.kt$ChecksTab$12</ID>
+    <ID>MagicNumber:ChecksTab.kt$ChecksTab$22</ID>
+    <ID>MagicNumber:ChecksTab.kt$ChecksTab$4</ID>
+    <ID>MagicNumber:ChecksTab.kt$ChecksTab$6</ID>
+    <ID>MagicNumber:ChecksTab.kt$ChecksTab$8</ID>
+    <ID>MagicNumber:ChecksTab.kt$ChecksTab.&lt;no name provided>$1.5f</ID>
+    <ID>MagicNumber:ChecksTab.kt$ChecksTab.&lt;no name provided>$16</ID>
+    <ID>MagicNumber:ChecksTab.kt$ChecksTab.&lt;no name provided>$8</ID>
+    <ID>MagicNumber:CopyrightFixCard.kt$CopyrightCellRenderer$6</ID>
+    <ID>MagicNumber:CopyrightFixCard.kt$CopyrightCellRenderer$8</ID>
+    <ID>MagicNumber:CopyrightFixCard.kt$CopyrightFixCard$40</ID>
+    <ID>MagicNumber:CopyrightFixCard.kt$CopyrightFixCard$60</ID>
+    <ID>MagicNumber:CopyrightFixCard.kt$CopyrightFixCard$8</ID>
+    <ID>MagicNumber:CopyrightFixService.kt$CopyrightFixService$30</ID>
+    <ID>MagicNumber:HandoverOverrideBanner.kt$HandoverOverrideBanner$12</ID>
+    <ID>MagicNumber:HandoverOverrideBanner.kt$HandoverOverrideBanner$3</ID>
+    <ID>MagicNumber:HandoverOverrideBanner.kt$HandoverOverrideBanner$6</ID>
+    <ID>MagicNumber:HandoverOverrideBanner.kt$HandoverOverrideBanner$8</ID>
+    <ID>MagicNumber:HandoverOverrideTracker.kt$HandoverOverrideTracker$30</ID>
+    <ID>MagicNumber:HandoverStateService.kt$HandoverStateService$120</ID>
+    <ID>MagicNumber:HandoverTabProvider.kt$HandoverTabProvider$5</ID>
+    <ID>MagicNumber:HandoverTemplateStore.kt$HandoverTemplateStore$100</ID>
+    <ID>MagicNumber:HandoverTicketHeader.kt$HandoverTicketHeader$0x004786</ID>
+    <ID>MagicNumber:HandoverTicketHeader.kt$HandoverTicketHeader$0x1C2740</ID>
+    <ID>MagicNumber:HandoverTicketHeader.kt$HandoverTicketHeader$0xE8F0FE</ID>
+    <ID>MagicNumber:HandoverTicketHeader.kt$HandoverTicketHeader$0xEEF0F2</ID>
+    <ID>MagicNumber:HandoverTicketHeader.kt$HandoverTicketHeader$11</ID>
+    <ID>MagicNumber:HandoverTicketHeader.kt$HandoverTicketHeader$12</ID>
+    <ID>MagicNumber:HandoverTicketHeader.kt$HandoverTicketHeader$4</ID>
+    <ID>MagicNumber:HandoverTicketHeader.kt$HandoverTicketHeader$8</ID>
+    <ID>MagicNumber:HandoverWikiPreviewRenderer.kt$HandoverWikiPreviewRendererService.&lt;no name provided>$0.75f</ID>
+    <ID>MagicNumber:HandoverWikiPreviewRenderer.kt$HandoverWikiPreviewRendererService.&lt;no name provided>$64</ID>
+    <ID>MagicNumber:JiraPreviewPane.kt$JiraPreviewPane$4</ID>
+    <ID>MagicNumber:QuickValueChipsPanel.kt$ChipView$10</ID>
+    <ID>MagicNumber:QuickValueChipsPanel.kt$ChipView$4</ID>
+    <ID>MagicNumber:QuickValueChipsPanel.kt$ChipView$6</ID>
+    <ID>MagicNumber:QuickValueChipsPanel.kt$ChipView$8</ID>
+    <ID>MagicNumber:QuickValueChipsPanel.kt$QuickValueChipsPanel$4</ID>
+    <ID>MagicNumber:QuickValueChipsPanel.kt$QuickValueChipsPanel$6</ID>
+    <ID>MagicNumber:QuickValueChipsPanel.kt$QuickValueChipsPanel$8</ID>
+    <ID>MagicNumber:ShareTab.kt$ShareTab$12</ID>
+    <ID>MagicNumber:ShareTab.kt$ShareTab$8</ID>
+    <ID>MagicNumber:TemplateEditorCard.kt$TemplateEditorCard$10</ID>
+    <ID>MagicNumber:TemplateEditorCard.kt$TemplateEditorCard$4</ID>
+    <ID>MagicNumber:TemplateEditorCard.kt$TemplateEditorCard$60</ID>
+    <ID>MagicNumber:TemplatePicker.kt$TemplatePicker$4</ID>
+    <ID>MagicNumber:TimeLogCard.kt$TimeLogCard$10</ID>
+    <ID>MagicNumber:TimeLogCard.kt$TimeLogCard$3</ID>
+    <ID>MagicNumber:TimeLogCard.kt$TimeLogCard$4</ID>
+    <ID>MagicNumber:TimeLogCard.kt$TimeLogCard$4.0</ID>
+    <ID>MagicNumber:TimeLogCard.kt$TimeLogCard$40</ID>
+    <ID>MagicNumber:TimeLogCard.kt$TimeLogCard$5</ID>
+    <ID>MagicNumber:TimeLogCard.kt$TimeLogCard$8</ID>
+    <ID>MagicNumber:TimeLogCard.kt$TimeLogCard$80</ID>
+    <ID>MagicNumber:TimeLogCard.kt$TimeLogCard$9</ID>
+    <ID>MagicNumber:TimeTrackingService.kt$TimeTrackingService$1000.0</ID>
+    <ID>MagicNumber:TimeTrackingService.kt$TimeTrackingService$3600</ID>
+    <ID>MagicNumber:TimeTrackingService.kt$TimeTrackingService$3600.0</ID>
+    <ID>MagicNumber:TimeTrackingService.kt$TimeTrackingService$60</ID>
+    <ID>MagicNumber:TimeTrackingService.kt$TimeTrackingService$60.0</ID>
+    <ID>MaximumLineLength:CopyrightFixCard.kt$CopyrightFixCard$ </ID>
+    <ID>MaximumLineLength:CopyrightFixService.kt$CopyrightFixService$ </ID>
+    <ID>MaximumLineLength:CopyrightFixServiceTest.kt$CopyrightFixServiceTest$ </ID>
+    <ID>MaximumLineLength:HandoverPanel.kt$HandoverPanel$ </ID>
+    <ID>MaximumLineLength:HandoverStateService.kt$HandoverStateService$ </ID>
+    <ID>MaximumLineLength:HandoverStateServicePrScopingTest.kt$HandoverStateServicePrScopingTest$ </ID>
+    <ID>MaximumLineLength:HandoverTemplateStore.kt$ClasspathBundledLoader$ </ID>
+    <ID>MaximumLineLength:JiraPreviewPaneTest.kt$JiraPreviewPaneTest$ </ID>
+    <ID>MaximumLineLength:PrServiceTemplateTest.kt$PrServiceTemplateTest$ </ID>
+    <ID>MaximumLineLength:QuickValueChipsPanel.kt$ChipView$ </ID>
+    <ID>MaximumLineLength:QuickValueChipsPanel.kt$QuickValueChipsPanel$ </ID>
+    <ID>MaximumLineLength:QuickValueChipsPanelTest.kt$QuickValueChipsPanelTest$ </ID>
+    <ID>MaximumLineLength:ShareTab.kt$ShareTab.Companion$ </ID>
+    <ID>MaximumLineLength:ShareTabTest.kt$ShareTabTest$ </ID>
+    <ID>ModifierListSpacing:HandoverOverrideTrackerActivityTest.kt$HandoverOverrideTrackerActivityTest$@AfterEach</ID>
+    <ID>MultiLineIfElse:CopyrightFixCard.kt$CopyrightFixCard$original</ID>
+    <ID>MultiLineIfElse:HandoverStateService.kt$HandoverStateService$suite</ID>
+    <ID>MultiLineIfElse:QuickValueChipsPanel.kt$QuickValueChipsPanel$project?.let { PluginSettings.getInstance(it).state.quickClipboardChips.toList() } ?: emptyList()</ID>
+    <ID>MultiLineIfElse:QuickValueChipsPanel.kt$QuickValueChipsPanel$testChipKeys.invoke()</ID>
+    <ID>NoBlankLineBeforeRbrace:CopyrightFixServiceTest.kt$CopyrightFixServiceTest$ </ID>
+    <ID>NoBlankLineBeforeRbrace:HandoverModelsTest.kt$HandoverModelsTest$ </ID>
+    <ID>NoBlankLineBeforeRbrace:HandoverWikiPreviewRenderer.kt$HandoverWikiPreviewRenderer$ </ID>
+    <ID>NoMultipleSpaces:ActionsTab.kt$ActionsTab$ </ID>
+    <ID>NoMultipleSpaces:HandoverOverrideTrackerActivityTest.kt$HandoverOverrideTrackerActivityTest$ </ID>
+    <ID>NoMultipleSpaces:HandoverPlaceholderResolver.kt$HandoverPlaceholderResolver$ </ID>
+    <ID>NoMultipleSpaces:HandoverStateService.kt$HandoverStateService$ </ID>
+    <ID>NoMultipleSpaces:HandoverStateService.kt$HandoverStateService.Companion$ </ID>
+    <ID>NoMultipleSpaces:QuickValueChipsPanel.kt$QuickValueChipsPanel.Companion$ </ID>
+    <ID>NoMultipleSpaces:TemplateEditorCard.kt$TemplateEditorCard$ </ID>
+    <ID>NoMultipleSpaces:TemplateEditorCardTest.kt$TemplateEditorCardTest$ </ID>
+    <ID>NoMultipleSpaces:TemplatePickerTest.kt$ </ID>
+    <ID>NoMultipleSpaces:TemplatePickerTest.kt$TemplatePickerTest$ </ID>
+    <ID>NoUnusedImports:ChecksTab.kt$com.workflow.orchestrator.handover.ui.tabs.ChecksTab.kt</ID>
+    <ID>NoUnusedImports:ChecksTabTest.kt$com.workflow.orchestrator.handover.ui.tabs.ChecksTabTest.kt</ID>
+    <ID>NoUnusedImports:CopyrightFixCard.kt$com.workflow.orchestrator.handover.ui.cards.CopyrightFixCard.kt</ID>
+    <ID>NoUnusedImports:HandoverOverrideBanner.kt$com.workflow.orchestrator.handover.ui.HandoverOverrideBanner.kt</ID>
+    <ID>NoUnusedImports:HandoverPanelTest.kt$com.workflow.orchestrator.handover.ui.HandoverPanelTest.kt</ID>
+    <ID>NoUnusedImports:HandoverPlaceholderResolver.kt$com.workflow.orchestrator.handover.service.HandoverPlaceholderResolver.kt</ID>
+    <ID>NoUnusedImports:HandoverPlaceholderResolverTest.kt$com.workflow.orchestrator.handover.service.HandoverPlaceholderResolverTest.kt</ID>
+    <ID>NoUnusedImports:HandoverStateService.kt$com.workflow.orchestrator.handover.service.HandoverStateService.kt</ID>
+    <ID>NoUnusedImports:HandoverStateServiceTest.kt$com.workflow.orchestrator.handover.service.HandoverStateServiceTest.kt</ID>
+    <ID>NoUnusedImports:JiraPreviewPaneTest.kt$com.workflow.orchestrator.handover.ui.editor.JiraPreviewPaneTest.kt</ID>
+    <ID>NoUnusedImports:QuickValueChipsPanelTest.kt$com.workflow.orchestrator.handover.ui.chips.QuickValueChipsPanelTest.kt</ID>
+    <ID>NoUnusedImports:TemplateEditorCardTest.kt$com.workflow.orchestrator.handover.ui.editor.TemplateEditorCardTest.kt</ID>
+    <ID>NoUnusedImports:TimeLogCard.kt$com.workflow.orchestrator.handover.ui.cards.TimeLogCard.kt</ID>
+    <ID>NoUnusedImports:TimeTrackingServiceTest.kt$com.workflow.orchestrator.handover.service.TimeTrackingServiceTest.kt</ID>
+    <ID>NoWildcardImports:ActionsTabTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:ChecksTab.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:ChecksTab.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:ChecksTabTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:CopyrightFixServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:EmailPreviewPaneTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:HandoverModelsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:HandoverOverrideBannerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:HandoverOverrideTrackerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:HandoverPlaceholderValueTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:HandoverStateServicePrScopingTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:HandoverStateServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:HandoverTicketHeaderTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:HandoverWikiPreviewRendererLocalTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:JiraClosureServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:JiraPreviewPaneTest.kt$import io.mockk.*</ID>
+    <ID>NoWildcardImports:JiraPreviewPaneTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:PrServiceTemplateTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:PrServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:TemplatePickerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:TimeTrackingServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:HandoverOverrideTrackerActivityTest.kt$HandoverOverrideTrackerActivityTest$@AfterEach fun tearDown()</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TemplatePickerTest.kt$TemplatePickerTest$@Suppress("UNCHECKED_CAST") val renderer = combo.renderer as javax.swing.ListCellRenderer&lt;Any?></ID>
+    <ID>SpacingBetweenDeclarationsWithComments:QuickValueChipsPanel.kt$ChipView$/** Tracks the active flash job so a second click cancels an in-progress flash. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:TemplateEditorCard.kt$TemplateEditorCard$/** Suppresses the document listener while loading a template into the source area. */</ID>
+    <ID>UnusedPrivateMember:TemplatePickerTest.kt$private fun TemplatePicker.isDirtyVisible(): Boolean</ID>
+    <ID>UnusedPrivateProperty:ChecksTab.kt$ChecksTab$private val project: Project</ID>
+    <ID>UnusedPrivateProperty:JiraPreviewPane.kt$JiraPreviewPane$private val project: Project</ID>
+    <ID>UseRequire:HandoverTemplateStore.kt$HandoverTemplateStore$throw IllegalArgumentException( "A GLOBAL template with name '$newName' already exists" )</ID>
+    <ID>UseRequire:HandoverTemplateStore.kt$HandoverTemplateStore$throw IllegalArgumentException( "Template with id '$id' already exists in ${existing.origin}" )</ID>
+    <ID>VariableNaming:CopyrightFixService.kt$CopyrightFixService$private val FULL_YEAR_EXPR = Regex("""(?:(?:19|20)\d{2})(?:\s*[-–,]\s*(?:(?:19|20)\d{2}))*""")</ID>
+    <ID>VariableNaming:CopyrightFixService.kt$CopyrightFixService$private val YEAR_PATTERN = Regex("""\b((?:19|20)\d{2})\b""")</ID>
+    <ID>VariableNaming:CopyrightFixService.kt$CopyrightFixService$private val YEAR_RANGE_PATTERN = Regex("""((?:19|20)\d{2})\s*[-–]\s*((?:19|20)\d{2})""")</ID>
+    <ID>VariableNaming:HandoverAiSummaryCache.kt$HandoverAiSummaryCache$// Stable cache-bust token used when no real commit SHA is available. private val NO_SHA = "no-sha"</ID>
+    <ID>WildcardImport:ActionsTabTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:ChecksTab.kt$import java.awt.*</ID>
+    <ID>WildcardImport:ChecksTab.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:ChecksTabTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:CopyrightFixServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:EmailPreviewPaneTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:HandoverModelsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:HandoverOverrideBannerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:HandoverOverrideTrackerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:HandoverPlaceholderValueTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:HandoverStateServicePrScopingTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:HandoverStateServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:HandoverTicketHeaderTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:HandoverWikiPreviewRendererLocalTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:JiraClosureServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:JiraPreviewPaneTest.kt$import io.mockk.*</ID>
+    <ID>WildcardImport:JiraPreviewPaneTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:PrServiceTemplateTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:PrServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:TemplatePickerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:TimeTrackingServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>Wrapping:ActionsTab.kt$ActionsTab$(</ID>
+    <ID>Wrapping:ActionsTab.kt$ActionsTab$(JBScrollPane(column).apply { border = JBUI.Borders.empty() viewport.isOpaque = false isOpaque = false }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:ChecksTab.kt$ChecksTab$(</ID>
+    <ID>Wrapping:ChecksTab.kt$ChecksTab$(JBLabel(label).apply { font = font.deriveFont(JBUI.scale(11).toFloat()) foreground = JBColor.foreground() }, gbc)</ID>
+    <ID>Wrapping:ChecksTab.kt$ChecksTab$(JBLabel(title).apply { font = font.deriveFont(Font.BOLD, JBUI.scale(12).toFloat()) foreground = JBColor.foreground() border = JBUI.Borders.emptyBottom(6) }, BorderLayout.NORTH)</ID>
+    <ID>Wrapping:ChecksTab.kt$ChecksTab$(ROW_SUITE_API_INT, suites.find { s -> s.suitePlanKey.contains("API-INT", ignoreCase = true) || s.suitePlanKey.contains("APIINT", ignoreCase = true) || s.suitePlanKey.contains("API-INTEGRATION", ignoreCase = true) })</ID>
+    <ID>Wrapping:ChecksTab.kt$ChecksTab$(ROW_SUITE_API_SMOKE, suites.find { s -> s.suitePlanKey.contains("API-SMOKE", ignoreCase = true) || s.suitePlanKey.endsWith("APISMOKE", ignoreCase = true) })</ID>
+    <ID>Wrapping:ChecksTab.kt$ChecksTab$(ROW_SUITE_WEB_E2E, suites.find { s -> s.suitePlanKey.contains("WEB-E2E", ignoreCase = true) || s.suitePlanKey.contains("WEBE2E", ignoreCase = true) || s.suitePlanKey.contains("E2E", ignoreCase = true) })</ID>
+    <ID>Wrapping:ChecksTab.kt$ChecksTab$;</ID>
+    <ID>Wrapping:CopyrightFixCard.kt$CopyrightFixCard$(</ID>
+    <ID>Wrapping:CopyrightFixCard.kt$CopyrightFixCard$(project, "Fix Copyright Headers", null, Runnable { for (entry in nonOk) { val vf = com.intellij.openapi.vfs.LocalFileSystem.getInstance().findFileByPath(entry.filePath) if (vf == null || !vf.isValid || vf.isWritable.not()) { failed.add(entry.filePath) continue } try { val document = FileDocumentManager.getInstance().getDocument(vf) if (document == null) { failed.add(entry.filePath) continue } val original = document.text val updated = when (entry.status) { CopyrightStatus.YEAR_OUTDATED -> { val headerRegion = original.lines().take(CopyrightFixService.HEADER_SCAN_LINES).joinToString("\n") val rewritten = service.updateYearInHeader(headerRegion, currentYear) if (rewritten == headerRegion) original else { // Reassemble: rewritten header region + the rest verbatim. // Use the same HEADER_SCAN_LINES constant as CopyrightFixService.analyzeFile // to avoid a scan-window mismatch that would leave years in lines 16-30 unpatched. val rest = original.lines().drop(CopyrightFixService.HEADER_SCAN_LINES).joinToString("\n") if (rest.isEmpty()) rewritten else "$rewritten\n$rest" } } CopyrightStatus.MISSING_HEADER -> { val rendered = service.prepareHeader(template, currentYear) val wrapped = service.wrapForLanguage(rendered, vf) "$wrapped\n\n$original" } CopyrightStatus.OK -> original } if (updated != original) { document.setText(updated) FileDocumentManager.getInstance().saveDocument(document) } } catch (t: Throwable) { log.warn("[Handover:Copyright] Failed to fix ${entry.filePath}", t) failed.add(entry.filePath) } } })</ID>
+    <ID>Wrapping:HandoverAiSummaryCacheTest.kt$HandoverAiSummaryCacheTest$(</ID>
+    <ID>Wrapping:HandoverOverrideBannerTest.kt$HandoverOverrideBannerTest$(</ID>
+    <ID>Wrapping:HandoverPlaceholderResolverTest.kt$HandoverPlaceholderResolverTest$(</ID>
+    <ID>Wrapping:HandoverStateServicePrScopingTest.kt$HandoverStateServicePrScopingTest$(</ID>
+    <ID>Wrapping:HandoverStateServiceTest.kt$HandoverStateServiceTest$(</ID>
+    <ID>Wrapping:HandoverTemplateStoreTest.kt$HandoverTemplateStoreTest$(</ID>
+    <ID>Wrapping:HandoverTemplateStoreTest.kt$HandoverTemplateStoreTest$(HandoverTemplateOrigin.PROJECT, store.templates.value .first { it.id == "jira/standard-closure" }.origin)</ID>
+    <ID>Wrapping:HandoverWikiPreviewRendererLocalTest.kt$HandoverWikiPreviewRendererLocalTest$(</ID>
+    <ID>Wrapping:JiraClosureService.kt$JiraClosureService$;</ID>
+    <ID>Wrapping:JiraClosureServiceTest.kt$JiraClosureServiceTest$(</ID>
+    <ID>Wrapping:QuickValueChipsPanel.kt$ChipView$(</ID>
+    <ID>Wrapping:QuickValueChipsPanel.kt$ChipView.&lt;no name provided>$;</ID>
+    <ID>Wrapping:ShareTab.kt$ShareTab$(</ID>
+    <ID>Wrapping:ShareTab.kt$ShareTab$(JBScrollPane(column).apply { border = JBUI.Borders.empty() viewport.isOpaque = false isOpaque = false }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:ShareTabTest.kt$ShareTabTest$(</ID>
+    <ID>Wrapping:TemplateEditorCard.kt$TemplateEditorCard$(</ID>
+    <ID>Wrapping:TemplatePickerTest.kt$TemplatePickerTest$(</ID>
+    <ID>Wrapping:TimeLogCard.kt$TimeLogCard$;</ID>
+  </CurrentIssues>
+</SmellBaseline>

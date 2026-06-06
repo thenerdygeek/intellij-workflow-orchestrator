@@ -38,6 +38,7 @@ turbine = "1.1.0"
 changelog = "2.5.0"
 kover = "0.9.5"
 qodana = "2025.3.1"
+detekt = "1.23.8"
 
 [libraries]
 # Kotlin
@@ -80,6 +81,9 @@ turbine = { group = "app.cash.turbine", name = "turbine", version.ref = "turbine
 lsp4j-jsonrpc = { group = "org.eclipse.lsp4j", name = "org.eclipse.lsp4j.jsonrpc", version.ref = "lsp4j" }
 gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 
+# Static analysis
+detekt-formatting = { group = "io.gitlab.arturbosch.detekt", name = "detekt-formatting", version.ref = "detekt" }
+
 [plugins]
 kotlin = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
@@ -88,3 +92,4 @@ intelliJPlatformModule = { id = "org.jetbrains.intellij.platform.module", versio
 changelog = { id = "org.jetbrains.changelog", version.ref = "changelog" }
 kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }
 qodana = { id = "org.jetbrains.qodana", version.ref = "qodana" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }

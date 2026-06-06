@@ -1,0 +1,1513 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ArgumentListWrapping:ApiDebugCounterResetBugTest.kt$ApiDebugCounterResetBugTest$(1, firstOfTurn2, "Today's executeTask creates a fresh AtomicInteger(0) per turn, so both " + "counters issue '1' as their first call — clobbering call-001-*.txt")</ID>
+    <ID>ArgumentListWrapping:ApiDebugCounterResetBugTest.kt$ApiDebugCounterResetBugTest$(afterTurn1.contains("call-001-request.txt"), "turn 1 should have produced call-001-request.txt, got: $afterTurn1")</ID>
+    <ID>ArgumentListWrapping:ApiDebugCounterResetBugTest.kt$ApiDebugCounterResetBugTest$(afterTurn2.contains("call-002-request.txt"), "Expected turn 2's request to be dumped as call-002-request.txt, " + "but api-debug/ contained: $afterTurn2.")</ID>
+    <ID>ArgumentListWrapping:ApiDebugCounterResetBugTest.kt$ApiDebugCounterResetBugTest$(call001.contains("TURN-ONE-UNIQUE-MARKER"), "call-001-request.txt should still contain turn 1's content, but got:\n" + call001.take(400))</ID>
+    <ID>ArgumentListWrapping:ApiDebugCounterResetBugTest.kt$ApiDebugCounterResetBugTest$(call002.contains("TURN-TWO-UNIQUE-MARKER"), "call-002-request.txt should contain turn 2's content, but got:\n" + call002.take(400))</ID>
+    <ID>ArgumentListWrapping:ApiDebugCounterResetBugTest.kt$ApiDebugCounterResetBugTest$(listOf("call-001-request.txt", "call-002-request.txt", "call-003-request.txt"), dumps, "Within one turn, api-debug counter must produce 001, 002, 003 — no overwrites.")</ID>
+    <ID>ArgumentListWrapping:AskFollowupQuestionParserTest.kt$AskFollowupQuestionParserTest$( "read_file", "edit_file", "create_file", "run_command", "search_code", "think", "attempt_completion", "ask_followup_question" )</ID>
+    <ID>ArgumentListWrapping:AssistantMessageParserReadDocumentReproTest.kt$AssistantMessageParserReadDocumentReproTest$( "read_file", "edit_file", "create_file", "run_command", "search_code", "think", "attempt_completion", "ask_followup_question" )</ID>
+    <ID>ArgumentListWrapping:AssistantMessageParserTest.kt$AssistantMessageParserTest$("Page B")</ID>
+    <ID>ArgumentListWrapping:AssistantMessageParserTest.kt$AssistantMessageParserTest$("read_file", "edit_file", "create_file", "run_command", "search_code", "think", "attempt_completion", "ask_followup_question")</ID>
+    <ID>ArgumentListWrapping:AssistantMessageParserTest.kt$AssistantMessageParserTest$(tools[0].params["content"]!!.contains("Page B"), "First tool should NOT contain second tool's content")</ID>
+    <ID>ArgumentListWrapping:AttachmentSinkContractTest.kt$FakeAttachmentSink$(sha256 = digest, mime = mime, size = bytes.size.toLong(), originalFilename = originalFilename)</ID>
+    <ID>ArgumentListWrapping:AuthInterceptor.kt$AuthInterceptor$("[Core:Auth] No token available for ${scheme.name} auth, proceeding without auth header for ${originalRequest.url.host}")</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$("[Core:Auth] Connection test failed for ${serviceType.name} — DNS resolution failed for host: ${e.message}", e)</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$("[Core:Auth] Connection test failed for ${serviceType.name} — SSL error: ${e.message}. " + "If using a self-signed certificate, add it to the JDK truststore.", e)</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$("[Core:Auth] Connection test failed for ${serviceType.name} — authentication failed (401). Response: ${body.take(200)}")</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$("[Core:Auth] Connection test failed for ${serviceType.name} — connection refused: ${e.message}", e)</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$("[Core:Auth] Connection test failed for ${serviceType.name} — endpoint not found (404) at ${request.url}. Check the base URL.")</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$("[Core:Auth] Connection test failed for ${serviceType.name} — forbidden (403). Response: ${body.take(200)}")</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$("[Core:Auth] Connection test failed for ${serviceType.name} — server returned ${it.code}: ${it.message}. Response: ${body.take(200)}")</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$("[Core:Auth] Connection test for ${serviceType.name} returned redirect (${it.code}) to $location")</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$("[Core:Auth] Connection test successful for ${serviceType.name} at $normalizedBaseUrl (${it.code})")</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$("[Core:Auth] Sourcegraph auth failed (401). Token may be invalid or expired. Response: ${body.take(200)}")</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$("[Core:Auth] Testing connection to ${serviceType.name} at $url (auth: ${authSchemeLabel(serviceType)})")</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$(200)</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$(ErrorType.FORBIDDEN, "Authenticated as $username, but the LLM API is disabled by your site admin. " + "Contact your Sourcegraph administrator to enable it.")</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$(ErrorType.NETWORK_ERROR, "Connection refused: ${e.message}. Check that the service is running and the URL/port are correct.", e)</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$(ErrorType.NETWORK_ERROR, "SSL certificate error: ${e.message}. For self-signed certs, add the certificate to your JDK truststore.", e)</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$(ErrorType.SERVER_ERROR, "Endpoint not found (404). Check the base URL — it should not include a path like /rest or /api.")</ID>
+    <ID>ArgumentListWrapping:AuthTestService.kt$AuthTestService$(serviceType)</ID>
+    <ID>ArgumentListWrapping:AuthTestServiceTest.kt$AuthTestServiceTest$(MockResponse() .setBody("""{"displayName":"John","emailAddress":"john@co.com"}""") .setResponseCode(200))</ID>
+    <ID>ArgumentListWrapping:AuthTestServiceTest.kt$AuthTestServiceTest$(MockResponse() .setBody("""{"login":"admin"}""") .setResponseCode(200))</ID>
+    <ID>ArgumentListWrapping:AuthTestServiceTest.kt$AuthTestServiceTest$(MockResponse() .setBody("""{"name":"admin"}""") .setResponseCode(200))</ID>
+    <ID>ArgumentListWrapping:AutoDetectOrchestrator.kt$AutoDetectOrchestrator$("[AutoDetect:BambooSpecs] Found ${constants.size} constants for repo '${repo.displayLabel}', applying")</ID>
+    <ID>ArgumentListWrapping:AutoDetectOrchestrator.kt$AutoDetectOrchestrator.Companion$("[AutoDetect:Apply] Applying to $label state. DOCKER_TAG_NAME='${constants["DOCKER_TAG_NAME"]}', fullPlanKey='$fullPlanKey' (PROJECT_KEY='${constants["PROJECT_KEY"]}', PLAN_KEY='${constants["PLAN_KEY"]}')")</ID>
+    <ID>ArgumentListWrapping:AutoDetectOrchestrator.kt$AutoDetectOrchestrator.Companion$("[AutoDetect:Apply] Applying to repo '$label'. DOCKER_TAG_NAME='${constants["DOCKER_TAG_NAME"]}', fullPlanKey='$fullPlanKey' (PROJECT_KEY='${constants["PROJECT_KEY"]}', PLAN_KEY='${constants["PLAN_KEY"]}')")</ID>
+    <ID>ArgumentListWrapping:BambooModelsLifeCycleStateTest.kt$BambooModelsLifeCycleStateTest$("Finished", parsed.lifeCycleState, "lifeCycleState must be 'Finished' matching probe result_full.json")</ID>
+    <ID>ArgumentListWrapping:BambooSpecsParserTest.kt$BambooSpecsParserTest$(javaDir.resolve("A.java"), """class A { private static final String PLAN_KEY = "FIRST"; }""")</ID>
+    <ID>ArgumentListWrapping:BambooSpecsParserTest.kt$BambooSpecsParserTest$(javaDir.resolve("B.java"), """class B { private static final String PLAN_KEY = "SECOND"; }""")</ID>
+    <ID>ArgumentListWrapping:BambooSpecsParserTest.kt$BambooSpecsParserTest$(javaDir.resolve("PlanProperties.java"), """public class PlanProperties { private static final String PLAN_KEY = "XYZ"; }""")</ID>
+    <ID>ArgumentListWrapping:BambooSpecsParserTest.kt$BambooSpecsParserTest$(javaDir.resolve("ProjectProperties.java"), """public class ProjectProperties { private static final String PROJECT_KEY = "ABC"; }""")</ID>
+    <ID>ArgumentListWrapping:BaseUrlValidator.kt$BaseUrlValidator$(host)</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("$baseUrl/rest/api/1.0/dashboard/pull-requests?role=$role&amp;state=$state&amp;start=$start&amp;limit=$limit")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/commits/$sha/pull-requests?limit=$limit")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/activities?limit=50&amp;start=$start")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/blocker-comments$countParam")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/changes?limit=100&amp;start=$start")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/comments/$commentId")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/comments/$commentId?version=$expectedVersion")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/commits?limit=$limit&amp;start=$start")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/decline?version=$version")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/merge?version=$version")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/participants/$username")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests/$prId/participants?limit=100")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests?state=$state&amp;limit=$limit")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests?state=$state&amp;role.1=AUTHOR$usernameParam&amp;start=$start&amp;limit=$limit")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests?state=$state&amp;role.1=REVIEWER$usernameParam&amp;start=$start&amp;limit=$limit")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("$baseUrl/rest/api/1.0/projects/$projectKey/repos/$repoSlug/pull-requests?state=$state&amp;start=$start&amp;limit=$limit")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] $projectKey/$repoSlug has ${parsed.values.size} required-builds condition(s)")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] Commit $sha build stats: success=${parsed.successful} fail=${parsed.failed} inProgress=${parsed.inProgress}")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] Dashboard returned ${parsed.values.size} $role PRs (isLastPage=${parsed.isLastPage})")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] Default branch for $projectKey/$repoSlug is '${branch.displayId}'")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] Fetching all repo PRs (state=$state, start=$start, limit=$limit) in $projectKey/$repoSlug")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] Fetching my PRs (state=$state, username=$username, start=$start, limit=$limit) in $projectKey/$repoSlug")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] Fetching reviewing PRs (state=$state, username=$username, start=$start, limit=$limit) in $projectKey/$repoSlug")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] Found ${parsed.values.size} authored PRs (isLastPage=${parsed.isLastPage})")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] Found ${parsed.values.size} build statuses for commit ${commitId.take(8)}")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] Found ${parsed.values.size} repo PRs (isLastPage=${parsed.isLastPage})")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] Found ${parsed.values.size} reviewing PRs (isLastPage=${parsed.isLastPage})")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] Found ${settings.mergeConfig.strategies.size} merge strategies for $scopeForLog")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] Merge status for PR #$prId: canMerge=${status.canMerge}, conflicted=${status.conflicted}, vetoes=${status.vetoes.size}")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] Merging PR #$prId in $projectKey/$repoSlug (version=$version, strategy=$strategyId, deleteBranch=$deleteSourceBranch)")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] PR #$prId blocker comments: size=${parsed.size}, values=${parsed.values.size}")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] PR #$prId diff fetched (${raw.length} chars raw, ${capped.length} chars after cap)")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$("[Core:Bitbucket] Repo merge-strategy URL 404'd for $projectKey/$repoSlug; falling back to project URL")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$(8)</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$(BitbucketRequiredBuildsResponse(values = emptyList(), size = 0, isLastPage = true))</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$(ErrorType.FORBIDDEN, "Insufficient permissions to create PR in $projectKey/$repoSlug")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$(ErrorType.NOT_FOUND, "Comment $commentId not found on PR #$prId in $projectKey/$repoSlug")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$(ErrorType.NOT_FOUND, "File $filePath not found at ref $atRef in $projectKey/$repoSlug")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$(ErrorType.VALIDATION_ERROR, "Cannot approve PR #$prId — already approved or not a reviewer")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$(ErrorType.VALIDATION_ERROR, "Cannot set status $status for $username on PR #$prId")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$(ErrorType.VALIDATION_ERROR, "PR #$prId version conflict — refresh and retry")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$(ErrorType.VALIDATION_ERROR, "STALE_VERSION: comment was modified by another user; re-fetch and retry")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$(ReviewerStatusRequest(status = status, approved = (status == "APPROVED")))</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$(status = status, approved = (status == "APPROVED"))</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClient.kt$BitbucketBranchClient$(values = emptyList(), size = 0, isLastPage = true)</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientGetUsersTest.kt$BitbucketBranchClientGetUsersTest$(path.contains("permission.1"), "Without projectKey/repoSlug the request must NOT carry permission filters; got $path")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientGetUsersTest.kt$BitbucketBranchClientGetUsersTest$(path.contains("permission.1.projectKey=PROJ"), "Must forward projectKey; got $path")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientGetUsersTest.kt$BitbucketBranchClientGetUsersTest$(path.contains("permission.1.repositorySlug=my-repo"), "Must forward repoSlug; got $path")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientGetUsersTest.kt$BitbucketBranchClientGetUsersTest$(path.contains("permission.1=REPO_READ"), "Repo-scoped query must request REPO_READ; got $path")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientGetUsersTest.kt$BitbucketBranchClientGetUsersTest$(req.path!!.contains("permission.1"), "Blank projectKey/repoSlug must skip the permission filter; got ${req.path}")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientInlineAnchorTest.kt$BitbucketBranchClientInlineAnchorTest$( projectKey = "P", repoSlug = "R", prId = 1, filePath = "src/Foo.kt", lineNumber = 42, lineType = "ADDED", text = "comment", )</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientInlineAnchorTest.kt$BitbucketBranchClientInlineAnchorTest$( projectKey = "P", repoSlug = "R", prId = 1, text = "comment", filePath = "src/Foo.kt", lineNumber = 42, lineType = "ADDED", )</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientInlineAnchorTest.kt$BitbucketBranchClientInlineAnchorTest$( projectKey = "P", repoSlug = "R", prId = 1, text = "comment", filePath = "src/new/Foo.kt", lineNumber = 42, lineType = "ADDED", srcPath = "src/old/Foo.kt", )</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientInlineAnchorTest.kt$BitbucketBranchClientInlineAnchorTest$("""{"id":1,"version":0,"text":"c","author":{"name":"u","displayName":"U"},"createdDate":0,"updatedDate":0}""")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientInlineAnchorTest.kt$BitbucketBranchClientInlineAnchorTest$(201)</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientInlineAnchorTest.kt$BitbucketBranchClientInlineAnchorTest$(MockResponse().setResponseCode(201).setBody("""{"id":1,"version":0,"text":"c","author":{"name":"u","displayName":"U"},"createdDate":0,"updatedDate":0}"""))</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientMergeWithRetryTest.kt$BitbucketBranchClientMergeWithRetryTest$( 2, server.requestCount, "Veto must NOT trigger refetch+retry (only the first GET+POST). Got ${server.requestCount} requests." )</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientMergeWithRetryTest.kt$BitbucketBranchClientMergeWithRetryTest$( ErrorType.VALIDATION_ERROR, error.type, "Veto must NOT be STALE_VERSION (would mislead the user). Got: ${error.type}" )</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientMergeWithRetryTest.kt$BitbucketBranchClientMergeWithRetryTest$("""{"errors":[{"message":"PR is out-of-date","exceptionName":"com.atlassian.bitbucket.pull.PullRequestOutOfDateException"}]}""")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientPaginationTest.kt$BitbucketBranchClientPaginationTest$(!req1.path!!.contains("start=") || req1.path!!.contains("start=0"), "page 1 req was ${req1.path}")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientSharedPoolTest.kt$BitbucketBranchClientSharedPoolTest$(10_000, client.httpClient.connectTimeoutMillis, "default connectTimeout should be 10s")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientSharedPoolTest.kt$BitbucketBranchClientSharedPoolTest$(120_000, httpClient.readTimeoutMillis, "readTimeout should be 120s (120_000 ms) as set in HttpTimeouts")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientSharedPoolTest.kt$BitbucketBranchClientSharedPoolTest$(2, httpClient.interceptors.size, "Expected RetryInterceptor + AuthInterceptor (2 application interceptors)")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientSharedPoolTest.kt$BitbucketBranchClientSharedPoolTest$(30_000, client.httpClient.readTimeoutMillis, "default readTimeout should be 30s")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientSharedPoolTest.kt$BitbucketBranchClientSharedPoolTest$(45_000, httpClient.connectTimeoutMillis, "connectTimeout should be 45s (45_000 ms) as set in HttpTimeouts")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientSharedPoolTest.kt$BitbucketBranchClientSharedPoolTest$(c1.httpClient.connectionPool, c2.httpClient.connectionPool, "Clients from equivalent factory paths must share ConnectionPool")</ID>
+    <ID>ArgumentListWrapping:BitbucketBranchClientUrlEncodingTest.kt$BitbucketBranchClientUrlEncodingTest$(path.contains("at=refs%2Fheads%2Fmain") || path.contains("at=refs/heads/main"), "Expected 'at=refs/heads/main'; got: $path")</ID>
+    <ID>ArgumentListWrapping:BitbucketModels.kt$PullRequestDetailData$(", ")</ID>
+    <ID>ArgumentListWrapping:BitbucketModels.kt$PullRequestDetailData$("\n Reviewers: ${reviewers.joinToString(", ") { "${it.displayName} (${it.status})" }}")</ID>
+    <ID>ArgumentListWrapping:BranchSwitchActionTest.kt$BranchSwitchActionTest$(result is BranchSwitchAction.Result.Dirty, "Expected Dirty, got: $result")</ID>
+    <ID>ArgumentListWrapping:BranchSwitchActionTest.kt$BranchSwitchActionTest$(result is BranchSwitchAction.Result.Switched, "Expected Switched (clean repo, deterministic stub), got: $result")</ID>
+    <ID>ArgumentListWrapping:BuildLogCacheTest.kt$BuildLogCacheTest$(planKey = "PROJ", chainKey = "PROJ-BUILD523", buildNumber = 10, logText = "feature-branch")</ID>
+    <ID>ArgumentListWrapping:CachingInterceptorTest.kt$CachingInterceptorTest$("""{"id":1}""")</ID>
+    <ID>ArgumentListWrapping:CachingInterceptorTest.kt$CachingInterceptorTest$("/rest/agile/1.0/board")</ID>
+    <ID>ArgumentListWrapping:CachingInterceptorTest.kt$CachingInterceptorTest$("/rest/api/latest/plan")</ID>
+    <ID>ArgumentListWrapping:CachingInterceptorTest.kt$CachingInterceptorTest$("Authorization", "Bearer t")</ID>
+    <ID>ArgumentListWrapping:CachingInterceptorTest.kt$CachingInterceptorTest$("Content-Type", "application/json")</ID>
+    <ID>ArgumentListWrapping:CachingInterceptorTest.kt$CachingInterceptorTest$(200)</ID>
+    <ID>ArgumentListWrapping:CachingInterceptorTest.kt$CachingInterceptorTest$(MockResponse().setBody("""{"id":1}""").setHeader("Content-Type", "application/json").setResponseCode(200))</ID>
+    <ID>ArgumentListWrapping:CachingInterceptorTest.kt$CachingInterceptorTest$(server.url("/rest/agile/1.0/board"))</ID>
+    <ID>ArgumentListWrapping:CachingInterceptorTest.kt$CachingInterceptorTest$(server.url("/rest/api/latest/plan"))</ID>
+    <ID>ArgumentListWrapping:ChatCompletionModels.kt$ChatCompletionRequest$("tool_choice")</ID>
+    <ID>ArgumentListWrapping:CodyStreamSseParserTest.kt$CodyStreamSseParserTest$(parts.any { it is CodyStreamSseParser.ParseResult.StreamDone }, "Stream must still terminate via done event after an error frame")</ID>
+    <ID>ArgumentListWrapping:CommitMessagePromptBuilder.kt$CommitMessagePromptBuilder$("${candidateTickets.first().details.key} type(scope): imperative summary (max 72 chars total)")</ID>
+    <ID>ArgumentListWrapping:CommitMessagePromptBuilder.kt$CommitMessagePromptBuilder$("- If neither fits the DIFF (the diff is unrelated to either ticket), still use ACTIVE — but reflect the actual change in the body, not the ticket title.")</ID>
+    <ID>ArgumentListWrapping:CommitMessagePromptBuilder.kt$CommitMessagePromptBuilder$("- No ticket is active; do NOT prepend any ticket ID to the summary, even if RECENT COMMITS show one.")</ID>
+    <ID>ArgumentListWrapping:CommitMessagePromptBuilder.kt$CommitMessagePromptBuilder$("- Task, Sub-task → infer from the diff (fix if it's repairing broken behavior, feat if it's new behavior, refactor/perf/test/docs/chore otherwise)")</ID>
+    <ID>ArgumentListWrapping:CommitMessagePromptBuilder.kt$CommitMessagePromptBuilder$("- Use ONLY the ticket ID you select from CANDIDATE TICKETS. Do NOT copy ticket IDs from RECENT COMMITS — those are style/tone references only.")</ID>
+    <ID>ArgumentListWrapping:CommitMessagePromptBuilder.kt$CommitMessagePromptBuilder$("- scope = domain area (auth, billing, pr-list); prefer the chosen ticket's component or label if it matches; NEVER use file paths")</ID>
+    <ID>ArgumentListWrapping:CommitMessagePromptBuilder.kt$CommitMessagePromptBuilder$("RECENT COMMITS (for tone and vocabulary only — the FORMAT and TYPES sections above are authoritative):")</ID>
+    <ID>ArgumentListWrapping:ConnectionsConfigurable.kt$ConnectionsConfigurable$("Open Connection settings")</ID>
+    <ID>ArgumentListWrapping:DefaultReviewerConditionTest.kt$DefaultReviewerConditionTest$( id = id, displayId = id, type = RefMatcherTypeDescriptor(id = type, name = type), )</ID>
+    <ID>ArgumentListWrapping:DefaultReviewerConditionTest.kt$DefaultReviewerConditionTest$(RefMatcherType.ANY_REF, parsed[0].sourceRefMatcher.matcherType, "Unknown matcher types must fall back to ANY_REF — never crash on a Bitbucket upgrade")</ID>
+    <ID>ArgumentListWrapping:DefaultReviewerConditionTest.kt$DefaultReviewerConditionTest$(listOf("carol"), users.map { it.name }, "Only the feature→master condition should match — alice/bob/dave belong to other conditions")</ID>
+    <ID>ArgumentListWrapping:DelegationDoorbellProtocolTest.kt$DelegationDoorbellProtocolTest$( delegatorIde = "ide-1", delegatorRepo = "backend", delegatorSessionId = "s1", request = "do X", preauthNonce = "n1", )</ID>
+    <ID>ArgumentListWrapping:DelegationDoorbellProtocolTest.kt$DelegationDoorbellProtocolTest$( delegatorIde = "ide-1", delegatorRepo = "backend", delegatorSessionId = "s1", requestPreview = "do X", nonce = "n1", )</ID>
+    <ID>ArgumentListWrapping:DelegationDoorbellProtocolTest.kt$DelegationDoorbellProtocolTest$(DelegationMessage.serializer(), a)</ID>
+    <ID>ArgumentListWrapping:DelegationDoorbellProtocolTest.kt$DelegationDoorbellProtocolTest$(DelegationMessage.serializer(), c)</ID>
+    <ID>ArgumentListWrapping:DelegationDoorbellProtocolTest.kt$DelegationDoorbellProtocolTest$(DelegationMessage.serializer(), json.encodeToString(DelegationMessage.serializer(), a))</ID>
+    <ID>ArgumentListWrapping:DelegationDoorbellProtocolTest.kt$DelegationDoorbellProtocolTest$(DelegationMessage.serializer(), json.encodeToString(DelegationMessage.serializer(), c))</ID>
+    <ID>ArgumentListWrapping:DelegationDoorbellProtocolTest.kt$DelegationDoorbellProtocolTest$(DelegationMessage.serializer(), json.encodeToString(DelegationMessage.serializer(), k))</ID>
+    <ID>ArgumentListWrapping:DelegationDoorbellProtocolTest.kt$DelegationDoorbellProtocolTest$(DelegationMessage.serializer(), k)</ID>
+    <ID>ArgumentListWrapping:DelegationDoorbellProtocolTest.kt$DelegationDoorbellProtocolTest$(DelegationPaths.socketFor(p).fileName.toString(), DelegationPaths.doorbellSocketFor(p).fileName.toString())</ID>
+    <ID>ArgumentListWrapping:DelegationProtocolTest.kt$DelegationProtocolTest$(accepted)</ID>
+    <ID>ArgumentListWrapping:DelegationProtocolTest.kt$DelegationProtocolTest$(busyF)</ID>
+    <ID>ArgumentListWrapping:DelegationProtocolTest.kt$DelegationProtocolTest$(busyN)</ID>
+    <ID>ArgumentListWrapping:DelegationProtocolTest.kt$DelegationProtocolTest$(busyT)</ID>
+    <ID>ArgumentListWrapping:DelegationProtocolTest.kt$DelegationProtocolTest$(json.encodeToString(accepted))</ID>
+    <ID>ArgumentListWrapping:DelegationProtocolTest.kt$DelegationProtocolTest$(json.encodeToString(msg))</ID>
+    <ID>ArgumentListWrapping:DelegationProtocolTest.kt$DelegationProtocolTest$(json.encodeToString(rejected))</ID>
+    <ID>ArgumentListWrapping:DelegationProtocolTest.kt$DelegationProtocolTest$(json.encodeToString&lt;DelegationMessage>(busyF))</ID>
+    <ID>ArgumentListWrapping:DelegationProtocolTest.kt$DelegationProtocolTest$(json.encodeToString&lt;DelegationMessage>(busyN))</ID>
+    <ID>ArgumentListWrapping:DelegationProtocolTest.kt$DelegationProtocolTest$(json.encodeToString&lt;DelegationMessage>(busyT))</ID>
+    <ID>ArgumentListWrapping:DelegationProtocolTest.kt$DelegationProtocolTest$(json.encodeToString&lt;DelegationMessage>(pong))</ID>
+    <ID>ArgumentListWrapping:DelegationProtocolTest.kt$DelegationProtocolTest$(msg)</ID>
+    <ID>ArgumentListWrapping:DelegationProtocolTest.kt$DelegationProtocolTest$(pong)</ID>
+    <ID>ArgumentListWrapping:DelegationProtocolTest.kt$DelegationProtocolTest$(rejected)</ID>
+    <ID>ArgumentListWrapping:DevStatusBundle.kt$DevStatusBundle$("${deployments.size} ${if (deployments.size == 1) "deployment" else "deployments"}")</ID>
+    <ID>ArgumentListWrapping:DevStatusBundleTest.kt$DevStatusBundleTest$(displayName = "deploy", url = "", state = "SUCCESS", environmentName = "prod", environmentType = "production", lastUpdated = null)</ID>
+    <ID>ArgumentListWrapping:DevStatusBundleTest.kt$DevStatusBundleTest$(name = "Build #1", url = "", state = "SUCCESSFUL", lastUpdated = null, description = null)</ID>
+    <ID>ArgumentListWrapping:DevStatusBundleTest.kt$DevStatusBundleTest$(name = "Review 1", url = "", state = "APPROVED", reviewerNames = emptyList(), lastUpdated = null)</ID>
+    <ID>ArgumentListWrapping:DevStatusBundleTest.kt$DevStatusBundleTest$(sha = "abc1234abc1234abc1234abc1234abc1234abc1234", displayId = "abc1234", message = "fix thing", url = "", authorName = null, authorTimestamp = null, merge = false)</ID>
+    <ID>ArgumentListWrapping:DevStatusCacheInvalidatorTest.kt$DevStatusCacheInvalidatorTest$(WorkflowEvent.BuildFinished(planKey = "PROJ-PLAN", buildNumber = 10, status = WorkflowEvent.BuildEventStatus.SUCCESS))</ID>
+    <ID>ArgumentListWrapping:DevStatusCacheInvalidatorTest.kt$DevStatusCacheInvalidatorTest$(planKey = "PROJ-PLAN", buildNumber = 10, status = WorkflowEvent.BuildEventStatus.SUCCESS)</ID>
+    <ID>ArgumentListWrapping:DiagnosticBundleBuilder.kt$DiagnosticBundleBuilder$("OS: ${System.getProperty("os.name")} ${System.getProperty("os.version")} ${System.getProperty("os.arch")}")</ID>
+    <ID>ArgumentListWrapping:DiagnosticBundleBuilder.kt$DiagnosticBundleBuilder$("os.arch")</ID>
+    <ID>ArgumentListWrapping:DiagnosticBundleBuilder.kt$DiagnosticBundleBuilder$("os.name")</ID>
+    <ID>ArgumentListWrapping:DiagnosticBundleBuilder.kt$DiagnosticBundleBuilder$("os.version")</ID>
+    <ID>ArgumentListWrapping:DiagnosticDialog.kt$DiagnosticDialog$("&lt;html>Diagnostic bundle created.&lt;br>Attach &lt;b>${zipFile.name}&lt;/b> to your bug report.&lt;/html>")</ID>
+    <ID>ArgumentListWrapping:DiagnosticDialog.kt$DiagnosticDialog$(JBLabel("&lt;html>Diagnostic bundle created.&lt;br>Attach &lt;b>${zipFile.name}&lt;/b> to your bug report.&lt;/html>"), BorderLayout.NORTH)</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$(", ")</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$(",")</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$("[AI:CommitMsg] Branch='${targetRepo?.currentBranch?.name ?: "&lt;none>"}' upstream='${targetRepo?.currentBranch?.findTrackedBranch(targetRepo)?.nameForRemoteOperations ?: "&lt;none>"}'")</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$("[AI:CommitMsg] Context overflow — retrying with diff length=${attemptDiff.length} (attempt ${attemptIndex + 1}/${diffLadder.size})")</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$("[AI:CommitMsg] Diff preview (first 40 lines, full length=${diff.length}):\n$diffPreview${if (diff.length > diffPreview.length) "\n...&lt;truncated>" else ""}")</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$("[AI:CommitMsg] Generating: ${diff.length} char diff, active='${activeTicketId ?: "&lt;none>"}' branch='${branchTicketId ?: "&lt;none>"}' candidates=${candidateTickets.size} (${candidateTickets.joinToString(",") { "${it.details.key}/${it.source}" }}), ${recentCommits.size} recent commits, codeContext=${codeContext.length} chars")</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$("[AI:CommitMsg] getGitDiff: root='$rootPath' relativePaths(${relativePaths.size})=${relativePaths.take(10)}")</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$("[AI:CommitMsg] getRecentCommits: git log failed exit=${result.exitCode} stderr='${result.errorOutputAsJoinedString.take(200)}'")</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$("[AI:CommitMsg] getRecentCommits: running 'git log -5 --no-merges' on root='${repo.root.path}' branch='${repo.currentBranch?.name ?: "&lt;detached>"}' (no upstream-range filter — walks full HEAD history including merged-in commits)")</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$("\n methods: ${interestingMethods.map { (m, a) -> "$m(${a.joinToString(",")})" }.joinToString(", ")}")</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$(10)</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$(200)</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$(CommitMessagePromptBuilder.TicketCandidate(CommitMessagePromptBuilder.TicketSource.ACTIVE, active))</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$(CommitMessagePromptBuilder.TicketCandidate(CommitMessagePromptBuilder.TicketSource.BOTH, active))</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$(CommitMessagePromptBuilder.TicketCandidate(CommitMessagePromptBuilder.TicketSource.BRANCH, branch))</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$(CommitMessagePromptBuilder.TicketSource.ACTIVE, active)</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$(CommitMessagePromptBuilder.TicketSource.BOTH, active)</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$(CommitMessagePromptBuilder.TicketSource.BRANCH, branch)</ID>
+    <ID>ArgumentListWrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction.&lt;no name provided>$( project, targetRepo, selectedChanges, indicator, renderer, commitMessage, modalityState )</ID>
+    <ID>ArgumentListWrapping:GitMergeBaseUtil.kt$GitMergeBaseUtil$("[Git:MergeBase] merge-base failed for '$branch1' and '$branch2': ${result.errorOutputAsJoinedString}")</ID>
+    <ID>ArgumentListWrapping:HealthCheckCheckinHandlerFactory.kt$HealthCheckCheckinHandler.&lt;no name provided>$( project, "Running Health Checks...", true )</ID>
+    <ID>ArgumentListWrapping:HtmlReportRenderer.kt$HtmlReportRenderer$("""&lt;div class="area-header">&lt;span class="area-name">${HtmlEscape.escapeHtml(area.name)}&lt;/span>&lt;/div>""")</ID>
+    <ID>ArgumentListWrapping:HtmlReportRenderer.kt$HtmlReportRenderer$("""&lt;div class="bar-track">&lt;div class="bar-fill" style="width:${pct}%;background:#8b5cf6">&lt;/div>&lt;/div>""")</ID>
+    <ID>ArgumentListWrapping:HtmlReportRenderer.kt$HtmlReportRenderer$("""&lt;div class="bar-track">&lt;div class="bar-fill" style="width:${pct}%;background:${color}">&lt;/div>&lt;/div>""")</ID>
+    <ID>ArgumentListWrapping:HtmlReportRenderer.kt$HtmlReportRenderer$("""&lt;div class="feature-code">&lt;code>${HtmlEscape.escapeHtml(card.example)}&lt;/code>&lt;button class="copy-btn" onclick="copyText(this)">Copy&lt;/button>&lt;/div>""")</ID>
+    <ID>ArgumentListWrapping:HtmlReportRenderer.kt$HtmlReportRenderer$("""&lt;input type="checkbox" id="cmd-$idx" class="cmd-checkbox" checked data-text="${HtmlEscape.escapeHtml(snippet.content)}">""")</ID>
+    <ID>ArgumentListWrapping:HtmlReportRenderer.kt$HtmlReportRenderer$("{{APPENDIX_TEXT}}", "Cost estimates use public list pricing (Anthropic/OpenAI). Not your actual enterprise bill.")</ID>
+    <ID>ArgumentListWrapping:HtmlReportRenderer.kt$HtmlReportRenderer$("{{WINDOW_DATES}}", "${formatDate(mechanical.windowStartMs)} to ${formatDate(mechanical.windowEndMs)}")</ID>
+    <ID>ArgumentListWrapping:HtmlReportRenderer.kt$HtmlReportRenderer$(area.name)</ID>
+    <ID>ArgumentListWrapping:HtmlReportRenderer.kt$HtmlReportRenderer$(card.example)</ID>
+    <ID>ArgumentListWrapping:HtmlReportRenderer.kt$HtmlReportRenderer$(label)</ID>
+    <ID>ArgumentListWrapping:HtmlReportRenderer.kt$HtmlReportRenderer$(mechanical.windowEndMs)</ID>
+    <ID>ArgumentListWrapping:HtmlReportRenderer.kt$HtmlReportRenderer$(mechanical.windowStartMs)</ID>
+    <ID>ArgumentListWrapping:HtmlReportRenderer.kt$HtmlReportRenderer$(snippet.content)</ID>
+    <ID>ArgumentListWrapping:HtmlReportRenderer.kt$HtmlReportRenderer$(value)</ID>
+    <ID>ArgumentListWrapping:HttpFormPostTest.kt$HttpFormPostTest$(error.message.contains("Settings", ignoreCase = true) || error.message.contains("session", ignoreCase = true), "Expected actionable message; got: ${error.message}")</ID>
+    <ID>ArgumentListWrapping:InsightsPanel.kt$InsightsPanel$(action, dataContext, action.templatePresentation.clone(), ActionPlaces.TOOLWINDOW_CONTENT, ActionUiKind.NONE, null)</ID>
+    <ID>ArgumentListWrapping:InsightsPromptPrototype.kt$InsightsPromptPrototype$(messages = messages, tools = null, maxTokens = 4000, temperature = temperature)</ID>
+    <ID>ArgumentListWrapping:InteractionModePurityTest.kt$InteractionModePurityTest$(ctxLiveBase.interactionMode, ctxLiveWithExtras.interactionMode, "interactionMode changed when an unrelated declared field changed — invariant broken")</ID>
+    <ID>ArgumentListWrapping:LinkParser.kt$LinkParser$("""^class:([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(?:#([A-Za-z_][A-Za-z0-9_]*))?$""")</ID>
+    <ID>ArgumentListWrapping:MavenGoalValidatorTest.kt$MavenGoalValidatorTest$("-DskipTests", "-Dmaven.test.skip=true", "-Denv=prod", "-Dversion=1.2.3", "-DrunIT")</ID>
+    <ID>ArgumentListWrapping:MavenGoalValidatorTest.kt$MavenGoalValidatorTest$("pre-clean", "post-clean", "process-resources", "generate-sources", "pre-integration-test", "post-integration-test", "prepare-package")</ID>
+    <ID>ArgumentListWrapping:MavenGoalValidatorTest.kt$MavenGoalValidatorTest$("surefire:test", "compiler:compile", "org.apache.maven.plugins:maven-surefire-plugin:test", "spring-boot:run", "versions:display-dependency-updates")</ID>
+    <ID>ArgumentListWrapping:MavenGoalValidatorTest.kt$MavenGoalValidatorTest$(MavenGoalValidator.isAllowed("$(whoami)"), "Command substitution \$(whoami) must be rejected")</ID>
+    <ID>ArgumentListWrapping:MavenGoalValidatorTest.kt$MavenGoalValidatorTest$(MavenGoalValidator.isAllowed("`id`"), "Backtick command substitution must be rejected")</ID>
+    <ID>ArgumentListWrapping:MavenGoalValidatorTest.kt$MavenGoalValidatorTest$(MavenGoalValidator.isAllowed("clean > /etc/cron.d/evil"), "Output redirection must be rejected")</ID>
+    <ID>ArgumentListWrapping:MavenGoalValidatorTest.kt$MavenGoalValidatorTest$(MavenGoalValidator.isAllowed("clean; rm -rf /"), "Semicolon must be rejected")</ID>
+    <ID>ArgumentListWrapping:MavenGoalValidatorTest.kt$MavenGoalValidatorTest$(MavenGoalValidator.isAllowed("clean\nrm -rf /"), "Embedded newline must be rejected")</ID>
+    <ID>ArgumentListWrapping:MavenGoalValidatorTest.kt$MavenGoalValidatorTest$(MavenGoalValidator.isAllowed("verify &amp;&amp; curl evil.com"), "Double-ampersand must be rejected")</ID>
+    <ID>ArgumentListWrapping:MavenGoalValidatorTest.kt$MavenGoalValidatorTest$(MavenGoalValidator.isAllowed("verify | curl evil.com"), "Pipe must be rejected")</ID>
+    <ID>ArgumentListWrapping:MessageSanitizer.kt$MessageSanitizer$(ChatMessage(role = "user", content = "&lt;system_instructions>\n$pendingSystemContent\n&lt;/system_instructions>"))</ID>
+    <ID>ArgumentListWrapping:MessageSanitizer.kt$MessageSanitizer$(role = "user", content = "&lt;system_instructions>\n$pendingSystemContent\n&lt;/system_instructions>")</ID>
+    <ID>ArgumentListWrapping:MessageSanitizerTest.kt$MessageSanitizerTest$("Continue please", result.last().content, "Already-user tail must not be touched")</ID>
+    <ID>ArgumentListWrapping:MessageSanitizerTest.kt$MessageSanitizerTest$("Let me read the file for you.", assistantMsg!!.content, "Non-empty content alongside tool calls must NOT be overwritten")</ID>
+    <ID>ArgumentListWrapping:MessageSanitizerTest.kt$MessageSanitizerTest$("user", result.first().role, "Conversation must start with a user message")</ID>
+    <ID>ArgumentListWrapping:MessageSanitizerTest.kt$MessageSanitizerTest$("user", result.last().role, "Anthropic-via-Vertex rejects assistant-prefill — final message must be user")</ID>
+    <ID>ArgumentListWrapping:MessageSanitizerTest.kt$MessageSanitizerTest$("user", result.last().role, "Tool tail is coerced to user in Phase 1 — Phase 6 must not double-append")</ID>
+    <ID>ArgumentListWrapping:MessageSanitizerTest.kt$MessageSanitizerTest$(result.any { it.role == "assistant" &amp;&amp; it.toolCalls.isNullOrEmpty() }, "Assistant message with empty content and no tool calls must be dropped")</ID>
+    <ID>ArgumentListWrapping:MessageSanitizerTest.kt$MessageSanitizerTest$(result.any { it.role == "assistant" &amp;&amp; it.toolCalls.isNullOrEmpty() }, "U+200B-only assistant echo must be dropped by isEffectivelyBlank")</ID>
+    <ID>ArgumentListWrapping:MessageSanitizerTest.kt$MessageSanitizerTest$(toolResultMsg.content!!.contains("&lt;tool_result>"), "Tool result must use plain text prefix, not XML tags")</ID>
+    <ID>ArgumentListWrapping:ModelCacheTest.kt$ModelCacheTest$(id = "anthropic::2024-10-22::claude-opus-4-5-thinking-20250101", ownedBy = "anthropic", created = 1000)</ID>
+    <ID>ArgumentListWrapping:ModelCacheTest.kt$ModelCacheTest$(id = "anthropic::2024-10-22::claude-opus-4-5-thinking-20250514", ownedBy = "anthropic", created = 3000)</ID>
+    <ID>ArgumentListWrapping:ModelIdNormalizerTest.kt$ModelIdNormalizerTest$(expected, ModelIdNormalizer.normalize(raw), "normalize(\"$raw\") should equal \"$expected\"")</ID>
+    <ID>ArgumentListWrapping:ModelPricingTest.kt$ModelPricingTest$( "claude-sonnet-4", "claude-sonnet-4-thinking", "claude-sonnet-4-5", "claude-sonnet-4-5-thinking", "claude-sonnet-4-6", "claude-sonnet-4-6-thinking", "claude-sonnet-4-7", "claude-sonnet-4-7-thinking", )</ID>
+    <ID>ArgumentListWrapping:ModelPricingTest.kt$ModelPricingTest$(ModelPricingRegistry.lookup("claude-sonnet-4"), "Bundled entries must survive user override merge")</ID>
+    <ID>ArgumentListWrapping:MultiRepoScopeInvariantTest.kt$MultiRepoScopeInvariantTest$("""\.(resolveCurrentEditorRepoOrPrimary|resolveFromCurrentEditor|getPrimary)\b\(""")</ID>
+    <ID>ArgumentListWrapping:MultimodalSettingsConfigurable.kt$MultimodalSettingsConfigurable$("getInstance", com.intellij.openapi.project.Project::class.java)</ID>
+    <ID>ArgumentListWrapping:MutationInvalidationInterceptorTest.kt$MutationInvalidationInterceptorTest$(0L, HttpCacheMetrics.getStats("jira").invalidatedByMutation, "GET must never fire mutation invalidation — reads don't invalidate")</ID>
+    <ID>ArgumentListWrapping:MutationInvalidationInterceptorTest.kt$MutationInvalidationInterceptorTest$(1L, HttpCacheMetrics.getStats("jira").entriesInCache, "cache must survive a failed mutation — state didn't actually change")</ID>
+    <ID>ArgumentListWrapping:MutationInvalidationInterceptorTest.kt$MutationInvalidationInterceptorTest$(HttpResponseCache.get(keyFor("/rest/api/2/issue/PROJ-1")), "PROJ-1 GET entry must still be present after a sibling GET")</ID>
+    <ID>ArgumentListWrapping:PluginSettings.kt$PluginSettings.State$( "docker.tag", "docker.tagsJson", "pr.url", "build.url", "automation.url", "ticket.id", "ai.changeSummary", "ai.ticketSummary" )</ID>
+    <ID>ArgumentListWrapping:PluginSettings.kt$PluginSettings.State$( "image/png", "image/jpeg", "image/webp", "image/gif" )</ID>
+    <ID>ArgumentListWrapping:PluginSettingsTest.kt$PluginSettingsTest$( "docker.tag", "docker.tagsJson", "pr.url", "build.url", "automation.url", "ticket.id", "ai.changeSummary", "ai.ticketSummary" )</ID>
+    <ID>ArgumentListWrapping:PrCommentTest.kt$PrCommentTest$( id = "1", version = 0, text = "hello", author = PrCommentAuthor("u", "U"), createdDate = 1, updatedDate = 1, state = PrCommentState.OPEN, severity = PrCommentSeverity.NORMAL, )</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilder.kt$PrDescriptionPromptBuilder$("- First sentence of Summary must stand alone — a reader should understand the change from that sentence without reading further.")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilder.kt$PrDescriptionPromptBuilder$("- Generic descriptions: \"Fix bug\", \"Update dependencies\", \"Phase 1\", \"Misc improvements\" — these tell the reviewer nothing.")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilder.kt$PrDescriptionPromptBuilder$("1–2 paragraphs. First sentence is a self-contained tl;dr: what this PR delivers and why, understandable without reading the code. Add a second sentence or short paragraph for the user-visible or developer-visible outcome.")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilder.kt$PrDescriptionPromptBuilder$("Bullet list of logical, behavior-level deltas in imperative mood. Each bullet describes a capability, contract, or behavior change — NOT a file edit. Group related bullets. Use `backticks` for class/method/config names.")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilder.kt$PrDescriptionPromptBuilder$("Generate a pull request description in markdown. Output ONLY the markdown — no preamble, no wrapping code blocks.")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilder.kt$PrDescriptionPromptBuilder$("Key design decisions, trade-offs, and alternatives considered. Call out anything non-obvious a reviewer should understand BEFORE reading the diff, or any area that deserves extra scrutiny. This is where you explain the HOW at a design level (not line-by-line). Omit for mechanical PRs.")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilder.kt$PrDescriptionPromptBuilder$("NOTE: Diff is unavailable. Base `## Changes` and `## Implementation Notes` on commit messages and Jira context only. Write conservative claims grounded in that evidence — do NOT invent design rationale, architectural decisions, or test scenarios the commits don't support. If a section would require guessing, write \"_(to be filled by author)_\" and omit other detail for that section.")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilder.kt$PrDescriptionPromptBuilder$("One specific sentence stating what kind of review is most valuable: e.g. \"Correctness of the retry/backoff logic under concurrent failures\", \"API naming and error shape\", \"Security review of the token scope\", \"LGTM unless you spot issues\". (Research: specifying feedback type increases merge rate by 64–72%.)")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilder.kt$PrDescriptionPromptBuilder$("STRUCTURE (follow exactly, in this order; omit a section only when it would be empty or not applicable):")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilder.kt$PrDescriptionPromptBuilder$("Skip this section entirely for mechanical/trivial PRs (renames, typo fixes, dependency bumps with no behavior change).")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilder.kt$PrDescriptionPromptBuilder$("Specific scenarios the reviewer should verify — not generic \"test the feature\". Format as a checklist:")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilder.kt$PrDescriptionPromptBuilder$("Type: ${ticket.issueType ?: "?"} · Status: ${ticket.status ?: "?"} · Priority: ${ticket.priority ?: "?"}")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilder.kt$PrDescriptionPromptBuilder$(tok, ignoreCase = true)</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilderTest.kt$PrDescriptionPromptBuilderTest$("A".repeat(2001))</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilderTest.kt$PrDescriptionPromptBuilderTest$("B".repeat(801))</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilderTest.kt$PrDescriptionPromptBuilderTest$("Comment body #5")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilderTest.kt$PrDescriptionPromptBuilderTest$("Update dependencies")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilderTest.kt$PrDescriptionPromptBuilderTest$(2001)</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilderTest.kt$PrDescriptionPromptBuilderTest$(801)</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilderTest.kt$PrDescriptionPromptBuilderTest$(result.contains("A".repeat(2001)), "Should not contain more than 2000 description chars for primary")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilderTest.kt$PrDescriptionPromptBuilderTest$(result.contains("B".repeat(801)), "Should not contain more than 800 desc chars for additional ticket")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilderTest.kt$PrDescriptionPromptBuilderTest$(result.contains("Comment body #5"), "11th-oldest comment should be excluded from primary (max 10 shown)")</ID>
+    <ID>ArgumentListWrapping:PrDescriptionPromptBuilderTest.kt$PrDescriptionPromptBuilderTest$(result.contains("Update dependencies"), "AVOID list should name 'Update dependencies' as a bad example")</ID>
+    <ID>ArgumentListWrapping:PrService.kt$PrService$("${file.nameWithoutExtension} (${psi.classAnnotations.joinToString(", ") { "@$it" }})")</ID>
+    <ID>ArgumentListWrapping:PrService.kt$PrService$(", ")</ID>
+    <ID>ArgumentListWrapping:PrTitlePromptBuilderTest.kt$PrTitlePromptBuilderTest$(result.contains("Imperative mood") || result.contains("imperative mood"), "Prompt should specify imperative mood")</ID>
+    <ID>ArgumentListWrapping:PrTitlePromptBuilderTest.kt$PrTitlePromptBuilderTest$(result.contains("Output ONLY the title") || result.contains("Output the title only"), "Prompt should instruct model to output only the title")</ID>
+    <ID>ArgumentListWrapping:RawApiTraceInterceptorTest.kt$RawApiTraceInterceptorTest$(true, RawApiTraceConfig.redactPromptBody, "redactPromptBody must default to true (audit finding core:F-3)")</ID>
+    <ID>ArgumentListWrapping:ReadOnlyBannerTextTest.kt$ReadOnlyBannerTextTest$(!rendered.contains("totally-unrelated-branch"), "Editor-derived activeBranch must not leak into the banner: $rendered")</ID>
+    <ID>ArgumentListWrapping:RemoteUrlParserMultiRemoteTest.kt$RemoteUrlParserMultiRemoteTest$( RemoteUrlParseResult.CloudNotSupported, result, "Expected CloudNotSupported for $url" )</ID>
+    <ID>ArgumentListWrapping:RepoContextResolver.kt$RepoContextResolver$("[AutoDetect] $projectKey/$repoSlug not found on server — auto-detected key may be wrong")</ID>
+    <ID>ArgumentListWrapping:RepoContextResolver.kt$RepoContextResolver$("[AutoDetect] Cannot validate $projectKey/$repoSlug (${apiResult.type}): ${apiResult.message}")</ID>
+    <ID>ArgumentListWrapping:ReportDataCollector.kt$ReportDataCollector$( "&lt;5s" to 0, "5-15s" to 0, "15-60s" to 0, "1-5m" to 0, ">5m" to 0 )</ID>
+    <ID>ArgumentListWrapping:RepositoriesConfigurable.kt$RepositoriesConfigurable$("Name", "Bitbucket", "Bamboo Plan", "Docker Tag", "SonarQube", "Canonical URL", "Primary")</ID>
+    <ID>ArgumentListWrapping:RepositoriesConfigurable.kt$RepositoriesConfigurable$("[Settings:Repos] Final global state: " + "bambooPlan='${pluginSettings.state.bambooPlanKey}', dockerTag='${pluginSettings.state.dockerTagKey}', " + "sonar='${pluginSettings.state.sonarProjectKey}'")</ID>
+    <ID>ArgumentListWrapping:RepositoriesConfigurable.kt$RepositoriesConfigurable$("[Settings:Repos] Final repo '${repo.displayLabel}': " + "bambooPlan='${repo.bambooPlanKey}', dockerTag='${repo.dockerTagKey}', " + "sonar='${repo.sonarProjectKey}', rootPath='${repo.localVcsRootPath}'")</ID>
+    <ID>ArgumentListWrapping:RepositoriesConfigurable.kt$RepositoriesConfigurable$("[Settings:Repos] Merged VCS data into existing repo '${existing.displayLabel}': rootPath='${existing.localVcsRootPath}'")</ID>
+    <ID>ArgumentListWrapping:RepositoriesConfigurable.kt$RepositoriesConfigurable$("[Settings:Repos] Saved new repo to settings: ${repo.displayLabel} (rootPath=${repo.localVcsRootPath})")</ID>
+    <ID>ArgumentListWrapping:RepositoriesConfigurable.kt$RepositoriesConfigurable$("[Settings:Repos] Settings repos: before=$savedReposBefore, after=${pluginSettings.getRepos().size}")</ID>
+    <ID>ArgumentListWrapping:RepositoriesConfigurable.kt$RepositoriesConfigurable$("[Settings:Repositories] Saved ${editedRepos.size} repos, primary='${(editedRepos.find { it.isPrimary } ?: editedRepos.firstOrNull())?.displayLabel}'")</ID>
+    <ID>ArgumentListWrapping:RetryInterceptor.kt$RetryInterceptor$("[Core:HTTP] All $maxRetries retries exhausted for ${request.url} — final status ${response.code}")</ID>
+    <ID>ArgumentListWrapping:RetryInterceptor.kt$RetryInterceptor$("[Core:HTTP] Request to ${request.url} succeeded after $attempt retry attempt(s) — status ${response.code}")</ID>
+    <ID>ArgumentListWrapping:RetryInterceptor.kt$RetryInterceptor$("[Core:HTTP] Retry attempt $attempt/$maxRetries for ${request.url} — status ${response.code}, waiting ${delay}ms" + if (headerDelay != null) " (from retry-after header)" else " (exponential backoff)")</ID>
+    <ID>ArgumentListWrapping:RetryInterceptorTest.kt$RetryInterceptorTest$(MockResponse() .setResponseCode(429) .setHeader("ratelimit-reset", "1"))</ID>
+    <ID>ArgumentListWrapping:RetryInterceptorTest.kt$RetryInterceptorTest$(MockResponse() .setResponseCode(429) .setHeader("retry-after", "1"))</ID>
+    <ID>ArgumentListWrapping:RetryInterceptorTest.kt$RetryInterceptorTest$(MockResponse() .setResponseCode(429) .setHeader("retry-after", "30"))</ID>
+    <ID>ArgumentListWrapping:RetryInterceptorTest.kt$RetryInterceptorTest$(MockResponse() .setResponseCode(429) .setHeader("retry-after", "Thu, 01 Dec 2025 16:00:00 GMT"))</ID>
+    <ID>ArgumentListWrapping:RetryInterceptorTest.kt$RetryInterceptorTest$(MockResponse() .setResponseCode(429) .setHeader("retry-after", futureTimestamp.toString()))</ID>
+    <ID>ArgumentListWrapping:RetryInterceptorTest.kt$RetryInterceptorTest$(MockResponse() .setResponseCode(429) .setHeader("x-ratelimit-reset", "1"))</ID>
+    <ID>ArgumentListWrapping:ScannerWorkReaderTest.kt$ScannerWorkReaderTest$("report-task.txt")</ID>
+    <ID>ArgumentListWrapping:ScannerWorkReaderTest.kt$ScannerWorkReaderTest$(scannerWork.resolve("report-task.txt"), "serverUrl=http://sonar.example.com\nceTaskId=abc123\n")</ID>
+    <ID>ArgumentListWrapping:SearchModelsTest.kt$SearchModelsTest$( name = "jdoe", displayName = "Jane Doe", email = "jane@example.com", avatarUrl = null, active = true )</ID>
+    <ID>ArgumentListWrapping:SetupDialog.kt$SetupDialog$("Connect your development tools. You can change these later in&lt;br>" + "&lt;b>Settings → Tools → Workflow Orchestrator → Connections&lt;/b>")</ID>
+    <ID>ArgumentListWrapping:SmartPoller.kt$SmartPoller$("[Poller:$name] Visibility debounced (${elapsed}ms &lt; ${VISIBILITY_DEBOUNCE_MS}ms), skipping immediate poll")</ID>
+    <ID>ArgumentListWrapping:SonarCurrentUserDataTest.kt$SonarCurrentUserDataTest$( login = "u", name = "User", email = null, groups = emptyList(), globalPermissions = perms, externalProvider = null, isLoggedIn = true, )</ID>
+    <ID>ArgumentListWrapping:SonarModelToStringTest.kt$SonarModelToStringTest$( line = 1, code = "// header", coverageStatus = null, conditions = null, coveredConditions = null )</ID>
+    <ID>ArgumentListWrapping:SonarModelToStringTest.kt$SonarModelToStringTest$( line = 42, code = "if (x &amp;&amp; y)", coverageStatus = "partially-covered", conditions = 2, coveredConditions = 1 )</ID>
+    <ID>ArgumentListWrapping:SonarModelToStringTest.kt$SonarModelToStringTest$( line = 7, code = "return x", coverageStatus = "covered", conditions = null, coveredConditions = null )</ID>
+    <ID>ArgumentListWrapping:SonarModelToStringTest.kt$SonarModelToStringTest$( line = 9, code = "throw e", coverageStatus = "uncovered", conditions = null, coveredConditions = null )</ID>
+    <ID>ArgumentListWrapping:SonarModelToStringTest.kt$SonarModelToStringTest$("Project Default", isDefault = true, isBuiltIn = false, caycStatus = "over-compliant", hasStandardConditions = true, hasMQRConditions = false, isAiCodeSupported = false)</ID>
+    <ID>ArgumentListWrapping:SonarModelToStringTest.kt$SonarModelToStringTest$("Sonar way", isDefault = false, isBuiltIn = true, caycStatus = "compliant", hasStandardConditions = false, hasMQRConditions = false, isAiCodeSupported = false)</ID>
+    <ID>ArgumentListWrapping:SonarModelToStringTest.kt$SonarModelToStringTest$("ai-pilot", isDefault = false, isBuiltIn = false, caycStatus = "compliant", hasStandardConditions = false, hasMQRConditions = true, isAiCodeSupported = true)</ID>
+    <ID>ArgumentListWrapping:SonarModelToStringTest.kt$SonarModelToStringTest$("legacy-gate", isDefault = false, isBuiltIn = false, caycStatus = "non-compliant", hasStandardConditions = true, hasMQRConditions = false, isAiCodeSupported = false)</ID>
+    <ID>ArgumentListWrapping:SonarModels.kt$DuplicationData$(" ↔ ")</ID>
+    <ID>ArgumentListWrapping:SonarModels.kt$DuplicationData$("\n Group ${i + 1}: ${block.fragments.joinToString(" ↔ ") { "${it.file}:${it.startLine}-${it.endLine}" }}")</ID>
+    <ID>ArgumentListWrapping:SonarModels.kt$HotspotDetailData$("\n (rule HTML in data: risk=${riskDescription.length}, vulnerability=${vulnerabilityDescription.length}, fix=${fixRecommendations.length} chars)")</ID>
+    <ID>ArgumentListWrapping:SonarModels.kt$HotspotDetailData$("\n ⚠ canChangeStatus=false: token cannot mark fixed/safe via API; remediation = edit code → push → wait for re-analysis")</ID>
+    <ID>ArgumentListWrapping:SonarModels.kt$SonarQualityGateListData$(" — default: \"${it.name}\" (${it.caycStatus.ifBlank { "?" }})")</ID>
+    <ID>ArgumentListWrapping:SourcegraphChatClient.kt$SourcegraphChatClient$("Usage: prompt=${response.usage?.promptTokens} completion=${response.usage?.completionTokens} total=${response.usage?.totalTokens}")</ID>
+    <ID>ArgumentListWrapping:SourcegraphChatClient.kt$SourcegraphChatClient$("[Agent:API] Extracted ${xmlToolCalls.size} XML tool call(s) from non-streaming response")</ID>
+    <ID>ArgumentListWrapping:SourcegraphChatClient.kt$SourcegraphChatClient$("[Agent:API] Request dumped to ${file.name} (${messages.size} messages, ${tools?.size ?: 0} tools, $bodyLength chars)")</ID>
+    <ID>ArgumentListWrapping:SourcegraphChatClient.kt$SourcegraphChatClient$("[Agent:API] Response dumped to ${file.name} (finish=${choice?.finishReason}, tools=${choice?.message?.toolCalls?.size ?: 0})")</ID>
+    <ID>ArgumentListWrapping:SourcegraphChatClient.kt$SourcegraphChatClient$("[Agent:API] Sourcegraph gateway emitted mid-stream timeout frame; will surface as upstream_timeout")</ID>
+    <ID>ArgumentListWrapping:SourcegraphChatClient.kt$SourcegraphChatClient$(Choice(index = 0, message = finalMessage, finishReason = finishReasonWithPartialXmlPromotion))</ID>
+    <ID>ArgumentListWrapping:SourcegraphChatClient.kt$SourcegraphChatClient$(choice.copy(message = updatedMsg, finishReason = updatedFr))</ID>
+    <ID>ArgumentListWrapping:SourcegraphChatClient.kt$SourcegraphChatClient$(choices = listOf(choice.copy(message = updatedMsg, finishReason = updatedFr)))</ID>
+    <ID>ArgumentListWrapping:SourcegraphChatClient.kt$SourcegraphChatClient$(content = content, toolCalls = toolCallDtos)</ID>
+    <ID>ArgumentListWrapping:SourcegraphChatClient.kt$SourcegraphChatClient$(content, knownToolNames, knownParamNames)</ID>
+    <ID>ArgumentListWrapping:SourcegraphChatClient.kt$SourcegraphChatClient$(index = 0, message = finalMessage, finishReason = finishReasonWithPartialXmlPromotion)</ID>
+    <ID>ArgumentListWrapping:SourcegraphChatClient.kt$SourcegraphChatClient$(message = updatedMsg, finishReason = updatedFr)</ID>
+    <ID>ArgumentListWrapping:SourcegraphChatClientStreamTest.kt$SourcegraphChatClientStreamTest$(rawContent!!.contains("Let me read that."), "Prose portion must survive in content")</ID>
+    <ID>ArgumentListWrapping:SourcegraphChatClientStreamTest.kt$SourcegraphChatClientStreamTest$(rawContent.contains("&lt;read_file>"), "XML tool call must remain in content for in-context learning")</ID>
+    <ID>ArgumentListWrapping:SourcegraphChatClientToolResultPrefixTest.kt$SourcegraphChatClientToolResultPrefixTest$(800)</ID>
+    <ID>ArgumentListWrapping:SourcegraphCompletionsStreamClientTest.kt$SourcegraphCompletionsStreamClientTest$("\"maxTokensToSample\":4096")</ID>
+    <ID>ArgumentListWrapping:SourcegraphCompletionsStreamClientTest.kt$SourcegraphCompletionsStreamClientTest$(body.contains("\"maxTokensToSample\":4096"), "Body must use 'maxTokensToSample' (not 'max_tokens'): $body")</ID>
+    <ID>ArgumentListWrapping:SourcegraphCompletionsStreamClientTest.kt$SourcegraphCompletionsStreamClientTest$(null, result.rejectionReason, "rejectionReason must be null on successful streams to avoid false-positive UX")</ID>
+    <ID>ArgumentListWrapping:SourcegraphDebugRedactionTest.kt$SourcegraphDebugRedactionTest$("sgp_my_secret_token")</ID>
+    <ID>ArgumentListWrapping:SourcegraphDebugRedactionTest.kt$SourcegraphDebugRedactionTest$(result.contains("sgp_my_secret_token"), "Sourcegraph token must be redacted from Authorization JSON field")</ID>
+    <ID>ArgumentListWrapping:TeamCityMessageConverter.kt$TeamCityMessageConverter$("##teamcity[testFailed name='${escapeValue(tc.name)}' message='${escapeValue(tc.failureMessage)}' details='${escapeValue(tc.stackTrace)}']")</ID>
+    <ID>ArgumentListWrapping:TeamCityMessageConverter.kt$TeamCityMessageConverter$("##teamcity[testFinished name='${escapeValue(tc.name)}' duration='${tc.durationMs}']")</ID>
+    <ID>ArgumentListWrapping:TeamCityMessageConverter.kt$TeamCityMessageConverter$("##teamcity[testStarted name='${escapeValue(tc.name)}' locationHint='java:test://${escapeValue(testId)}']")</ID>
+    <ID>ArgumentListWrapping:TeamCityMessageConverter.kt$TeamCityMessageConverter$(tc.failureMessage)</ID>
+    <ID>ArgumentListWrapping:TeamCityMessageConverter.kt$TeamCityMessageConverter$(tc.name)</ID>
+    <ID>ArgumentListWrapping:TeamCityMessageConverter.kt$TeamCityMessageConverter$(tc.stackTrace)</ID>
+    <ID>ArgumentListWrapping:TeamCityMessageConverter.kt$TeamCityMessageConverter$(testId)</ID>
+    <ID>ArgumentListWrapping:TicketBranchLocator.kt$TicketBranchLocator$("[Core:TicketBranchLocator] ${repoConfig.displayLabel} lookup failed: ${result.message}")</ID>
+    <ID>ArgumentListWrapping:ToolPromptBuilderTest.kt$ToolPromptBuilderTest$(rendered.contains("Allowed values: foo, bar, baz"), "rendered prompt should advertise the enumValues; got: $rendered")</ID>
+    <ID>ArgumentListWrapping:ToolPromptBuilderTest.kt$ToolPromptBuilderTest$(rendered.contains("Allowed values:"), "rendered prompt should not contain Allowed values line when enumValues is absent")</ID>
+    <ID>ArgumentListWrapping:ToolResultImageRefsTest.kt$ToolResultImageRefsTest$( sha256 = "abc123", mime = "image/png", size = 100, originalFilename = "x.png" )</ID>
+    <ID>ArgumentListWrapping:TransitionErrorTest.kt$TransitionErrorTest$( "reviewer", "Reviewer", true, FieldSchema.User(multi = false), emptyList(), "/rest/api/2/user/assignable/search?issueKey=ABC-1", null )</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("AWS key redacted", query = "AKIAIOSFODNN7EXAMPLE", expectContains = "&lt;aws-key-redacted>", expectRedacted = true)</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("Bearer token redacted", query = "Bearer abc123def456", expectContains = "&lt;redacted>", expectRedacted = true)</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("Cyrillic homograph flagged", "https://gооgle.com", // contains Cyrillic о expectFlag = UrlScreener.Flag.IDN_HOMOGRAPH)</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("IPv4 literal allowed when toggled", "https://203.0.113.1/", allowIpLiteral = true)</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("IPv4 literal rejected by default", "https://203.0.113.1/", expectReject = WebError.RawIpLiteral("https://203.0.113.1/"))</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("IPv6 literal rejected by default", "https://[2001:db8::1]/", expectReject = WebError.RawIpLiteral("https://[2001:db8::1]/"))</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("JWT token redacted", query = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c", expectContains = "&lt;jwt-redacted>", expectRedacted = true)</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("Pure Unicode (not homograph) gets IDN flag only", "https://日本.example", expectFlag = UrlScreener.Flag.IDN_NON_ASCII)</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("bit.ly flagged as shortener", "https://bit.ly/abc", expectFlag = UrlScreener.Flag.SHORTENER)</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("empty → Reject(MalformedUrl)", query = "", expectRejectCode = "MALFORMED_URL")</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("ftp rejected", "ftp://example.com", expectReject = WebError.HttpDisallowed("ftp://example.com"))</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("http allowed when https not required", "http://example.com", httpsRequired = false)</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("http rejected when https required", "http://example.com", expectReject = WebError.HttpDisallowed("http://example.com"))</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("normal query passes unchanged", query = "normal docs query", expectContains = "normal docs query", expectRedacted = false)</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("over 1000 chars → Reject(MalformedUrl)", query = "a".repeat(1001), expectRejectCode = "MALFORMED_URL")</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("suspicious TLD .click flagged", "https://example.click", expectFlag = UrlScreener.Flag.SUSPICIOUS_TLD)</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("suspicious TLD .tk flagged", "https://example.tk", expectFlag = UrlScreener.Flag.SUSPICIOUS_TLD)</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("suspicious TLD .zip flagged", "https://example.zip", expectFlag = UrlScreener.Flag.SUSPICIOUS_TLD)</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("t.co flagged as shortener", "https://t.co/abc", expectFlag = UrlScreener.Flag.SHORTENER)</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("tinyurl flagged as shortener", "https://tinyurl.com/abc", expectFlag = UrlScreener.Flag.SHORTENER)</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("user-only userinfo rejected", "https://user@example.com", expectReject = WebError.CredentialsInUrl("https://user@example.com"))</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("userinfo rejected", "https://user:pass@example.com", expectReject = WebError.CredentialsInUrl("https://user:pass@example.com"))</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$("whitespace-only → Reject(MalformedUrl)", query = " ", expectRejectCode = "MALFORMED_URL")</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$(c.expectRedacted, pass.redacted, "Expected redacted=${c.expectRedacted} for query '${c.query}'")</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$(c.expectReject.code, (result as UrlScreener.Result.Reject).error.code)</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$(c.expectRejectCode, (result as QueryScreenResult.Reject).error.code)</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$(pass.cleaned.contains(c.expectContains), "Expected cleaned to contain '${c.expectContains}', got '${pass.cleaned}'")</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$(pass.flags.contains(c.expectFlag), "Expected flag ${c.expectFlag} for ${c.url}, got ${pass.flags}")</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$(result is QueryScreenResult.Pass, "Expected Pass for query '${c.query}', got $result")</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$(result is QueryScreenResult.Reject, "Expected Reject for query '${c.query}', got $result")</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$(result is UrlScreener.Result.Pass, "Expected pass for ${c.url}, got $result")</ID>
+    <ID>ArgumentListWrapping:UrlScreenerTest.kt$UrlScreenerTest$(result is UrlScreener.Result.Reject, "Expected reject for ${c.url}, got $result")</ID>
+    <ID>ArgumentListWrapping:WebError.kt$WebError.NoProviderConfigured$("NO_PROVIDER_CONFIGURED", "No web_search provider configured in settings", true)</ID>
+    <ID>ArgumentListWrapping:WebError.kt$WebError.ProviderAuthFailed$("PROVIDER_AUTH_FAILED", "Auth failed for provider: $provider", true)</ID>
+    <ID>ArgumentListWrapping:WebError.kt$WebError.ProviderMalformedResponse$("PROVIDER_MALFORMED_RESPONSE", "Malformed response from provider: $provider", true)</ID>
+    <ID>ArgumentListWrapping:WebError.kt$WebError.ProviderUrlUnsafe$("PROVIDER_URL_UNSAFE", "Provider $provider base URL rejected by safety guard: $reason", false)</ID>
+    <ID>ArgumentListWrapping:WebError.kt$WebError.WebFetchDisabled$("WEB_FETCH_DISABLED", "web_fetch is disabled in Workflow Orchestrator settings", false)</ID>
+    <ID>ArgumentListWrapping:WebError.kt$WebError.WebSearchDisabled$("WEB_SEARCH_DISABLED", "web_search is disabled in Workflow Orchestrator settings", false)</ID>
+    <ID>ArgumentListWrapping:WorkflowContextService.kt$WorkflowContextService$("[Workflow:Context] chainKey resolved → $chainKey for ${resolvedPr.bambooPlanKey}@${resolvedPr.fromBranch}")</ID>
+    <ID>ArgumentListWrapping:WorkflowContextServiceMutatorsTest.kt$WorkflowContextServiceMutatorsTest$("main", service.state.value.prRepoBranch, "reconcile must re-read prRepoBranch when repo is still configured")</ID>
+    <ID>ArgumentListWrapping:WorkflowIntent.kt$WorkflowIntent.START_WORK$( "In Progress", "Start Progress", "Begin Work", "Start Development", "Begin Development" )</ID>
+    <ID>ArgumentListWrapping:WorkflowIntent.kt$WorkflowIntent.SUBMIT_FOR_REVIEW$( "In Review", "Submit for Review", "Ready for Review", "Code Review", "Peer Review" )</ID>
+    <ID>ArgumentListWrapping:WorkflowToolWindowFactory.kt$WorkflowToolWindowFactory.&lt;no name provided>$("Clear Active Ticket", "Remove the current active ticket", AllIcons.Actions.Cancel)</ID>
+    <ID>ArgumentListWrapping:WorkflowToolWindowFactory.kt$WorkflowToolWindowFactory.&lt;no name provided>$("Open Bamboo", "Open Bamboo build dashboard in browser", AllIcons.General.Web)</ID>
+    <ID>ArgumentListWrapping:WorkflowToolWindowFactory.kt$WorkflowToolWindowFactory.&lt;no name provided>$("Open SonarQube", "Open SonarQube dashboard in browser", AllIcons.General.Web)</ID>
+    <ID>ArgumentListWrapping:WorkflowToolWindowFactory.kt$WorkflowToolWindowFactory.&lt;no name provided>$("Refresh All Tabs", "Rebuild all tabs with latest settings", AllIcons.Actions.ForceRefresh)</ID>
+    <ID>ChainWrapping:MavenGoalValidator.kt$MavenGoalValidator$+</ID>
+    <ID>ChainWrapping:MessageSanitizer.kt$MessageSanitizer$&amp;&amp;</ID>
+    <ID>ChainWrapping:SourcegraphChatClient.kt$SourcegraphChatClient$&amp;&amp;</ID>
+    <ID>ChainWrapping:WorkflowToolWindowFactory.kt$WorkflowToolWindowFactory.&lt;no name provided>$&amp;&amp;</ID>
+    <ID>CommentWrapping:BranchSwitchAction.kt$BranchSwitchAction$/* callInAwtLater = */</ID>
+    <ID>CommentWrapping:BranchSwitchAction.kt$BranchSwitchAction$/* detach = */</ID>
+    <ID>CommentWrapping:PostMutationRefresh.kt$PostMutationRefresh$/* reloadChildren = */</ID>
+    <ID>ComplexCondition:FileLinkResolver.kt$FileLinkResolver$editor != null &amp;&amp; link.line != null &amp;&amp; link.endLine != null &amp;&amp; link.endLine != link.line</ID>
+    <ID>ComplexCondition:RepositoriesConfigurable.kt$RepositoriesConfigurable$edited.name != saved.name || edited.bitbucketProjectKey != saved.bitbucketProjectKey || edited.bitbucketRepoSlug != saved.bitbucketRepoSlug || edited.bambooPlanKey != saved.bambooPlanKey || edited.sonarProjectKey != saved.sonarProjectKey || edited.dockerTagKey != saved.dockerTagKey || edited.defaultTargetBranch != saved.defaultTargetBranch || edited.canonicalCloneUrl != saved.canonicalCloneUrl || edited.isPrimary != saved.isPrimary</ID>
+    <ID>ComplexCondition:SourcegraphChatClient.kt$SourcegraphChatClient$finalFinishReason != "upstream_timeout" &amp;&amp; parsedBlocks?.any { it is ToolUseContent &amp;&amp; it.partial } == true &amp;&amp; finalToolCalls.isNullOrEmpty()</ID>
+    <ID>ComplexCondition:UrlSafetyGuard.kt$UrlSafetyGuard$host.startsWith("fe8") || host.startsWith("fe9") || host.startsWith("fea") || host.startsWith("feb")</ID>
+    <ID>EmptyFunctionBlock:HealthCheckCheckinHandlerFactory.kt$HealthCheckCheckinHandler.&lt;no name provided>${}</ID>
+    <ID>EmptyFunctionBlock:IdeProxy.kt$IdeProxy.NoProxySelector${}</ID>
+    <ID>EmptyFunctionBlock:InsightsPanel.kt$InsightsPanel.&lt;no name provided>${}</ID>
+    <ID>EmptyFunctionBlock:SmartPollerOfflineGateTest.kt$SmartPollerOfflineGateTest.FakeProbe${}</ID>
+    <ID>EmptyFunctionBlock:WorkflowContextService.kt$WorkflowContextService.&lt;no name provided>${}</ID>
+    <ID>EmptyFunctionBlock:WorkflowSettingsConfigurable.kt$WorkflowSettingsConfigurable${}</ID>
+    <ID>Filename:ClientConfigDto.kt$com.workflow.orchestrator.core.ai.dto.ClientConfigDto.kt</ID>
+    <ID>ImplicitDefaultLocale:SmartPoller.kt$SmartPoller$String.format("%.1f", currentBackoff)</ID>
+    <ID>ImplicitDefaultLocale:SourcegraphChatClient.kt$SourcegraphChatClient$String.format("%03d", idx)</ID>
+    <ID>ImplicitDefaultLocale:StatusColors.kt$StatusColors$String.format("#%02x%02x%02x", color.red, color.green, color.blue)</ID>
+    <ID>ImportOrdering:AuthTestServiceTest.kt$import com.workflow.orchestrator.core.model.ServiceType import kotlinx.coroutines.test.runTest import okhttp3.mockwebserver.MockResponse import okhttp3.mockwebserver.MockWebServer import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.Assertions.* import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import org.junit.jupiter.api.extension.ExtendWith import com.intellij.testFramework.LoggedErrorProcessorEnabler</ID>
+    <ID>ImportOrdering:BitbucketApiClientTest.kt$import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.ErrorType import kotlinx.coroutines.test.runTest import okhttp3.mockwebserver.MockResponse import okhttp3.mockwebserver.MockWebServer import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.Assertions.* import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import com.intellij.testFramework.LoggedErrorProcessorEnabler import org.junit.jupiter.api.extension.ExtendWith</ID>
+    <ID>ImportOrdering:BitbucketBranchClientCommentsTest.kt$import com.workflow.orchestrator.core.model.ApiResult import kotlinx.coroutines.test.runTest import kotlinx.serialization.json.Json import kotlinx.serialization.json.int import kotlinx.serialization.json.jsonObject import kotlinx.serialization.json.jsonPrimitive import okhttp3.mockwebserver.MockResponse import okhttp3.mockwebserver.MockWebServer import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.assertEquals import org.junit.jupiter.api.Assertions.assertTrue</ID>
+    <ID>ImportOrdering:BitbucketBranchClientDiffSizeCapTest.kt$import com.workflow.orchestrator.core.model.ApiResult import kotlinx.coroutines.test.runTest import okhttp3.mockwebserver.MockResponse import okhttp3.mockwebserver.MockWebServer import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.assertEquals import org.junit.jupiter.api.Assertions.assertTrue</ID>
+    <ID>ImportOrdering:BitbucketBranchClientGetMyPrsTest.kt$import kotlinx.coroutines.test.runTest import okhttp3.mockwebserver.MockResponse import okhttp3.mockwebserver.MockWebServer import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.assertTrue</ID>
+    <ID>ImportOrdering:BitbucketBranchClientGetReviewingPrsTest.kt$import kotlinx.coroutines.test.runTest import okhttp3.mockwebserver.MockResponse import okhttp3.mockwebserver.MockWebServer import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.assertTrue</ID>
+    <ID>ImportOrdering:BitbucketBranchClientInlineAnchorTest.kt$import kotlinx.coroutines.runBlocking import kotlinx.coroutines.test.runTest import kotlinx.serialization.json.Json import kotlinx.serialization.json.jsonObject import kotlinx.serialization.json.jsonPrimitive import okhttp3.mockwebserver.MockResponse import okhttp3.mockwebserver.MockWebServer import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.assertEquals</ID>
+    <ID>ImportOrdering:BitbucketBranchClientPaginationTest.kt$import com.workflow.orchestrator.core.model.ApiResult import kotlinx.coroutines.test.runTest import okhttp3.mockwebserver.MockResponse import okhttp3.mockwebserver.MockWebServer import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.assertEquals import org.junit.jupiter.api.Assertions.assertTrue</ID>
+    <ID>ImportOrdering:BitbucketBranchClientReviewerStatusTest.kt$import kotlinx.coroutines.test.runTest import kotlinx.serialization.json.Json import kotlinx.serialization.json.jsonObject import kotlinx.serialization.json.jsonPrimitive import okhttp3.mockwebserver.MockResponse import okhttp3.mockwebserver.MockWebServer import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.assertEquals</ID>
+    <ID>ImportOrdering:DefaultBranchResolverTest.kt$import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>ImportOrdering:GatewayErrorDetectorTest.kt$import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.assertTrue import org.junit.jupiter.api.Assertions.assertFalse</ID>
+    <ID>ImportOrdering:GenerateCommitMessageAction.kt$import com.intellij.icons.AllIcons import com.intellij.notification.NotificationGroupManager import com.intellij.notification.NotificationType import com.intellij.openapi.actionSystem.ActionUpdateThread import com.intellij.openapi.actionSystem.AnAction import com.intellij.openapi.actionSystem.AnActionEvent import com.intellij.openapi.application.ApplicationManager import com.intellij.openapi.application.ModalityState import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.progress.ProcessCanceledException import com.intellij.openapi.progress.ProgressIndicator import com.intellij.openapi.progress.ProgressManager import com.intellij.openapi.progress.Task import com.intellij.openapi.progress.runBlockingCancellable import com.intellij.openapi.project.Project import com.intellij.openapi.vcs.CheckinProjectPanel import com.intellij.openapi.vcs.VcsDataKeys import com.intellij.openapi.vcs.changes.Change import com.intellij.openapi.vcs.ui.CommitMessage import com.intellij.openapi.vcs.ui.Refreshable import com.intellij.ui.AnimatedIcon import com.intellij.vcs.commit.CommitWorkflowUi import com.intellij.openapi.command.CommandProcessor import com.workflow.orchestrator.core.psi.PsiContextEnricher import com.workflow.orchestrator.core.ai.LlmBrainFactory import com.workflow.orchestrator.core.ai.prompts.CommitMessagePromptBuilder import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.settings.RepoContextResolver import com.workflow.orchestrator.core.ui.CommitMessageFlash import com.workflow.orchestrator.core.ui.CommitMessageStreamBatcher import com.workflow.orchestrator.core.workflow.JiraTicketProvider import git4idea.commands.Git import git4idea.commands.GitCommand import git4idea.commands.GitLineHandler import kotlinx.coroutines.async import kotlinx.coroutines.awaitAll import kotlinx.coroutines.coroutineScope import java.util.concurrent.atomic.AtomicBoolean</ID>
+    <ID>ImportOrdering:GenerateCommitMessageActionFeedbackTest.kt$import com.intellij.openapi.application.Application import com.intellij.openapi.application.ApplicationManager import com.intellij.openapi.application.ModalityState import com.intellij.openapi.progress.ProcessCanceledException import com.intellij.openapi.progress.ProgressIndicator import com.intellij.openapi.vcs.ui.CommitMessage import com.intellij.ui.AnimatedIcon import com.intellij.openapi.actionSystem.AnActionEvent import com.intellij.openapi.actionSystem.Presentation import com.workflow.orchestrator.core.ui.CommitMessageFlash import com.workflow.orchestrator.core.ui.CommitMessageStreamBatcher import io.mockk.every import io.mockk.just import io.mockk.mockk import io.mockk.mockkStatic import io.mockk.runs import io.mockk.slot import io.mockk.unmockkAll import io.mockk.verify import kotlinx.coroutines.test.runTest import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.Assertions.assertEquals import org.junit.jupiter.api.Assertions.assertFalse import org.junit.jupiter.api.Assertions.assertTrue import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import java.util.concurrent.atomic.AtomicInteger import java.util.concurrent.atomic.AtomicReference import javax.swing.Timer</ID>
+    <ID>ImportOrdering:GitMergeBaseUtilTest.kt$import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>ImportOrdering:HealthCheckService.kt$import com.intellij.openapi.components.Service import com.intellij.openapi.project.Project import com.intellij.openapi.application.readAction import com.workflow.orchestrator.core.events.EventBus import com.workflow.orchestrator.core.events.WorkflowEvent import com.workflow.orchestrator.core.healthcheck.checks.* import com.workflow.orchestrator.core.settings.PluginSettings import kotlinx.coroutines.* import kotlinx.coroutines.flow.filterIsInstance</ID>
+    <ID>ImportOrdering:JiraSearchService.kt$import com.workflow.orchestrator.core.services.ToolResult import com.workflow.orchestrator.core.model.jira.ComponentSuggestion import com.workflow.orchestrator.core.model.jira.FieldOption import com.workflow.orchestrator.core.model.jira.GroupSuggestion import com.workflow.orchestrator.core.model.jira.LabelSuggestion import com.workflow.orchestrator.core.model.jira.UserSuggestion import com.workflow.orchestrator.core.model.jira.VersionSuggestion</ID>
+    <ID>ImportOrdering:JiraService.kt$import com.workflow.orchestrator.core.model.jira.AttachmentContentData import com.workflow.orchestrator.core.model.jira.BoardData import com.workflow.orchestrator.core.model.jira.CommentVisibility import com.workflow.orchestrator.core.model.jira.DevStatusBranchData import com.workflow.orchestrator.core.model.jira.DevStatusBuildData import com.workflow.orchestrator.core.model.jira.DevStatusBundle import com.workflow.orchestrator.core.model.jira.DevStatusCommitData import com.workflow.orchestrator.core.model.jira.DevStatusDeploymentData import com.workflow.orchestrator.core.model.jira.DevStatusPrData import com.workflow.orchestrator.core.model.jira.DevStatusReviewData import com.workflow.orchestrator.core.model.jira.FilterData import com.workflow.orchestrator.core.model.jira.IssueSuggestion import com.workflow.orchestrator.core.model.jira.JiraBoardSummary import com.workflow.orchestrator.core.model.jira.JiraCommentData import com.workflow.orchestrator.core.model.jira.JiraFieldData import com.workflow.orchestrator.core.model.jira.JiraTicketData import com.workflow.orchestrator.core.model.jira.MyPermissionsData import com.workflow.orchestrator.core.model.jira.MyselfData import com.workflow.orchestrator.core.model.jira.RemoteLinkData import com.workflow.orchestrator.core.model.jira.TicketHistoryEntry import com.workflow.orchestrator.core.model.jira.TransitionMeta import com.workflow.orchestrator.core.model.jira.SprintData import com.workflow.orchestrator.core.model.jira.StartWorkResultData import com.workflow.orchestrator.core.model.jira.VisibilityOptions import com.workflow.orchestrator.core.model.jira.WatchersData import com.workflow.orchestrator.core.model.jira.WorklogData import com.workflow.orchestrator.core.model.jira.WorklogEstimateAdjustment import java.time.OffsetDateTime</ID>
+    <ID>ImportOrdering:ModelCacheFallbackChainTest.kt$import com.workflow.orchestrator.core.ai.dto.ModelInfo import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>ImportOrdering:PathLinkResolverTest.kt$import com.intellij.openapi.module.ModuleManager import com.intellij.openapi.project.Project import com.intellij.openapi.roots.ModuleRootManager import com.intellij.openapi.vfs.VirtualFile import io.mockk.every import io.mockk.mockk import io.mockk.mockkStatic import io.mockk.unmockkAll import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.Assertions.assertNull import org.junit.jupiter.api.Assertions.assertNotNull import org.junit.jupiter.api.Assertions.assertEquals import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import org.junit.jupiter.api.io.TempDir import java.nio.file.Files import java.nio.file.Path</ID>
+    <ID>ImportOrdering:PathLinkResolverWindowsTest.kt$import com.intellij.openapi.module.ModuleManager import com.intellij.openapi.project.Project import com.intellij.openapi.roots.ModuleRootManager import com.intellij.openapi.util.SystemInfo import com.intellij.openapi.vfs.VirtualFile import io.mockk.every import io.mockk.mockk import io.mockk.mockkStatic import io.mockk.unmockkAll import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.Assertions.assertNull import org.junit.jupiter.api.Assertions.assertNotNull import org.junit.jupiter.api.Assumptions.assumeTrue import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import org.junit.jupiter.api.io.TempDir import java.nio.file.Files import java.nio.file.Path</ID>
+    <ID>ImportOrdering:PrCommentTest.kt$import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.assertEquals import org.junit.jupiter.api.Assertions.assertNull import org.junit.jupiter.api.Assertions.assertTrue</ID>
+    <ID>ImportOrdering:PrDescriptionPromptBuilder.kt$import com.workflow.orchestrator.core.workflow.TicketContext import com.workflow.orchestrator.core.workflow.TicketComment</ID>
+    <ID>ImportOrdering:RawApiTraceInterceptorTest.kt$import com.workflow.orchestrator.core.ai.dto.ChatMessage import okhttp3.OkHttpClient import okhttp3.Request import okhttp3.RequestBody.Companion.toRequestBody import okhttp3.MediaType.Companion.toMediaType import okhttp3.mockwebserver.MockResponse import okhttp3.mockwebserver.MockWebServer import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.Assertions.* import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import org.junit.jupiter.api.io.TempDir import java.io.File</ID>
+    <ID>ImportOrdering:ReadOnlyBannerTextTest.kt$import com.workflow.orchestrator.core.model.workflow.PrRef import com.workflow.orchestrator.core.model.workflow.WorkflowContext import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.assertTrue</ID>
+    <ID>ImportOrdering:RepositoriesConfigurable.kt$import com.intellij.openapi.application.ApplicationManager import com.intellij.openapi.application.ModalityState import com.intellij.openapi.application.invokeLater as platformInvokeLater import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.options.SearchableConfigurable import com.intellij.openapi.progress.runBlockingCancellable import com.intellij.openapi.project.Project import com.intellij.openapi.ui.DialogWrapper import com.intellij.openapi.ui.Messages import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBScrollPane import com.intellij.ui.components.JBTextField import com.intellij.ui.dsl.builder.* import com.intellij.ui.table.JBTable import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.autodetect.AutoDetectOrchestrator import com.workflow.orchestrator.core.services.SonarProjectPickerLauncher import com.workflow.orchestrator.core.services.SonarService import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.core.util.DefaultBranchResolver import com.workflow.orchestrator.core.workflow.WorkflowContextService import javax.swing.JButton import javax.swing.JCheckBox import javax.swing.JComponent import javax.swing.ListSelectionModel import javax.swing.table.DefaultTableModel</ID>
+    <ID>ImportOrdering:RetryInterceptorTest.kt$import okhttp3.OkHttpClient import okhttp3.Request import okhttp3.mockwebserver.MockResponse import okhttp3.mockwebserver.MockWebServer import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.Assertions.* import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import org.junit.jupiter.api.extension.ExtendWith import com.intellij.testFramework.LoggedErrorProcessorEnabler</ID>
+    <ID>ImportOrdering:SetupDialog.kt$import com.intellij.openapi.progress.runBackgroundableTask import com.intellij.openapi.progress.runBlockingCancellable import com.intellij.openapi.project.Project import com.intellij.openapi.ui.DialogWrapper import com.intellij.ui.dsl.builder.* import com.workflow.orchestrator.core.auth.AuthTestService import com.workflow.orchestrator.core.auth.CredentialStore import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.ServiceType import com.workflow.orchestrator.core.services.JiraService import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.ui.StatusColors import com.intellij.util.ui.JBUI import java.awt.Font import javax.swing.JComponent import javax.swing.JLabel import javax.swing.JPasswordField import javax.swing.JTextField import com.intellij.openapi.application.ModalityState import com.intellij.openapi.application.invokeLater as platformInvokeLater</ID>
+    <ID>ImportOrdering:SonarService.kt$import com.workflow.orchestrator.core.model.sonar.CoverageData import com.workflow.orchestrator.core.model.sonar.PagedIssuesData import com.workflow.orchestrator.core.model.sonar.ProjectMeasuresData import com.workflow.orchestrator.core.model.sonar.QualityGateData import com.workflow.orchestrator.core.model.sonar.SonarAnalysisTaskData import com.workflow.orchestrator.core.model.sonar.SonarBranchData import com.workflow.orchestrator.core.model.sonar.SonarIssueData import com.workflow.orchestrator.core.model.sonar.SonarProjectData import com.workflow.orchestrator.core.model.sonar.SecurityHotspotData import com.workflow.orchestrator.core.model.sonar.DuplicationData import com.workflow.orchestrator.core.model.sonar.SourceLineData import com.workflow.orchestrator.core.model.sonar.SonarFileComponent import com.workflow.orchestrator.core.model.sonar.SonarRuleData import com.workflow.orchestrator.core.model.sonar.BranchQualityReportData import com.workflow.orchestrator.core.model.sonar.HotspotDetailData import com.workflow.orchestrator.core.model.sonar.IssueFacetsData import com.workflow.orchestrator.core.model.sonar.SonarCurrentUserData import com.workflow.orchestrator.core.model.sonar.SonarQualityGateListData</ID>
+    <ID>ImportOrdering:SourcegraphChatClient.kt$import com.intellij.openapi.diagnostic.Logger import com.workflow.orchestrator.core.ai.dto.* import com.workflow.orchestrator.core.ai.dto.ListModelsResponse import com.workflow.orchestrator.core.http.AuthInterceptor import com.workflow.orchestrator.core.http.AuthScheme import com.workflow.orchestrator.core.http.ChatHttpEventListener import com.workflow.orchestrator.core.http.PreSanitizeDumper import com.workflow.orchestrator.core.http.RawApiTraceConfig import com.workflow.orchestrator.core.http.RawApiTraceInterceptor import com.workflow.orchestrator.core.http.RetryInterceptor import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.ErrorType import kotlinx.coroutines.CancellationException import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.ensureActive import kotlinx.coroutines.withContext import java.time.LocalTime import java.time.format.DateTimeFormatter import java.util.concurrent.atomic.AtomicInteger import java.util.concurrent.atomic.AtomicReference import kotlinx.serialization.encodeToString import kotlinx.serialization.json.Json import kotlinx.serialization.json.JsonElement import okhttp3.* import okhttp3.MediaType.Companion.toMediaType import okhttp3.RequestBody.Companion.toRequestBody import java.io.IOException import java.util.concurrent.TimeUnit</ID>
+    <ID>ImportOrdering:SourcegraphChatClientToolsDroppedTest.kt$import com.workflow.orchestrator.core.ai.dto.ChatMessage import com.workflow.orchestrator.core.ai.dto.ChatCompletionRequest import com.workflow.orchestrator.core.ai.dto.FunctionDefinition import com.workflow.orchestrator.core.ai.dto.FunctionParameters import com.workflow.orchestrator.core.ai.dto.ToolDefinition import kotlinx.serialization.json.Json import org.junit.jupiter.api.Assertions.assertNull import org.junit.jupiter.api.Test</ID>
+    <ID>ImportOrdering:TicketTransitionService.kt$import com.workflow.orchestrator.core.services.ToolResult import com.workflow.orchestrator.core.model.jira.TransitionInput import com.workflow.orchestrator.core.model.jira.TransitionMeta import com.workflow.orchestrator.core.model.jira.TransitionOutcome</ID>
+    <ID>ImportOrdering:ToolResultTest.kt$import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>ImportOrdering:UrlScreenerTest.kt$import org.junit.jupiter.api.DynamicTest import org.junit.jupiter.api.TestFactory import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>ImportOrdering:WebErrorTest.kt$import org.junit.jupiter.api.Test import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>ImportOrdering:WebFetchService.kt$import com.workflow.orchestrator.core.services.ToolResult import com.workflow.orchestrator.core.model.web.WebPage</ID>
+    <ID>ImportOrdering:WebSearchService.kt$import com.workflow.orchestrator.core.services.ToolResult import com.workflow.orchestrator.core.model.web.SearchHit</ID>
+    <ID>ImportOrdering:WorkflowContextService.kt$import com.intellij.dvcs.repo.VcsRepositoryManager import com.intellij.dvcs.repo.VcsRepositoryMappingListener import com.intellij.openapi.Disposable import com.intellij.openapi.application.readAction import com.intellij.openapi.components.Service import com.intellij.openapi.components.service import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.fileEditor.FileEditorManager import com.intellij.openapi.fileEditor.FileEditorManagerEvent import com.intellij.openapi.fileEditor.FileEditorManagerListener import com.intellij.openapi.module.ModuleUtilCore import com.intellij.openapi.project.Project import com.intellij.openapi.roots.ModuleRootManager import com.intellij.openapi.vcs.BranchChangeListener import git4idea.repo.GitRepository import git4idea.repo.GitRepositoryChangeListener import git4idea.repo.GitRepositoryManager import com.workflow.orchestrator.core.model.workflow.InteractionMode import com.workflow.orchestrator.core.model.workflow.ModuleRef import com.workflow.orchestrator.core.model.workflow.PrRef import com.workflow.orchestrator.core.model.workflow.QualityScope import com.workflow.orchestrator.core.model.workflow.RepoRef import com.workflow.orchestrator.core.model.workflow.TicketRef import com.workflow.orchestrator.core.model.workflow.WorkflowContext import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.settings.RepoContextResolver import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.flow.MutableStateFlow import kotlinx.coroutines.flow.SharingStarted import kotlinx.coroutines.flow.StateFlow import kotlinx.coroutines.flow.asStateFlow import kotlinx.coroutines.flow.distinctUntilChanged import kotlinx.coroutines.flow.map import kotlinx.coroutines.flow.stateIn import kotlinx.coroutines.launch import kotlinx.coroutines.sync.Mutex import kotlinx.coroutines.sync.withLock import kotlinx.coroutines.withTimeoutOrNull</ID>
+    <ID>ImportOrdering:WorkflowEventMirrorTest.kt$import com.intellij.openapi.project.Project import com.workflow.orchestrator.core.events.EventBus import com.workflow.orchestrator.core.events.WorkflowEvent import com.workflow.orchestrator.core.model.workflow.PrRef import com.workflow.orchestrator.core.settings.PluginSettings import io.mockk.every import io.mockk.mockk import io.mockk.mockkObject import io.mockk.unmockkObject import kotlinx.coroutines.delay import kotlinx.coroutines.test.TestScope import kotlinx.coroutines.test.TestCoroutineScheduler import kotlinx.coroutines.test.runTest import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.Assertions.* import org.junit.jupiter.api.Test</ID>
+    <ID>ImportOrdering:WorkflowEventTest.kt$import org.junit.Test import kotlin.test.assertEquals import java.time.Instant</ID>
+    <ID>Indentation:AuthTestService.kt$AuthTestService$ </ID>
+    <ID>Indentation:AutoDetectOrchestrator.kt$AutoDetectOrchestrator$ </ID>
+    <ID>Indentation:BaseUrlValidator.kt$BaseUrlValidator$ </ID>
+    <ID>Indentation:BitbucketBranchClient.kt$BitbucketBranchClient$ </ID>
+    <ID>Indentation:CopyrightCheck.kt$CopyrightCheck$ </ID>
+    <ID>Indentation:DelegationDoorbellProtocolTest.kt$DelegationDoorbellProtocolTest$ </ID>
+    <ID>Indentation:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$ </ID>
+    <ID>Indentation:HttpFormPostTest.kt$HttpFormPostTest$ </ID>
+    <ID>Indentation:MavenGoalValidatorTest.kt$MavenGoalValidatorTest$ </ID>
+    <ID>Indentation:MessageSanitizerTest.kt$MessageSanitizerTest$ </ID>
+    <ID>Indentation:ModelCatalogServiceTest.kt$ModelCatalogServiceTest$ </ID>
+    <ID>Indentation:ModelPricing.kt$ModelPricing$ </ID>
+    <ID>Indentation:PluginSettings.kt$PluginSettings$ </ID>
+    <ID>Indentation:SetupDialog.kt$SetupDialog$ </ID>
+    <ID>Indentation:SourcegraphChatClient.kt$SourcegraphChatClient$ </ID>
+    <ID>Indentation:UrlScreenerTest.kt$UrlScreenerTest$ </ID>
+    <ID>Indentation:WebError.kt$WebError.EgressScreenerUnavailable$ </ID>
+    <ID>Indentation:WebError.kt$WebError.HttpConnectError$ </ID>
+    <ID>Indentation:WebError.kt$WebError.HttpStatus$ </ID>
+    <ID>Indentation:WebError.kt$WebError.HttpTlsError$ </ID>
+    <ID>Indentation:WebError.kt$WebError.QueryBlockedSensitive$ </ID>
+    <ID>Indentation:WebError.kt$WebError.ResponseTooLarge$ </ID>
+    <ID>Indentation:WebError.kt$WebError.SanitizerRefused$ </ID>
+    <ID>Indentation:WebError.kt$WebError.SanitizerTimeout$ </ID>
+    <ID>Indentation:WebError.kt$WebError.SanitizerUnreadable$ </ID>
+    <ID>Indentation:WebError.kt$WebError.UnsupportedContentType$ </ID>
+    <ID>Indentation:WebError.kt$WebError.UrlBlocked$ </ID>
+    <ID>Indentation:WeeklyDigestStartupActivity.kt$WeeklyDigestStartupActivity$ </ID>
+    <ID>Indentation:WorkflowEventMirror.kt$WorkflowEventMirror$ </ID>
+    <ID>InstanceOfCheckForException:HealthCheckService.kt$HealthCheckService$e is CancellationException</ID>
+    <ID>InstanceOfCheckForException:SmartPoller.kt$SmartPoller$e is CancellationException</ID>
+    <ID>LoopWithTooManyJumpStatements:AssistantMessageParser.kt$AssistantMessageParser$while</ID>
+    <ID>LoopWithTooManyJumpStatements:AutoDetectFileListener.kt$AutoDetectFileListener$for</ID>
+    <ID>LoopWithTooManyJumpStatements:AutoDetectOrchestrator.kt$AutoDetectOrchestrator$for</ID>
+    <ID>LoopWithTooManyJumpStatements:CopyrightCheckService.kt$CopyrightCheckService$for</ID>
+    <ID>LoopWithTooManyJumpStatements:DefaultBranchResolver.kt$DefaultBranchResolver$for</ID>
+    <ID>LoopWithTooManyJumpStatements:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$for</ID>
+    <ID>LoopWithTooManyJumpStatements:ModelPricing.kt$ModelPricingRegistry$for</ID>
+    <ID>LoopWithTooManyJumpStatements:ModelPricing.kt$ModelPricingRegistry$while</ID>
+    <ID>LoopWithTooManyJumpStatements:MultiRepoScopeInvariantTest.kt$MultiRepoScopeInvariantTest$for</ID>
+    <ID>LoopWithTooManyJumpStatements:RepoContextResolver.kt$RepoContextResolver$for</ID>
+    <ID>MagicNumber:AiSettings.kt$AiSettings.State$16_000</ID>
+    <ID>MagicNumber:AuthTestService.kt$AuthTestService$10</ID>
+    <ID>MagicNumber:AuthTestService.kt$AuthTestService$200</ID>
+    <ID>MagicNumber:AuthTestService.kt$AuthTestService$299</ID>
+    <ID>MagicNumber:AuthTestService.kt$AuthTestService$300</ID>
+    <ID>MagicNumber:AuthTestService.kt$AuthTestService$399</ID>
+    <ID>MagicNumber:AuthTestService.kt$AuthTestService$401</ID>
+    <ID>MagicNumber:AuthTestService.kt$AuthTestService$403</ID>
+    <ID>MagicNumber:AuthTestService.kt$AuthTestService$404</ID>
+    <ID>MagicNumber:AutoDetectFileListener.kt$AutoDetectFileListener$500</ID>
+    <ID>MagicNumber:BambooSpecsParser.kt$BambooSpecsParser$200</ID>
+    <ID>MagicNumber:BaseUrlValidator.kt$BaseUrlValidator$3</ID>
+    <ID>MagicNumber:BitbucketBranchClient.kt$BitbucketBranchClient$20</ID>
+    <ID>MagicNumber:BitbucketBranchClient.kt$BitbucketBranchClient$200</ID>
+    <ID>MagicNumber:BitbucketBranchClient.kt$BitbucketBranchClient$299</ID>
+    <ID>MagicNumber:BitbucketBranchClient.kt$BitbucketBranchClient$401</ID>
+    <ID>MagicNumber:BitbucketBranchClient.kt$BitbucketBranchClient$403</ID>
+    <ID>MagicNumber:BitbucketBranchClient.kt$BitbucketBranchClient$404</ID>
+    <ID>MagicNumber:BitbucketBranchClient.kt$BitbucketBranchClient$409</ID>
+    <ID>MagicNumber:BitbucketBranchClient.kt$BitbucketBranchClient$8</ID>
+    <ID>MagicNumber:BitbucketModels.kt$CommitData$80</ID>
+    <ID>MagicNumber:BitbucketModels.kt$PrActivityData$150</ID>
+    <ID>MagicNumber:BitbucketModels.kt$PullRequestDetailData$200</ID>
+    <ID>MagicNumber:CacheKey.kt$CacheKey.Companion$0x100</ID>
+    <ID>MagicNumber:CacheKey.kt$CacheKey.Companion$0xFF</ID>
+    <ID>MagicNumber:CacheKey.kt$CacheKey.Companion$16</ID>
+    <ID>MagicNumber:CacheKey.kt$CacheKey.Companion$8</ID>
+    <ID>MagicNumber:CachePolicy.kt$CachePolicyRegistry$10</ID>
+    <ID>MagicNumber:CachePolicy.kt$CachePolicyRegistry$120</ID>
+    <ID>MagicNumber:CachePolicy.kt$CachePolicyRegistry$30</ID>
+    <ID>MagicNumber:CachePolicy.kt$CachePolicyRegistry$300</ID>
+    <ID>MagicNumber:CachePolicy.kt$CachePolicyRegistry$3600</ID>
+    <ID>MagicNumber:CachePolicy.kt$CachePolicyRegistry$60</ID>
+    <ID>MagicNumber:CachePolicy.kt$CachePolicyRegistry$600</ID>
+    <ID>MagicNumber:CachePolicy.kt$CachePolicyRegistry$86400</ID>
+    <ID>MagicNumber:CachingInterceptor.kt$CachingInterceptor$200</ID>
+    <ID>MagicNumber:ChatHttpEventListener.kt$ChatHttpEventListener$10_000</ID>
+    <ID>MagicNumber:ChatHttpEventListener.kt$ChatHttpEventListener$1_000_000</ID>
+    <ID>MagicNumber:CommitMessagePromptBuilder.kt$CommitMessagePromptBuilder$800</ID>
+    <ID>MagicNumber:CommitMessageStreamBatcher.kt$CommitMessageStreamBatcher$16</ID>
+    <ID>MagicNumber:ConnectionsConfigurable.kt$ConnectionsConfigurable$40</ID>
+    <ID>MagicNumber:CopyrightCheck.kt$CopyrightCheck$30</ID>
+    <ID>MagicNumber:CopyrightCheckService.kt$CopyrightCheckService$10</ID>
+    <ID>MagicNumber:CrossIdeDelegationConfigurable.kt$CrossIdeDelegationConfigurable$10</ID>
+    <ID>MagicNumber:CrossIdeDelegationConfigurable.kt$CrossIdeDelegationConfigurable$5</ID>
+    <ID>MagicNumber:CrossIdeDelegationConfigurable.kt$CrossIdeDelegationConfigurable$600</ID>
+    <ID>MagicNumber:CrossIdeDelegationConfigurable.kt$CrossIdeDelegationConfigurable$720</ID>
+    <ID>MagicNumber:DefaultBranchResolver.kt$DefaultBranchResolver$20</ID>
+    <ID>MagicNumber:DefaultBranchResolver.kt$DefaultBranchResolver$5000</ID>
+    <ID>MagicNumber:DelegationProtocol.kt$DelegationFraming$4</ID>
+    <ID>MagicNumber:DiagnosticBundleBuilder.kt$DiagnosticBundleBuilder$1000L</ID>
+    <ID>MagicNumber:DiagnosticBundleBuilder.kt$DiagnosticBundleBuilder$24</ID>
+    <ID>MagicNumber:DiagnosticBundleBuilder.kt$DiagnosticBundleBuilder$60</ID>
+    <ID>MagicNumber:DiagnosticDialog.kt$DiagnosticDialog$12</ID>
+    <ID>MagicNumber:DiagnosticDialog.kt$DiagnosticDialog$8</ID>
+    <ID>MagicNumber:DocumentBlock.kt$DocumentBlock.Heading$6</ID>
+    <ID>MagicNumber:EmptyStatePanel.kt$EmptyStatePanel$50</ID>
+    <ID>MagicNumber:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$10</ID>
+    <ID>MagicNumber:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$200</ID>
+    <ID>MagicNumber:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$3</ID>
+    <ID>MagicNumber:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$40</ID>
+    <ID>MagicNumber:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$5</ID>
+    <ID>MagicNumber:GradleErrorParser.kt$GradleErrorParser$5</ID>
+    <ID>MagicNumber:HandoverConfigurable.kt$HandoverConfigurable$30</ID>
+    <ID>MagicNumber:HandoverConfigurable.kt$HandoverConfigurable$50</ID>
+    <ID>MagicNumber:HealthCheckService.kt$HealthCheckService$1000L</ID>
+    <ID>MagicNumber:HtmlReportRenderer.kt$HtmlReportRenderer$100</ID>
+    <ID>MagicNumber:HtmlReportRenderer.kt$HtmlReportRenderer$11</ID>
+    <ID>MagicNumber:HtmlReportRenderer.kt$HtmlReportRenderer$12</ID>
+    <ID>MagicNumber:HtmlReportRenderer.kt$HtmlReportRenderer$17</ID>
+    <ID>MagicNumber:HtmlReportRenderer.kt$HtmlReportRenderer$18</ID>
+    <ID>MagicNumber:HtmlReportRenderer.kt$HtmlReportRenderer$23</ID>
+    <ID>MagicNumber:HtmlReportRenderer.kt$HtmlReportRenderer$24</ID>
+    <ID>MagicNumber:HtmlReportRenderer.kt$HtmlReportRenderer$5</ID>
+    <ID>MagicNumber:HtmlReportRenderer.kt$HtmlReportRenderer$6</ID>
+    <ID>MagicNumber:HtmlReportRenderer.kt$HtmlReportRenderer$8</ID>
+    <ID>MagicNumber:HttpCacheMetrics.kt$HttpCacheMetrics.CacheStats$100.0</ID>
+    <ID>MagicNumber:HttpFormPost.kt$200</ID>
+    <ID>MagicNumber:HttpFormPost.kt$302</ID>
+    <ID>MagicNumber:HttpFormPost.kt$303</ID>
+    <ID>MagicNumber:HttpFormPost.kt$401</ID>
+    <ID>MagicNumber:HttpFormPost.kt$403</ID>
+    <ID>MagicNumber:HttpFormPost.kt$404</ID>
+    <ID>MagicNumber:HttpFormPost.kt$429</ID>
+    <ID>MagicNumber:HttpMetricsInterceptor.kt$HttpMetricsInterceptor$400</ID>
+    <ID>MagicNumber:HttpMetricsRegistry.kt$HttpMetricsRegistry$100.0</ID>
+    <ID>MagicNumber:HttpMetricsRegistry.kt$HttpMetricsRegistry$50</ID>
+    <ID>MagicNumber:HttpMetricsRegistry.kt$HttpMetricsRegistry$86_400_000L</ID>
+    <ID>MagicNumber:HttpMetricsRegistry.kt$HttpMetricsRegistry$95</ID>
+    <ID>MagicNumber:HttpResponseCache.kt$HttpResponseCache.Entry$1000L</ID>
+    <ID>MagicNumber:HttpResponseGuards.kt$200</ID>
+    <ID>MagicNumber:HttpResponseGuards.kt$299</ID>
+    <ID>MagicNumber:InsightsFormatters.kt$InsightsFormatters$1_000</ID>
+    <ID>MagicNumber:InsightsFormatters.kt$InsightsFormatters$1_000.0</ID>
+    <ID>MagicNumber:InsightsFormatters.kt$InsightsFormatters$1_000_000</ID>
+    <ID>MagicNumber:InsightsFormatters.kt$InsightsFormatters$1_000_000.0</ID>
+    <ID>MagicNumber:InsightsNarrativeService.kt$InsightsNarrativeService$0.3</ID>
+    <ID>MagicNumber:InsightsNarrativeService.kt$InsightsNarrativeService$20</ID>
+    <ID>MagicNumber:InsightsNarrativeService.kt$InsightsNarrativeService$30_000L</ID>
+    <ID>MagicNumber:InsightsPanel.kt$InsightsPanel$4</ID>
+    <ID>MagicNumber:InsightsServiceImpl.kt$InsightsServiceImpl$1000</ID>
+    <ID>MagicNumber:InsightsServiceImpl.kt$InsightsServiceImpl$24</ID>
+    <ID>MagicNumber:InsightsServiceImpl.kt$InsightsServiceImpl$60</ID>
+    <ID>MagicNumber:InsightsServiceImpl.kt$InsightsServiceImpl$7L</ID>
+    <ID>MagicNumber:InsightsTabProvider.kt$InsightsTabProvider$7</ID>
+    <ID>MagicNumber:JiraModels.kt$JiraTicketData$1024</ID>
+    <ID>MagicNumber:JiraModels.kt$JiraTicketData$1024.0</ID>
+    <ID>MagicNumber:MavenBuildService.kt$MavenBuildService$1000L</ID>
+    <ID>MagicNumber:MavenCompileCheck.kt$MavenCompileCheck$10</ID>
+    <ID>MagicNumber:MavenGoalValidator.kt$MavenGoalValidator$120</ID>
+    <ID>MagicNumber:MavenModuleDetector.kt$MavenModuleDetector$80</ID>
+    <ID>MagicNumber:MavenTestCheck.kt$MavenTestCheck$20</ID>
+    <ID>MagicNumber:ModelModels.kt$ModelInfo$3</ID>
+    <ID>MagicNumber:ModelPricing.kt$ModelPricing$1_000_000.0</ID>
+    <ID>MagicNumber:MultimodalSettingsConfigurable.kt$MultimodalSettingsConfigurable$1_048_576L</ID>
+    <ID>MagicNumber:NetworkReachabilityProbe.kt$NetworkReachabilityProbe$3</ID>
+    <ID>MagicNumber:NetworkStateService.kt$NetworkStateService$5</ID>
+    <ID>MagicNumber:PluginSettings.kt$10</ID>
+    <ID>MagicNumber:PluginSettings.kt$1000L</ID>
+    <ID>MagicNumber:PluginSettings.kt$1_000L</ID>
+    <ID>MagicNumber:PluginSettings.kt$5</ID>
+    <ID>MagicNumber:PluginSettings.kt$59</ID>
+    <ID>MagicNumber:PluginSettings.kt$60</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$0.5f</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$10</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$100</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$10000</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$120</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$15</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$1500</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$15_000</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$200_000</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$2_097_152</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$3</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$30</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$300</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$300_000L</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$30_000L</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$32_768</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$5</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$50</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$500</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$52_428_800L</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$55</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$5_242_880L</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$60</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$7</ID>
+    <ID>MagicNumber:PluginSettings.kt$PluginSettings.State$7.0f</ID>
+    <ID>MagicNumber:PrDescriptionPromptBuilder.kt$PrDescriptionPromptBuilder$20</ID>
+    <ID>MagicNumber:PrReviewFindingsStoreImpl.kt$PrReviewFindingsStoreImpl$6</ID>
+    <ID>MagicNumber:PrService.kt$PrTitleRenderer$3</ID>
+    <ID>MagicNumber:RawApiTraceConfig.kt$RawApiTraceConfig$1024</ID>
+    <ID>MagicNumber:RawApiTraceConfig.kt$RawApiTraceConfig$10L</ID>
+    <ID>MagicNumber:RawApiTraceConfig.kt$RawApiTraceConfig$3</ID>
+    <ID>MagicNumber:RawApiTraceInterceptor.kt$RawApiTraceInterceptor$3</ID>
+    <ID>MagicNumber:ReadOnlyBanner.kt$ReadOnlyBanner$3</ID>
+    <ID>MagicNumber:ReadOnlyBanner.kt$ReadOnlyBanner$4</ID>
+    <ID>MagicNumber:ReadOnlyBanner.kt$ReadOnlyBanner$8</ID>
+    <ID>MagicNumber:ReliabilityPanel.kt$ReliabilityPanel$10</ID>
+    <ID>MagicNumber:ReliabilityPanel.kt$ReliabilityPanel$10f</ID>
+    <ID>MagicNumber:ReliabilityPanel.kt$ReliabilityPanel$16</ID>
+    <ID>MagicNumber:ReliabilityPanel.kt$ReliabilityPanel$20</ID>
+    <ID>MagicNumber:ReliabilityPanel.kt$ReliabilityPanel$6</ID>
+    <ID>MagicNumber:RemoteUrlParser.kt$RemoteUrlParser$3</ID>
+    <ID>MagicNumber:ReportDataCollector.kt$ReportDataCollector$100</ID>
+    <ID>MagicNumber:ReportDataCollector.kt$ReportDataCollector$200</ID>
+    <ID>MagicNumber:ReportDataCollector.kt$ReportDataCollector$24</ID>
+    <ID>MagicNumber:ReportRangeDialog.kt$ReportRangeDialog$1000</ID>
+    <ID>MagicNumber:ReportRangeDialog.kt$ReportRangeDialog$24</ID>
+    <ID>MagicNumber:ReportRangeDialog.kt$ReportRangeDialog$30L</ID>
+    <ID>MagicNumber:ReportRangeDialog.kt$ReportRangeDialog$4</ID>
+    <ID>MagicNumber:ReportRangeDialog.kt$ReportRangeDialog$60</ID>
+    <ID>MagicNumber:ReportRangeDialog.kt$ReportRangeDialog$7L</ID>
+    <ID>MagicNumber:ReportRangeDialog.kt$ReportRangeDialog$8</ID>
+    <ID>MagicNumber:RepositoriesConfigurable.kt$RepositoriesConfigurable$120</ID>
+    <ID>MagicNumber:RepositoriesConfigurable.kt$RepositoriesConfigurable$160</ID>
+    <ID>MagicNumber:RepositoriesConfigurable.kt$RepositoriesConfigurable$5</ID>
+    <ID>MagicNumber:RepositoriesConfigurable.kt$RepositoriesConfigurable$6</ID>
+    <ID>MagicNumber:RepositoriesConfigurable.kt$RepositoriesConfigurable$60</ID>
+    <ID>MagicNumber:RepositoriesConfigurable.kt$RepositoriesConfigurable$60_000</ID>
+    <ID>MagicNumber:RepositoriesConfigurable.kt$RepositoriesConfigurable$70</ID>
+    <ID>MagicNumber:RepositoriesConfigurable.kt$RepositoriesConfigurable$700</ID>
+    <ID>MagicNumber:RepositoriesConfigurable.kt$RepositoriesConfigurable.&lt;no name provided>$6</ID>
+    <ID>MagicNumber:RepositoriesConfigurable.kt$RepositoriesConfigurable.RepoConfigDialog$11</ID>
+    <ID>MagicNumber:RepositoriesConfigurable.kt$RepositoriesConfigurable.RepoConfigDialog$30</ID>
+    <ID>MagicNumber:RepositoriesConfigurable.kt$RepositoriesConfigurable.RepoConfigDialog$4</ID>
+    <ID>MagicNumber:RetryInterceptor.kt$RetryInterceptor$1000</ID>
+    <ID>MagicNumber:RetryInterceptor.kt$RetryInterceptor$429</ID>
+    <ID>MagicNumber:RetryInterceptor.kt$RetryInterceptor$500</ID>
+    <ID>MagicNumber:RetryInterceptor.kt$RetryInterceptor$502</ID>
+    <ID>MagicNumber:RetryInterceptor.kt$RetryInterceptor$503</ID>
+    <ID>MagicNumber:RetryInterceptor.kt$RetryInterceptor$504</ID>
+    <ID>MagicNumber:SessionsPanel.kt$SessionsPanel$11f</ID>
+    <ID>MagicNumber:SessionsPanel.kt$SessionsPanel$120</ID>
+    <ID>MagicNumber:SessionsPanel.kt$SessionsPanel$200</ID>
+    <ID>MagicNumber:SessionsPanel.kt$SessionsPanel$280</ID>
+    <ID>MagicNumber:SessionsPanel.kt$SessionsPanel$3</ID>
+    <ID>MagicNumber:SessionsPanel.kt$SessionsPanel$4</ID>
+    <ID>MagicNumber:SessionsPanel.kt$SessionsPanel$5</ID>
+    <ID>MagicNumber:SessionsPanel.kt$SessionsPanel$57</ID>
+    <ID>MagicNumber:SessionsPanel.kt$SessionsPanel$60</ID>
+    <ID>MagicNumber:SessionsPanel.kt$SessionsPanel$8</ID>
+    <ID>MagicNumber:SessionsPanel.kt$SessionsPanel$80</ID>
+    <ID>MagicNumber:SessionsPanel.kt$SessionsPanel$90</ID>
+    <ID>MagicNumber:SetupDialog.kt$SetupDialog$20</ID>
+    <ID>MagicNumber:SetupDialog.kt$SetupDialog$80</ID>
+    <ID>MagicNumber:SmartPoller.kt$SmartPoller$0.1</ID>
+    <ID>MagicNumber:SmartPoller.kt$SmartPoller$1.5</ID>
+    <ID>MagicNumber:SmartPoller.kt$SmartPoller$1000</ID>
+    <ID>MagicNumber:SmartPoller.kt$SmartPoller$4</ID>
+    <ID>MagicNumber:SonarGateCheck.kt$SonarGateCheck$40</ID>
+    <ID>MagicNumber:SonarModels.kt$HotspotDetailData$200</ID>
+    <ID>MagicNumber:SonarModels.kt$SecurityHotspotData$120</ID>
+    <ID>MagicNumber:SonarModels.kt$SonarIssueData$120</ID>
+    <ID>MagicNumber:SonarModels.kt$SonarIssueData$3</ID>
+    <ID>MagicNumber:SonarModels.kt$SourceLineData$120</ID>
+    <ID>MagicNumber:SonarModels.kt$SourceLineData$4</ID>
+    <ID>MagicNumber:SourcegraphBranchNameGenerator.kt$SourcegraphBranchNameGenerator$300</ID>
+    <ID>MagicNumber:SourcegraphBranchNameGenerator.kt$SourcegraphBranchNameGenerator$50</ID>
+    <ID>MagicNumber:SourcegraphChatClient.kt$SourcegraphChatClient$1000</ID>
+    <ID>MagicNumber:SourcegraphChatClient.kt$SourcegraphChatClient$120</ID>
+    <ID>MagicNumber:SourcegraphChatClient.kt$SourcegraphChatClient$3</ID>
+    <ID>MagicNumber:SourcegraphChatClient.kt$SourcegraphChatClient$401</ID>
+    <ID>MagicNumber:SourcegraphChatClient.kt$SourcegraphChatClient$403</ID>
+    <ID>MagicNumber:SourcegraphChatClient.kt$SourcegraphChatClient$429</ID>
+    <ID>MagicNumber:SourcegraphChatClient.kt$SourcegraphChatClient$500</ID>
+    <ID>MagicNumber:SourcegraphChatClient.kt$SourcegraphChatClient$599</ID>
+    <ID>MagicNumber:SourcegraphCompletionsStreamClient.kt$SourcegraphCompletionsStreamClient$200</ID>
+    <ID>MagicNumber:SourcegraphCompletionsStreamClient.kt$SourcegraphCompletionsStreamClient$500</ID>
+    <ID>MagicNumber:SourcegraphTextGenerationService.kt$SourcegraphTextGenerationService$50_000</ID>
+    <ID>MagicNumber:StatTilePanel.kt$StatTilePanel$10</ID>
+    <ID>MagicNumber:StatTilePanel.kt$StatTilePanel$11f</ID>
+    <ID>MagicNumber:StatTilePanel.kt$StatTilePanel$12</ID>
+    <ID>MagicNumber:StatTilePanel.kt$StatTilePanel$20f</ID>
+    <ID>MagicNumber:StatTilePanel.kt$StatTilePanel$4</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x1A</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x1B</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x1E</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x22</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x2B</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x2E</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x30</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x34</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x35</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x37</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x3A</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x3D</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x3F</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x41</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x42</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x44</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x48</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x4D</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x4E</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x50</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x56</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x57</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x5E</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x5F</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x60</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x65</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x6A</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x6D</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x6F</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x73</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x76</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x7B</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x7F</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x80</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x8A</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x8B</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x94</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0x9E</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xB3</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xB4</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xB8</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xB9</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xBF</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xC1</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xCF</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xD1</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xD9</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xDE</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xE0</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xE3</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xE8</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xE9</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xF2</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xF3</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xF5</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xF7</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xF8</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xFA</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xFC</ID>
+    <ID>MagicNumber:StatusColors.kt$StatusColors$0xFF</ID>
+    <ID>MagicNumber:SurefireReportParser.kt$SurefireReportParser$1000</ID>
+    <ID>MagicNumber:TelemetryConfigurable.kt$TelemetryConfigurable$1024.0</ID>
+    <ID>MagicNumber:TelemetryConfigurable.kt$TelemetryConfigurable$1024L</ID>
+    <ID>MagicNumber:TelemetryConfigurable.kt$TelemetryConfigurable$512</ID>
+    <ID>MagicNumber:TimeFormatter.kt$TimeFormatter$10</ID>
+    <ID>MagicNumber:TimeFormatter.kt$TimeFormatter$1000</ID>
+    <ID>MagicNumber:TimeFormatter.kt$TimeFormatter$24</ID>
+    <ID>MagicNumber:TimeFormatter.kt$TimeFormatter$3600</ID>
+    <ID>MagicNumber:TimeFormatter.kt$TimeFormatter$3_600_000</ID>
+    <ID>MagicNumber:TimeFormatter.kt$TimeFormatter$60</ID>
+    <ID>MagicNumber:TimeFormatter.kt$TimeFormatter$604_800_000</ID>
+    <ID>MagicNumber:TimeFormatter.kt$TimeFormatter$60_000</ID>
+    <ID>MagicNumber:TimeFormatter.kt$TimeFormatter$8</ID>
+    <ID>MagicNumber:TimeFormatter.kt$TimeFormatter$86400</ID>
+    <ID>MagicNumber:TimeFormatter.kt$TimeFormatter$86_400_000</ID>
+    <ID>MagicNumber:TodayPanel.kt$TodayPanel$100</ID>
+    <ID>MagicNumber:TodayPanel.kt$TodayPanel$10f</ID>
+    <ID>MagicNumber:TodayPanel.kt$TodayPanel$12</ID>
+    <ID>MagicNumber:TodayPanel.kt$TodayPanel$120</ID>
+    <ID>MagicNumber:TodayPanel.kt$TodayPanel$200</ID>
+    <ID>MagicNumber:TodayPanel.kt$TodayPanel$24</ID>
+    <ID>MagicNumber:TodayPanel.kt$TodayPanel$4</ID>
+    <ID>MagicNumber:TodayPanel.kt$TodayPanel$8</ID>
+    <ID>MagicNumber:TodayPanel.kt$TodayPanel$80</ID>
+    <ID>MagicNumber:TokenEstimator.kt$TokenEstimator$4</ID>
+    <ID>MagicNumber:UrlSafetyGuard.kt$UrlSafetyGuard$0xFF</ID>
+    <ID>MagicNumber:UrlSafetyGuard.kt$UrlSafetyGuard$100</ID>
+    <ID>MagicNumber:UrlSafetyGuard.kt$UrlSafetyGuard$127</ID>
+    <ID>MagicNumber:UrlSafetyGuard.kt$UrlSafetyGuard$18</ID>
+    <ID>MagicNumber:UrlSafetyGuard.kt$UrlSafetyGuard$19</ID>
+    <ID>MagicNumber:UrlSafetyGuard.kt$UrlSafetyGuard$198</ID>
+    <ID>MagicNumber:UrlSafetyGuard.kt$UrlSafetyGuard$64</ID>
+    <ID>MagicNumber:UrlScreener.kt$UrlScreener$1000</ID>
+    <ID>MagicNumber:UrlScreener.kt$UrlScreener$128</ID>
+    <ID>MagicNumber:WebError.kt$WebError.HttpStatus$500</ID>
+    <ID>MagicNumber:WebError.kt$WebError.HttpStatus$599</ID>
+    <ID>MagicNumber:WeekPanel.kt$WeekPanel$100</ID>
+    <ID>MagicNumber:WeekPanel.kt$WeekPanel$1000</ID>
+    <ID>MagicNumber:WeekPanel.kt$WeekPanel$10f</ID>
+    <ID>MagicNumber:WeekPanel.kt$WeekPanel$12</ID>
+    <ID>MagicNumber:WeekPanel.kt$WeekPanel$14f</ID>
+    <ID>MagicNumber:WeekPanel.kt$WeekPanel$24</ID>
+    <ID>MagicNumber:WeekPanel.kt$WeekPanel$28</ID>
+    <ID>MagicNumber:WeekPanel.kt$WeekPanel$4</ID>
+    <ID>MagicNumber:WeekPanel.kt$WeekPanel$6</ID>
+    <ID>MagicNumber:WeekPanel.kt$WeekPanel$60</ID>
+    <ID>MagicNumber:WeekPanel.kt$WeekPanel$7L</ID>
+    <ID>MagicNumber:WeekPanel.kt$WeekPanel$8</ID>
+    <ID>MagicNumber:WeeklyDigestStartupActivity.kt$WeeklyDigestStartupActivity$1000</ID>
+    <ID>MagicNumber:WeeklyDigestStartupActivity.kt$WeeklyDigestStartupActivity$24</ID>
+    <ID>MagicNumber:WeeklyDigestStartupActivity.kt$WeeklyDigestStartupActivity$60</ID>
+    <ID>MagicNumber:WeeklyDigestStartupActivity.kt$WeeklyDigestStartupActivity$7L</ID>
+    <ID>MagicNumber:WorkflowContextService.kt$WorkflowContextService$5_000</ID>
+    <ID>MagicNumber:WorkflowToolWindowFactory.kt$WorkflowToolWindowFactory$3</ID>
+    <ID>MagicNumber:WorkflowToolWindowFactory.kt$WorkflowToolWindowFactory$4</ID>
+    <ID>MagicNumber:WorkflowToolWindowFactory.kt$WorkflowToolWindowFactory$5</ID>
+    <ID>MagicNumber:WorkflowToolWindowFactory.kt$WorkflowToolWindowFactory$8</ID>
+    <ID>MatchingDeclarationName:ClientConfigDto.kt$ClientConfig</ID>
+    <ID>MatchingDeclarationName:ComboBoxes.kt$ComboBoxWidth</ID>
+    <ID>MaximumLineLength:ApiDebugCounterResetBugTest.kt$ApiDebugCounterResetBugTest$ </ID>
+    <ID>MaximumLineLength:AssistantMessageParserReadDocumentReproTest.kt$AssistantMessageParserReadDocumentReproTest$ </ID>
+    <ID>MaximumLineLength:AssistantMessageParserTest.kt$AssistantMessageParserTest$ </ID>
+    <ID>MaximumLineLength:AttachmentSinkContractTest.kt$FakeAttachmentSink$ </ID>
+    <ID>MaximumLineLength:AuthInterceptor.kt$AuthInterceptor$ </ID>
+    <ID>MaximumLineLength:AuthTestService.kt$AuthTestService$ </ID>
+    <ID>MaximumLineLength:AutoDetectOrchestrator.kt$AutoDetectOrchestrator$ </ID>
+    <ID>MaximumLineLength:AutoDetectOrchestrator.kt$AutoDetectOrchestrator.Companion$ </ID>
+    <ID>MaximumLineLength:BambooService.kt$BambooService$ </ID>
+    <ID>MaximumLineLength:BaseUrlValidator.kt$BaseUrlValidator$ </ID>
+    <ID>MaximumLineLength:BitbucketBranchClient.kt$BitbucketBranchClient$ </ID>
+    <ID>MaximumLineLength:BitbucketBranchClientAuditAdditionsTest.kt$BitbucketBranchClientAuditAdditionsTest$ </ID>
+    <ID>MaximumLineLength:BitbucketBranchClientCommentsTest.kt$BitbucketBranchClientCommentsTest$ </ID>
+    <ID>MaximumLineLength:BitbucketBranchClientInlineAnchorTest.kt$BitbucketBranchClientInlineAnchorTest$ </ID>
+    <ID>MaximumLineLength:BitbucketBranchClientMergeWithRetryTest.kt$BitbucketBranchClientMergeWithRetryTest$ </ID>
+    <ID>MaximumLineLength:BitbucketModels.kt$PullRequestDetailData$ </ID>
+    <ID>MaximumLineLength:BitbucketService.kt$BitbucketService$ </ID>
+    <ID>MaximumLineLength:BuildLogCacheTest.kt$BuildLogCacheTest$ </ID>
+    <ID>MaximumLineLength:BuildToolExecutableResolverTest.kt$BuildToolExecutableResolverTest$ </ID>
+    <ID>MaximumLineLength:CachePolicyRegistryDevStatusTest.kt$CachePolicyRegistryDevStatusTest$ </ID>
+    <ID>MaximumLineLength:CachingInterceptorTest.kt$CachingInterceptorTest$ </ID>
+    <ID>MaximumLineLength:ChatCompletionModels.kt$ChatCompletionRequest$ </ID>
+    <ID>MaximumLineLength:CommitMessagePromptBuilder.kt$CommitMessagePromptBuilder$ </ID>
+    <ID>MaximumLineLength:ConnectionsConfigurable.kt$ConnectionsConfigurable$ </ID>
+    <ID>MaximumLineLength:CredentialStoreTest.kt$CredentialStoreTest$ </ID>
+    <ID>MaximumLineLength:DefaultReviewerConditionTest.kt$DefaultReviewerConditionTest$ </ID>
+    <ID>MaximumLineLength:DelegationClient.kt$DelegationClient$ </ID>
+    <ID>MaximumLineLength:DelegationDoorbellProtocolTest.kt$DelegationDoorbellProtocolTest$ </ID>
+    <ID>MaximumLineLength:DelegationProtocolTest.kt$DelegationProtocolTest$ </ID>
+    <ID>MaximumLineLength:DelegationServerReplyMutexTest.kt$DelegationServerReplyMutexTest$ </ID>
+    <ID>MaximumLineLength:DevStatusBundle.kt$DevStatusBundle$ </ID>
+    <ID>MaximumLineLength:DevStatusBundleTest.kt$DevStatusBundleTest$ </ID>
+    <ID>MaximumLineLength:DevStatusCacheInvalidatorTest.kt$DevStatusCacheInvalidatorTest$ </ID>
+    <ID>MaximumLineLength:DiagnosticBundleBuilder.kt$DiagnosticBundleBuilder$ </ID>
+    <ID>MaximumLineLength:DiagnosticDialog.kt$DiagnosticDialog$ </ID>
+    <ID>MaximumLineLength:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$ </ID>
+    <ID>MaximumLineLength:GenerateCommitMessageActionTest.kt$GenerateCommitMessageActionTest$ </ID>
+    <ID>MaximumLineLength:GitMergeBaseUtil.kt$GitMergeBaseUtil$ </ID>
+    <ID>MaximumLineLength:GradleErrorParser.kt$GradleErrorParser$ </ID>
+    <ID>MaximumLineLength:HealthCheckService.kt$HealthCheckService$ </ID>
+    <ID>MaximumLineLength:HtmlReportRenderer.kt$HtmlReportRenderer$ </ID>
+    <ID>MaximumLineLength:InsightsPanel.kt$InsightsPanel$ </ID>
+    <ID>MaximumLineLength:InsightsPromptPrototype.kt$InsightsPromptPrototype$ </ID>
+    <ID>MaximumLineLength:InsightsTabProvider.kt$InsightsTabProvider$ </ID>
+    <ID>MaximumLineLength:JiraModels.kt$WorklogData$ </ID>
+    <ID>MaximumLineLength:JiraSearchService.kt$JiraSearchService$ </ID>
+    <ID>MaximumLineLength:JiraService.kt$JiraService$ </ID>
+    <ID>MaximumLineLength:LinkParser.kt$LinkParser$ </ID>
+    <ID>MaximumLineLength:LiveOnlyEnablement.kt$ </ID>
+    <ID>MaximumLineLength:LlmBrainFactory.kt$LlmBrainFactory$ </ID>
+    <ID>MaximumLineLength:MessageSanitizer.kt$MessageSanitizer$ </ID>
+    <ID>MaximumLineLength:ModelCacheTest.kt$ModelCacheTest$ </ID>
+    <ID>MaximumLineLength:MultiRepoScopeInvariantTest.kt$MultiRepoScopeInvariantTest$ </ID>
+    <ID>MaximumLineLength:MultimodalSettingsConfigurable.kt$MultimodalSettingsConfigurable$ </ID>
+    <ID>MaximumLineLength:PrDescriptionPromptBuilder.kt$PrDescriptionPromptBuilder$ </ID>
+    <ID>MaximumLineLength:PrDescriptionPromptBuilderTest.kt$PrDescriptionPromptBuilderTest$ </ID>
+    <ID>MaximumLineLength:PrReviewFindingsStore.kt$PrReviewFindingsStore$ </ID>
+    <ID>MaximumLineLength:PrService.kt$PrService$ </ID>
+    <ID>MaximumLineLength:PromptBodyRedactor.kt$PromptBodyRedactor$ </ID>
+    <ID>MaximumLineLength:RepoContextResolver.kt$RepoContextResolver$ </ID>
+    <ID>MaximumLineLength:RepositoriesConfigurable.kt$RepositoriesConfigurable$ </ID>
+    <ID>MaximumLineLength:RetryInterceptor.kt$RetryInterceptor$ </ID>
+    <ID>MaximumLineLength:ScannerWorkReaderTest.kt$ScannerWorkReaderTest$ </ID>
+    <ID>MaximumLineLength:SetupDialog.kt$SetupDialog.TestResult$ </ID>
+    <ID>MaximumLineLength:SmartPoller.kt$SmartPoller$ </ID>
+    <ID>MaximumLineLength:SmartPollerOfflineGateTest.kt$SmartPollerOfflineGateTest.FakeProbe$ </ID>
+    <ID>MaximumLineLength:SonarModels.kt$DuplicationData$ </ID>
+    <ID>MaximumLineLength:SonarModels.kt$HotspotDetailData$ </ID>
+    <ID>MaximumLineLength:SonarModels.kt$SonarIssueData$ </ID>
+    <ID>MaximumLineLength:SonarModels.kt$SonarQualityGateListData$ </ID>
+    <ID>MaximumLineLength:SonarService.kt$SonarService$ </ID>
+    <ID>MaximumLineLength:SourcegraphChatClient.kt$SourcegraphChatClient$ </ID>
+    <ID>MaximumLineLength:SourcegraphChatClientStreamTest.kt$SourcegraphChatClientStreamTest$ </ID>
+    <ID>MaximumLineLength:SourcegraphChatClientToolResultPrefixTest.kt$SourcegraphChatClientToolResultPrefixTest$ </ID>
+    <ID>MaximumLineLength:SourcegraphCompletionsStreamClientTest.kt$SourcegraphCompletionsStreamClientTest$ </ID>
+    <ID>MaximumLineLength:SourcegraphDebugRedactionTest.kt$SourcegraphDebugRedactionTest$ </ID>
+    <ID>MaximumLineLength:TeamCityMessageConverter.kt$TeamCityMessageConverter$ </ID>
+    <ID>MaximumLineLength:TeamCityMessageConverterTest.kt$TeamCityMessageConverterTest$ </ID>
+    <ID>MaximumLineLength:TelemetryConfigurable.kt$TelemetryConfigurable$ </ID>
+    <ID>MaximumLineLength:TicketBranchLocator.kt$TicketBranchLocator$ </ID>
+    <ID>MaximumLineLength:TicketBranchLocatorTest.kt$TicketBranchLocatorTest.&lt;no name provided>$ </ID>
+    <ID>MaximumLineLength:TicketBranchLocatorTest.kt$TicketBranchLocatorTest.StubBranchClient$ </ID>
+    <ID>MaximumLineLength:WebError.kt$WebError$ </ID>
+    <ID>MaximumLineLength:WebError.kt$WebError.NoProviderConfigured$ </ID>
+    <ID>MaximumLineLength:WebError.kt$WebError.ProviderUrlUnsafe$ </ID>
+    <ID>MaximumLineLength:WebError.kt$WebError.WebFetchDisabled$ </ID>
+    <ID>MaximumLineLength:WorkflowContextService.kt$WorkflowContextService$ </ID>
+    <ID>MaximumLineLength:WorkflowToolWindowFactory.kt$WorkflowToolWindowFactory$ </ID>
+    <ID>MaximumLineLength:WorkflowToolWindowFactory.kt$WorkflowToolWindowFactory.&lt;no name provided>$ </ID>
+    <ID>ModifierListSpacing:MessageSanitizerTest.kt$MessageSanitizerTest$@Test</ID>
+    <ID>MultiLineIfElse:BaseUrlValidator.kt$BaseUrlValidator$return "IPv6 link-local address '$host' (fe80::/10) is not allowed."</ID>
+    <ID>MultiLineIfElse:BaseUrlValidator.kt$BaseUrlValidator$return "Link-local address '$host' is not allowed (includes AWS IMDS 169.254.169.254)."</ID>
+    <ID>MultiLineIfElse:BitbucketBranchClient.kt$BitbucketBranchClient$""</ID>
+    <ID>MultiLineIfElse:ClassLinkResolver.kt$ClassLinkResolver$"Opens class ${link.fqn}"</ID>
+    <ID>MultiLineIfElse:ClassLinkResolver.kt$ClassLinkResolver$"Opens method ${link.fqn}#${link.method}"</ID>
+    <ID>MultiLineIfElse:ClassLinkResolver.kt$ClassLinkResolver$cls</ID>
+    <ID>MultiLineIfElse:ConnectionsConfigurable.kt$ConnectionsConfigurable$null</ID>
+    <ID>MultiLineIfElse:CopyrightCheck.kt$CopyrightCheck$"${result.violations.size} file(s) missing copyright header"</ID>
+    <ID>MultiLineIfElse:CopyrightCheck.kt$CopyrightCheck$"All files have copyright headers"</ID>
+    <ID>MultiLineIfElse:DefaultBranchResolver.kt$DefaultBranchResolver$emptyList()</ID>
+    <ID>MultiLineIfElse:DelegationServerReplyMutexTest.kt$DelegationServerReplyMutexTest$bothReady.complete(Unit)</ID>
+    <ID>MultiLineIfElse:DelegationServerReplyMutexTest.kt$DelegationServerReplyMutexTest$withContext(Dispatchers.Default) { withTimeout(2_000) { bothReady.await() } }</ID>
+    <ID>MultiLineIfElse:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$""</ID>
+    <ID>MultiLineIfElse:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$CommitMessagePromptBuilder.TicketSource.ACTIVE</ID>
+    <ID>MultiLineIfElse:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$CommitMessagePromptBuilder.TicketSource.BOTH</ID>
+    <ID>MultiLineIfElse:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$null</ID>
+    <ID>MultiLineIfElse:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$selectedChanges</ID>
+    <ID>MultiLineIfElse:HtmlReportRenderer.kt$HtmlReportRenderer$"Keep building."</ID>
+    <ID>MultiLineIfElse:HtmlReportRenderer.kt$HtmlReportRenderer$"You ran $sessionCount sessions this period."</ID>
+    <ID>MultiLineIfElse:HtmlReportRenderer.kt$HtmlReportRenderer$HtmlEscape.escapeHtml(funEnding.detail)</ID>
+    <ID>MultiLineIfElse:HtmlReportRenderer.kt$HtmlReportRenderer$HtmlEscape.escapeHtml(funEnding.headline)</ID>
+    <ID>MultiLineIfElse:JiraLinkResolver.kt$JiraLinkResolver$"Jira base URL not configured — set it in Tools > Workflow Orchestrator settings"</ID>
+    <ID>MultiLineIfElse:JiraLinkResolver.kt$JiraLinkResolver$"Opens Jira ticket ${link.ticketId} in browser"</ID>
+    <ID>MultiLineIfElse:LiveOnlyEnablement.kt$"Disabled: focused PR is on a different branch. Switch to ${focusFromBranch ?: "&lt;none>"} to enable."</ID>
+    <ID>MultiLineIfElse:LiveOnlyEnablement.kt$null</ID>
+    <ID>MultiLineIfElse:MavenGoalValidator.kt$MavenGoalValidator$ValidationResult.Invalid(bad)</ID>
+    <ID>MultiLineIfElse:MavenGoalValidator.kt$MavenGoalValidator$ValidationResult.Valid(tokens)</ID>
+    <ID>MultiLineIfElse:MessageSanitizer.kt$MessageSanitizer$content</ID>
+    <ID>MultiLineIfElse:ModelCatalogService.kt$ModelCatalogService$log.debug("[ModelCatalog] Catalog network error: ${e.message}")</ID>
+    <ID>MultiLineIfElse:ModelCatalogService.kt$ModelCatalogService$log.debug("[ModelCatalog] ClientConfig network error: ${e.message}")</ID>
+    <ID>MultiLineIfElse:ModelCatalogService.kt$ModelCatalogService$log.warn("[ModelCatalog] Catalog parse error: ${e.message}")</ID>
+    <ID>MultiLineIfElse:ModelCatalogService.kt$ModelCatalogService$log.warn("[ModelCatalog] ClientConfig parse error: ${e.message}")</ID>
+    <ID>MultiLineIfElse:PathLinkResolver.kt$PathLinkResolver$Paths.get(pathPart)</ID>
+    <ID>MultiLineIfElse:PathLinkResolver.kt$PathLinkResolver$Paths.get(project.basePath ?: return null, pathPart)</ID>
+    <ID>MultiLineIfElse:RepositoriesConfigurable.kt$RepositoriesConfigurable$return true</ID>
+    <ID>MultiLineIfElse:SessionsPanel.kt$SessionsPanel$"${sessions.size} session${if (sessions.size == 1) "" else "s"}"</ID>
+    <ID>MultiLineIfElse:SessionsPanel.kt$SessionsPanel$"Showing last $MAX_SESSIONS of ${sessions.size} sessions"</ID>
+    <ID>MultiLineIfElse:SonarModels.kt$SonarIssueData$" [$cleanCodeAttributeCategory/$cleanCodeAttribute]"</ID>
+    <ID>MultiLineIfElse:SonarModels.kt$SonarIssueData$" [impacts: ${impacts.joinToString(",") { "${shortQuality(it.softwareQuality)}/${it.severity}" }}]"</ID>
+    <ID>MultiLineIfElse:SonarModels.kt$SonarIssueData$""</ID>
+    <ID>MultiLineIfElse:SourcegraphChatClient.kt$SourcegraphChatClient$null</ID>
+    <ID>MultiLineIfElse:SourcegraphTextGenerationService.kt$SourcegraphTextGenerationService$TextGenerationOutcome.Other(null, "empty response")</ID>
+    <ID>MultiLineIfElse:SourcegraphTextGenerationService.kt$SourcegraphTextGenerationService$TextGenerationOutcome.Success(text)</ID>
+    <ID>MultiLineIfElse:SourcegraphTextGenerationService.kt$SourcegraphTextGenerationService$null</ID>
+    <ID>MultiLineIfElse:StringUtils.kt$StringUtils$text</ID>
+    <ID>MultiLineIfElse:StringUtils.kt$StringUtils$text.substring(0, maxLength - 1) + "…"</ID>
+    <ID>MultiLineIfElse:WorkflowEventMirror.kt$WorkflowEventMirror$TicketRef(event.ticketId, event.ticketSummary)</ID>
+    <ID>MultiLineIfElse:WorkflowEventMirror.kt$WorkflowEventMirror$null</ID>
+    <ID>NoBlankLineBeforeRbrace:BitbucketBranchClient.kt$BitbucketBranchClient$ </ID>
+    <ID>NoBlankLineBeforeRbrace:ConnectionsConfigurable.kt$ConnectionsConfigurable$ </ID>
+    <ID>NoBlankLineBeforeRbrace:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$ </ID>
+    <ID>NoBlankLineBeforeRbrace:MessageSanitizerTest.kt$MessageSanitizerTest$ </ID>
+    <ID>NoConsecutiveBlankLines:SourcegraphCompletionsStreamClient.kt$ </ID>
+    <ID>NoMultipleSpaces:AssistantMessageParser.kt$AssistantMessageParser$ </ID>
+    <ID>NoMultipleSpaces:AutoDetectOrchestrator.kt$AutoDetectOrchestrator$ </ID>
+    <ID>NoMultipleSpaces:BaseUrlValidator.kt$BaseUrlValidator$ </ID>
+    <ID>NoMultipleSpaces:BitbucketBranchClient.kt$BitbucketBranchClient$ </ID>
+    <ID>NoMultipleSpaces:BitbucketBranchClient.kt$BitbucketCommentAnchor$ </ID>
+    <ID>NoMultipleSpaces:BitbucketBranchClientDiffSizeCapTest.kt$BitbucketBranchClientDiffSizeCapTest$ </ID>
+    <ID>NoMultipleSpaces:BitbucketBranchClientMergeWithRetryTest.kt$BitbucketBranchClientMergeWithRetryTest$ </ID>
+    <ID>NoMultipleSpaces:BuildEventCaptureServiceImpl.kt$BuildEventCaptureServiceImpl.&lt;no name provided>$ </ID>
+    <ID>NoMultipleSpaces:ConnectionsConfigurable.kt$ConnectionsConfigurable$ </ID>
+    <ID>NoMultipleSpaces:CredentialStore.kt$CredentialStore.Companion$ </ID>
+    <ID>NoMultipleSpaces:DefaultReviewerConditionTest.kt$DefaultReviewerConditionTest$ </ID>
+    <ID>NoMultipleSpaces:DocumentBlockTest.kt$DocumentBlockTest$ </ID>
+    <ID>NoMultipleSpaces:DomainAllowlistEntry.kt$DomainAllowlistEntry$ </ID>
+    <ID>NoMultipleSpaces:FocusPrCascadeTest.kt$FocusPrCascadeTest$ </ID>
+    <ID>NoMultipleSpaces:GenerateCommitMessageActionFeedbackTest.kt$GenerateCommitMessageActionFeedbackTest$ </ID>
+    <ID>NoMultipleSpaces:HealthCheckCheckinHandlerFactory.kt$HealthCheckCheckinHandler$ </ID>
+    <ID>NoMultipleSpaces:JiraModels.kt$JiraLinkedIssueRef$ </ID>
+    <ID>NoMultipleSpaces:MavenGoalValidator.kt$MavenGoalValidator$ </ID>
+    <ID>NoMultipleSpaces:MessageSanitizerTest.kt$MessageSanitizerTest$ </ID>
+    <ID>NoMultipleSpaces:ModelIdNormalizer.kt$ModelIdNormalizer$ </ID>
+    <ID>NoMultipleSpaces:MultimodalSettingsConfigurable.kt$MultimodalSettingsConfigurable$ </ID>
+    <ID>NoMultipleSpaces:NoAuthHeaderOnRedirectTest.kt$NoAuthHeaderOnRedirectTest$ </ID>
+    <ID>NoMultipleSpaces:OpenAiCompatBrain.kt$OpenAiCompatBrain$ </ID>
+    <ID>NoMultipleSpaces:PluginSettings.kt$PluginSettings.State$ </ID>
+    <ID>NoMultipleSpaces:PluginSettingsImageFieldsTest.kt$PluginSettingsImageFieldsTest$ </ID>
+    <ID>NoMultipleSpaces:PrDescriptionPromptBuilderTest.kt$PrDescriptionPromptBuilderTest$ </ID>
+    <ID>NoMultipleSpaces:RawApiTraceConfig.kt$RawApiTraceConfig$ </ID>
+    <ID>NoMultipleSpaces:ReportData.kt$ReportData.AuthoringSnippet$ </ID>
+    <ID>NoMultipleSpaces:ReportData.kt$ReportData.Mechanical$ </ID>
+    <ID>NoMultipleSpaces:ReportData.kt$ReportData.SessionDigest$ </ID>
+    <ID>NoMultipleSpaces:ReportDataCollector.kt$ReportDataCollector$ </ID>
+    <ID>NoMultipleSpaces:ReportRangeDialog.kt$ReportRangeDialog$ </ID>
+    <ID>NoMultipleSpaces:SmartPoller.kt$SmartPoller$ </ID>
+    <ID>NoMultipleSpaces:SonarModels.kt$QualityGateData$ </ID>
+    <ID>NoMultipleSpaces:SonarModels.kt$SecurityHotspotData$ </ID>
+    <ID>NoMultipleSpaces:SonarModels.kt$SonarAnalysisTaskData$ </ID>
+    <ID>NoMultipleSpaces:SonarModels.kt$SonarImpact$ </ID>
+    <ID>NoMultipleSpaces:SonarModels.kt$SonarIssueData$ </ID>
+    <ID>NoMultipleSpaces:SourcegraphChatClient.kt$SourcegraphChatClient$ </ID>
+    <ID>NoMultipleSpaces:SourcegraphChatClientToolsDroppedTest.kt$SourcegraphChatClientToolsDroppedTest$ </ID>
+    <ID>NoMultipleSpaces:TextGenerationService.kt$TextGenerationService$ </ID>
+    <ID>NoMultipleSpaces:TicketBranchLocatorTest.kt$TicketBranchLocatorTest$ </ID>
+    <ID>NoMultipleSpaces:UrlSafetyGuard.kt$UrlSafetyGuard$ </ID>
+    <ID>NoMultipleSpaces:UrlScreenerTest.kt$UrlScreenerTest$ </ID>
+    <ID>NoMultipleSpaces:WebFetchService.kt$WebFetchService.WebFetchRequest$ </ID>
+    <ID>NoMultipleSpaces:WebPage.kt$AllowlistDecision.APPROVED_AUTO$ </ID>
+    <ID>NoMultipleSpaces:WebPage.kt$AllowlistDecision.APPROVED_PROMPT$ </ID>
+    <ID>NoMultipleSpaces:WebPage.kt$AllowlistDecision.DENIED$ </ID>
+    <ID>NoMultipleSpaces:WebPage.kt$AllowlistDecision.TIMED_OUT$ </ID>
+    <ID>NoMultipleSpaces:WebPage.kt$AllowlistDecision.UNLISTED_HARD_REJECT$ </ID>
+    <ID>NoMultipleSpaces:WebPage.kt$SanitizerVerdict.REFUSED$ </ID>
+    <ID>NoMultipleSpaces:WebPage.kt$SanitizerVerdict.STRIPPED$ </ID>
+    <ID>NoMultipleSpaces:WebPage.kt$SanitizerVerdict.STRUCTURAL_ONLY$ </ID>
+    <ID>NoMultipleSpaces:WireOutputScenarioTest.kt$WireOutputScenarioTest$ </ID>
+    <ID>NoSemicolons:ServiceType.kt$ServiceType.WEB_SEARCH$;</ID>
+    <ID>NoUnusedImports:BitbucketApiClientTest.kt$com.workflow.orchestrator.core.bitbucket.BitbucketApiClientTest.kt</ID>
+    <ID>NoUnusedImports:BitbucketBranchClientUrlEncodingTest.kt$com.workflow.orchestrator.core.bitbucket.BitbucketBranchClientUrlEncodingTest.kt</ID>
+    <ID>NoUnusedImports:BuildEventCaptureServiceImpl.kt$com.workflow.orchestrator.core.services.impl.BuildEventCaptureServiceImpl.kt</ID>
+    <ID>NoUnusedImports:DelegationPeerDisconnectTest.kt$com.workflow.orchestrator.core.delegation.DelegationPeerDisconnectTest.kt</ID>
+    <ID>NoUnusedImports:HttpResponseCache.kt$com.workflow.orchestrator.core.http.HttpResponseCache.kt</ID>
+    <ID>NoUnusedImports:LinkParserTest.kt$com.workflow.orchestrator.core.services.LinkParserTest.kt</ID>
+    <ID>NoUnusedImports:ModelCatalogServiceTest.kt$com.workflow.orchestrator.core.ai.ModelCatalogServiceTest.kt</ID>
+    <ID>NoUnusedImports:PrDescriptionPromptBuilder.kt$com.workflow.orchestrator.core.ai.prompts.PrDescriptionPromptBuilder.kt</ID>
+    <ID>NoUnusedImports:ReportDataCollector.kt$com.workflow.orchestrator.core.insights.ReportDataCollector.kt</ID>
+    <ID>NoUnusedImports:SourcegraphChatClientToolsDroppedTest.kt$com.workflow.orchestrator.core.ai.SourcegraphChatClientToolsDroppedTest.kt</ID>
+    <ID>NoUnusedImports:TicketBranchLocatorTest.kt$com.workflow.orchestrator.core.workflow.TicketBranchLocatorTest.kt</ID>
+    <ID>NoUnusedImports:UrlSafetyGuardTest.kt$com.workflow.orchestrator.core.security.UrlSafetyGuardTest.kt</ID>
+    <ID>NoUnusedImports:WorkflowToolWindowFactory.kt$com.workflow.orchestrator.core.toolwindow.WorkflowToolWindowFactory.kt</ID>
+    <ID>NoWildcardImports:AiSettings.kt$import com.intellij.openapi.components.*</ID>
+    <ID>NoWildcardImports:ApiDebugCounterResetBugTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:ApiResultTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:AskFollowupQuestionParserTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:AssistantMessageParserTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:AttachmentSinkContractTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:AuthInterceptorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:AuthTestServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BambooModelsLifeCycleStateTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BaseUrlValidatorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BitbucketApiClientTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BitbucketBranchClientSharedPoolTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BitbucketService.kt$import com.workflow.orchestrator.core.model.bitbucket.*</ID>
+    <ID>NoWildcardImports:ConnectionsConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>NoWildcardImports:CopyrightCheckServiceTest.kt$import io.mockk.*</ID>
+    <ID>NoWildcardImports:CopyrightCheckServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:CopyrightCheckTest.kt$import io.mockk.*</ID>
+    <ID>NoWildcardImports:CopyrightCheckTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:CredentialStoreTest.kt$import io.mockk.*</ID>
+    <ID>NoWildcardImports:CredentialStoreTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:CrossIdeDelegationConfigurableAcceptWindowTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:DefaultBranchResolver.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:DefaultBranchResolverTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:DelegationClientTest.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:DelegationClientTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:DelegationDoorbellProtocolTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:DelegationPathsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:DelegationPeerDisconnectTest.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:DelegationPeerDisconnectTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:DelegationProtocolTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:DelegationServer.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:DelegationServerReplyMutexTest.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:DelegationServerReplyMutexTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:DelegationServerTest.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:DelegationServerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:DiagnosticDialog.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:DiagnosticDialog.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:EventBusTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:GitMergeBaseUtilTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:HandoverConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>NoWildcardImports:HandoverConfigurableTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:HealthCheckCheckinHandlerFactoryTest.kt$import io.mockk.*</ID>
+    <ID>NoWildcardImports:HealthCheckCheckinHandlerFactoryTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:HealthCheckService.kt$import com.workflow.orchestrator.core.healthcheck.checks.*</ID>
+    <ID>NoWildcardImports:HealthCheckService.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:HealthCheckServiceTest.kt$import io.mockk.*</ID>
+    <ID>NoWildcardImports:HealthCheckServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:HttpClientFactoryTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:MavenBuildServiceTest.kt$import io.mockk.*</ID>
+    <ID>NoWildcardImports:MavenBuildServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:MavenCompileCheckTest.kt$import io.mockk.*</ID>
+    <ID>NoWildcardImports:MavenCompileCheckTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:MavenModuleDetectorTest.kt$import io.mockk.*</ID>
+    <ID>NoWildcardImports:MavenModuleDetectorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:MavenTestCheckTest.kt$import io.mockk.*</ID>
+    <ID>NoWildcardImports:MavenTestCheckTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:ModelCacheFallbackChainTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:ModelCacheTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:ModelPricingTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:OpenAiCompatBrain.kt$import com.workflow.orchestrator.core.ai.dto.*</ID>
+    <ID>NoWildcardImports:PluginSettings.kt$import com.intellij.openapi.components.*</ID>
+    <ID>NoWildcardImports:PrReviewFindingsStoreImplTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:ProjectIdentifierTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:PsiContextEnricherTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:RawApiTraceInterceptorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:ReliabilityPanel.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:ReliabilityPanel.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:RepositoriesConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>NoWildcardImports:RetryInterceptorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SetupDialog.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>NoWildcardImports:SmartPoller.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:SonarGateCheckTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SonarModelToStringTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SourcegraphChatClient.kt$import com.workflow.orchestrator.core.ai.dto.*</ID>
+    <ID>NoWildcardImports:SourcegraphChatClient.kt$import okhttp3.*</ID>
+    <ID>NoWildcardImports:SourcegraphChatClientStreamTest.kt$import com.workflow.orchestrator.core.ai.dto.*</ID>
+    <ID>NoWildcardImports:SourcegraphChatClientStreamTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SourcegraphDebugRedactionTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:SurefireReportParserTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:TeamCityMessageConverterTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:TelemetryConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>NoWildcardImports:TicketKeyExtractorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:TodayPanel.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:TodayPanel.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:ToolPromptBuilderTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:ToolResultImageRefsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:ToolResultTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:UrlScreenerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:WebEgressDenyListTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:WebErrorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:WeekPanel.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:WeekPanel.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:WireOutputScenarioTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:WorkflowEventMirrorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:WorkflowSettingsConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>NoWildcardImports:WorkflowToolWindowFactory.kt$import com.intellij.openapi.actionSystem.*</ID>
+    <ID>NoWildcardImports:WorkflowToolWindowFactory.kt$import kotlinx.coroutines.*</ID>
+    <ID>ParameterListWrapping:AuthTestService.kt$AuthTestService$(serviceType: ServiceType, token: String, username: String? = null)</ID>
+    <ID>ParameterListWrapping:BambooService.kt$BambooService$(resultKey: String)</ID>
+    <ID>ParameterListWrapping:BitbucketService.kt$BitbucketService$(branchName: String, repoName: String? = null)</ID>
+    <ID>ParameterListWrapping:BitbucketService.kt$BitbucketService$(prId: Int, parentCommentId: Int, text: String, repoName: String? = null)</ID>
+    <ID>ParameterListWrapping:BitbucketService.kt$BitbucketService$(prId: Int, username: String, status: String, repoName: String? = null)</ID>
+    <ID>ParameterListWrapping:BitbucketService.kt$BitbucketService$(state: String = "OPEN", repoName: String? = null)</ID>
+    <ID>ParameterListWrapping:BuildToolExecutableResolverTest.kt$BuildToolExecutableResolverTest$(@TempDir baseDir: File)</ID>
+    <ID>ParameterListWrapping:ComboBoxes.kt$&lt;no name provided>$( list: JList&lt;*>?, value: Any?, index: Int, isSelected: Boolean, cellHasFocus: Boolean )</ID>
+    <ID>ParameterListWrapping:DelegationClient.kt$DelegationClient$(doorbellPath: Path, knock: DelegationMessage.Knock, timeoutMillis: Long = 1000)</ID>
+    <ID>ParameterListWrapping:JiraSearchService.kt$JiraSearchService$(ticketKey: String, query: String, limit: Int = 20)</ID>
+    <ID>ParameterListWrapping:JiraService.kt$JiraService$(text: String, maxResults: Int = 20, currentUserOnly: Boolean = true)</ID>
+    <ID>ParameterListWrapping:PrReviewFindingsStore.kt$PrReviewFindingsStore$(prId: String, sessionId: String? = null, includeArchived: Boolean = false)</ID>
+    <ID>ParameterListWrapping:SetupDialog.kt$SetupDialog.TestResult$(val serviceType: ServiceType, val url: String, val token: String, val username: String? = null)</ID>
+    <ID>ParameterListWrapping:SmartPollerOfflineGateTest.kt$SmartPollerOfflineGateTest.FakeProbe$(timeoutMs: Long)</ID>
+    <ID>ParameterListWrapping:SonarService.kt$SonarService$(componentKey: String, branch: String? = null, repoName: String? = null)</ID>
+    <ID>ParameterListWrapping:SonarService.kt$SonarService$(componentKey: String, from: Int? = null, to: Int? = null, branch: String? = null, repoName: String? = null)</ID>
+    <ID>ParameterListWrapping:SonarService.kt$SonarService$(projectKey: String, branch: String? = null, repoName: String? = null)</ID>
+    <ID>ParameterListWrapping:SonarService.kt$SonarService$(projectKey: String, filePath: String? = null, branch: String? = null, repoName: String? = null, inNewCodePeriod: Boolean = false)</ID>
+    <ID>ParameterListWrapping:SonarService.kt$SonarService$(projectKey: String, page: Int = 1, pageSize: Int = 100, branch: String? = null, repoName: String? = null, inNewCodePeriod: Boolean = false)</ID>
+    <ID>ParameterListWrapping:TicketBranchLocatorTest.kt$TicketBranchLocatorTest.&lt;no name provided>$(projectKey: String, repoSlug: String, filterText: String)</ID>
+    <ID>ParameterListWrapping:WebError.kt$WebError.ProviderAuthFailed$(provider: String)</ID>
+    <ID>ParameterListWrapping:WebError.kt$WebError.ProviderMalformedResponse$(provider: String)</ID>
+    <ID>ParameterListWrapping:WebError.kt$WebError.ProviderUrlUnsafe$(provider: String, reason: String)</ID>
+    <ID>PropertyWrapping:BuildLogCacheTest.kt$BuildLogCacheTest$val eventA = makeEvent(planKey = "PROJ", chainKey = "PROJ-BUILD523", buildNumber = 10, logText = "feature-branch")</ID>
+    <ID>PropertyWrapping:LinkParser.kt$LinkParser$private val CLASS_REGEX = Regex("""^class:([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(?:#([A-Za-z_][A-Za-z0-9_]*))?$""")</ID>
+    <ID>PropertyWrapping:MultiRepoScopeInvariantTest.kt$MultiRepoScopeInvariantTest$/** * Editor-or-primary resolvers on [com.workflow.orchestrator.core.settings.RepoContextResolver]. * These resolvers always return *some* repo by chaining current-editor → configured primary → * `repositories.firstOrNull()`. That makes them dangerous defaults — UI and service code that * already knows the repo from a stronger user-action signal (checked changes, focused PR, * selected build, clicked ticket) silently loses that signal when these resolvers run instead. * * The 2026-04-27 sweep audit found 11 misuse sites (see * `docs/architecture/repo-resolution-sweep-plan.md`). To prevent regression, every call to * one of these resolvers MUST sit on the same or an adjacent line as a `// editor-fallback-allowed:` * comment explaining why editor/primary is the right answer here. */ private val editorOrPrimaryResolverPattern = Regex("""\.(resolveCurrentEditorRepoOrPrimary|resolveFromCurrentEditor|getPrimary)\b\(""")</ID>
+    <ID>PropertyWrapping:RepositoriesConfigurable.kt$RepositoriesConfigurable$// --- Repository table state --- private val repoTableColumnNames = arrayOf("Name", "Bitbucket", "Bamboo Plan", "Docker Tag", "SonarQube", "Canonical URL", "Primary")</ID>
+    <ID>SpacingAroundColon:WebError.kt$WebError.HttpStatus$:</ID>
+    <ID>SpacingAroundColon:WebError.kt$WebError.ResponseTooLarge$:</ID>
+    <ID>SpacingAroundColon:WebError.kt$WebError.SanitizerRefused$:</ID>
+    <ID>SpacingAroundColon:WebError.kt$WebError.SanitizerTimeout$:</ID>
+    <ID>SpacingAroundColon:WebError.kt$WebError.SanitizerUnreadable$:</ID>
+    <ID>SpacingAroundColon:WebError.kt$WebError.UnsupportedContentType$:</ID>
+    <ID>SpacingAroundColon:WebError.kt$WebError.UrlBlocked$:</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:AutoDetectFileListener.kt$AutoDetectFileListener$@Volatile private var gitConfigJob: Job? = null</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:AutoDetectFileListener.kt$AutoDetectFileListener$@Volatile private var pomJob: Job? = null</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:BuildProblemsServiceImpl.kt$ReflectiveMavenProblemsProbe$@Suppress("UNCHECKED_CAST") val mavenProblems = invokeAny(mavenProject, "getProblems", "problems") as? List&lt;Any> ?: continue</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:ComboBoxes.kt$&lt;no name provided>$@Suppress("UNCHECKED_CAST") val full = textOf(value as T?)</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:InstantMoshiAdapter.kt$InstantMoshiAdapter$@FromJson fun fromJson(value: String): Instant</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:ModelCatalogService.kt$ModelCatalogService$@Volatile private var cachedCatalog: ModelCatalog? = null</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:ModelCatalogService.kt$ModelCatalogService$@Volatile private var cachedConfig: ClientConfig? = null</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:ModelCatalogService.kt$ModelCatalogService$@Volatile private var catalogFetchedAt: Instant? = null</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:ModelCatalogService.kt$ModelCatalogService$@Volatile private var configFetchedAt: Instant? = null</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldSchema$CascadingSelect : FieldSchema</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldSchema$Component : FieldSchema</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldSchema$Date : FieldSchema</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldSchema$DateTime : FieldSchema</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldSchema$Group : FieldSchema</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldSchema$Labels : FieldSchema</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldSchema$MultiSelect : FieldSchema</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldSchema$Number : FieldSchema</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldSchema$Priority : FieldSchema</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldSchema$SingleSelect : FieldSchema</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldSchema$Unknown : FieldSchema</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldSchema$User : FieldSchema</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldSchema$Version : FieldSchema</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldValue$Cascade : FieldValue</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldValue$ComponentRef : FieldValue</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldValue$ComponentRefs : FieldValue</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldValue$Date : FieldValue</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldValue$DateTime : FieldValue</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldValue$GroupRef : FieldValue</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldValue$LabelList : FieldValue</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldValue$Number : FieldValue</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldValue$Option : FieldValue</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldValue$Options : FieldValue</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldValue$UserRef : FieldValue</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldValue$UserRefs : FieldValue</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldValue$VersionRef : FieldValue</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:TransitionModels.kt$FieldValue$VersionRefs : FieldValue</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:AiSettings.kt$AiSettings.State$/** * Max output tokens for non-agent text generation (PR titles, PR descriptions, commit * messages). Must be > the selected model's thinking.budget_tokens — Sourcegraph * rejects thinking-capable models with HTTP 400 ("max_tokens must be greater than * thinking.budget_tokens") when this is unset or too small. 16000 safely covers the * typical 4000–10000 thinking budget while keeping responses concise. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:ApiResult.kt$ErrorType.AUTH_REDIRECT$/** * The server replied with HTML (typically a login redirect) where JSON was expected. * Distinct from [AUTH_FAILED] (HTTP 401) because the original request often returns * 200 OK with a `text/html` body when the auth cookie/PAT has expired and the server * silently redirects to the login page. Callers should surface this as * "your session expired, re-authenticate in Settings" rather than the generic 401 copy. * * Detected via [com.workflow.orchestrator.core.services.looksLikeAuthRedirect]. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:ApiResult.kt$ErrorType.STALE_VERSION$/** * Optimistic-locking conflict: the resource changed between the GET-modify-PUT * cycle and the server rejected the update with 409. Used by Bitbucket PR * mutations after [com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient.modifyPullRequest] * exhausts its single retry. Callers should surface * "the PR was updated by someone else — refresh and try again". */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:AutoDetectOrchestrator.kt$AutoDetectOrchestrator$// Per-session set of repo labels that have already been notified about a missing</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:AutoDetectOrchestrator.kt$AutoDetectOrchestrator$// cs is service-injected: supervisor-scoped, cancelled on project/plugin dispose</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:BuildEventCaptureServiceImpl.kt$BuildEventCaptureServiceImpl.Companion$// ProjectSystemId.id for Gradle. Using a string literal to avoid a compile-time</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:ModelCatalogService.kt$ModelCatalogService.Companion$/** * Default stream API version when `/.api/client-config` has not been * fetched. v8 is the lowest version that accepts `image_url` content * parts on `/.api/completions/stream`. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PluginSettings.kt$PluginSettings.State$/** * Last user-chosen Sonar Quality tab mode (0=unset/follow heuristic, * 1=Overall, 2=NewCode). On unset, the panel defaults to NewCode for * non-main branches and Overall on main. On set, the user's choice wins * across IDE restarts. Stored as Int because BaseState's `property` doesn't * have a nullable Boolean delegate. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PluginSettings.kt$PluginSettings.State$/** * Multiline template used to insert a copyright header into files that * don't have one (Handover → Copyright → Fix All). `{year}` is replaced * with the current year. Comment-wrapping for the file's language is * applied at write time by `CopyrightFixService.wrapForLanguage`. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PluginSettings.kt$PluginSettings.State$/** Cache entry lifetime in minutes. Matches Claude Code's default. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PluginSettings.kt$PluginSettings.State$/** Custom field ID for the Jira acceptance-criteria field (e.g. "customfield_10001"). Null = unused. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PluginSettings.kt$PluginSettings.State$/** Maximum number of cached entries (LRU eviction beyond this). */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PluginSettings.kt$PluginSettings.State$/** Maximum number of search results returned to the agent. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PluginSettings.kt$PluginSettings.State$/** Maximum snippet length (chars) returned per search hit after sanitization. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PluginSettings.kt$PluginSettings.State$/** Per-call timeout for the mandatory LLM egress screener. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PluginSettings.kt$PluginSettings.State$/** When true, PR creation uses AI to generate a richer PR title from ticket + diff context. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PluginSettings.kt$PluginSettings.State$// When on, Agent-A's proposed answer to Agent-B's clarifying questions</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PrService.kt$PrService.Companion$// HTTPS: https://host/scm/PROJECT/repo.git</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:PrService.kt$PrService.Companion$// SCP-style: git@host:PROJECT/repo.git</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:RepoConfig.kt$RepoConfig$/** Server-anchored HTTPS clone URL, populated after first successful Bitbucket validation. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:StatusColors.kt$StatusColors$// Border / Separator</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:StatusColors.kt$StatusColors$// Card background</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:StatusColors.kt$StatusColors$// Declined / Closed</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:StatusColors.kt$StatusColors$// Error / Failed / Critical</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:StatusColors.kt$StatusColors$// Highlight background</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:StatusColors.kt$StatusColors$// Info / Minor</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:StatusColors.kt$StatusColors$// Info background</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:StatusColors.kt$StatusColors$// Link / Action</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:StatusColors.kt$StatusColors$// Merged / Complete</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:StatusColors.kt$StatusColors$// Open / Active</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:StatusColors.kt$StatusColors$// Secondary text / Dimmed</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:StatusColors.kt$StatusColors$// Success background</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:StatusColors.kt$StatusColors$// Warning / Major / In Progress</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:StatusColors.kt$StatusColors$// Warning background</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:TextGenerationService.kt$TextGenerationOutcome.ContextOverflow$/** The provider rejected the prompt because it exceeded the model's context window. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:TextGenerationService.kt$TextGenerationOutcome.Other$/** Any other failure (auth, network, timeout, parse). [message] is logged, not user-facing. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:UrlSafetyGuard.kt$UrlSafetyGuard$// Benchmark 198.18.0.0/15 — second octet 18..19.</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:UrlSafetyGuard.kt$UrlSafetyGuard$// CGNAT 100.64.0.0/10 — second octet 64..127.</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:UrlSafetyGuard.kt$UrlSafetyGuard.Reason.IPV4_ANY_LOCAL$/** `0.0.0.0`. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:UrlSafetyGuard.kt$UrlSafetyGuard.Reason.IPV4_LINK_LOCAL$/** `169.254.0.0/16` — includes the AWS metadata address `169.254.169.254`. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:UrlSafetyGuard.kt$UrlSafetyGuard.Reason.IPV4_LOOPBACK$/** `127.0.0.0/8` or hostname `localhost`. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:UrlSafetyGuard.kt$UrlSafetyGuard.Reason.IPV6_ANY_LOCAL$/** `::`. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:UrlSafetyGuard.kt$UrlSafetyGuard.Reason.IPV6_LINK_LOCAL$/** `fe80::/10`. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:UrlSafetyGuard.kt$UrlSafetyGuard.Reason.IPV6_LOOPBACK$/** `::1`. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:UrlSafetyGuard.kt$UrlSafetyGuard.Reason.PRIVATE_LAN$/** RFC 1918: `10/8`, `192.168/16`, `172.16/12` (and IPv6 site-local `fec0::/10`). */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:UrlSafetyGuard.kt$UrlSafetyGuard.Reason.SHARED_SPECIAL_USE$/** Shared/special-use IPv4: carrier-grade NAT `100.64.0.0/10` and benchmarking `198.18.0.0/15`. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:UrlSafetyGuard.kt$UrlSafetyGuard.Reason.UNRESOLVABLE_HOST$/** Host could not be resolved by DNS — fail-closed. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:WebError.kt$WebError.EgressScreenerUnavailable$/** The mandatory egress LLM screener could not be reached (timeout/error/unparseable). * Fail-closed: the search is not sent, because safety cannot be guaranteed. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:WebError.kt$WebError.HttpError$/** Catch-all for unclassified transport failures; prefer the specific subtypes above. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:WebError.kt$WebError.HttpReadTimeout$/** Read-stage (response body) timeout. Distinct from [HttpTimeout], which covers connect/redirect stages via a dynamic code. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:WebError.kt$WebError.ProviderUrlUnsafe$/** The provider's configured base URL failed the UrlSafetyGuard / UrlPipeline screen. */</ID>
+    <ID>SpreadOperator:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$(*relativePaths.toTypedArray())</ID>
+    <ID>SpreadOperator:PostMutationRefresh.kt$PostMutationRefresh$(async, recursive, /* reloadChildren = */ true, *files.toTypedArray())</ID>
+    <ID>StringTemplate:AssistantMessageParser.kt$AssistantMessageParser$${matchedTool}</ID>
+    <ID>StringTemplate:HtmlReportRenderer.kt$HtmlReportRenderer$${color}</ID>
+    <ID>StringTemplate:HtmlReportRenderer.kt$HtmlReportRenderer$${count}</ID>
+    <ID>StringTemplate:HtmlReportRenderer.kt$HtmlReportRenderer$${pct}</ID>
+    <ID>SwallowedException:BaseUrlValidator.kt$BaseUrlValidator$e: Exception</ID>
+    <ID>SwallowedException:BitbucketBranchClient.kt$BitbucketBranchClient$e: Exception</ID>
+    <ID>SwallowedException:BuildEventCaptureServiceImpl.kt$BuildEventCaptureServiceImpl$e: ClassNotFoundException</ID>
+    <ID>SwallowedException:DefaultBranchResolver.kt$DefaultBranchResolver.Companion$e: Exception</ID>
+    <ID>SwallowedException:DelegationClient.kt$DelegationClient$e: Exception</ID>
+    <ID>SwallowedException:GenerateCommitMessageAction.kt$GenerateCommitMessageAction.&lt;no name provided>$ex: ProcessCanceledException</ID>
+    <ID>SwallowedException:GenerateCommitMessageActionFeedbackTest.kt$GenerateCommitMessageActionFeedbackTest$ex: Exception</ID>
+    <ID>SwallowedException:GenerateCommitMessageActionFeedbackTest.kt$GenerateCommitMessageActionFeedbackTest$ex: ProcessCanceledException</ID>
+    <ID>SwallowedException:GitMergeBaseUtil.kt$GitMergeBaseUtil$e: Exception</ID>
+    <ID>SwallowedException:IdeProxy.kt$IdeProxy$t: Throwable</ID>
+    <ID>SwallowedException:NetworkReachabilityProbe.kt$NetworkReachabilityProbe$e: Exception</ID>
+    <ID>SwallowedException:RepositoriesConfigurable.kt$RepositoriesConfigurable$e: kotlinx.coroutines.TimeoutCancellationException</ID>
+    <ID>UnusedParameter:AuthTestService.kt$AuthTestService$username: String? = null</ID>
+    <ID>UnusedParameter:AutoDetectOrchestrator.kt$AutoDetectOrchestrator$filled: MutableList&lt;String></ID>
+    <ID>UnusedParameter:SourcegraphChatClient.kt$SourcegraphChatClient$toolChoice: JsonElement? = null</ID>
+    <ID>UnusedPrivateProperty:GenerateCommitMessageActionFeedbackTest.kt$GenerateCommitMessageActionFeedbackTest$var interruptCalled = false</ID>
+    <ID>UnusedPrivateProperty:PrDescriptionPromptBuilderTest.kt$PrDescriptionPromptBuilderTest$val bigAc = "Y".repeat(980) // just under 1000</ID>
+    <ID>UnusedPrivateProperty:PrDescriptionPromptBuilderTest.kt$PrDescriptionPromptBuilderTest$val bigDesc = "X".repeat(1980) // just under 2000</ID>
+    <ID>UnusedPrivateProperty:WorkflowSettingsConfigurable.kt$WorkflowSettingsConfigurable$private val project: Project</ID>
+    <ID>UseCheckOrError:BuildProblemsServiceImplTest.kt$BuildProblemsServiceImplTest.&lt;no name provided>$throw IllegalStateException("probe broken")</ID>
+    <ID>UseCheckOrError:LlmBrainFactory.kt$LlmBrainFactory$throw IllegalStateException( "No models available from Sourcegraph. Check your connection and token in Settings > Workflow Orchestrator > General." )</ID>
+    <ID>UseCheckOrError:SourcegraphCompletionsStreamClient.kt$SourcegraphCompletionsStreamClient$throw IllegalStateException("no Sourcegraph token configured")</ID>
+    <ID>VariableNaming:RawApiTraceInterceptor.kt$RawApiTraceInterceptor$private val TIME_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("HHmmss")</ID>
+    <ID>VariableNaming:SessionsPanel.kt$SessionsPanel$private val COLUMNS = arrayOf("Time", "Task", "Model", "Tokens In", "Tokens Out", "Est. Cost")</ID>
+    <ID>VariableNaming:SessionsPanel.kt$SessionsPanel$private val MAX_SESSIONS = 200</ID>
+    <ID>WildcardImport:AiSettings.kt$import com.intellij.openapi.components.*</ID>
+    <ID>WildcardImport:ApiDebugCounterResetBugTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:ApiResultTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:AskFollowupQuestionParserTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:AssistantMessageParserTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:AttachmentSinkContractTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:AuthInterceptorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:AuthTestServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BambooModelsLifeCycleStateTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BaseUrlValidatorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BitbucketApiClientTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BitbucketBranchClientSharedPoolTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BitbucketService.kt$import com.workflow.orchestrator.core.model.bitbucket.*</ID>
+    <ID>WildcardImport:ConnectionsConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>WildcardImport:CopyrightCheckServiceTest.kt$import io.mockk.*</ID>
+    <ID>WildcardImport:CopyrightCheckServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:CopyrightCheckTest.kt$import io.mockk.*</ID>
+    <ID>WildcardImport:CopyrightCheckTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:CredentialStoreTest.kt$import io.mockk.*</ID>
+    <ID>WildcardImport:CredentialStoreTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:CrossIdeDelegationConfigurableAcceptWindowTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:DefaultBranchResolver.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:DefaultBranchResolverTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:DelegationClientTest.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:DelegationClientTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:DelegationDoorbellProtocolTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:DelegationPathsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:DelegationPeerDisconnectTest.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:DelegationPeerDisconnectTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:DelegationProtocolTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:DelegationServer.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:DelegationServerReplyMutexTest.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:DelegationServerReplyMutexTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:DelegationServerTest.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:DelegationServerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:DiagnosticDialog.kt$import java.awt.*</ID>
+    <ID>WildcardImport:DiagnosticDialog.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:EventBusTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:GitMergeBaseUtilTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:HandoverConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>WildcardImport:HandoverConfigurableTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:HealthCheckCheckinHandlerFactoryTest.kt$import io.mockk.*</ID>
+    <ID>WildcardImport:HealthCheckCheckinHandlerFactoryTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:HealthCheckService.kt$import com.workflow.orchestrator.core.healthcheck.checks.*</ID>
+    <ID>WildcardImport:HealthCheckService.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:HealthCheckServiceTest.kt$import io.mockk.*</ID>
+    <ID>WildcardImport:HealthCheckServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:HttpClientFactoryTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:MavenBuildServiceTest.kt$import io.mockk.*</ID>
+    <ID>WildcardImport:MavenBuildServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:MavenCompileCheckTest.kt$import io.mockk.*</ID>
+    <ID>WildcardImport:MavenCompileCheckTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:MavenModuleDetectorTest.kt$import io.mockk.*</ID>
+    <ID>WildcardImport:MavenModuleDetectorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:MavenTestCheckTest.kt$import io.mockk.*</ID>
+    <ID>WildcardImport:MavenTestCheckTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:ModelCacheFallbackChainTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:ModelCacheTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:ModelPricingTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:OpenAiCompatBrain.kt$import com.workflow.orchestrator.core.ai.dto.*</ID>
+    <ID>WildcardImport:PluginSettings.kt$import com.intellij.openapi.components.*</ID>
+    <ID>WildcardImport:PrReviewFindingsStoreImplTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:ProjectIdentifierTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:PsiContextEnricherTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:RawApiTraceInterceptorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:ReliabilityPanel.kt$import java.awt.*</ID>
+    <ID>WildcardImport:ReliabilityPanel.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:RepositoriesConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>WildcardImport:RetryInterceptorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SetupDialog.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>WildcardImport:SmartPoller.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:SonarGateCheckTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SonarModelToStringTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SourcegraphChatClient.kt$import com.workflow.orchestrator.core.ai.dto.*</ID>
+    <ID>WildcardImport:SourcegraphChatClient.kt$import okhttp3.*</ID>
+    <ID>WildcardImport:SourcegraphChatClientStreamTest.kt$import com.workflow.orchestrator.core.ai.dto.*</ID>
+    <ID>WildcardImport:SourcegraphChatClientStreamTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SourcegraphDebugRedactionTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:SurefireReportParserTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:TeamCityMessageConverterTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:TelemetryConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>WildcardImport:TicketKeyExtractorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:TodayPanel.kt$import java.awt.*</ID>
+    <ID>WildcardImport:TodayPanel.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:ToolPromptBuilderTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:ToolResultImageRefsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:ToolResultTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:UrlScreenerTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:WebEgressDenyListTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:WebErrorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:WeekPanel.kt$import java.awt.*</ID>
+    <ID>WildcardImport:WeekPanel.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:WireOutputScenarioTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:WorkflowEventMirrorTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:WorkflowSettingsConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>WildcardImport:WorkflowToolWindowFactory.kt$import com.intellij.openapi.actionSystem.*</ID>
+    <ID>WildcardImport:WorkflowToolWindowFactory.kt$import kotlinx.coroutines.*</ID>
+    <ID>Wrapping:ApiDebugCounterResetBugTest.kt$ApiDebugCounterResetBugTest$(</ID>
+    <ID>Wrapping:AssistantMessageParserTest.kt$AssistantMessageParserTest$(</ID>
+    <ID>Wrapping:AuthTestService.kt$AuthTestService$(</ID>
+    <ID>Wrapping:AuthTestService.kt$AuthTestService$("[Core:Auth] Connection test failed for ${serviceType.name} — SSL error: ${e.message}. " + "If using a self-signed certificate, add it to the JDK truststore.", e)</ID>
+    <ID>Wrapping:AuthTestServiceTest.kt$AuthTestServiceTest$(</ID>
+    <ID>Wrapping:AutoDetectOrchestrator.kt$AutoDetectOrchestrator$(</ID>
+    <ID>Wrapping:BambooModelsLifeCycleStateTest.kt$BambooModelsLifeCycleStateTest$(</ID>
+    <ID>Wrapping:BambooSpecsParserTest.kt$BambooSpecsParserTest$(</ID>
+    <ID>Wrapping:BambooSpecsParserTest.kt$BambooSpecsParserTest$(javaDir.resolve("Mixed.java"), """ public class Mixed { private static final int BUILD_NUMBER = 42; private static final String VALID = "yes"; // private static final String COMMENTED = "no"; private static final String[] BRANCHES = { "develop" }; } """.trimIndent())</ID>
+    <ID>Wrapping:BambooSpecsParserTest.kt$BambooSpecsParserTest$(javaDir.resolve("PlanProperties.java"), """ package constants; public class PlanProperties { private static final String REPOSITORY_NAME = "my-sample-service"; private static final String PLAN_KEY = "MYSAMPLESERVICE"; private static final String DOCKER_TAG_NAME = "MySampleServiceDockerTag"; public static final String PROJECT_KEY = "MYPROJ"; } """.trimIndent())</ID>
+    <ID>Wrapping:BitbucketBranchClientAuditAdditionsTest.kt$BitbucketBranchClientAuditAdditionsTest$"""</ID>
+    <ID>Wrapping:BitbucketBranchClientCommentsTest.kt$BitbucketBranchClientCommentsTest$(</ID>
+    <ID>Wrapping:BitbucketBranchClientGetReviewingPrsTest.kt$BitbucketBranchClientGetReviewingPrsTest$(</ID>
+    <ID>Wrapping:BitbucketBranchClientGetUsersTest.kt$BitbucketBranchClientGetUsersTest$"""</ID>
+    <ID>Wrapping:BitbucketBranchClientGetUsersTest.kt$BitbucketBranchClientGetUsersTest$(</ID>
+    <ID>Wrapping:BitbucketBranchClientMergeWithRetryTest.kt$BitbucketBranchClientMergeWithRetryTest$"""</ID>
+    <ID>Wrapping:BitbucketBranchClientModifyPullRequestTest.kt$BitbucketBranchClientModifyPullRequestTest$"""</ID>
+    <ID>Wrapping:BitbucketBranchClientPaginationTest.kt$BitbucketBranchClientPaginationTest$"""</ID>
+    <ID>Wrapping:BitbucketBranchClientPaginationTest.kt$BitbucketBranchClientPaginationTest$(</ID>
+    <ID>Wrapping:BitbucketBranchClientSharedPoolTest.kt$BitbucketBranchClientSharedPoolTest$(</ID>
+    <ID>Wrapping:BitbucketBranchClientUrlEncodingTest.kt$BitbucketBranchClientUrlEncodingTest$(</ID>
+    <ID>Wrapping:BranchChangedEventEmitter.kt$BranchChangedEventEmitter$(</ID>
+    <ID>Wrapping:BranchSwitchActionTest.kt$BranchSwitchActionTest$(</ID>
+    <ID>Wrapping:CachingInterceptorTest.kt$CachingInterceptorTest$(</ID>
+    <ID>Wrapping:CodyStreamSseParserTest.kt$CodyStreamSseParserTest$(</ID>
+    <ID>Wrapping:ConnectionsConfigurable.kt$ConnectionsConfigurable$(</ID>
+    <ID>Wrapping:DefaultBranchResolver.kt$DefaultBranchResolver$(</ID>
+    <ID>Wrapping:DefaultReviewerConditionTest.kt$DefaultReviewerConditionTest$"""</ID>
+    <ID>Wrapping:DefaultReviewerConditionTest.kt$DefaultReviewerConditionTest$(</ID>
+    <ID>Wrapping:DelegationClient.kt$DelegationClient$;</ID>
+    <ID>Wrapping:DelegationDoorbellProtocolTest.kt$DelegationDoorbellProtocolTest$(</ID>
+    <ID>Wrapping:DelegationDoorbellProtocolTest.kt$DelegationDoorbellProtocolTest$;</ID>
+    <ID>Wrapping:DelegationProtocolTest.kt$DelegationProtocolTest$;</ID>
+    <ID>Wrapping:DelegationServer.kt$DelegationServer$;</ID>
+    <ID>Wrapping:DelegationServerTest.kt$DelegationServerTest$;</ID>
+    <ID>Wrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$(</ID>
+    <ID>Wrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$AnAction( "Generate with Workflow", "Generate commit message using AI", AllIcons.Actions.Lightning ), com.intellij.openapi.project.DumbAware</ID>
+    <ID>Wrapping:GenerateCommitMessageAction.kt$GenerateCommitMessageAction$it in listOf("GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "RequestMapping", "Test", "BeforeEach", "Transactional")</ID>
+    <ID>Wrapping:HealthCheckService.kt$HealthCheckService$;</ID>
+    <ID>Wrapping:HtmlReportRenderer.kt$HtmlReportRenderer$(</ID>
+    <ID>Wrapping:HtmlReportRenderer.kt$HtmlReportRenderer$("{{CHART_FRICTION_TYPES}}", buildBarChart( tallyClassifications(narrative.perSessionClassifications) { it.frictionType }, "#dc2626" ))</ID>
+    <ID>Wrapping:HtmlReportRenderer.kt$HtmlReportRenderer$("{{CHART_OUTCOMES}}", buildBarChart( tallyClassifications(narrative.perSessionClassifications) { it.outcome }, "#8b5cf6" ))</ID>
+    <ID>Wrapping:HtmlReportRenderer.kt$HtmlReportRenderer$("{{CHART_SATISFACTION}}", buildBarChart( tallyClassifications(narrative.perSessionClassifications) { it.satisfaction }, "#eab308" ))</ID>
+    <ID>Wrapping:HtmlReportRenderer.kt$HtmlReportRenderer$("{{CHART_SESSION_TYPE}}", buildBarChart( tallyClassifications(narrative.perSessionClassifications) { it.sessionType }, "#8b5cf6" ))</ID>
+    <ID>Wrapping:HtmlReportRenderer.kt$HtmlReportRenderer$("{{CHART_TASK_TYPE}}", buildBarChart( tallyClassifications(narrative.perSessionClassifications) { it.taskType }, "#2563eb" ))</ID>
+    <ID>Wrapping:HtmlReportRenderer.kt$HtmlReportRenderer$("{{CHART_WHAT_HELPED}}", buildBarChart( tallyClassifications(narrative.perSessionClassifications) { it.whatHelped }, "#16a34a" ))</ID>
+    <ID>Wrapping:HtmlReportRenderer.kt$HtmlReportRenderer$0</ID>
+    <ID>Wrapping:HttpCacheMetrics.kt$HttpCacheMetrics$(</ID>
+    <ID>Wrapping:HttpFormPostTest.kt$HttpFormPostTest$(</ID>
+    <ID>Wrapping:InsightsNarrativeService.kt$InsightsNarrativeService$;</ID>
+    <ID>Wrapping:InsightsPromptPrototype.kt$InsightsPromptPrototype$(</ID>
+    <ID>Wrapping:InsightsPromptPrototype.kt$InsightsPromptPrototype$("mechanicalStats", buildJsonObject { put("sessionCount", mechanical.sessionCount.toString()) put("totalTokensIn", mechanical.totalTokensIn.toString()) put("totalTokensOut", mechanical.totalTokensOut.toString()) put("totalCostUsd", "%.4f".format(mechanical.totalCostUsd)) put("distinctDays", mechanical.distinctDays.toString()) put("models", mechanical.modelUsage.keys.joinToString(", ")) })</ID>
+    <ID>Wrapping:InsightsPromptPrototype.kt$InsightsPromptPrototype$;</ID>
+    <ID>Wrapping:InteractionModePurityTest.kt$InteractionModePurityTest$(</ID>
+    <ID>Wrapping:MavenGoalValidatorTest.kt$MavenGoalValidatorTest$(</ID>
+    <ID>Wrapping:MessageSanitizerTest.kt$MessageSanitizerTest$(</ID>
+    <ID>Wrapping:ModelIdNormalizerTest.kt$ModelIdNormalizerTest$(</ID>
+    <ID>Wrapping:ModelPricingTest.kt$ModelPricingTest$(</ID>
+    <ID>Wrapping:MutationInvalidationInterceptorTest.kt$MutationInvalidationInterceptorTest$(</ID>
+    <ID>Wrapping:NetworkReachabilityProbeTest.kt$NetworkReachabilityProbeTest$;</ID>
+    <ID>Wrapping:NetworkStateReportingInterceptorTest.kt$NetworkStateReportingInterceptorTest$;</ID>
+    <ID>Wrapping:NetworkStateService.kt$NetworkStateService$;</ID>
+    <ID>Wrapping:NetworkStateServiceTest.kt$NetworkStateServiceTest$;</ID>
+    <ID>Wrapping:PrReviewFindingsStoreImpl.kt$PrReviewFindingsStoreImpl$;</ID>
+    <ID>Wrapping:PrTitlePromptBuilderTest.kt$PrTitlePromptBuilderTest$(</ID>
+    <ID>Wrapping:RawApiTraceInterceptorTest.kt$RawApiTraceInterceptorTest$(</ID>
+    <ID>Wrapping:ReadOnlyBannerTextTest.kt$ReadOnlyBannerTextTest$(</ID>
+    <ID>Wrapping:ReliabilityPanel.kt$ReliabilityPanel$(</ID>
+    <ID>Wrapping:RepoContextResolver.kt$RepoContextResolver$(</ID>
+    <ID>Wrapping:ReportRangeDialog.kt$ReportRangeDialog$(</ID>
+    <ID>Wrapping:ReportRangeDialog.kt$ReportRangeDialog$;</ID>
+    <ID>Wrapping:RepositoriesConfigurable.kt$RepositoriesConfigurable$(</ID>
+    <ID>Wrapping:RetryInterceptor.kt$RetryInterceptor$(</ID>
+    <ID>Wrapping:RetryInterceptorTest.kt$RetryInterceptorTest$(</ID>
+    <ID>Wrapping:ScannerWorkReader.kt$ScannerWorkReader$;</ID>
+    <ID>Wrapping:SessionsPanel.kt$SessionsPanel$;</ID>
+    <ID>Wrapping:SetupDialog.kt$SetupDialog$(</ID>
+    <ID>Wrapping:SmartPollerOfflineGateTest.kt$SmartPollerOfflineGateTest$;</ID>
+    <ID>Wrapping:SmartPollerOfflineGateTest.kt$SmartPollerOfflineGateTest.FakeProbe$;</ID>
+    <ID>Wrapping:SonarModelToStringTest.kt$SonarModelToStringTest$(</ID>
+    <ID>Wrapping:SonarPropertiesReader.kt$SonarPropertiesReader$;</ID>
+    <ID>Wrapping:SourcegraphChatClient.kt$SourcegraphChatClient$(</ID>
+    <ID>Wrapping:SourcegraphChatClient.kt$SourcegraphChatClient$;</ID>
+    <ID>Wrapping:SourcegraphChatClientStreamTest.kt$SourcegraphChatClientStreamTest$(</ID>
+    <ID>Wrapping:SourcegraphChatClientToolsDroppedTest.kt$SourcegraphChatClientToolsDroppedTest$;</ID>
+    <ID>Wrapping:SourcegraphCompletionsStreamClient.kt$SourcegraphCompletionsStreamClient$;</ID>
+    <ID>Wrapping:SourcegraphCompletionsStreamClientTest.kt$SourcegraphCompletionsStreamClientTest$(</ID>
+    <ID>Wrapping:SourcegraphTextGenerationService.kt$SourcegraphTextGenerationService$(</ID>
+    <ID>Wrapping:SurefireReportParserTest.kt$SurefireReportParserTest$(</ID>
+    <ID>Wrapping:TeamCityMessageConverterTest.kt$TeamCityMessageConverterTest$(</ID>
+    <ID>Wrapping:TicketBranchLocatorTest.kt$TicketBranchLocatorTest$(</ID>
+    <ID>Wrapping:TicketBranchLocatorTest.kt$TicketBranchLocatorTest$;</ID>
+    <ID>Wrapping:TicketBranchLocatorTest.kt$TicketBranchLocatorTest.StubBranchClient$;</ID>
+    <ID>Wrapping:TodayPanel.kt$TodayPanel$;</ID>
+    <ID>Wrapping:TokenEstimator.kt$TokenEstimator$;</ID>
+    <ID>Wrapping:ToolPromptBuilderTest.kt$ToolPromptBuilderTest$(</ID>
+    <ID>Wrapping:UrlScreenerTest.kt$UrlScreenerTest$(</ID>
+    <ID>Wrapping:WeekPanel.kt$WeekPanel$;</ID>
+    <ID>Wrapping:WireOutputScenarioTest.kt$WireOutputScenarioTest$;</ID>
+    <ID>Wrapping:WorkflowContextServiceMutatorsTest.kt$WorkflowContextServiceMutatorsTest$(</ID>
+    <ID>Wrapping:WorkflowEventMirrorTest.kt$WorkflowEventMirrorTest$;</ID>
+    <ID>Wrapping:WorkflowToolWindowFactory.kt$WorkflowToolWindowFactory$(</ID>
+    <ID>Wrapping:WorkflowToolWindowFactory.kt$WorkflowToolWindowFactory$(ToolWindowManagerListener.TOPIC, object : ToolWindowManagerListener { private var lastSettingsSnapshot = settingsSnapshot(project) override fun toolWindowShown(tw: ToolWindow) { if (tw.id != toolWindow.id) return val current = settingsSnapshot(project) if (current != lastSettingsSnapshot) { lastSettingsSnapshot = current val selectedTab = toolWindow.contentManager.selectedContent?.displayName buildTabs(project, toolWindow) // Restore previously selected tab if (selectedTab != null) { toolWindow.contentManager.contents .firstOrNull { it.displayName == selectedTab } ?.let { toolWindow.contentManager.setSelectedContent(it) } } } } })</ID>
+  </CurrentIssues>
+</SmellBaseline>

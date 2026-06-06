@@ -1,0 +1,486 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ArgumentListWrapping:CorpusExtractionProbe.kt$CorpusExtractionProbe$("${i + 1}. [off=${a.offset}] ${a.key}")</ID>
+    <ID>ArgumentListWrapping:CorpusExtractionProbe.kt$CorpusExtractionProbe$("[corpus-probe] $name: ${index.sections.size} sections, ${index.pages.size} pages, " + "$tableRows tableRows, $imageMarkers images, $urlRefs urls, ${md.length} chars")</ID>
+    <ID>ArgumentListWrapping:CorpusExtractionProbe.kt$CorpusExtractionProbe$("| $name | $ext | $bytes | - | - | - | - | - | - | - | - | ERROR: ${e.message?.take(50)} |")</ID>
+    <ID>ArgumentListWrapping:CorpusExtractionProbe.kt$CorpusExtractionProbe$("| file | ext | bytes | pages | #sectionAnchors | #pageAnchors | tableRows | imageMarkers | embeddedObjs | urlRefs | chars | status |")</ID>
+    <ID>ArgumentListWrapping:CorpusExtractionProbe.kt$CorpusExtractionProbe$(50)</ID>
+    <ID>ArgumentListWrapping:DocumentArtifactStore.kt$DocumentArtifactStore$("index.json")</ID>
+    <ID>ArgumentListWrapping:DocumentArtifactStore.kt$DocumentArtifactStore$(DocumentIndex.serializer(), assembled.index)</ID>
+    <ID>ArgumentListWrapping:DocumentArtifactStore.kt$DocumentArtifactStore$(artDir.resolve("index.json"), json.encodeToString(DocumentIndex.serializer(), assembled.index))</ID>
+    <ID>ArgumentListWrapping:DocumentArtifactStoreFormatsTest.kt$DocumentArtifactStoreFormatsTest$(strings = [ "spec-with-tables.pdf", "tabula-eu-002.pdf", "ietf-rfc7230.pdf", "bug-tracker.xlsx", "slides.pptx", "release-notes.rtf", "data.csv", ])</ID>
+    <ID>ArgumentListWrapping:DocumentArtifactStoreSearchTest.kt$DocumentArtifactStoreSearchTest$(m.snippet.contains("«") &amp;&amp; m.snippet.contains("»"), "snippet must delimit the match; got: ${m.snippet}")</ID>
+    <ID>ArgumentListWrapping:DocumentArtifactStoreSliceTest.kt$DocumentArtifactStoreSliceTest$("1", 0)</ID>
+    <ID>ArgumentListWrapping:DocumentArtifactStoreSliceTest.kt$DocumentArtifactStoreSliceTest$("2", 100)</ID>
+    <ID>ArgumentListWrapping:DocumentArtifactStoreSliceTest.kt$DocumentArtifactStoreSliceTest$("3", 200)</ID>
+    <ID>ArgumentListWrapping:DocumentArtifactStoreSliceTest.kt$DocumentArtifactStoreSliceTest$("encrypted PDF", store.loadFailureIfFresh(dir, nowEpochMs = 1_000_000L + 60_000L, ttlMs = 3_600_000L))</ID>
+    <ID>ArgumentListWrapping:DocumentArtifactStoreSliceTest.kt$DocumentArtifactStoreSliceTest$(DocumentIndex.Anchor("1", 0), DocumentIndex.Anchor("2", 100), DocumentIndex.Anchor("3", 200))</ID>
+    <ID>ArgumentListWrapping:DocumentArtifactStoreSliceTest.kt$DocumentArtifactStoreSliceTest$(dir, nowEpochMs = 1_000_000L + 60_000L, ttlMs = 3_600_000L)</ID>
+    <ID>ArgumentListWrapping:DocumentArtifactStoreSubsectionDiscoveryTest.kt$DocumentArtifactStoreSubsectionDiscoveryTest$(total, slice.totalSectionCount, "the FULL section count must be reported so truncation is never silent")</ID>
+    <ID>ArgumentListWrapping:DocumentBlockHandler.kt$DocumentBlockHandler$(lastSlash + 1)</ID>
+    <ID>ArgumentListWrapping:DocumentBlockHandlerHeadingDetectionTest.kt$DocumentBlockHandlerHeadingDetectionTest$( 1, blocks.filterIsInstance&lt;DocumentBlock.Heading>().size, "real heading '$line' must stay a Heading; got: $blocks", )</ID>
+    <ID>ArgumentListWrapping:DocumentBlockHandlerHeadingDetectionTest.kt$DocumentBlockHandlerHeadingDetectionTest$( 1, blocks.filterIsInstance&lt;DocumentBlock.Heading>().size, "real numbered heading '$line' must stay a Heading; got: $blocks", )</ID>
+    <ID>ArgumentListWrapping:DocumentBlockHandlerStructureFidelityTest.kt$DocumentBlockHandlerStructureFidelityTest$("2.2 Considerations, Other Requirements, and Flexibilities ................................... 5")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$( ByteArrayInputStream(pngBytes), XWPFDocument.PICTURE_TYPE_PNG, "boulders.png", Units.toEMU(40.0), Units.toEMU(40.0), )</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$( ByteArrayInputStream(pngBytes), XWPFDocument.PICTURE_TYPE_PNG, "diagram.png", Units.toEMU(40.0), Units.toEMU(40.0), )</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$( ByteArrayInputStream(pngBytes), XWPFDocument.PICTURE_TYPE_PNG, "pic.png", Units.toEMU(40.0), Units.toEMU(40.0), )</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$( ByteArrayInputStream(pngBytes), XWPFDocument.PICTURE_TYPE_PNG, "shape.png", Units.toEMU(40.0), Units.toEMU(40.0), )</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$( javax.xml.namespace.QName(wNs, "id", "w"), id.toString(), )</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$("Abacus with solid fill", ref.altText, "docPr descr must surface as the figure's alt-text")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$("BOLD ITALIC plain", text, "Bold/italic runs collapse to plain text — DocumentBlock has no inline-style field")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$("REMOVED", tracked.single().anchorText, "Deleted text should be in anchorText so the assembler can render it in the header")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(0)</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(0, tracked.size, "Empty w:ins (no text inside) should not emit a Comment block")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(1)</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(1, commentBlocks.size, "Expected the orphaned marker (id=99) to be skipped, only the real id=1 comment emitted")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(2)</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(3)</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(blocks.none { it is DocumentBlock.EmbeddedFileRef }, "No images in the doc → visitor emits nothing")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(blocks.none { it is DocumentBlock.EmbeddedFileRef }, "Without ImageExtractionService, ImageExtractionVisitor is not in the chain → no image emission")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(blocks.none { it is DocumentBlock.EmbeddedObjectRef }, "Plain picture should not yield any EmbeddedObjectRef placeholder")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(body.contains("Footnotes[^fn2] and endnotes[^en2] are recognized."), "Surrounding prose + inline refs should be intact; got: $body")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(commentIdx > listIdx, "Comment must emit AFTER the ListBlock, not between items. Got: $classes")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(imageRef!!.name.endsWith(".png"), "Expected a PNG filename but got: ${imageRef.name}")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(imageRef, "Oversize image still emits an EmbeddedFileRef placeholder so the LLM knows an image exists")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(introIdx >= 0 &amp;&amp; listIdx > introIdx, "Paragraph must appear before the ListBlock in extracted order")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(items.containsAll(listOf("Step 1", "Step 2", "Step 3")), "All SmartArt text items should appear in the ListBlock; got items: $items")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(java.nio.file.Files.exists(java.nio.file.Path.of(imageRef.path!!)), "Saved file should exist on disk at the reported path")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(listBlocks.isEmpty(), "No SmartArt → no extra ListBlocks; got: $listBlocks")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(listBlocks.isNotEmpty(), "Expected at least one ListBlock from SmartArt; got: ${blocks.map { it::class.simpleName }}")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(listOf("Parent", " Child", " Grandchild"), listBlock!!.items, "Level 0 → no indent, level 1 → ' ', level 2 → ' '")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(listOf("author-1", "author-2", "author-3"), commentBlocks.map { it.author }, "Comments should be emitted in ascending w:id order")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(listOf("item-one", "item-two", "item-three"), list.items, "All three items should be in the ListBlock, regardless of comment anchoring")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(paragraphs.none { it.text in listOf("Apple", "Banana", "Cherry") }, "List-item text must NOT also appear as Paragraph blocks (double-emission)")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(refs[0].path, refs[1].path, "Content-addressed: identical bytes within one doc share the same on-disk path")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(savedFiles.isEmpty(), "No file should have been written for the oversize image; got: $savedFiles")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(table.getRow(1).getCell(0), org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge.RESTART)</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(table.getRow(2).getCell(0), org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge.CONTINUE)</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(table.getRow(3).getCell(0), org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge.CONTINUE)</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(text!!.contains(needle), "DocxTableExtractor must NOT touch '$needle' directly; delegate to FootnoteExtractionVisitor")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(text.contains("**") || text.contains("&lt;b>") || text.contains("*ITALIC*"), "Extractor must not invent Markdown/HTML formatting; it has none to invent from")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(text.contains("E = mc^2"), "Math-only paragraph should still emit a Paragraph; got: $text")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(text.contains("The equation is"), "Surrounding prose should be preserved; got: $text")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(text.contains("a^2 + b^2 = c^2"), "oMathPara plain-text should surface; got: $text")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(text.contains("the spec (https://workflow.example.com/spec)"), "Hyperlink should appear as 'visible text (url)'; got: $text")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(text.contains("x + 2 = y"), "OMath plain-text fallback should appear in the paragraph; got: $text")</ID>
+    <ID>ArgumentListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(tracked.single().text.isBlank(), "TRACKED_DELETION body should be blank — the deleted text is in the header")</ID>
+    <ID>ArgumentListWrapping:DocxTableExtractorTest.kt$DocxTableExtractorTest$(paragraphBetween, "Expected at least one Paragraph block between the two tables; " + "blocks between tables: ${blocksBetween.map { it::class.simpleName }}")</ID>
+    <ID>ArgumentListWrapping:DocxVisitorChainTest.kt$DocxVisitorChainTest$(blocks.first() is DocumentBlock.Heading, "First block should be a Heading; got ${blocks.first()::class.simpleName}")</ID>
+    <ID>ArgumentListWrapping:EmbeddedFileRefUnreachableTest.kt$EmbeddedFileRefUnreachableTest$("DocumentBlockHandler.kt", "ImageExtractionVisitor.kt", "PdfMetadataExtractor.kt", "PptxExtractor.kt", "XlsxTableExtractor.kt")</ID>
+    <ID>ArgumentListWrapping:EmbeddedFileRefUnreachableTest.kt$EmbeddedFileRefUnreachableTest$(PDFParserConfig.OCR_STRATEGY.NO_OCR, cfg.ocrStrategy, "OCR is explicitly OFF — flipping this without adding an OCR parser will break TikaDocumentExtractor's " + "init-block 'no OCR parser registered' assertion.")</ID>
+    <ID>ArgumentListWrapping:EmbeddedFileRefUnreachableTest.kt$EmbeddedFileRefUnreachableTest$(cfg.isExtractAnnotationText, "Annotation extraction is OFF — PdfMetadataExtractor is the SOLE annotation source post-Phase-4b. " + "Re-enabling this would re-introduce duplicate annotation Paragraphs alongside the typed Comment blocks.")</ID>
+    <ID>ArgumentListWrapping:EmbeddedFileRefUnreachableTest.kt$EmbeddedFileRefUnreachableTest$(cfg.isExtractInlineImages, "Images are explicitly OFF — if this flips, PDF images will start flowing through " + "Tika as separate parser invocations and the extractor still has nowhere to put them.")</ID>
+    <ID>ArgumentListWrapping:EmbeddedFileRefUnreachableTest.kt$EmbeddedFileRefUnreachableTest$(expected, producers, "EmbeddedFileRef producer set changed — update this list to reflect the new positive behaviour. " + "Current producers: $producers")</ID>
+    <ID>ArgumentListWrapping:ImageExtractionVisitor.kt$ImageExtractionVisitor$(name = name, mimeType = mime, path = null, altText = altText)</ID>
+    <ID>ArgumentListWrapping:ImageExtractionVisitor.kt$ImageExtractionVisitor$(name = name, mimeType = saveResult.mimeType, path = saveResult.path.toString(), altText = altText)</ID>
+    <ID>ArgumentListWrapping:ImageMimeSniffAndFilterTest.kt$ImageMimeSniffAndFilterTest$("application/octet-stream", result.mimeType, "Fallback to declared MIME when sniffing inconclusive")</ID>
+    <ID>ArgumentListWrapping:ImageMimeSniffAndFilterTest.kt$ImageMimeSniffAndFilterTest$("image/png", result.mimeType, "Expected sniffed MIME image/png but got: ${result.mimeType}")</ID>
+    <ID>ArgumentListWrapping:ImageMimeSniffAndFilterTest.kt$ImageMimeSniffAndFilterTest$(pngData, docKey = "/source/spec.pdf", suggestedName = "figure.jpg", mime = "image/jpeg")</ID>
+    <ID>ArgumentListWrapping:ImageMimeSniffAndFilterTest.kt$ImageMimeSniffAndFilterTest$(result.path.toString().endsWith(".jpg"), "Expected .jpg extension but got: ${result.path}")</ID>
+    <ID>ArgumentListWrapping:ImageMimeSniffAndFilterTest.kt$ImageMimeSniffAndFilterTest$(result.path.toString().endsWith(".png"), "Expected .png extension from sniffed MIME but got: ${result.path}")</ID>
+    <ID>ArgumentListWrapping:IndexedExtractionProbe.kt$IndexedExtractionProbe$("[indexed-probe] $name: ${index.sections.size} section anchors, ${index.pages.size} page anchors, ${md.length} chars")</ID>
+    <ID>ArgumentListWrapping:IndexedExtractionProbe.kt$IndexedExtractionProbe$("| PDF | bytes | pages | #sectionAnchors | #pageAnchors | exact-hit | slug-hit | natural-hit |")</ID>
+    <ID>ArgumentListWrapping:MarkdownAssembler.kt$MarkdownAssembler$("\n\n*[Document truncated at $n characters of $m total characters; $x of $y blocks rendered$footnoteClause]*\n")</ID>
+    <ID>ArgumentListWrapping:MarkdownAssemblerNewVariantsTest.kt$MarkdownAssemblerNewVariantsTest$( kind = DocumentBlock.EmbeddedObjectRef.Kind.OLE, name = "PowerPoint.Slide.8", )</ID>
+    <ID>ArgumentListWrapping:MarkdownAssemblerNewVariantsTest.kt$MarkdownAssemblerNewVariantsTest$( kind = DocumentBlock.EmbeddedObjectRef.Kind.OLE, name = null, )</ID>
+    <ID>ArgumentListWrapping:MarkdownAssemblerNewVariantsTest.kt$MarkdownAssemblerNewVariantsTest$( kind = DocumentBlock.EmbeddedObjectRef.Kind.SHAPE, name = "Direct Access Storage 1", )</ID>
+    <ID>ArgumentListWrapping:MarkdownAssemblerNewVariantsTest.kt$MarkdownAssemblerNewVariantsTest$( kind = DocumentBlock.EmbeddedObjectRef.Kind.SMARTART, name = "AlternatingHexagons", )</ID>
+    <ID>ArgumentListWrapping:MarkdownAssemblerTableAnchorTest.kt$MarkdownAssemblerTableAnchorTest$("Fare Parameters")</ID>
+    <ID>ArgumentListWrapping:MarkdownAssemblerTableAnchorTest.kt$MarkdownAssemblerTableAnchorTest$("Table 8.7.3-2 specifies the default and optional Transfer Syntax UID combinations.")</ID>
+    <ID>ArgumentListWrapping:MarkdownAssemblerTableAnchorTest.kt$MarkdownAssemblerTableAnchorTest$(out.index.sections.none { it.key.contains("Fare Parameters") }, "table caption must not be in sections")</ID>
+    <ID>ArgumentListWrapping:MarkdownAssemblerTableAnchorTest.kt$MarkdownAssemblerTableAnchorTest$(out.index.tables.isEmpty(), "prose references must not be indexed as captions; got ${out.index.tables}")</ID>
+    <ID>ArgumentListWrapping:OfficePipelineTest.kt$OfficePipelineTest$(blocks.any { it is DocumentBlock.Heading }, "Expected at least one Heading block")</ID>
+    <ID>ArgumentListWrapping:OfficePipelineTest.kt$OfficePipelineTest$(blocks.any { it is DocumentBlock.Table }, "Expected at least one Table block")</ID>
+    <ID>ArgumentListWrapping:OfficePipelineTest.kt$OfficePipelineTest$(headingTexts.contains("Bugs"), "Expected 'Bugs' sheet heading, found: $headingTexts")</ID>
+    <ID>ArgumentListWrapping:PdfColumnProseExtractor.kt$PdfColumnProseExtractor$( gutter, 0f, (originX + pageWidth - gutter).coerceAtLeast(1f), pageHeight, )</ID>
+    <ID>ArgumentListWrapping:PdfColumnProseExtractor.kt$PdfColumnProseExtractor$( originX, 0f, (gutter - originX).coerceAtLeast(1f), pageHeight, )</ID>
+    <ID>ArgumentListWrapping:PdfOutlineDeepSubsectionTest.kt$PdfOutlineDeepSubsectionTest$( 1, deep.size, "outline already covers '2.4.4.1' → exactly ONE anchor, no heuristic duplicate; got: $headings", )</ID>
+    <ID>ArgumentListWrapping:PdfOutlineDeepSubsectionTest.kt$PdfOutlineDeepSubsectionTest$( 1, deepAnchors.size, "exactly one '2.4.4.1' section anchor; got: ${index.sections.map { it.key }}", )</ID>
+    <ID>ArgumentListWrapping:PdfPageAttributionTest.kt$PdfPageAttributionTest$(anchorK != null &amp;&amp; at >= anchorK &amp;&amp; at &lt; anchorNext, "page-$k text found at $at but its anchor is $anchorK (next ${pageAnchors[k + 1]}). " + "Text is not under its own page marker.")</ID>
+    <ID>ArgumentListWrapping:PdfPageAttributionTest.kt$PdfPageAttributionTest$(pageAnchors.size >= pages - 1, "expected ~$pages page anchors, got ${pageAnchors.size}: $pageAnchors")</ID>
+    <ID>ArgumentListWrapping:PdfPageAttributionTest.kt$PdfPageAttributionTest$(span1to2 &lt; md.length / 2, "page-1 anchor span ($span1to2) holds >=50% of the ${md.length}-char body — prose collapsed under page 1. anchors=$pageAnchors")</ID>
+    <ID>ArgumentListWrapping:PdfPageAttributionTest.kt$PdfPageAttributionTest$(tinyGaps &lt;= 1, "most page anchors are &lt;20 chars apart ($tinyGaps tiny gaps of ${gaps.size}) — pages are empty markers. gaps=$gaps")</ID>
+    <ID>ArgumentListWrapping:PdfPipeline.kt$PdfPipeline$("PDF metadata (annotations/outline/images)", emptyList(), DOCUMENT_FATAL)</ID>
+    <ID>ArgumentListWrapping:PdfPipeline.kt$PdfPipeline$(file)</ID>
+    <ID>ArgumentListWrapping:PdfPipelineTest.kt$PdfPipelineTest$(ref, "Expected an EmbeddedFileRef for the image XObject; blocks=${blocks.map { it::class.simpleName }}")</ID>
+    <ID>ArgumentListWrapping:PdfPipelineTest.kt$PdfPipelineTest$(ref.path, "Path must be non-null when service is wired and attachment fits within maxBytesPerImage")</ID>
+    <ID>ArgumentListWrapping:PdfPreformattedCorpusByteIdenticalTest.kt$PdfPreformattedCorpusByteIdenticalTest$(codeBlocks.any { cb -> cb.lines.any { it.contains("HTTP-version") &amp;&amp; it.contains("HTTP-name") } }, "HTTP-version ABNF production not fenced")</ID>
+    <ID>ArgumentListWrapping:PdfPreformattedCorpusByteIdenticalTest.kt$PdfPreformattedCorpusByteIdenticalTest$(codeBlocks.any { cb -> cb.lines.size >= 2 &amp;&amp; cb.lines.any { it.contains("chunked-body") } }, "chunked-body multi-line ABNF not fenced with line structure")</ID>
+    <ID>ArgumentListWrapping:PdfPreformattedCorpusByteIdenticalTest.kt$PdfPreformattedCorpusByteIdenticalTest$(codeBlocks.size >= 5, "expected several fenced CodeBlocks in rfc7230, found ${codeBlocks.size}")</ID>
+    <ID>ArgumentListWrapping:PdfPreformattedSubstitutionTest.kt$PdfPreformattedSubstitutionTest$(code.none { it.lines.any { l -> l.contains("PROSEALPHA") } }, "prose was wrongly fenced as code")</ID>
+    <ID>ArgumentListWrapping:PdfPreformattedSubstitutionTest.kt$PdfPreformattedSubstitutionTest$(codeLines.any { it.contains("HTTP-version") &amp;&amp; it.contains("HTTP-name") }, "first ABNF production missing/merged: $codeLines")</ID>
+    <ID>ArgumentListWrapping:PdfPreformattedSubstitutionTest.kt$PdfPreformattedSubstitutionTest$(codeLines.any { it.startsWith("chunk-size") || it.contains("chunk-size = 1*HEXDIG") }, "chunk-size production missing/merged: $codeLines")</ID>
+    <ID>ArgumentListWrapping:PdfPreformattedSubstitutionTest.kt$PdfPreformattedSubstitutionTest$(dump(withoutSf2), dump(withSf2), "SF-2 preformatted handling must not alter ordinary single-column prose output")</ID>
+    <ID>ArgumentListWrapping:PdfPreformattedSubstitutionTest.kt$PdfPreformattedSubstitutionTest$(fenced.contains("HTTP-version") &amp;&amp; fenced.contains("chunk-size"), "ABNF not inside the fence:\n$md")</ID>
+    <ID>ArgumentListWrapping:PdfPreformattedSubstitutionTest.kt$PdfPreformattedSubstitutionTest$(fenced.lineSequence().count { it.isNotBlank() } >= 2, "fenced block collapsed to one line:\n$md")</ID>
+    <ID>ArgumentListWrapping:PdfPreformattedSubstitutionTest.kt$PdfPreformattedSubstitutionTest$(httpLine >= 0 &amp;&amp; chunkLine >= 0 &amp;&amp; httpLine != chunkLine, "ABNF productions collapsed onto one line: $codeLines")</ID>
+    <ID>ArgumentListWrapping:PdfRealExtractionGroundTruthTest.kt$PdfRealExtractionGroundTruthTest$("1.0 Framework Introduction")</ID>
+    <ID>ArgumentListWrapping:PdfRealExtractionGroundTruthTest.kt$PdfRealExtractionGroundTruthTest$(headings.contains("1.0 Framework Introduction"), "TOC's multi-space title normalized to single space; got: $headings")</ID>
+    <ID>ArgumentListWrapping:PdfRealExtractionGroundTruthTest.kt$PdfRealExtractionGroundTruthTest$(offset, "section '$label' must resolve via the index (substring match); sections=${e.index.sections.map { it.key }}")</ID>
+    <ID>ArgumentListWrapping:PdfTableExtractorContinuationMergeTest.kt$PdfTableExtractorContinuationMergeTest$( cs, font, xs = floatArrayOf(72f, 180f, 290f, 400f, 540f), // 4 columns ys = floatArrayOf(ph - 50f, ph - 72f, ph - 94f), rows = listOf( listOf("A", "B", "C", "D"), listOf("1", "2", "3", "4"), listOf("5", "6", "7", "8"), ), )</ID>
+    <ID>ArgumentListWrapping:PdfTableExtractorContinuationMergeTest.kt$PdfTableExtractorContinuationMergeTest$( cs, font, xs = floatArrayOf(72f, 220f, 360f, 540f), ys = floatArrayOf(180f, 158f, 136f, 114f), // header + 2 data rows rows = listOf( listOf("Sym", "Type", "Desc"), listOf("clk", "in", "clock"), listOf("en", "in", "enable"), ), )</ID>
+    <ID>ArgumentListWrapping:PdfTableExtractorContinuationMergeTest.kt$PdfTableExtractorContinuationMergeTest$( cs, font, xs = floatArrayOf(72f, 220f, 360f, 540f), ys = floatArrayOf(180f, 158f, 136f, 114f), rows = listOf( listOf("Sym", "Type", "Desc"), listOf("clk", "in", "clock"), listOf("en", "in", "enable"), ), )</ID>
+    <ID>ArgumentListWrapping:PdfTableExtractorContinuationMergeTest.kt$PdfTableExtractorContinuationMergeTest$( cs, font, xs = floatArrayOf(72f, 220f, 360f, 540f), ys = floatArrayOf(ph - 50f, ph - 72f, ph - 94f), // 2 data rows, no header rows = listOf( listOf("", "", "reset"), // blank-dominant continuation first row listOf("out", "out", "result"), ), )</ID>
+    <ID>ArgumentListWrapping:PdfTableExtractorContinuationMergeTest.kt$PdfTableExtractorContinuationMergeTest$( cs, font, xs = floatArrayOf(72f, 220f, 360f, 540f), ys = floatArrayOf(ph - 50f, ph - 72f, ph - 94f), rows = listOf( listOf("Code", "Status", "Note"), // fully-populated DIFFERENT header listOf("E1", "open", "first"), listOf("E2", "closed", "second"), ), )</ID>
+    <ID>ArgumentListWrapping:PdfTwoColumnSubstitutionTest.kt$PdfTwoColumnSubstitutionTest$(textOf(withoutSf1), textOf(withSf1), "SF-1 column handling must not alter single-column output")</ID>
+    <ID>ArgumentListWrapping:PptxExtractor.kt$PptxExtractor$(DocumentBlock.EmbeddedObjectRef(kind = DocumentBlock.EmbeddedObjectRef.Kind.SMARTART, name = name))</ID>
+    <ID>ArgumentListWrapping:PptxExtractor.kt$PptxExtractor$(kind = DocumentBlock.EmbeddedObjectRef.Kind.SMARTART, name = name)</ID>
+    <ID>ArgumentListWrapping:PptxExtractor.kt$PptxExtractor$(name = name, mimeType = saveResult.mimeType, path = saveResult.path.toString(), altText = altText)</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$("PowerPoint.Slide.8", obj!!.name, "OLE placeholder should carry the progId as its identifier")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(1, countOccurrences(firstCell, "Web Page"), "Cell display text must appear once, was: $firstCell")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(1, s1Range.count { it is DocumentBlock.EmbeddedFileRef }, "Slide 1 should own exactly one EmbeddedFileRef")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(1, s2Range.count { it is DocumentBlock.EmbeddedFileRef }, "Slide 2 should own exactly one EmbeddedFileRef")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(blocks.none { it is DocumentBlock.EmbeddedFileRef }, "Without ImageExtractionService wired, picture shapes are skipped (legacy behaviour)")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(blocks.none { it is DocumentBlock.ListBlock }, "No SmartArt → no ListBlocks")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(firstCell.contains("[Web Page](http://poi.apache.org/)"), "Hyperlink in a table cell should render as a markdown link, was: $firstCell")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(items.containsAll(listOf("Idea", "Plan", "Execute")), "All SmartArt text items should appear; got items: $items")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(java.nio.file.Files.exists(java.nio.file.Path.of(ref.path!!)), "Saved file should exist at the reported path")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(listBlocks.isNotEmpty(), "Expected at least one ListBlock from PPTX SmartArt; got: ${blocks.map { it::class.simpleName }}")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(text.contains(" | ") &amp;&amp; text.contains(" end"), "Plain runs must remain in the text, was: $text")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(text.contains("&lt;b>") || text.contains("**BOLD**"), "Extractor never invents Markdown/HTML markup for bold/italic")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(text.contains("BOLD ITALIC plain"), "All run text is concatenated — but style metadata is gone, was: $text")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(text.contains("[Email](mailto:dev@poi.apache.org)"), "Email hyperlink should render as a mailto markdown link, was: $text")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(text.contains("[Jump](#slide-1)"), "Slide-jump hyperlink should resolve to #slide-N, was: $text")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(text.contains("[Web Page](http://poi.apache.org/)"), "External hyperlink should render as a markdown link, was: $text")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(texts.any { it.contains("text-at-depth-2") }, "Recursion must handle arbitrary nesting depth; got texts: $texts")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(texts.any { it.contains("text-inside-a-group") }, "Group-shape children must be recursed into; got texts: $texts")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(topIdx >= 0 &amp;&amp; groupIdx > topIdx &amp;&amp; trailingIdx > groupIdx, "Order should be: top → group child → trailing; got texts: $texts")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorTest.kt$PptxExtractorTest$(3, table.rows.size, "Slide 2 table should have 3 data rows")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorTest.kt$PptxExtractorTest$(listOf("RiskId", "Likelihood", "Impact"), table!!.headers, "Slide 2 table headers should be [RiskId, Likelihood, Impact]")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorTest.kt$PptxExtractorTest$(notesBlock!!.text.contains("Demo notes", ignoreCase = true), "Notes paragraph should contain 'Demo notes', was: '${notesBlock.text}'")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorTest.kt$PptxExtractorTest$(notesBlock, "Expected a notes paragraph starting with '> Notes:' in Slide 1 blocks; " + "paragraphs found: ${slide1Blocks.filterIsInstance&lt;DocumentBlock.Paragraph>().map { it.text }}")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorTest.kt$PptxExtractorTest$(slideHeadings.size >= 3, "Expected at least 3 slide headings, got: $slideHeadings")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorTest.kt$PptxExtractorTest$(slideHeadings[0].startsWith("Slide 1"), "First slide heading should start with 'Slide 1', was: ${slideHeadings[0]}")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorTest.kt$PptxExtractorTest$(slideHeadings[1].startsWith("Slide 2"), "Second slide heading should start with 'Slide 2', was: ${slideHeadings[1]}")</ID>
+    <ID>ArgumentListWrapping:PptxExtractorTest.kt$PptxExtractorTest$(slideHeadings[2].startsWith("Slide 3"), "Third slide heading should start with 'Slide 3', was: ${slideHeadings[2]}")</ID>
+    <ID>ArgumentListWrapping:TableAnchorCorpusProbe.kt$TableAnchorCorpusProbe$("[table-anchor-probe] dicom tables (${index.tables.size}): " + index.tables.take(8).joinToString(" | ") { it.key })</ID>
+    <ID>ArgumentListWrapping:TableAnchorCorpusProbe.kt$TableAnchorCorpusProbe$("[table-anchor-probe] microchip tables (${index.tables.size}): " + index.tables.take(8).joinToString(" | ") { it.key })</ID>
+    <ID>ArgumentListWrapping:TableAnchorCorpusProbe.kt$TableAnchorCorpusProbe$("microchip-$hash")</ID>
+    <ID>ArgumentListWrapping:TableAnchorCorpusProbe.kt$TableAnchorCorpusProbe$(120)</ID>
+    <ID>ArgumentListWrapping:TableAnchorCorpusProbe.kt$TableAnchorCorpusProbe$(byNumber.content.contains("Request Header Fields", ignoreCase = true) || byNumber.content.contains("Table 5.2-1", ignoreCase = true), "the resolved region should be the Request Header Fields table; got head: ${byNumber.content.take(120)}")</ID>
+    <ID>ArgumentListWrapping:TableAnchorCorpusProbe.kt$TableAnchorCorpusProbe$(byNumber.sectionMatched == true &amp;&amp; byNumber.startOffset > 0, "section='Table 5.2-1' must resolve to the table (offset=${byNumber.startOffset}, matched=${byNumber.sectionMatched})")</ID>
+    <ID>ArgumentListWrapping:TableAnchorCorpusProbe.kt$TableAnchorCorpusProbe$(index.tables.any { it.key.contains("TABLE 1-2", ignoreCase = true) }, "TABLE 1-2 must be indexed; tables=${index.tables.map { it.key }.take(10)}")</ID>
+    <ID>ArgumentListWrapping:TableAnchorCorpusProbe.kt$TableAnchorCorpusProbe$(index.tables.any { it.key.contains("Table 5.2-1", ignoreCase = true) }, "Table 5.2-1 must be indexed; tables=${index.tables.map { it.key }.take(10)}")</ID>
+    <ID>ArgumentListWrapping:TableAnchorCorpusProbe.kt$TableAnchorCorpusProbe$(slice.availableTables.isNotEmpty(), "availableTables must be surfaced separately from availableSections")</ID>
+    <ID>ArgumentListWrapping:TableAnchorCorpusProbe.kt$TableAnchorCorpusProbe$(slice.content.contains("PINOUT", ignoreCase = true) || slice.content.contains("Table 1-2", ignoreCase = true), "the resolved region should be the pinout table; got head: ${slice.content.take(120)}")</ID>
+    <ID>ArgumentListWrapping:TableAnchorCorpusProbe.kt$TableAnchorCorpusProbe$(slice.startOffset > 0, "must resolve to a real offset, not a fallback to 0 (got ${slice.startOffset})")</ID>
+    <ID>ArgumentListWrapping:TableAnchorCorpusProbe.kt$TableAnchorCorpusProbe$(src, work.resolve("microchip-$hash"), hash, extractTimeoutMs = 300_000L)</ID>
+    <ID>ArgumentListWrapping:TaggedPdfFixtureFactory.kt$TaggedPdfFixtureFactory$(COSName.P, org.apache.pdfbox.pdmodel.documentinterchange.markedcontent.PDPropertyList.create(props))</ID>
+    <ID>ArgumentListWrapping:TaggedPdfFixtureFactory.kt$TaggedPdfFixtureFactory$(props)</ID>
+    <ID>ArgumentListWrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$("text/plain", content.mime, "Plain-text file with .pdf extension should be detected as text/plain")</ID>
+    <ID>ArgumentListWrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$(1, markdowns.size, "All 4 concurrent extractions must produce identical markdown; got ${markdowns.size} distinct outputs")</ID>
+    <ID>ArgumentListWrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$(content.markdown.contains("Alice"), "Each concurrent extraction must contain 'Alice'")</ID>
+    <ID>ArgumentListWrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$(content.markdown.contains("Alice"), "Extracted markdown must contain 'Alice'; got: ${content.markdown.take(500)}")</ID>
+    <ID>ArgumentListWrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$(content.markdown.contains("Alice"), "Full content must be present when options.maxChars=1000")</ID>
+    <ID>ArgumentListWrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$(content.markdown.contains("BUG-001"), "Markdown must contain 'BUG-001'; snippet: ${content.markdown.take(500)}")</ID>
+    <ID>ArgumentListWrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$(content.markdown.contains("Q1"), "Markdown must contain merged cell value 'Q1'; snippet: ${content.markdown.take(1000)}")</ID>
+    <ID>ArgumentListWrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$(content.markdown.length &lt;= 50 + 300, // The first block may exceed 50 chars (single-block oversizing rule in assembler), // but the rest of the document must be cut off. We allow assembler overhead for the // truncation marker text itself (~300 chars). "Markdown length should be close to 50 chars budget; got ${content.markdown.length}", )</ID>
+    <ID>ArgumentListWrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$(content.truncated, "Markdown must NOT be truncated when options.maxChars=1000 on a tiny CSV")</ID>
+    <ID>ArgumentListWrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$(content.truncated, "Markdown must be truncated when maxCharsProvider = 50")</ID>
+    <ID>ArgumentListWrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$(md.contains("FR-001"), "Markdown must contain 'FR-001' from the FR table; snippet: ${md.take(1000)}")</ID>
+    <ID>ArgumentListWrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$(md.contains("Test") || md.contains("Actual"), "Markdown must contain Acceptance table content; snippet: ${md.take(1500)}")</ID>
+    <ID>ArgumentListWrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$(result.isError, "All concurrent extractions must succeed; error: ${result.summary}")</ID>
+    <ID>ArgumentListWrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$(result.isError, "Corrupt PDF must return isError=true; got summary: ${result.summary}")</ID>
+    <ID>ArgumentListWrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$(result.isError, "Encrypted PDF must return isError=true; got summary: ${result.summary}")</ID>
+    <ID>ArgumentListWrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$(result.isError, "Zero-byte file must return isError=true; got summary: ${result.summary}")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlFormatGapsTest.kt$TikaXhtmlFormatGapsTest$("application/octet-stream", ref.mimeType, "MIME falls back to octet-stream when Tika strips the data: URI from src")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlFormatGapsTest.kt$TikaXhtmlFormatGapsTest$(1, tables.size, "Exactly one Table is emitted from nested HTML tables — inner structure is lost")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlFormatGapsTest.kt$TikaXhtmlFormatGapsTest$(firstImgIdx &lt; middleTextIdx &amp;&amp; middleTextIdx &lt; secondImgIdx, "Images and text should interleave in document order; got img@$firstImgIdx middle@$middleTextIdx img2@$secondImgIdx")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlFormatGapsTest.kt$TikaXhtmlFormatGapsTest$(firstList >= 0 &amp;&amp; between > firstList &amp;&amp; secondList > between, "Expected ListBlock, Paragraph(between), ListBlock order; got: ${blocks.map { it::class.simpleName }}")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlFormatGapsTest.kt$TikaXhtmlFormatGapsTest$(text.contains("&lt;b>") || text.contains("**important**"), "Bold structure is gone — handler does not synthesise Markdown")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlFormatGapsTest.kt$TikaXhtmlFormatGapsTest$(text.contains("the details (https://example.com/details)"), "Anchor href should be appended as parenthetical; got: $text")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlHtmlFidelityTest.kt$TikaXhtmlHtmlFidelityTest$(0, imageRefs.size, "Sub-threshold decorative icons (empty alt, ${'$'}width/height &lt; 32) should be dropped; got ${imageRefs.size}")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlHtmlFidelityTest.kt$TikaXhtmlHtmlFidelityTest$(1, imageRefs.size, "A tiny image that carries a real alt is NOT purely decorative — keep it; got ${imageRefs.size}")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlHtmlFidelityTest.kt$TikaXhtmlHtmlFidelityTest$(2, imageRefs.size, "Real images (descriptive alt, or large dimensions) must survive; got ${imageRefs.size}")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlHtmlFidelityTest.kt$TikaXhtmlHtmlFidelityTest$(body.contains("#cite_note"), "Dead fragment ref token must be cleaned, not left as a broken link; body=$body")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlHtmlFidelityTest.kt$TikaXhtmlHtmlFidelityTest$(body.contains("(#"), "No bare '(#...)' fragment parenthetical should survive; body=$body")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlHtmlFidelityTest.kt$TikaXhtmlHtmlFidelityTest$(body.contains("largest") &amp;&amp; body.contains("in Asia"), "Surrounding prose preserved; body=$body")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlHtmlFidelityTest.kt$TikaXhtmlHtmlFidelityTest$(body.contains("the details (https://example.com/details)"), "A real external href must still be preserved as a parenthetical; body=$body")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlHtmlFidelityTest.kt$TikaXhtmlHtmlFidelityTest$(body.contains(chrome), "Chrome text '$chrome' must be stripped, not promoted to a heading/body; body=$body")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlHtmlFidelityTest.kt$TikaXhtmlHtmlFidelityTest$(heads.contains("Real Article Section"), "The real &lt;h2> must survive as a heading; got headings=$heads")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlHtmlFidelityTest.kt$TikaXhtmlHtmlFidelityTest$(imageRefs.any { it.altText == "System architecture diagram" }, "The alt-bearing diagram must survive")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlHtmlFidelityTest.kt$TikaXhtmlHtmlFidelityTest$(imageRefs.size &lt; 20, "A wall of 20 tiny decorative icons must NOT emit 20 image markers; got ${imageRefs.size}")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlHtmlFidelityTest.kt$TikaXhtmlHtmlFidelityTest$(listOf("Document Title", "Introduction", "Methods"), heads, "An ordinary article's headings must be untouched by the chrome strip")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$(0, tables.size, "Multiline prose with commas must NOT become a Table when csvDetectionEnabled=false")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$(1, paragraphs.size, "Multiline prose must produce exactly one Paragraph block")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$(allText.contains("Release Notes"), "RTF output must contain 'Release Notes'; got: $allText")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$(allText.contains("Version 1.0"), "RTF output must contain 'Version 1.0'; got: $allText")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$(conclusionPara.text.contains("Performance was within target"), "conclusion paragraph must contain expected text")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$(intro.text.contains("quarterly engineering report"), "intro paragraph should contain expected text")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$(listOf("Metric", "Value"), table.headers, "table headers must be [Metric, Value]")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$(listOf("Name", "Score", "Grade"), table.headers, "CSV headers must be [Name, Score, Grade]")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$(ocrParsers.isEmpty(), "No OCR parser should be registered; found: ${ocrParsers.map { it.value.javaClass.name }}")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$(paragraphs.isNotEmpty(), "PDF extraction must produce at least one Paragraph block (prose-only Phase 3 test)")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$(parsers.isNotEmpty(), "AutoDetectParser.parsers must be non-empty — TIKA-1145 ServiceLoader issue detected if empty")</ID>
+    <ID>ArgumentListWrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$(value in allCells, "Expected cell value '$value' not found in extracted cells: $allCells")</ID>
+    <ID>ArgumentListWrapping:XlsxDataFidelityTest.kt$XlsxDataFidelityTest$( "", table.rows[rowIdx][colIdx], "Spanned cell (row=$rowIdx,col=$colIdx) must be blank, not the fabricated anchor value. " + "Full table: ${table.rows}" )</ID>
+    <ID>ArgumentListWrapping:XlsxDataFidelityTest.kt$XlsxDataFidelityTest$( 0 to 1, 0 to 2, // B2, C2 1 to 0, 1 to 1, 1 to 2, // A3, B3, C3 2 to 0, 2 to 1, 2 to 2, // A4, B4, C4 )</ID>
+    <ID>ArgumentListWrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$("A2", comment.anchorText, "Anchor should be the cell reference (column letter + 1-indexed row) so the LLM can map back to the cell")</ID>
+    <ID>ArgumentListWrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$("CRITICAL", v, "Rich-text runs collapse to plain text — DocumentBlock.Table cells are flat strings")</ID>
+    <ID>ArgumentListWrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$("D2", comment.anchorText, "Anchor should be the out-of-band cell's A1 ref (D2), not coerced to a header column")</ID>
+    <ID>ArgumentListWrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$(1, tables.size, "No chart in workbook — should have exactly one Table (the sheet data). Got: ${tables.size}")</ID>
+    <ID>ArgumentListWrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$(2, chartTable.rows.size, "Chart table should have one row per category point (2)")</ID>
+    <ID>ArgumentListWrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$(blocks.none { it is DocumentBlock.EmbeddedFileRef }, "Without ImageExtractionService, image emission is skipped")</ID>
+    <ID>ArgumentListWrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$(cells.any { it.contains("Docs") &amp;&amp; it.contains("https://example.com/handbook") }, "Hyperlink should appear as 'display (url)'; got: $cells")</ID>
+    <ID>ArgumentListWrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$(chartTable!!.caption!!.contains("bar", ignoreCase = true), "P-7: chart caption should name the type (bar); caption='${chartTable.caption}'")</ID>
+    <ID>ArgumentListWrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$(chartTable, "Expected a Table whose caption starts with 'Monthly Metrics'; found captions: ${tables.map { it.caption }}")</ID>
+    <ID>ArgumentListWrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$(expectedShape, classes, "Multi-sheet workbook: each sheet's comments must belong to its OWN Table. Got: $classes")</ID>
+    <ID>ArgumentListWrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$(java.nio.file.Files.exists(java.nio.file.Path.of(ref.path!!)), "Saved file should exist on disk at the reported path")</ID>
+    <ID>ArgumentListWrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$(kvgIdx >= 0 &amp;&amp; firstHeadingIdx > kvgIdx, "Defined names should come before any sheet Heading; got kvg@$kvgIdx headings@$firstHeadingIdx")</ID>
+    <ID>ArgumentListWrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$(listOf("A2", "B2", "A3"), comments.map { it.anchorText }, "Comments should be emitted in row-major order: row 1 left-to-right (A2 then B2), then row 2 (A3)")</ID>
+    <ID>ArgumentListWrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$(listOf("Category", "Sales", "Returns"), chartTable.headers, "Chart table headers must be Category + series titles")</ID>
+    <ID>ArgumentListWrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$(tables.any { it.caption != null }, "Sheet data Table should have null caption; only chart Tables carry a caption")</ID>
+    <ID>ArgumentListWrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$(tables.size >= 2, "Expected at least 2 Table blocks (sheet data + chart); got ${tables.size}. " + "All blocks: ${blocks.map { it::class.simpleName }}")</ID>
+    <ID>ArgumentListWrapping:XlsxSemanticsTest.kt$XlsxSemanticsTest$( "=SUM(Sheet2!D2,Sheet2!D11) (237)", formulaCell, "Expected the '=&lt;formula> (&lt;value>)' rendering", )</ID>
+    <ID>ArgumentListWrapping:XlsxSemanticsTest.kt$XlsxSemanticsTest$( listOf("Col A", "Col B"), table.headers, "Headerless sheet must use positional column headers, not promote data values", )</ID>
+    <ID>ArgumentListWrapping:XlsxSemanticsTest.kt$XlsxSemanticsTest$( listOf("Column1", "Column2"), tableBlock!!.headers, "Defined-table block must expose the declared column headers", )</ID>
+    <ID>ArgumentListWrapping:XlsxSemanticsTest.kt$XlsxSemanticsTest$("bar", ignoreCase = true)</ID>
+    <ID>ArgumentListWrapping:XlsxSemanticsTest.kt$XlsxSemanticsTest$(caption.contains("bar", ignoreCase = true), "Chart caption must name the type (bar); caption='$caption'")</ID>
+    <ID>ArgumentListWrapping:XlsxSemanticsTest.kt$XlsxSemanticsTest$(chartTable, "Expected a chart Table; captions=${blocks.filterIsInstance&lt;DocumentBlock.Table>().map { it.caption }}")</ID>
+    <ID>ArgumentListWrapping:XlsxTableExtractor.kt$XlsxTableExtractor$(name = name, mimeType = saveResult.mimeType, path = saveResult.path.toString())</ID>
+    <ID>ArgumentListWrapping:XlsxTableExtractorTest.kt$XlsxTableExtractorTest$("", notesTable.rows[2][0], "A3 (spanned) must be blank — the anchor value must not be duplicated")</ID>
+    <ID>ArgumentListWrapping:XlsxTableExtractorTest.kt$XlsxTableExtractorTest$("=COUNTIF(Bugs!B:B,\"CRITICAL\") (1)", criticalRow!![1], "COUNTIF formula text + evaluated value (1) should both be shown")</ID>
+    <ID>ArgumentListWrapping:XlsxTableExtractorTest.kt$XlsxTableExtractorTest$(listOf("Bugs", "Counts", "Notes"), headings, "Expected sheet headings in workbook order")</ID>
+    <ID>ArgumentListWrapping:XlsxTableExtractorTest.kt$XlsxTableExtractorTest$(listOf("Col A", "Col B"), notesTable.headers, "All-text Notes sheet has no header evidence ⇒ positional headers (P-5)")</ID>
+    <ID>ArgumentListWrapping:XlsxTableExtractorTest.kt$XlsxTableExtractorTest$(listOf("Section", "Note"), notesTable.rows[0], "The former 'header' row is now the first data row")</ID>
+    <ID>ComplexCondition:CellFormatter.kt$CellFormatter$localDateTime.hour == 0 &amp;&amp; localDateTime.minute == 0 &amp;&amp; localDateTime.second == 0 &amp;&amp; localDateTime.nano == 0</ID>
+    <ID>ComplexCondition:ImageExtractionService.kt$ImageExtractionService.Companion$b.size >= 12 &amp;&amp; b[0] == 0x52.toByte() &amp;&amp; b[1] == 0x49.toByte() &amp;&amp; b[2] == 0x46.toByte() &amp;&amp; b[3] == 0x46.toByte() &amp;&amp; // "RIFF" b[8] == 0x57.toByte() &amp;&amp; b[9] == 0x45.toByte() &amp;&amp; b[10] == 0x42.toByte() &amp;&amp; b[11] == 0x50.toByte()</ID>
+    <ID>ComplexCondition:ImageExtractionService.kt$ImageExtractionService.Companion$b.size >= 3 &amp;&amp; b[0] == 0xFF.toByte() &amp;&amp; b[1] == 0xD8.toByte() &amp;&amp; b[2] == 0xFF.toByte()</ID>
+    <ID>ComplexCondition:ImageExtractionService.kt$ImageExtractionService.Companion$b.size >= 4 &amp;&amp; b[0] == 0x49.toByte() &amp;&amp; b[1] == 0x49.toByte() &amp;&amp; b[2] == 0x2A.toByte() &amp;&amp; b[3] == 0x00.toByte()</ID>
+    <ID>ComplexCondition:ImageExtractionService.kt$ImageExtractionService.Companion$b.size >= 4 &amp;&amp; b[0] == 0x4D.toByte() &amp;&amp; b[1] == 0x4D.toByte() &amp;&amp; b[2] == 0x00.toByte() &amp;&amp; b[3] == 0x2A.toByte()</ID>
+    <ID>ComplexCondition:ImageExtractionService.kt$ImageExtractionService.Companion$b.size >= 8 &amp;&amp; b[0] == 0x89.toByte() &amp;&amp; b[1] == 0x50.toByte() &amp;&amp; b[2] == 0x4E.toByte() &amp;&amp; b[3] == 0x47.toByte() &amp;&amp; b[4] == 0x0D.toByte() &amp;&amp; b[5] == 0x0A.toByte() &amp;&amp; b[6] == 0x1A.toByte() &amp;&amp; b[7] == 0x0A.toByte()</ID>
+    <ID>EmptyFunctionBlock:PdfMetadataExtractor.kt$ImagePlacementEngine${}</ID>
+    <ID>ExplicitGarbageCollectionCall:TikaDocumentExtractor.kt$TikaDocumentExtractor$gc()</ID>
+    <ID>Filename:package-info.kt$com.workflow.orchestrator.document.package-info.kt</ID>
+    <ID>FunctionOnlyReturningConstant:XlsxTableExtractor.kt$XlsxTableExtractor$private fun allDataRowsBold(firstRow: Row, @Suppress("UNUSED_PARAMETER") dataRowCount: Int): Boolean</ID>
+    <ID>ImportOrdering:DocxTableExtractor.kt$import com.workflow.orchestrator.core.model.DocumentBlock import com.workflow.orchestrator.document.safeExtract import com.workflow.orchestrator.document.poi.visitor.CommentExtractionVisitor import com.workflow.orchestrator.document.poi.visitor.DefaultHeadingParagraphVisitor import com.workflow.orchestrator.document.poi.visitor.DefaultTableVisitor import com.workflow.orchestrator.document.poi.visitor.FootnoteExtractionVisitor import com.workflow.orchestrator.document.poi.visitor.ImageExtractionVisitor import com.workflow.orchestrator.document.poi.visitor.ListAccumulatorVisitor import com.workflow.orchestrator.document.poi.visitor.ParagraphVisitor import com.workflow.orchestrator.document.poi.visitor.PostBodyVisitor import com.workflow.orchestrator.document.poi.visitor.TableVisitor import com.workflow.orchestrator.document.poi.visitor.TrackedChangeVisitor import com.workflow.orchestrator.document.service.ImageExtractionService import org.apache.poi.xwpf.model.XWPFHeaderFooterPolicy import org.apache.poi.xwpf.usermodel.IBodyElement import org.apache.poi.xwpf.usermodel.XWPFDocument import org.apache.poi.xwpf.usermodel.XWPFParagraph import org.apache.poi.xwpf.usermodel.XWPFTable import java.io.InputStream</ID>
+    <ID>ImportOrdering:PdfPipeline.kt$import com.workflow.orchestrator.core.model.DocumentBlock import com.workflow.orchestrator.document.safeExtract import com.workflow.orchestrator.document.pdf.PdfColumnDetector import com.workflow.orchestrator.document.pdf.PdfColumnProseExtractor import com.workflow.orchestrator.document.pdf.PdfLink import com.workflow.orchestrator.document.pdf.PdfMetadataExtractor import com.workflow.orchestrator.document.pdf.PdfPreformattedDetector import com.workflow.orchestrator.document.pdf.PdfProseExtractor import com.workflow.orchestrator.document.pdf.PdfTableExtractor import com.workflow.orchestrator.document.pdf.PositionedBlock import com.workflow.orchestrator.document.sax.DocumentBlockHandler import com.workflow.orchestrator.document.service.ImageExtractionService import org.apache.pdfbox.Loader import java.nio.file.Path</ID>
+    <ID>ImportOrdering:PdfProseExtractor.kt$import com.workflow.orchestrator.core.model.DocumentBlock import com.workflow.orchestrator.document.pipeline.TikaXhtmlPipeline import java.nio.file.Path import java.nio.file.Files</ID>
+    <ID>ImportOrdering:PptxExtractor.kt$import com.workflow.orchestrator.core.model.DocumentBlock import com.workflow.orchestrator.document.safeExtract import com.workflow.orchestrator.document.service.ImageExtractionService import org.apache.poi.common.usermodel.HyperlinkType import org.apache.poi.xslf.usermodel.XSLFComment import org.apache.poi.xslf.usermodel.XSLFGraphicFrame import org.apache.poi.xslf.usermodel.XSLFGroupShape import org.apache.poi.xslf.usermodel.XSLFObjectShape import org.apache.poi.xslf.usermodel.XSLFPictureData import org.apache.poi.xslf.usermodel.XSLFPictureShape import org.apache.poi.xslf.usermodel.XSLFShape import org.apache.poi.xslf.usermodel.XSLFSlide import org.apache.poi.xslf.usermodel.XSLFTable import org.apache.poi.xslf.usermodel.XSLFTextRun import org.apache.poi.xslf.usermodel.XSLFTextShape import org.apache.poi.xslf.usermodel.XMLSlideShow import java.io.InputStream</ID>
+    <ID>ImportOrdering:TrackedChangeVisitor.kt$import com.workflow.orchestrator.core.model.DocumentBlock import org.apache.xmlbeans.XmlObject import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTRunTrackChange import org.apache.poi.xwpf.usermodel.XWPFDocument import org.apache.poi.xwpf.usermodel.XWPFParagraph</ID>
+    <ID>Indentation:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$ </ID>
+    <ID>Indentation:PdfPreformattedDetector.kt$PdfPreformattedDetector$ </ID>
+    <ID>LoopWithTooManyJumpStatements:ImageExtractionVisitor.kt$ImageExtractionVisitor$for</ID>
+    <ID>LoopWithTooManyJumpStatements:PdfMetadataExtractor.kt$PdfMetadataExtractor$for</ID>
+    <ID>LoopWithTooManyJumpStatements:PdfPipeline.kt$PdfPipeline$for</ID>
+    <ID>LoopWithTooManyJumpStatements:PdfPipeline.kt$PdfPipeline$while</ID>
+    <ID>LoopWithTooManyJumpStatements:TrackedChangeVisitor.kt$TrackedChangeVisitor$while</ID>
+    <ID>MagicNumber:DefaultHeadingParagraphVisitor.kt$DefaultHeadingParagraphVisitor$3</ID>
+    <ID>MagicNumber:DefaultHeadingParagraphVisitor.kt$DefaultHeadingParagraphVisitor$6</ID>
+    <ID>MagicNumber:DocumentArtifactStore.kt$DocumentArtifactStore$1024</ID>
+    <ID>MagicNumber:DocumentArtifactStore.kt$DocumentArtifactStore$64</ID>
+    <ID>MagicNumber:DocumentArtifactStore.kt$DocumentArtifactStore$8</ID>
+    <ID>MagicNumber:DocumentBlockHandler.kt$DocumentBlockHandler$3</ID>
+    <ID>MagicNumber:DocumentBlockHandler.kt$DocumentBlockHandler$4</ID>
+    <ID>MagicNumber:DocumentBlockHandler.kt$DocumentBlockHandler$5</ID>
+    <ID>MagicNumber:DocumentBlockHandler.kt$DocumentBlockHandler$6</ID>
+    <ID>MagicNumber:HardenedPdfConfig.kt$50_000_000L</ID>
+    <ID>MagicNumber:ImageExtractionService.kt$ImageExtractionService$6</ID>
+    <ID>MagicNumber:ImageExtractionService.kt$ImageExtractionService$8</ID>
+    <ID>MagicNumber:ImageExtractionService.kt$ImageExtractionService.Companion$10</ID>
+    <ID>MagicNumber:ImageExtractionService.kt$ImageExtractionService.Companion$11</ID>
+    <ID>MagicNumber:ImageExtractionService.kt$ImageExtractionService.Companion$12</ID>
+    <ID>MagicNumber:ImageExtractionService.kt$ImageExtractionService.Companion$3</ID>
+    <ID>MagicNumber:ImageExtractionService.kt$ImageExtractionService.Companion$4</ID>
+    <ID>MagicNumber:ImageExtractionService.kt$ImageExtractionService.Companion$5</ID>
+    <ID>MagicNumber:ImageExtractionService.kt$ImageExtractionService.Companion$6</ID>
+    <ID>MagicNumber:ImageExtractionService.kt$ImageExtractionService.Companion$7</ID>
+    <ID>MagicNumber:ImageExtractionService.kt$ImageExtractionService.Companion$8</ID>
+    <ID>MagicNumber:ImageExtractionService.kt$ImageExtractionService.Companion$9</ID>
+    <ID>MagicNumber:ImageExtractionVisitor.kt$ImageExtractionVisitor$1024</ID>
+    <ID>MagicNumber:ImageExtractionVisitor.kt$ImageExtractionVisitor$25L</ID>
+    <ID>MagicNumber:MarkdownAssembler.kt$MarkdownAssembler$3</ID>
+    <ID>MagicNumber:PdfColumnDetector.kt$PdfColumnDetector$0.5</ID>
+    <ID>MagicNumber:PdfMetadataExtractor.kt$PdfMetadataExtractor$1024</ID>
+    <ID>MagicNumber:PdfMetadataExtractor.kt$PdfMetadataExtractor$25L</ID>
+    <ID>MagicNumber:PdfMetadataExtractor.kt$PdfMetadataExtractor$6</ID>
+    <ID>MagicNumber:PdfPipeline.kt$PdfPipeline$10.0</ID>
+    <ID>MagicNumber:PdfPreformattedDetector.kt$PdfPreformattedDetector$0.5</ID>
+    <ID>MagicNumber:PdfPreformattedDetector.kt$PdfPreformattedDetector$0.5f</ID>
+    <ID>MagicNumber:PoiHardening.kt$PoiHardening$0.001</ID>
+    <ID>MagicNumber:PoiHardening.kt$PoiHardening$100L</ID>
+    <ID>MagicNumber:PoiHardening.kt$PoiHardening$1024</ID>
+    <ID>MagicNumber:PoiHardening.kt$PoiHardening$50_000_000</ID>
+    <ID>MagicNumber:PptxExtractor.kt$PptxExtractor$1024</ID>
+    <ID>MagicNumber:PptxExtractor.kt$PptxExtractor$25L</ID>
+    <ID>MagicNumber:TikaDocumentExtractor.kt$TikaDocumentExtractor$200_000</ID>
+    <ID>MagicNumber:XlsxTableExtractor.kt$XlsxTableExtractor$1024</ID>
+    <ID>MagicNumber:XlsxTableExtractor.kt$XlsxTableExtractor$25L</ID>
+    <ID>MaximumLineLength:CorpusExtractionProbe.kt$CorpusExtractionProbe$ </ID>
+    <ID>MaximumLineLength:DocumentArtifactStore.kt$DocumentArtifactStore$ </ID>
+    <ID>MaximumLineLength:DocumentArtifactStoreSearchTest.kt$DocumentArtifactStoreSearchTest$ </ID>
+    <ID>MaximumLineLength:DocumentArtifactStoreSliceTest.kt$DocumentArtifactStoreSliceTest$ </ID>
+    <ID>MaximumLineLength:DocumentArtifactStoreSubsectionDiscoveryTest.kt$DocumentArtifactStoreSubsectionDiscoveryTest$ </ID>
+    <ID>MaximumLineLength:DocumentBlockHandler.kt$DocumentBlockHandler$ </ID>
+    <ID>MaximumLineLength:DocumentBlockHandlerStructureFidelityTest.kt$DocumentBlockHandlerStructureFidelityTest$ </ID>
+    <ID>MaximumLineLength:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$ </ID>
+    <ID>MaximumLineLength:DocxTableExtractor.kt$DocxTableExtractor$ </ID>
+    <ID>MaximumLineLength:EmbeddedFileRefUnreachableTest.kt$EmbeddedFileRefUnreachableTest$ </ID>
+    <ID>MaximumLineLength:HardenedPdfConfig.kt$ </ID>
+    <ID>MaximumLineLength:ImageExtractionVisitor.kt$ImageExtractionVisitor$ </ID>
+    <ID>MaximumLineLength:ImageMimeSniffAndFilterTest.kt$ImageMimeSniffAndFilterTest$ </ID>
+    <ID>MaximumLineLength:IndexedExtractionProbe.kt$IndexedExtractionProbe$ </ID>
+    <ID>MaximumLineLength:MarkdownAssembler.kt$MarkdownAssembler$ </ID>
+    <ID>MaximumLineLength:MarkdownAssemblerTableAnchorTest.kt$MarkdownAssemblerTableAnchorTest$ </ID>
+    <ID>MaximumLineLength:PdfMetadataExtractor.kt$PdfMetadataExtractor$ </ID>
+    <ID>MaximumLineLength:PdfPageAttributionTest.kt$PdfPageAttributionTest$ </ID>
+    <ID>MaximumLineLength:PdfPipeline.kt$PdfPipeline$ </ID>
+    <ID>MaximumLineLength:PdfPipelineTest.kt$PdfPipelineTest$ </ID>
+    <ID>MaximumLineLength:PdfRealExtractionGroundTruthTest.kt$PdfRealExtractionGroundTruthTest$ </ID>
+    <ID>MaximumLineLength:PptxExtractor.kt$PptxExtractor$ </ID>
+    <ID>MaximumLineLength:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$ </ID>
+    <ID>MaximumLineLength:TableAnchorCorpusProbe.kt$TableAnchorCorpusProbe$ </ID>
+    <ID>MaximumLineLength:TaggedPdfFixtureFactory.kt$TaggedPdfFixtureFactory$ </ID>
+    <ID>MaximumLineLength:TikaXhtmlFormatGapsTest.kt$TikaXhtmlFormatGapsTest$ </ID>
+    <ID>MaximumLineLength:TikaXhtmlHtmlFidelityTest.kt$TikaXhtmlHtmlFidelityTest$ </ID>
+    <ID>MaximumLineLength:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$ </ID>
+    <ID>MaximumLineLength:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$ </ID>
+    <ID>MaximumLineLength:XlsxSemanticsTest.kt$XlsxSemanticsTest$ </ID>
+    <ID>MaximumLineLength:XlsxTableExtractor.kt$XlsxTableExtractor$ </ID>
+    <ID>MultiLineIfElse:DocumentSearchEngine.kt$DocumentSearchEngine$start = nextWs + 1</ID>
+    <ID>MultiLineIfElse:ImageExtractionService.kt$ImageExtractionService$"bin"</ID>
+    <ID>MultiLineIfElse:ImageExtractionService.kt$ImageExtractionService.Companion$return "image/jpeg"</ID>
+    <ID>MultiLineIfElse:ImageExtractionService.kt$ImageExtractionService.Companion$return "image/png"</ID>
+    <ID>MultiLineIfElse:ImageExtractionService.kt$ImageExtractionService.Companion$return "image/tiff"</ID>
+    <ID>MultiLineIfElse:ImageExtractionService.kt$ImageExtractionService.Companion$return "image/webp"</ID>
+    <ID>MultiLineIfElse:PdfPipeline.kt$PdfPipeline$proseRaw</ID>
+    <ID>MultiLineIfElse:PdfPipeline.kt$PdfPipeline$safeExtract("G-6 link splice", proseRaw) { spliceLinksIntoProse(proseRaw, links) }</ID>
+    <ID>MultiLineIfElse:PptxExtractor.kt$PptxExtractor$emptyList()</ID>
+    <ID>MultiLineIfElse:PptxExtractor.kt$PptxExtractor$extractPictureBlock(shape)?.let { listOf(it) } ?: emptyList()</ID>
+    <ID>MultiLineIfElse:SmartArtExtractor.kt$SmartArtExtractor$DocumentBlock.ListBlock(ordered = false, items = items)</ID>
+    <ID>MultiLineIfElse:SmartArtExtractor.kt$SmartArtExtractor$null</ID>
+    <ID>NoMultipleSpaces:CellFormatter.kt$CellFormatter$ </ID>
+    <ID>NoMultipleSpaces:DocumentArtifactStoreSearchTest.kt$DocumentArtifactStoreSearchTest$ </ID>
+    <ID>NoMultipleSpaces:DocumentBlockHandler.kt$DocumentBlockHandler$ </ID>
+    <ID>NoMultipleSpaces:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$ </ID>
+    <ID>NoMultipleSpaces:DocxTableExtractor.kt$DocxTableExtractor.Companion$ </ID>
+    <ID>NoMultipleSpaces:DocxVisitorChainTest.kt$DocxVisitorChainTest$ </ID>
+    <ID>NoMultipleSpaces:HardenedPdfConfig.kt$ </ID>
+    <ID>NoMultipleSpaces:ImageExtractionService.kt$ImageExtractionService$ </ID>
+    <ID>NoMultipleSpaces:ImageExtractionService.kt$ImageExtractionService.Companion$ </ID>
+    <ID>NoMultipleSpaces:ImageExtractionServiceTest.kt$ImageExtractionServiceTest$ </ID>
+    <ID>NoMultipleSpaces:ImageExtractionVisitor.kt$ImageExtractionVisitor$ </ID>
+    <ID>NoMultipleSpaces:ImageMimeSniffAndFilterTest.kt$ImageMimeSniffAndFilterTest$ </ID>
+    <ID>NoMultipleSpaces:MarkdownAssembler.kt$MarkdownAssembler$ </ID>
+    <ID>NoMultipleSpaces:MarkdownAssemblerTableAnchorTest.kt$MarkdownAssemblerTableAnchorTest$ </ID>
+    <ID>NoMultipleSpaces:MarkdownAssemblerTest.kt$MarkdownAssemblerTest$ </ID>
+    <ID>NoMultipleSpaces:PdfTableExtractorContinuationMergeTest.kt$PdfTableExtractorContinuationMergeTest$ </ID>
+    <ID>NoMultipleSpaces:PdfTwoColumnSubstitutionTest.kt$PdfTwoColumnSubstitutionTest$ </ID>
+    <ID>NoMultipleSpaces:PptxExtractor.kt$PptxExtractor$ </ID>
+    <ID>NoMultipleSpaces:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$ </ID>
+    <ID>NoMultipleSpaces:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$ </ID>
+    <ID>NoMultipleSpaces:XlsxDataFidelityTest.kt$XlsxDataFidelityTest$ </ID>
+    <ID>NoMultipleSpaces:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$ </ID>
+    <ID>NoMultipleSpaces:XlsxTableExtractor.kt$XlsxTableExtractor$ </ID>
+    <ID>NoUnusedImports:CellFormatter.kt$com.workflow.orchestrator.document.poi.CellFormatter.kt</ID>
+    <ID>NoUnusedImports:DocumentBlockHandlerHeadingDetectionTest.kt$com.workflow.orchestrator.document.sax.DocumentBlockHandlerHeadingDetectionTest.kt</ID>
+    <ID>NoUnusedImports:HtmlOffsetRoundTripTest.kt$com.workflow.orchestrator.document.service.HtmlOffsetRoundTripTest.kt</ID>
+    <ID>NoUnusedImports:IndexedExtractionProbe.kt$com.workflow.orchestrator.document.probe.IndexedExtractionProbe.kt</ID>
+    <ID>NoUnusedImports:PdfLinkAnnotationNoHoistTest.kt$com.workflow.orchestrator.document.pipeline_pdf.PdfLinkAnnotationNoHoistTest.kt</ID>
+    <ID>NoUnusedImports:PdfLinkHarvestTest.kt$com.workflow.orchestrator.document.pdf.PdfLinkHarvestTest.kt</ID>
+    <ID>NoUnusedImports:PdfOutlineDeepSubsectionTest.kt$com.workflow.orchestrator.document.pipeline_pdf.PdfOutlineDeepSubsectionTest.kt</ID>
+    <ID>NoUnusedImports:PdfOutlineHeadingSeedTest.kt$com.workflow.orchestrator.document.pdf.PdfOutlineHeadingSeedTest.kt</ID>
+    <ID>NoUnusedImports:PdfPipelineStructureFidelityTest.kt$com.workflow.orchestrator.document.pipeline_pdf.PdfPipelineStructureFidelityTest.kt</ID>
+    <ID>NoUnusedImports:PdfTableExtractorTest.kt$com.workflow.orchestrator.document.pdf.PdfTableExtractorTest.kt</ID>
+    <ID>NoUnusedImports:XlsxSemanticsTest.kt$com.workflow.orchestrator.document.poi.XlsxSemanticsTest.kt</ID>
+    <ID>PackageName:OfficePipelineTest.kt$package com.workflow.orchestrator.document.pipeline_poi</ID>
+    <ID>PackageName:PdfLinkAnnotationNoHoistTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageName:PdfOutlineDeepSubsectionTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageName:PdfOutlineSeededPipelineTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageName:PdfPageAttributionTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageName:PdfPipelineStructureFidelityTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageName:PdfPipelineSubExtractorIsolationTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageName:PdfPipelineTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageName:PdfPreformattedCorpusByteIdenticalTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageName:PdfPreformattedSubstitutionTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageName:PdfRealExtractionGroundTruthTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageName:PdfSingleColCorpusByteIdenticalTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageName:PdfTwoColumnSubstitutionTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageNaming:OfficePipelineTest.kt$package com.workflow.orchestrator.document.pipeline_poi</ID>
+    <ID>PackageNaming:PdfLinkAnnotationNoHoistTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageNaming:PdfOutlineDeepSubsectionTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageNaming:PdfOutlineSeededPipelineTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageNaming:PdfPageAttributionTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageNaming:PdfPipelineStructureFidelityTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageNaming:PdfPipelineSubExtractorIsolationTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageNaming:PdfPipelineTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageNaming:PdfPreformattedCorpusByteIdenticalTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageNaming:PdfPreformattedSubstitutionTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageNaming:PdfRealExtractionGroundTruthTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageNaming:PdfSingleColCorpusByteIdenticalTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>PackageNaming:PdfTwoColumnSubstitutionTest.kt$package com.workflow.orchestrator.document.pipeline_pdf</ID>
+    <ID>ParameterListWrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(cell: org.apache.poi.xwpf.usermodel.XWPFTableCell, merge: org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge.Enum)</ID>
+    <ID>ParameterListWrapping:PdfMetadataExtractor.kt$PdfMetadataExtractor$(_: Exception)</ID>
+    <ID>ParameterListWrapping:PdfPipeline.kt$PdfPipeline$( aTop: Double, aBottom: Double, bTop: Double, bBottom: Double, )</ID>
+    <ID>PropertyWrapping:EmbeddedFileRefUnreachableTest.kt$EmbeddedFileRefUnreachableTest$val expected = listOf("DocumentBlockHandler.kt", "ImageExtractionVisitor.kt", "PdfMetadataExtractor.kt", "PptxExtractor.kt", "XlsxTableExtractor.kt")</ID>
+    <ID>SpacingAroundKeyword:PptxExtractor.kt$PptxExtractor$catch</ID>
+    <ID>StringTemplate:LargePdfFixtureFactory.kt$LargePdfFixtureFactory$${c}</ID>
+    <ID>UnusedParameter:TikaDocumentExtractor.kt$TikaDocumentExtractor$options: ExtractOptions</ID>
+    <ID>UnusedParameter:XlsxTableExtractor.kt$XlsxTableExtractor$col: Int</ID>
+    <ID>UnusedParameter:XlsxTableExtractor.kt$XlsxTableExtractor$firstRow: Row</ID>
+    <ID>UnusedParameter:XlsxTableExtractor.kt$XlsxTableExtractor$row: Row</ID>
+    <ID>UnusedParameter:XlsxTableExtractor.kt$XlsxTableExtractor$sheet: XSSFSheet</ID>
+    <ID>Wrapping:CorpusExtractionProbe.kt$CorpusExtractionProbe$(</ID>
+    <ID>Wrapping:DocumentArtifactStore.kt$DocumentArtifactStore$;</ID>
+    <ID>Wrapping:DocumentArtifactStore.kt$DocumentArtifactStore${ done, total -> sink( DocumentExtractionProgress( stage = "tables", pagesDone = done, pagesTotal = total, elapsedMs = System.currentTimeMillis() - startMs, ) ) }</ID>
+    <ID>Wrapping:DocumentArtifactStoreFormatsTest.kt$DocumentArtifactStoreFormatsTest$(</ID>
+    <ID>Wrapping:DocumentSearchEngine.kt$DocumentSearchEngine$;</ID>
+    <ID>Wrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$"""</ID>
+    <ID>Wrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(</ID>
+    <ID>Wrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$(blocks.none { it is DocumentBlock.Paragraph &amp;&amp; (it.text.startsWith("> Header:") || it.text.startsWith("> Footer:")) }, "No header/footer policy → no header/footer Paragraph")</ID>
+    <ID>Wrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$;</ID>
+    <ID>Wrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$it is DocumentBlock.Paragraph &amp;&amp; (it as DocumentBlock.Paragraph).text.contains("Body text")</ID>
+    <ID>Wrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$it is DocumentBlock.Paragraph &amp;&amp; (it as DocumentBlock.Paragraph).text.contains("Middle prose")</ID>
+    <ID>Wrapping:DocxExtractorFormatGapsTest.kt$DocxExtractorFormatGapsTest$it.kind == DocumentBlock.Comment.Kind.TRACKED_INSERTION || it.kind == DocumentBlock.Comment.Kind.TRACKED_DELETION</ID>
+    <ID>Wrapping:DocxTableExtractorTest.kt$DocxTableExtractorTest$(</ID>
+    <ID>Wrapping:DocxVisitorChainTest.kt$DocxVisitorChainTest$(</ID>
+    <ID>Wrapping:EmbeddedFileRefUnreachableTest.kt$EmbeddedFileRefUnreachableTest$(</ID>
+    <ID>Wrapping:ImageMimeSniffAndFilterTest.kt$ImageMimeSniffAndFilterTest$(</ID>
+    <ID>Wrapping:LargePdfFixtureFactory.kt$LargePdfFixtureFactory$;</ID>
+    <ID>Wrapping:OfficePipelineTest.kt$OfficePipelineTest$(</ID>
+    <ID>Wrapping:PdfColumnDetectorCorpusTest.kt$PdfColumnDetectorCorpusTest$;</ID>
+    <ID>Wrapping:PdfMetadataExtractor.kt$PdfMetadataExtractor${ imageService.save(bytes, docKey, displayName, effectiveMime).toString() }</ID>
+    <ID>Wrapping:PdfMetadataExtractor.kt$PdfMetadataExtractor${ null }</ID>
+    <ID>Wrapping:PdfOutlineDeepSubsectionTest.kt$PdfOutlineDeepSubsectionTest$(</ID>
+    <ID>Wrapping:PdfOutlineSeededPipelineTest.kt$PdfOutlineSeededPipelineTest$(</ID>
+    <ID>Wrapping:PdfPageAttributionTest.kt$PdfPageAttributionTest$(</ID>
+    <ID>Wrapping:PdfPageAttributionTest.kt$PdfPageAttributionTest$;</ID>
+    <ID>Wrapping:PdfPipeline.kt$PdfPipeline$metadataExtractor.extract(file)</ID>
+    <ID>Wrapping:PdfPipelineTest.kt$PdfPipelineTest$;</ID>
+    <ID>Wrapping:PdfPipelineTest.kt$PdfPipelineTest$it is DocumentBlock.PageMarker &amp;&amp; (it as DocumentBlock.PageMarker).pageNumber == 2</ID>
+    <ID>Wrapping:PdfPreformattedCorpusByteIdenticalTest.kt$PdfPreformattedCorpusByteIdenticalTest$(</ID>
+    <ID>Wrapping:PdfPreformattedCorpusByteIdenticalTest.kt$PdfPreformattedCorpusByteIdenticalTest$;</ID>
+    <ID>Wrapping:PdfPreformattedDetector.kt$PdfPreformattedDetector$;</ID>
+    <ID>Wrapping:PdfPreformattedSubstitutionTest.kt$PdfPreformattedSubstitutionTest$(</ID>
+    <ID>Wrapping:PdfSingleColCorpusByteIdenticalTest.kt$PdfSingleColCorpusByteIdenticalTest$;</ID>
+    <ID>Wrapping:PdfTableExtractorCellClipTest.kt$PdfTableExtractorCellClipTest$;</ID>
+    <ID>Wrapping:PdfTableExtractorContinuationMergeTest.kt$PdfTableExtractorContinuationMergeTest$;</ID>
+    <ID>Wrapping:PdfTableExtractorGroupedHeaderTest.kt$PdfTableExtractorGroupedHeaderTest$;</ID>
+    <ID>Wrapping:PdfTwoColumnSubstitutionTest.kt$PdfTwoColumnSubstitutionTest$(</ID>
+    <ID>Wrapping:PptxExtractor.kt$PptxExtractor$(</ID>
+    <ID>Wrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$"""</ID>
+    <ID>Wrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$(</ID>
+    <ID>Wrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$;</ID>
+    <ID>Wrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$it is DocumentBlock.Heading &amp;&amp; (it as DocumentBlock.Heading).text.contains("Slide 1")</ID>
+    <ID>Wrapping:PptxExtractorFormatGapsTest.kt$PptxExtractorFormatGapsTest$it is DocumentBlock.Heading &amp;&amp; (it as DocumentBlock.Heading).text.contains("Slide 2")</ID>
+    <ID>Wrapping:PptxExtractorTest.kt$PptxExtractorTest$(</ID>
+    <ID>Wrapping:TableAnchorCorpusProbe.kt$TableAnchorCorpusProbe$(</ID>
+    <ID>Wrapping:TableAnchorCorpusProbe.kt$TableAnchorCorpusProbe$;</ID>
+    <ID>Wrapping:TikaDocumentExtractorTest.kt$TikaDocumentExtractorTest$(</ID>
+    <ID>Wrapping:TikaXhtmlFormatGapsTest.kt$TikaXhtmlFormatGapsTest$(</ID>
+    <ID>Wrapping:TikaXhtmlFormatGapsTest.kt$TikaXhtmlFormatGapsTest$it is DocumentBlock.Paragraph &amp;&amp; (it as DocumentBlock.Paragraph).text.contains("between")</ID>
+    <ID>Wrapping:TikaXhtmlHtmlFidelityTest.kt$TikaXhtmlHtmlFidelityTest$(</ID>
+    <ID>Wrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$(</ID>
+    <ID>Wrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$it is DocumentBlock.Heading &amp;&amp; (it as DocumentBlock.Heading).level == 2 &amp;&amp; (it as DocumentBlock.Heading).text.contains("Conclusion")</ID>
+    <ID>Wrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$it is DocumentBlock.Heading &amp;&amp; (it as DocumentBlock.Heading).level == 2 &amp;&amp; (it as DocumentBlock.Heading).text.contains("Metrics")</ID>
+    <ID>Wrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$it is DocumentBlock.Paragraph &amp;&amp; (it as DocumentBlock.Paragraph).text.contains("Performance was within target")</ID>
+    <ID>Wrapping:TikaXhtmlPipelineTest.kt$TikaXhtmlPipelineTest$it is DocumentBlock.Paragraph &amp;&amp; (it as DocumentBlock.Paragraph).text.contains("quarterly engineering report")</ID>
+    <ID>Wrapping:XlsxDataFidelityTest.kt$XlsxDataFidelityTest$;</ID>
+    <ID>Wrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$(</ID>
+    <ID>Wrapping:XlsxExtractorFormatGapsTest.kt$XlsxExtractorFormatGapsTest$;</ID>
+    <ID>Wrapping:XlsxSemanticsTest.kt$XlsxSemanticsTest$;</ID>
+    <ID>Wrapping:XlsxTableExtractorTest.kt$XlsxTableExtractorTest$(</ID>
+  </CurrentIssues>
+</SmellBaseline>

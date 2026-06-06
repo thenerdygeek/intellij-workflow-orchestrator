@@ -1,0 +1,485 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>ArgumentListWrapping:BambooApiClient.kt$BambooApiClient$("/rest/api/latest/result/$jobResultKey?expand=testResults.failedTests.testResult,testResults.successfulTests.testResult")</ID>
+    <ID>ArgumentListWrapping:BambooApiClient.kt$BambooApiClient$("[Bamboo:API] Authentication failed (401)")</ID>
+    <ID>ArgumentListWrapping:BambooApiClient.kt$BambooApiClient$("[Bamboo:API] Forbidden (403)")</ID>
+    <ID>ArgumentListWrapping:BambooApiClient.kt$BambooApiClient$("[Bamboo:API] Not found (404)")</ID>
+    <ID>ArgumentListWrapping:BambooApiClient.kt$BambooApiClient$("[Bamboo:API] Rate limited (429)")</ID>
+    <ID>ArgumentListWrapping:BambooApiClient.kt$BambooApiClient$("[Bamboo:API] Server error (${it.code})")</ID>
+    <ID>ArgumentListWrapping:BambooApiClient.kt$BambooApiClient$("[Bamboo:API] getRecentResults: FAILED for $planKey — ${result.type}: ${result.message}")</ID>
+    <ID>ArgumentListWrapping:BambooApiClient.kt$BambooApiClient$("[Bamboo:API] queueBuildWithStageSelection chainKey=$chainKey, stages=$selectedStages, boundStage=$boundStage, variables=${variables.keys}")</ID>
+    <ID>ArgumentListWrapping:BambooApiClient.kt$BambooApiClient$("[Bamboo:API] queueBuildWithStageSelection chainKey=$chainKey, stages=ALL, variables=${variables.keys}")</ID>
+    <ID>ArgumentListWrapping:BambooApiClient.kt$BambooApiClient$(3)</ID>
+    <ID>ArgumentListWrapping:BambooApiClient.kt$BambooApiClient$(ErrorType.AUTH_FAILED, "Invalid Bamboo token")</ID>
+    <ID>ArgumentListWrapping:BambooApiClient.kt$BambooApiClient$(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions")</ID>
+    <ID>ArgumentListWrapping:BambooApiClient.kt$BambooApiClient$(ErrorType.NOT_FOUND, "Bamboo resource not found")</ID>
+    <ID>ArgumentListWrapping:BambooApiClient.kt$BambooApiClient$(ErrorType.RATE_LIMITED, "Bamboo rate limit exceeded")</ID>
+    <ID>ArgumentListWrapping:BambooApiClient.kt$BambooApiClient$(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientDownloadArtifactTest.kt$BambooApiClientDownloadArtifactTest$(artifactContent, targetFile.readText(), "File content should match the response body")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientJobsExpandTest.kt$BambooApiClientJobsExpandTest$(firstStage.results.result.first().buildResultKey.isNotBlank(), "Each job must have a buildResultKey")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientJobsExpandTest.kt$BambooApiClientJobsExpandTest$(firstStage.results.result.isNotEmpty(), "Fixture must include results.result so per-job tests have data; update fixtures/build-result.json")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientJobsExpandTest.kt$BambooApiClientJobsExpandTest$(path.contains("expand=stages.stage.results.result"), "URL must request the deep job expansion. Got: $path")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientLatestResultTest.kt$BambooApiClientLatestResultTest$("PROJ-BUILD2")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientPaginationTest.kt$BambooApiClientPaginationTest$('-')</ID>
+    <ID>ArgumentListWrapping:BambooApiClientPaginationTest.kt$BambooApiClientPaginationTest$(req2.path?.contains("start-index=100") == true, "Second page must use start-index=100; path=${req2.path}")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientPaginationTest.kt$BambooApiClientPaginationTest$(req2.path?.contains("start-index=200") == true, "Second page must use start-index=200; path=${req2.path}")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientPaginationTest.kt$BambooApiClientPaginationTest$(request.path?.contains("start-index=0") == true, "Expected start-index=0 in URL; path=${request.path}")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientPaginationTest.kt$BambooApiClientPaginationTest$(result is ApiResult.Error, "Expected ApiResult.Error when a mid-pagination page fails, got: $result")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientPlanBranchTest.kt$BambooApiClientPlanBranchTest$("""{"branches":{"branch":[],"size":0,"max-result":50,"start-index":0}}""")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientPlanBranchTest.kt$BambooApiClientPlanBranchTest$(MockResponse().setBody("""{"branches":{"branch":[],"size":0,"max-result":50,"start-index":0}}"""))</ID>
+    <ID>ArgumentListWrapping:BambooApiClientStageSelectionTest.kt$BambooApiClientStageSelectionTest$("no-check", recorded.getHeader("X-Atlassian-Token"), "X-Atlassian-Token: no-check header required for Bamboo DC XSRF bypass")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientStageSelectionTest.kt$BambooApiClientStageSelectionTest$("no-check", recorded.getHeader("X-Atlassian-Token"), "X-Atlassian-Token: no-check required on the REST queue endpoint")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientStageSelectionTest.kt$BambooApiClientStageSelectionTest$(result is ApiResult.Error &amp;&amp; result.type == ErrorType.VALIDATION_ERROR, "Expected VALIDATION_ERROR, got: $result")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientTest.kt$BambooApiClientTest$("""{"buildResultKey":"PROJ-AUTO-101","buildNumber":101}""")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientTest.kt$BambooApiClientTest$(200)</ID>
+    <ID>ArgumentListWrapping:BambooApiClientTest.kt$BambooApiClientTest$(ErrorType.AUTH_FAILED, (result as ApiResult.Error).type, "401 on stopBuild should map to AUTH_FAILED")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientTest.kt$BambooApiClientTest$(ErrorType.AUTH_REDIRECT, (result as ApiResult.Error).type, "200+text/html on stopBuild should map to AUTH_REDIRECT")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientTest.kt$BambooApiClientTest$(ErrorType.FORBIDDEN, (result as ApiResult.Error).type, "403 on stopBuild should map to FORBIDDEN")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientTest.kt$BambooApiClientTest$(ErrorType.NETWORK_ERROR, (result as ApiResult.Error).type, "Connection-refused IOException should map to NETWORK_ERROR")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientTest.kt$BambooApiClientTest$(ErrorType.NOT_FOUND, (result as ApiResult.Error).type, "404 on stopBuild should map to NOT_FOUND")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientTest.kt$BambooApiClientTest$(ErrorType.PARSE_ERROR, (result as ApiResult.Error).type, "JSON parse failure should map to PARSE_ERROR")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientTest.kt$BambooApiClientTest$(ErrorType.PARSE_ERROR, (result as ApiResult.Error).type, "text/html content-type on GET should map to PARSE_ERROR")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientTest.kt$BambooApiClientTest$(MockResponse().setResponseCode(200).setBody("""{"buildResultKey":"PROJ-AUTO-101","buildNumber":101}"""))</ID>
+    <ID>ArgumentListWrapping:BambooApiClientTest.kt$BambooApiClientTest$(listOf("InProgress", "Queued", "Pending"), states, "Finished + NotBuilt excluded; every other (live) state kept")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientTest.kt$BambooApiClientTest$(recorded.path!!.contains("expand=results.result.stages.stage.results.result"), "collection endpoint must prefix the expand with results.result. or Bamboo returns " + "only the wrapper (size) with no result[] array; path=${recorded.path}")</ID>
+    <ID>ArgumentListWrapping:BambooApiClientTest.kt$BambooApiClientTest$(recorded.path!!.contains("max-results=25"), "cap must be wide enough that live builds aren't truncated out; path=${recorded.path}")</ID>
+    <ID>ArgumentListWrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$( BambooResultDto(buildNumber = 1, state = "Unknown"), "PROJ-PLAN138", "feature/x")</ID>
+    <ID>ArgumentListWrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$( BambooStageDto(name = "Deploy", state = "Failed", manual = true))</ID>
+    <ID>ArgumentListWrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$( buildNumber = 42, state = "Successful", lifeCycleState = "Finished", stages = BambooStageCollection(stage = listOf( BambooStageDto(name = "Build Stage", state = "Successful", manual = false, results = BambooJobResultCollection(result = listOf( job("Mystery A"), job("Build Artifacts"), job("Mystery B"), ))) )) )</ID>
+    <ID>ArgumentListWrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$( buildNumber = 42, state = "Successful", lifeCycleState = "Finished", stages = BambooStageCollection(stage = listOf( BambooStageDto(name = "Build Stage", state = "Successful", manual = false, results = BambooJobResultCollection(result = listOf( job("SonarQube Analysis"), job("Build Artifacts"), ))) )) )</ID>
+    <ID>ArgumentListWrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$( buildNumber = 42, state = "Successful", lifeCycleState = "Finished", stages = BambooStageCollection(stage = listOf( BambooStageDto(name = "Build Stage", state = "Successful", manual = false, results = BambooJobResultCollection(result = listOf( job("SonarQube Analysis"), job("Build Artifacts"), job("OSS Analysis"), ))) )) )</ID>
+    <ID>ArgumentListWrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$( buildNumber = 42, state = "Successful", lifeCycleState = "Finished", stages = BambooStageCollection(stage = listOf( BambooStageDto(name = "Build", state = "Successful", manual = false, results = BambooJobResultCollection(result = listOf( BambooJobResultDto(buildResultKey = "PROJ-PLAN138-UNIT-42", state = "Successful", lifeCycleState = "Finished", buildDurationInSeconds = 5, plan = BambooPlanDto(key = "PROJ-PLAN138-UNIT", name = "Unit", shortName = "Unit")) ))) )) )</ID>
+    <ID>ArgumentListWrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$( buildResultKey = "PROJ-PLAN138-$short-42", state = "Successful", lifeCycleState = "Finished", buildDurationInSeconds = 1, plan = BambooPlanDto(key = "PROJ-PLAN138-$short", name = short, shortName = short), )</ID>
+    <ID>ArgumentListWrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$( job("Mystery A"), job("Build Artifacts"), job("Mystery B"), )</ID>
+    <ID>ArgumentListWrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$( job("SonarQube Analysis"), job("Build Artifacts"), )</ID>
+    <ID>ArgumentListWrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$( job("SonarQube Analysis"), job("Build Artifacts"), job("OSS Analysis"), )</ID>
+    <ID>ArgumentListWrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$(buildNumber = 7, state = "Failed", stages = BambooStageCollection(stage = listOf( BambooStageDto(name = "Deploy", state = "Failed", manual = true))))</ID>
+    <ID>ArgumentListWrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$(buildResultKey = "PROJ-PLAN138-UNIT-42", state = "Successful", lifeCycleState = "Finished", buildDurationInSeconds = 5, plan = BambooPlanDto(key = "PROJ-PLAN138-UNIT", name = "Unit", shortName = "Unit"))</ID>
+    <ID>ArgumentListWrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$(name = "Build Stage", state = "Successful", manual = false, results = BambooJobResultCollection(result = listOf( job("Mystery A"), job("Build Artifacts"), job("Mystery B"), )))</ID>
+    <ID>ArgumentListWrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$(name = "Build Stage", state = "Successful", manual = false, results = BambooJobResultCollection(result = listOf( job("SonarQube Analysis"), job("Build Artifacts"), )))</ID>
+    <ID>ArgumentListWrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$(name = "Build Stage", state = "Successful", manual = false, results = BambooJobResultCollection(result = listOf( job("SonarQube Analysis"), job("Build Artifacts"), job("OSS Analysis"), )))</ID>
+    <ID>ArgumentListWrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$(name = "Build", state = "Successful", manual = false, results = BambooJobResultCollection(result = listOf( BambooJobResultDto(buildResultKey = "PROJ-PLAN138-UNIT-42", state = "Successful", lifeCycleState = "Finished", buildDurationInSeconds = 5, plan = BambooPlanDto(key = "PROJ-PLAN138-UNIT", name = "Unit", shortName = "Unit")) )))</ID>
+    <ID>ArgumentListWrapping:BambooPlanRefTest.kt$BambooPlanRefTest$(planKey = "PROJ-PLAN138", parentPlanKey = "PROJ-PLAN", branchShortName = "feature/x")</ID>
+    <ID>ArgumentListWrapping:BambooProbeShapeContractTest.kt$BambooProbeShapeContractTest$("XULM-F8EKIRDSUSZOJIPSGNR445", "MASTER-PLAN", "feature-PROJ2-002-verify-the-changes")</ID>
+    <ID>ArgumentListWrapping:BambooServiceImpl.kt$BambooServiceImpl$( planKey = key, buildNumber = buildNumber, state = "ERROR", durationSeconds = 0 )</ID>
+    <ID>ArgumentListWrapping:BambooServiceImpl.kt$BambooServiceImpl$("[BambooService] Got ${data.size} variable(s) from last build $resultKey as fallback (all marked isPassword=true)")</ID>
+    <ID>ArgumentListWrapping:BambooServiceImpl.kt$BambooServiceImpl$(name = it.key, value = it.value, isPassword = true)</ID>
+    <ID>ArgumentListWrapping:BambooServiceImplGetPlansProjectKeyTest.kt$BambooServiceImplGetPlansProjectKeyTest$("MY-PROJ", plans[0].projectKey, "projectKey must be MY-PROJ (from DTO), not MY (from bad substringBefore split)")</ID>
+    <ID>ArgumentListWrapping:BambooServiceImplGetPlansProjectKeyTest.kt$BambooServiceImplGetPlansProjectKeyTest$("MY-PROJ", plans[0].projectKey, "projectKey must be MY-PROJ (from search entity), not MY (from bad substringBefore split)")</ID>
+    <ID>ArgumentListWrapping:BambooServiceImplGetPlansProjectKeyTest.kt$BambooServiceImplGetPlansProjectKeyTest$("SIMPLE", result.data!![0].projectKey, "Fallback substringBefore should return SIMPLE for a simple (non-hyphenated) key")</ID>
+    <ID>ArgumentListWrapping:BambooServiceImplJobsTest.kt$BambooServiceImplJobsTest$("PROJ-PLAN138-4", result.data!!.buildResultKey, "buildResultKey was historically dropped by mapBuildResult — Task 2.3 fixes this")</ID>
+    <ID>ArgumentListWrapping:BambooServiceImplJobsTest.kt$BambooServiceImplJobsTest$(key = "PROJ-PLAN138-COMPILE", name = "Compile", shortName = "Compile")</ID>
+    <ID>ArgumentListWrapping:BambooServiceImplJobsTest.kt$BambooServiceImplJobsTest$(key = "PROJ-PLAN138-INTEG", name = "Integration Tests", shortName = "Integration Tests")</ID>
+    <ID>ArgumentListWrapping:BambooServiceImplJobsTest.kt$BambooServiceImplJobsTest$(key = "PROJ-PLAN138-UNIT", name = "Unit Tests", shortName = "Unit Tests")</ID>
+    <ID>ArgumentListWrapping:BambooServiceImplPlanVariablesAllFailTest.kt$BambooServiceImplPlanVariablesAllFailTest$(result.hint, "A hint should be provided when all strategies fail")</ID>
+    <ID>ArgumentListWrapping:BambooServiceImplPlanVariablesAllFailTest.kt$BambooServiceImplPlanVariablesAllFailTest$(result.isError, "getPlanVariables should return isError=true when all strategies fail")</ID>
+    <ID>ArgumentListWrapping:BambooServiceImplPlanVariablesAllFailTest.kt$BambooServiceImplPlanVariablesAllFailTest$(result.isError, "getPlanVariables should return isError=true when getBuildVariables also fails")</ID>
+    <ID>ArgumentListWrapping:BambooServiceImplPlanVariablesAllFailTest.kt$BambooServiceImplPlanVariablesAllFailTest$(result.isError, "getPlanVariables should return isError=true when variableContext is empty and no recent builds exist")</ID>
+    <ID>ArgumentListWrapping:BambooServiceImplTestResultsTest.kt$BambooServiceImplTestResultsTest$(failedMethodNames.contains("testCreate"), "failedTests should include testCreate, got: $failedMethodNames")</ID>
+    <ID>ArgumentListWrapping:BambooServiceImplTestResultsTest.kt$BambooServiceImplTestResultsTest$(failedMethodNames.contains("testDelete"), "failedTests should include testDelete, got: $failedMethodNames")</ID>
+    <ID>ArgumentListWrapping:BambooServiceImplTestResultsTest.kt$BambooServiceImplTestResultsTest$(result.isError, "getTestResults should return isError=true when the API returns an error")</ID>
+    <ID>ArgumentListWrapping:BambooServiceShapeInvariantTest.kt$BambooServiceShapeInvariantTest$("chainKey", valueParams[0].name, "getLatestBuild's single parameter must be named 'chainKey', " + "got '${valueParams[0].name}'")</ID>
+    <ID>ArgumentListWrapping:BambooServiceShapeInvariantTest.kt$BambooServiceShapeInvariantTest$("chainKey", valueParams[0].name, "getRecentBuilds's first parameter must be named 'chainKey', " + "got '${valueParams[0].name}'")</ID>
+    <ID>ArgumentListWrapping:BambooServiceShapeInvariantTest.kt$BambooServiceShapeInvariantTest$("maxResults", valueParams[1].name, "getRecentBuilds's second parameter must be named 'maxResults', " + "got '${valueParams[1].name}'")</ID>
+    <ID>ArgumentListWrapping:BambooServiceShapeInvariantTest.kt$BambooServiceShapeInvariantTest$(1, valueParams.size, "getLatestBuild must have exactly one value parameter (chainKey). " + "Got ${valueParams.map { it.name }}")</ID>
+    <ID>ArgumentListWrapping:BambooServiceShapeInvariantTest.kt$BambooServiceShapeInvariantTest$(2, valueParams.size, "getRecentBuilds must have exactly two value parameters (chainKey, maxResults). " + "Got ${valueParams.map { it.name }}")</ID>
+    <ID>ArgumentListWrapping:BambooServiceShapeInvariantTest.kt$BambooServiceShapeInvariantTest$(3, valueParams.size, "triggerBuild must have exactly 3 value parameters (chainKey, variables, stages). " + "Got: ${valueParams.map { it.name }}")</ID>
+    <ID>ArgumentListWrapping:BambooServiceShapeInvariantTest.kt$BambooServiceShapeInvariantTest$(emptyList&lt;Any>(), violations, "No BambooService method may have a 'branch' parameter — " + "callers must resolve to a chainKey first via ChainKeyResolver. " + "Offending methods: ${violations.map { it.name }}")</ID>
+    <ID>ArgumentListWrapping:BambooServiceShapeInvariantTest.kt$BambooServiceShapeInvariantTest$(stagesParam.type.isMarkedNullable, "triggerBuild's 'stages' parameter must be nullable (Set&lt;String>?) to indicate 'run all stages'. " + "Got type: ${stagesParam.type}")</ID>
+    <ID>ArgumentListWrapping:BambooSpecsLocalParserSafeYamlTest.kt$BambooSpecsLocalParserSafeYamlTest$(result, "SafeConstructor must block gadget chains; extractKey must return null, not a successful result")</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverter.kt$BambooTestResultConverter$("##teamcity[testFailed name='${testName}' message='${errorMessage}' details='${errorTrace}']")</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverter.kt$BambooTestResultConverter$("##teamcity[testStarted name='${testName}' locationHint='${testLocationHint}' captureStandardOutput='true']")</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverter.kt$BambooTestResultConverter$("##teamcity[testStdOut name='${testName}' out='${TeamCityMessageConverter.escapeValue(errorInfo.fullOutput)}']")</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverter.kt$BambooTestResultConverter$("##teamcity[testSuiteStarted name='${TeamCityMessageConverter.escapeValue(className)}' locationHint='${suiteLocationHint}']")</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverter.kt$BambooTestResultConverter$(className)</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverter.kt$BambooTestResultConverter$(errorInfo.fullOutput)</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverter.kt$BambooTestResultConverter$(errorInfo?.message ?: "Test failed on Bamboo build")</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverter.kt$BambooTestResultConverter$(fullClassName)</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverter.kt$BambooTestResultConverter$(methodName)</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverter.kt$BambooTestResultConverter$(simpleClassName)</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverterTest.kt$BambooTestResultConverterTest$("testFailed")</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverterTest.kt$BambooTestResultConverterTest$(2, finishedLines.size, "Expected 2 testFinished lines (one per passing test), got: $finishedLines")</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverterTest.kt$BambooTestResultConverterTest$(failedLines.isNotEmpty(), "Expected a testFailed line, got: $messages")</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverterTest.kt$BambooTestResultConverterTest$(ignoredLines.isNotEmpty(), "Expected at least one testIgnored line for a skipped test, got: $messages")</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverterTest.kt$BambooTestResultConverterTest$(messages.isEmpty(), "fromTestResultsData with no tests should return emptyList(), got: $messages")</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverterTest.kt$BambooTestResultConverterTest$(messages.isEmpty(), "toTeamCityMessages with empty dto should return emptyList(), got: $messages")</ID>
+    <ID>ArgumentListWrapping:BambooTestResultConverterTest.kt$BambooTestResultConverterTest$(messages.none { it.contains("testFailed") }, "No testFailed lines expected for all-passing suite, but found: ${messages.filter { it.contains("testFailed") }}")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanel.kt$BuildDashboardPanel$("[Build:Dashboard] Initial activeRepoConfig='${activeRepoConfig?.displayLabel}' (focusPr=${workflowContextService.state.value.focusPr?.repoName ?: "&lt;none>"})")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanel.kt$BuildDashboardPanel$("[Build:Dashboard] Resolved branch plan '${resolution.planKey}' via BambooService.autoDetectPlan (branch='$branchName', preferredMaster='${configuredMasterKey.orEmpty()}')")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanel.kt$BuildDashboardPanel$("[Build:Dashboard] Test results: ${testData.total} total, ${testData.failed} failed, ${testData.passed} passed")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanel.kt$BuildDashboardPanel$("[Build:Dashboard] Waterfall miss — falling back to configured planKey '${resolution.planKey}' (autoDetect summary: ${detection.summary})")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanel.kt$BuildDashboardPanel$("[Build:Dashboard] onFocusPrChanged: matchedRepo='${matchedRepo?.displayLabel}' planKey='${pr.bambooPlanKey}'")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanel.kt$BuildDashboardPanel$("[Build:Dashboard] reroutableFocusPr: branch '$branchName' (scope=${focusedRepoName ?: "&lt;any>"}) has no open PR — focus unchanged; ambient polling continues on previously-focused build")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanel.kt$BuildDashboardPanel$("[Build:Dashboard] reroutableFocusPr: branch '$branchName' (scope=${focusedRepoName ?: "&lt;any>"}) → PR #${matchedPr.prId} (${matchedPr.repoName}) — calling focusPr")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanel.kt$BuildDashboardPanel$(if (result.success) "Local build PASSED" else "Local build FAILED (exit ${result.exitCode})")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanel.kt$BuildDashboardPanel$(project, repo.root, git4idea.commands.GitCommand.REV_LIST)</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanel.kt$BuildDashboardPanel$(stage.state, "")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanel.kt$BuildDashboardPanel.&lt;no name provided>$("Rerun Failed Jobs", "Rerun failed/incomplete jobs on Bamboo", AllIcons.Actions.Restart)</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanel.kt$BuildDashboardPanel.&lt;no name provided>$("Trigger Build", "Trigger a new build with custom variables", AllIcons.Actions.Execute)</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanelDropdownTest.kt$BuildDashboardPanelDropdownTest$(42, result?.prId, "When preferredRepoName is set, must return that repo's PR even when a foreign " + "repo's PR has a higher prId for the same branch")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanelDropdownTest.kt$BuildDashboardPanelDropdownTest$(42, result?.prId, "Within the preferred-repo scope, highest prId must win (primary-repo's 99 is ignored)")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanelDropdownTest.kt$BuildDashboardPanelDropdownTest$(99, result?.prId, "When multiple PRs share the same fromBranch, highest prId (latest iteration) must win")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanelDropdownTest.kt$BuildDashboardPanelDropdownTest$(pr(10, "feature/search"), result, "Must return the PR whose fromBranch matches the selected branch")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanelDropdownTest.kt$BuildDashboardPanelDropdownTest$(result, "Must return null when no open PR matches the selected branch — focus must not be updated")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanelDropdownTest.kt$BuildDashboardPanelDropdownTest$(result, "When preferredRepoName has no matching PR, must return null — must NOT fall back " + "to a foreign repo's PR (that would silently move focus to the wrong repo)")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanelLogCapTest.kt$BuildDashboardPanelLogCapTest$(result.endsWith("A".repeat(cap)), "Last $cap chars of result should be the tail")</ID>
+    <ID>ArgumentListWrapping:BuildDashboardPanelLogCapTest.kt$BuildDashboardPanelLogCapTest$(result.length &lt;= BuildDashboardPanel.LOG_RENDER_CAP_BYTES + 200, "Result should not significantly exceed the cap (banner is small overhead)")</ID>
+    <ID>ArgumentListWrapping:BuildFailureBridgeStartupActivity.kt$BuildFailureBridgeStartupActivity$("[BuildFailureBridge] No configured repos — skipping bridge for ${event.planKey}-${event.buildNumber}")</ID>
+    <ID>ArgumentListWrapping:BuildFailureBridgeStartupActivity.kt$BuildFailureBridgeStartupActivity$("[BuildFailureBridge] Reverse-lookup miss for $projectKey/$repoSlug @$sha: ${result.message}")</ID>
+    <ID>ArgumentListWrapping:BuildFailureBridgeStartupActivity.kt$BuildFailureBridgeStartupActivity$("[BuildFailureBridge] handler failed for ${event.planKey}-${event.buildNumber}", it)</ID>
+    <ID>ArgumentListWrapping:BuildLogParser.kt$BuildLogParser$("[Bamboo:Parser] Errors: ${errors.filter { it.severity == ErrorSeverity.ERROR }.joinToString { "${it.filePath}:${it.lineNumber} - ${it.message}" }}")</ID>
+    <ID>ArgumentListWrapping:BuildLogParserTest.kt$BuildLogParserTest$(errors.isEmpty(), "parse with only whitespace should return an empty list, got: $errors")</ID>
+    <ID>ArgumentListWrapping:BuildLogParserTest.kt$BuildLogParserTest$(errors.isEmpty(), "parse(\"\") should return an empty list, got: $errors")</ID>
+    <ID>ArgumentListWrapping:BuildMonitorFocusLifecycleTest.kt$BuildMonitorFocusLifecycleTest$("P-CK", calls.last().planKey, "startPolling must use chainKey (P-CK) not planKey (P)")</ID>
+    <ID>ArgumentListWrapping:BuildMonitorFocusLifecycleTest.kt$BuildMonitorFocusLifecycleTest$("PLAN-B-CK", lastCall.planKey, "Last startPolling must target PLAN-B-CK (StateFlow coalesced A→B)")</ID>
+    <ID>ArgumentListWrapping:BuildMonitorFocusLifecycleTest.kt$BuildMonitorFocusLifecycleTest$("PROJ-PLAN", calls.last().planKey, "startPolling must use planKey when chainKey is null")</ID>
+    <ID>ArgumentListWrapping:BuildMonitorFocusLifecycleTest.kt$BuildMonitorFocusLifecycleTest$(service.stateFlow.value, "stateFlow must remain null when startPolling is intercepted (no SmartPoller launched)")</ID>
+    <ID>ArgumentListWrapping:BuildMonitorService.kt$BuildMonitorService$("[Bamboo:Monitor] Build $planKey-${dto.buildNumber} changed from $previousStatus to ${buildState.overallStatus}")</ID>
+    <ID>ArgumentListWrapping:BuildMonitorService.kt$BuildMonitorService$("[Bamboo:Monitor] Fetched ${logParts.size}/${keysToFetch.size} job logs for build $planKey-${dto.buildNumber} (allSucceeded=$allFetchesSucceeded)")</ID>
+    <ID>ArgumentListWrapping:BuildMonitorService.kt$BuildMonitorService$("[Bamboo:Monitor] pollOnce result: ${if (result is ApiResult.Success) "SUCCESS" else "FAILED: $result"}")</ID>
+    <ID>ArgumentListWrapping:BuildMonitorServiceTest.kt$BuildMonitorServiceTest$(43, state.newerBuild!!.buildNumber, "newerBuild.buildNumber should be 43")</ID>
+    <ID>ArgumentListWrapping:BuildMonitorServiceTest.kt$BuildMonitorServiceTest$(com.workflow.orchestrator.core.model.ErrorType.NETWORK_ERROR, "log not yet flushed")</ID>
+    <ID>ArgumentListWrapping:BuildMonitorServiceTest.kt$BuildMonitorServiceTest$(event is WorkflowEvent.BuildLogReady, "First event must be BuildLogReady, got: $event")</ID>
+    <ID>ArgumentListWrapping:BuildMonitorServiceTest.kt$BuildMonitorServiceTest$(state!!.newerBuild, "newerBuild should be null when no higher-numbered build is running")</ID>
+    <ID>ArgumentListWrapping:BuildMonitorServiceTest.kt$BuildMonitorServiceTest$(state!!.newerBuild, "newerBuild should be populated when build #43 is running")</ID>
+    <ID>ArgumentListWrapping:BuildsAndHealthChecksConfigurable.kt$BuildsAndHealthChecksConfigurable$( this, project, listOf(ConnectionStatusBanner.Requirement.BAMBOO) )</ID>
+    <ID>ArgumentListWrapping:ManualStageDialog.kt$ManualStageDialog$(when (triggerMode) { TriggerMode.STAGE -> "OK" TriggerMode.CUSTOM_STAGES -> "Trigger" })</ID>
+    <ID>ArgumentListWrapping:ManualStageDialog.kt$ManualStageDialog$(when { variablesPreview != null &amp;&amp; suiteDisplayName != null -> 590 variablesPreview != null -> 560 else -> 380 })</ID>
+    <ID>ArgumentListWrapping:PlanDetectionService.kt$PlanDetectionService$("[Bamboo:Plan:T1] Extracted plan key $planKey from commit $sha (preferredMaster='${preferredMaster.orEmpty()}', totalStatuses=${statuses.size})")</ID>
+    <ID>ArgumentListWrapping:PlanDetectionService.kt$PlanDetectionService.Companion$(org.yaml.snakeyaml.LoaderOptions())</ID>
+    <ID>ArgumentListWrapping:PlanDetectionService.kt$PlanDetectionService.Companion$(org.yaml.snakeyaml.constructor.SafeConstructor(org.yaml.snakeyaml.LoaderOptions()))</ID>
+    <ID>ArgumentListWrapping:PlanDetectionServicePreferredMasterTest.kt$PlanDetectionServicePreferredMasterTest$(ApiResult.Success("PROJ-API138"), result, "Expected the API138 plan key to be picked because it matches preferredMaster")</ID>
+    <ID>ArgumentListWrapping:PlanDetectionServicePreferredMasterTest.kt$PlanDetectionServicePreferredMasterTest$(ApiResult.Success("PROJ-WEB138"), result, "Expected fallback to first status (legacy behaviour preserved)")</ID>
+    <ID>ArgumentListWrapping:PrBarTest.kt$PrBarTest$( name = "repo-b", projectKey = "P", repoSlug = "repo-b", localVcsRootPath = "/p/repo-b" )</ID>
+    <ID>ArgumentListWrapping:PrBarTest.kt$PrBarTest$(labelText!!.contains("PR #42"), "Label text should contain 'PR #42', was: $labelText")</ID>
+    <ID>ArgumentListWrapping:PrBarTest.kt$PrBarTest$(labelText.contains("feat/abc"), "Label text should contain fromBranch, was: $labelText")</ID>
+    <ID>ArgumentListWrapping:PrBarTest.kt$PrBarTest$(prId = 42, fromBranch = "feat/abc", toBranch = "main", repoName = "repo", bambooPlanKey = null, sonarProjectKey = null)</ID>
+    <ID>ArgumentListWrapping:PrBarTest.kt$PrBarTest$(prId = 42, fromBranch = "feat/abc", toBranch = "main", repoName = "repo-a", bambooPlanKey = null, sonarProjectKey = null)</ID>
+    <ID>ArgumentListWrapping:PrBarTest.kt$PrBarTest$(prId = 7, fromBranch = "feat/abc", toBranch = "main", repoName = "repo", bambooPlanKey = null, sonarProjectKey = null)</ID>
+    <ID>ArgumentListWrapping:PrBarTest.kt$PrBarTest$(rendered.background == com.workflow.orchestrator.core.ui.StatusColors.INFO_BG, "Expected empty-state (INFO_BG) panel when focusPr is null")</ID>
+    <ID>ArgumentListWrapping:PrBarTest.kt$PrBarTest$(rendered.background == com.workflow.orchestrator.core.ui.StatusColors.INFO_BG, "Expected empty-state panel under ReadOnly (PR repo on different branch)")</ID>
+    <ID>ArgumentListWrapping:PrBarTest.kt$PrBarTest$(rendered.background == com.workflow.orchestrator.core.ui.StatusColors.SUCCESS_BG, "Expected Live render — editor's repo/branch must not influence the bar")</ID>
+    <ID>ArgumentListWrapping:PrBarTest.kt$PrBarTest$(rendered.background == com.workflow.orchestrator.core.ui.StatusColors.SUCCESS_BG, "Expected single-PR (SUCCESS_BG) panel under Live + focusPr != null")</ID>
+    <ID>ArgumentListWrapping:StageDetailPanel.kt$BambooTestLocator$( project, ext, scope )</ID>
+    <ID>ArgumentListWrapping:StageDetailPanel.kt$StageDetailPanel$("... [Log truncated — showing last ${MAX_DISPLAY_CHARS / 1000}K chars] ...\n\n", ConsoleViewContentType.SYSTEM_OUTPUT)</ID>
+    <ID>ArgumentListWrapping:VariablesTableModelTest.kt$VariablesTableModelTest$(model.isCellEditable(row, col), "Cell ($row,$col) should not be editable")</ID>
+    <ID>EmptyFunctionBlock:BuildDashboardPanel.kt$BuildDashboardPanel.&lt;no name provided>${}</ID>
+    <ID>ImplicitDefaultLocale:StageDetailPanel.kt$StageDetailPanel$String.format("%.1f MB", bytes / (1024.0 * 1024.0))</ID>
+    <ID>ImportOrdering:BambooApiClient.kt$import com.workflow.orchestrator.bamboo.api.dto.* import com.workflow.orchestrator.core.http.HttpClientFactory import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.ErrorType import com.workflow.orchestrator.core.model.ServiceType import com.workflow.orchestrator.core.services.isSuccess import com.workflow.orchestrator.core.services.looksLikeAuthRedirect import com.workflow.orchestrator.core.services.postForm import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.withContext import kotlinx.serialization.json.Json import okhttp3.MediaType.Companion.toMediaType import okhttp3.OkHttpClient import okhttp3.Request import okhttp3.RequestBody.Companion.toRequestBody import com.intellij.openapi.diagnostic.Logger import java.io.IOException import java.net.URLEncoder</ID>
+    <ID>ImportOrdering:BambooApiClientLatestResultTest.kt$import kotlinx.coroutines.test.runTest import okhttp3.mockwebserver.MockResponse import okhttp3.mockwebserver.MockWebServer import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.Assertions.assertFalse import org.junit.jupiter.api.Assertions.assertTrue import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import com.intellij.testFramework.LoggedErrorProcessorEnabler import org.junit.jupiter.api.extension.ExtendWith</ID>
+    <ID>ImportOrdering:BambooApiClientPlanBranchTest.kt$import com.workflow.orchestrator.core.model.ApiResult import kotlinx.coroutines.test.runTest import okhttp3.mockwebserver.MockResponse import okhttp3.mockwebserver.MockWebServer import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.Assertions.* import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import com.intellij.testFramework.LoggedErrorProcessorEnabler import org.junit.jupiter.api.extension.ExtendWith</ID>
+    <ID>ImportOrdering:BambooApiClientTest.kt$import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.ErrorType import kotlinx.coroutines.test.runTest import okhttp3.mockwebserver.MockResponse import okhttp3.mockwebserver.MockWebServer import org.junit.jupiter.api.AfterEach import org.junit.jupiter.api.Assertions.* import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test import com.intellij.testFramework.LoggedErrorProcessorEnabler import org.junit.jupiter.api.extension.ExtendWith</ID>
+    <ID>ImportOrdering:BambooBuildRunState.kt$import com.intellij.execution.DefaultExecutionResult import com.intellij.execution.ExecutionResult import com.intellij.execution.Executor import com.intellij.execution.process.ProcessHandler import com.intellij.execution.process.ProcessOutputTypes import com.intellij.execution.runners.ExecutionEnvironment import com.intellij.execution.runners.ProgramRunner import com.intellij.execution.configurations.RunProfileState import com.intellij.openapi.diagnostic.Logger import com.workflow.orchestrator.core.services.BambooService import com.workflow.orchestrator.core.settings.PluginSettings import com.intellij.openapi.util.Disposer import kotlinx.coroutines.* import java.io.OutputStream</ID>
+    <ID>ImportOrdering:BambooServiceImpl.kt$import com.intellij.openapi.components.Service import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.workflow.orchestrator.core.auth.CredentialStore import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.ErrorType import com.workflow.orchestrator.core.model.ServiceType import com.workflow.orchestrator.core.model.bamboo.ArtifactData import com.workflow.orchestrator.core.model.bamboo.BuildChangeData import com.workflow.orchestrator.core.model.bamboo.BuildJobData import com.workflow.orchestrator.core.model.bamboo.BuildResultData import com.workflow.orchestrator.core.model.bamboo.BuildStageData import com.workflow.orchestrator.core.model.bamboo.BuildTriggerData import com.workflow.orchestrator.core.model.bamboo.FailedTestData import com.workflow.orchestrator.core.model.bamboo.PlanBranchData import com.workflow.orchestrator.core.model.bamboo.PlanData import com.workflow.orchestrator.core.model.bamboo.PlanVariableData import com.workflow.orchestrator.core.model.bamboo.ProjectData import com.workflow.orchestrator.core.model.bamboo.TestResultsData import com.workflow.orchestrator.core.services.BambooService import com.workflow.orchestrator.core.services.ToolResult import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.ui.TimeFormatter import com.workflow.orchestrator.bamboo.api.BambooApiClient import com.workflow.orchestrator.bamboo.api.dto.BambooResultDto import com.workflow.orchestrator.bamboo.api.dto.BambooStageDto</ID>
+    <ID>ImportOrdering:BambooTestResultConverterReDoSTest.kt$import com.workflow.orchestrator.bamboo.api.dto.BambooTestCaseDto import com.workflow.orchestrator.bamboo.api.dto.BambooTestCaseCollection import com.workflow.orchestrator.bamboo.api.dto.BambooTestResultsDto import org.junit.jupiter.api.Assertions.* import org.junit.jupiter.api.Test import org.junit.jupiter.api.Timeout import java.util.concurrent.TimeUnit</ID>
+    <ID>ImportOrdering:BuildDashboardPanel.kt$import com.intellij.icons.AllIcons import com.intellij.openapi.Disposable import com.intellij.openapi.util.Disposer import com.intellij.openapi.actionSystem.ActionManager import com.intellij.openapi.actionSystem.ActionPlaces import com.intellij.openapi.actionSystem.ActionUpdateThread import com.intellij.openapi.actionSystem.AnAction import com.intellij.openapi.actionSystem.AnActionEvent import com.intellij.openapi.actionSystem.DefaultActionGroup import com.intellij.openapi.actionSystem.Separator import com.intellij.openapi.application.invokeLater import com.intellij.openapi.application.readAction import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.ui.Messages import com.intellij.openapi.project.Project import com.intellij.openapi.vcs.BranchChangeListener import com.intellij.openapi.ui.ComboBox import com.intellij.ui.AnimatedIcon import com.intellij.ui.ColoredListCellRenderer import com.intellij.ui.JBSplitter import com.intellij.ui.SimpleTextAttributes import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBList import com.intellij.util.ui.JBUI import com.workflow.orchestrator.bamboo.model.BuildStatus import com.workflow.orchestrator.bamboo.service.BuildMonitorService import com.workflow.orchestrator.core.maven.MavenBuildService import com.workflow.orchestrator.core.maven.SurefireReportParser import com.workflow.orchestrator.core.maven.TeamCityMessageConverter import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.core.ui.TimeFormatter import com.workflow.orchestrator.core.model.bamboo.BuildResultData import com.workflow.orchestrator.core.services.BambooService import com.workflow.orchestrator.core.events.EventBus import com.workflow.orchestrator.core.events.WorkflowEvent import com.workflow.orchestrator.core.model.workflow.InteractionMode import com.workflow.orchestrator.core.model.workflow.PrRef import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.settings.RepoConfig import com.workflow.orchestrator.core.settings.RepoContextResolver import com.workflow.orchestrator.core.ui.ComboBoxWidth import com.workflow.orchestrator.core.ui.bindBoundedWidth import com.workflow.orchestrator.core.util.DefaultBranchResolver import com.workflow.orchestrator.core.workflow.OpenPrLister import com.workflow.orchestrator.core.workflow.WorkflowContextService import com.workflow.orchestrator.core.workflow.ui.ReadOnlyBanner import git4idea.repo.GitRepositoryManager import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.SupervisorJob import kotlinx.coroutines.cancel import kotlinx.coroutines.delay import kotlinx.coroutines.flow.distinctUntilChanged import kotlinx.coroutines.flow.map import kotlinx.coroutines.launch import java.awt.* import java.awt.event.MouseAdapter import java.awt.event.MouseEvent import javax.swing.DefaultComboBoxModel import javax.swing.DefaultListModel import javax.swing.JList import javax.swing.JPanel import javax.swing.ListSelectionModel import javax.swing.border.AbstractBorder</ID>
+    <ID>ImportOrdering:BuildFailureBridgeStartupActivity.kt$import com.intellij.openapi.components.service import com.intellij.openapi.Disposable import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.intellij.openapi.startup.ProjectActivity import com.intellij.openapi.util.Disposer import com.workflow.orchestrator.bamboo.service.BambooServiceImpl import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient import com.workflow.orchestrator.core.events.EventBus import com.workflow.orchestrator.core.events.WorkflowEvent import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.notifications.WorkflowNotificationService import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.settings.RepoConfig import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.SupervisorJob import kotlinx.coroutines.cancel import kotlinx.coroutines.flow.filterIsInstance import kotlinx.coroutines.launch</ID>
+    <ID>ImportOrdering:BuildMonitorService.kt$import com.intellij.openapi.components.Service import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.workflow.orchestrator.bamboo.api.BambooApiClient import com.workflow.orchestrator.bamboo.model.BuildState import com.workflow.orchestrator.bamboo.model.BuildStatus import com.workflow.orchestrator.bamboo.model.NewerBuild import com.workflow.orchestrator.core.events.EventBus import com.workflow.orchestrator.core.events.WorkflowEvent import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.model.workflow.BuildRef import com.workflow.orchestrator.core.notifications.WorkflowNotificationService import com.workflow.orchestrator.core.services.BuildLogCache import com.workflow.orchestrator.core.settings.PluginSettings import com.workflow.orchestrator.core.polling.SmartPoller import com.workflow.orchestrator.core.workflow.WorkflowContextService import kotlinx.coroutines.CancellationException import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.flow.MutableStateFlow import kotlinx.coroutines.flow.StateFlow import kotlinx.coroutines.flow.asStateFlow import kotlinx.coroutines.flow.collectLatest import kotlinx.coroutines.flow.distinctUntilChanged import kotlinx.coroutines.flow.map import kotlinx.coroutines.launch import kotlinx.coroutines.sync.Mutex import kotlinx.coroutines.sync.withLock</ID>
+    <ID>ImportOrdering:BuildMonitorServiceTest.kt$import app.cash.turbine.test import com.workflow.orchestrator.bamboo.api.BambooApiClient import com.workflow.orchestrator.bamboo.api.dto.BambooResultDto import com.workflow.orchestrator.bamboo.api.dto.BambooStageCollection import com.workflow.orchestrator.bamboo.api.dto.BambooJobResultCollection import com.workflow.orchestrator.bamboo.api.dto.BambooJobResultDto import com.workflow.orchestrator.bamboo.api.dto.BambooStageDto import com.workflow.orchestrator.bamboo.model.BuildStatus import com.workflow.orchestrator.core.events.EventBus import com.workflow.orchestrator.core.events.WorkflowEvent import com.workflow.orchestrator.core.model.ApiResult import com.workflow.orchestrator.core.services.BuildLogCache import com.workflow.orchestrator.bamboo.api.dto.BambooPlanConfigResponse import io.mockk.coEvery import io.mockk.mockk import kotlinx.coroutines.ExperimentalCoroutinesApi import kotlinx.coroutines.test.runTest import org.junit.jupiter.api.Assertions.* import org.junit.jupiter.api.BeforeEach import org.junit.jupiter.api.Test</ID>
+    <ID>ImportOrdering:ManualStageDialog.kt$import com.intellij.openapi.application.ModalityState import com.intellij.openapi.application.invokeLater as platformInvokeLater import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.project.Project import com.intellij.openapi.ui.DialogWrapper import com.intellij.ui.AnimatedIcon import com.intellij.ui.JBColor import com.intellij.ui.components.JBCheckBox import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBPasswordField import com.intellij.ui.components.JBScrollPane import com.intellij.ui.components.JBTextField import com.intellij.util.ui.JBUI import java.awt.Dimension import com.workflow.orchestrator.core.model.bamboo.PlanVariableData import com.workflow.orchestrator.core.services.BambooService import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.launch import java.awt.FlowLayout import java.awt.Font import java.awt.GridBagConstraints import java.awt.GridBagLayout import javax.swing.BorderFactory import javax.swing.BoxLayout import javax.swing.JComponent import javax.swing.JPanel import com.intellij.ui.table.JBTable import javax.swing.JTable import javax.swing.table.AbstractTableModel import javax.swing.table.DefaultTableCellRenderer</ID>
+    <ID>ImportOrdering:StageDetailPanel.kt$import com.intellij.execution.Executor import com.intellij.execution.configurations.RunProfile import com.intellij.execution.executors.DefaultRunExecutor import com.intellij.execution.filters.RegexpFilter import com.intellij.execution.filters.TextConsoleBuilderFactory import com.intellij.execution.impl.ConsoleViewImpl import com.intellij.execution.process.ProcessHandler import com.intellij.execution.process.ProcessOutputTypes import com.intellij.execution.runners.ExecutionEnvironment import com.intellij.execution.testframework.sm.SMTestRunnerConnectionUtil import com.intellij.execution.testframework.sm.runner.SMTRunnerConsoleProperties import com.intellij.execution.testframework.sm.runner.SMTestLocator import com.intellij.ide.BrowserUtil import com.workflow.orchestrator.core.notifications.WorkflowNotificationService import com.intellij.openapi.editor.ScrollType import com.intellij.openapi.editor.markup.HighlighterLayer import com.intellij.openapi.editor.markup.HighlighterTargetArea import com.intellij.openapi.editor.markup.RangeHighlighter import com.intellij.openapi.editor.markup.TextAttributes import com.intellij.openapi.fileChooser.FileChooser import com.intellij.openapi.fileChooser.FileChooserDescriptor import com.intellij.psi.search.GlobalSearchScope import com.intellij.execution.ui.ConsoleView import com.intellij.execution.ui.ConsoleViewContentType import com.intellij.openapi.Disposable import com.intellij.openapi.diagnostic.Logger import com.intellij.openapi.fileEditor.FileEditorManager import com.intellij.openapi.project.Project import com.intellij.openapi.util.Disposer import com.intellij.openapi.vfs.LocalFileSystem import com.intellij.ui.SearchTextField import com.intellij.ui.JBColor import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBList import com.intellij.ui.components.JBScrollPane import com.intellij.ui.components.JBTabbedPane import javax.swing.JButton import com.intellij.util.ui.JBUI import com.workflow.orchestrator.core.model.bamboo.ArtifactData import com.workflow.orchestrator.core.services.BambooService import com.workflow.orchestrator.core.ui.StatusColors import kotlinx.coroutines.CoroutineScope import kotlinx.coroutines.Dispatchers import kotlinx.coroutines.SupervisorJob import kotlinx.coroutines.cancel import kotlinx.coroutines.launch import com.intellij.openapi.application.invokeLater import java.awt.* import java.awt.event.KeyAdapter import java.awt.event.KeyEvent import java.io.OutputStream import javax.swing.*</ID>
+    <ID>ImportOrdering:StageListPanel.kt$import com.intellij.icons.AllIcons import com.intellij.ui.AnimatedIcon import com.intellij.ui.ColoredListCellRenderer import com.intellij.ui.JBColor import com.intellij.ui.SimpleTextAttributes import com.workflow.orchestrator.core.ui.StatusColors import com.workflow.orchestrator.core.ui.TimeFormatter import com.intellij.ui.components.JBLabel import com.intellij.ui.components.JBList import com.intellij.ui.components.JBScrollPane import com.intellij.util.ui.JBUI import com.workflow.orchestrator.bamboo.model.BuildStatus import com.workflow.orchestrator.bamboo.model.StageState import java.awt.* import javax.swing.*</ID>
+    <ID>Indentation:BambooServiceImpl.kt$BambooServiceImpl$ </ID>
+    <ID>Indentation:BuildsAndHealthChecksConfigurable.kt$BuildsAndHealthChecksConfigurable$ </ID>
+    <ID>Indentation:FilePathHyperlinkFilter.kt$FilePathHyperlinkFilter$ </ID>
+    <ID>Indentation:StageDetailPanel.kt$StageDetailPanel$ </ID>
+    <ID>Indentation:StageListPanel.kt$StageListPanel.StageListCellRenderer$ </ID>
+    <ID>InstanceOfCheckForException:BuildMonitorService.kt$BuildMonitorService$e is CancellationException</ID>
+    <ID>LoopWithTooManyJumpStatements:BuildFailureBridgeStartupActivity.kt$BuildFailureBridgeStartupActivity$for</ID>
+    <ID>LoopWithTooManyJumpStatements:FilePathHyperlinkFilter.kt$FilePathHyperlinkFilter$for</ID>
+    <ID>LoopWithTooManyJumpStatements:PlanDetectionService.kt$PlanDetectionService$for</ID>
+    <ID>MagicNumber:BambooApiClient.kt$BambooApiClient$200</ID>
+    <ID>MagicNumber:BambooApiClient.kt$BambooApiClient$299</ID>
+    <ID>MagicNumber:BambooApiClient.kt$BambooApiClient$3</ID>
+    <ID>MagicNumber:BambooApiClient.kt$BambooApiClient$401</ID>
+    <ID>MagicNumber:BambooApiClient.kt$BambooApiClient$403</ID>
+    <ID>MagicNumber:BambooApiClient.kt$BambooApiClient$404</ID>
+    <ID>MagicNumber:BambooApiClient.kt$BambooApiClient$429</ID>
+    <ID>MagicNumber:BambooBuildRunConfiguration.kt$BambooBuildSettingsEditor$4</ID>
+    <ID>MagicNumber:BambooBuildRunState.kt$BambooBuildProcessHandler$1000</ID>
+    <ID>MagicNumber:BambooBuildRunState.kt$BambooBuildProcessHandler$1000L</ID>
+    <ID>MagicNumber:BambooServiceImpl.kt$BambooServiceImpl$8</ID>
+    <ID>MagicNumber:BambooTestResultConverter.kt$BambooTestResultConverter$100</ID>
+    <ID>MagicNumber:BambooTestResultConverter.kt$BambooTestResultConverter$1000</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$BuildDashboardPanel$0.35f</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$BuildDashboardPanel$10</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$BuildDashboardPanel$1000</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$BuildDashboardPanel$11f</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$BuildDashboardPanel$12</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$BuildDashboardPanel$120</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$BuildDashboardPanel$4</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$BuildDashboardPanel$5</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$BuildDashboardPanel$6</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$BuildDashboardPanel$8</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$BuildDashboardPanel.&lt;no name provided>$2000</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$BuildDashboardPanel.BuildHistoryCellRenderer$1000</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$BuildDashboardPanel.BuildHistoryCellRenderer$3</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$BuildDashboardPanel.BuildHistoryCellRenderer$4</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$BuildDashboardPanel.BuildHistoryCellRenderer$8</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$BuildDashboardPanel.Companion$1024</ID>
+    <ID>MagicNumber:BuildDashboardPanel.kt$StitchLeftAccentBorder$3</ID>
+    <ID>MagicNumber:BuildFailureBridgeStartupActivity.kt$BuildFailureBridgeStartupActivity$8</ID>
+    <ID>MagicNumber:BuildMonitorService.kt$BuildMonitorService$1_000L</ID>
+    <ID>MagicNumber:BuildMonitorService.kt$BuildMonitorService$30_000L</ID>
+    <ID>MagicNumber:BuildsAndHealthChecksConfigurable.kt$BuildsAndHealthChecksConfigurable$4</ID>
+    <ID>MagicNumber:BuildsAndHealthChecksConfigurable.kt$BuildsAndHealthChecksConfigurable$40</ID>
+    <ID>MagicNumber:BuildsAndHealthChecksConfigurable.kt$BuildsAndHealthChecksConfigurable$60</ID>
+    <ID>MagicNumber:ManualStageDialog.kt$ManualStageDialog$10</ID>
+    <ID>MagicNumber:ManualStageDialog.kt$ManualStageDialog$160</ID>
+    <ID>MagicNumber:ManualStageDialog.kt$ManualStageDialog$20</ID>
+    <ID>MagicNumber:ManualStageDialog.kt$ManualStageDialog$220</ID>
+    <ID>MagicNumber:ManualStageDialog.kt$ManualStageDialog$260</ID>
+    <ID>MagicNumber:ManualStageDialog.kt$ManualStageDialog$380</ID>
+    <ID>MagicNumber:ManualStageDialog.kt$ManualStageDialog$4</ID>
+    <ID>MagicNumber:ManualStageDialog.kt$ManualStageDialog$420</ID>
+    <ID>MagicNumber:ManualStageDialog.kt$ManualStageDialog$440</ID>
+    <ID>MagicNumber:ManualStageDialog.kt$ManualStageDialog$460</ID>
+    <ID>MagicNumber:ManualStageDialog.kt$ManualStageDialog$560</ID>
+    <ID>MagicNumber:ManualStageDialog.kt$ManualStageDialog$590</ID>
+    <ID>MagicNumber:ManualStageDialog.kt$ManualStageDialog$8</ID>
+    <ID>MagicNumber:ManualStageDialog.kt$ManualStageDialog$80</ID>
+    <ID>MagicNumber:ManualStageDialog.kt$ManualStageDialog.WrappingMonospaceCellRenderer$11</ID>
+    <ID>MagicNumber:ManualStageDialog.kt$ManualStageDialog.WrappingMonospaceCellRenderer$280</ID>
+    <ID>MagicNumber:PrBar.kt$PrBar$36</ID>
+    <ID>MagicNumber:PrBar.kt$PrBar$4</ID>
+    <ID>MagicNumber:PrBar.kt$PrBar$8</ID>
+    <ID>MagicNumber:StageDetailPanel.kt$StageDetailPanel$1000</ID>
+    <ID>MagicNumber:StageDetailPanel.kt$StageDetailPanel$1024</ID>
+    <ID>MagicNumber:StageDetailPanel.kt$StageDetailPanel$1024.0</ID>
+    <ID>MagicNumber:StageDetailPanel.kt$StageDetailPanel$11</ID>
+    <ID>MagicNumber:StageDetailPanel.kt$StageDetailPanel$200</ID>
+    <ID>MagicNumber:StageDetailPanel.kt$StageDetailPanel$255</ID>
+    <ID>MagicNumber:StageDetailPanel.kt$StageDetailPanel$4</ID>
+    <ID>MagicNumber:StageDetailPanel.kt$StageDetailPanel$50</ID>
+    <ID>MagicNumber:StageDetailPanel.kt$StageDetailPanel$6</ID>
+    <ID>MagicNumber:StageDetailPanel.kt$StageDetailPanel$8</ID>
+    <ID>MagicNumber:StageDetailPanel.kt$StageDetailPanel$80</ID>
+    <ID>MagicNumber:StageDetailPanel.kt$StageDetailPanel.ArtifactCellRenderer$3</ID>
+    <ID>MagicNumber:StageDetailPanel.kt$StageDetailPanel.ArtifactCellRenderer$4</ID>
+    <ID>MagicNumber:StageDetailPanel.kt$StageDetailPanel.ArtifactCellRenderer$6</ID>
+    <ID>MagicNumber:StageDetailPanel.kt$StageDetailPanel.ArtifactCellRenderer$8</ID>
+    <ID>MagicNumber:StageListPanel.kt$StageListPanel$40</ID>
+    <ID>MagicNumber:StageListPanel.kt$StageListPanel.StageListCellRenderer$12</ID>
+    <ID>MagicNumber:StageListPanel.kt$StageListPanel.StageListCellRenderer$3</ID>
+    <ID>MagicNumber:StageListPanel.kt$StageListPanel.StageListCellRenderer$4</ID>
+    <ID>MagicNumber:StageListPanel.kt$StageListPanel.StageListCellRenderer$8</ID>
+    <ID>MaximumLineLength:BambooApiClient.kt$BambooApiClient$ </ID>
+    <ID>MaximumLineLength:BambooApiClientLatestResultTest.kt$BambooApiClientLatestResultTest$ </ID>
+    <ID>MaximumLineLength:BambooApiClientPaginationTest.kt$BambooApiClientPaginationTest$ </ID>
+    <ID>MaximumLineLength:BambooApiClientPlanBranchTest.kt$BambooApiClientPlanBranchTest$ </ID>
+    <ID>MaximumLineLength:BambooApiClientTest.kt$BambooApiClientTest$ </ID>
+    <ID>MaximumLineLength:BambooBuildRunConfiguration.kt$BambooBuildSettingsEditor$ </ID>
+    <ID>MaximumLineLength:BambooPlanRefTest.kt$BambooPlanRefTest$ </ID>
+    <ID>MaximumLineLength:BambooProbeShapeContractTest.kt$BambooProbeShapeContractTest$ </ID>
+    <ID>MaximumLineLength:BambooServiceImpl.kt$BambooServiceImpl$ </ID>
+    <ID>MaximumLineLength:BambooServiceImplJobsTest.kt$BambooServiceImplJobsTest$ </ID>
+    <ID>MaximumLineLength:BambooServiceImplPlanVariablesAllFailTest.kt$BambooServiceImplPlanVariablesAllFailTest$ </ID>
+    <ID>MaximumLineLength:BambooSpecsLocalParserSafeYamlTest.kt$BambooSpecsLocalParserSafeYamlTest$ </ID>
+    <ID>MaximumLineLength:BambooTestResultConverter.kt$BambooTestResultConverter$ </ID>
+    <ID>MaximumLineLength:BambooTestResultConverterTest.kt$BambooTestResultConverterTest$ </ID>
+    <ID>MaximumLineLength:BuildDashboardPanel.kt$BuildDashboardPanel$ </ID>
+    <ID>MaximumLineLength:BuildDashboardPanel.kt$BuildDashboardPanel.&lt;no name provided>$ </ID>
+    <ID>MaximumLineLength:BuildFailureBridgeStartupActivity.kt$BuildFailureBridgeStartupActivity$ </ID>
+    <ID>MaximumLineLength:BuildLogParser.kt$BuildLogParser$ </ID>
+    <ID>MaximumLineLength:BuildMonitorService.kt$BuildMonitorService$ </ID>
+    <ID>MaximumLineLength:BuildMonitorServiceTest.kt$BuildMonitorServiceTest$ </ID>
+    <ID>MaximumLineLength:PlanDetectionService.kt$PlanDetectionService$ </ID>
+    <ID>MaximumLineLength:PlanDetectionService.kt$PlanDetectionService.Companion$ </ID>
+    <ID>MaximumLineLength:PlanDetectionServiceTest.kt$PlanDetectionServiceTest$ </ID>
+    <ID>MaximumLineLength:PrBarTest.kt$ </ID>
+    <ID>MaximumLineLength:StageDetailPanel.kt$StageDetailPanel$ </ID>
+    <ID>MultiLineIfElse:BambooApiClient.kt$BambooApiClient$ApiResult.Success(Unit)</ID>
+    <ID>MultiLineIfElse:BambooServiceImpl.kt$BambooServiceImpl$""</ID>
+    <ID>MultiLineIfElse:BambooServiceImpl.kt$BambooServiceImpl$"Cannot trigger build for $chainKey: a build is already running or queued, and this plan allows only one concurrent build."</ID>
+    <ID>MultiLineIfElse:BambooServiceImpl.kt$BambooServiceImpl$"Error triggering build for $chainKey: $msg"</ID>
+    <ID>MultiLineIfElse:BambooTestResultConverter.kt$BambooTestResultConverter$emptyMap()</ID>
+    <ID>MultiLineIfElse:BuildDashboardActionGate.kt$BuildDashboardActionGate$"Disabled: local branch doesn't match the focused PR ($focusBranch)"</ID>
+    <ID>MultiLineIfElse:BuildDashboardActionGate.kt$BuildDashboardActionGate$"Disabled: read-only mode"</ID>
+    <ID>MultiLineIfElse:BuildDashboardPanel.kt$BuildDashboardPanel$emptyList()</ID>
+    <ID>MultiLineIfElse:BuildDashboardPanel.kt$BuildDashboardPanel$null</ID>
+    <ID>MultiLineIfElse:BuildDashboardPanel.kt$BuildDashboardPanel.&lt;no name provided>$"Force poll build status now"</ID>
+    <ID>MultiLineIfElse:BuildDashboardPanel.kt$BuildDashboardPanel.&lt;no name provided>$"Trigger a new build with custom variables"</ID>
+    <ID>MultiLineIfElse:BuildDashboardPanel.kt$BuildDashboardPanel.&lt;no name provided>$null</ID>
+    <ID>MultiLineIfElse:BuildDashboardPanel.kt$BuildDashboardPanel.&lt;no name provided>$readOnlyTooltip()</ID>
+    <ID>MultiLineIfElse:BuildMonitorService.kt$BuildMonitorService$null</ID>
+    <ID>MultiLineIfElse:ManualStageDialog.kt$ManualStageDialog$StagesData( stageNames = null, errorMessage = "No stage information available for plan $planKey. " + "Trigger a full build first so Bamboo records the stage list." )</ID>
+    <ID>MultiLineIfElse:ManualStageDialog.kt$ManualStageDialog$StagesData(stageNames = names, errorMessage = null)</ID>
+    <ID>MultiLineIfElse:ManualStageDialog.kt$ManualStageDialog$null</ID>
+    <ID>MultiLineIfElse:StageDetailPanel.kt$BambooTestLocator$null</ID>
+    <ID>MultiLineIfElse:StageDetailPanel.kt$StageDetailPanel.Companion$basename</ID>
+    <ID>MultiLineIfElse:StageDetailPanel.kt$StageDetailPanel.Companion$null</ID>
+    <ID>MultiLineIfElse:StageListPanel.kt$StageListPanel.StageListCellRenderer$SimpleTextAttributes.GRAYED_ATTRIBUTES</ID>
+    <ID>MultiLineIfElse:StageListPanel.kt$StageListPanel.StageListCellRenderer$SimpleTextAttributes.LINK_ATTRIBUTES</ID>
+    <ID>NoBlankLineBeforeRbrace:BuildDashboardPanel.kt$BuildDashboardPanel.BuildHistoryCellRenderer$ </ID>
+    <ID>NoBlankLineBeforeRbrace:BuildMonitorServiceTest.kt$BuildMonitorServiceTest$ </ID>
+    <ID>NoConsecutiveBlankLines:BambooApiClientTest.kt$BambooApiClientTest$ </ID>
+    <ID>NoConsecutiveBlankLines:BambooServiceImplTestResultsTest.kt$BambooServiceImplTestResultsTest$ </ID>
+    <ID>NoConsecutiveBlankLines:BuildMonitorService.kt$ </ID>
+    <ID>NoMultipleSpaces:BambooApiClientPaginationTest.kt$BambooApiClientPaginationTest$ </ID>
+    <ID>NoMultipleSpaces:BambooApiClientTest.kt$BambooApiClientTest$ </ID>
+    <ID>NoMultipleSpaces:BambooDtos.kt$BambooRepositoryUsage$ </ID>
+    <ID>NoMultipleSpaces:BambooDtos.kt$BambooResultDto$ </ID>
+    <ID>NoMultipleSpaces:BambooDtos.kt$BambooStageDto$ </ID>
+    <ID>NoMultipleSpaces:BambooProbeShapeContractTest.kt$BambooProbeShapeContractTest$ </ID>
+    <ID>NoMultipleSpaces:BambooServiceImpl.kt$BambooServiceImpl$ </ID>
+    <ID>NoMultipleSpaces:BambooServiceImplGetPlansProjectKeyTest.kt$BambooServiceImplGetPlansProjectKeyTest$ </ID>
+    <ID>NoMultipleSpaces:BambooServiceShapeInvariantTest.kt$BambooServiceShapeInvariantTest$ </ID>
+    <ID>NoMultipleSpaces:BambooTestResultConverterReDoSTest.kt$BambooTestResultConverterReDoSTest$ </ID>
+    <ID>NoMultipleSpaces:BuildDashboardPanel.kt$BuildDashboardPanel.Companion$ </ID>
+    <ID>NoMultipleSpaces:BuildDashboardPanelCoherenceTest.kt$BuildDashboardPanelCoherenceTest$ </ID>
+    <ID>NoMultipleSpaces:BuildDashboardPanelLogCapTest.kt$BuildDashboardPanelLogCapTest$ </ID>
+    <ID>NoMultipleSpaces:BuildMonitorFocusLifecycleTest.kt$BuildMonitorFocusLifecycleTest$ </ID>
+    <ID>NoMultipleSpaces:ManualStageDialog.kt$ManualStageDialog.StagesData$ </ID>
+    <ID>NoMultipleSpaces:PlanDetectionService.kt$PlanDetectionService$ </ID>
+    <ID>NoMultipleSpaces:PlanDetectionService.kt$PlanDetectionService.Companion$ </ID>
+    <ID>NoMultipleSpaces:PlanDetectionServicePreferredMasterTest.kt$PlanDetectionServicePreferredMasterTest$ </ID>
+    <ID>NoMultipleSpaces:PlanDetectionServiceTest.kt$PlanDetectionServiceTest$ </ID>
+    <ID>NoMultipleSpaces:StageDetailPanel.kt$StageDetailPanel.Companion$ </ID>
+    <ID>NoMultipleSpaces:StageRunnabilityPolicy.kt$StageRunnabilityPolicy$ </ID>
+    <ID>NoUnusedImports:BambooApiClientDownloadArtifactTest.kt$com.workflow.orchestrator.bamboo.api.BambooApiClientDownloadArtifactTest.kt</ID>
+    <ID>NoUnusedImports:BambooDtos.kt$com.workflow.orchestrator.bamboo.api.dto.BambooDtos.kt</ID>
+    <ID>NoUnusedImports:BambooServiceImplJobsTest.kt$com.workflow.orchestrator.bamboo.service.BambooServiceImplJobsTest.kt</ID>
+    <ID>NoUnusedImports:BambooServiceShapeInvariantTest.kt$com.workflow.orchestrator.bamboo.service.BambooServiceShapeInvariantTest.kt</ID>
+    <ID>NoUnusedImports:BuildDashboardPanel.kt$com.workflow.orchestrator.bamboo.ui.BuildDashboardPanel.kt</ID>
+    <ID>NoUnusedImports:LatestBuildLookupImplTest.kt$com.workflow.orchestrator.bamboo.workflow.LatestBuildLookupImplTest.kt</ID>
+    <ID>NoUnusedImports:StageListPanel.kt$com.workflow.orchestrator.bamboo.ui.StageListPanel.kt</ID>
+    <ID>NoWildcardImports:BambooApiClient.kt$import com.workflow.orchestrator.bamboo.api.dto.*</ID>
+    <ID>NoWildcardImports:BambooApiClientDownloadArtifactTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BambooApiClientPlanBranchTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BambooApiClientTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BambooBuildRunConfiguration.kt$import com.intellij.execution.configurations.*</ID>
+    <ID>NoWildcardImports:BambooBuildRunState.kt$import kotlinx.coroutines.*</ID>
+    <ID>NoWildcardImports:BambooBuildRunStateMaskingTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BambooMonitorFieldsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BambooServiceImplPlanVariablesAllFailTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BambooServiceImplStrategyCTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BambooServiceImplTestResultsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BambooSpecsLocalParserSafeYamlTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BambooSpecsLocalParserTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BambooTestResultConverterReDoSTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BambooTestResultConverterTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BuildDashboardPanel.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:BuildLogParserTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BuildMonitorServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:BuildsAndHealthChecksConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>NoWildcardImports:DefaultRevListTimeoutTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:PlanDetectionServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>NoWildcardImports:StageDetailPanel.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:StageDetailPanel.kt$import javax.swing.*</ID>
+    <ID>NoWildcardImports:StageListPanel.kt$import java.awt.*</ID>
+    <ID>NoWildcardImports:StageListPanel.kt$import javax.swing.*</ID>
+    <ID>ParameterListWrapping:BambooApiClient.kt$BambooApiClient$(id: Int)</ID>
+    <ID>ParameterListWrapping:BambooApiClient.kt$BambooApiClient$(planKey: String)</ID>
+    <ID>ParameterListWrapping:BambooApiClient.kt$BambooApiClient$(resultKey: String)</ID>
+    <ID>ParameterListWrapping:BambooApiClient.kt$BambooApiClient$(sha: String)</ID>
+    <ID>ParameterListWrapping:ManualStageDialog.kt$ManualStageDialog.WrappingMonospaceCellRenderer$( table: JTable, value: Any?, isSelected: Boolean, hasFocus: Boolean, row: Int, column: Int )</ID>
+    <ID>ParameterListWrapping:PlanDetectionServiceTest.kt$PlanDetectionServiceTest$(@TempDir repoRoot: Path)</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:BambooApiClientLatestResultTest.kt$BambooApiClientLatestResultTest$@AfterEach fun tearDown()</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:BambooApiClientLatestResultTest.kt$BambooApiClientLatestResultTest$@Test fun `master key ending in digit PROJ-BUILD2 uses direct latest`()</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:BambooApiClientLatestResultTest.kt$BambooApiClientLatestResultTest$@Test fun `plain master key PROJ-PLAN uses direct latest`()</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:BuildDashboardPanel.kt$BuildDashboardPanel$// Auto-detected plan key (not saved to settings — it's branch-specific) @Volatile private var activePlanKey: String = ""</ID>
+    <ID>SpacingBetweenDeclarationsWithAnnotations:BuildDashboardPanel.kt$BuildDashboardPanel$@Volatile private var latestBuildNumber: Int? = null</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:BambooBuildRunConfiguration.kt$BambooBuildSettingsEditor$/** * Comma-separated stage names to run, or blank to run all stages. * Example: `"Build,Unit Tests"` runs only those two stages. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:BambooBuildRunState.kt$BambooBuildProcessHandler.Companion$/** Floor for the configured poll interval — prevents accidental sub-10s polling. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:BuildDashboardPanel.kt$BuildDashboardPanel$/** * Single field scope for all fire-and-forget launches in this panel — follows the * non-`@Service` convention in `core/CLAUDE.md` "Service &amp; threading conventions" * (canonical example: `AgentController.controllerScope`). Cancelled in [dispose], * which the tool-window `Content` lifecycle guarantees via the * `WorkflowToolWindowFactory` dispose cascade. `Dispatchers.IO` (not `.Default`) * because every launch here is I/O — Bamboo HTTP, log fetch, monitor polling. */</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:BuildDashboardPanel.kt$BuildDashboardPanel$// Auto-detected plan key (not saved to settings — it's branch-specific)</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:BuildDashboardPanel.kt$BuildDashboardPanel$// Phase 5 T15: amber banner shown when interactionMode == ReadOnly. Wires</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:ManualStageDialog.kt$ManualStageDialog$// CUSTOM_STAGES: "Save as default for this suite" checkbox.</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:ManualStageDialog.kt$ManualStageDialog$// CUSTOM_STAGES: error message to show when stage load fails.</ID>
+    <ID>SpacingBetweenDeclarationsWithComments:ManualStageDialog.kt$ManualStageDialog$// Whether stage loading is in progress (CUSTOM_STAGES only).</ID>
+    <ID>StringTemplate:BambooServiceImpl.kt$BambooServiceImpl$${cachedBaseUrl}</ID>
+    <ID>StringTemplate:BambooServiceImpl.kt$BambooServiceImpl$${planKey}</ID>
+    <ID>StringTemplate:BambooTestResultConverter.kt$BambooTestResultConverter$${className}</ID>
+    <ID>StringTemplate:BambooTestResultConverter.kt$BambooTestResultConverter$${durationMs}</ID>
+    <ID>StringTemplate:BambooTestResultConverter.kt$BambooTestResultConverter$${errorMessage}</ID>
+    <ID>StringTemplate:BambooTestResultConverter.kt$BambooTestResultConverter$${errorTrace}</ID>
+    <ID>StringTemplate:BambooTestResultConverter.kt$BambooTestResultConverter$${suiteLocationHint}</ID>
+    <ID>StringTemplate:BambooTestResultConverter.kt$BambooTestResultConverter$${testLocationHint}</ID>
+    <ID>StringTemplate:BambooTestResultConverter.kt$BambooTestResultConverter$${testName}</ID>
+    <ID>StringTemplate:BuildDashboardPanel.kt$BuildDashboardPanel.Companion$${omittedKb}</ID>
+    <ID>StringTemplate:BuildMonitorService.kt$BuildMonitorService$${planKey}</ID>
+    <ID>UnusedPrivateProperty:BambooBuildRunState.kt$BambooBuildProcessHandler$private val log = Logger.getInstance(BambooBuildProcessHandler::class.java)</ID>
+    <ID>UnusedPrivateProperty:BambooBuildRunState.kt$BambooBuildRunState$private val log = Logger.getInstance(BambooBuildRunState::class.java)</ID>
+    <ID>UnusedPrivateProperty:BambooServiceImplTestResultsTest.kt$BambooServiceImplTestResultsTest$// Service where testClientOverride is null AND bambooUrl is blank → client property returns null. private val unconfiguredService = BambooServiceImpl(mockProject)</ID>
+    <ID>UnusedPrivateProperty:BuildDashboardPanel.kt$BuildDashboardPanel$val interval = settings.state.buildPollIntervalSeconds.toLong() * 1000</ID>
+    <ID>UnusedPrivateProperty:PlanDetectionServiceTest.kt$PlanDetectionServiceTest$val settings = PluginSettings()</ID>
+    <ID>WildcardImport:BambooApiClient.kt$import com.workflow.orchestrator.bamboo.api.dto.*</ID>
+    <ID>WildcardImport:BambooApiClientDownloadArtifactTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BambooApiClientPlanBranchTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BambooApiClientTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BambooBuildRunConfiguration.kt$import com.intellij.execution.configurations.*</ID>
+    <ID>WildcardImport:BambooBuildRunState.kt$import kotlinx.coroutines.*</ID>
+    <ID>WildcardImport:BambooBuildRunStateMaskingTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BambooMonitorFieldsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BambooServiceImplPlanVariablesAllFailTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BambooServiceImplStrategyCTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BambooServiceImplTestResultsTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BambooSpecsLocalParserSafeYamlTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BambooSpecsLocalParserTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BambooTestResultConverterReDoSTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BambooTestResultConverterTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BuildDashboardPanel.kt$import java.awt.*</ID>
+    <ID>WildcardImport:BuildLogParserTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BuildMonitorServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:BuildsAndHealthChecksConfigurable.kt$import com.intellij.ui.dsl.builder.*</ID>
+    <ID>WildcardImport:DefaultRevListTimeoutTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:PlanDetectionServiceTest.kt$import org.junit.jupiter.api.Assertions.*</ID>
+    <ID>WildcardImport:StageDetailPanel.kt$import java.awt.*</ID>
+    <ID>WildcardImport:StageDetailPanel.kt$import javax.swing.*</ID>
+    <ID>WildcardImport:StageListPanel.kt$import java.awt.*</ID>
+    <ID>WildcardImport:StageListPanel.kt$import javax.swing.*</ID>
+    <ID>Wrapping:BambooApiClient.kt$BambooApiClient$(</ID>
+    <ID>Wrapping:BambooApiClient.kt$BambooApiClient$;</ID>
+    <ID>Wrapping:BambooApiClient.kt$BambooApiClient${ log.warn("[Bamboo:API] Authentication failed (401)"); ApiResult.Error(ErrorType.AUTH_FAILED, "Invalid Bamboo token") }</ID>
+    <ID>Wrapping:BambooApiClient.kt$BambooApiClient${ log.warn("[Bamboo:API] Forbidden (403)"); ApiResult.Error(ErrorType.FORBIDDEN, "Insufficient Bamboo permissions") }</ID>
+    <ID>Wrapping:BambooApiClient.kt$BambooApiClient${ log.warn("[Bamboo:API] Not found (404)"); ApiResult.Error(ErrorType.NOT_FOUND, "Bamboo resource not found") }</ID>
+    <ID>Wrapping:BambooApiClient.kt$BambooApiClient${ log.warn("[Bamboo:API] Rate limited (429)"); ApiResult.Error(ErrorType.RATE_LIMITED, "Bamboo rate limit exceeded") }</ID>
+    <ID>Wrapping:BambooApiClient.kt$BambooApiClient${ log.warn("[Bamboo:API] Server error (${it.code})"); ApiResult.Error(ErrorType.SERVER_ERROR, "Bamboo returned ${it.code}") }</ID>
+    <ID>Wrapping:BambooApiClientBuildChangesTest.kt$BambooApiClientBuildChangesTest$"""</ID>
+    <ID>Wrapping:BambooApiClientDownloadArtifactTest.kt$BambooApiClientDownloadArtifactTest$(</ID>
+    <ID>Wrapping:BambooApiClientJobsExpandTest.kt$BambooApiClientJobsExpandTest$(</ID>
+    <ID>Wrapping:BambooApiClientLatestResultTest.kt$BambooApiClientLatestResultTest$;</ID>
+    <ID>Wrapping:BambooApiClientPaginationTest.kt$BambooApiClientPaginationTest$(</ID>
+    <ID>Wrapping:BambooApiClientStageSelectionTest.kt$BambooApiClientStageSelectionTest$(</ID>
+    <ID>Wrapping:BambooApiClientTest.kt$BambooApiClientTest$(</ID>
+    <ID>Wrapping:BambooApiClientVcsRevisionTest.kt$BambooApiClientVcsRevisionTest$"""</ID>
+    <ID>Wrapping:BambooBuildStructureMapper.kt$BambooBuildStructureMapper$(</ID>
+    <ID>Wrapping:BambooBuildStructureMapperTest.kt$BambooBuildStructureMapperTest$(</ID>
+    <ID>Wrapping:BambooServiceImpl.kt$BambooServiceImpl$(</ID>
+    <ID>Wrapping:BambooServiceImplGetPlansProjectKeyTest.kt$BambooServiceImplGetPlansProjectKeyTest$(</ID>
+    <ID>Wrapping:BambooServiceImplJobsTest.kt$BambooServiceImplJobsTest$(</ID>
+    <ID>Wrapping:BambooServiceImplPlanVariablesAllFailTest.kt$BambooServiceImplPlanVariablesAllFailTest$(</ID>
+    <ID>Wrapping:BambooServiceImplStrategyCTest.kt$BambooServiceImplStrategyCTest$(</ID>
+    <ID>Wrapping:BambooServiceImplTestResultsTest.kt$BambooServiceImplTestResultsTest$(</ID>
+    <ID>Wrapping:BambooServiceShapeInvariantTest.kt$BambooServiceShapeInvariantTest$(</ID>
+    <ID>Wrapping:BambooTestResultConverterTest.kt$BambooTestResultConverterTest$(</ID>
+    <ID>Wrapping:BuildDashboardPanel.kt$BuildDashboardPanel$(</ID>
+    <ID>Wrapping:BuildDashboardPanel.kt$BuildDashboardPanel$(com.intellij.ui.components.JBLabel("").apply { foreground = StatusColors.LINK icon = com.intellij.icons.AllIcons.Toolwindows.ToolWindowRun name = "newerBuildLabel" }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:BuildDashboardPanel.kt$BuildDashboardPanel.&lt;no name provided>$DefaultBranchResolver.getInstance(project).resolve(it)</ID>
+    <ID>Wrapping:BuildDashboardPanel.kt$BuildDashboardPanel.BuildHistoryCellRenderer$(</ID>
+    <ID>Wrapping:BuildDashboardPanel.kt$BuildDashboardPanel.BuildHistoryCellRenderer$(" ${value.buildRelativeTime}", SimpleTextAttributes( SimpleTextAttributes.STYLE_ITALIC, if (!selected) StatusColors.SECONDARY_TEXT else null ))</ID>
+    <ID>Wrapping:BuildDashboardPanel.kt$BuildDashboardPanel.BuildHistoryCellRenderer$("#${value.buildNumber}", SimpleTextAttributes( SimpleTextAttributes.STYLE_BOLD, if (!selected) StatusColors.LINK else null ))</ID>
+    <ID>Wrapping:BuildDashboardPanel.kt$BuildDashboardPanel.BuildHistoryCellRenderer$("Failed", SimpleTextAttributes( SimpleTextAttributes.STYLE_PLAIN, if (!selected) StatusColors.ERROR else null ))</ID>
+    <ID>Wrapping:BuildDashboardPanel.kt$BuildDashboardPanel.BuildHistoryCellRenderer$("Running", SimpleTextAttributes( SimpleTextAttributes.STYLE_PLAIN, if (!selected) StatusColors.WARNING else null ))</ID>
+    <ID>Wrapping:BuildDashboardPanel.kt$BuildDashboardPanel.BuildHistoryCellRenderer$("Success", SimpleTextAttributes( SimpleTextAttributes.STYLE_PLAIN, if (!selected) StatusColors.SUCCESS else null ))</ID>
+    <ID>Wrapping:BuildDashboardPanelDropdownTest.kt$BuildDashboardPanelDropdownTest$(</ID>
+    <ID>Wrapping:BuildDashboardPanelLogCapTest.kt$BuildDashboardPanelLogCapTest$(</ID>
+    <ID>Wrapping:BuildLogParserTest.kt$BuildLogParserTest$(</ID>
+    <ID>Wrapping:BuildMonitorFocusLifecycleTest.kt$BuildMonitorFocusLifecycleTest$(</ID>
+    <ID>Wrapping:BuildMonitorServiceTest.kt$BuildMonitorServiceTest$(</ID>
+    <ID>Wrapping:ManualStageDialog.kt$ManualStageDialog$(</ID>
+    <ID>Wrapping:ManualStageDialog.kt$ManualStageDialog$(JBLabel("&lt;html>&lt;b>Stage load failed&lt;/b>&lt;br>$error&lt;/html>").apply { foreground = JBColor.RED }, gbc)</ID>
+    <ID>Wrapping:ManualStageDialog.kt$ManualStageDialog$(JBLabel("STAGES TO RUN").apply { font = font.deriveFont(java.awt.Font.BOLD, JBUI.scale(10).toFloat()) foreground = com.workflow.orchestrator.core.ui.StatusColors.SECONDARY_TEXT }, gbc)</ID>
+    <ID>Wrapping:PlanDetectionServicePreferredMasterTest.kt$PlanDetectionServicePreferredMasterTest$(</ID>
+    <ID>Wrapping:PrBarTest.kt$PrBarTest$(</ID>
+    <ID>Wrapping:StageDetailPanel.kt$StageDetailPanel$(</ID>
+    <ID>Wrapping:StageDetailPanel.kt$StageDetailPanel$(JBLabel("No test results available.").apply { horizontalAlignment = SwingConstants.CENTER }, BorderLayout.CENTER)</ID>
+    <ID>Wrapping:StageDetailPanel.kt$StageDetailPanel$(parentDisposable, Disposable { if (tempFile.exists()) { tempFile.delete() } })</ID>
+    <ID>Wrapping:StageListPanel.kt$StageListPanel$(</ID>
+    <ID>Wrapping:StageListPanel.kt$StageListPanel.StageListCellRenderer$(</ID>
+    <ID>Wrapping:StageListPanel.kt$StageListPanel.StageListCellRenderer$(value.name, SimpleTextAttributes( SimpleTextAttributes.STYLE_BOLD, null ))</ID>
+    <ID>Wrapping:VariablesTableModelTest.kt$VariablesTableModelTest$(</ID>
+  </CurrentIssues>
+</SmellBaseline>
