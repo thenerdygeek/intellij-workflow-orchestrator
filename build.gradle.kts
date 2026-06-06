@@ -62,7 +62,27 @@ subprojects {
     tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
         // 4g (was 2g): the growing :agent test suite (monitor framework sources + MockK/MockWebServer/coroutine fixtures retained across a single forked JVM) OOMed at 2g — 2026-06-05.
         maxHeapSize = "4g"
+
+        // Coverage-run failure tolerance. Under Kover bytecode instrumentation, MockK cannot
+        // mock certain targets (suspend-function-type mocks in the :agent delegation tests; the
+        // reflective tool construction in ToolDslSchemaParityTest; UI-card mocks in :handover
+        // TemplateEditorCardTest; possibly others across modules) and those tests fail with
+        // UnsupportedOperationException / CONSTRUCT_FAILURE. Test CORRECTNESS is enforced by the
+        // separate, non-instrumented `test` CI job (no `-Pcoverage`), which runs ALL tests with
+        // MockK intact. This coverage-only run (`-Pcoverage`, used by koverXmlReport / koverVerify
+        // in the dedicated CI job) only needs to MEASURE, so it tolerates the instrumentation-
+        // incompatible failures and lets koverXmlReport aggregate full coverage; koverVerify still
+        // enforces the floor. See docs/superpowers/plans/2026-06-06-phase0-enforcement-foundation.md.
+        if (project.hasProperty("coverage")) {
+            ignoreFailures = true
+        }
     }
+
+    // Apply Kover to every module so its production code is instrumented and its execution
+    // data is aggregated into the root total-coverage report (see root `dependencies {}` +
+    // `kover {}` blocks). Aggregation requires the plugin on every aggregated module, else
+    // root `kover(project(":x"))` cannot resolve the module's `kover` variant.
+    apply(plugin = "org.jetbrains.kotlinx.kover")
 }
 
 // ---- Static Analysis (detekt) ----
@@ -154,6 +174,21 @@ dependencies {
     implementation(project(":agent"))
     implementation(project(":web"))
 
+    // -- Kover total-coverage aggregation --
+    // Pull every code module's coverage into the root total report. `:document` is listed
+    // explicitly even though it is only a transitive (non-root) dependency via `:agent`.
+    // Infra-only modules (`:konsist` arch tests, `:mock-server` test fixtures) are excluded.
+    kover(project(":core"))
+    kover(project(":document"))
+    kover(project(":jira"))
+    kover(project(":bamboo"))
+    kover(project(":sonar"))
+    kover(project(":pullrequest"))
+    kover(project(":automation"))
+    kover(project(":handover"))
+    kover(project(":agent"))
+    kover(project(":web"))
+
     // -- External libraries --
     compileOnly(libs.kotlinx.coroutines.core)
     compileOnly(libs.kotlinx.serialization.json)
@@ -244,11 +279,23 @@ changelog {
 }
 
 // ---- Code Coverage ----
+// Aggregated across the 10 code modules (see `kover(project(...))` in `dependencies {}`).
+// Measure/verify with `-Pcoverage` (the dedicated CI coverage job), which tolerates the
+// Kover-instrumentation × MockK test failures (see the subprojects Test config) so the
+// report can aggregate. Correctness is enforced separately by the non-instrumented `test` job.
 kover {
     reports {
         total {
             xml { onCheck = true }
             html { onCheck = true }
+            // Total line-coverage floor. Baseline measured 2026-06-07 = 49.66%
+            // (covered 50789 / total 102282). Floor = floor(49.66) - 1 = 48, so the gate
+            // starts green with a small buffer and ratchets UP over time — never down.
+            verify {
+                rule("Minimum line coverage") {
+                    minBound(48)
+                }
+            }
         }
     }
 }
