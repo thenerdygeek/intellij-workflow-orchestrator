@@ -315,7 +315,7 @@ SYSTEM INFORMATION
 Operating System: Linux
 IDE: WebStorm 2025.1
 Default Shell: /bin/bash
-Home Directory: /Users/subhankarhalder
+Home Directory: /home/snapshot
 Current Working Directory: /snapshot/project
 
 ====

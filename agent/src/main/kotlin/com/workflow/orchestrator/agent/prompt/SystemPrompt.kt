@@ -45,6 +45,7 @@ object SystemPrompt {
         projectPath: String,
         osName: String = System.getProperty("os.name") ?: "Unknown",
         shell: String = defaultShell(),
+        homeDir: String = System.getProperty("user.home") ?: "unknown",
         repoMap: String? = null,
         planModeEnabled: Boolean = false,
         additionalContext: String? = null,
@@ -297,7 +298,7 @@ object SystemPrompt {
         // 8. SYSTEM INFO
         if (includeSystemInfo) {
             append(SECTION_SEP)
-            append(systemInfo(osName, shell, projectPath, ideContext, availableShells))
+            append(systemInfo(osName, shell, projectPath, homeDir, ideContext, availableShells))
         }
 
         // 9. OBJECTIVE
@@ -952,6 +953,7 @@ In each user message, the environment_details will specify the current mode. The
         osName: String,
         shell: String,
         projectPath: String,
+        homeDir: String,
         ideContext: IdeContext?,
         availableShells: List<String>? = null
     ): String {
@@ -966,7 +968,7 @@ In each user message, the environment_details will specify the current mode. The
 Operating System: $osName
 IDE: $ideName
 $shellLine
-Home Directory: ${System.getProperty("user.home") ?: "unknown"}
+Home Directory: $homeDir
 Current Working Directory: $projectPath"""
     }
 
