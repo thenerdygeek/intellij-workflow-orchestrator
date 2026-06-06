@@ -57,7 +57,7 @@ jobs:
 
       - name: Run tests (capped workers to avoid OOM)
         run: >-
-          ./gradlew --no-daemon --no-configuration-cache --continue
+          ./gradlew --no-daemon --no-configuration-cache
           -Dorg.gradle.java.home="$JAVA_HOME"
           -Dorg.gradle.workers.max=2 --max-workers=2
           test
