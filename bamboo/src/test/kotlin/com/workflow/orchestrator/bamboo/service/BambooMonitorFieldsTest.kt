@@ -208,6 +208,63 @@ class BambooMonitorFieldsTest {
     }
 
     @Test
+    fun `getRunningBuilds maps a running build's Unknown state to its live phase`() = runTest {
+        // Real DC shape (manual-captures/running-vs-stopped-build.xml, build 12): a running chain
+        // build reports state="Unknown" while lifeCycleState="InProgress". The collapsed `state` must
+        // surface the live phase, not the meaningless "Unknown" outcome (which made running builds
+        // read as "unknown" in the agent). Note the running filter keeps it (InProgress is non-terminal).
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"results":{"result":[
+                  {"key":"PROJ-REPO722-12","buildResultKey":"PROJ-REPO722-12","buildNumber":12,
+                   "state":"Unknown","lifeCycleState":"InProgress","buildDurationInSeconds":0,
+                   "stages":{"stage":[{"name":"Build Stage","state":"Unknown","lifeCycleState":"InProgress","manual":false,"buildDurationInSeconds":0,
+                     "results":{"result":[
+                       {"key":"PROJ-REPO722-SQAN-12","buildResultKey":"PROJ-REPO722-SQAN-12","state":"Unknown","lifeCycleState":"InProgress","buildDurationInSeconds":0,"plan":{"key":"PROJ-REPO722-SQAN","name":"SonarQube Analysis","shortName":"SonarQube Analysis"}},
+                       {"key":"PROJ-REPO722-OSSAN-12","buildResultKey":"PROJ-REPO722-OSSAN-12","state":"Successful","lifeCycleState":"Finished","buildDurationInSeconds":36,"plan":{"key":"PROJ-REPO722-OSSAN","name":"OSS Analysis","shortName":"OSS Analysis"}}
+                     ]}}]}}
+                ]}}"""
+            )
+        )
+
+        val result = service.getRunningBuilds("PROJ-REPO722")
+
+        assertFalse(result.isError, result.summary)
+        val builds = result.data!!
+        assertEquals(1, builds.size)
+        val b = builds[0]
+        assertEquals("InProgress", b.state, "a running build must show its live phase, not 'Unknown'")
+        assertEquals("InProgress", b.lifeCycleState)
+        val jobs = b.stages[0].jobs
+        assertEquals("InProgress", jobs[0].state, "the still-running job shows its live phase")
+        assertEquals("Successful", jobs[1].state, "the finished job keeps its real outcome")
+    }
+
+    @Test
+    fun `getLatestBuild maps a stopped NotBuilt build's Unknown state to NotBuilt`() = runTest {
+        // Real DC shape (build 11): a stopped/rebuilt chain build reports state="Unknown"
+        // lifeCycleState="NotBuilt". It must read as "NotBuilt" (stopped) — distinct from a running
+        // build's "InProgress" and from "Successful" — so the agent can tell stopped from running.
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"key":"PROJ-REPO722-11","buildResultKey":"PROJ-REPO722-11","buildNumber":11,
+                    "state":"Unknown","lifeCycleState":"NotBuilt","buildDurationInSeconds":278,
+                    "stages":{"stage":[{"name":"Build Stage","state":"Unknown","lifeCycleState":"NotBuilt","manual":false,"buildDurationInSeconds":0,
+                      "results":{"result":[
+                        {"key":"PROJ-REPO722-BART-11","buildResultKey":"PROJ-REPO722-BART-11","state":"Unknown","lifeCycleState":"NotBuilt","buildDurationInSeconds":52,"plan":{"key":"PROJ-REPO722-BART","name":"Build Artifacts","shortName":"Build Artifacts"}}
+                      ]}}]}}"""
+            )
+        )
+
+        val result = service.getLatestBuild("PROJ-REPO722")
+
+        assertFalse(result.isError, result.summary)
+        val b = result.data!!
+        assertEquals("NotBuilt", b.state, "a stopped/not-built build must read as NotBuilt, not 'Unknown'")
+        assertEquals("NotBuilt", b.stages[0].jobs[0].state)
+    }
+
+    @Test
     fun `getLatestBuild surfaces isError and non-empty summary on 404`() = runTest {
         server.enqueue(MockResponse().setResponseCode(404))
 

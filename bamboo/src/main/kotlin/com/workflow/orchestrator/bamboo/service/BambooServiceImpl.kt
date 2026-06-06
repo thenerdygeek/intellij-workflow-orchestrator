@@ -593,7 +593,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     BuildResultData(
                         planKey = dto.plan?.key ?: dto.key.substringBeforeLast("-"),
                         buildNumber = dto.buildNumber,
-                        state = dto.state.ifBlank { dto.lifeCycleState },
+                        state = collapseBuildState(dto.state, dto.lifeCycleState),
                         durationSeconds = dto.buildDurationInSeconds,
                         buildResultKey = dto.buildResultKey.ifBlank { dto.key },
                         buildRelativeTime = dto.buildRelativeTime,
@@ -821,7 +821,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
                     BuildResultData(
                         planKey = dto.plan?.key ?: dto.key.substringBeforeLast("-"),
                         buildNumber = dto.buildNumber,
-                        state = dto.state.ifBlank { dto.lifeCycleState },
+                        state = collapseBuildState(dto.state, dto.lifeCycleState),
                         durationSeconds = dto.buildDurationInSeconds,
                         buildResultKey = dto.buildResultKey.ifBlank { dto.key },
                         buildRelativeTime = dto.buildRelativeTime,
@@ -1030,6 +1030,28 @@ class BambooServiceImpl(private val project: Project) : BambooService {
     // --- Private helpers ---
 
     /**
+     * Collapse Bamboo's two state fields into the single display `state` string on the `:core`
+     * [BuildResultData]/[BuildStageData]/[BuildJobData] model.
+     *
+     * Bamboo reports an *outcome* (`state`: Successful/Failed/Unknown) AND a *phase*
+     * (`lifeCycleState`: Finished/InProgress/Queued/Pending/NotBuilt). A build that has not produced
+     * an outcome yet reports `state="Unknown"` — true for BOTH a running build (`lifeCycleState=InProgress`)
+     * and a stopped/not-fully-built one (`lifeCycleState=NotBuilt`), so the raw `state` alone made
+     * both read as "unknown" in the agent. Ground truth: tools/atlassian-probe/Result_Bamboo/
+     * manual-captures/running-vs-stopped-build.xml (build 12 running, build 11 stopped).
+     *
+     * Rule: keep a real outcome (Successful/Failed); when the outcome is the meaningless "Unknown"
+     * (or blank), surface the lifecycle phase instead so running ("InProgress") is distinguishable
+     * from stopped ("NotBuilt") and from done. Falls back to `state` only when both are blank.
+     * (The richer raw `lifeCycleState` is still preserved verbatim on the model alongside this.)
+     */
+    private fun collapseBuildState(state: String, lifeCycleState: String): String = when {
+        state.isNotBlank() && !state.equals("Unknown", ignoreCase = true) -> state
+        lifeCycleState.isNotBlank() -> lifeCycleState
+        else -> state
+    }
+
+    /**
      * Map a raw [BambooStageDto] (from `?expand=stages.stage.results.result` responses)
      * to the `:core` model. Populates [BuildStageData.jobs] when the stage has expanded
      * job results — the `resultKey` carried per job is what the agent uses to fetch
@@ -1038,12 +1060,12 @@ class BambooServiceImpl(private val project: Project) : BambooService {
     private fun BambooStageDto.toBuildStageData(): BuildStageData =
         BuildStageData(
             name = name,
-            state = state.ifBlank { lifeCycleState },
+            state = collapseBuildState(state, lifeCycleState),
             durationSeconds = buildDurationInSeconds,
             jobs = results.result.map { job ->
                 BuildJobData(
                     name = job.plan?.shortName ?: job.buildResultKey,
-                    state = job.state.ifBlank { job.lifeCycleState },
+                    state = collapseBuildState(job.state, job.lifeCycleState),
                     durationSeconds = job.buildDurationInSeconds,
                     resultKey = job.buildResultKey.ifBlank { job.key }
                 )
@@ -1057,7 +1079,7 @@ class BambooServiceImpl(private val project: Project) : BambooService {
         val data = BuildResultData(
             planKey = dto.plan?.key ?: dto.key.substringBeforeLast("-"),
             buildNumber = dto.buildNumber,
-            state = dto.state.ifBlank { dto.lifeCycleState },
+            state = collapseBuildState(dto.state, dto.lifeCycleState),
             durationSeconds = dto.buildDurationInSeconds,
             stages = stages,
             buildResultKey = dto.buildResultKey.ifBlank { dto.key },
