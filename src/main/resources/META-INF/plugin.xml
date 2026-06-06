@@ -60,6 +60,10 @@
             qualifiedName="com.workflow.orchestrator.plugin.sonarProjectPickerLauncher"
             interface="com.workflow.orchestrator.core.services.SonarProjectPickerLauncher"
             dynamic="true"/>
+        <extensionPoint
+            qualifiedName="com.workflow.orchestrator.authProvider"
+            interface="com.workflow.orchestrator.core.auth.AuthProvider"
+            dynamic="true"/>
     </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
@@ -476,6 +480,8 @@
     </extensions>
 
     <extensions defaultExtensionNs="com.workflow.orchestrator">
+        <authProvider
+            implementation="com.workflow.orchestrator.core.auth.DefaultAuthProvider"/>
         <branchNameAiGenerator
             implementation="com.workflow.orchestrator.core.ai.SourcegraphBranchNameGenerator"/>
         <jiraTicketProvider

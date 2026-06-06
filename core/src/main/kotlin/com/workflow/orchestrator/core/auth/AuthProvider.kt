@@ -25,11 +25,17 @@ interface AuthProvider {
         /**
          * The active provider for [service]: the lowest-[order] registered provider that
          * supports it, falling back to a fresh [DefaultAuthProvider] if none is registered.
+         *
+         * Wrapped in [runCatching] so it degrades to the default in environments where the
+         * extension-point system isn't available (e.g. plain unit tests that construct
+         * [com.workflow.orchestrator.core.http.HttpClientFactory] without loading plugin.xml) —
+         * there the default path runs, preserving pre-Phase-2 behavior.
          */
         fun resolve(service: ServiceType): AuthProvider =
-            EP_NAME.extensionList
-                .filter { it.supports(service) }
-                .minByOrNull { it.order }
-                ?: DefaultAuthProvider()
+            runCatching {
+                EP_NAME.extensionList
+                    .filter { it.supports(service) }
+                    .minByOrNull { it.order }
+            }.getOrNull() ?: DefaultAuthProvider()
     }
 }
