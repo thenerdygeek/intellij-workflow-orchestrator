@@ -12,15 +12,19 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Tests for the H1/H2/H6 running-visibility bug-fix:
+ * Tests for the running-visibility bug-fix:
  *
- *  H1 – [build_status] is the running-aware composite; [recent_builds] was previously
- *       finished-only. Tests here verify both actions surface in-flight builds.
- *  H2 – Branch-chain keys (e.g. PROJ-PLAN523) may 404 the running-builds endpoint.
- *       The [activeBuildsOrWarning] helper falls back to the master plan key when the
- *       chain-key call returns empty or errors.
- *  H6 – A failed running-check was previously silently swallowed (active = emptyList()).
- *       Now a distinct "⚠ Could not verify in-progress/queued builds" warning is prepended.
+ *  - `build_status`/`recent_builds` are running-aware: they compose the finished-only
+ *    `getLatestBuild` with `getRunningBuilds(chainKey)` so in-flight (queued/running)
+ *    builds are surfaced.
+ *  - A failed running-check is NOT silently swallowed — a distinct
+ *    "⚠ Could not verify in-progress/queued builds" warning is prepended.
+ *
+ * IMPORTANT — no master-plan-key fallback. Bamboo branch builds live ONLY under the
+ * branch plan key (the resolved [chainKey], e.g. `PLAN-X523`). Callers resolve
+ * `branch → chainKey` upstream (ChainKeyResolver) and the running-check queries THAT
+ * key only; it never falls back to the master plan key (which would surface the wrong
+ * branch's builds — see ChainKeyResolver's "no fallback to master" contract).
  *
  * All tests use [BambooBuildsTool.executeBuildStatusForTest] /
  * [BambooBuildsTool.activeBuildsOrWarning] so no IntelliJ infrastructure is needed.
@@ -74,7 +78,7 @@ class BambooBuildsToolRunningVisibilityTest {
     )
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // build_status: running build is surfaced (happy path, no fallback needed)
+    // build_status: running build on the (resolved) chainKey is surfaced
     // ═══════════════════════════════════════════════════════════════════════════
 
     @Test
@@ -83,7 +87,7 @@ class BambooBuildsToolRunningVisibilityTest {
         coEvery { service.getLatestBuild("PLAN-X") } returns latestFinished()
         coEvery { service.getRunningBuilds("PLAN-X") } returns runningBuild()
 
-        val result = tool.executeBuildStatusForTest("PLAN-X", service, masterPlanKey = null)
+        val result = tool.executeBuildStatusForTest("PLAN-X", service)
 
         assertFalse(result.isError)
         assertTrue(
@@ -105,114 +109,57 @@ class BambooBuildsToolRunningVisibilityTest {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // H2: branch-chain key returns empty → fallback to masterPlanKey finds the build
+    // build_status: a branch's running build is surfaced under the BRANCH chain key —
+    // and the master plan key is NEVER queried (no fallback).
     // ═══════════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `build_status H2 - chainKey returns empty, masterPlanKey fallback surfaces running build`() = runTest {
+    fun `build_status - branch running build surfaced under branch chainKey, master never queried`() = runTest {
         val service = mockk<BambooService>()
+        // Caller already resolved branch -> branch chain key (e.g. PLAN-X523).
         coEvery { service.getLatestBuild("PLAN-X523") } returns latestFinished(planKey = "PLAN-X")
-        // Branch chain key returns empty (simulates 404-then-empty from the endpoint)
-        coEvery { service.getRunningBuilds("PLAN-X523") } returns emptyRunning(planKey = "PLAN-X523")
-        // Master plan key returns the actual running build
-        coEvery { service.getRunningBuilds("PLAN-X") } returns runningBuild(planKey = "PLAN-X")
+        coEvery { service.getRunningBuilds("PLAN-X523") } returns runningBuild(planKey = "PLAN-X523")
 
-        val result = tool.executeBuildStatusForTest(
-            chainKey = "PLAN-X523",
-            service = service,
-            masterPlanKey = "PLAN-X"
-        )
+        val result = tool.executeBuildStatusForTest("PLAN-X523", service)
 
-        assertFalse(result.isError)
         assertTrue(
             result.content.contains("IN PROGRESS or QUEUED"),
-            "fallback must surface the running build, got:\n${result.content}"
+            "branch running build must be surfaced under the branch chain key, got:\n${result.content}"
         )
-        // Verify the fallback was actually consulted.
         coVerify(exactly = 1) { service.getRunningBuilds("PLAN-X523") }
-        coVerify(exactly = 1) { service.getRunningBuilds("PLAN-X") }
-    }
-
-    @Test
-    fun `build_status H2 - chainKey errors, masterPlanKey fallback surfaces running build`() = runTest {
-        val service = mockk<BambooService>()
-        coEvery { service.getLatestBuild("PLAN-X523") } returns latestFinished(planKey = "PLAN-X")
-        // Branch chain key errors (HTTP 404)
-        coEvery { service.getRunningBuilds("PLAN-X523") } returns errorRunning(planKey = "PLAN-X523")
-        // Master plan key returns the actual running build
-        coEvery { service.getRunningBuilds("PLAN-X") } returns runningBuild(planKey = "PLAN-X")
-
-        val result = tool.executeBuildStatusForTest(
-            chainKey = "PLAN-X523",
-            service = service,
-            masterPlanKey = "PLAN-X"
-        )
-
-        assertFalse(result.isError)
-        assertTrue(
-            result.content.contains("IN PROGRESS or QUEUED"),
-            "fallback must surface the running build even when chainKey 404s, got:\n${result.content}"
-        )
-        coVerify(exactly = 1) { service.getRunningBuilds("PLAN-X") }
+        // The master plan key must NEVER be queried — no fallback.
+        coVerify(exactly = 0) { service.getRunningBuilds("PLAN-X") }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // H6: BOTH attempts error → non-silent warning prepended (was silently emptyList)
+    // Failed running-check → non-silent warning (was silently emptyList)
     // ═══════════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `build_status H6 - both chainKey and masterPlanKey error produces non-silent warning`() = runTest {
+    fun `build_status - running-check error produces non-silent warning, not a silent finished-only result`() = runTest {
         val service = mockk<BambooService>()
-        coEvery { service.getLatestBuild("PLAN-X523") } returns latestFinished(planKey = "PLAN-X")
-        coEvery { service.getRunningBuilds("PLAN-X523") } returns errorRunning(planKey = "PLAN-X523")
-        coEvery { service.getRunningBuilds("PLAN-X") } returns errorRunning(planKey = "PLAN-X")
+        coEvery { service.getLatestBuild("PLAN-X") } returns latestFinished()
+        coEvery { service.getRunningBuilds("PLAN-X") } returns errorRunning()
 
-        val result = tool.executeBuildStatusForTest(
-            chainKey = "PLAN-X523",
-            service = service,
-            masterPlanKey = "PLAN-X"
-        )
+        val result = tool.executeBuildStatusForTest("PLAN-X", service)
 
-        // Must NOT be silently clean — the output must warn the LLM.
         assertFalse(result.isError, "isError should remain false (latest build still shown)")
         assertTrue(
             result.content.contains("Could not verify in-progress/queued builds"),
             "warning must mention 'Could not verify in-progress/queued builds', got:\n${result.content}"
         )
-        // Latest finished build must still appear below the warning.
         assertTrue(
             result.content.contains("#2"),
             "latest finished build must still be shown even when running-check errors, got:\n${result.content}"
         )
-        // Must NOT show the clean "IN PROGRESS or QUEUED" notice.
         assertFalse(
             result.content.contains("IN PROGRESS or QUEUED"),
             "must not show clean running-build notice when the check itself errored, got:\n${result.content}"
         )
     }
 
-    @Test
-    fun `build_status H6 - single key errors with no masterPlanKey produces non-silent warning`() = runTest {
-        val service = mockk<BambooService>()
-        coEvery { service.getLatestBuild("PLAN-X") } returns latestFinished()
-        coEvery { service.getRunningBuilds("PLAN-X") } returns errorRunning()
-
-        val result = tool.executeBuildStatusForTest(
-            chainKey = "PLAN-X",
-            service = service,
-            masterPlanKey = null
-        )
-
-        assertFalse(result.isError)
-        assertTrue(
-            result.content.contains("Could not verify in-progress/queued builds"),
-            "single-key error must also produce the non-silent warning, got:\n${result.content}"
-        )
-        assertTrue(result.content.contains("#2"), "latest finished build must still appear")
-    }
-
     // ═══════════════════════════════════════════════════════════════════════════
-    // recent_builds H1: running-aware — notice is prepended when active builds exist
+    // recent_builds path: activeBuildsOrWarning surfaces the running build for the chainKey
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
@@ -225,7 +172,7 @@ class BambooBuildsToolRunningVisibilityTest {
         val service = mockk<BambooService>()
         coEvery { service.getRunningBuilds("PLAN-X") } returns runningBuild()
 
-        val check = tool.activeBuildsOrWarning(service, chainKey = "PLAN-X", masterPlanKey = null)
+        val check = tool.activeBuildsOrWarning(service, chainKey = "PLAN-X")
 
         assertTrue(check.activeBuilds.isNotEmpty(), "should find the running build")
         assertFalse(check.bothErrored)
@@ -236,63 +183,39 @@ class BambooBuildsToolRunningVisibilityTest {
     }
 
     @Test
-    fun `recent_builds path - activeBuildsOrWarning uses masterPlanKey fallback when chainKey returns empty`() = runTest {
-        val service = mockk<BambooService>()
-        coEvery { service.getRunningBuilds("PLAN-X523") } returns emptyRunning(planKey = "PLAN-X523")
-        coEvery { service.getRunningBuilds("PLAN-X") } returns runningBuild(planKey = "PLAN-X")
-
-        val check = tool.activeBuildsOrWarning(service, chainKey = "PLAN-X523", masterPlanKey = "PLAN-X")
-
-        assertTrue(check.activeBuilds.isNotEmpty(), "fallback should find the running build")
-        assertFalse(check.bothErrored)
-        coVerify(exactly = 1) { service.getRunningBuilds("PLAN-X") }
-    }
-
-    @Test
-    fun `recent_builds path - activeBuildsOrWarning both-errored when no fallback available`() = runTest {
+    fun `activeBuildsOrWarning - reports bothErrored when the chainKey query fails`() = runTest {
         val service = mockk<BambooService>()
         coEvery { service.getRunningBuilds("PLAN-X") } returns errorRunning()
 
-        val check = tool.activeBuildsOrWarning(service, chainKey = "PLAN-X", masterPlanKey = null)
+        val check = tool.activeBuildsOrWarning(service, chainKey = "PLAN-X")
 
         assertTrue(check.activeBuilds.isEmpty())
-        assertTrue(check.bothErrored, "should report bothErrored when only attempt fails")
+        assertTrue(check.bothErrored, "should report bothErrored when the running-check fails")
         assertTrue(check.errorReason.isNotBlank(), "should carry an error reason")
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // activeBuildsOrWarning: no fallback attempted when masterPlanKey == chainKey
+    // No master fallback: the running-check queries ONLY the given chainKey, exactly once.
     // ═══════════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `activeBuildsOrWarning - no secondary call when masterPlanKey equals chainKey`() = runTest {
+    fun `activeBuildsOrWarning - queries only the given chainKey exactly once (no master fallback)`() = runTest {
         val service = mockk<BambooService>()
-        coEvery { service.getRunningBuilds("PLAN-X") } returns emptyRunning()
+        // Empty result on the chain key — must NOT trigger any second/master query.
+        coEvery { service.getRunningBuilds("PLAN-X523") } returns emptyRunning(planKey = "PLAN-X523")
 
-        // masterPlanKey == chainKey → should not trigger a second call
-        val check = tool.activeBuildsOrWarning(service, chainKey = "PLAN-X", masterPlanKey = "PLAN-X")
+        val check = tool.activeBuildsOrWarning(service, chainKey = "PLAN-X523")
 
         assertTrue(check.activeBuilds.isEmpty())
         assertFalse(check.bothErrored)
         coVerify(exactly = 1) { service.getRunningBuilds(any()) }
-    }
-
-    @Test
-    fun `activeBuildsOrWarning - no secondary call when masterPlanKey is null`() = runTest {
-        val service = mockk<BambooService>()
-        coEvery { service.getRunningBuilds("PLAN-X") } returns emptyRunning()
-
-        val check = tool.activeBuildsOrWarning(service, chainKey = "PLAN-X", masterPlanKey = null)
-
-        assertTrue(check.activeBuilds.isEmpty())
-        assertFalse(check.bothErrored)
-        coVerify(exactly = 1) { service.getRunningBuilds(any()) }
+        coVerify(exactly = 1) { service.getRunningBuilds("PLAN-X523") }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Regression NIT: a CLEAN empty-success running-check must emit NEITHER the
+    // Regression: a CLEAN empty-success running-check must emit NEITHER the
     // "IN PROGRESS or QUEUED" notice NOR the "Could not verify" warning — output is
-    // exactly the latest finished build. Pins that success≠failure for empty results.
+    // exactly the latest finished build. Pins that success ≠ failure for empty results.
     // ═══════════════════════════════════════════════════════════════════════════
 
     @Test
@@ -301,7 +224,7 @@ class BambooBuildsToolRunningVisibilityTest {
         coEvery { service.getLatestBuild("PLAN-X") } returns latestFinished()
         coEvery { service.getRunningBuilds("PLAN-X") } returns emptyRunning()
 
-        val result = tool.executeBuildStatusForTest("PLAN-X", service, masterPlanKey = null)
+        val result = tool.executeBuildStatusForTest("PLAN-X", service)
 
         assertFalse(result.isError)
         assertFalse(

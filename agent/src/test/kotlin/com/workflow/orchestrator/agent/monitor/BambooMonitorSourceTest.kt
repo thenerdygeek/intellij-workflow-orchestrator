@@ -169,20 +169,18 @@ class BambooMonitorSourceTest {
     }
 
     @Test
-    fun `fetch fallback to masterPlanKey when chainKey running empty - branch scenario`() = runTest {
+    fun `fetch on a branch queries only the branch chainKey - master plan key never queried`() = runTest {
         val bamboo = mockk<BambooService>()
-        // Branch resolves to PROJ-PLAN-42 (chainKey != planKey → masterPlanKey = "PROJ-PLAN")
+        // Branch resolves to the branch chain key PROJ-PLAN-42 — branch builds live there, not under master.
         coEvery { bamboo.getPlanBranches("PROJ-PLAN") } returns okBranches("PROJ-PLAN-42" to "feature/bar")
-        // chainKey returns empty running builds → should fall back to masterPlanKey
-        coEvery { bamboo.getRunningBuilds("PROJ-PLAN-42") } returns emptyRunningResult()
-        val masterRunning = okBuild("Unknown", "InProgress", buildNumber = 5, planKey = "PROJ-PLAN")
-        coEvery { bamboo.getRunningBuilds("PROJ-PLAN") } returns okRunningResult(listOf(masterRunning))
-        // getLatestBuild should NOT be called because fallback running build was found
+        val running = okBuild("Unknown", "InProgress", buildNumber = 7, planKey = "PROJ-PLAN-42")
+        coEvery { bamboo.getRunningBuilds("PROJ-PLAN-42") } returns okRunningResult(listOf(running))
         val src = source(bamboo, planKey = "PROJ-PLAN", branch = "feature/bar", scope = this)
         val events = mutableListOf<MonitorEvent>()
         src.pollOnce { events.add(it) }
         coVerify(exactly = 1) { bamboo.getRunningBuilds("PROJ-PLAN-42") }
-        coVerify(exactly = 1) { bamboo.getRunningBuilds("PROJ-PLAN") }
+        // The master plan key must NEVER be queried — no fallback to master for a branch's builds.
+        coVerify(exactly = 0) { bamboo.getRunningBuilds("PROJ-PLAN") }
         coVerify(exactly = 0) { bamboo.getLatestBuild(any()) }
     }
 
@@ -199,19 +197,19 @@ class BambooMonitorSourceTest {
     }
 
     @Test
-    fun `getRunningBuilds error on both attempts falls back to getLatestBuild gracefully`() = runTest {
+    fun `getRunningBuilds error on the branch chainKey falls back to getLatestBuild gracefully`() = runTest {
         val bamboo = mockk<BambooService>()
-        // Branch resolves so chainKey != planKey → masterPlanKey is non-null
         coEvery { bamboo.getPlanBranches("PROJ-PLAN") } returns okBranches("PROJ-PLAN-99" to "bugfix/x")
         coEvery { bamboo.getRunningBuilds("PROJ-PLAN-99") } returns errRunningResult()
-        coEvery { bamboo.getRunningBuilds("PROJ-PLAN") } returns errRunningResult()
         val finishedBuild = okBuild("Successful", "Finished", buildNumber = 3)
         coEvery { bamboo.getLatestBuild("PROJ-PLAN-99") } returns okResult(finishedBuild)
         val src = source(bamboo, planKey = "PROJ-PLAN", branch = "bugfix/x", scope = this)
         val events = mutableListOf<MonitorEvent>()
         src.pollOnce { events.add(it) }
-        // Running errors should NOT prevent fetching latest finished build
+        // A running-check error must NOT prevent fetching the latest finished build for the SAME chain key.
         coVerify(exactly = 1) { bamboo.getLatestBuild("PROJ-PLAN-99") }
+        // Master plan key must NEVER be queried — no fallback to master.
+        coVerify(exactly = 0) { bamboo.getRunningBuilds("PROJ-PLAN") }
     }
 
     @Test

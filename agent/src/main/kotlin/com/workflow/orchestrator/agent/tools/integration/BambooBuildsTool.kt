@@ -246,13 +246,14 @@ description optional: for approval dialog on trigger/stop/cancel.
             action("build_status") {
                 description {
                     technical(
-                        "Running-aware composite CI status check. Checks in-progress/queued builds via " +
-                        "service.getRunningBuilds() FIRST (with master-plan fallback when a branch-chain key " +
-                        "may 404 the running-builds endpoint), then fetches the latest finished build via " +
-                        "service.getLatestBuild(chainKey). If any builds are in-progress/queued, they are " +
-                        "surfaced above the latest finished result. If the running-check fails, a distinct " +
-                        "warning is prepended so the partial result is never silently shown as complete. " +
-                        "Calls ChainKeyResolver to map plan_key + optional branch to the Bamboo chain key."
+                        "Running-aware composite CI status check. Resolves branch→chainKey via ChainKeyResolver, " +
+                        "then checks in-progress/queued builds via service.getRunningBuilds(chainKey) FIRST, " +
+                        "then fetches the latest finished build via service.getLatestBuild(chainKey). " +
+                        "Branch builds live under the branch plan key (e.g. PROJ-PLAN42) — the chainKey is " +
+                        "queried directly with no master-plan-key fallback. If any builds are " +
+                        "in-progress/queued, they are surfaced above the latest finished result. If the " +
+                        "running-check fails, a distinct warning is prepended so the partial result is never " +
+                        "silently shown as complete."
                     )
                     plain(
                         "The definitive 'what is CI doing right now?' check — checks running/queued builds FIRST, " +
@@ -904,11 +905,7 @@ description optional: for approval dialog on trigger/stop/cancel.
                 } else {
                     planKey
                 }
-                // Pass the original planKey as masterPlanKey fallback — when chainKey is a
-                // branch-chain key (e.g. PROJ-PLAN523), getRunningBuilds may 404 on it while
-                // the master plan key (PROJ-PLAN) works correctly for the running-builds query.
-                val masterPlanKey = if (chainKey != planKey) planKey else null
-                executeBuildStatusForTest(chainKey, service, masterPlanKey)
+                executeBuildStatusForTest(chainKey, service)
             }
 
             "get_build" -> {
@@ -1023,8 +1020,7 @@ description optional: for approval dialog on trigger/stop/cancel.
                 val recentResult = service.getRecentBuilds(chainKey, maxResults).toAgentToolResult()
                 // H1: Make recent_builds running-aware so the LLM sees in-flight builds even
                 // when it picks recent_builds over build_status for "current status" queries.
-                val masterPlanKey = if (chainKey != planKey) planKey else null
-                val runningCheck = activeBuildsOrWarning(service, chainKey, masterPlanKey)
+                val runningCheck = activeBuildsOrWarning(service, chainKey)
                 when {
                     runningCheck.activeBuilds.isNotEmpty() -> {
                         val notice = buildRunningNotice(runningCheck.activeBuilds, chainKey)
@@ -1090,9 +1086,9 @@ description optional: for approval dialog on trigger/stop/cancel.
     /**
      * Return type for the shared running-check helper [activeBuildsOrWarning].
      *
-     * @param activeBuilds non-empty when at least one attempt succeeded and found active builds.
-     * @param bothErrored  true when EVERY attempt (chainKey + optional masterPlanKey) returned
-     *   an error — caller should emit a non-silent warning instead of silently hiding the gap.
+     * @param activeBuilds non-empty when the query succeeded and found active builds.
+     * @param bothErrored  true when the [chainKey] query returned an error — caller
+     *   should emit a non-silent warning instead of silently hiding the gap.
      * @param errorReason  human-readable reason string when [bothErrored] is true.
      */
     internal data class RunningCheck(
@@ -1105,49 +1101,25 @@ description optional: for approval dialog on trigger/stop/cancel.
      * Shared running-build check used by both [executeBuildStatusForTest] and the
      * `recent_builds` handler.
      *
-     * Calls `service.getRunningBuilds(chainKey)`.  If that call errors **or** returns
-     * empty AND [masterPlanKey] is non-null and different from [chainKey], retries with
-     * [masterPlanKey] — because branch-chain keys (e.g. `PROJ-PLAN523`) may 404 the
-     * `includeAllStates` endpoint while the master plan key (`PROJ-PLAN`) succeeds.
-     *
-     * Returns [RunningCheck.bothErrored] = `true` only when **every** attempt failed,
-     * so the caller can emit a distinct non-silent warning (H6 fix).
+     * Branch builds live exclusively under the branch plan key ([chainKey], e.g.
+     * `PROJ-PLAN523`) — there is no master-plan-key fallback.  Calls
+     * `service.getRunningBuilds(chainKey)` once.  Returns [RunningCheck.bothErrored]
+     * = `true` only when the attempt failed, so the caller can emit a distinct
+     * non-silent warning (H6 fix).
      */
     internal suspend fun activeBuildsOrWarning(
         service: com.workflow.orchestrator.core.services.BambooService,
-        chainKey: String,
-        masterPlanKey: String?
+        chainKey: String
     ): RunningCheck {
-        // Primary attempt — keyed on the resolved chain key.
-        val primary = service.getRunningBuilds(chainKey)
-        if (!primary.isError) {
-            val builds = primary.data.orEmpty()
-            if (builds.isNotEmpty()) return RunningCheck(builds, bothErrored = false, errorReason = "")
-            // Primary succeeded but empty — try master plan key as a secondary source only
-            // when a distinct master key is available (branch-collection 404 case, H2).
-        }
-
-        if (masterPlanKey != null && masterPlanKey != chainKey) {
-            val secondary = service.getRunningBuilds(masterPlanKey)
-            if (!secondary.isError) {
-                val builds = secondary.data.orEmpty()
-                return RunningCheck(builds, bothErrored = false, errorReason = "")
-            }
-            // Both errored.
-            val reason = secondary.summary.ifBlank { primary.summary.ifBlank { "unknown error" } }
-            return RunningCheck(emptyList(), bothErrored = true, errorReason = reason)
-        }
-
-        // No master key available — primary was the only attempt.
-        if (primary.isError) {
+        val result = service.getRunningBuilds(chainKey)
+        if (result.isError) {
             return RunningCheck(
                 emptyList(),
                 bothErrored = true,
-                errorReason = primary.summary.ifBlank { "unknown error" }
+                errorReason = result.summary.ifBlank { "unknown error" }
             )
         }
-        // Primary succeeded but empty, no fallback needed.
-        return RunningCheck(emptyList(), bothErrored = false, errorReason = "")
+        return RunningCheck(result.data.orEmpty(), bothErrored = false, errorReason = "")
     }
 
     /**
@@ -1180,8 +1152,8 @@ description optional: for approval dialog on trigger/stop/cancel.
      * invisible to it. That made the agent report a stale FAILED/SUCCESSFUL state
      * while a newer build was actually running. To give an honest "current CI
      * state" we additionally fetch in-progress/queued builds via [activeBuildsOrWarning]
-     * (which includes a master-plan fallback for branch keys that 404 the
-     * includeAllStates endpoint) and surface them above the latest finished result.
+     * and surface them above the latest finished result. Branch builds live under
+     * the branch plan key ([chainKey]) — queried once, no master-plan-key fallback.
      *
      * H6 fix: if the running-check fails, prepend a DISTINCT non-silent warning so
      * the LLM knows the result is incomplete — never silently hide the gap.
@@ -1189,18 +1161,15 @@ description optional: for approval dialog on trigger/stop/cancel.
      * Extracted as an `internal` seam so it can be unit-tested with a mock
      * [BambooService] without IntelliJ infrastructure (mirrors [executeGetBuildForTest]).
      *
-     * @param chainKey     resolved chain key (may equal [masterPlanKey] for trunk builds).
-     * @param masterPlanKey the original plan_key param, passed as a fallback when [chainKey]
-     *   is a branch-chain key (e.g. `PROJ-PLAN523`) that may 404 the running-builds endpoint.
-     *   Pass `null` when chainKey == planKey (no distinct master key exists).
+     * @param chainKey resolved chain key — the branch plan key when a branch was
+     *   supplied (e.g. `PROJ-PLAN42`), or the plan key itself for trunk builds.
      */
     internal suspend fun executeBuildStatusForTest(
         chainKey: String,
-        service: com.workflow.orchestrator.core.services.BambooService,
-        masterPlanKey: String? = null
+        service: com.workflow.orchestrator.core.services.BambooService
     ): ToolResult = coroutineScope {
         val latestDeferred = async { service.getLatestBuild(chainKey) }
-        val runningCheck = activeBuildsOrWarning(service, chainKey, masterPlanKey)
+        val runningCheck = activeBuildsOrWarning(service, chainKey)
         val latest = latestDeferred.await().toAgentToolResult()
 
         when {
