@@ -3,6 +3,17 @@
    <configuration>
       <verify-metadata>true</verify-metadata>
       <verify-signatures>false</verify-signatures>
+      <trusted-artifacts>
+         <!-- The IntelliJ IDE distribution (group "idea": .dmg on macOS, .tar.gz on Linux,
+              .zip on Windows) and the JetBrains Runtime (group "org.jetbrains.runtime") are large
+              OS/arch-specific binaries served from JetBrains' official HTTPS repositories. A single
+              committed SHA-256 (generated on one platform) cannot match the per-OS downloads used by
+              CI (Linux) and Windows testing, and maintaining per-platform hashes for multi-GB
+              binaries is impractical. Trust just these two groups; every actual library JAR stays
+              hash-verified. -->
+         <trust group="idea" reason="Platform-specific IDE distribution; differs per OS/arch"/>
+         <trust group="org.jetbrains.runtime" reason="Platform-specific JetBrains Runtime; differs per OS/arch"/>
+      </trusted-artifacts>
    </configuration>
    <components>
       <component group="app.cash.turbine" name="turbine" version="1.1.0">
