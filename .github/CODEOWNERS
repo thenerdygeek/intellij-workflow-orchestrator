@@ -1,0 +1,22 @@
+# Code owners — solo maintainer owns everything by default.
+# Forks should replace these entries with their own maintainers.
+# Syntax: https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything in the repo.
+*                       @thenerdygeek
+
+# Governance & security docs.
+/SECURITY.md            @thenerdygeek
+/THREAT_MODEL.md        @thenerdygeek
+/FORKING.md             @thenerdygeek
+/CONTRIBUTING.md        @thenerdygeek
+/docs/adr/              @thenerdygeek
+
+# Stable fork-facing surface — changes here affect every fork.
+/core/                  @thenerdygeek
+/src/main/resources/META-INF/plugin.xml  @thenerdygeek
+
+# Enforcement & supply chain.
+/.github/               @thenerdygeek
+/konsist/               @thenerdygeek
+/gradle/verification-metadata.xml  @thenerdygeek
