@@ -72,7 +72,6 @@ import com.workflow.orchestrator.agent.tools.psi.*
 import com.workflow.orchestrator.agent.tools.runtime.*
 import com.workflow.orchestrator.agent.tools.vcs.ChangelistShelveTool
 import com.workflow.orchestrator.core.ai.LlmBrain
-import com.workflow.orchestrator.core.ai.LlmBrainFactory
 import com.workflow.orchestrator.core.ai.ModelCache
 import com.workflow.orchestrator.core.ai.OpenAiCompatBrain
 import com.workflow.orchestrator.core.ai.SourcegraphChatClient
@@ -817,77 +816,24 @@ class AgentService(
     // ── Brain ──────────────────────────────────────────────────────────────
 
     /**
+     * Brain construction + model-selection precedence, extracted into [BrainFactory] (Phase 3
+     * cut D). The tool/param name sets are passed as providers so the factory depends only on the
+     * registry data it uses. [createBrain] delegates here, keeping its callers unchanged.
+     */
+    private val brainFactory = com.workflow.orchestrator.agent.brain.BrainFactory(
+        project = project,
+        toolNames = { registry.allToolNames() },
+        paramNames = { registry.allParamNames() },
+    )
+
+    /**
      * Creates a fresh LLM brain for each task execution.
      * Never cached — always picks up the latest settings (model, URL, token).
+     *
+     * @see BrainFactory.create
      */
-    private suspend fun createBrain(modelOverride: String? = null): LlmBrain {
-        val connections = ConnectionSettings.getInstance()
-        val sgUrl = connections.state.sourcegraphUrl.trimEnd('/')
-        val credentialStore = CredentialStore()
-        val tokenProvider = { credentialStore.getToken(ServiceType.SOURCEGRAPH) }
-
-        if (sgUrl.isBlank()) {
-            throw IllegalStateException("No Sourcegraph URL configured. Set one in Settings > AI & Advanced.")
-        }
-
-        val modelId = if (!modelOverride.isNullOrBlank()) {
-            log.info("[Agent] Using caller-specified model override: $modelOverride")
-            modelOverride
-        } else {
-            // Honour the user's saved selection (from the model picker / settings page) FIRST.
-            // Auto-pick only runs when nothing has ever been selected (first-launch) or when
-            // settings is blank — otherwise [ModelCache.pickBest] would silently override the
-            // user's choice with Opus-thinking on every fresh task, leading to ~5x over-billing
-            // when they had Sonnet selected.
-            val settingsModel = AgentSettings.getInstance(project).state.sourcegraphChatModel
-            if (!settingsModel.isNullOrBlank()) {
-                log.info("[Agent] Using user-selected model from settings: $settingsModel")
-                settingsModel
-            } else {
-                // No saved choice — fetch models and auto-pick the latest Opus tier as a sane
-                // first-run default. AgentController.loadModelList() also persists this back
-                // into settings so subsequent tasks see a non-blank value here.
-                val client = SourcegraphChatClient(baseUrl = sgUrl, tokenProvider = tokenProvider, model = "")
-                val models = try {
-                    ModelCache.getModels(client)
-                } catch (e: Exception) {
-                    log.warn("[Agent] Failed to fetch models from Sourcegraph: ${e.message}")
-                    emptyList()
-                }
-                val best = ModelCache.pickBest(models)
-
-                if (best != null) {
-                    log.info("[Agent] No saved selection — auto-picking: ${best.modelName} (${best.id})")
-                    best.id
-                } else {
-                    // Last resort — try factory which may have cached models
-                    log.warn("[Agent] No models available and no model configured. Trying factory auto-resolution.")
-                    try {
-                        return LlmBrainFactory.create(project)
-                    } catch (e: Exception) {
-                        throw IllegalStateException(
-                            "Cannot start agent: failed to fetch models from Sourcegraph ($sgUrl) " +
-                            "and no model is configured in settings. " +
-                            "Please check your Sourcegraph URL and token in Settings > AI & Advanced. " +
-                            "Error: ${e.message}"
-                        )
-                    }
-                }
-            }
-        }
-
-        val allToolNames = registry.allToolNames()
-        val allParamNames = registry.allParamNames()
-        log.info("[Agent] Creating brain with model: $modelId at $sgUrl (tools=${allToolNames.size}, params=${allParamNames.size})")
-
-        return OpenAiCompatBrain(
-            sourcegraphUrl = sgUrl,
-            tokenProvider = tokenProvider,
-            model = modelId,
-            toolNameSet = allToolNames,
-            paramNameSet = allParamNames
-        )
-    }
+    private suspend fun createBrain(modelOverride: String? = null): LlmBrain =
+        brainFactory.create(modelOverride)
 
     /**
      * Wrap a freshly-created [LlmBrain] in a Phase 6 [BrainRouter] so the
