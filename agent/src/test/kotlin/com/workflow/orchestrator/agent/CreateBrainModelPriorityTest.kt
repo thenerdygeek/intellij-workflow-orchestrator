@@ -8,13 +8,16 @@ import java.nio.file.Files
 import java.nio.file.Paths
 
 /**
- * Source-text regression for the model-selection priority in [AgentService.createBrain].
+ * Source-text regression for the model-selection priority in [BrainFactory.create] (extracted
+ * from `AgentService.createBrain` in Phase 3 cut D). The pure precedence is now also covered
+ * behaviorally by `BrainModelResolutionTest`; this scan additionally pins the call-site wiring
+ * inside `create()` (saved-settings read before the pickBest fetch).
  *
  * Bug reproduced 2026-05-06: a user picked Sonnet 4.5 in the model chip, but every fresh
- * task created a brain via `createBrain()` which called `ModelCache.pickBest()` (Opus
- * thinking first) BEFORE consulting `AgentSettings.sourcegraphChatModel`. The user's
- * saved selection was silently overridden, the API was called with Opus, and the cost
- * meter showed ~5x the rate expected for Sonnet.
+ * task created a brain which called `ModelCache.pickBest()` (Opus thinking first) BEFORE
+ * consulting `AgentSettings.sourcegraphChatModel`. The user's saved selection was silently
+ * overridden, the API was called with Opus, and the cost meter showed ~5x the rate expected
+ * for Sonnet.
  *
  * The fix flips priority: settings.sourcegraphChatModel wins; pickBest is only used on
  * first-launch when settings is blank. This test pins the order via source-text scan
@@ -22,24 +25,24 @@ import java.nio.file.Paths
  */
 class CreateBrainModelPriorityTest {
 
-    private val agentServiceSrc: String by lazy {
+    private val brainFactorySrc: String by lazy {
         // Resolve robustly regardless of Gradle's working directory (project root vs module).
-        val rel = "src/main/kotlin/com/workflow/orchestrator/agent/AgentService.kt"
+        val rel = "src/main/kotlin/com/workflow/orchestrator/agent/brain/BrainFactory.kt"
         val candidates = listOf(
             Paths.get(rel),
             Paths.get("agent", rel),
             Paths.get("..", "agent", rel),
         )
         val found = candidates.firstOrNull { Files.exists(it) }
-            ?: error("Could not locate AgentService.kt; tried: $candidates from cwd=${System.getProperty("user.dir")}")
+            ?: error("Could not locate BrainFactory.kt; tried: $candidates from cwd=${System.getProperty("user.dir")}")
         Files.readString(found)
     }
 
     @Test
     fun `createBrain reads sourcegraphChatModel before calling pickBest`() {
-        val src = agentServiceSrc
-        val createBrainStart = src.indexOf("private suspend fun createBrain(")
-        assertTrue(createBrainStart >= 0, "createBrain() not found in AgentService.kt")
+        val src = brainFactorySrc
+        val createBrainStart = src.indexOf("suspend fun create(")
+        assertTrue(createBrainStart >= 0, "create() not found in BrainFactory.kt")
 
         // Match real code, not KDoc. `state.sourcegraphChatModel` is the property access
         // (not just the property name), and `ModelCache.pickBest(` (open-paren) is the
