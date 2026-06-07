@@ -134,26 +134,28 @@ class AgentService(
     private val activeDelegatedSessions = java.util.concurrent.atomic.AtomicInteger(0)
 
     /**
-     * Test-only capture hooks keyed by sessionId — when set, background completion
-     * messages for that session are delivered to the callback instead of being routed
-     * to the live AgentLoop / persistence. See [setSteeringCapturerForTest].
-     *
-     * Declared here (not in a test-only subclass) because the listener path lives inside
-     * [onBackgroundCompletion], which must be exercised end-to-end from the real
-     * [com.workflow.orchestrator.agent.tools.background.BackgroundPool] instance.
+     * Background-process completion routing + auto-resume message building, extracted into
+     * [com.workflow.orchestrator.agent.tools.background.BackgroundCompletionCoordinator] (Phase 3
+     * cut F). Subscribes to [com.workflow.orchestrator.agent.tools.background.BackgroundPool] on
+     * construction; registered under this service for disposal in `init`. The shared auto-wake
+     * substrate ([idleWaker] via [autoWakeIdleSession]) and [activeLoopForSession] are injected so
+     * monitor / background / delegation wakes keep sharing one guard.
      */
-    private val steeringCapturersForTest = java.util.concurrent.ConcurrentHashMap<String, (String) -> Unit>()
+    private val backgroundCompletionCoordinator =
+        com.workflow.orchestrator.agent.tools.background.BackgroundCompletionCoordinator(
+            project = project,
+            agentDirProvider = { agentDir },
+            activeLoopForSession = ::activeLoopForSession,
+            autoWake = { sessionId, text, source -> autoWakeIdleSession(sessionId, text, source) },
+        )
 
     /**
-     * Install a capture callback for background-completion steering messages
-     * belonging to [sessionId]. Test-only hook — production code should never call it.
-     * When set, the callback receives the formatted system message and the
-     * production routing (activeLoopForSession / persistForLaterResume) is skipped.
+     * Install a capture callback for background-completion steering messages belonging to
+     * [sessionId]. Test-only hook — delegates to [BackgroundCompletionCoordinator].
      */
     @org.jetbrains.annotations.TestOnly
-    fun setSteeringCapturerForTest(sessionId: String, capture: (String) -> Unit) {
-        steeringCapturersForTest[sessionId] = capture
-    }
+    fun setSteeringCapturerForTest(sessionId: String, capture: (String) -> Unit) =
+        backgroundCompletionCoordinator.setSteeringCapturerForTest(sessionId, capture)
 
     /**
      * Task 6.1 — per-session auto-wake guardrail state (enabled toggle, per-session
@@ -419,14 +421,10 @@ class AgentService(
                 }
             })
 
-        // Task 5.4 — Route BackgroundPool completion events into the active loop's
-        // steering queue so the LLM learns about process exits at the next iteration
-        // boundary. One completion event produces exactly one steering message
-        // (no batching) so the LLM can react to each process exit individually.
-        com.intellij.openapi.util.Disposer.register(this,
-            com.workflow.orchestrator.agent.tools.background.BackgroundPool.getInstance(project)
-                .addCompletionListener { event -> onBackgroundCompletion(event) }
-        )
+        // Task 5.4 — BackgroundPool completion routing (steering / persist + auto-wake) is owned
+        // by [backgroundCompletionCoordinator] (extracted Phase 3 cut F); register it for disposal
+        // so its BackgroundPool listener is torn down with this service.
+        com.intellij.openapi.util.Disposer.register(this, backgroundCompletionCoordinator)
 
         // Plan 1 Task 11 — Re-register (or unregister) delegation_* tools when the
         // outbound setting is toggled at runtime, so the LLM sees them only when the
@@ -446,124 +444,13 @@ class AgentService(
     }
 
     /**
-     * Task 5.4 — Handle a [com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent]
-     * emitted by [com.workflow.orchestrator.agent.tools.background.BackgroundPool].
-     *
-     * Routing:
-     * 1. If a test capturer is installed for the session, deliver the message there and return.
-     * 2. If there is an active loop whose sessionId matches, enqueue a steering message into it.
-     * 3. Otherwise persist the event so the next session that resumes can surface it
-     *    (Task 6 will wire auto-wake from that store).
-     */
-    private fun onBackgroundCompletion(
-        event: com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent
-    ) {
-        val message = buildCompletionSystemMessage(event)
-
-        steeringCapturersForTest[event.sessionId]?.let { capture ->
-            runCatching { capture(message) }.onFailure {
-                log.warn("[AgentService] steering capturer for ${event.sessionId} failed: ${it.message}")
-            }
-            return
-        }
-
-        val loop = activeLoopForSession(event.sessionId)
-        if (loop != null) {
-            loop.enqueueSteeringMessage(message)
-        } else {
-            // Task 6.1 — loop is idle. Always persist first so the completion
-            // survives even if auto-wake is skipped (disabled / capped / cooled)
-            // or the listener is unavailable — Task 6.2 picks it up on resume.
-            persistForLaterResume(event)
-            autoResumeForBackgroundCompletion(event.sessionId, event)
-        }
-    }
-
-    /**
-     * Task 6.1 — auto-wake the session for an idle-path background completion,
-     * subject to guardrails:
-     *  - `autoWakeOnBackgroundCompletion` setting toggle (master kill-switch)
-     *  - per-session attempt cap (`autoWakeMaxPerSession`)
-     *  - per-session cooldown window (`autoWakeCooldownMs`)
-     *
-     * If any guardrail rejects the wake, we log and return — the event is already
-     * persisted by the caller so Task 6.2 still delivers it on the next resume.
-     *
-     * If all guards pass and a listener is registered (production path: wired from
-     * [com.workflow.orchestrator.agent.ui.AgentController]), we hand off a synthetic
-     * `[BACKGROUND COMPLETION — AUTO-RESUMED]` user message. If no listener is wired
-     * (tests / shutdown), we no-op — the persisted entry still surfaces on resume.
-     *
-     * TODO: iteration budget guard — Task 6.x refinement. Current ActiveTask doesn't
-     * expose the loop's iteration count cleanly; once AgentLoop publishes a metrics
-     * snapshot, check `iterations >= 180` (of 200) and skip auto-wake accordingly.
-     *
-     * TODO: session-lock hold check — if another resume is already holding the
-     * session lock (cross-instance), abort auto-wake. Presently [resumeSession]
-     * already tryAcquires the lock and bails with a warning, so this is handled
-     * one layer down; revisit if contention becomes a real-world problem.
-     */
-    private fun autoResumeForBackgroundCompletion(
-        sessionId: String,
-        event: com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent,
-    ) {
-        // The event is already persisted by the caller, so a SKIP_GUARD / DEFER_NO_LISTENER
-        // route here still surfaces on the next manual resume (Task 6.2 pickup).
-        autoWakeIdleSession(
-            sessionId = sessionId,
-            syntheticText = buildAutoResumeSyntheticMessage(event),
-            source = "bg ${event.bgId}",
-        )
-    }
-
-    /**
      * Guarded auto-wake of an idle session — delegates to the testable [idleWaker]
-     * ([IdleSessionWaker]). Shared by background-process completion
-     * ([autoResumeForBackgroundCompletion]) and cross-IDE delegation result/question
+     * ([IdleSessionWaker]). Shared by background-process completion (the
+     * `BackgroundCompletionCoordinator`) and cross-IDE delegation result/question
      * delivery ([enqueueNudgeForSession]) so both async-completion paths behave identically.
      */
     private fun autoWakeIdleSession(sessionId: String, syntheticText: String, source: String) =
         idleWaker.wake(sessionId, syntheticText, source)
-
-    /**
-     * Build the synthetic `[BACKGROUND COMPLETION — AUTO-RESUMED]` user message
-     * delivered to the session on auto-wake. Format is pinned by
-     * `AutoWakeSyntheticMessageFormatTest` (if introduced) — keep the markers and
-     * section headers stable for downstream LLM parsing.
-     */
-    internal fun buildAutoResumeSyntheticMessage(
-        event: com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent,
-    ): String = buildString {
-        appendLine("[BACKGROUND COMPLETION — AUTO-RESUMED]")
-        appendLine("Your previous turn ended, but a background process just completed:")
-        appendLine()
-        appendLine("Process ${event.bgId} (${event.kind}: \"${event.label.take(80)}\")")
-        appendLine("State: ${event.state}, exit code: ${event.exitCode}, runtime: ${event.runtimeMs}ms")
-        appendLine("Output (tail 20 lines):")
-        event.tailContent.lines().takeLast(20).forEach { appendLine("  $it") }
-        if (event.spillPath != null) appendLine("Full output: ${event.spillPath}")
-        appendLine()
-        appendLine("Decide whether this needs action. If it completes the original task or")
-        appendLine("requires no follow-up, call attempt_completion. Otherwise continue working.")
-    }
-
-    /**
-     * Build the system message injected as a steering message when a background
-     * process exits. Uses a stable `[BACKGROUND COMPLETION]` prefix so tests and
-     * humans can identify the source. Tail output is bounded to the last 20 lines
-     * — full output lives at [BackgroundCompletionEvent.spillPath] when present.
-     */
-    private fun buildCompletionSystemMessage(
-        event: com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent
-    ): String = buildString {
-        appendLine("[BACKGROUND COMPLETION]")
-        appendLine("Process ${event.bgId} (${event.kind}: \"${event.label.take(80)}\")")
-        append("State: ${event.state}, exit code: ${event.exitCode}, ")
-        appendLine("runtime: ${event.runtimeMs}ms")
-        appendLine("Output (tail 20 lines):")
-        event.tailContent.lines().takeLast(20).forEach { appendLine("  $it") }
-        if (event.spillPath != null) appendLine("Full output: ${event.spillPath}")
-    }
 
     /** Return the active loop if it is running for [sessionId], else null. */
     private fun activeLoopForSession(sessionId: String): AgentLoop? {
@@ -660,22 +547,6 @@ class AgentService(
             } catch (e: Exception) {
                 log.warn("[Agent] appendDelegationCardToSession: persist failed for $sessionId", e)
             }
-        }
-    }
-
-    /**
-     * Persist the completion for later resumption when no loop is active. Task 6
-     * will read this store at session start and replay queued completions as
-     * steering messages before the first LLM call.
-     */
-    private fun persistForLaterResume(
-        event: com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent
-    ) {
-        runCatching {
-            com.workflow.orchestrator.agent.tools.background.BackgroundPersistence(agentDir.toPath())
-                .appendCompletion(event.sessionId, event)
-        }.onFailure {
-            log.warn("[AgentService] BackgroundPersistence append failed for ${event.sessionId}: ${it.message}", it)
         }
     }
 
