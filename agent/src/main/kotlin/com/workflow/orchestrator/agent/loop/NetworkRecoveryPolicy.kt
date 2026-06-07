@@ -35,4 +35,44 @@ object NetworkRecoveryPolicy {
 
     /** Whether the loop should compact context as the last resort on timeout exhaustion. */
     fun compactOnTimeoutExhaustion(strategy: String): Boolean = strategy == STRATEGY_CONTEXT_COMPACTION
+
+    /**
+     * Outcome of [resolveFallbackChain]: the chain L2 escalation may descend ([chain], null when
+     * escalation stays disabled) plus [reason] for WHICH branch was taken, so the caller can emit
+     * the matching log line without re-deriving the branch.
+     */
+    data class FallbackChainResolution(val chain: List<String>?, val reason: Reason) {
+        enum class Reason {
+            /** The user opted out via [STRATEGY_NONE] — never silently switch their chosen model. */
+            STRATEGY_NONE,
+
+            /** A strategy is set but the built chain has ≤1 tier — nothing to escalate to. */
+            CHAIN_TOO_SHORT,
+
+            /** A strategy is set and the built chain has ≥2 tiers — L2 escalation is enabled. */
+            CHAIN_AVAILABLE,
+        }
+    }
+
+    /**
+     * Decide whether (and with what chain) L2 tier escalation runs, wrapping [fallbackChainOrNull]
+     * with the three-way branch selection that was inline in `AgentService.executeTask` (Phase 3
+     * cut B, incision 2). [buildChain] is invoked lazily — only when a strategy other than
+     * [STRATEGY_NONE] is set — so the opt-out path never pays the cost of building the chain.
+     */
+    fun resolveFallbackChain(
+        strategy: String,
+        buildChain: () -> List<String>,
+    ): FallbackChainResolution = when {
+        strategy == STRATEGY_NONE ->
+            FallbackChainResolution(null, FallbackChainResolution.Reason.STRATEGY_NONE)
+        else -> {
+            val resolved = fallbackChainOrNull(strategy, buildChain())
+            if (resolved != null) {
+                FallbackChainResolution(resolved, FallbackChainResolution.Reason.CHAIN_AVAILABLE)
+            } else {
+                FallbackChainResolution(null, FallbackChainResolution.Reason.CHAIN_TOO_SHORT)
+            }
+        }
+    }
 }

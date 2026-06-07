@@ -1816,22 +1816,24 @@ class AgentService(
                 // automatic model switching. Disable L2 tier escalation so the loop never
                 // silently changes the user's chosen model. Same-tier brain recycling
                 // (fresh OkHttp pool on dead-socket) is unaffected — it preserves the model.
-                val cachedFallbackChain: List<String>? =
-                    if (strategy == com.workflow.orchestrator.agent.loop.NetworkRecoveryPolicy.STRATEGY_NONE) {
-                        log.info("[Agent] Network error strategy = 'none' — L2 tier escalation disabled")
-                        null
-                    } else {
-                        val builtChain = ModelCache.buildFallbackChain(ModelCache.getCached())
-                        val resolved = com.workflow.orchestrator.agent.loop.NetworkRecoveryPolicy
-                            .fallbackChainOrNull(strategy, builtChain)
-                        if (resolved != null) {
-                            val tiers = resolved.map { it.substringAfterLast("::") }
-                            log.info("[Agent] Fallback chain available: $tiers")
-                        } else {
-                            log.info("[Agent] Fallback chain has ≤1 model — L2 tier escalation disabled")
-                        }
-                        resolved
+                val fallbackResolution = com.workflow.orchestrator.agent.loop.NetworkRecoveryPolicy
+                    .resolveFallbackChain(strategy) {
+                        ModelCache.buildFallbackChain(ModelCache.getCached())
                     }
+                when (fallbackResolution.reason) {
+                    com.workflow.orchestrator.agent.loop.NetworkRecoveryPolicy
+                        .FallbackChainResolution.Reason.STRATEGY_NONE ->
+                        log.info("[Agent] Network error strategy = 'none' — L2 tier escalation disabled")
+                    com.workflow.orchestrator.agent.loop.NetworkRecoveryPolicy
+                        .FallbackChainResolution.Reason.CHAIN_AVAILABLE -> {
+                        val tiers = fallbackResolution.chain?.map { it.substringAfterLast("::") }
+                        log.info("[Agent] Fallback chain available: $tiers")
+                    }
+                    com.workflow.orchestrator.agent.loop.NetworkRecoveryPolicy
+                        .FallbackChainResolution.Reason.CHAIN_TOO_SHORT ->
+                        log.info("[Agent] Fallback chain has ≤1 model — L2 tier escalation disabled")
+                }
+                val cachedFallbackChain: List<String>? = fallbackResolution.chain
 
                 val compactOnTimeoutExhaustion =
                     com.workflow.orchestrator.agent.loop.NetworkRecoveryPolicy.compactOnTimeoutExhaustion(strategy)

@@ -57,4 +57,41 @@ class NetworkRecoveryPolicyTest {
         assertFalse(NetworkRecoveryPolicy.compactOnTimeoutExhaustion("model_fallback"))
         assertFalse(NetworkRecoveryPolicy.compactOnTimeoutExhaustion("none"))
     }
+
+    // ---- resolveFallbackChain (Phase 3 cut B, incision 2) ----
+    // Wraps fallbackChainOrNull with the three-way branch selection that was inline in
+    // AgentService.executeTask, returning WHICH branch was taken so the caller can emit the
+    // matching log line without re-deriving the branch. The chain is built lazily so the
+    // strategy='none' opt-out never pays the cost of building it (behavior preserved exactly).
+
+    @Test
+    fun `resolveFallbackChain with none returns null and STRATEGY_NONE without building the chain`() {
+        var built = false
+        val result = NetworkRecoveryPolicy.resolveFallbackChain("none") {
+            built = true
+            listOf("a::1", "b::2")
+        }
+        assertNull(result.chain, "strategy 'none' disables L2 escalation")
+        assertEquals(NetworkRecoveryPolicy.FallbackChainResolution.Reason.STRATEGY_NONE, result.reason)
+        assertFalse(built, "the chain must NOT be built when the user opted out (short-circuit preserved)")
+    }
+
+    @Test
+    fun `resolveFallbackChain with a strategy and 2+ tiers returns the chain and CHAIN_AVAILABLE`() {
+        val chain = listOf("opus-thinking", "opus", "sonnet")
+        val result = NetworkRecoveryPolicy.resolveFallbackChain("model_fallback") { chain }
+        assertEquals(chain, result.chain)
+        assertEquals(NetworkRecoveryPolicy.FallbackChainResolution.Reason.CHAIN_AVAILABLE, result.reason)
+    }
+
+    @Test
+    fun `resolveFallbackChain with a strategy and one or zero tiers returns null and CHAIN_TOO_SHORT`() {
+        val one = NetworkRecoveryPolicy.resolveFallbackChain("model_fallback") { listOf("only-one") }
+        assertNull(one.chain)
+        assertEquals(NetworkRecoveryPolicy.FallbackChainResolution.Reason.CHAIN_TOO_SHORT, one.reason)
+
+        val none = NetworkRecoveryPolicy.resolveFallbackChain("context_compaction") { emptyList() }
+        assertNull(none.chain)
+        assertEquals(NetworkRecoveryPolicy.FallbackChainResolution.Reason.CHAIN_TOO_SHORT, none.reason)
+    }
 }
