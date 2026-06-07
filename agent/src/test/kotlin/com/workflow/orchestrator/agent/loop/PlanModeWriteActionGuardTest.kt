@@ -12,10 +12,12 @@ import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.*
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
+import com.workflow.orchestrator.core.model.ModelPricingRegistry
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
@@ -37,6 +39,13 @@ import org.junit.jupiter.api.Test
  *   `toolName in WRITE_TOOLS || tool.isWriteAction(action)`.
  */
 class PlanModeWriteActionGuardTest {
+
+    // The agent loop lazily starts a ModelPricingRegistry watcher thread when computing cost;
+    // reset it after each test so the IntelliJ ThreadLeakTracker doesn't flag the leak.
+    @AfterEach
+    fun stopModelPricingWatcher() {
+        runCatching { ModelPricingRegistry.resetForTests() }
+    }
 
     // ──────────────────────────────────────────────────────────────────────
     // Tier 1 — isWriteAction contract on the tools themselves
@@ -237,6 +246,7 @@ class PlanModeWriteActionGuardTest {
         brain: LlmBrain,
         tools: List<AgentTool>,
         planMode: Boolean = false,
+        planModeProvider: (() -> Boolean)? = null,
     ): AgentLoop {
         val toolMap = tools.associateBy { it.name }
         val toolDefs = tools.map { it.toToolDefinition() }
@@ -247,7 +257,19 @@ class PlanModeWriteActionGuardTest {
             contextManager = ContextManager(maxInputTokens = 100_000),
             project = mockk(relaxed = true),
             planMode = planMode,
+            planModeProvider = planModeProvider,
         )
+    }
+
+    private fun fakeEditFile(executed: MutableList<String>): AgentTool = object : AgentTool {
+        override val name = "edit_file"
+        override val description = "Fake edit_file"
+        override val parameters = FunctionParameters(properties = emptyMap())
+        override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.ORCHESTRATOR)
+        override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+            executed.add("edit_file")
+            return ToolResult(content = "ok", summary = "ok", tokenEstimate = 5)
+        }
     }
 
     private fun fakePlanModeRespond(): AgentTool = object : AgentTool {
@@ -365,6 +387,62 @@ class PlanModeWriteActionGuardTest {
         assertTrue(result is LoopResult.Completed, "loop should complete after block, got: $result")
         assertTrue(toolExecuted.isEmpty(),
             "runtime_config.create_run_config must NOT execute in plan mode, but got: $toolExecuted")
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Tier 3 — the guard must use the LIVE plan-mode state, not a stale snapshot
+    // Regression: the loop is built in plan mode (snapshot=true); the user approves
+    // the plan (live state → ACT). environment_details + schema filter read the live
+    // state (ACT) and offer edit_file, but the execution guard read the construction-
+    // time snapshot (PLAN) → "edit_file is blocked in plan mode" while env says ACT MODE.
+    // ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `edit_file is ALLOWED when snapshot is plan but live state is act (post-approval)`() = runTest {
+        val brain = SequenceBrain(
+            listOf(
+                ApiResult.Success(toolCallResponse("edit_file" to """{"path":"X.kt"}""")),
+                ApiResult.Success(toolCallResponse("attempt_completion" to """{"result":"Done"}""")),
+            )
+        )
+        val executed = mutableListOf<String>()
+        val loop = buildLoop(
+            brain = brain,
+            tools = listOf(fakeEditFile(executed), fakeCompletion()),
+            planMode = true, // snapshot captured while in plan mode
+            planModeProvider = { false }, // live state: user approved → ACT
+        )
+
+        val result = loop.run("Implement the plan")
+
+        assertTrue(result is LoopResult.Completed, "loop should complete, got: $result")
+        assertEquals(
+            listOf("edit_file"),
+            executed,
+            "edit_file MUST execute once live state is ACT, even if the loop's snapshot was PLAN",
+        )
+    }
+
+    @Test
+    fun `edit_file is BLOCKED when live state is plan regardless of snapshot`() = runTest {
+        val brain = SequenceBrain(
+            listOf(
+                ApiResult.Success(toolCallResponse("edit_file" to """{"path":"X.kt"}""")),
+                ApiResult.Success(toolCallResponse("attempt_completion" to """{"result":"Done"}""")),
+            )
+        )
+        val executed = mutableListOf<String>()
+        val loop = buildLoop(
+            brain = brain,
+            tools = listOf(fakeEditFile(executed), fakeCompletion()),
+            planMode = false, // snapshot says act...
+            planModeProvider = { true }, // ...but live state is PLAN
+        )
+
+        val result = loop.run("Plan only")
+
+        assertTrue(result is LoopResult.Completed, "loop should complete after block, got: $result")
+        assertTrue(executed.isEmpty(), "edit_file must be blocked when the LIVE state is plan mode, got: $executed")
     }
 
     @Test

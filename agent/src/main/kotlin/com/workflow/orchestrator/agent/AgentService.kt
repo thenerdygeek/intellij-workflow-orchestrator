@@ -2299,6 +2299,9 @@ class AgentService(
                     onStreamChunk = onStreamChunk,
                     onToolCall = onToolCall,
                     planMode = isPlanModeActive(),
+                    // LIVE plan-mode signal so the write-tool execution guard tracks Approve→ACT
+                    // mid-loop (the snapshot above goes stale once the user switches mode).
+                    planModeProvider = { isPlanModeActive() },
                     maxOutputTokens = agentSettings.state.maxOutputTokens,
                     toolDefinitionProvider = toolDefinitionProvider,
                     toolResolver = { name -> registry.get(name) },

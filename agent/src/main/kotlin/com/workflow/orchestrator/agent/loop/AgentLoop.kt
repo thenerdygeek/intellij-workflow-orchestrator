@@ -131,7 +131,20 @@ class AgentLoop(
     private val onStreamChunk: (String) -> Unit = {},
     private val onToolCall: (ToolCallProgress) -> Unit = {},
     private val maxIterations: Int = 200,
+    /**
+     * Construction-time plan-mode snapshot. Used as the fallback when [planModeProvider] is null
+     * (sub-agents, tests). For the orchestrator, prefer [planModeProvider] — plan mode can toggle
+     * during the loop's life (enable_plan_mode, then user Approve → ACT), and a snapshot goes stale.
+     */
     private val planMode: Boolean = false,
+    /**
+     * LIVE plan-mode signal. When non-null, the execution guard and plan-mode wait read this on
+     * every check instead of the [planMode] snapshot — keeping them consistent with the schema
+     * filter and environment_details (which already read the live state). Wired by AgentService to
+     * `{ isPlanModeActive() }`. Fixes the bug where, after the user approves a plan (live → ACT), a
+     * loop built in plan mode kept blocking writes with "blocked in plan mode" while env said ACT.
+     */
+    private val planModeProvider: (() -> Boolean)? = null,
     /**
      * Optional Cline-style session persistence handler.
      * When provided, every streaming chunk, assistant message, and tool result is
@@ -1664,7 +1677,7 @@ class AgentLoop(
                     consecutiveMistakes++
                     LOG.info("[Loop] Text-only response (no tool calls) — mistake $consecutiveMistakes/$maxConsecutiveMistakes")
 
-                    if (planMode && userInputChannel != null) {
+                    if ((planModeProvider?.invoke() ?: planMode) && userInputChannel != null) {
                         // In plan mode, text-only responses are conversational turns.
                         // Signal UI to drop the working spinner — we're idle awaiting user reply.
                         val reason = "Plan-mode reply — waiting for your next message."
@@ -1887,7 +1900,9 @@ class AgentLoop(
             } catch (_: Exception) {
                 null
             }
-            if (planMode && (toolName in WRITE_TOOLS || tool.isWriteAction(planModeAction))) {
+            if ((planModeProvider?.invoke() ?: planMode) &&
+                (toolName in WRITE_TOOLS || tool.isWriteAction(planModeAction))
+            ) {
                 val planModeBlockMsg = "Error: '$toolName' is blocked in plan mode. You can only read, search, and analyze code."
                 fileLogger?.logToolCall(
                     sessionId = sessionId ?: "",
