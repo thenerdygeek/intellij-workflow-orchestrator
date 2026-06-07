@@ -391,6 +391,13 @@ class MonitorReArmIntegrationTest {
             "AgentController.kt",
             "src/main/kotlin/com/workflow/orchestrator/agent/ui/AgentController.kt",
         )
+        // Phase 3: the monitor cluster (incl. reArmMonitors) was extracted out of AgentService
+        // into AgentMonitorCoordinator. The reArmMonitors body now lives there; AgentService only
+        // delegates to it (asserted in part (b) below).
+        val coordinatorText = readSourceFile(
+            "AgentMonitorCoordinator.kt",
+            "src/main/kotlin/com/workflow/orchestrator/agent/monitor/AgentMonitorCoordinator.kt",
+        )
 
         // ─── (a) reArmMonitors call-site ordering ────────────────────────────────
         // Bound the search to the reArmMonitors function BODY so the landmarks pin the
@@ -398,12 +405,12 @@ class MonitorReArmIntegrationTest {
         // appears elsewhere in the file (e.g. forgetMonitor()'s body, the ensureMonitorManager
         // declaration, or a code comment). Slice from the declaration to the next top-level
         // member declaration after it.
-        val reArmDeclIdx = agentServiceText.indexOf("fun reArmMonitors(")
-        assertTrue(reArmDeclIdx >= 0, "AgentService must declare reArmMonitors(")
+        val reArmDeclIdx = coordinatorText.indexOf("fun reArmMonitors(")
+        assertTrue(reArmDeclIdx >= 0, "AgentMonitorCoordinator must declare reArmMonitors(")
         val afterDecl = reArmDeclIdx + "fun reArmMonitors(".length
-        val nextMemberRel = Regex("\\n    (private |internal |public )?(suspend )?fun ")
-            .find(agentServiceText, afterDecl)?.range?.first ?: agentServiceText.length
-        val body = agentServiceText.substring(reArmDeclIdx, nextMemberRel)
+        val nextMemberRel = Regex("\\n    (private |internal |public )?(suspend )?(override )?fun ")
+            .find(coordinatorText, afterDecl)?.range?.first ?: coordinatorText.length
+        val body = coordinatorText.substring(reArmDeclIdx, nextMemberRel)
 
         // Each landmark must appear in the function body, in the correct relative order.
         val loadIdx          = body.indexOf("monitorPersistence.load(")
@@ -426,10 +433,10 @@ class MonitorReArmIntegrationTest {
         assertTrue(startIdx > forgetIdx,
             ".start { must appear after forget( in reArmMonitors")
 
-        // ─── (b) resumeSession calls reArmMonitors ────────────────────────────────
-        // Find the resumeSession declaration then look for a reArmMonitors( call AFTER it.
-        // (The private fun reArmMonitors declaration itself appears before resumeSession in
-        //  the file, so we must search from the resumeSession declaration forward.)
+        // ─── (b) resumeSession delegates to the coordinator's reArmMonitors ────────
+        // Phase 3: AgentService no longer declares reArmMonitors — resumeSession calls
+        // `monitorCoordinator.reArmMonitors(...)`. Search from the resumeSession declaration
+        // forward for that delegated call.
         val resumeSessionIdx = agentServiceText.indexOf("fun resumeSession(")
         assertTrue(resumeSessionIdx >= 0, "AgentService must contain resumeSession(")
         val reArmCallFromResume = agentServiceText.indexOf("reArmMonitors(", resumeSessionIdx)

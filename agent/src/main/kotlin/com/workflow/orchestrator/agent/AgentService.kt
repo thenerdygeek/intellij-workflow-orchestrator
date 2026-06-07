@@ -47,17 +47,6 @@ import com.workflow.orchestrator.agent.session.ResumeHelper
 import com.workflow.orchestrator.agent.session.toChatMessage
 import com.workflow.orchestrator.agent.session.toApiMessage
 import com.workflow.orchestrator.agent.settings.AgentSettings
-import com.workflow.orchestrator.agent.monitor.MonitorBridge
-import com.workflow.orchestrator.agent.monitor.MonitorConfig
-import com.workflow.orchestrator.agent.monitor.MonitorEvent
-import com.workflow.orchestrator.agent.monitor.MonitorHandle
-import com.workflow.orchestrator.agent.monitor.MonitorManager
-import com.workflow.orchestrator.agent.monitor.MonitorPersistence
-import com.workflow.orchestrator.agent.monitor.MonitorPool
-import com.workflow.orchestrator.agent.monitor.MonitorSourceFactory
-import com.workflow.orchestrator.agent.monitor.Severity
-import com.workflow.orchestrator.agent.monitor.wakeOutcomeFor
-import com.workflow.orchestrator.agent.tools.integration.ServiceLookup
 import com.workflow.orchestrator.agent.tools.builtin.MonitorTool
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolOutputSpiller
@@ -222,167 +211,36 @@ class AgentService(
     }
 
     /**
-     * Task 8 — per-session [MonitorManager] coordinators. Created lazily on first event
-     * for a session, dropped via [disposeMonitorsForSession] when the session is left.
+     * Task 8 — proactive monitor framework, extracted into `AgentMonitorCoordinator` (Phase 3).
+     * Owns the per-session `MonitorManager` map + `MonitorPersistence`; wires the MonitorBridge
+     * router + 200 ms flush loop on construction and tears the router down on [dispose]. The
+     * side effects it needs are injected: the live-loop lookup ([activeLoopForSession]), the
+     * shared [idleWaker], and the agent dir (lazy — `agentDir` is `lateinit`, set in
+     * [registerAllTools], so it is passed as a provider). The methods below are thin delegators
+     * so existing callers (AgentController, MonitorTool, resumeSession) are unchanged.
      */
-    private val monitorManagers = java.util.concurrent.ConcurrentHashMap<String, MonitorManager>()
+    private val monitorCoordinator = com.workflow.orchestrator.agent.monitor.AgentMonitorCoordinator(
+        project = project,
+        cs = cs,
+        agentDirProvider = { agentDir },
+        idleWaker = idleWaker,
+        activeLoopForSession = ::activeLoopForSession,
+    )
 
-    /**
-     * Build (or fetch) the [MonitorManager] for [sessionId]. All side effects are injected
-     * so monitor routing reuses the live-loop steering path and the shared idle-waker
-     * (guard cap/cooldown honoured across background + delegation + monitor wakes).
-     */
-    private fun monitorManagerFor(sessionId: String): MonitorManager =
-        monitorManagers.computeIfAbsent(sessionId) {
-            val st = AgentSettings.getInstance(project).state
-            MonitorManager(
-                config = MonitorConfig(
-                    coalesceWindowMs = st.monitorCoalesceWindowMs,
-                    wakeBudgetPerMonitor = st.monitorWakeBudgetPerMonitor,
-                    floodThresholdPerMin = st.monitorFloodThresholdPerMin,
-                ),
-                clock = { System.currentTimeMillis() },
-                // Documented TOCTOU: if the loop exits between isLoopLive() and deliverToLoop(),
-                // the `?.` drops the message safely — acceptable, the loop was terminating anyway.
-                isLoopLive = { activeLoopForSession(sessionId) != null },
-                deliverToLoop = { text -> activeLoopForSession(sessionId)?.enqueueSteeringMessage(text) },
-                wakeIdle = { text ->
-                    // Task 6E — persist FIRST (mirror onBackgroundCompletion's persist-then-wake ordering).
-                    // The notification survives even when the wake route is SKIP_GUARD or DEFER
-                    // (global guard hit / another session active) — Task 6F replays it on resume.
-                    runCatching { monitorPersistence.appendPendingNotification(sessionId, text) }
-                        .onFailure { log.warn("[AgentService] monitorPersistence.appendPendingNotification failed for $sessionId: ${it.message}", it) }
-                    wakeOutcomeFor(idleWaker.wake(sessionId, text, "monitor"))
-                },
-                onFloodStop = { id ->
-                    MonitorPool.getInstance(project).stop(sessionId, id)
-                    monitorManagers[sessionId]?.forget(id)
-                    monitorPersistence.remove(sessionId, id)
-                },
-            )
-        }
+    /** @see AgentMonitorCoordinator.ensureMonitorManager */
+    fun ensureMonitorManager(sessionId: String) = monitorCoordinator.ensureMonitorManager(sessionId)
 
-    /**
-     * Pre-create the [MonitorManager] for [sessionId] at monitor-start. Paired with the
-     * get-only bridge router (`monitorManagers[sessionId]?.onEvent`) so a late event from a
-     * just-killed process cannot resurrect a manager for a disposed session.
-     */
-    fun ensureMonitorManager(sessionId: String) { monitorManagerFor(sessionId) }
+    /** @see AgentMonitorCoordinator.disposeMonitorsForSession */
+    fun disposeMonitorsForSession(sessionId: String) = monitorCoordinator.disposeMonitorsForSession(sessionId)
 
-    /** Drop a session's [MonitorManager] and kill its live monitor sources. */
-    fun disposeMonitorsForSession(sessionId: String) {
-        monitorManagers.remove(sessionId)
-        MonitorPool.getInstance(project).killAll(sessionId)
-    }
+    /** @see AgentMonitorCoordinator.forgetMonitor */
+    fun forgetMonitor(sessionId: String, id: String) = monitorCoordinator.forgetMonitor(sessionId, id)
 
-    /** Forget a single monitor's coalesce/wake/flood state after it is stopped. */
-    fun forgetMonitor(sessionId: String, id: String) {
-        monitorManagers[sessionId]?.forget(id)
-    }
+    /** @see AgentMonitorCoordinator.markMonitorsDormantForSession */
+    fun markMonitorsDormantForSession(sessionId: String) = monitorCoordinator.markMonitorsDormantForSession(sessionId)
 
-    /** Mark all monitors for [sessionId] dormant on abnormal loop exit (max-iter/cancel/fail). */
-    fun markMonitorsDormantForSession(sessionId: String) { monitorManagers[sessionId]?.markAllDormant() }
-
-    /**
-     * Clear persisted monitor specs and pending notifications for [sessionId].
-     *
-     * Called on new-chat / session-switch transitions so a fresh session does not inherit stale
-     * monitors from the previous session.  Both files are deleted idempotently; a missing file
-     * is not an error.  The whole body is runCatching-wrapped so a persistence failure never
-     * propagates to the caller (mirrors [disposeMonitorsForSession]'s silent contract).
-     */
-    fun clearPersistedMonitors(sessionId: String) {
-        runCatching {
-            monitorPersistence.clear(sessionId)
-            monitorPersistence.clearPendingNotifications(sessionId)
-        }.onFailure { e ->
-            log.warn("[AgentService] clearPersistedMonitors failed for $sessionId: ${e.message}", e)
-        }
-    }
-
-    /**
-     * Re-arm all monitors that were persisted to [MonitorPersistence] for [sessionId].
-     *
-     * Called on session RESUME so watches that were active before the session was paused/killed
-     * continue without the LLM having to re-issue `monitor(action=start)`.  Each monitor is
-     * re-armed with the SAME id so prior `monitor stop <id>` references still resolve.
-     *
-     * The entire body is wrapped in runCatching so a re-arm failure never aborts the resume
-     * (spec contract: re-arm failure MUST NOT break resume).
-     *
-     * ### Task 6B dormancy reset
-     * Before starting the source we call `manager.forget(spec.id)` to clear any stale dormancy
-     * state that was stamped on the id during an abnormal loop exit (markAllDormant).  Without
-     * this reset a re-armed monitor would remain dormant and could never fire an idle-wake on
-     * the freshly resumed session.
-     */
-    private suspend fun reArmMonitors(sessionId: String) {
-        runCatching {
-            val specs = monitorPersistence.load(sessionId)
-            if (specs.isEmpty()) return@runCatching
-            log.info("[AgentService] reArmMonitors: re-arming ${specs.size} monitor(s) for $sessionId")
-            val pool = MonitorPool.getInstance(project)
-            // Provider lambdas mirror MonitorTool's constructor defaults exactly.
-            val bambooProvider: (Project) -> com.workflow.orchestrator.core.services.BambooService? =
-                { p -> ServiceLookup.bamboo(p) }
-            val bitbucketProvider: (Project) -> com.workflow.orchestrator.core.services.BitbucketService? =
-                { p -> ServiceLookup.bitbucket(p) }
-            val jiraProvider: (Project) -> com.workflow.orchestrator.core.services.JiraService? =
-                { p -> ServiceLookup.jira(p) }
-            val sonarProvider: (Project) -> com.workflow.orchestrator.core.services.SonarService? =
-                { p -> ServiceLookup.sonar(p) }
-            val eventBusProvider: (Project) -> kotlinx.coroutines.flow.SharedFlow<com.workflow.orchestrator.core.events.WorkflowEvent>? =
-                { p -> p.service<com.workflow.orchestrator.core.events.EventBus>().events }
-
-            for (spec in specs) {
-                // Build the shell onExit callback that mirrors MonitorTool.startShell's onExit lambda.
-                val onShellExit: (Int?) -> Unit = { code ->
-                    val sev = if (code == 0) Severity.NOTABLE else Severity.ALERT
-                    MonitorBridge.emit(
-                        project, sessionId,
-                        MonitorEvent(spec.id, sev, "process exited (code=${code ?: "unknown"})")
-                    )
-                    pool.markExited(sessionId, spec.id, code)
-                    monitorPersistence.remove(sessionId, spec.id)
-                }
-                val result = MonitorSourceFactory.build(
-                    spec, project, cs,
-                    bambooProvider, bitbucketProvider, jiraProvider, sonarProvider, eventBusProvider,
-                    onShellExit = onShellExit,
-                )
-                when (result) {
-                    is MonitorSourceFactory.BuildResult.Failed -> {
-                        log.warn("[AgentService] reArmMonitors: failed to build source for ${spec.id} (${spec.sourceType}): ${result.error}")
-                        // Don't re-persist the failure; just skip this monitor.
-                    }
-                    is MonitorSourceFactory.BuildResult.Built -> {
-                        val src = result.source
-                        val handle = MonitorHandle(src, sessionId, System.currentTimeMillis())
-                        try {
-                            pool.register(sessionId, handle)
-                        } catch (e: MonitorPool.MaxConcurrentReached) {
-                            src.stop()
-                            log.warn("[AgentService] reArmMonitors: cap reached for $sessionId, skipping ${spec.id}: ${e.message}")
-                            continue
-                        }
-                        // Pre-create the manager BEFORE start so the bridge router is live.
-                        ensureMonitorManager(sessionId)
-                        // Task 6B: reset any stale dormancy state so the re-armed monitor can
-                        // wake the freshly resumed session (markAllDormant left it dormant on
-                        // the previous abnormal exit; forget() clears all per-id state).
-                        monitorManagers[sessionId]?.forget(spec.id)
-                        src.start { event ->
-                            handle.appendLine(event.formatLine())
-                            MonitorBridge.emit(project, sessionId, event)
-                        }
-                        log.info("[AgentService] reArmMonitors: re-armed ${spec.id} (${spec.sourceType}) for $sessionId")
-                    }
-                }
-            }
-        }.onFailure { e ->
-            log.warn("[AgentService] reArmMonitors failed for $sessionId — resume continues unaffected: ${e.message}", e)
-        }
-    }
+    /** @see AgentMonitorCoordinator.clearPersistedMonitors */
+    fun clearPersistedMonitors(sessionId: String) = monitorCoordinator.clearPersistedMonitors(sessionId)
 
     /**
      * Document-extraction progress sink wired by [AgentController] after construction.
@@ -421,13 +279,6 @@ class AgentService(
 
     private var debugController: AgentDebugController? = null
     private lateinit var agentDir: java.io.File
-
-    /**
-     * Lazy [MonitorPersistence] over [agentDir]. Constructed on first access so it is
-     * always available after [registerAllTools] has set [agentDir]. Mirrors the
-     * [BackgroundPersistence] pattern: [agentDir].toPath() is the sessions base dir.
-     */
-    private val monitorPersistence: MonitorPersistence by lazy { MonitorPersistence(agentDir.toPath()) }
 
     private val failedRegistrations = mutableListOf<String>()
 
@@ -591,27 +442,8 @@ class AgentService(
             },
         )
 
-        // Task 8 — route MonitorBridge events into the per-session MonitorManager and
-        // drive a single flush loop (coalesce window expiry → steering / idle-wake) on the
-        // service scope. Cleaned up per-session via disposeMonitorsForSession.
-        // Get-only: a late event for a disposed session must NOT recreate its manager
-        // (zombie-session resurrection). The manager is pre-created at monitor-start via
-        // ensureMonitorManager(); MonitorTool.start calls it before the source emits.
-        MonitorBridge.setRouter(project) { sessionId, event ->
-            monitorManagers[sessionId]?.onEvent(event)
-        }
-        // When MonitorPool prunes an old EXITED handle, forget its per-id MonitorManager state
-        // (pending/wakeBudget/dormant/autoStopped/recentTimestamps) so the slot doesn't leak.
-        MonitorPool.getInstance(project).forgetCallback = { sid, id -> forgetMonitor(sid, id) }
-        cs.launch(Dispatchers.IO) {
-            while (isActive) {
-                // Per-manager isolation: one bad manager's flush must not starve the others.
-                monitorManagers.values.forEach { m ->
-                    runCatching { m.flushDue() }.onFailure { log.warn("monitor flush failed: ${it.message}", it) }
-                }
-                delay(200)
-            }
-        }
+        // Task 8 — the MonitorBridge router, MonitorPool forget-callback, and 200 ms flush loop
+        // are wired by [monitorCoordinator]'s constructor (extracted into AgentMonitorCoordinator).
     }
 
     /**
@@ -3177,7 +3009,7 @@ class AgentService(
         // are delivered exactly once.  Wrapped in runCatching so a persistence failure never
         // aborts the resume.
         val finalPreamble = runCatching {
-            val pendingNotifications = monitorPersistence.loadPendingNotifications(sessionId)
+            val pendingNotifications = monitorCoordinator.loadPendingNotifications(sessionId)
             if (pendingNotifications.isEmpty()) {
                 preamble
             } else {
@@ -3185,7 +3017,7 @@ class AgentService(
                 val notificationsPreamble = "\n\n# Monitor notifications while away\n" +
                     "While the session was paused, the following monitor events fired:\n\n" +
                     body + "\n"
-                monitorPersistence.clearPendingNotifications(sessionId)
+                monitorCoordinator.clearPendingNotifications(sessionId)
                 log.info("[AgentService] resume pickup: delivered ${pendingNotifications.size} persisted monitor notification(s) for $sessionId")
                 preamble + notificationsPreamble
             }
@@ -3227,7 +3059,7 @@ class AgentService(
             // rather than dropped.  reArmMonitors is suspend (pool.register uses a Mutex) so
             // it executes here inside the IO coroutine.  Its own runCatching wrapper guarantees
             // a re-arm failure can never prevent the hook or loop from starting.
-            reArmMonitors(sessionId)
+            monitorCoordinator.reArmMonitors(sessionId)
 
             // Add resume ask to UI messages
             handler.addToClineMessages(UiMessage(
@@ -3967,10 +3799,10 @@ class AgentService(
     // ── Dispose ────────────────────────────────────────────────────────────
 
     override fun dispose() {
-        // Task 8 — drop the process-global MonitorBridge router FIRST so neither this
-        // Project nor the capturing lambda (which retains AgentService) leaks for the
-        // IDE's lifetime.
-        MonitorBridge.clearRouter(project)
+        // Task 8 — drop the process-global MonitorBridge router FIRST (via the coordinator's
+        // dispose) so neither this Project nor the capturing lambda (which retains the
+        // coordinator/AgentService) leaks for the IDE's lifetime.
+        monitorCoordinator.dispose()
         // Close the file logger first — before cancelCurrentTask() so the final
         // "session ended" log entries are flushed and the file descriptor is released.
         // Wrapped in try/catch: a logger failure on dispose must never surface to the

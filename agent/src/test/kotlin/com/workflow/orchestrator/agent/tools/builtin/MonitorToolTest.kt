@@ -472,8 +472,8 @@ class MonitorToolTest {
     }
 
     @Test
-    fun `source-contract - AgentService reArmMonitors onShellExit calls monitorPersistence remove`() {
-        val src = java.io.File("src/main/kotlin/com/workflow/orchestrator/agent/AgentService.kt")
+    fun `source-contract - AgentMonitorCoordinator reArmMonitors onShellExit calls monitorPersistence remove`() {
+        val src = java.io.File("src/main/kotlin/com/workflow/orchestrator/agent/monitor/AgentMonitorCoordinator.kt")
             .readText()
         val onShellExitBlock = src.substringAfter("val onShellExit: (Int?) -> Unit = { code ->")
             .substringBefore("val result = MonitorSourceFactory.build")
@@ -484,8 +484,8 @@ class MonitorToolTest {
     }
 
     @Test
-    fun `source-contract - AgentService monitorManagerFor onFloodStop calls monitorPersistence remove`() {
-        val src = java.io.File("src/main/kotlin/com/workflow/orchestrator/agent/AgentService.kt")
+    fun `source-contract - AgentMonitorCoordinator monitorManagerFor onFloodStop calls monitorPersistence remove`() {
+        val src = java.io.File("src/main/kotlin/com/workflow/orchestrator/agent/monitor/AgentMonitorCoordinator.kt")
             .readText()
         val onFloodStopBlock = src.substringAfter("onFloodStop = { id ->")
             .substringBefore("},")
