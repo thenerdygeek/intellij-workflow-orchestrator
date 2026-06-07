@@ -1360,6 +1360,15 @@ class AgentCefPanel(
         callJs("updateSubAgentIteration(${JsEscape.toJsString(payload)})")
     }
 
+    /**
+     * Nudge the chat-input context-usage bar to re-fetch immediately (it otherwise polls every 1s
+     * and pauses when document.hidden). Fired after compaction + session handoff so the bar
+     * reflects the new context size at once.
+     */
+    fun refreshContextUsage() {
+        callJs("if (window.dispatchEvent) { window.dispatchEvent(new Event('wf-context-usage-refresh')); }")
+    }
+
     /** Transient status note on the sub-agent card (retry / compaction). null clears it. */
     fun setSubAgentStatusNote(agentId: String, note: String?) {
         val payload = buildJsonObject {

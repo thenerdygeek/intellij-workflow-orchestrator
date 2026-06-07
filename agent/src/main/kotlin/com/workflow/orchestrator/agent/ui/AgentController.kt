@@ -2553,7 +2553,12 @@ class AgentController(
             onCompactionState = { active, phase ->
                 // Bug 5 — surface auto-compaction to the webview so input locks +
                 // overlay shows during the LLM-summary round-trip.
-                invokeLater { dashboard.setCompactionState(active, phase) }
+                invokeLater {
+                    dashboard.setCompactionState(active, phase)
+                    // When compaction finishes the context shrank — refresh the usage bar at once
+                    // instead of waiting for its 1s poll (which may be paused via document.hidden).
+                    if (!active) dashboard.refreshContextUsage()
+                }
             },
             onModelSwitch = { _, to, reason ->
                 invokeLater {
@@ -3250,7 +3255,11 @@ class AgentController(
                             currentSessionId = sid
                             sessionActive = true
                         },
-                        onContextManagerReady = { cm -> contextManager = cm },
+                        onContextManagerReady = { cm ->
+                            contextManager = cm
+                            // New session/handoff context is live — refresh the usage bar now.
+                            invokeLater { dashboard.refreshContextUsage() }
+                        },
                         onHandoffProposed = ::onHandoffProposed,
                         userInputChannel = userInputChannel
                     )
@@ -4324,7 +4333,12 @@ class AgentController(
             onCompactionState = { active, phase ->
                 // Bug 5 — surface auto-compaction to the webview so input locks +
                 // overlay shows during the LLM-summary round-trip.
-                invokeLater { dashboard.setCompactionState(active, phase) }
+                invokeLater {
+                    dashboard.setCompactionState(active, phase)
+                    // When compaction finishes the context shrank — refresh the usage bar at once
+                    // instead of waiting for its 1s poll (which may be paused via document.hidden).
+                    if (!active) dashboard.refreshContextUsage()
+                }
             },
             onModelSwitch = { _, to, reason ->
                 invokeLater {

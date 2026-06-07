@@ -52,9 +52,15 @@ export function UsageIndicator() {
       if (typeof document !== 'undefined' && document.hidden) return;
       tick();
     }, 1000);
+    // Event-driven immediate refresh — Kotlin fires this after context compaction and after a
+    // session handoff / new_task so the bar reflects the new context size at once instead of
+    // waiting up to 1s (and even when the poll is paused via document.hidden).
+    const onRefresh = () => { tick(); };
+    if (typeof window !== 'undefined') window.addEventListener('wf-context-usage-refresh', onRefresh);
     return () => {
       cancelled = true;
       clearInterval(id);
+      if (typeof window !== 'undefined') window.removeEventListener('wf-context-usage-refresh', onRefresh);
     };
   }, []);
 

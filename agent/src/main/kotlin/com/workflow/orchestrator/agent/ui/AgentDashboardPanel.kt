@@ -722,6 +722,11 @@ class AgentDashboardPanel(
         broadcast(replay = false) { it.setSubAgentStatusNote(agentId, note) }
     }
 
+    fun refreshContextUsage() {
+        runOnEdt { cefPanel?.refreshContextUsage() }
+        broadcast(replay = false) { it.refreshContextUsage() }
+    }
+
     fun addSubAgentToolCall(agentId: String, toolCallId: String, toolName: String, toolArgs: String) {
         runOnEdt { cefPanel?.addSubAgentToolCall(agentId, toolCallId, toolName, toolArgs) }
         broadcast(replay = false) { it.addSubAgentToolCall(agentId, toolCallId, toolName, toolArgs) }
