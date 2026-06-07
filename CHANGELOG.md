@@ -18,3 +18,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Corrected `pluginRepositoryUrl` placeholder so changelog compare-links resolve.
+
+## [0.86.0-phase3.1] - 2026-06-07
+
+First release containing the Phase 3 `AgentService` decomposition (roadmap Phase 3, batch 1).
+These are pure structural refactors — no behavior changes intended — extracting four clusters
+out of the 4.2K-line `AgentService` into their own unit-testable units.
+
+### Changed
+
+- Extracted `AgentMonitorCoordinator` — the per-session monitor cluster (managers map,
+  persistence, re-arm, bridge wiring) is now unit-instantiable; `AgentService` keeps thin
+  same-named delegators.
+- Extracted `BrainFactory` — per-task brain construction and model-selection precedence, with
+  the precedence carved into a pure `resolveModel(...)` (caller override > saved model >
+  auto-pick > fallback).
+- Extracted `NetworkRecoveryPolicy` — first pure incision out of `executeTask`: the L2
+  tier-escalation gating decision.
+- Extracted `BackgroundCompletionCoordinator` — background-process completion routing and
+  synthetic-message builders; the shared auto-wake substrate stays on `AgentService` and is
+  injected.
+
+### Fixed
+
+- De-flaked `SessionDocumentArtifactServiceTest` — injected dispatcher plus a deterministic
+  test scheduler; removes intermittent CI failures under constrained runners.
+
+[Unreleased]: https://github.com/thenerdygeek/intellij-workflow-orchestrator/compare/v0.86.0-phase3.1...HEAD
+[0.86.0-phase3.1]: https://github.com/thenerdygeek/intellij-workflow-orchestrator/compare/v0.86.0-token-ctx.8...v0.86.0-phase3.1
