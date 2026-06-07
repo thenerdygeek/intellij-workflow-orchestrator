@@ -92,6 +92,9 @@ internal val METHOD_NAME_REGEX: Regex = Regex("""^[A-Za-z_$][A-Za-z0-9_$]*$""")
 /** Floor for the compile_module timeout — a sub-30s compile cap is never useful. */
 internal const val COMPILE_MIN_TIMEOUT_SECONDS = 30L
 
+/** How often the shell test-run heartbeat reports elapsed time while the build is silent. */
+internal const val HEARTBEAT_INTERVAL_MS = 12_000L
+
 /**
  * Resolve the compile_module timeout (seconds). Defaults to [RUN_TESTS_DEFAULT_TIMEOUT] (300s,
  * up from the old hard-coded 120s — large modules routinely exceed two minutes) and is clamped
@@ -554,6 +557,47 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         return RunCommandTool.streamCallback
     }
 
+    /**
+     * Build the Maven Surefire shell-fallback argv for a test run.
+     *
+     * - method filter: `-Dtest=Class` (whole class), `-Dtest=Class#m` (one method),
+     *   `-Dtest=Class#m1+m2` (Surefire `+` separator — NOT comma, which separates classes).
+     * - multi-module: when [moduleRelPath] is non-null the run is scoped to that module from the
+     *   reactor root via `-pl <relPath> -am` (instead of cd-ing into the submodule), which is the
+     *   canonical Maven way to test one module + its upstream deps.
+     * - `-Dsurefire.failIfNoSpecifiedTests=false`: a method filter that matches nothing reports 0
+     *   tests (→ NO_TESTS_FOUND) rather than hard-failing the build.
+     *
+     * NOTE: whether Surefire honors the `#method` filter at all depends on the project's Surefire
+     * version/provider config (older JUnit5 providers can ignore it and run the whole class). The
+     * in-IDE native runner targets individual methods reliably and is preferred.
+     */
+    internal fun buildMavenTestArgv(
+        mvnExec: String,
+        className: String,
+        methods: List<String>,
+        moduleRelPath: String?,
+    ): List<String> {
+        val methodPart = when (methods.size) {
+            0 -> ""
+            1 -> "#${methods.first()}"
+            else -> "#${methods.joinToString("+")}"
+        }
+        val dTestArg = "-Dtest=${className}${methodPart}"
+        val argv = mutableListOf(mvnExec)
+        if (moduleRelPath != null) {
+            argv.add("-pl")
+            argv.add(moduleRelPath)
+            argv.add("-am")
+        }
+        argv.add("test")
+        argv.add(dTestArg)
+        argv.add("-Dsurefire.useFile=false")
+        argv.add("-Dsurefire.failIfNoSpecifiedTests=false")
+        argv.add("-q")
+        return argv
+    }
+
     override suspend fun execute(params: JsonObject, project: Project): ToolResult {
         coroutineContext.ensureActive()
         val action = params["action"]?.jsonPrimitive?.content
@@ -744,7 +788,14 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 // why a multi-module project could land on Maven even with use_native_runner=true
                 // (e.g. findModuleForClass returned null for a sibling module's class,
                 // createJUnitRunSettings bailed, the dispatcher fell back without telling anyone).
-                val reason = reasonOut.toString().ifBlank { "setup returned null without a specific reason" }
+                val reason = reasonOut.toString().ifBlank {
+                    "the in-IDE JUnit/TestNG runner could not be set up for '$className' and reported no " +
+                        "specific reason. Most likely causes: (1) module resolution failed — in a multi-module " +
+                        "project the test class may not be under a module's test source root, or the module " +
+                        "hasn't been re-imported since it was added (open the class and check for a module badge " +
+                        "on the editor tab); (2) the project was still indexing; (3) the JUnit/TestNG runner is " +
+                        "incompatible with this configuration. Falling back to the Maven/Gradle shell runner."
+                }
 
                 // Exception: MULTI_METHOD_PATTERNS_UNAVAILABLE is a known capability
                 // gap, not a real configuration error. The shell fallback supports
@@ -1446,10 +1497,19 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             if (authoritativeBuildPath != null && !authoritativeBuildPath.startsWith(":")) File(authoritativeBuildPath)
             else mavenModuleDir
 
-        // For Maven multi-module: run from the submodule directory so Maven uses the
-        // submodule's pom.xml and doesn't walk unrelated modules. For everything else
-        // (Gradle, single-module Maven) always run from the project root.
-        val workDir = if (hasMaven && effectiveMavenDir != null && effectiveMavenDir != baseDir) effectiveMavenDir else baseDir
+        // Maven multi-module is scoped via `-pl <relPath> -am` from the reactor ROOT (see
+        // buildMavenTestArgv), which is the canonical way to test one module + upstream deps and
+        // keeps the `-Dtest=Class#method` filter intact. So Maven always runs from baseDir now
+        // (Gradle already does — it uses the `:module:test` task path).
+        val mavenModuleRelPath: String? =
+            if (hasMaven && effectiveMavenDir != null && effectiveMavenDir != baseDir) {
+                runCatching { baseDir.toPath().relativize(effectiveMavenDir.toPath()).toString().replace('\\', '/') }
+                    .getOrNull()
+                    ?.takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
+        val workDir = baseDir
 
         // Build the argv list directly — no shell interpreter is invoked.
         //
@@ -1469,29 +1529,12 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
         // depend on the working directory's position in PATH.
         val argv: List<String> = when {
             hasMaven -> {
-                // Surefire native multi-method syntax: `-Dtest=ClassName#method1+method2+method3`.
-                // The `+` separator is Surefire-specific (NOT comma — comma separates
-                // distinct classes). Single-method stays `-Dtest=Class#m`; whole-class
-                // stays `-Dtest=Class`. The entire value is a single argv element — the OS
-                // does not split on `+` or `#`, so no quoting is needed.
-                val methodPart = when (methods.size) {
-                    0 -> ""
-                    1 -> "#${methods.first()}"
-                    else -> "#${methods.joinToString("+")}"
-                }
-                val dTestArg = "-Dtest=${className}${methodPart}"
                 // Resolve wrapper → absolute path; fall back to PATH executable
                 // (`mvn.cmd` on Windows, `mvn` on Unix). See BuildToolExecutableResolver.
+                // argv (incl. `-Dtest=Class#method` filter + `-pl <module> -am` multi-module
+                // scoping) is built by the pure, unit-tested buildMavenTestArgv.
                 val mvnExec = BuildToolExecutableResolver.resolveMaven(baseDir)
-                if (effectiveMavenDir != null && effectiveMavenDir != baseDir) {
-                    // Run only the submodule to avoid rebuilding unrelated modules.
-                    // workDir is already set to effectiveMavenDir above so Maven's pom.xml
-                    // is the submodule's pom — no `-pl` needed, but `--also-make` ensures
-                    // upstream dependencies are up to date.
-                    listOf(mvnExec, "test", dTestArg, "-Dsurefire.useFile=false", "-q", "--also-make")
-                } else {
-                    listOf(mvnExec, "test", dTestArg, "-Dsurefire.useFile=false", "-q")
-                }
+                buildMavenTestArgv(mvnExec, className, methods, mavenModuleRelPath)
             }
             hasGradle -> {
                 // Resolve wrapper → absolute path; fall back to PATH executable
@@ -1523,6 +1566,17 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
             val process = processBuilder.start()
             val toolCallId = RunCommandTool.currentToolCallId.get()
             val activeStreamCallback = resolveStreamCallback(project)
+            val shellStartMs = System.currentTimeMillis()
+            // Track when real build output last arrived so the heartbeat stays quiet while the
+            // build is actively talking, and only fires during long silent phases.
+            val lastOutputAt = java.util.concurrent.atomic.AtomicLong(shellStartMs)
+
+            // Immediate launch line — Maven runs with `-q` and can be silent for a long time
+            // (dependency resolution / compilation), which previously made the run look stuck.
+            if (toolCallId != null) {
+                val exeName = runCatching { java.io.File(argv.first()).name }.getOrNull() ?: "build"
+                activeStreamCallback?.invoke(toolCallId, "[run_tests] launched $exeName — this can take a while…\n")
+            }
 
             val outputBuilder = StringBuilder()
             val readerThread = Thread {
@@ -1531,6 +1585,7 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                         var line = reader.readLine()
                         while (line != null) {
                             outputBuilder.appendLine(line)
+                            lastOutputAt.set(System.currentTimeMillis())
                             if (toolCallId != null) {
                                 activeStreamCallback?.invoke(toolCallId, line + "\n")
                             }
@@ -1544,7 +1599,35 @@ description optional: shown to user in approval dialog on run_tests, compile_mod
                 start()
             }
 
+            // Heartbeat — while the process runs and the build has been silent (the `-q` flag
+            // suppresses Maven progress), emit an elapsed-time line every HEARTBEAT_INTERVAL_MS so
+            // a long run never *looks* stuck. Goes only to the live UI stream, NOT outputBuilder,
+            // so the agent's captured result isn't polluted with heartbeat noise.
+            val heartbeatThread = Thread {
+                try {
+                    while (process.isAlive) {
+                        Thread.sleep(HEARTBEAT_INTERVAL_MS)
+                        if (!process.isAlive) break
+                        val now = System.currentTimeMillis()
+                        if (toolCallId != null && now - lastOutputAt.get() >= HEARTBEAT_INTERVAL_MS) {
+                            val elapsedSec = (now - shellStartMs) / 1000
+                            activeStreamCallback?.invoke(
+                                toolCallId,
+                                "[run_tests] still running… ${elapsedSec}s elapsed\n",
+                            )
+                        }
+                    }
+                } catch (_: InterruptedException) {
+                    // process exited / cancelled — stop heartbeating
+                } catch (_: Exception) { }
+            }.apply {
+                isDaemon = true
+                name = "RunTests-Heartbeat-${toolCallId ?: "shell"}"
+                start()
+            }
+
             val completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+            heartbeatThread.interrupt()
 
             if (!completed) {
                 process.destroyForcibly()

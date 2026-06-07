@@ -91,6 +91,62 @@ class ShellFallbackTest {
         assertTrue(GRADLE_TEST_TASK_REGEX.containsMatchIn("> Task :test UP-TO-DATE"))
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    // buildMavenTestArgv — single/multi-method filter + multi-module -pl scoping
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    fun `buildMavenTestArgv targets a single method via -Dtest Class#method`() {
+        val argv = JavaRuntimeExecTool().buildMavenTestArgv(
+            mvnExec = "mvn",
+            className = "com.example.FooTest",
+            methods = listOf("testBar"),
+            moduleRelPath = null,
+        )
+        assertTrue("-Dtest=com.example.FooTest#testBar" in argv, "single method must filter to Class#method: $argv")
+        assertTrue(
+            "-Dsurefire.failIfNoSpecifiedTests=false" in argv,
+            "must not hard-fail when the filter matches nothing",
+        )
+        assertFalse(argv.contains("-pl"), "single-module run must not pass -pl: $argv")
+    }
+
+    @Test
+    fun `buildMavenTestArgv joins multiple methods with the Surefire plus separator`() {
+        val argv = JavaRuntimeExecTool().buildMavenTestArgv(
+            mvnExec = "mvn",
+            className = "com.example.FooTest",
+            methods = listOf("a", "b", "c"),
+            moduleRelPath = null,
+        )
+        assertTrue("-Dtest=com.example.FooTest#a+b+c" in argv, "multi-method uses '+' (not ','): $argv")
+    }
+
+    @Test
+    fun `buildMavenTestArgv scopes to the submodule with -pl and -am in multi-module builds`() {
+        val argv = JavaRuntimeExecTool().buildMavenTestArgv(
+            mvnExec = "mvn",
+            className = "com.example.FooTest",
+            methods = listOf("testBar"),
+            moduleRelPath = "services/data",
+        )
+        val plIdx = argv.indexOf("-pl")
+        assertTrue(plIdx >= 0 && argv.getOrNull(plIdx + 1) == "services/data", "must pass -pl <relPath>: $argv")
+        assertTrue("-am" in argv, "must also-make upstream modules: $argv")
+        assertTrue("-Dtest=com.example.FooTest#testBar" in argv, "method filter preserved in multi-module: $argv")
+    }
+
+    @Test
+    fun `buildMavenTestArgv whole-class run omits the method suffix`() {
+        val argv = JavaRuntimeExecTool().buildMavenTestArgv(
+            mvnExec = "mvn",
+            className = "com.example.FooTest",
+            methods = emptyList(),
+            moduleRelPath = null,
+        )
+        assertTrue("-Dtest=com.example.FooTest" in argv, "whole-class run is -Dtest=Class with no '#': $argv")
+    }
+
     @Test
     fun `gradleTestTaskRegex does not match arbitrary log lines containing colon test`() {
         // Previous implementation ORed two substring checks that both matched
