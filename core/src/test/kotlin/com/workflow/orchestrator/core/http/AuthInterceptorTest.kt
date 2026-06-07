@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.core.http
 
+import com.workflow.orchestrator.core.auth.Credential
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
@@ -44,6 +45,35 @@ class AuthInterceptorTest {
 
         val client = OkHttpClient.Builder()
             .addInterceptor(AuthInterceptor(tokenProvider = { null }))
+            .build()
+
+        client.newCall(Request.Builder().url(server.url("/test")).build()).execute()
+
+        val recorded = server.takeRequest()
+        assertNull(recorded.getHeader("Authorization"))
+    }
+
+    @Test
+    fun `fromCredential applies a Basic credential`() {
+        server.enqueue(MockResponse().setBody("ok"))
+
+        val client = OkHttpClient.Builder()
+            .addInterceptor(AuthInterceptor.fromCredential { Credential.Basic("user", "pass") })
+            .build()
+
+        client.newCall(Request.Builder().url(server.url("/test")).build()).execute()
+
+        val recorded = server.takeRequest()
+        // base64("user:pass") == dXNlcjpwYXNz
+        assertEquals("Basic dXNlcjpwYXNz", recorded.getHeader("Authorization"))
+    }
+
+    @Test
+    fun `fromCredential skips header when credential is null`() {
+        server.enqueue(MockResponse().setBody("ok"))
+
+        val client = OkHttpClient.Builder()
+            .addInterceptor(AuthInterceptor.fromCredential { null })
             .build()
 
         client.newCall(Request.Builder().url(server.url("/test")).build()).execute()

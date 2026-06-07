@@ -1,6 +1,8 @@
 package com.workflow.orchestrator.core.http
 
 import com.intellij.openapi.application.PathManager
+import com.workflow.orchestrator.core.auth.AuthProvider
+import com.workflow.orchestrator.core.auth.DefaultAuthProvider
 import com.workflow.orchestrator.core.model.ServiceType
 import okhttp3.Cache
 import okhttp3.ConnectionPool
@@ -56,16 +58,32 @@ class HttpClientFactory(
 
     fun clientFor(service: ServiceType): OkHttpClient {
         return clients.getOrPut(service) {
-            val scheme = when (service) {
-                ServiceType.SOURCEGRAPH -> AuthScheme.TOKEN
-                else -> AuthScheme.BEARER
-            }
             baseClient.newBuilder()
                 .addInterceptor(CachingInterceptor(service))
                 .addInterceptor(MutationInvalidationInterceptor(service))
                 .addInterceptor(HttpMetricsInterceptor())
-                .addInterceptor(AuthInterceptor({ tokenProvider(service) }, scheme))
+                .addInterceptor(authInterceptorFor(service))
                 .build()
+        }
+    }
+
+    /**
+     * Resolve the auth interceptor for [service]. The base ships [DefaultAuthProvider], so the
+     * default path is byte-identical to before: this factory's injected [tokenProvider] supplies
+     * the token and the per-service scheme (Sourcegraph = `token`, else `Bearer`) is applied. If a
+     * company fork registers its own `AuthProvider` (SSO/SAML/OAuth2) via the `authProvider` EP,
+     * that provider wins and supplies the [com.workflow.orchestrator.core.auth.Credential] instead.
+     */
+    private fun authInterceptorFor(service: ServiceType): AuthInterceptor {
+        val provider = AuthProvider.resolve(service)
+        return if (provider is DefaultAuthProvider) {
+            val scheme = when (service) {
+                ServiceType.SOURCEGRAPH -> AuthScheme.TOKEN
+                else -> AuthScheme.BEARER
+            }
+            AuthInterceptor({ tokenProvider(service) }, scheme)
+        } else {
+            AuthInterceptor.fromCredential { provider.credentialFor(service) }
         }
     }
 
