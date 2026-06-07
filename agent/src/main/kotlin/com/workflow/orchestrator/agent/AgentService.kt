@@ -1990,29 +1990,34 @@ class AgentService(
 
                 val agentSettings = AgentSettings.getInstance(project)
 
-                // Network error strategy
-                val strategy = agentSettings.state.networkErrorStrategy ?: "none"
+                // Network error strategy — the L2-tier-escalation gating decision is the pure
+                // [com.workflow.orchestrator.agent.loop.NetworkRecoveryPolicy] (Phase 3 cut B).
+                val strategy = com.workflow.orchestrator.agent.loop.NetworkRecoveryPolicy
+                    .effectiveStrategy(agentSettings.state.networkErrorStrategy)
 
                 // Bug 2 — when strategy is "none", the user explicitly opted out of any
                 // automatic model switching. Disable L2 tier escalation so the loop never
                 // silently changes the user's chosen model. Same-tier brain recycling
                 // (fresh OkHttp pool on dead-socket) is unaffected — it preserves the model.
-                val cachedFallbackChain: List<String>? = if (strategy == "none") {
-                    log.info("[Agent] Network error strategy = 'none' — L2 tier escalation disabled")
-                    null
-                } else {
-                    val cachedModels = ModelCache.getCached()
-                    val chain = ModelCache.buildFallbackChain(cachedModels)
-                    if (chain.size > 1) {
-                        log.info("[Agent] Fallback chain available: ${chain.map { it.substringAfterLast("::") }}")
-                        chain
-                    } else {
-                        log.info("[Agent] Fallback chain has ≤1 model — L2 tier escalation disabled")
+                val cachedFallbackChain: List<String>? =
+                    if (strategy == com.workflow.orchestrator.agent.loop.NetworkRecoveryPolicy.STRATEGY_NONE) {
+                        log.info("[Agent] Network error strategy = 'none' — L2 tier escalation disabled")
                         null
+                    } else {
+                        val builtChain = ModelCache.buildFallbackChain(ModelCache.getCached())
+                        val resolved = com.workflow.orchestrator.agent.loop.NetworkRecoveryPolicy
+                            .fallbackChainOrNull(strategy, builtChain)
+                        if (resolved != null) {
+                            val tiers = resolved.map { it.substringAfterLast("::") }
+                            log.info("[Agent] Fallback chain available: $tiers")
+                        } else {
+                            log.info("[Agent] Fallback chain has ≤1 model — L2 tier escalation disabled")
+                        }
+                        resolved
                     }
-                }
 
-                val compactOnTimeoutExhaustion = strategy == "context_compaction"
+                val compactOnTimeoutExhaustion =
+                    com.workflow.orchestrator.agent.loop.NetworkRecoveryPolicy.compactOnTimeoutExhaustion(strategy)
 
                 // Counter for recycle marker filenames (recycle-001.txt, recycle-002.txt, ...).
                 // Increments every time the factory is invoked, regardless of reason
