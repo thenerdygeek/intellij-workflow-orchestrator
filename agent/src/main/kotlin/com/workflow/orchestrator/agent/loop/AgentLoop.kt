@@ -1352,10 +1352,6 @@ class AgentLoop(
                 totalTokensUsed += usage.totalTokens
                 totalInputTokens += usage.promptTokens
                 totalOutputTokens += usage.completionTokens
-                contextManager.updateTokens(usage.promptTokens)
-                // Pass CURRENT context usage (promptTokens = how full the context window is now)
-                // not cumulative totals — the UI shows "X / maxInputTokens" as a progress bar.
-                onTokenUpdate?.invoke(usage.promptTokens, usage.completionTokens)
                 // RANK-1 MEASUREMENT (perf/token-context-optimization): log prompt+completion
                 // against the effective input window. If sum routinely approaches the window the
                 // gateway caps input+output together (input cuts free thinking budget); if only
@@ -1373,6 +1369,18 @@ class AgentLoop(
                 onDebugLog?.invoke("info", "api_call", "API: ${usage.promptTokens}p + ${usage.completionTokens}c tokens, ${apiLatencyMs}ms",
                     mapOf("latencyMs" to apiLatencyMs, "promptTokens" to usage.promptTokens, "completionTokens" to usage.completionTokens))
             }
+
+            // Report token usage to the UI (context-usage bar + subagent token counts) EVERY turn.
+            // Sourcegraph streaming frequently returns usage==null; TokenUsageEstimator falls back
+            // to an estimate so the bar never freezes and subagent counts don't stay 0.
+            val (uiPromptTokens, uiCompletionTokens) = TokenUsageEstimator.reportFor(
+                usage = response.usage,
+                promptEstimate = contextManager.tokenEstimate(),
+                responseText = response.choices.firstOrNull()?.message?.content ?: "",
+                estimate = { estimateTokens(it) },
+            )
+            contextManager.updateTokens(uiPromptTokens)
+            onTokenUpdate?.invoke(uiPromptTokens, uiCompletionTokens)
 
             // Finalize streaming UI message (flip partial=false) and update api_req_started with cost (I7 fix).
             val promptTokens = response.usage?.promptTokens ?: 0

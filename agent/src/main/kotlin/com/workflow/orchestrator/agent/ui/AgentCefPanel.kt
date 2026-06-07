@@ -1360,6 +1360,15 @@ class AgentCefPanel(
         callJs("updateSubAgentIteration(${JsEscape.toJsString(payload)})")
     }
 
+    /** Transient status note on the sub-agent card (retry / compaction). null clears it. */
+    fun setSubAgentStatusNote(agentId: String, note: String?) {
+        val payload = buildJsonObject {
+            put("agentId", agentId)
+            if (note != null) put("note", note)
+        }.toString()
+        callJs("setSubAgentStatusNote(${JsEscape.toJsString(payload)})")
+    }
+
     fun addSubAgentToolCall(agentId: String, toolCallId: String, toolName: String, toolArgs: String) {
         val payload = buildJsonObject {
             put("agentId", agentId)

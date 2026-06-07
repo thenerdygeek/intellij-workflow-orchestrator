@@ -844,18 +844,16 @@ class AgentController(
             }
             dir
         }
-        // Multimodal-agent Phase 7 — chat input usage indicator. Reads (used,
-        // max) from the active ContextManager, paired with the live model id
-        // for per-model max-input-token lookup against ModelCatalogService.
+        // Multimodal-agent Phase 7 — chat input usage indicator. Reads (used, max) from the
+        // active ContextManager. max comes from effectiveMaxInputTokens() — the RESOLVED budget
+        // keyed on currentBrainModelId (the model the brain actually runs), the SAME source the
+        // compaction trigger uses. Previously this keyed off AgentSettings.sourcegraphChatModel,
+        // which is blank on auto-pick → fell to the 90K constructor fallback, so the bar showed
+        // e.g. 93K instead of the real 132K window even mid-session.
         panel.setContextUsageProvider {
             val cm = contextManager ?: return@setContextUsageProvider null
-            val modelId = AgentSettings.getInstance(project).state.sourcegraphChatModel ?: ""
             val used = cm.currentInputTokens()
-            val max = if (modelId.isNotBlank()) {
-                cm.maxInputTokensFor(modelId)
-            } else {
-                cm.maxInputTokens
-            }
+            val max = cm.effectiveMaxInputTokens()
             used to max
         }
         // Phase 7 followup F-P5-2 / F-P6-1 — JS pulls current image settings
@@ -2871,6 +2869,12 @@ class AgentController(
                     )
                 }
                 SubagentExecutionStatus.PENDING, null -> {
+                    // Transient sub-agent status (retry / compaction) — routed to the SUB-AGENT
+                    // CARD, never the orchestrator's main chat. statusNoteSet marks it authoritative
+                    // (null clears). This is the fix for subagent retry/compaction leaking to main chat.
+                    if (update.statusNoteSet) {
+                        dashboard.setSubAgentStatusNote(agentId, update.statusNote)
+                    }
                     // Tool starting — add a RUNNING tool chip to the subagent's chain.
                     // The toolCallId from [ToolCallProgress] is threaded through so the
                     // webview can key parallel tool calls by exact ID instead of relying

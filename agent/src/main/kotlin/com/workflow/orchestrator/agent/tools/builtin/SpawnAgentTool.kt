@@ -86,8 +86,6 @@ class SpawnAgentTool(
     private val outputSpiller: () -> com.workflow.orchestrator.agent.tools.ToolOutputSpiller? = { null },
     /** Provider for the session-scoped AttachmentStore — forwarded so sub-agent image tools hit the same store. */
     private val attachmentStoreProvider: () -> com.workflow.orchestrator.agent.session.AttachmentStore? = { null },
-    /** Optional signal fired when the sub-agent's ContextManager runs a compaction pass. */
-    private val onCompactionState: ((active: Boolean, phase: String) -> Unit)? = null,
     /**
      * Provider for the brain factory — evaluated at dispatch time so sub-agents see the factory
      * populated in executeTask, not the null snapshot at registerAllTools time.
@@ -98,8 +96,6 @@ class SpawnAgentTool(
      * the chain populated in executeTask, not the null snapshot at registerAllTools time.
      */
     private val cachedFallbackChain: () -> List<String>? = { null },
-    /** Optional callback fired when the loop retries a failed API call. */
-    private val onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
     /** Optional callback when the loop switches models (fallback or escalation). */
     private val onModelSwitch: ((fromModel: String, toModel: String, reason: String) -> Unit)? = null,
     /**
@@ -738,11 +734,13 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
         config: AgentConfig
     ): Pair<Map<String, AgentTool>, Map<String, Pair<AgentTool, String>>> {
         // --- Core ---
-        // Filter out "agent" (recursion guard) and "attempt_completion" (orchestrator-only;
-        // sub-agents receive task_report instead). Some persona configs list attempt_completion
-        // in their tools field — silently drop it here so the LLM isn't confused by both.
+        // Filter out "agent" (recursion guard), "attempt_completion" (orchestrator-only; sub-agents
+        // receive task_report instead), and "render_artifact" (orchestrator-only — a sub-agent has
+        // no chat surface to render into; output flows to the parent via task_report, and a render
+        // call would just return Skipped(headless)). Some persona configs list these in their tools
+        // field — silently drop them here so the LLM isn't confused or wasting calls.
         val core = config.tools
-            .filter { it != "agent" && it != "attempt_completion" }
+            .filter { it != "agent" && it != "attempt_completion" && it != "render_artifact" }
             .mapNotNull { name ->
                 val tool = toolRegistry.get(name)
                 if (tool == null) LOG.warn("[SpawnAgent] Config '${config.name}' references unknown core tool: $name")
@@ -759,7 +757,7 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
 
         // --- Deferred ---
         val deferred = config.deferredTools
-            .filter { it != "agent" && it !in core }
+            .filter { it != "agent" && it != "render_artifact" && it !in core }
             .mapNotNull { name ->
                 val tool = toolRegistry.get(name)
                 if (tool == null) LOG.warn("[SpawnAgent] Config '${config.name}' references unknown deferred tool: $name")
@@ -839,10 +837,8 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
             messageStateHandler = subagentStateHandler,
             outputSpiller = outputSpiller(),
             attachmentStoreProvider = attachmentStoreProvider,
-            onCompactionState = onCompactionState,
             brainFactory = brainFactory(),
             cachedFallbackChain = cachedFallbackChain(),
-            onRetry = onRetry,
             onModelSwitch = onModelSwitch,
             modelCatalogService = modelCatalogService(),
         )
@@ -959,10 +955,8 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
                         messageStateHandler = childSubagentStateHandler,
                         outputSpiller = outputSpiller(),
                         attachmentStoreProvider = attachmentStoreProvider,
-                        onCompactionState = onCompactionState,
                         brainFactory = brainFactory(),
                         cachedFallbackChain = cachedFallbackChain(),
-                        onRetry = onRetry,
                         onModelSwitch = onModelSwitch,
                         modelCatalogService = modelCatalogService(),
                     )

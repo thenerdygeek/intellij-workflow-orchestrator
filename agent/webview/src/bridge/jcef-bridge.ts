@@ -569,6 +569,9 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   updateSubAgentIteration(payload: string) {
     stores?.getChatStore().updateSubAgentIteration(payload);
   },
+  setSubAgentStatusNote(payload: string) {
+    stores?.getChatStore().setSubAgentStatusNote(payload);
+  },
   addSubAgentToolCall(payload: string) {
     stores?.getChatStore().addSubAgentToolCall(payload);
   },

@@ -360,6 +360,44 @@ class SpawnAgentToolTest {
         }
 
         @Test
+        fun `resolveConfigToolsTiered excludes render_artifact from both core and deferred`() {
+            // A sub-agent has no chat surface to render into (output goes to the parent via
+            // task_report), so render_artifact is dropped regardless of what the persona config
+            // lists — even when listed as a core tool or a deferred tool.
+            val registry = ToolRegistry()
+            registry.registerCore(stubTool("render_artifact"))
+            registry.registerCore(stubTool("read_file"))
+
+            val config = AgentConfig(
+                name = "test",
+                description = "test",
+                tools = listOf("render_artifact", "read_file"),
+                deferredTools = listOf("render_artifact"),
+                skills = null,
+                modelId = null,
+                systemPrompt = "Test prompt",
+            )
+
+            val tool = SpawnAgentTool(
+                brainProvider = { mockk(relaxed = true) },
+                toolRegistry = registry,
+                project = mockk(relaxed = true),
+            )
+
+            val (core, deferred) = tool.resolveConfigToolsTiered(config)
+
+            assertFalse(
+                core.containsKey("render_artifact"),
+                "render_artifact must not be a sub-agent core tool",
+            )
+            assertFalse(
+                deferred.containsKey("render_artifact"),
+                "render_artifact must not be a sub-agent deferred tool",
+            )
+            assertTrue(core.containsKey("read_file"), "other tools are unaffected")
+        }
+
+        @Test
         fun `unknown deferred tool names are silently dropped`() {
             val registry = ToolRegistry()
             registry.registerCore(stubTool("read_file"))

@@ -64,6 +64,15 @@ data class SubagentProgressUpdate(
     val status: SubagentExecutionStatus? = null,
     val result: String? = null,
     val error: String? = null,
+    /**
+     * Transient status note for the sub-agent card (e.g. "Compacting context…" or
+     * "timeout — retrying (2/3) in 3s…"). Sub-agent retries/compactions are routed HERE
+     * (the sub-agent card) instead of the orchestrator's main chat — that leak was the bug.
+     * [statusNoteSet] distinguishes "this update carries a note" (possibly null = clear) from
+     * the many unrelated updates that leave [statusNote] at its default null.
+     */
+    val statusNote: String? = null,
+    val statusNoteSet: Boolean = false,
     // Tool lifecycle (start)
     val toolStartName: String? = null,
     val toolStartArgs: String? = null,

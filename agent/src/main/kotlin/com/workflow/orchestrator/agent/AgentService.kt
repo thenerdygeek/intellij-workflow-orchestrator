@@ -605,8 +605,6 @@ class AgentService(
 
     // Per-task wiring "live" fields for SpawnAgentTool — populated at the start of
     // executeTask so the SpawnAgentTool's lambdas resolve to the current task's callbacks.
-    @Volatile private var liveOnRetry: ((Int, Int, String, Long) -> Unit)? = null
-    @Volatile private var liveOnCompactionState: ((Boolean, String) -> Unit)? = null
     @Volatile private var liveOnModelSwitch: ((String, String, String) -> Unit)? = null
     @Volatile private var liveBrainFactory: (suspend (String, String?) -> com.workflow.orchestrator.core.ai.LlmBrain)? = null
     @Volatile private var liveCachedFallbackChain: List<String>? = null
@@ -1004,10 +1002,8 @@ class AgentService(
             ideContext = ideContext,
             outputSpiller = { _outputSpiller },
             attachmentStoreProvider = { activeAttachmentStore },
-            onCompactionState = { active, phase -> liveOnCompactionState?.invoke(active, phase) },
             brainFactory = { liveBrainFactory },
             cachedFallbackChain = { liveCachedFallbackChain },
-            onRetry = { a, m, r, d -> liveOnRetry?.invoke(a, m, r, d) },
             onModelSwitch = { from, to, reason -> liveOnModelSwitch?.invoke(from, to, reason) },
             modelCatalogService = { sharedCatalogHolder.peek() },
             parentSessionIdProvider = { activeTask.get()?.sessionId },
@@ -2287,8 +2283,9 @@ class AgentService(
 
                 // Wire live fields for SpawnAgentTool — keeps the per-task callbacks
                 // accessible to LLM-spawned sub-agents constructed by SpawnAgentTool.
-                liveOnRetry = onRetry
-                liveOnCompactionState = onCompactionState
+                // NOTE: onRetry/onCompactionState are intentionally NOT forwarded — a sub-agent's
+                // retry/compaction routes to its own card (SubagentRunner→onProgress), not the
+                // orchestrator's main chat. Forwarding them here was the leak.
                 liveOnModelSwitch = onModelSwitch
                 liveBrainFactory = brainFactory
                 liveCachedFallbackChain = cachedFallbackChain
