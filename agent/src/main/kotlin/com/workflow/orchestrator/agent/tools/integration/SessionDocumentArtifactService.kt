@@ -11,6 +11,7 @@ import com.workflow.orchestrator.core.services.SessionDownloadDir
 import com.workflow.orchestrator.core.services.ToolResult
 import com.workflow.orchestrator.document.service.DocumentArtifactStore
 import kotlin.coroutines.coroutineContext
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +33,10 @@ class SessionDocumentArtifactService(
     private val cacheDirProvider: suspend () -> Path?,
     private val jobBudgetMs: Long,
     private val progressSink: ((DocumentExtractionProgress) -> Unit)? = null,
+    // Test seam: the dispatcher the background extraction job runs on. Defaults to
+    // [Dispatchers.IO] (production); tests inject a TestDispatcher so the launch/await is driven
+    // by a single deterministic scheduler instead of racing the real IO pool from runBlocking.
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) : DocumentArtifactService {
 
     private val inFlight = ConcurrentHashMap<String, Deferred<Result<DocumentArtifact>>>()
@@ -163,7 +168,7 @@ class SessionDocumentArtifactService(
                 ?: SessionDownloadDir((cacheRoot.parent ?: cacheRoot).resolve("downloads"))
 
         val job = inFlight.computeIfAbsent(hash) {
-            cs.async(Dispatchers.IO + sessionCtx) {
+            cs.async(ioDispatcher + sessionCtx) {
                 val outcome = withTimeoutOrNull(jobBudgetMs) {
                     runCatching { store.extractAndPersist(effectivePath, artDir, hash, jobBudgetMs, progressSink) }
                 } ?: Result.failure(RuntimeException("extraction exceeded ${jobBudgetMs / 1000}s budget"))

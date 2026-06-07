@@ -9,9 +9,12 @@ import com.workflow.orchestrator.document.service.DocumentArtifactStore
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -21,6 +24,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class SessionDocumentArtifactServiceTest {
 
     @TempDir lateinit var cacheRoot: Path
@@ -33,7 +37,8 @@ class SessionDocumentArtifactServiceTest {
     }
 
     @Test
-    fun `cold read then warm read extracts exactly once`() = runBlocking {
+    fun `cold read then warm read extracts exactly once`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
         val src = Files.createTempFile("doc", ".pdf").also { Files.writeString(it, "bytes") }
         val extractCount = AtomicInteger(0)
         val store = mockk<DocumentArtifactStore>(relaxed = true)
@@ -50,9 +55,10 @@ class SessionDocumentArtifactServiceTest {
 
         val svc = SessionDocumentArtifactService(
             store = store,
-            cs = CoroutineScope(SupervisorJob()),
+            cs = CoroutineScope(SupervisorJob() + dispatcher),
             cacheDirProvider = { cacheRoot },
             jobBudgetMs = 60_000,
+            ioDispatcher = dispatcher,
         )
 
         val r1 = svc.read(src, DocumentCursor.Offset(0), 100)
@@ -63,7 +69,8 @@ class SessionDocumentArtifactServiceTest {
     }
 
     @Test
-    fun `read blocks until extraction completes then returns content`() = runBlocking {
+    fun `read blocks until extraction completes then returns content`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
         val src = Files.createTempFile("doc", ".pdf").also { Files.writeString(it, "bytes") }
         val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
         val store = io.mockk.mockk<com.workflow.orchestrator.document.service.DocumentArtifactStore>(relaxed = true)
@@ -80,9 +87,10 @@ class SessionDocumentArtifactServiceTest {
         }
         val svc = SessionDocumentArtifactService(
             store = store,
-            cs = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob()),
+            cs = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + dispatcher),
             cacheDirProvider = { cacheRoot },
             jobBudgetMs = 60_000,
+            ioDispatcher = dispatcher,
         )
         val readJob = async { svc.read(src, com.workflow.orchestrator.core.model.DocumentCursor.Offset(0), 100) }
         gate.complete(Unit)
@@ -92,7 +100,8 @@ class SessionDocumentArtifactServiceTest {
     }
 
     @Test
-    fun `extraction job inherits the SessionDownloadDir context from the caller`() = runBlocking {
+    fun `extraction job inherits the SessionDownloadDir context from the caller`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
         val src = java.nio.file.Files.createTempFile("doc", ".pdf").also { java.nio.file.Files.writeString(it, "bytes") }
         val installedDir = cacheRoot.resolve("downloads")
         val observed = java.util.concurrent.atomic.AtomicReference<java.nio.file.Path?>(null)
@@ -115,9 +124,10 @@ class SessionDocumentArtifactServiceTest {
 
         val svc = SessionDocumentArtifactService(
             store = store,
-            cs = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob()),
+            cs = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + dispatcher),
             cacheDirProvider = { cacheRoot },
             jobBudgetMs = 60_000,
+            ioDispatcher = dispatcher,
         )
 
         kotlinx.coroutines.withContext(com.workflow.orchestrator.core.services.SessionDownloadDir(installedDir)) {
@@ -128,7 +138,8 @@ class SessionDocumentArtifactServiceTest {
     }
 
     @Test
-    fun `extraction job is given a SessionDownloadDir derived from the cache dir when the caller has none`() = runBlocking {
+    fun `extraction job is given a SessionDownloadDir derived from the cache dir when the caller has none`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
         // Regression for the "embedded images land in java.io.tmpdir, view_image rejects them" bug.
         // When read() runs in a context WITHOUT a SessionDownloadDir (sub-agent, resume, or an
         // in-flight job first triggered outside the attachment scope), the extraction job must
@@ -152,9 +163,10 @@ class SessionDocumentArtifactServiceTest {
 
         val svc = SessionDocumentArtifactService(
             store = store,
-            cs = CoroutineScope(SupervisorJob()),
+            cs = CoroutineScope(SupervisorJob() + dispatcher),
             cacheDirProvider = { cacheRoot },
             jobBudgetMs = 60_000,
+            ioDispatcher = dispatcher,
         )
 
         // No SessionDownloadDir installed in this coroutine context.
