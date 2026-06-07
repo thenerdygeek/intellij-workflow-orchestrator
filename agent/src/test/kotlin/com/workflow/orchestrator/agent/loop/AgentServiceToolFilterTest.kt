@@ -19,19 +19,19 @@ import org.junit.jupiter.api.Test
 class AgentServiceToolFilterTest {
 
     /**
-     * Production filter predicate — faithfully ported from AgentService.executeTask's
-     * toolDefinitionProvider lambda. Uses AgentLoop.WRITE_TOOLS as the authoritative set
-     * so any change to the production write-tool list is immediately reflected in these tests.
+     * Delegates to the production predicate [com.workflow.orchestrator.agent.tools.ToolDefinitionFilter]
+     * (extracted from AgentService.executeTask's toolDefinitionProvider in Phase 3 cut B, incision 3).
+     * Uses AgentLoop.WRITE_TOOLS as the authoritative write-tool set; `isDelegatedSession=false` here
+     * (the delegated act-only path is pinned by `DelegatedActOnlyToolFilterTest`).
      */
-    private fun filterForMode(isPlanMode: Boolean, toolName: String, hasSkills: Boolean = true): Boolean {
-        // Port of Cline's contextRequirements: omit use_skill when no skills available
-        if (toolName == "use_skill" && !hasSkills) return false
-        return if (isPlanMode) {
-            toolName !in AgentLoop.WRITE_TOOLS && toolName != "enable_plan_mode"
-        } else {
-            toolName != "plan_mode_respond" && toolName != "discard_plan"
-        }
-    }
+    private fun filterForMode(isPlanMode: Boolean, toolName: String, hasSkills: Boolean = true): Boolean =
+        com.workflow.orchestrator.agent.tools.ToolDefinitionFilter.shouldInclude(
+            toolName = toolName,
+            isPlanMode = isPlanMode,
+            isDelegatedSession = false,
+            hasSkills = hasSkills,
+            writeToolNames = AgentLoop.WRITE_TOOLS,
+        )
 
     private val allToolNames = listOf(
         "read_file", "edit_file", "create_file", "search_code", "glob_files",

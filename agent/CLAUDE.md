@@ -564,7 +564,7 @@ try {
 
 Two-layer enforcement:
 
-1. **Schema filtering** (`AgentService` tool definition provider, ~line 834) — Removes write tools and `enable_plan_mode` from tool definitions before each LLM call. The LLM never sees blocked tools. In act mode, removes `plan_mode_respond`.
+1. **Schema filtering** (`AgentService` tool definition provider) — Removes write tools and `enable_plan_mode` from tool definitions before each LLM call. The LLM never sees blocked tools. In act mode, removes `plan_mode_respond`. The pure inclusion predicate (use_skill gating + act-only delegated + plan/act split) is `tools/ToolDefinitionFilter.shouldInclude(...)`, extracted from the `toolDefinitionProvider` closure in Phase 3 cut B (incision 3) and pinned by `ToolDefinitionFilterTest` (with `AgentServiceToolFilterTest` + `DelegatedActOnlyToolFilterTest` now delegating to it).
 2. **Execution guard** (`AgentLoop.run()`, ~line 955) — Checks `planMode && toolName in WRITE_TOOLS` as a safety net for cached tool calls from before mode switch.
 
 **Blocked in plan mode:** edit_file, create_file, run_command, revert_file, background_process, send_stdin, format_code, optimize_imports, refactor_rename, enable_plan_mode

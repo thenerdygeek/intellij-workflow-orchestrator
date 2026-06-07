@@ -2059,21 +2059,18 @@ class AgentService(
                     // on the per-session state before the loop starts (startDelegatedSession /
                     // resumeDelegatedSession), so it is set on the very first provider call.
                     val isDelegatedSession = currentSessionState()?.delegated != null
+                    // Tool-visibility predicate (use_skill gating + act-only delegated + plan/act
+                    // split) is the pure com.workflow.orchestrator.agent.tools.ToolDefinitionFilter
+                    // (Phase 3 cut B, incision 3).
                     val defs = registry.getActiveTools().values
                         .filter { tool ->
-                            // Port of Cline's contextRequirements: omit use_skill when no skills available
-                            if (tool.name == "use_skill" && !hasSkills) return@filter false
-                            // Act-only delegated: drop BOTH plan tools regardless of plan-mode state.
-                            if (isDelegatedSession &&
-                                (tool.name == "enable_plan_mode" || tool.name == "plan_mode_respond")
-                            ) {
-                                return@filter false
-                            }
-                            if (isPlanMode) {
-                                tool.name !in writeToolNames && tool.name != "enable_plan_mode"
-                            } else {
-                                tool.name != "plan_mode_respond" && tool.name != "discard_plan"
-                            }
+                            com.workflow.orchestrator.agent.tools.ToolDefinitionFilter.shouldInclude(
+                                toolName = tool.name,
+                                isPlanMode = isPlanMode,
+                                isDelegatedSession = isDelegatedSession,
+                                hasSkills = hasSkills,
+                                writeToolNames = writeToolNames,
+                            )
                         }
                         .map { AgentTool.injectOutputParams(it.toToolDefinition()) }
 
