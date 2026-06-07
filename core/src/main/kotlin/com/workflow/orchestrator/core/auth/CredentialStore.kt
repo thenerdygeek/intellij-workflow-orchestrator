@@ -71,19 +71,12 @@ class CredentialStore(
      * URL in settings immediately invalidates the cached token (F-8 fix).
      * Returns empty string if the settings are unavailable (test context without IDE).
      */
+    // Delegates to the WorkflowConfig seam so the ServiceType→URL mapping lives in one place
+    // (DefaultWorkflowConfig) and forks can override config without editing :core. The default
+    // impl reads the same ConnectionSettings, so behavior is unchanged. try/catch stays defensive
+    // (PasswordSafe cache-key resolution must never throw).
     private fun serverUrlFor(service: ServiceType): String = try {
-        val s = com.workflow.orchestrator.core.settings.ConnectionSettings.getInstance().state
-        when (service) {
-            ServiceType.JIRA -> s.jiraUrl
-            ServiceType.BAMBOO -> s.bambooUrl
-            ServiceType.BITBUCKET -> s.bitbucketUrl
-            ServiceType.SONARQUBE -> s.sonarUrl
-            ServiceType.SOURCEGRAPH -> s.sourcegraphUrl
-            // WEB_SEARCH stores a single provider-agnostic API key (Custom HTTP)
-            // with no canonical service URL in ConnectionSettings — fall back to the
-            // empty-string key documented above (no URL available).
-            ServiceType.WEB_SEARCH -> ""
-        }
+        com.workflow.orchestrator.core.config.WorkflowConfig.resolve().baseUrl(service)
     } catch (_: Exception) {
         ""
     }

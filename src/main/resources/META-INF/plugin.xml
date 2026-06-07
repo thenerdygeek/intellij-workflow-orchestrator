@@ -64,6 +64,14 @@
             qualifiedName="com.workflow.orchestrator.authProvider"
             interface="com.workflow.orchestrator.core.auth.AuthProvider"
             dynamic="true"/>
+        <extensionPoint
+            qualifiedName="com.workflow.orchestrator.workflowConfig"
+            interface="com.workflow.orchestrator.core.config.WorkflowConfig"
+            dynamic="true"/>
+        <extensionPoint
+            qualifiedName="com.workflow.orchestrator.featureRegistry"
+            interface="com.workflow.orchestrator.core.capability.FeatureRegistry"
+            dynamic="true"/>
     </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">
@@ -482,6 +490,10 @@
     <extensions defaultExtensionNs="com.workflow.orchestrator">
         <authProvider
             implementation="com.workflow.orchestrator.core.auth.DefaultAuthProvider"/>
+        <workflowConfig
+            implementation="com.workflow.orchestrator.core.config.DefaultWorkflowConfig"/>
+        <featureRegistry
+            implementation="com.workflow.orchestrator.core.capability.DefaultFeatureRegistry"/>
         <branchNameAiGenerator
             implementation="com.workflow.orchestrator.core.ai.SourcegraphBranchNameGenerator"/>
         <jiraTicketProvider

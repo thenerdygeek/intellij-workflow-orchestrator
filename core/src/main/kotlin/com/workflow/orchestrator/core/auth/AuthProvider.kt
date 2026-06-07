@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.core.auth
 
 import com.intellij.openapi.extensions.ExtensionPointName
+import com.workflow.orchestrator.core.api.StableApi
 import com.workflow.orchestrator.core.model.ServiceType
 
 /**
@@ -8,6 +9,7 @@ import com.workflow.orchestrator.core.model.ServiceType
  * Company forks register their own implementation (SSO/SAML/OAuth2/licensing) in their plugin.xml
  * overlay — the lowest-[order] provider that [supports] a service wins. Forks never edit :core.
  */
+@StableApi(since = "0.86")
 interface AuthProvider {
     /** Lower runs first; a fork overrides the base (which sits at the lowest priority). */
     val order: Int get() = 0
