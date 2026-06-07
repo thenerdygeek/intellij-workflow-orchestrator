@@ -1,8 +1,10 @@
 package com.workflow.orchestrator.agent.delegation
 
+import com.workflow.orchestrator.agent.loop.AgentLoop
+import com.workflow.orchestrator.agent.tools.ToolDefinitionFilter
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.io.File
 
 /**
  * #5 reconciliation pin — a delegated session is ACT-ONLY.
@@ -13,58 +15,43 @@ import java.io.File
  * sub-agents are act-only (`includePlanModeSection = false`). So the plan callbacks in
  * `SessionUiCallbacks` are simply never exercised on the delegated path.
  *
- * The filter lives in `AgentService`'s `toolDefinitionProvider` closure (built once inside
- * `executeTask`, reused by `resumeSession`). It already branches on `isPlanModeActive()`; the
- * act-only delegated condition is added there, keyed on the per-session delegation marker
- * (`currentSessionState()?.delegated != null`), which both `startDelegatedSession` and
- * `resumeDelegatedSession` stamp before the loop starts.
- *
- * Source-text pin: the harness can't easily build a live toolDefinitionProvider, so we assert the
- * filter expression is present and references both plan tools + the delegation marker.
+ * The filter logic now lives in the pure [ToolDefinitionFilter] (Phase 3 cut B, incision 3),
+ * extracted from `AgentService.executeTask`'s `toolDefinitionProvider` closure. `AgentService`
+ * computes `isDelegatedSession = currentSessionState()?.delegated != null` and passes it in. This
+ * test pins the real predicate behaviorally (was a source-text grep on AgentService.kt before the
+ * extraction made the logic reachable).
  */
 class DelegatedActOnlyToolFilterTest {
 
-    private fun agentRoot(): File {
-        val d = System.getProperty("user.dir")
-        return if (File("$d/src/main/kotlin").isDirectory) File("$d/src/main/kotlin")
-        else File("$d/agent/src/main/kotlin")
-    }
+    private fun include(toolName: String, isDelegatedSession: Boolean, isPlanMode: Boolean = false) =
+        ToolDefinitionFilter.shouldInclude(
+            toolName = toolName,
+            isPlanMode = isPlanMode,
+            isDelegatedSession = isDelegatedSession,
+            hasSkills = true,
+            writeToolNames = AgentLoop.WRITE_TOOLS,
+        )
 
-    private val serviceSource: String by lazy {
-        File(agentRoot(), "com/workflow/orchestrator/agent/AgentService.kt").readText()
-    }
-
-    private fun toolDefinitionProviderBlock(): String {
-        val start = serviceSource.indexOf("val toolDefinitionProvider")
-        assertTrue(start >= 0, "AgentService must declare a toolDefinitionProvider")
-        // Capture a generous window around the filter body.
-        return serviceSource.substring(start, minOf(start + 2000, serviceSource.length))
+    @Test
+    fun `delegated act-only session excludes both plan tools regardless of plan mode`() {
+        // Act mode already drops plan_mode_respond; the delegated branch must ADDITIONALLY drop
+        // enable_plan_mode so the LLM can never switch a delegated session into plan mode.
+        assertFalse(include("enable_plan_mode", isDelegatedSession = true, isPlanMode = false))
+        assertFalse(include("plan_mode_respond", isDelegatedSession = true, isPlanMode = false))
+        // ...and even if the per-session plan-mode flag were somehow set, both stay dropped.
+        assertFalse(include("enable_plan_mode", isDelegatedSession = true, isPlanMode = true))
+        assertFalse(include("plan_mode_respond", isDelegatedSession = true, isPlanMode = true))
     }
 
     @Test
-    fun `tool definition provider has an act-only delegated branch`() {
-        val block = toolDefinitionProviderBlock()
-        assertTrue(
-            block.contains("delegated") || block.contains("isDelegatedSession") ||
-                block.contains("actOnly"),
-            "toolDefinitionProvider must compute a delegated/act-only flag from the session state " +
-                "so a delegated session never sees the plan tools"
-        )
+    fun `a non-delegated session keeps enable_plan_mode in act mode`() {
+        // Guards against the filter over-dropping: only the delegated path removes enable_plan_mode.
+        assertTrue(include("enable_plan_mode", isDelegatedSession = false, isPlanMode = false))
     }
 
     @Test
-    fun `delegated act-only branch excludes both plan tools`() {
-        val block = toolDefinitionProviderBlock()
-        // The act-only branch must drop enable_plan_mode AND plan_mode_respond. (Act mode already
-        // drops plan_mode_respond; the delegated branch must additionally drop enable_plan_mode so
-        // the LLM can never switch a delegated session into plan mode.)
-        assertTrue(
-            block.contains("enable_plan_mode"),
-            "delegated act-only filter must exclude enable_plan_mode"
-        )
-        assertTrue(
-            block.contains("plan_mode_respond"),
-            "delegated act-only filter must exclude plan_mode_respond"
-        )
+    fun `delegated session still allows ordinary act-mode tools`() {
+        assertTrue(include("read_file", isDelegatedSession = true))
+        assertTrue(include("edit_file", isDelegatedSession = true))
     }
 }
