@@ -1387,24 +1387,16 @@ class AgentService(
         }
         // Recents already cover paths in this IDE's recents list; discovered fills in
         // socket-glob hits for paths NOT in recents (e.g. a sibling Toolbox flavor).
-        val recentPaths = recents.map { it.projectPath }.toSet()
         val discovered = try {
             com.workflow.orchestrator.agent.tools.delegation.DelegationTool
                 .defaultDiscoveredProvider(project)
-                .filter { it.projectPath !in recentPaths }
         } catch (e: Exception) {
             log.warn("[AgentService] delegation discovery failed for prompt: ${e.message}")
             emptyList()
         }
-        // Drop "missing" — a path that no longer exists on disk is noise to the LLM.
-        return (recents + discovered)
-            .filter { it.status != "missing" }
-            .map {
-                com.workflow.orchestrator.agent.prompt.SystemPrompt.DelegationTarget(
-                    repoName = it.repoName,
-                    status = it.status,
-                )
-            }
+        // Dedup discovered against recents, drop "missing" paths, map to prompt targets.
+        return com.workflow.orchestrator.agent.tools.delegation.DelegationTargetComposer
+            .compose(recents, discovered)
     }
 
     private fun registerDebugTools() {
