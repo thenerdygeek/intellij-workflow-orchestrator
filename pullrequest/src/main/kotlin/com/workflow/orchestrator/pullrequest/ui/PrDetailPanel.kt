@@ -1362,24 +1362,12 @@ class PrDetailPanel(
     }
 
     private fun updateBuildStatusBadge(statuses: List<BitbucketBuildStatus>) {
-        val (text, color) = when {
-            statuses.isEmpty() -> "No builds" to StatusColors.INFO
-            statuses.any { it.state.equals("FAILED", ignoreCase = true) } ->
-                "Build Failed" to StatusColors.ERROR
-            statuses.any { it.state.equals("INPROGRESS", ignoreCase = true) } ->
-                "Building..." to StatusColors.LINK
-            statuses.all { it.state.equals("SUCCESSFUL", ignoreCase = true) } ->
-                "Build Passed" to StatusColors.SUCCESS
-            else -> "Build Unknown" to StatusColors.INFO
-        }
-
+        val badge = BuildStatusBadgeDeriver.derive(statuses)
         // Store URL of the most relevant build status for click-to-open
-        buildStatusUrl = statuses.firstOrNull { it.state.equals("FAILED", ignoreCase = true) }?.url
-            ?: statuses.firstOrNull { it.state.equals("INPROGRESS", ignoreCase = true) }?.url
-            ?: statuses.firstOrNull()?.url
+        buildStatusUrl = badge.url
 
         buildStatusBadgeContainer.removeAll()
-        buildStatusBadgeContainer.add(createBuildStatusBadge(text, color))
+        buildStatusBadgeContainer.add(createBuildStatusBadge(badge.text, badge.color))
         buildStatusBadgeContainer.revalidate()
         buildStatusBadgeContainer.repaint()
     }
