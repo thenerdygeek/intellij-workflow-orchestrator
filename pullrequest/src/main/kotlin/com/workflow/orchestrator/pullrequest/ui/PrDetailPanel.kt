@@ -1830,25 +1830,13 @@ class PrDetailPanel(
                 add(emptyLabel, BorderLayout.CENTER)
             } else {
                 // Separate inline comments (with anchor) from general activities
-                val inlineComments = activities.filter { a ->
-                    val anchor = a.commentAnchor ?: a.comment?.anchor
-                    anchor != null && anchor.path.isNotBlank()
-                }
-                val generalActivities = activities.filter { a ->
-                    val anchor = a.commentAnchor ?: a.comment?.anchor
-                    anchor == null || anchor.path.isBlank()
-                }
+                val split = PrActivityGrouping.partition(activities)
+                val inlineComments = split.inline
+                val generalActivities = split.general
 
                 // Group inline comments by file:line
                 if (inlineComments.isNotEmpty()) {
-                    data class AnchorKey(val path: String, val line: Int)
-
-                    val grouped = linkedMapOf<AnchorKey, MutableList<BitbucketPrActivity>>()
-                    for (activity in inlineComments) {
-                        val anchor = activity.commentAnchor ?: activity.comment?.anchor ?: continue
-                        val key = AnchorKey(anchor.path, anchor.line)
-                        grouped.getOrPut(key) { mutableListOf() }.add(activity)
-                    }
+                    val grouped = PrActivityGrouping.groupInlineByAnchor(inlineComments)
 
                     for ((anchorKey, group) in grouped) {
                         // File:line header
