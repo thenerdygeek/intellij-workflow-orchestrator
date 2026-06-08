@@ -1840,62 +1840,10 @@ class AgentController(
         live: LiveQuestions,
         collectedAnswers: Map<String, String>,
         skippedIds: Set<String> = emptySet()
-    ): String {
-        return when (live.mode) {
-            QuestionMode.SIMPLE -> {
-                // Single question: resolve ids → labels, pass joined labels to executeSimple.
-                // If the user skipped, emit the [SKIPPED] sentinel so the tool can produce a
-                // distinct "User skipped this question." result instead of an empty answer.
-                val q = live.questions.firstOrNull()
-                if (q != null && q.id in skippedIds) return "[SKIPPED]"
-                val idsJson = collectedAnswers["q1"] ?: "[]"
-                val selectedIds = try {
-                    lenientJson.decodeFromString<List<String>>(idsJson)
-                } catch (_: Exception) { emptyList() }
-                val labels = selectedIds.map { id ->
-                    q?.options?.find { it.id == id }?.label ?: id
-                }
-                labels.joinToString(", ")
-            }
-            QuestionMode.WIZARD -> {
-                // Multi-question wizard: build enriched JSON with question text + selected labels.
-                // Skipped questions emit "skipped": true instead of "selected": [] so the LLM can
-                // tell the difference between "user actively skipped" and "no options chosen".
-                buildString {
-                    append("{")
-                    var first = true
-                    for (q in live.questions) {
-                        if (!first) append(",")
-                        first = false
-                        append(JsEscape.toJsonString(q.id))
-                        append(":{\"question\":")
-                        append(JsEscape.toJsonString(q.question))
-                        if (q.id in skippedIds) {
-                            append(",\"skipped\":true}")
-                            continue
-                        }
-                        val idsJson = collectedAnswers[q.id] ?: "[]"
-                        val selectedIds = try {
-                            lenientJson.decodeFromString<List<String>>(idsJson)
-                        } catch (_: Exception) { emptyList() }
-                        append(",\"selected\":[")
-                        var firstOpt = true
-                        for (id in selectedIds) {
-                            val label = q.options.find { it.id == id }?.label ?: id
-                            if (!firstOpt) append(",")
-                            firstOpt = false
-                            append("{\"id\":")
-                            append(JsEscape.toJsonString(id))
-                            append(",\"label\":")
-                            append(JsEscape.toJsonString(label))
-                            append("}")
-                        }
-                        append("]}")
-                    }
-                    append("}")
-                }
-            }
-        }
+    ): String = when (live.mode) {
+        // SIMPLE: joined labels (or [SKIPPED]); WIZARD: enriched JSON. See AnswerPayloadEnricher.
+        QuestionMode.SIMPLE -> AnswerPayloadEnricher.buildSimple(live.questions, collectedAnswers, skippedIds)
+        QuestionMode.WIZARD -> AnswerPayloadEnricher.buildWizard(live.questions, collectedAnswers, skippedIds)
     }
 
     /**
