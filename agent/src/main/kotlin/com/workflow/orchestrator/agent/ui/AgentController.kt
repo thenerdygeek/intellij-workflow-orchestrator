@@ -1244,30 +1244,7 @@ class AgentController(
     private fun inferMimeType(f: java.io.File): String {
         val probed = runCatching { java.nio.file.Files.probeContentType(f.toPath()) }.getOrNull()
         if (!probed.isNullOrBlank()) return probed
-        return when (f.extension.lowercase()) {
-            "png" -> "image/png"
-            "jpg", "jpeg" -> "image/jpeg"
-            "webp" -> "image/webp"
-            "gif" -> "image/gif"
-            "pdf" -> "application/pdf"
-            "txt", "log" -> "text/plain"
-            "md", "markdown" -> "text/markdown"
-            "json" -> "application/json"
-            "xml" -> "application/xml"
-            "yaml", "yml" -> "application/yaml"
-            "csv" -> "text/csv"
-            "html", "htm" -> "text/html"
-            "rtf" -> "application/rtf"
-            "doc" -> "application/msword"
-            "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            "xls" -> "application/vnd.ms-excel"
-            "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            "ppt" -> "application/vnd.ms-powerpoint"
-            "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            "odt" -> "application/vnd.oasis.opendocument.text"
-            "epub" -> "application/epub+zip"
-            else -> "application/octet-stream"
-        }
+        return AttachmentMimeTypes.fromExtension(f.extension)
     }
 
     /** Serialise [AttachmentIngestService.ChipMeta] to a compact JSON string for the webview. */
