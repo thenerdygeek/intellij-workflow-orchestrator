@@ -236,4 +236,82 @@ class ResumeHelperTest {
             "\n"
         assertEquals(expected, section)
     }
+
+    // --- resume-time history cleanup transforms (Phase 3 cut C incision 2) ---
+
+    private fun assistant(vararg blocks: ContentBlock) =
+        ApiMessage(role = ApiRole.ASSISTANT, content = blocks.toList())
+
+    private fun user(text: String) =
+        ApiMessage(role = ApiRole.USER, content = listOf(ContentBlock.Text(text)))
+
+    @Test
+    fun `drops trailing empty and blank assistant turns and counts them`() {
+        val history = listOf(
+            user("do it"),
+            assistant(ContentBlock.Text("working")),
+            assistant(), // empty content
+            assistant(ContentBlock.Text("   ")), // blank text
+        )
+        val result = ResumeHelper.dropTrailingEmptyAssistants(history)
+        assertEquals(2, result.droppedCount)
+        assertEquals(2, result.history.size)
+        assertEquals("working", (result.history.last().content[0] as ContentBlock.Text).text)
+    }
+
+    @Test
+    fun `keeps a trailing non-empty assistant turn`() {
+        val history = listOf(user("hi"), assistant(ContentBlock.Text("answer")))
+        val result = ResumeHelper.dropTrailingEmptyAssistants(history)
+        assertEquals(0, result.droppedCount)
+        assertEquals(history, result.history)
+    }
+
+    @Test
+    fun `stops dropping at the first non-empty turn from the end`() {
+        val history = listOf(
+            assistant(), // earlier empty — must survive
+            assistant(ContentBlock.Text("kept")),
+            assistant(), // trailing empty — dropped
+        )
+        val result = ResumeHelper.dropTrailingEmptyAssistants(history)
+        assertEquals(1, result.droppedCount)
+        assertEquals(2, result.history.size)
+        assertTrue(result.history[0].content.isEmpty(), "an empty assistant before a non-empty one is preserved")
+    }
+
+    @Test
+    fun `does not drop a trailing user turn`() {
+        val history = listOf(assistant(ContentBlock.Text("a")), user("follow-up"))
+        val result = ResumeHelper.dropTrailingEmptyAssistants(history)
+        assertEquals(0, result.droppedCount)
+        assertEquals(history, result.history)
+    }
+
+    @Test
+    fun `redacts dialect markers in assistant turns and counts changed turns`() {
+        val dialect = "let me call <function_calls><invoke name=\"x\"></invoke></function_calls>"
+        val history = listOf(
+            user("go"),
+            assistant(ContentBlock.Text(dialect)),
+            assistant(ContentBlock.Text("plain answer")),
+        )
+        val result = ResumeHelper.redactDialectDriftInHistory(history)
+        assertEquals(1, result.redactedCount, "only the assistant turn with dialect XML is changed")
+        // The user turn and the clean assistant turn are the SAME instances (untouched).
+        assertSame(history[0], result.history[0])
+        assertSame(history[2], result.history[2])
+        // The dialect turn is a new instance whose text no longer contains the raw marker.
+        assertNotSame(history[1], result.history[1])
+        assertFalse((result.history[1].content[0] as ContentBlock.Text).text.contains("<function_calls>"))
+    }
+
+    @Test
+    fun `clean history is returned unchanged with zero redaction count`() {
+        val history = listOf(user("go"), assistant(ContentBlock.Text("all good, no dialect here")))
+        val result = ResumeHelper.redactDialectDriftInHistory(history)
+        assertEquals(0, result.redactedCount)
+        assertSame(history[0], result.history[0])
+        assertSame(history[1], result.history[1])
+    }
 }

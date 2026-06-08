@@ -176,6 +176,59 @@ object ResumeHelper {
             body + "\n"
     }
 
+    data class TrailingEmptyDropResult(
+        val history: List<ApiMessage>,
+        val droppedCount: Int,
+    )
+
+    /**
+     * Drop trailing empty/blank-assistant turns left by pre-guard sessions, mirroring
+     * `ContextManager.pruneTrailingEmptyAssistants` / `MessageStateHandler.pruneTrailingEmptyAssistants`.
+     * Pure: returns the trimmed history + how many turns were dropped (the caller logs). An assistant
+     * turn is "empty" when its content list is empty or every block is blank [ContentBlock.Text].
+     * Stops at the first non-empty turn from the end, so an empty turn followed by a real one survives.
+     */
+    fun dropTrailingEmptyAssistants(history: List<ApiMessage>): TrailingEmptyDropResult {
+        val trimmed = history.dropLastWhile { msg ->
+            msg.role == ApiRole.ASSISTANT &&
+                (msg.content.isEmpty() || msg.content.all { it is ContentBlock.Text && it.text.isBlank() })
+        }
+        return TrailingEmptyDropResult(trimmed, history.size - trimmed.size)
+    }
+
+    data class DialectRedactionResult(
+        val history: List<ApiMessage>,
+        val redactedCount: Int,
+    )
+
+    /**
+     * Redact incompatible-format tool-call XML (Anthropic `<invoke>`, Hermes `<tool_call>{json}`, etc.)
+     * inline on assistant turns before the history is seeded into the resumed session. Pure: delegates
+     * each assistant text block to [DialectDriftDetector.redactDialectMarkers] and returns the rewritten
+     * history + the count of changed turns (the caller logs + raises the one-shot drift flag when > 0).
+     * Unchanged turns (user role, non-text blocks, no dialect) are returned as the SAME instances so the
+     * caller can cheaply detect "nothing changed".
+     */
+    fun redactDialectDriftInHistory(history: List<ApiMessage>): DialectRedactionResult {
+        val redacted = history.map { msg ->
+            if (msg.role != ApiRole.ASSISTANT) return@map msg
+            var changed = false
+            val newContent = msg.content.map { block ->
+                if (block !is ContentBlock.Text) return@map block
+                val r = DialectDriftDetector.redactDialectMarkers(block.text)
+                if (r.modified) {
+                    changed = true
+                    ContentBlock.Text(r.text)
+                } else {
+                    block
+                }
+            }
+            if (changed) msg.copy(content = newContent) else msg
+        }
+        val redactedCount = history.zip(redacted).count { (orig, new) -> orig !== new }
+        return DialectRedactionResult(redacted, redactedCount)
+    }
+
     fun formatTimeAgo(lastActivityTs: Long): String {
         val diffMs = System.currentTimeMillis() - lastActivityTs
         val seconds = diffMs / 1000
