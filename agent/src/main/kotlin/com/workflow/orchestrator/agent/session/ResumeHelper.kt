@@ -229,6 +229,23 @@ object ResumeHelper {
         return DialectRedactionResult(redacted, redactedCount)
     }
 
+    /**
+     * Build the chat note shown when a `TASK_RESUME` hook cancels a resume. Pure. When the user
+     * typed a follow-up alongside the resume ([userText]), it is quoted back so the cancellation
+     * isn't silently swallowing their input (mirrors the fix shape from 56906e668 — completed-task
+     * resume drop). A null/blank [reason] omits the `": …"` clause; a null/blank [userText] omits
+     * the quoted-message block. Each line of [userText] is prefixed with `> `.
+     */
+    fun buildResumeCancelledNote(reason: String?, userText: String?): String = buildString {
+        append("Resume cancelled by TASK_RESUME hook")
+        if (!reason.isNullOrBlank()) append(": $reason")
+        append('.')
+        if (!userText.isNullOrBlank()) {
+            append("\n\nYour message was not sent:\n> ")
+            append(userText.lineSequence().joinToString("\n> "))
+        }
+    }
+
     fun formatTimeAgo(lastActivityTs: Long): String {
         val diffMs = System.currentTimeMillis() - lastActivityTs
         val seconds = diffMs / 1000
