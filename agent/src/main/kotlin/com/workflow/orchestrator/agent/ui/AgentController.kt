@@ -2003,16 +2003,6 @@ class AgentController(
             // status="deprecated" in the catalog; they are hidden from the picker.
             val activeModels = models.filter { m -> catalog?.getStatus(m.id) != "deprecated" }
 
-            // Strips "-thinking", "-latest", and 8-digit date suffixes so that
-            // "claude-opus-4-5-thinking-latest" and "claude-opus-4-5" share the
-            // same version key for generation-grouping purposes.
-            fun versionKey(modelName: String): String =
-                modelName
-                    .replace(Regex("(?i)-thinking"), "")
-                    .replace(Regex("(?i)-latest"), "")
-                    .replace(Regex("-\\d{8}$"), "")
-                    .trimEnd('-')
-
             // Within each family: thinking variants first, then newest-created first.
             val thinkingFirst =
                 compareByDescending<com.workflow.orchestrator.core.ai.dto.ModelInfo> { it.isThinkingModel }
@@ -2025,33 +2015,22 @@ class AgentController(
                 .filter { !it.isOpusClass && !it.modelName.lowercase().contains("sonnet") && !it.modelName.lowercase().contains("haiku") }
                 .sortedWith(compareBy<com.workflow.orchestrator.core.ai.dto.ModelInfo> { it.tier }.thenByDescending { it.created })
 
-            // Extract digit groups for numerical version comparison.
-            // "claude-opus-4-6" → [4, 6]; "claude-3-opus" → [3]; "claude-opus-4-5" → [4, 5]
-            fun versionNums(modelName: String): List<Int> =
-                Regex("\\d+").findAll(versionKey(modelName)).map { it.value.toInt() }.toList()
-
-            // Compare two models by version number, not by `created` timestamp.
-            // Using `created` is unreliable because Sourcegraph refreshes the timestamp
-            // on "-latest" alias models (e.g. opus-4-5-thinking-latest) after newer
-            // numbered releases (e.g. opus-4-6), causing the alias to sort above the
-            // genuinely newer model.
+            // Compare two models by version number, not by `created` timestamp — see
+            // ModelVersionOrdering (fixes the "-latest" alias timestamp-refresh mis-sort).
             val byVersionAsc = Comparator<com.workflow.orchestrator.core.ai.dto.ModelInfo> { a, b ->
-                val va = versionNums(a.modelName); val vb = versionNums(b.modelName)
-                for (i in 0 until maxOf(va.size, vb.size)) {
-                    val diff = va.getOrElse(i) { 0 } - vb.getOrElse(i) { 0 }  // ascending
-                    if (diff != 0) return@Comparator diff
-                }
-                0
+                ModelVersionOrdering.compareByVersionAsc(a.modelName, b.modelName)
             }
 
             // Latest generation = the version key of the numerically highest model in the family.
-            val latestOpusKey   = opusAll.maxWithOrNull(byVersionAsc)?.let { versionKey(it.modelName) }
-            val latestSonnetKey = sonnetAll.maxWithOrNull(byVersionAsc)?.let { versionKey(it.modelName) }
+            val latestOpusKey = opusAll.maxWithOrNull(byVersionAsc)
+                ?.let { ModelVersionOrdering.versionKey(it.modelName) }
+            val latestSonnetKey = sonnetAll.maxWithOrNull(byVersionAsc)
+                ?.let { ModelVersionOrdering.versionKey(it.modelName) }
 
-            val opusLatest   = opusAll.filter   { versionKey(it.modelName) == latestOpusKey }
-            val opusOlder    = opusAll.filter    { versionKey(it.modelName) != latestOpusKey }
-            val sonnetLatest = sonnetAll.filter  { versionKey(it.modelName) == latestSonnetKey }
-            val sonnetOlder  = sonnetAll.filter  { versionKey(it.modelName) != latestSonnetKey }
+            val opusLatest   = opusAll.filter   { ModelVersionOrdering.versionKey(it.modelName) == latestOpusKey }
+            val opusOlder    = opusAll.filter    { ModelVersionOrdering.versionKey(it.modelName) != latestOpusKey }
+            val sonnetLatest = sonnetAll.filter  { ModelVersionOrdering.versionKey(it.modelName) == latestSonnetKey }
+            val sonnetOlder  = sonnetAll.filter  { ModelVersionOrdering.versionKey(it.modelName) != latestSonnetKey }
 
             // Build JSON incrementally so separator objects can be interspersed
             // with model objects in the same flat array.
