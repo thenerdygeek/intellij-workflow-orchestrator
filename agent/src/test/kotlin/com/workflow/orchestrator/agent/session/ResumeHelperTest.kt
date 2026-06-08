@@ -314,4 +314,36 @@ class ResumeHelperTest {
         assertSame(history[0], result.history[0])
         assertSame(history[1], result.history[1])
     }
+
+    // --- TASK_RESUME hook cancellation note (Phase 3 cut C incision 3) ---
+
+    @Test
+    fun `cancel note with reason and user text includes both`() {
+        val note = ResumeHelper.buildResumeCancelledNote(reason = "policy blocked", userText = "please continue")
+        assertEquals(
+            "Resume cancelled by TASK_RESUME hook: policy blocked.\n\nYour message was not sent:\n> please continue",
+            note,
+        )
+    }
+
+    @Test
+    fun `cancel note without reason omits the colon clause`() {
+        val note = ResumeHelper.buildResumeCancelledNote(reason = null, userText = null)
+        assertEquals("Resume cancelled by TASK_RESUME hook.", note)
+    }
+
+    @Test
+    fun `cancel note treats blank reason as absent`() {
+        val note = ResumeHelper.buildResumeCancelledNote(reason = "   ", userText = null)
+        assertEquals("Resume cancelled by TASK_RESUME hook.", note)
+    }
+
+    @Test
+    fun `cancel note quotes each line of a multi-line user message`() {
+        val note = ResumeHelper.buildResumeCancelledNote(reason = null, userText = "line one\nline two")
+        assertEquals(
+            "Resume cancelled by TASK_RESUME hook.\n\nYour message was not sent:\n> line one\n> line two",
+            note,
+        )
+    }
 }

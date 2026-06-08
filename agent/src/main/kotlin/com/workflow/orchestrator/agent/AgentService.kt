@@ -2869,15 +2869,7 @@ class AgentService(
                     // If the user typed a follow-up alongside the resume, surface it back
                     // in the chat so the cancellation isn't silently swallowing their input.
                     // Mirrors the fix shape from 56906e668 (completed-task resume drop).
-                    val cancelNote = buildString {
-                        append("Resume cancelled by TASK_RESUME hook")
-                        if (!hookResult.reason.isNullOrBlank()) append(": ${hookResult.reason}")
-                        append('.')
-                        if (!userText.isNullOrBlank()) {
-                            append("\n\nYour message was not sent:\n> ")
-                            append(userText.lineSequence().joinToString("\n> "))
-                        }
-                    }
+                    val cancelNote = ResumeHelper.buildResumeCancelledNote(hookResult.reason, userText)
                     handler.addToClineMessages(UiMessage(
                         ts = System.currentTimeMillis(),
                         type = UiMessageType.SAY,
