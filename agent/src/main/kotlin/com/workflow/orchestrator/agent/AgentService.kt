@@ -3296,13 +3296,7 @@ class AgentService(
                 onResult(delegationResult)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 val durationSeconds = (System.currentTimeMillis() - startTime) / 1000
-                onResult(
-                    com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
-                        status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.CANCELED,
-                        reason = e.message,
-                        durationSeconds = durationSeconds,
-                    )
-                )
+                onResult(delegationResultForDeliveryFailure(e, durationSeconds))
                 throw e
             } catch (e: Exception) {
                 if (isBenignDeliveryDisconnect(e)) {
@@ -3317,13 +3311,7 @@ class AgentService(
                     // closed-channel write on a gone peer. Wrap it so a benign double-fault
                     // can never escape uncaught into the coroutine's handler.
                     try {
-                        onResult(
-                            com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
-                                status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.FAILED,
-                                reason = e.message ?: e::class.qualifiedName,
-                                durationSeconds = durationSeconds,
-                            )
-                        )
+                        onResult(delegationResultForDeliveryFailure(e, durationSeconds))
                     } catch (ce: kotlinx.coroutines.CancellationException) {
                         throw ce
                     } catch (deliveryError: Exception) {
@@ -3469,13 +3457,7 @@ class AgentService(
                 onResult(delegationResult)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 val durationSeconds = (System.currentTimeMillis() - startTime) / 1000
-                onResult(
-                    com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
-                        status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.CANCELED,
-                        reason = e.message,
-                        durationSeconds = durationSeconds,
-                    )
-                )
+                onResult(delegationResultForDeliveryFailure(e, durationSeconds))
                 throw e
             } catch (e: Exception) {
                 if (isBenignDeliveryDisconnect(e)) {
@@ -3485,13 +3467,7 @@ class AgentService(
                     log.error("[Agent] Resumed delegated session $sessionId failed unexpectedly", e)
                     val durationSeconds = (System.currentTimeMillis() - startTime) / 1000
                     try {
-                        onResult(
-                            com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
-                                status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.FAILED,
-                                reason = e.message ?: e::class.qualifiedName,
-                                durationSeconds = durationSeconds,
-                            )
-                        )
+                        onResult(delegationResultForDeliveryFailure(e, durationSeconds))
                     } catch (ce: kotlinx.coroutines.CancellationException) {
                         throw ce
                     } catch (deliveryError: Exception) {
@@ -3793,6 +3769,39 @@ class AgentService(
                 is LoopResult.Failed -> com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
                     status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.FAILED,
                     reason = loopResult.error,
+                    durationSeconds = durationSeconds,
+                )
+            }
+
+        /**
+         * Pure mapping from a delivery-time failure (thrown while awaiting/delivering a delegated
+         * session's terminal result) to the [DelegationMessage.Result] sent back to the delegator.
+         * A [kotlinx.coroutines.CancellationException] → `CANCELED` (reason = its message); any
+         * other throwable → `FAILED` (reason = its message, falling back to the qualified class
+         * name when null). Extracted from the four near-identical catch-block constructions in
+         * [startDelegatedSession] / [resumeDelegatedSession] so the mapping is unit-testable and
+         * the two wrappers can't drift. The caller still owns rethrowing a `CancellationException`
+         * after delivery and the benign-disconnect short-circuit.
+         *
+         * Placed AFTER [mapLoopResultToDelegationResult] on purpose: `DelegationConversationNarrationTest`
+         * slices the source between `fun delegatedIncomingTaskText` and `fun mapLoopResultToDelegationResult`
+         * and asserts that region never says "IDE-A"/"IDE-B"; keeping this function past that sentinel
+         * preserves the slice boundary.
+         */
+        fun delegationResultForDeliveryFailure(
+            e: Throwable,
+            durationSeconds: Long,
+        ): com.workflow.orchestrator.core.delegation.DelegationMessage.Result =
+            if (e is kotlinx.coroutines.CancellationException) {
+                com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                    status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.CANCELED,
+                    reason = e.message,
+                    durationSeconds = durationSeconds,
+                )
+            } else {
+                com.workflow.orchestrator.core.delegation.DelegationMessage.Result(
+                    status = com.workflow.orchestrator.core.delegation.DelegationMessage.ResultStatus.FAILED,
+                    reason = e.message ?: e::class.qualifiedName,
                     durationSeconds = durationSeconds,
                 )
             }
