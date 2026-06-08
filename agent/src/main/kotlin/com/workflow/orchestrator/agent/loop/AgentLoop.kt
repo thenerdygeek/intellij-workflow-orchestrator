@@ -764,7 +764,19 @@ class AgentLoop(
          * companion note) — replace with a CoroutineContext element so tools declare
          * streaming support instead of being enumerated here.
          */
-        private val STREAMING_TOOLS = setOf("run_command", "sonar")
+        // Tools that spawn long-running external processes and stream stdout to the UI via
+        // RunCommandTool.streamCallback. AgentLoop sets currentToolCallId only for these; a
+        // streaming tool NOT listed here shows a silent "executing" spinner for its whole run.
+        // The runtime_exec family runs shell test/build/run processes (e.g. run_tests' Maven/Gradle
+        // shell fallback when use_native_runner=false) — they read currentToolCallId and must stream.
+        internal val STREAMING_TOOLS = setOf(
+            "run_command",
+            "sonar",
+            "java_runtime_exec",
+            "python_runtime_exec",
+            "runtime_exec",
+            "coverage",
+        )
 
         /** Error types that are transient and safe to retry. */
         private val RETRYABLE_ERRORS = setOf(
