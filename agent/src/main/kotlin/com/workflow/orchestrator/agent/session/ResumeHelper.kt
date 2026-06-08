@@ -1,5 +1,7 @@
 package com.workflow.orchestrator.agent.session
 
+import com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent
+import com.workflow.orchestrator.agent.tools.background.DelegationNudge
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -7,6 +9,12 @@ import kotlinx.serialization.json.jsonPrimitive
 object ResumeHelper {
 
     private val json = Json { ignoreUnknownKeys = true }
+
+    /** Max chars of a background-process label shown in the resume preamble. */
+    private const val COMPLETION_LABEL_MAX = 80
+
+    /** Max trailing output lines of a background completion shown in the resume preamble. */
+    private const val COMPLETION_TAIL_LINES = 5
 
     data class PopResult(
         val trimmedHistory: List<ApiMessage>,
@@ -121,6 +129,51 @@ object ResumeHelper {
                 appendLine("Continue where you left off. Do not repeat completed work. If you were mid-task, pick up from the last tool result in the conversation history.")
             }
         }
+    }
+
+    /**
+     * Format the "background completions delivered on resume" section that is spliced into
+     * the [TASK RESUMPTION] preamble. Pure: given the persisted [pending] events, returns the
+     * section text to append (with its own leading blank lines), or "" when there are none so
+     * the caller appends nothing. The caller owns the side-effecting load + per-event consume.
+     */
+    fun formatBackgroundCompletionsSection(pending: List<BackgroundCompletionEvent>): String {
+        if (pending.isEmpty()) return ""
+        val body = pending.joinToString("\n\n") { ev ->
+            "- ${ev.bgId} (${ev.kind}: \"${ev.label.take(COMPLETION_LABEL_MAX)}\") — " +
+                "exit ${ev.exitCode}, ${ev.state}, ${ev.runtimeMs}ms\n  " +
+                ev.tailContent.lines().takeLast(COMPLETION_TAIL_LINES).joinToString("\n  ")
+        }
+        return "\n\n[BACKGROUND COMPLETIONS — delivered on resume]\n" +
+            "While the session was paused, these background processes completed:\n\n" +
+            body + "\n"
+    }
+
+    /**
+     * Format the "cross-IDE delegation results delivered on resume" section. Pure: given the
+     * persisted [pendingNudges], returns the section text to append, or "" when there are none.
+     * The caller owns the side-effecting load + per-nudge consume.
+     */
+    fun formatDelegationNudgesSection(pendingNudges: List<DelegationNudge>): String {
+        if (pendingNudges.isEmpty()) return ""
+        val body = pendingNudges.joinToString("\n\n---\n\n") { it.text }
+        return "\n\n[DELEGATION RESULTS — delivered on resume]\n" +
+            "While the session was paused, these cross-IDE delegation results/questions " +
+            "arrived. Decide whether each needs action; if a question is included, answer " +
+            "it via delegation(action=\"answer\"):\n\n" + body + "\n"
+    }
+
+    /**
+     * Format the "monitor notifications while away" section. Pure: given the persisted
+     * [pendingNotifications] lines, returns the section text to append, or "" when there are
+     * none. The caller owns the side-effecting load + clear.
+     */
+    fun formatMonitorNotificationsSection(pendingNotifications: List<String>): String {
+        if (pendingNotifications.isEmpty()) return ""
+        val body = pendingNotifications.joinToString("\n")
+        return "\n\n# Monitor notifications while away\n" +
+            "While the session was paused, the following monitor events fired:\n\n" +
+            body + "\n"
     }
 
     fun formatTimeAgo(lastActivityTs: Long): String {

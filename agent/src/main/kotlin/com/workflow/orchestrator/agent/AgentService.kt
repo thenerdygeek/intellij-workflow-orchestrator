@@ -2767,17 +2767,10 @@ class AgentService(
                     log.warn("[AgentService] loadPendingCompletions failed for $sessionId: ${err.message}", err)
                     emptyList()
                 }
-            if (pending.isEmpty()) {
+            val completionsPreamble = ResumeHelper.formatBackgroundCompletionsSection(pending)
+            if (completionsPreamble.isEmpty()) {
                 basePreamble
             } else {
-                val body = pending.joinToString("\n\n") { ev ->
-                    "- ${ev.bgId} (${ev.kind}: \"${ev.label.take(80)}\") — " +
-                        "exit ${ev.exitCode}, ${ev.state}, ${ev.runtimeMs}ms\n  " +
-                        ev.tailContent.lines().takeLast(5).joinToString("\n  ")
-                }
-                val completionsPreamble = "\n\n[BACKGROUND COMPLETIONS — delivered on resume]\n" +
-                    "While the session was paused, these background processes completed:\n\n" +
-                    body + "\n"
                 // Consume entries only after we've built the combined preamble — if
                 // the join fails or the caller aborts, we'd prefer to redeliver than
                 // silently lose them. consumeCompletion is best-effort.
@@ -2805,14 +2798,10 @@ class AgentService(
                     log.warn("[AgentService] loadPendingNudges failed for $sessionId: ${err.message}", err)
                     emptyList()
                 }
-            if (pendingNudges.isEmpty()) {
+            val nudgesPreamble = ResumeHelper.formatDelegationNudgesSection(pendingNudges)
+            if (nudgesPreamble.isEmpty()) {
                 withBgCompletions
             } else {
-                val body = pendingNudges.joinToString("\n\n---\n\n") { it.text }
-                val nudgesPreamble = "\n\n[DELEGATION RESULTS — delivered on resume]\n" +
-                    "While the session was paused, these cross-IDE delegation results/questions " +
-                    "arrived. Decide whether each needs action; if a question is included, answer " +
-                    "it via delegation(action=\"answer\"):\n\n" + body + "\n"
                 pendingNudges.forEach { n ->
                     runCatching { nudgePersistence.consumeNudge(sessionId, n.id) }
                         .onFailure { err ->
@@ -2831,13 +2820,10 @@ class AgentService(
         // aborts the resume.
         val finalPreamble = runCatching {
             val pendingNotifications = monitorCoordinator.loadPendingNotifications(sessionId)
-            if (pendingNotifications.isEmpty()) {
+            val notificationsPreamble = ResumeHelper.formatMonitorNotificationsSection(pendingNotifications)
+            if (notificationsPreamble.isEmpty()) {
                 preamble
             } else {
-                val body = pendingNotifications.joinToString("\n")
-                val notificationsPreamble = "\n\n# Monitor notifications while away\n" +
-                    "While the session was paused, the following monitor events fired:\n\n" +
-                    body + "\n"
                 monitorCoordinator.clearPendingNotifications(sessionId)
                 log.info("[AgentService] resume pickup: delivered ${pendingNotifications.size} persisted monitor notification(s) for $sessionId")
                 preamble + notificationsPreamble

@@ -1,5 +1,8 @@
 package com.workflow.orchestrator.agent.session
 
+import com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent
+import com.workflow.orchestrator.agent.tools.background.BackgroundState
+import com.workflow.orchestrator.agent.tools.background.DelegationNudge
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
@@ -136,5 +139,101 @@ class ResumeHelperTest {
         val result = ResumeHelper.popTrailingUserMessage(apiHistory)
         assertFalse(result.poppedContent.isEmpty(), "popped content must not be empty")
         assertTrue(result.poppedContent.all { it is ContentBlock.ToolResult })
+    }
+
+    // --- resume preamble away-event section formatters (Phase 3 cut C incision) ---
+
+    private fun completionEvent(
+        bgId: String = "bg-1",
+        kind: String = "command",
+        label: String = "npm test",
+        exitCode: Int = 0,
+        state: BackgroundState = BackgroundState.EXITED,
+        runtimeMs: Long = 1200L,
+        tailContent: String = "line1\nline2",
+    ) = BackgroundCompletionEvent(
+        bgId = bgId,
+        kind = kind,
+        label = label,
+        sessionId = "sess",
+        exitCode = exitCode,
+        state = state,
+        runtimeMs = runtimeMs,
+        tailContent = tailContent,
+        spillPath = null,
+        occurredAt = 0L,
+    )
+
+    @Test
+    fun `empty background completions yield empty section`() {
+        assertEquals("", ResumeHelper.formatBackgroundCompletionsSection(emptyList()))
+    }
+
+    @Test
+    fun `formats background completions section exactly`() {
+        val section = ResumeHelper.formatBackgroundCompletionsSection(listOf(completionEvent()))
+        val expected = "\n\n[BACKGROUND COMPLETIONS — delivered on resume]\n" +
+            "While the session was paused, these background processes completed:\n\n" +
+            "- bg-1 (command: \"npm test\") — exit 0, EXITED, 1200ms\n  line1\n  line2" +
+            "\n"
+        assertEquals(expected, section)
+    }
+
+    @Test
+    fun `background completion label is truncated to 80 chars and tail capped at 5 lines`() {
+        val longLabel = "x".repeat(120)
+        val tail = (1..10).joinToString("\n") { "l$it" }
+        val section = ResumeHelper.formatBackgroundCompletionsSection(
+            listOf(completionEvent(label = longLabel, tailContent = tail))
+        )
+        assertTrue(section.contains("\"${"x".repeat(80)}\""), "label must be truncated to 80 chars")
+        assertFalse(section.contains("x".repeat(81)), "no more than 80 label chars")
+        assertTrue(section.contains("l6\n  l7\n  l8\n  l9\n  l10"), "only the last 5 tail lines kept")
+        assertFalse(section.contains("  l5"), "earlier tail lines dropped")
+    }
+
+    @Test
+    fun `formats multiple background completions joined by blank line`() {
+        val section = ResumeHelper.formatBackgroundCompletionsSection(
+            listOf(completionEvent(bgId = "bg-1"), completionEvent(bgId = "bg-2"))
+        )
+        assertTrue(section.contains("- bg-1 "))
+        assertTrue(section.contains("- bg-2 "))
+    }
+
+    @Test
+    fun `empty delegation nudges yield empty section`() {
+        assertEquals("", ResumeHelper.formatDelegationNudgesSection(emptyList()))
+    }
+
+    @Test
+    fun `formats delegation nudges section exactly`() {
+        val nudges = listOf(
+            DelegationNudge(id = "n1", text = "result A", occurredAt = 0L),
+            DelegationNudge(id = "n2", text = "question B", occurredAt = 0L),
+        )
+        val section = ResumeHelper.formatDelegationNudgesSection(nudges)
+        val expected = "\n\n[DELEGATION RESULTS — delivered on resume]\n" +
+            "While the session was paused, these cross-IDE delegation results/questions " +
+            "arrived. Decide whether each needs action; if a question is included, answer " +
+            "it via delegation(action=\"answer\"):\n\n" +
+            "result A\n\n---\n\nquestion B" +
+            "\n"
+        assertEquals(expected, section)
+    }
+
+    @Test
+    fun `empty monitor notifications yield empty section`() {
+        assertEquals("", ResumeHelper.formatMonitorNotificationsSection(emptyList()))
+    }
+
+    @Test
+    fun `formats monitor notifications section exactly`() {
+        val section = ResumeHelper.formatMonitorNotificationsSection(listOf("build failed", "tests green"))
+        val expected = "\n\n# Monitor notifications while away\n" +
+            "While the session was paused, the following monitor events fired:\n\n" +
+            "build failed\ntests green" +
+            "\n"
+        assertEquals(expected, section)
     }
 }
