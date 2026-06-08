@@ -16,13 +16,13 @@ class AgentServiceSpawnWiringTest {
             .map { it.groupValues[1] }
             .toList()
         require(blocks.isNotEmpty()) { "Expected at least one SpawnAgentTool(...) construction site." }
+        // onCompactionState/onRetry are intentionally NOT passed to SpawnAgentTool — a sub-agent's
+        // retry/compaction routes to its own card (SubagentRunner→onProgress), not the main chat.
         listOf(
             "outputSpiller",
             "attachmentStoreProvider",
-            "onCompactionState",
             "brainFactory",
             "cachedFallbackChain",
-            "onRetry",
             "onModelSwitch",
             "modelCatalogService",
         ).forEach { name ->

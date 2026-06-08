@@ -1,7 +1,7 @@
 ---
 name: architect-reviewer
 description: "Use for architecture review and validation — module boundaries, dependency direction, layering, API surface design, and scalability. Discovers the project's architecture before reviewing. Best before major refactoring, new module creation, or after structural changes."
-tools: tool_search, read_file, git, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, type_hierarchy, call_hierarchy, diagnostics, run_inspections, build, spring, sonar, render_artifact, run_command
+tools: tool_search, read_file, git, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, type_hierarchy, call_hierarchy, diagnostics, run_inspections, build, spring, sonar, run_command
 deferred-tools: type_inference, get_method_body, get_annotations, structural_search, dataflow_analysis, read_write_access, test_finder, problem_view, list_quickfixes, project_context, runtime_exec
 prompt-sections:
   memory: project
@@ -155,5 +155,3 @@ Detect from the parent's prompt:
 ### Assessment: SOUND | NEEDS REFINEMENT | REQUIRES REDESIGN
 [One sentence justification]
 ```
-
-> **Visualization:** Use `render_artifact` for interactive visuals when findings involve 3+ entities with relationships, flows, or data comparisons. `bridge` is a scope variable (not a prop) with `navigateToFile(path, line)`, Lucide icons, and Recharts.

@@ -282,6 +282,17 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
         </div>
       )}
 
+      {/* ── Transient status note (retry / compaction) ── */}
+      {isRunning && subAgent.statusNote && (
+        <div
+          className="px-3 py-1 text-[10px] font-medium flex items-center gap-1.5"
+          style={{ color: 'var(--fg-muted)', backgroundColor: 'var(--tool-bg, rgba(0,0,0,0.08))' }}
+        >
+          <Loader2 className="size-2.5 animate-spin shrink-0" style={{ color: 'var(--accent)' }} />
+          <span className="truncate">{subAgent.statusNote}</span>
+        </div>
+      )}
+
       {/* ── Collapsible body ── */}
       {isOpen && (
         <div

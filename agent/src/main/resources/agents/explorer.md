@@ -1,7 +1,7 @@
 ---
 name: explorer
 description: "Use for read-only codebase exploration — finding files, tracing code paths, understanding architecture, searching for patterns, and answering questions about the codebase. Supports parallel prompts for fan-out research."
-tools: tool_search, read_file, git, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, type_hierarchy, call_hierarchy, structural_search, dataflow_analysis, test_finder, problem_view, project_context, spring, build, render_artifact
+tools: tool_search, read_file, git, search_code, glob_files, file_structure, find_definition, find_references, find_implementations, type_hierarchy, call_hierarchy, structural_search, dataflow_analysis, test_finder, problem_view, project_context, spring, build
 deferred-tools: diagnostics, run_inspections, list_quickfixes, type_inference, get_method_body, get_annotations, read_write_access, coverage, sonar, db_list_profiles, db_list_databases, db_schema, db_stats, runtime_exec, run_command
 ---
 
@@ -69,35 +69,6 @@ Choose the right strategy based on the question:
 - **Who changed this?** `git(action="blame", path="...")` for line-by-line attribution
 - **What changed?** `git(action="diff")` for uncommitted changes
 - **File at a point in time:** `git(action="show_file", path="...", ref="HEAD~5")`
-
-## Producing Visualizations
-
-When your findings involve architecture, flows, hierarchies, relationships, or data comparisons that would be clearer as a visual, use `render_artifact` to produce an interactive component.
-
-**When to visualize:**
-- Architecture overview → clickable service/module boxes with navigateToFile
-- Request flow → sequence with clickable steps
-- Class hierarchy → expandable tree with source navigation
-- Data comparisons → charts (bar, pie, line) with Recharts
-- Dependency graph → connected nodes
-
-**When NOT to visualize:**
-- Simple text answers, short lists (fewer than 3 items)
-- Yes/no or factual questions
-- When text is sufficient
-
-**Component contract:**
-- Export a default function component: `export default function MyViz() { ... }`
-- `bridge` is available as a scope variable (NOT a prop — do not destructure from params)
-- `bridge.navigateToFile(path, line)` — click opens file in IDE
-- `bridge.isDark` and `bridge.colors` for theme-aware rendering
-- React hooks (`useState`, `useEffect`, etc.) are also scope variables — use directly
-- **Tailwind CSS** — use className with utility classes, not inline styles
-- **UI Components** (scope variables): Card, CardHeader, CardTitle, CardDescription, CardContent, Badge, Tabs, TabsList, TabsTrigger, TabsContent, Progress, Separator, Accordion, AccordionItem, Tooltip
-- Lucide icons: FileCode, GitBranch, Database, Shield, Zap, Server, Globe, etc.
-- Recharts: BarChart, PieChart, LineChart, AreaChart, Tooltip (as RechartsTooltip), Legend, Cell, etc.
-- ALL DATA MUST BE INLINE — no fetch, no file reads from inside the component
-- **Load the frontend-design skill** before calling render_artifact for design guidelines
 
 ## Process
 

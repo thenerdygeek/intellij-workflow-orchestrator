@@ -592,6 +592,7 @@ interface ChatState {
   // Sub-Agent Actions
   spawnSubAgent(payload: string): void;
   updateSubAgentIteration(payload: string): void;
+  setSubAgentStatusNote(payload: string): void;
   addSubAgentToolCall(payload: string): void;
   updateSubAgentToolCall(payload: string): void;
   updateSubAgentMessage(payload: string): void;
@@ -2099,6 +2100,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...sub,
             iteration: data.iteration ?? ((sub.iteration ?? 0) + 1),
             tokensUsed: data.tokensUsed ?? sub.tokensUsed,
+          } as SubAgentState,
+        };
+      });
+      return { messages };
+    });
+  },
+
+  setSubAgentStatusNote(payload: string) {
+    const data = JSON.parse(payload);
+    set((state) => {
+      const messages = state.messages.map((m): UiMessage => {
+        if (!m.subagentData || m.subagentData.agentId !== data.agentId) return m;
+        return {
+          ...m,
+          subagentData: {
+            ...m.subagentData,
+            // `note` absent ⇒ clear the status note.
+            statusNote: data.note ?? null,
           } as SubAgentState,
         };
       });

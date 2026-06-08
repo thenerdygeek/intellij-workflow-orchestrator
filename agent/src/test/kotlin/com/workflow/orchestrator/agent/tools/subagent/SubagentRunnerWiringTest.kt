@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test
 class SubagentRunnerWiringTest {
 
     @Test
-    fun `SubagentRunner accepts outputSpiller attachmentStoreProvider onCompactionState brainFactory cachedFallbackChain onRetry onModelSwitch modelCatalogService as constructor params`() {
+    fun `SubagentRunner accepts outputSpiller attachmentStoreProvider brainFactory cachedFallbackChain onModelSwitch modelCatalogService as constructor params`() {
         val brain = mockk<LlmBrain>(relaxed = true)
         val project = mockk<com.intellij.openapi.project.Project>(relaxed = true)
         val spiller = mockk<ToolOutputSpiller>(relaxed = true)
@@ -19,6 +19,8 @@ class SubagentRunnerWiringTest {
         val catalog = mockk<ModelCatalogService>(relaxed = true)
         val brainFactory: suspend (String, String?) -> LlmBrain = { _, _ -> brain }
 
+        // onCompactionState/onRetry are NO LONGER ctor params — a sub-agent's retry/compaction
+        // routes to its own card via onProgress, not the orchestrator's main chat (the leak fix).
         val runner = SubagentRunner(
             brain = brain,
             coreTools = emptyMap(),
@@ -29,10 +31,8 @@ class SubagentRunnerWiringTest {
             contextBudget = 1000,
             outputSpiller = spiller,
             attachmentStoreProvider = storeProvider,
-            onCompactionState = { _, _ -> },
             brainFactory = brainFactory,
             cachedFallbackChain = listOf("a", "b"),
-            onRetry = { _, _, _, _ -> },
             onModelSwitch = { _, _, _ -> },
             modelCatalogService = catalog,
         )
@@ -87,10 +87,8 @@ class SubagentRunnerWiringTest {
         val mustContain = listOf(
             "outputSpiller = outputSpiller",
             "attachmentStoreProvider = attachmentStoreProvider",
-            "onCompactionState = onCompactionState",
             "brainFactory = brainFactory",
             "cachedFallbackChain = cachedFallbackChain",
-            "onRetry = onRetry",
             "onModelSwitch = onModelSwitch",
             "modelCatalogService = modelCatalogService",
         )
@@ -98,6 +96,11 @@ class SubagentRunnerWiringTest {
             assert(line in agentLoopBlock) {
                 "SubagentRunner.run() must forward `$line` into AgentLoop. Block:\n$agentLoopBlock"
             }
+        }
+        // Retry/compaction must route to the sub-agent CARD (onProgress + statusNote), NOT the
+        // orchestrator's main chat — the wiring lambdas carry statusNote into the AgentLoop block.
+        assert("statusNote" in agentLoopBlock) {
+            "SubagentRunner must route loop onCompactionState/onRetry to onProgress with statusNote. Block:\n$agentLoopBlock"
         }
     }
 }

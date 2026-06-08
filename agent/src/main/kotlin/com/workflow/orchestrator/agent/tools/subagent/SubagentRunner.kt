@@ -120,12 +120,6 @@ class SubagentRunner(
      */
     private val attachmentStoreProvider: () -> com.workflow.orchestrator.agent.session.AttachmentStore? = { null },
     /**
-     * Optional signal fired when the sub-agent's own ContextManager runs a compaction
-     * pass. Lets the sub-agent card show a "Compacting…" overlay instead of freezing
-     * silently. Mirrors main agent's `onCompactionState`.
-     */
-    private val onCompactionState: ((active: Boolean, phase: String) -> Unit)? = null,
-    /**
      * Optional factory that produces a fresh LlmBrain for a given model ID. Used by
      * same-tier brain recycling and L2 tier escalation. Null = no recycling.
      */
@@ -135,11 +129,6 @@ class SubagentRunner(
      * exhausted. Mirrors main agent's `cachedFallbackChain`.
      */
     private val cachedFallbackChain: List<String>? = null,
-    /**
-     * Optional callback fired when the loop retries a failed API call. Lets the sub-agent
-     * card show "Retrying 2/3…" instead of freezing.
-     */
-    private val onRetry: ((attempt: Int, maxAttempts: Int, reason: String, delayMs: Long) -> Unit)? = null,
     /**
      * Optional callback when the loop switches models (fallback or escalation). Lets the
      * sub-agent card update its model badge.
@@ -389,10 +378,40 @@ class SubagentRunner(
                 messageStateHandler = messageStateHandler,
                 outputSpiller = outputSpiller,
                 attachmentStoreProvider = attachmentStoreProvider,
-                onCompactionState = onCompactionState,
+                // Route the sub-agent loop's compaction/retry status to the SUB-AGENT CARD
+                // (via onProgress), NOT the orchestrator's main chat. Forwarding the main-chat
+                // callbacks here was the leak that painted subagent retries/compactions in the
+                // main chat. statusNoteSet=true marks the note as authoritative (null = clear).
+                onCompactionState = { active, phase ->
+                    val note = if (active) {
+                        if (phase.isNotBlank()) "Compacting context… ($phase)" else "Compacting context…"
+                    } else {
+                        null
+                    }
+                    scope.launch {
+                        onProgress(
+                            SubagentProgressUpdate(
+                                statusNote = note,
+                                statusNoteSet = true,
+                                stats = stats.snapshot(),
+                            ),
+                        )
+                    }
+                },
                 brainFactory = brainFactory,
                 cachedFallbackChain = cachedFallbackChain,
-                onRetry = onRetry,
+                onRetry = { attempt, maxAttempts, reason, delayMs ->
+                    val secs = (delayMs / 1000).coerceAtLeast(1)
+                    scope.launch {
+                        onProgress(
+                            SubagentProgressUpdate(
+                                statusNote = "$reason — retrying ($attempt/$maxAttempts) in ${secs}s…",
+                                statusNoteSet = true,
+                                stats = stats.snapshot(),
+                            ),
+                        )
+                    }
+                },
                 onModelSwitch = onModelSwitch,
                 modelCatalogService = modelCatalogService,
             )

@@ -14,6 +14,12 @@ export interface SubAgentState {
   startedAt: number;
   /** Live streaming thinking buffer for this sub-agent's current <thinking> block. */
   streamingThinkingText?: string | null;
+  /**
+   * Transient status note shown on the sub-agent card (e.g. "Compacting context…" or
+   * "timeout — retrying (2/3) in 3s…"). Sub-agent retries/compactions surface HERE rather than
+   * in the orchestrator's main chat. null/absent ⇒ no note.
+   */
+  statusNote?: string | null;
 }
 
 // ── Tool call types ──

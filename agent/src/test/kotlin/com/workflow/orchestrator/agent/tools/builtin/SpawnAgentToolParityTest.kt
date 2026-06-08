@@ -10,10 +10,15 @@ class SpawnAgentToolParityTest {
             "src/main/kotlin/com/workflow/orchestrator/agent/tools/builtin/SpawnAgentTool.kt"
         ).readText()
 
+        // onCompactionState/onRetry are intentionally NOT forwarded — a sub-agent's retry/compaction
+        // routes to its own card inside SubagentRunner (onProgress), not the orchestrator main chat.
         val expectedFields = listOf(
-            "outputSpiller", "attachmentStoreProvider", "onCompactionState",
-            "brainFactory", "cachedFallbackChain",
-            "onRetry", "onModelSwitch", "modelCatalogService",
+            "outputSpiller",
+            "attachmentStoreProvider",
+            "brainFactory",
+            "cachedFallbackChain",
+            "onModelSwitch",
+            "modelCatalogService",
         )
 
         // Each SubagentRunner(...) block in this file MUST forward every parity field.
