@@ -29,7 +29,6 @@ import com.workflow.orchestrator.agent.prompt.InstructionLoader
 import com.workflow.orchestrator.agent.prompt.SystemPrompt
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.agent.session.AtomicFileWriter
-import com.workflow.orchestrator.agent.session.DialectDriftDetector
 import com.workflow.orchestrator.agent.session.TaskStore
 import com.workflow.orchestrator.agent.session.Session
 import com.workflow.orchestrator.agent.session.SessionStatus
@@ -2699,11 +2698,9 @@ class AgentService(
 
         // Clean trailing empty-assistant pollution left by pre-guard sessions.
         // Mirror: ContextManager.pruneTrailingEmptyAssistants runs below on restoreMessages.
-        val preCleanSize = activeApiHistory.size
-        activeApiHistory = activeApiHistory.dropLastWhile { msg ->
-            msg.role == ApiRole.ASSISTANT && (msg.content.isEmpty() || msg.content.all { it is ContentBlock.Text && it.text.isBlank() })
-        }
-        val droppedEmpties = preCleanSize - activeApiHistory.size
+        val emptyDrop = ResumeHelper.dropTrailingEmptyAssistants(activeApiHistory)
+        activeApiHistory = emptyDrop.history
+        val droppedEmpties = emptyDrop.droppedCount
         if (droppedEmpties > 0) {
             log.info("[AgentService] resume cleanup: dropped $droppedEmpties trailing empty-assistant turn(s) from history")
         }
@@ -2716,21 +2713,12 @@ class AgentService(
         // handler runs its first save (the resumption user-message append at the
         // bottom of this function will overwrite the file with the cleaned list).
         var dialectDriftDetectedOnResume = false
-        val redactedHistory = activeApiHistory.map { msg ->
-            if (msg.role != ApiRole.ASSISTANT) return@map msg
-            var changed = false
-            val newContent = msg.content.map { block ->
-                if (block !is ContentBlock.Text) return@map block
-                val r = DialectDriftDetector.redactDialectMarkers(block.text)
-                if (r.modified) { changed = true; ContentBlock.Text(r.text) } else block
-            }
-            if (changed) msg.copy(content = newContent) else msg
-        }
-        val redactedCount = activeApiHistory.zip(redactedHistory).count { (orig, new) -> orig !== new }
+        val dialectRedaction = ResumeHelper.redactDialectDriftInHistory(activeApiHistory)
+        val redactedCount = dialectRedaction.redactedCount
         if (redactedCount > 0) {
             log.info("[AgentService] resume cleanup: redacted dialect tool-call XML in $redactedCount assistant turn(s)")
             dialectDriftDetectedOnResume = true
-            activeApiHistory = redactedHistory
+            activeApiHistory = dialectRedaction.history
         }
 
         // Build task resumption preamble
