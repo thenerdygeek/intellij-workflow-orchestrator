@@ -971,34 +971,15 @@ class PrDetailPanel(
     // ---------------------------------------------------------------
 
     private fun updateMergeButtonState(mergeStatus: BitbucketMergeStatus?) {
-        if (mergeStatus == null) {
-            // Could not fetch status — leave button in its current state
-            mergeButton.toolTipText = "Merge status unknown"
-            return
+        val state = MergeButtonStateDeriver.derive(mergeStatus)
+        when (state.icon) {
+            MergeButtonStateDeriver.IconKind.WARNING -> mergeButton.icon = AllIcons.General.Warning
+            MergeButtonStateDeriver.IconKind.MERGE -> mergeButton.icon = AllIcons.Vcs.Merge
+            // For canMerge, mergeButton.isEnabled is already set by renderPrHeader based on PR state.
+            MergeButtonStateDeriver.IconKind.UNCHANGED -> {}
         }
-
-        if (mergeStatus.conflicted) {
-            mergeButton.icon = AllIcons.General.Warning
-        } else {
-            mergeButton.icon = AllIcons.Vcs.Merge
-        }
-
-        if (mergeStatus.canMerge) {
-            // mergeButton.isEnabled is already set by renderPrHeader based on PR state
-            mergeButton.toolTipText = if (mergeStatus.conflicted) {
-                "Merge (conflicts detected — may require resolution)"
-            } else {
-                "Merge this pull request"
-            }
-        } else {
-            mergeButton.isEnabled = false
-            val vetoReasons = mergeStatus.vetoes.joinToString("\n") { it.summaryMessage }
-            mergeButton.toolTipText = if (vetoReasons.isNotBlank()) {
-                HtmlEscape.escapeHtml("Cannot merge:\n$vetoReasons")
-            } else {
-                "Cannot merge — preconditions not met"
-            }
-        }
+        if (state.forceDisable) mergeButton.isEnabled = false
+        mergeButton.toolTipText = state.tooltip
     }
 
     // ---------------------------------------------------------------
