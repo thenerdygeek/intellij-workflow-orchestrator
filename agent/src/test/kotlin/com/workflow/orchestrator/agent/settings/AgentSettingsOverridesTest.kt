@@ -31,4 +31,10 @@ class AgentSettingsOverridesTest {
         val s = AgentSettings.State().apply { maxTokenPerModelOverrideJson = "not json" }
         assertEquals(emptyMap<String, Int>(), s.maxTokenOverridesSnapshot().perModel)
     }
+
+    @Test
+    fun `per-model entries with zero or negative values are dropped (hand-edited xml guard)`() {
+        val s = AgentSettings.State().apply { maxTokenPerModelOverrideJson = """{"m1":0,"m2":-5,"m3":70000}""" }
+        assertEquals(mapOf("m3" to 70_000), s.maxTokenOverridesSnapshot().perModel)
+    }
 }

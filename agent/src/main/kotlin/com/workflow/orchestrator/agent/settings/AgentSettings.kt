@@ -109,7 +109,7 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
             val perModel = try {
                 kotlinx.serialization.json.Json.decodeFromString<Map<String, Int>>(
                     maxTokenPerModelOverrideJson ?: "{}",
-                )
+                ).filter { (_, v) -> v > 0 } // drop 0/negative (hand-edited XML) — mirrors the global takeIf
             } catch (_: Exception) {
                 emptyMap()
             }

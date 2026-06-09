@@ -477,6 +477,8 @@ class ContextManager(
     fun currentInputTokens(): Int = lastPromptTokens ?: tokenEstimate()
 
     fun maxInputTokensFor(modelRef: String): Int {
+        // Route through the resolver so per-model/global overrides apply (not a catalog-only bypass).
+        effectiveContextWindow?.let { return it.maxInputTokens(modelRef) }
         val window = modelCatalogService?.getContextWindow(modelRef, tier = currentTier())
         return window?.maxInputTokens ?: FALLBACK_MAX_INPUT_TOKENS
     }

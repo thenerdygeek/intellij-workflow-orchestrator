@@ -4758,7 +4758,7 @@ class AgentController(
         service.getEffectiveContextWindow().maxInputTokens(selectedModelId())
 
     /**
-     * Called by [com.workflow.orchestrator.agent.settings.ContextWindowOverridesConfigurable]
+     * Called by [com.workflow.orchestrator.agent.settings.AgentAdvancedConfigurable]
      * (via [AgentControllerRegistry.getController]) after the user applies new per-model or
      * global context-window overrides in Settings.  Re-emits the model list so each row's
      * capacity strip updates immediately, then fires a context-usage refresh so the bar
