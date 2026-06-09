@@ -63,7 +63,9 @@ class EditFileDocumentWriteContractTest {
      */
     private fun writeViaDocumentBody(): String {
         val source = locateEditFileToolSource().readText()
-        val start = source.indexOf("private suspend fun writeViaDocument")
+        // `internal` (not `private`) so EditFilePersistenceFixtureTest can drive it against a real
+        // Document to pin the silent-no-op data-loss guard (bug #3).
+        val start = source.indexOf("internal suspend fun writeViaDocument")
         assertTrue(start >= 0, "Could not find writeViaDocument in EditFileTool.kt")
         val end = source.indexOf("private suspend fun writeViaVfs", start)
         assertTrue(end > start, "Could not find writeViaVfs boundary after writeViaDocument")

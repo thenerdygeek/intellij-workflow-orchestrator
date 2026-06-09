@@ -68,7 +68,8 @@ class WriteToolsSuspendApiTest {
     @Test
     fun `EditFileTool writeViaDocument is suspend`() {
         assertTrue(
-            editFileSource.contains("private suspend fun writeViaDocument"),
+            // `internal` (not `private`) so it's drivable by EditFilePersistenceFixtureTest (bug #3).
+            editFileSource.contains("internal suspend fun writeViaDocument"),
             "EditFileTool.writeViaDocument must be suspend so writeAction { } can be called — F-1"
         )
     }
