@@ -17,6 +17,12 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
          * Auto-resolved from API on first use. User can override in settings.
          */
         var sourcegraphChatModel by string(null)
+
+        /** Global max-input-tokens override for ALL models. 0 = no override. */
+        var maxTokenGlobalOverride by property(0)
+
+        /** JSON-encoded {modelId: maxInputTokens} per-model overrides. "{}" = none. */
+        var maxTokenPerModelOverrideJson by string("{}")
         /** Tracks whether the user has manually selected a model (prevents auto-upgrade). */
         var userManuallySelectedModel by property(false)
         /** Max output tokens per LLM response. Limit varies per model — no hardcoded cap. */
@@ -98,6 +104,20 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
          * per-invocation approval — see [com.workflow.orchestrator.agent.loop.AgentLoop].
          */
         var autoApproveMemoryOperations by property(false)
+
+        fun maxTokenOverridesSnapshot(): com.workflow.orchestrator.agent.model.MaxTokenOverrides {
+            val perModel = try {
+                kotlinx.serialization.json.Json.decodeFromString<Map<String, Int>>(
+                    maxTokenPerModelOverrideJson ?: "{}",
+                )
+            } catch (_: Exception) {
+                emptyMap()
+            }
+            return com.workflow.orchestrator.agent.model.MaxTokenOverrides(
+                global = maxTokenGlobalOverride.takeIf { it > 0 },
+                perModel = perModel,
+            )
+        }
     }
 
     companion object {
