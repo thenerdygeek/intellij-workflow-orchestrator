@@ -492,7 +492,7 @@ class EditFileTool : AgentTool {
      * Returns true if write succeeded via Document.
      */
     @Suppress("UnstableApiUsage")
-    private suspend fun writeViaDocument(
+    internal suspend fun writeViaDocument(
         vFile: VirtualFile?,
         project: Project,
         rawPath: String,
@@ -505,6 +505,15 @@ class EditFileTool : AgentTool {
             withContext(Dispatchers.EDT) {
                 val document = FileDocumentManager.getInstance().getDocument(vFile)
                     ?: return@withContext false
+                // Track whether a replacement actually happened. The validated `content` read in
+                // execute() can diverge from this Document (readAction→java.io fallback, a VFS/Document
+                // reload between the read and this write, or an external write behind the VFS) — in
+                // which case `oldString` is absent here and the replace silently no-ops. Returning
+                // true on a no-op is the data-loss/false-success bug: execute()'s `||` chain
+                // short-circuits and reports success with the file unchanged. Instead, return false
+                // so the fallback writers (writeViaVfs / writeViaFileIo) persist the validated
+                // newContent. Pinned by EditFilePersistenceFixtureTest.
+                var replaced = false
                 WriteCommandAction.runWriteCommandAction(project, "Agent: Edit File", null, Runnable {
                     if (replaceAll) {
                         // Replace all occurrences from end to preserve offsets
@@ -512,6 +521,7 @@ class EditFileTool : AgentTool {
                         var offset = text.lastIndexOf(oldString)
                         while (offset >= 0) {
                             document.replaceString(offset, offset + oldString.length, newString)
+                            replaced = true
                             text = document.text
                             offset = if (offset > 0) text.lastIndexOf(oldString, offset - 1) else -1
                         }
@@ -519,9 +529,11 @@ class EditFileTool : AgentTool {
                         val offset = document.text.indexOf(oldString)
                         if (offset >= 0) {
                             document.replaceString(offset, offset + oldString.length, newString)
+                            replaced = true
                         }
                     }
                 })
+                if (!replaced) return@withContext false
                 // Flush the in-memory edit to disk so external tooling (git, build) sees it now.
                 FileDocumentManager.getInstance().saveDocument(document)
                 true

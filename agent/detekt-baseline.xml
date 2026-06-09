@@ -8657,7 +8657,7 @@
     <ID>Wrapping:DocumentToolSearchTest.kt$DocumentToolSearchTest$(</ID>
     <ID>Wrapping:DriftCorrectiveLoopScenarioTest.kt$DriftCorrectiveLoopScenarioTest$(</ID>
     <ID>Wrapping:EditFileTool.kt$EditFileTool$(</ID>
-    <ID>Wrapping:EditFileTool.kt$EditFileTool$(project, "Agent: Edit File", null, Runnable { if (replaceAll) { // Replace all occurrences from end to preserve offsets var text = document.text var offset = text.lastIndexOf(oldString) while (offset >= 0) { document.replaceString(offset, offset + oldString.length, newString) text = document.text offset = if (offset > 0) text.lastIndexOf(oldString, offset - 1) else -1 } } else { val offset = document.text.indexOf(oldString) if (offset >= 0) { document.replaceString(offset, offset + oldString.length, newString) } } })</ID>
+    <ID>Wrapping:EditFileTool.kt$EditFileTool$(project, "Agent: Edit File", null, Runnable { if (replaceAll) { // Replace all occurrences from end to preserve offsets var text = document.text var offset = text.lastIndexOf(oldString) while (offset >= 0) { document.replaceString(offset, offset + oldString.length, newString) replaced = true text = document.text offset = if (offset > 0) text.lastIndexOf(oldString, offset - 1) else -1 } } else { val offset = document.text.indexOf(oldString) if (offset >= 0) { document.replaceString(offset, offset + oldString.length, newString) replaced = true } } })</ID>
     <ID>Wrapping:EndpointsToolTest.kt$EndpointsToolTest.DispatcherContract$(</ID>
     <ID>Wrapping:EndpointsToolTest.kt$EndpointsToolTest.MicroservicesPluginApiContract$(</ID>
     <ID>Wrapping:EnvironmentDetailsBuilder.kt$EnvironmentDetailsBuilder$(</ID>

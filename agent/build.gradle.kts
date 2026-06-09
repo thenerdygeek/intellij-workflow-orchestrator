@@ -1,3 +1,5 @@
+import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+
 plugins {
     alias(libs.plugins.kotlin)
     alias(libs.plugins.kotlinSerialization)
@@ -31,6 +33,9 @@ dependencies {
             "org.jetbrains.idea.maven",
             "com.intellij.modules.microservices",
         ))
+        // Phase 3 data-loss bug #3 — BasePlatformTestCase reproduction of the edit_file
+        // silent-no-op false-success needs a live Document/VFS environment.
+        testFramework(TestFrameworkType.Platform)
     }
 
     implementation(project(":core"))
@@ -56,6 +61,9 @@ dependencies {
     testImplementation(libs.junit5.api)
     testImplementation(libs.junit5.params)
     testRuntimeOnly(libs.junit5.engine)
+    // JUnit Vintage engine — bridges JUnit 4 BasePlatformTestCase onto the JUnit 5 platform.
+    // Required by EditFilePersistenceFixtureTest (data-loss bug #3 reproduction).
+    testRuntimeOnly(libs.junit5.vintage.engine)
     testRuntimeOnly(libs.junit5.platform.launcher)
     testImplementation(libs.mockk)
     testImplementation(libs.kotlinx.coroutines.test)
