@@ -19,7 +19,10 @@ class EffectiveContextWindowTest {
 
     @Test
     fun `per-model override wins over global and catalog`() {
-        val r = resolver(window = m1Catalog, overrides = MaxTokenOverrides(global = 50_000, perModel = mapOf("m1" to 70_000)))
+        val r = resolver(
+            window = m1Catalog,
+            overrides = MaxTokenOverrides(global = 50_000, perModel = mapOf("m1" to 70_000)),
+        )
         assertEquals(70_000, r.maxInputTokens("m1"))
     }
 
@@ -36,7 +39,10 @@ class EffectiveContextWindowTest {
 
     @Test
     fun `override may exceed catalog`() {
-        val r = resolver(window = m1Catalog, overrides = MaxTokenOverrides(global = null, perModel = mapOf("m1" to 200_000)))
+        val r = resolver(
+            window = m1Catalog,
+            overrides = MaxTokenOverrides(global = null, perModel = mapOf("m1" to 200_000)),
+        )
         assertEquals(200_000, r.maxInputTokens("m1"))
     }
 
