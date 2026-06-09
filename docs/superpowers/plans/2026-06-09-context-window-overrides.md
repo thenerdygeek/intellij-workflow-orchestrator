@@ -25,71 +25,57 @@
 
 - [ ] **Step 1: Write the failing test**
 
+> **Design note (from plan review):** the resolver depends on a narrow `windowLookup: (String) -> ContextWindow?`
+> function, NOT the whole `ModelCatalogService`. This is because `ModelCatalogService.getContextWindow` is a
+> `final` method on an `open class` (can't be MockK-stubbed), and narrowing to the one function used keeps the
+> test mock-free and avoids any `:core` change. Production wiring passes `{ id -> sharedCatalogHolder.peek()?.getContextWindow(id) }`.
+
 ```kotlin
 package com.workflow.orchestrator.agent.model
 
-import com.workflow.orchestrator.core.ai.ModelCatalogService
 import com.workflow.orchestrator.core.ai.dto.ContextWindow
-import io.mockk.every
-import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
 class EffectiveContextWindowTest {
 
-    private fun catalogReturning(modelId: String, maxInput: Int?): ModelCatalogService {
-        val svc = mockk<ModelCatalogService>()
-        every { svc.getContextWindow(any(), any()) } returns null
-        if (maxInput != null) {
-            every { svc.getContextWindow(modelId, any()) } returns
-                ContextWindow(maxInputTokens = maxInput, maxOutputTokens = 8000, maxUserInputTokens = null)
-        }
-        return svc
-    }
+    private fun win(maxInput: Int) =
+        ContextWindow(maxInputTokens = maxInput, maxOutputTokens = 8000, maxUserInputTokens = null)
 
     private fun resolver(
-        catalog: ModelCatalogService? = null,
+        window: (String) -> ContextWindow? = { null },
         overrides: MaxTokenOverrides = MaxTokenOverrides(global = null, perModel = emptyMap()),
         fallback: Int = 90_000,
-    ) = EffectiveContextWindow(catalog = { catalog }, overrides = { overrides }, fallback = fallback)
+    ) = EffectiveContextWindow(windowLookup = window, overrides = { overrides }, fallback = fallback)
+
+    private val m1Catalog: (String) -> ContextWindow? = { id -> if (id == "m1") win(132_000) else null }
 
     @Test
     fun `per-model override wins over global and catalog`() {
-        val r = resolver(
-            catalog = catalogReturning("m1", 132_000),
-            overrides = MaxTokenOverrides(global = 50_000, perModel = mapOf("m1" to 70_000)),
-        )
+        val r = resolver(window = m1Catalog, overrides = MaxTokenOverrides(global = 50_000, perModel = mapOf("m1" to 70_000)))
         assertEquals(70_000, r.maxInputTokens("m1"))
     }
 
     @Test
     fun `global override applies when no per-model entry`() {
-        val r = resolver(
-            catalog = catalogReturning("m1", 132_000),
-            overrides = MaxTokenOverrides(global = 50_000, perModel = emptyMap()),
-        )
+        val r = resolver(window = m1Catalog, overrides = MaxTokenOverrides(global = 50_000, perModel = emptyMap()))
         assertEquals(50_000, r.maxInputTokens("m1"))
     }
 
     @Test
     fun `catalog value used when no override`() {
-        val r = resolver(catalog = catalogReturning("m1", 132_000))
-        assertEquals(132_000, r.maxInputTokens("m1"))
+        assertEquals(132_000, resolver(window = m1Catalog).maxInputTokens("m1"))
     }
 
     @Test
     fun `override may exceed catalog`() {
-        val r = resolver(
-            catalog = catalogReturning("m1", 132_000),
-            overrides = MaxTokenOverrides(global = null, perModel = mapOf("m1" to 200_000)),
-        )
+        val r = resolver(window = m1Catalog, overrides = MaxTokenOverrides(global = null, perModel = mapOf("m1" to 200_000)))
         assertEquals(200_000, r.maxInputTokens("m1"))
     }
 
     @Test
     fun `cache miss falls back when no override`() {
-        val r = resolver(catalog = catalogReturning("m1", null), fallback = 90_000)
-        assertEquals(90_000, r.maxInputTokens("unknown"))
+        assertEquals(90_000, resolver(window = { null }, fallback = 90_000).maxInputTokens("unknown"))
     }
 
     @Test
@@ -100,10 +86,7 @@ class EffectiveContextWindowTest {
 
     @Test
     fun `catalogMaxInputTokens ignores overrides`() {
-        val r = resolver(
-            catalog = catalogReturning("m1", 132_000),
-            overrides = MaxTokenOverrides(global = 10, perModel = mapOf("m1" to 10)),
-        )
+        val r = resolver(window = m1Catalog, overrides = MaxTokenOverrides(global = 10, perModel = mapOf("m1" to 10)))
         assertEquals(132_000, r.catalogMaxInputTokens("m1"))
     }
 }
@@ -119,23 +102,26 @@ Expected: FAIL — `EffectiveContextWindow` / `MaxTokenOverrides` unresolved.
 ```kotlin
 package com.workflow.orchestrator.agent.model
 
-import com.workflow.orchestrator.core.ai.ModelCatalogService
+import com.workflow.orchestrator.core.ai.dto.ContextWindow
 
 /** Snapshot of the user's max-token overrides. `global == null` means no global override. */
 data class MaxTokenOverrides(val global: Int?, val perModel: Map<String, Int>)
 
 /**
  * Single resolution path for a model's max INPUT tokens, layering user overrides over the shared,
- * cached [ModelCatalogService]. Precedence: per-model override > global override > catalog > fallback.
+ * cached catalog (injected as a narrow [windowLookup] = `modelId -> ContextWindow?`).
+ * Precedence: per-model override > global override > catalog > fallback.
  *
  * Used with TWO different keys (see spec "Two-key architecture"):
  *   - DISPLAY (bar/picker/TopBar) → keyed on the SELECTED model.
  *   - RUNTIME (compaction/sub-agent budget) → keyed on the running `currentBrainModelId`.
  *
- * Synchronous: [ModelCatalogService.getContextWindow] is a non-suspend in-memory cache read.
+ * Synchronous: the production [windowLookup] wraps a non-suspend in-memory cache read.
+ * Narrowed to a function (not the whole ModelCatalogService) so it is mock-free in tests and
+ * needs no `:core` change (ModelCatalogService.getContextWindow is a final method).
  */
 class EffectiveContextWindow(
-    private val catalog: () -> ModelCatalogService?,
+    private val windowLookup: (String) -> ContextWindow?,
     private val overrides: () -> MaxTokenOverrides,
     private val fallback: Int = FALLBACK,
 ) {
@@ -143,15 +129,14 @@ class EffectiveContextWindow(
         val ov = overrides()
         if (!modelId.isNullOrBlank()) ov.perModel[modelId]?.let { return it }
         ov.global?.let { return it }
-        val catVal = modelId?.takeIf { it.isNotBlank() }?.let { catalog()?.getContextWindow(it)?.maxInputTokens }
+        val catVal = modelId?.takeIf { it.isNotBlank() }?.let { windowLookup(it)?.maxInputTokens }
         return catVal ?: fallback
     }
 
-    fun catalogMaxInputTokens(modelId: String): Int? =
-        catalog()?.getContextWindow(modelId)?.maxInputTokens
+    fun catalogMaxInputTokens(modelId: String): Int? = windowLookup(modelId)?.maxInputTokens
 
     companion object {
-        /** Mirrors ContextManager.FALLBACK_MAX_INPUT_TOKENS (90_000). */
+        /** Mirrors ContextManager.FALLBACK_MAX_INPUT_TOKENS (90_000) — duplicated to avoid a :agent→ContextManager dep. */
         const val FALLBACK = 90_000
     }
 }
@@ -398,12 +383,14 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement the wiring**
 
-In `AgentService`, where the shared `ModelCatalogService` is available (the `getOrCreateSharedCatalog`/`SharedCatalogHolder` area; the same provider used by `ContextManager`'s `modelCatalogService`), add a lazily-built resolver field:
+**PLACEMENT (sentinel-slice trap — required):** insert the field + method near `fun newContextManager()` (~line 800), NOT in or after the companion object. `DelegationConversationNarrationTest` slices `AgentService.kt` between `fun delegatedIncomingTaskText` (~:3705) and `fun mapLoopResultToDelegationResult` (~:3729); a function landing in that range fails that test.
+
+Add a lazily-built resolver field. The catalog lambda uses `sharedCatalogHolder.peek()` (the synchronous nullable getter for the already-warmed shared catalog — the same instance the existing `ContextManager(...)` sites pass as `modelCatalogService` at ~:1915/:2895):
 
 ```kotlin
     private val effectiveContextWindow: com.workflow.orchestrator.agent.model.EffectiveContextWindow by lazy {
         com.workflow.orchestrator.agent.model.EffectiveContextWindow(
-            catalog = { getOrCreateSharedCatalog() },   // same shared, cached catalog the bar/picker use
+            windowLookup = { id -> sharedCatalogHolder.peek()?.getContextWindow(id) },   // shared, cached catalog
             overrides = { com.workflow.orchestrator.agent.settings.AgentSettings.getInstance(project).state.maxTokenOverridesSnapshot() },
         )
     }
@@ -411,7 +398,7 @@ In `AgentService`, where the shared `ModelCatalogService` is available (the `get
     fun getEffectiveContextWindow(): com.workflow.orchestrator.agent.model.EffectiveContextWindow = effectiveContextWindow
 ```
 
-> NOTE for implementer: confirm the exact accessor that returns the shared `ModelCatalogService?` (search `getOrCreateSharedCatalog` / `SharedCatalogHolder` / `getSharedModelCatalog`). Use whichever returns the cached instance synchronously (nullable). If only a suspend getter exists, capture the already-warmed instance into a `@Volatile var` set on warm-up and read that here.
+> NOTE for implementer: confirm the exact field name of the `SharedCatalogHolder` instance in `AgentService` (the review found `sharedCatalogHolder.peek()` used at ~:1915/:2895 — `peek(): ModelCatalogService?`). If the field is named differently, match it; the lambda only needs the synchronous nullable getter.
 
 For EACH `ContextManager(...)` constructed in `AgentService` (search `ContextManager(`), add the argument:
 
@@ -687,14 +674,10 @@ class MaxTokenOverrideTableModel : AbstractTableModel() {
     }
 
     fun toJson(): String {
-        val map = rows.filter { it.override > 0 }.associate { it.modelId to it.override }
-        return kotlinx.serialization.json.Json.encodeToString(
-            kotlinx.serialization.builtins.MapSerializer(
-                kotlinx.serialization.builtins.serializer<String>(),
-                kotlinx.serialization.builtins.serializer<Int>(),
-            ),
-            map,
-        )
+        val map: Map<String, Int> = rows.filter { it.override > 0 }.associate { it.modelId to it.override }
+        // Reified form — symmetric with the decode in AgentSettings.maxTokenOverridesSnapshot().
+        // (builtins.serializer<String>() is NOT a valid API; this resolves the Map serializer at compile time.)
+        return kotlinx.serialization.json.Json.encodeToString<Map<String, Int>>(map)
     }
 
     override fun getRowCount() = rows.size
@@ -729,7 +712,18 @@ Read the existing `AgentAdvancedConfigurable` to match its `panel { group("…")
 - A soft-warning `JBLabel` updated on table edits: if any row `aboveCatalog()`, show "⚠ Some overrides exceed the model's real window — the API may reject requests."
 
 Configurable lifecycle (do NOT rely on `dialogPanel.isModified()` for the table):
-- `reset()`: after `dialogPanel?.reset()`, call `tableModel.seed(modelReals = currentCatalogReals(), overridesJson = agentSettings.state.maxTokenPerModelOverrideJson)`. Source `currentCatalogReals()` from `AgentControllerRegistry.getController()?.…`/the shared catalog — map each catalog model id → `getEffectiveContextWindow().catalogMaxInputTokens(id)`. If the catalog is not warmed, seed reals as `null` (UI shows "—").
+- `reset()`: after `dialogPanel?.reset()`, call `tableModel.seed(modelReals = currentCatalogReals(), overridesJson = agentSettings.state.maxTokenPerModelOverrideJson)`. Build `currentCatalogReals(): Map<String, Int?>` from the cached model list and the resolver:
+
+```kotlin
+    private fun currentCatalogReals(): Map<String, Int?> {
+        val resolver = com.workflow.orchestrator.agent.ui.AgentControllerRegistry.getController()
+            ?.let { /* controller exposes service */ } // see NOTE below
+        val models = com.workflow.orchestrator.core.ai.ModelCache.getCached()   // List<ModelInfo>, may be empty pre-warm
+        return models.associate { it.id to resolver?.catalogMaxInputTokens(it.id) }
+    }
+```
+
+> NOTE: `ModelCache.getCached()` is the same source `AgentController.changeModel` uses (~:4747) and returns the warmed model list (empty before first agent-tab open → table shows no rows / "—"). Obtain the `EffectiveContextWindow` via the controller's `service.getEffectiveContextWindow()`; if the controller isn't available yet, seed reals as `null`. If the catalog is not warmed, reals are `null` (UI shows "—").
 - `isModified()`: `super/dialogPanel modified` OR `tableModel.toJson() != (agentSettings.state.maxTokenPerModelOverrideJson ?: "{}")`.
 - `apply()`: `dialogPanel?.apply()` (persists the global int) THEN `agentSettings.state.maxTokenPerModelOverrideJson = tableModel.toJson()` THEN notify:
 
