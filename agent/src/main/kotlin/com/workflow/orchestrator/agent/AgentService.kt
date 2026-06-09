@@ -801,7 +801,21 @@ class AgentService(
         maxInputTokens = ContextManager.FALLBACK_MAX_INPUT_TOKENS,
         modelCatalogService = getSharedModelCatalog(),
         currentModelRef = { currentBrainModelId },
+        effectiveContextWindow = effectiveContextWindow,
     )
+
+    @get:JvmName("effectiveContextWindowInternal")
+    private val effectiveContextWindow: com.workflow.orchestrator.agent.model.EffectiveContextWindow by lazy {
+        com.workflow.orchestrator.agent.model.EffectiveContextWindow(
+            windowLookup = { id -> sharedCatalogHolder.peek()?.getContextWindow(id) },
+            overrides = {
+                com.workflow.orchestrator.agent.settings.AgentSettings
+                    .getInstance(project).state.maxTokenOverridesSnapshot()
+            },
+        )
+    }
+
+    fun getEffectiveContextWindow(): com.workflow.orchestrator.agent.model.EffectiveContextWindow = effectiveContextWindow
 
     /**
      * v0.83.44 — exposes the live `currentBrainModelId` so AgentController's
@@ -1914,6 +1928,7 @@ class AgentService(
                     maxInputTokens = ContextManager.FALLBACK_MAX_INPUT_TOKENS,
                     modelCatalogService = sharedCatalogHolder.peek(),
                     currentModelRef = { currentBrainModelId },
+                    effectiveContextWindow = effectiveContextWindow,
                 )
                 // Report the resolved manager so the controller can hold it across turns.
                 onContextManagerReady?.invoke(ctx)
@@ -2894,6 +2909,7 @@ class AgentService(
                 maxInputTokens = ContextManager.FALLBACK_MAX_INPUT_TOKENS,
                 modelCatalogService = sharedCatalogHolder.peek(),
                 currentModelRef = { currentBrainModelId },
+                effectiveContextWindow = effectiveContextWindow,
             )
             val resumeResearchDirPath = com.workflow.orchestrator.core.util.ProjectIdentifier.researchDir(basePath).toPath()
             val resumeResearchIndex = com.workflow.orchestrator.agent.research.ResearchIndex.load(resumeResearchDirPath)
