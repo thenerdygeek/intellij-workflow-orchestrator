@@ -845,15 +845,14 @@ class AgentController(
             dir
         }
         // Multimodal-agent Phase 7 — chat input usage indicator. Reads (used, max) from the
-        // active ContextManager. max comes from effectiveMaxInputTokens() — the RESOLVED budget
-        // keyed on currentBrainModelId (the model the brain actually runs), the SAME source the
-        // compaction trigger uses. Previously this keyed off AgentSettings.sourcegraphChatModel,
-        // which is blank on auto-pick → fell to the 90K constructor fallback, so the bar showed
-        // e.g. 93K instead of the real 132K window even mid-session.
+        // active ContextManager.
+        // 3d — DISPLAY key = selected model (keeps the bar identical to the selected picker row).
+        // Previously keyed on the running brain model id which diverged from the picker when the
+        // user selected a model with a different context window than the one currently executing.
         panel.setContextUsageProvider {
             val cm = contextManager ?: return@setContextUsageProvider null
             val used = cm.currentInputTokens()
-            val max = cm.effectiveMaxInputTokens()
+            val max = displayMaxInputTokens()
             used to max
         }
         // Phase 7 followup F-P5-2 / F-P6-1 — JS pulls current image settings
@@ -1965,14 +1964,19 @@ class AgentController(
                 val provider = m.provider.replace("\"", "\\\"")
                 val thinking = m.isThinkingModel
                 val vision = catalog?.supportsVision(m.id) ?: isLikelyVisionCapable(m.id)
-                val cw = catalog?.getContextWindow(m.id, tier = "enterprise")
-                val cwField = if (cw != null) {
+                // 3c — selector row: route DISPLAY read through the override-aware resolver keyed
+                // on THIS row's model id so the picker capacity strip matches the usage bar.
+                val effMax = service.getEffectiveContextWindow().maxInputTokens(m.id)
+                val cwReal = catalog?.getContextWindow(m.id, tier = "enterprise")
+                val cw = cwReal?.copy(maxInputTokens = effMax)
+                    ?: com.workflow.orchestrator.core.ai.dto.ContextWindow(maxInputTokens = effMax, maxOutputTokens = 0, maxUserInputTokens = null)
+                val cwField = run {
                     val core = """{"maxInputTokens":${cw.maxInputTokens}"""
                     val withCap = if (cw.maxUserInputTokens != null) {
                         """$core,"maxUserInputTokens":${cw.maxUserInputTokens}}"""
                     } else "$core}"
                     ""","contextWindow":$withCap"""
-                } else ""
+                }
                 val capsField = if (catalog != null) {
                     val parts = mutableListOf<String>()
                     if (catalog.supportsVision(m.id)) parts += "\"vision\""
@@ -2846,11 +2850,8 @@ class AgentController(
             // v0.83.44 — budget follows the live per-model number from the
             // Sourcegraph catalog (e.g. Sonnet → 132K, Sonnet-thinking → 93K),
             // not the static `AgentSettings.maxInputTokens` setting (removed).
-            // ContextManager.effectiveMaxInputTokens() is the single source of
-            // truth that compaction also uses, so the TopBar progress bar can
-            // never disagree with the live compaction trigger.
-            val maxTokens = contextManager?.effectiveMaxInputTokens()
-                ?: ContextManager.FALLBACK_MAX_INPUT_TOKENS
+            // DISPLAY key = selected model so TopBar matches the picker row.
+            val maxTokens = displayMaxInputTokens()
             dashboard.updateProgress("", promptTokens, maxTokens)
         }
     }
@@ -4736,6 +4737,36 @@ class AgentController(
         LOG.info("AgentController.togglePlanMode: $enabled")
         service.setPlanModeActive(enabled)
         dashboard.setPlanMode(enabled)
+    }
+
+    /**
+     * The model id that DISPLAY reads (bar, picker row, TopBar) should be keyed on.
+     * This is the saved/selected model — the one the user is looking at in the picker.
+     * Falls back to the running brain model when the selection is blank (auto-pick path).
+     */
+    private fun selectedModelId(): String? =
+        AgentSettings.getInstance(project).state.sourcegraphChatModel
+            ?.takeIf { it.isNotBlank() }
+            ?: service.getCurrentBrainModelId()
+
+    /**
+     * DISPLAY max-input-tokens for the bar + TopBar — the override-aware window keyed on the
+     * SELECTED model (so both surfaces stay identical to the selected picker row). The picker
+     * ROW intentionally keys on its own `m.id`, not this, and stays inline.
+     */
+    private fun displayMaxInputTokens(): Int =
+        service.getEffectiveContextWindow().maxInputTokens(selectedModelId())
+
+    /**
+     * Called by [com.workflow.orchestrator.agent.settings.ContextWindowOverridesConfigurable]
+     * (via [AgentControllerRegistry.getController]) after the user applies new per-model or
+     * global context-window overrides in Settings.  Re-emits the model list so each row's
+     * capacity strip updates immediately, then fires a context-usage refresh so the bar
+     * below the input updates in the same Settings.apply() cycle.
+     */
+    fun notifyContextWindowOverridesChanged() {
+        loadModelList(force = true)       // re-emit updateModelList with new effective per-row windows
+        dashboard.refreshContextUsage()   // fire the usage-refresh event so the bar updates at once
     }
 
     private fun changeModel(model: String) {
