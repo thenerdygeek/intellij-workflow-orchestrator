@@ -2,9 +2,15 @@ package com.workflow.orchestrator.agent.settings
 
 import com.intellij.openapi.options.SearchableConfigurable
 import com.intellij.openapi.project.Project
+import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.dsl.builder.*
+import com.intellij.ui.table.JBTable
+import com.workflow.orchestrator.agent.AgentService
 import com.workflow.orchestrator.core.settings.PluginSettings
 import javax.swing.JComponent
+import javax.swing.event.TableModelEvent
+import javax.swing.event.TableModelListener
 
 /**
  * "AI Agent → Advanced" sub-page.
@@ -28,6 +34,17 @@ class AgentAdvancedConfigurable(
     private var smartWorkingIndicator = agentSettings.state.smartWorkingIndicator
     private var powershellEnabled = agentSettings.state.powershellEnabled
     private var cmdEnabled = agentSettings.state.cmdEnabled
+
+    // Context Window group — table model + table + warn label (not covered by DialogPanel)
+    private val tableModel = MaxTokenOverrideTableModel()
+    private val table = JBTable(tableModel).apply {
+        putClientProperty("terminateEditOnFocusLost", true)
+    }
+    private val warnLabel = JBLabel(
+        "⚠ Some overrides exceed the model's real window — the API may reject requests."
+    ).apply {
+        isVisible = false
+    }
 
     override fun getId(): String = "workflow.orchestrator.agent.advanced"
     override fun getDisplayName(): String = "Advanced"
@@ -243,6 +260,25 @@ class AgentAdvancedConfigurable(
                 }
             }
 
+            group("Context Window") {
+                row("Max input tokens for all models (0 = model default):") {
+                    intTextField()
+                        .bindIntText(agentSettings.state::maxTokenGlobalOverride)
+                        .comment(
+                            "Global override applied to every model when no per-model override is set. " +
+                                "0 = use the model catalog value."
+                        )
+                }
+                row {
+                    cell(JBScrollPane(table))
+                        .align(Align.FILL)
+                        .resizableColumn()
+                }.resizableRow()
+                row {
+                    cell(warnLabel)
+                }
+            }
+
             group("Background processes") {
                 row("Concurrent processes per session:") {
                     intTextField(1..20)
@@ -277,10 +313,36 @@ class AgentAdvancedConfigurable(
             }
         }
         dialogPanel = innerPanel
+
+        // Wire table model listener to update the warn label on any cell edit
+        tableModel.addTableModelListener(TableModelListener { _: TableModelEvent ->
+            warnLabel.isVisible = tableModel.anyAboveCatalog()
+        })
+
+        // Seed the table with current catalog reals + persisted overrides
+        tableModel.seed(
+            modelReals = currentCatalogReals(),
+            overridesJson = agentSettings.state.maxTokenPerModelOverrideJson,
+        )
+        warnLabel.isVisible = tableModel.anyAboveCatalog()
+
         return innerPanel
     }
 
-    override fun isModified(): Boolean = dialogPanel?.isModified() ?: false
+    /**
+     * Builds a map of modelId → real catalog max-input-tokens (null when catalog not yet warmed).
+     * Project-level configurable: AgentService is accessible via [project.getService].
+     */
+    private fun currentCatalogReals(): Map<String, Int?> {
+        val ecw = project.getService(AgentService::class.java)?.getEffectiveContextWindow()
+        val models = com.workflow.orchestrator.core.ai.ModelCache.getCached()
+        return models.associate { it.id to ecw?.catalogMaxInputTokens(it.id) }
+    }
+
+    override fun isModified(): Boolean {
+        if (dialogPanel?.isModified() == true) return true
+        return tableModel.toJson() != (agentSettings.state.maxTokenPerModelOverrideJson ?: "{}")
+    }
 
     override fun apply() {
         dialogPanel?.apply()
@@ -288,6 +350,13 @@ class AgentAdvancedConfigurable(
         agentSettings.state.smartWorkingIndicator = smartWorkingIndicator
         agentSettings.state.powershellEnabled = powershellEnabled
         agentSettings.state.cmdEnabled = cmdEnabled
+        agentSettings.state.maxTokenPerModelOverrideJson = tableModel.toJson()
+        runCatching {
+            com.workflow.orchestrator.agent.ui.AgentControllerRegistry
+                .getInstance(project)
+                .getController()
+                ?.notifyContextWindowOverridesChanged()
+        }
     }
 
     override fun reset() {
@@ -296,6 +365,11 @@ class AgentAdvancedConfigurable(
         powershellEnabled = agentSettings.state.powershellEnabled
         cmdEnabled = agentSettings.state.cmdEnabled
         dialogPanel?.reset()
+        tableModel.seed(
+            modelReals = currentCatalogReals(),
+            overridesJson = agentSettings.state.maxTokenPerModelOverrideJson,
+        )
+        warnLabel.isVisible = tableModel.anyAboveCatalog()
     }
 
     override fun disposeUIResources() {

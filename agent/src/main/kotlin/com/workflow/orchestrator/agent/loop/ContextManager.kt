@@ -48,6 +48,7 @@ class ContextManager(
     var onHistoryOverwrite: (suspend (List<ChatMessage>, deletedRange: Pair<Int, Int>) -> Unit)? = null,
     private val modelCatalogService: ModelCatalogService? = null,
     private val currentModelRef: (() -> String?)? = null,
+    private val effectiveContextWindow: com.workflow.orchestrator.agent.model.EffectiveContextWindow? = null,
 ) {
     private val LOG = Logger.getInstance(ContextManager::class.java)
 
@@ -458,6 +459,9 @@ class ContextManager(
     }
 
     fun effectiveMaxInputTokens(): Int {
+        // RUNTIME key = the running model (currentModelRef = currentBrainModelId). Honors overrides
+        // for the model the brain is actually calling — correct under L2 tier escalation.
+        effectiveContextWindow?.let { return it.maxInputTokens(currentModelRef?.invoke()) }
         val ref = currentModelRef?.invoke() ?: return maxInputTokens
         val catalog = modelCatalogService ?: return maxInputTokens
         val window = catalog.getContextWindow(ref) ?: return maxInputTokens
@@ -473,6 +477,8 @@ class ContextManager(
     fun currentInputTokens(): Int = lastPromptTokens ?: tokenEstimate()
 
     fun maxInputTokensFor(modelRef: String): Int {
+        // Route through the resolver so per-model/global overrides apply (not a catalog-only bypass).
+        effectiveContextWindow?.let { return it.maxInputTokens(modelRef) }
         val window = modelCatalogService?.getContextWindow(modelRef, tier = currentTier())
         return window?.maxInputTokens ?: FALLBACK_MAX_INPUT_TOKENS
     }

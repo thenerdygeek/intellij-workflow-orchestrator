@@ -723,10 +723,11 @@ class AgentCefPanel(
         // `window.workflowAgent.getContextUsage()` which dispatches into this
         // query; the React `<InputBar>` polls every 1s while the input is
         // mounted. Returns JSON: {"used": N, "max": M}. When no session is
-        // active or the provider isn't wired, returns 0/132K so the indicator
-        // doesn't crash.
+        // active or the provider isn't wired, returns 0/FALLBACK so the indicator
+        // doesn't crash (sub-second placeholder before the real provider is wired).
         contextUsageQuery = registerQuery(b) { _ ->
-            val (used, max) = contextUsageProvider?.invoke() ?: (0 to 132_000)
+            val (used, max) = contextUsageProvider?.invoke()
+                ?: (0 to com.workflow.orchestrator.agent.model.EffectiveContextWindow.FALLBACK)
             JBCefJSQuery.Response("""{"used":$used,"max":$max}""")
         }
 
