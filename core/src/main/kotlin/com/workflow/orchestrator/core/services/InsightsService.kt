@@ -6,6 +6,9 @@ interface InsightsService {
     fun getSessions(since: Long = 0L): List<SessionRecord>
     fun getTodayStats(): InsightsStats
     fun getWeekStats(): InsightsStats
+
+    /** Load the session history ONCE and derive both stat windows + the list from it. */
+    fun getOverview(): InsightsOverview
 }
 
 data class InsightsStats(
@@ -17,4 +20,11 @@ data class InsightsStats(
     val failedToolCalls: Int,
     val topTools: List<Pair<String, Int>>,
     val recentErrors: List<String>,
+)
+
+/** One-load snapshot for the Insights panel: today + week stats and the full session list. */
+data class InsightsOverview(
+    val today: InsightsStats,
+    val week: InsightsStats,
+    val sessions: List<SessionRecord>,
 )

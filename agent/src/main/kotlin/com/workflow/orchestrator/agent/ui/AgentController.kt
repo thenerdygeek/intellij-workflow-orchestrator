@@ -9,42 +9,43 @@ import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.workflow.orchestrator.agent.AgentService
-import com.workflow.orchestrator.agent.tools.ArtifactRenderResult
-import com.workflow.orchestrator.agent.tools.CompletionData
-import com.workflow.orchestrator.agent.tools.CompletionKind
-import com.workflow.orchestrator.agent.tools.builtin.ArtifactResultRegistry
-import com.workflow.orchestrator.agent.tools.builtin.Question
-import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.agent.hooks.HookEvent
 import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookType
 import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.FailureReason
-import com.workflow.orchestrator.agent.loop.SessionApprovalStore
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.PlanJson
+import com.workflow.orchestrator.agent.loop.SessionApprovalStore
 import com.workflow.orchestrator.agent.loop.SteeringMessage
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
+import com.workflow.orchestrator.agent.monitor.MonitorPool
+import com.workflow.orchestrator.agent.observability.HaikuPhraseGenerator
+import com.workflow.orchestrator.agent.observability.PhraseActivityGate
 import com.workflow.orchestrator.agent.session.HistoryItem
 import com.workflow.orchestrator.agent.session.MessageStateHandler
-import com.workflow.orchestrator.agent.session.ResumeHelper
 import com.workflow.orchestrator.agent.session.PlanApprovalData
+import com.workflow.orchestrator.agent.session.ResumeHelper
 import com.workflow.orchestrator.agent.session.UiAsk
 import com.workflow.orchestrator.agent.session.UiMessage
 import com.workflow.orchestrator.agent.session.UiMessageType
 import com.workflow.orchestrator.agent.session.UiSay
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.settings.ToolPreferences
-import com.workflow.orchestrator.agent.observability.HaikuPhraseGenerator
+import com.workflow.orchestrator.agent.tools.ArtifactRenderResult
+import com.workflow.orchestrator.agent.tools.CompletionData
+import com.workflow.orchestrator.agent.tools.CompletionKind
+import com.workflow.orchestrator.agent.tools.background.BackgroundPool
+import com.workflow.orchestrator.agent.tools.builtin.ArtifactResultRegistry
+import com.workflow.orchestrator.agent.tools.builtin.Question
+import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.subagent.SubagentExecutionStatus
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanVirtualFile
 import com.workflow.orchestrator.agent.util.JsEscape
-import com.workflow.orchestrator.agent.tools.background.BackgroundPool
-import com.workflow.orchestrator.agent.monitor.MonitorPool
 import com.workflow.orchestrator.core.events.BackgroundProcessSnapshotDto
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.MonitorSnapshotDto
@@ -59,9 +60,9 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
@@ -4995,20 +4996,27 @@ class AgentController(
         // The new prompt contract uses this to decide whether the situation has shifted
         // enough to warrant a new line, or whether (no change) is the honest answer.
         var lastDisplayed: String? = null
+        var lastActivitySig: Int? = null
         phraseTimerJob = controllerScope.launch(Dispatchers.IO) {
             delay(30_000)
             while (isActive) {
                 try {
                     val tools = synchronized(recentToolCalls) { recentToolCalls.toList() }
                     val agentThinking = lastStreamSnippet.takeLast(100)
-                    LOG.info("AgentController: requesting Haiku phrase (${tools.size} recent tools)")
-                    val phrase = HaikuPhraseGenerator.generate(task, tools, agentThinking, lastDisplayed)
-                    if (phrase != null) {
-                        LOG.info("AgentController: got Haiku phrase: $phrase")
-                        lastDisplayed = phrase
-                        invokeLater { dashboard.setSmartWorkingPhrase(phrase) }
+                    val sig = PhraseActivityGate.signature(tools, agentThinking)
+                    if (PhraseActivityGate.shouldGenerate(lastActivitySig, sig)) {
+                        lastActivitySig = sig
+                        LOG.info("AgentController: requesting Haiku phrase (${tools.size} recent tools)")
+                        val phrase = HaikuPhraseGenerator.generate(task, tools, agentThinking, lastDisplayed)
+                        if (phrase != null) {
+                            LOG.info("AgentController: got Haiku phrase: $phrase")
+                            lastDisplayed = phrase
+                            invokeLater { dashboard.setSmartWorkingPhrase(phrase) }
+                        } else {
+                            LOG.info("AgentController: Haiku phrase returned null (no-change or failure)")
+                        }
                     } else {
-                        LOG.info("AgentController: Haiku phrase returned null (no-change or failure)")
+                        LOG.info("AgentController: skipping Haiku phrase — no agent activity since last tick (P1-10 gate)")
                     }
                 } catch (e: Exception) {
                     LOG.warn("AgentController: Haiku phrase timer error: ${e.message}")

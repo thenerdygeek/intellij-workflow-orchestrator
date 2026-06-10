@@ -2,10 +2,13 @@ package com.workflow.orchestrator.agent.monitor
 
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.loop.AgentLoop
+import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.background.IdleSessionWaker
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
 import io.mockk.unmockkAll
+import io.mockk.unmockkObject
 import io.mockk.verify
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +16,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -52,12 +56,17 @@ class AgentMonitorCoordinatorTest {
         cs = CoroutineScope(Dispatchers.IO + SupervisorJob())
         every { project.getService(MonitorPool::class.java) } returns pool
         seed = MonitorPersistence(agentDir)
+        mockkObject(AgentSettings.Companion)
+        every { AgentSettings.getInstance(any()) } returns mockk {
+            every { state } returns AgentSettings.State()
+        }
     }
 
     @AfterEach
     fun teardown() {
         MonitorBridge.clearRouter(project)
         cs.cancel()
+        unmockkObject(AgentSettings.Companion)
         unmockkAll()
     }
 
@@ -120,5 +129,29 @@ class AgentMonitorCoordinatorTest {
             coordinator.forgetMonitor("unknown-session", "some-id")
             coordinator.markMonitorsDormantForSession("unknown-session")
         }
+    }
+
+    @Test
+    fun `flush loop is NOT running after construction`() {
+        val coordinator = buildCoordinator()
+        assertFalse(coordinator.isFlushLoopRunning())
+    }
+
+    @Test
+    fun `flush loop starts on first ensureMonitorManager`() {
+        val coordinator = buildCoordinator()
+        coordinator.ensureMonitorManager("session-1")
+        assertTrue(coordinator.isFlushLoopRunning())
+    }
+
+    @Test
+    fun `flush loop stops when the last session's monitors are disposed`() {
+        val coordinator = buildCoordinator()
+        coordinator.ensureMonitorManager("session-1")
+        coordinator.ensureMonitorManager("session-2")
+        coordinator.disposeMonitorsForSession("session-1")
+        assertTrue(coordinator.isFlushLoopRunning(), "one session still has monitors")
+        coordinator.disposeMonitorsForSession("session-2")
+        assertFalse(coordinator.isFlushLoopRunning())
     }
 }

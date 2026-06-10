@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import java.nio.file.FileSystems
 import java.nio.file.Files
@@ -409,7 +410,7 @@ class HandoverTemplateStore {
         val watchService: WatchService = FileSystems.getDefault().newWatchService()
 
         // Register the WatchService close on the parent scope's coroutine completion so
-        // that closing interrupts the blocking poll() call promptly when scope is cancelled.
+        // that any residual take() call is cleaned up even if the coroutine was already done.
         cs.coroutineContext[Job]?.invokeOnCompletion {
             runCatching { watchService.close() }
         }
@@ -432,11 +433,12 @@ class HandoverTemplateStore {
             }
 
             try {
-                // Poll instead of take() — closing the WatchService interrupts poll(),
-                // making this loop cancellation-cooperative without blocking the thread.
+                // runInterruptible wraps the blocking take() so that coroutine cancellation
+                // interrupts the thread immediately (InterruptedException), making the loop
+                // fully cancellation-cooperative with zero idle CPU. The previous poll(100ms)
+                // loop woke 10x/s for the project lifetime (audit P1-9).
                 while (isActive) {
-                    val key = watchService.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
-                        ?: continue
+                    val key = runInterruptible { watchService.take() }
                     val events = key.pollEvents()
                     for (event in events) {
                         // If a new sub-directory was created at runtime, register it immediately
@@ -451,10 +453,18 @@ class HandoverTemplateStore {
                     if (events.isNotEmpty()) {
                         scheduleRescan()
                     }
-                    if (!key.reset()) break
+                    if (!key.reset()) {
+                        // B14: ONE invalid dir (e.g. deleted) must not kill the watch loop
+                        // for every other directory. Drop just this key and keep watching.
+                        log.warn(
+                            "HandoverTemplateStore: watch key for ${key.watchable()} became invalid;" +
+                                " continuing with remaining watches",
+                        )
+                        continue
+                    }
                 }
             } catch (_: InterruptedException) {
-                // poll() was interrupted — exit cleanly
+                // take() was interrupted — exit cleanly
             } catch (_: CancellationException) {
                 // coroutine scope was cancelled — exit cleanly
             } catch (_: java.nio.file.ClosedWatchServiceException) {

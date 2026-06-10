@@ -1,7 +1,7 @@
 package com.workflow.orchestrator.core.polling
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.wm.IdeFocusManager
 import com.workflow.orchestrator.core.network.NetworkProbe
 import com.workflow.orchestrator.core.network.NetworkState
 import com.workflow.orchestrator.core.network.NetworkStateService
@@ -21,9 +21,10 @@ class SmartPoller(
     private val baseIntervalMs: Long = 30_000,
     private val maxIntervalMs: Long = 300_000,
     private val scope: CoroutineScope,
-    // networkProbe MUST precede `action`: existing call sites pass `action` as a trailing
-    // lambda, which Kotlin binds to the LAST parameter. Keeping `action` last preserves them.
+    // networkProbe / ideFocused MUST precede `action`: existing call sites pass `action` as a
+    // trailing lambda, which Kotlin binds to the LAST parameter. Keeping `action` last preserves them.
     private val networkProbe: NetworkProbe? = NetworkStateService.getInstanceOrNull(),
+    private val ideFocused: () -> Boolean = ::defaultIdeFocused,
     private val action: suspend () -> Boolean,  // returns true if data changed
 ) {
     private val log = Logger.getInstance(SmartPoller::class.java)
@@ -37,6 +38,42 @@ class SmartPoller(
     private var lastVisibilityChangeMs: Long = 0L
     internal companion object {
         const val VISIBILITY_DEBOUNCE_MS = 1_000L
+        private const val BACKGROUND_MULTIPLIER = 4
+
+        /**
+         * Active (tab visible + IDE focused): base × backoff.
+         * Background (hidden OR unfocused): base × backoff × [BACKGROUND_MULTIPLIER], capped at maxIntervalMs.
+         * The focused branch is intentionally uncapped: the caller maintains the invariant
+         * backoff ≤ maxIntervalMs / baseIntervalMs, so base × backoff never exceeds maxIntervalMs.
+         */
+        internal fun effectiveIntervalMs(
+            baseIntervalMs: Long,
+            maxIntervalMs: Long,
+            backoff: Double,
+            visible: Boolean,
+            focused: Boolean,
+        ): Long =
+            if (visible && focused) {
+                (baseIntervalMs * backoff).toLong()
+            } else {
+                (baseIntervalMs * backoff * BACKGROUND_MULTIPLIER).toLong().coerceAtMost(maxIntervalMs)
+            }
+
+        /**
+         * Whether the IDE is the active OS application RIGHT NOW.
+         * `IdeFocusManager.lastFocusedFrame` is NOT a focus test — it stays non-null after
+         * the user switches apps (the P0-4 audit finding). `Application.isActive` reflects
+         * current window activation. Conservative `false` when the platform is absent
+         * (unit tests, startup, shutdown) so polling slows rather than accelerates.
+         * Note: `isActive` may self-heal activation state and sync-publish
+         * ApplicationActivationListener on the calling thread — platform-internal,
+         * acceptable, noted for auditors.
+         */
+        internal fun defaultIdeFocused(): Boolean = try {
+            ApplicationManager.getApplication()?.isActive == true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     fun start() {
@@ -66,11 +103,10 @@ class SmartPoller(
                     currentBackoff = (currentBackoff * 2.0).coerceAtMost(maxIntervalMs.toDouble() / baseIntervalMs)
                 }
 
-                val effectiveInterval = if (visible.get() && isIdeFocused()) {
-                    (baseIntervalMs * currentBackoff).toLong()
-                } else {
-                    (baseIntervalMs * currentBackoff * 4).toLong().coerceAtMost(maxIntervalMs)
-                }
+                val effectiveInterval = effectiveIntervalMs(
+                    baseIntervalMs, maxIntervalMs, currentBackoff,
+                    visible = visible.get(), focused = ideFocused(),
+                )
 
                 // Add +/-10% jitter
                 val jitter = (effectiveInterval * 0.1 * (Random.nextDouble() * 2 - 1)).toLong()
@@ -112,18 +148,6 @@ class SmartPoller(
                     // Swallow; normal polling will handle errors
                 }
             }
-        }
-    }
-
-    private fun isIdeFocused(): Boolean {
-        return try {
-            val frame = IdeFocusManager.getGlobalInstance().lastFocusedFrame
-            frame != null
-        } catch (_: Exception) {
-            // Conservative default: when focus state is indeterminate (IDE shutting
-            // down or not yet fully initialized), treat as unfocused so polling
-            // slows to its visibility-gated interval rather than accelerating.
-            false
         }
     }
 }

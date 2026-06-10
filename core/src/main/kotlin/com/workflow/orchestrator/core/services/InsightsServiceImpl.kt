@@ -28,6 +28,20 @@ class InsightsServiceImpl(
         return toInsightsStats(getSessions(sevenDaysAgo))
     }
 
+    override fun getOverview(): InsightsOverview {
+        val all = reader.loadSessions(baseDir).sortedByDescending { it.ts }
+        val midnight = LocalDate.now()
+            .atStartOfDay(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        val sevenDaysAgo = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
+        return InsightsOverview(
+            today = toInsightsStats(all.filter { it.ts >= midnight }),
+            week = toInsightsStats(all.filter { it.ts >= sevenDaysAgo }),
+            sessions = all,
+        )
+    }
+
     private fun toInsightsStats(items: List<SessionRecord>): InsightsStats {
         val totalIn = items.sumOf { it.tokensIn }
         val totalOut = items.sumOf { it.tokensOut }

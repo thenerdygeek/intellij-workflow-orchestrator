@@ -49,6 +49,7 @@ class BackgroundPool(
         val cap = AgentSettings.getInstance(project).state.concurrentBackgroundProcessesPerSession
         val pool = forSession(sessionId)
         pool.register(handle, cap)
+        startSupervisor()
         emitSnapshot(sessionId)
     }
 
@@ -139,6 +140,7 @@ class BackgroundPool(
         }
     }
 
+    @Synchronized
     fun startSupervisor(pollIntervalMs: Long = 500) {
         if (supervisorJob?.isActive == true) return
         supervisorJob = cs.launch(Dispatchers.IO) {
@@ -151,7 +153,21 @@ class BackgroundPool(
         }
     }
 
+    @Synchronized
     fun stopSupervisor() { supervisorJob?.cancel(); supervisorJob = null }
+
+    @Synchronized
+    private fun stopSupervisorIfIdle() {
+        // Re-check under the lock: serializes with startSupervisor() so a concurrent
+        // register() either makes this check non-empty or restarts the loop afterwards.
+        if (sessionPools.values.all { it.size() == 0 }) {
+            supervisorJob?.cancel()
+            supervisorJob = null
+        }
+    }
+
+    /** Visible for tests: whether the completion-detection loop is currently live. */
+    internal fun isSupervisorRunning(): Boolean = supervisorJob?.isActive == true
 
     // Test-only tight polling — stops any running supervisor first so interval takes effect.
     fun startSupervisorForTest() { stopSupervisor(); startSupervisor(50) }
@@ -178,9 +194,9 @@ class BackgroundPool(
                 }
             }
         }
+        // P1-7: nothing left to supervise — stop the 500ms loop. register() restarts it.
+        stopSupervisorIfIdle()
     }
-
-    init { startSupervisor() }
 }
 
 class SessionPool(val sessionId: String) {

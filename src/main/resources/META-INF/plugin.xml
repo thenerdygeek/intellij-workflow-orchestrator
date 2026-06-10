@@ -338,6 +338,9 @@
             serviceImplementation="com.workflow.orchestrator.automation.service.AutomationSettingsService"/>
         <applicationService
             serviceImplementation="com.workflow.orchestrator.core.network.NetworkStateService"/>
+        <!-- B1: app-level lifecycle owner for AgentConfigLoader (survives project close) -->
+        <applicationService
+            serviceImplementation="com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoaderLifecycle"/>
 
         <!-- Status Bar -->
         <statusBarWidgetFactory id="WorkflowAutomationStatusBar"

@@ -369,6 +369,21 @@ class AgentConfigLoaderTest {
     // ── Singleton ─────────────────────────────────────────────────
 
     @Test
+    fun `getInstance returns a fresh usable instance after dispose -- project close must not kill other projects`(
+        @TempDir tempDir: Path,
+    ) {
+        val first = AgentConfigLoader.getInstance()
+        first.dispose() // simulates project A closing under the old Disposer.register wiring
+
+        val second = AgentConfigLoader.getInstance()
+        assertNotSame(first, second, "a disposed singleton must be replaced, not returned")
+
+        // The fresh instance is fully functional: it can load and watch again.
+        second.loadFromDisk(tempDir)
+        assertTrue(second.getAllCachedConfigs().isNotEmpty(), "bundled agents should load")
+    }
+
+    @Test
     fun `getInstance returns same instance`() {
         val a = AgentConfigLoader.getInstance()
         val b = AgentConfigLoader.getInstance()

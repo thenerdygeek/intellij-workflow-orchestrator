@@ -402,7 +402,11 @@ class AgentService(
         if (configs.isNotEmpty()) {
             log.info("[AgentService] Loaded ${configs.size} dynamic agent config(s): ${configs.keys.toList()}")
         }
-        com.intellij.openapi.util.Disposer.register(this, configLoader)
+        // B1: the loader is an APP-wide singleton — its disposal is owned by the app-level
+        // AgentConfigLoaderLifecycle service (instantiating it registers platform disposal),
+        // NOT by this project-scoped service. A project close must not kill other projects' configs.
+        com.intellij.openapi.application.ApplicationManager.getApplication()
+            .getService(com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoaderLifecycle::class.java)
 
         // Task 5.2 — Silent kill-all of background processes on project close.
         // Best-effort: any failure is logged, never thrown, so IDE shutdown is not blocked.
