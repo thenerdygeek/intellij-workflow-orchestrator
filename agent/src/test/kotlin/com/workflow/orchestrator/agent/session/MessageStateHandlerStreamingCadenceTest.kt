@@ -133,6 +133,78 @@ class MessageStateHandlerStreamingCadenceTest {
     }
 
     @Test
+    fun `api history writes are coalesced within a burst and flushed by saveBoth`(
+        @TempDir dir: File,
+    ) = runBlocking {
+        var now = 10_000L
+        val h = handlerWithClock(dir) { now }
+        h.addToApiConversationHistory(apiMsg(10L, tokensIn = 1, tokensOut = 1, cost = 0.1, modelId = "m"))
+        // First append writes (window starts unstamped) and stamps the 1s window at 10_000.
+
+        now = 10_300L
+        h.addToApiConversationHistory(apiMsg(20L, tokensIn = 1, tokensOut = 1, cost = 0.1, modelId = "m"))
+        now = 10_600L
+        h.addToApiConversationHistory(apiMsg(30L, tokensIn = 1, tokensOut = 1, cost = 0.1, modelId = "m"))
+
+        assertEquals(3, h.getApiConversationHistory().size, "memory must be current")
+        val onDiskMidBurst = MessageStateHandler.loadApiHistory(File(dir, "sessions/cadence-test"))
+        assertEquals(1, onDiskMidBurst.size, "P1-1: appends inside the 1s window must NOT rewrite the file")
+
+        h.saveBoth()
+        val onDiskAfterFlush = MessageStateHandler.loadApiHistory(File(dir, "sessions/cadence-test"))
+        assertEquals(3, onDiskAfterFlush.size, "saveBoth must flush the coalesced appends")
+    }
+
+    @Test
+    fun `bulk rewrites are immediate and flush pending appends`(@TempDir dir: File) = runBlocking {
+        var now = 10_000L
+        val h = handlerWithClock(dir) { now }
+        h.addToApiConversationHistory(apiMsg(10L, tokensIn = 1, tokensOut = 1, cost = 0.1, modelId = "m"))
+        now = 10_200L
+        h.addToApiConversationHistory(apiMsg(20L, tokensIn = 1, tokensOut = 1, cost = 0.1, modelId = "m"))
+        assertEquals(
+            1,
+            MessageStateHandler.loadApiHistory(File(dir, "sessions/cadence-test")).size,
+            "precondition: second append coalesced",
+        )
+
+        // Bulk rewrite — must hit disk immediately, no saveBoth needed, carrying the pending append.
+        h.truncateMessagesAtTs(targetMessageTs = 100L, droppedApiCount = 0)
+        val onDisk = MessageStateHandler.loadApiHistory(File(dir, "sessions/cadence-test"))
+        assertEquals(2, onDisk.size, "P1-1: bulk rewrite must be immediate and include the coalesced append")
+    }
+
+    @Test
+    fun `next append past the window flushes the earlier coalesced one`(@TempDir dir: File) = runBlocking {
+        var now = 10_000L
+        val h = handlerWithClock(dir) { now }
+        h.addToApiConversationHistory(apiMsg(10L, tokensIn = 1, tokensOut = 1, cost = 0.1, modelId = "m"))
+        now = 10_500L
+        // inside the window → coalesced
+        h.addToApiConversationHistory(apiMsg(20L, tokensIn = 1, tokensOut = 1, cost = 0.1, modelId = "m"))
+        now = 11_100L
+        // past the window → writes the whole current list
+        h.addToApiConversationHistory(apiMsg(30L, tokensIn = 1, tokensOut = 1, cost = 0.1, modelId = "m"))
+
+        val onDisk = MessageStateHandler.loadApiHistory(File(dir, "sessions/cadence-test"))
+        assertEquals(3, onDisk.size, "P1-1: a past-window append must write the whole current list")
+    }
+
+    @Test
+    fun `api append with clean global index does not rewrite sessions json`(@TempDir dir: File) = runBlocking {
+        var now = 10_000L
+        val h = handlerWithClock(dir) { now }
+        h.addToClineMessages(partialMsg(1L, "a")) // writes the index, globalIndexDirty stays false
+        val indexBefore = File(dir, "sessions.json").readText()
+
+        now = 10_100L
+        h.addToApiConversationHistory(apiMsg(10L, tokensIn = 1, tokensOut = 1, cost = 0.1, modelId = "m"))
+
+        val indexAfter = File(dir, "sessions.json").readText()
+        assertEquals(indexBefore, indexAfter, "B15 negative cadence: a clean index must NOT be rewritten on append")
+    }
+
+    @Test
     fun `concurrent snapshot reads during mutation do not throw`(@TempDir dir: File) = runBlocking {
         val h = handler(dir)
         h.addToClineMessages(partialMsg(1L, "x"))
