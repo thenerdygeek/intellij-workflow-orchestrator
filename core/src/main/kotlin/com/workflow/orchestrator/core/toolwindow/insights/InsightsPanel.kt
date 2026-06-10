@@ -45,6 +45,8 @@ class InsightsPanel(
         addTab("Reliability", reliabilityPanel)
     }
 
+    @Volatile private var lastApplied: InsightsSnapshot? = null
+
     private val poller = SmartPoller(
         name = "insights",
         baseIntervalMs = 30_000,
@@ -52,8 +54,12 @@ class InsightsPanel(
         scope = scope,
         action = {
             val snapshot = loadSnapshot()
-            invokeLater { applySnapshot(snapshot) }
-            true
+            val changed = snapshot != lastApplied
+            if (changed) {
+                lastApplied = snapshot
+                invokeLater { applySnapshot(snapshot) }
+            }
+            changed   // real signal: backoff decays to 300s while nothing changes
         }
     )
 
@@ -67,6 +73,7 @@ class InsightsPanel(
             eventBus.events.collect { event ->
                 if (event is WorkflowEvent.TaskChanged) {
                     val snapshot = loadSnapshot()
+                    lastApplied = snapshot
                     invokeLater { applySnapshot(snapshot) }
                 }
             }
@@ -82,6 +89,7 @@ class InsightsPanel(
     fun refresh() {
         scope.launch {
             val snapshot = loadSnapshot()
+            lastApplied = snapshot
             invokeLater { applySnapshot(snapshot) }
         }
     }
@@ -96,10 +104,8 @@ class InsightsPanel(
     }
 
     private fun loadSnapshot(): InsightsSnapshot {
-        val today = service.getTodayStats()
-        val week = service.getWeekStats()
-        val all = service.getSessions()
-        return InsightsSnapshot(today, week, all)
+        val overview = service.getOverview()
+        return InsightsSnapshot(overview.today, overview.week, overview.sessions)
     }
 
     private fun applySnapshot(snapshot: InsightsSnapshot) {
