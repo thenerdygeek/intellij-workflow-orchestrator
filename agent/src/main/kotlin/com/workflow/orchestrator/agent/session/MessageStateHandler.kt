@@ -36,7 +36,7 @@ class MessageStateHandler(
     private val baseDir: File,
     val sessionId: String,
     val taskText: String,
-    /** Clock seam for the partial-save throttle (deterministic tests); production default. */
+    /** Clock seam for the partial-save + global-index throttles (deterministic tests); production default. */
     private val uiSaveClock: () -> Long = { System.currentTimeMillis() },
 ) {
     private val mutex = Mutex()
@@ -73,6 +73,15 @@ class MessageStateHandler(
 
     /** P0-1: throttle PARTIAL streaming UI saves to one disk write per window; memory stays authoritative. */
     @Volatile private var lastUiSaveMs = 0L
+
+    /** P1-4: running totals for the global index — incremental on append, recomputed on bulk rewrites. */
+    @Volatile private var totalTokensInCached = 0L
+
+    @Volatile private var totalTokensOutCached = 0L
+
+    @Volatile private var totalCostCached = 0.0
+
+    @Volatile private var lastModelIdCached: String? = null
 
     /**
      * B3: guards the two mutable lists for non-suspend snapshot readers. The getters take
@@ -208,7 +217,31 @@ class MessageStateHandler(
         synchronized(stateLock) {
             apiHistory.add(message)
         }
+        accumulateMetrics(message)
         saveApiHistoryInternal()
+        // B15: a throttled-skipped index update must not strand stale data until saveBoth —
+        // API turns are seconds apart, making this the natural boundary flush (P1-4 cadence).
+        if (globalIndexDirty) {
+            updateGlobalIndex()
+            lastGlobalIndexUpdateMs = uiSaveClock()
+            globalIndexDirty = false
+        }
+    }
+
+    /** P1-4: O(1) counter update for the append path; bulk rewrites use [recomputeMetricsFromHistory]. */
+    private fun accumulateMetrics(message: ApiMessage) {
+        totalTokensInCached += (message.metrics?.inputTokens ?: 0).toLong()
+        totalTokensOutCached += (message.metrics?.outputTokens ?: 0).toLong()
+        totalCostCached += message.metrics?.cost ?: 0.0
+        message.modelInfo?.modelId?.let { lastModelIdCached = it }
+    }
+
+    /** Recompute from scratch after any bulk rewrite (overwrite/truncate/prune/collapse/init). */
+    private fun recomputeMetricsFromHistory() {
+        totalTokensInCached = apiHistory.sumOf { (it.metrics?.inputTokens ?: 0).toLong() }
+        totalTokensOutCached = apiHistory.sumOf { (it.metrics?.outputTokens ?: 0).toLong() }
+        totalCostCached = apiHistory.sumOf { it.metrics?.cost ?: 0.0 }
+        lastModelIdCached = apiHistory.lastOrNull { it.modelInfo != null }?.modelInfo?.modelId
     }
 
     /**
@@ -228,6 +261,7 @@ class MessageStateHandler(
             }
         }
         if (removed > 0) {
+            recomputeMetricsFromHistory()
             saveApiHistoryInternal()
         }
         removed
@@ -320,6 +354,7 @@ class MessageStateHandler(
             apiHistory.clear()
             apiHistory.addAll(messages)
         }
+        recomputeMetricsFromHistory()
         saveApiHistoryInternal()
     }
 
@@ -393,6 +428,7 @@ class MessageStateHandler(
             apiHistory.removeAt(apiHistory.size - 1)  // assistant w/ ToolUse
             apiHistory.add(replacement)
         }
+        recomputeMetricsFromHistory()
         saveApiHistoryInternal()
         true
     }
@@ -452,6 +488,7 @@ class MessageStateHandler(
             apiHistory.clear()
             apiHistory.addAll(keptApi)
         }
+        recomputeMetricsFromHistory()
 
         saveInternal()
         saveApiHistoryInternal()
@@ -558,6 +595,7 @@ class MessageStateHandler(
             apiHistory.clear()
             apiHistory.addAll(messages)
         }
+        recomputeMetricsFromHistory()
     }
 
     private suspend fun saveInternal() {
@@ -567,7 +605,7 @@ class MessageStateHandler(
             uiMessagesFile,
             json.encodeToString(synchronized(stateLock) { uiMessages.toList() }),
         )
-        val now = System.currentTimeMillis()
+        val now = uiSaveClock()
         if (now - lastGlobalIndexUpdateMs >= globalIndexThrottleMs) {
             updateGlobalIndex()
             lastGlobalIndexUpdateMs = now
@@ -629,7 +667,7 @@ class MessageStateHandler(
         // Flush any throttled global index update
         if (globalIndexDirty) {
             updateGlobalIndex()
-            lastGlobalIndexUpdateMs = System.currentTimeMillis()
+            lastGlobalIndexUpdateMs = uiSaveClock()
             globalIndexDirty = false
         }
     }
@@ -642,29 +680,20 @@ class MessageStateHandler(
         // happen separately) — only the index entry is suppressed.
         if (sessionId.contains('/')) return@withLock
 
-        // B3: snapshot all five list-derived values under stateLock in one block so the
-        // index build can't observe a mid-mutation list from the lock-free getters' peer.
-        val totalTokensIn: Int
-        val totalTokensOut: Int
-        val totalCost: Double
-        val lastModel: String?
-        val lastUiTs: Long?
-        synchronized(stateLock) {
-            totalTokensIn = apiHistory.sumOf { it.metrics?.inputTokens ?: 0 }
-            totalTokensOut = apiHistory.sumOf { it.metrics?.outputTokens ?: 0 }
-            totalCost = apiHistory.sumOf { it.metrics?.cost ?: 0.0 }
-            lastModel = apiHistory.lastOrNull { it.modelInfo != null }?.modelInfo?.modelId
-            lastUiTs = uiMessages.lastOrNull()?.ts
-        }
+        // P1-4: token/cost/model values come from the incrementally-maintained counters
+        // (O(1) per index write instead of three O(history) sumOf passes). Counter writes
+        // happen under the session mutex, which every caller of this method also holds.
+        // B3: only the UI timestamp still needs a list read, snapshotted under stateLock.
+        val lastUiTs: Long? = synchronized(stateLock) { uiMessages.lastOrNull()?.ts }
 
         val item = HistoryItem(
             id = sessionId,
             ts = lastUiTs ?: System.currentTimeMillis(),
             task = taskText.take(200),
-            tokensIn = totalTokensIn.toLong(),
-            tokensOut = totalTokensOut.toLong(),
-            totalCost = totalCost,
-            modelId = lastModel,
+            tokensIn = totalTokensInCached,
+            tokensOut = totalTokensOutCached,
+            totalCost = totalCostCached,
+            modelId = lastModelIdCached,
             planModeEnabled = sessionPlanModeEnabled,
             // F2: thread delegation metadata into the index entry so sessions.json
             // carries the delegation marker without a secondary delegation.json read.
