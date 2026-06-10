@@ -568,10 +568,21 @@ class AgentConfigLoader private constructor() : Disposable {
 
         @JvmStatic
         fun getInstance(): AgentConfigLoader {
-            return instance ?: synchronized(this) {
-                instance ?: AgentConfigLoader().also { instance = it }
+            val current = instance
+            if (current != null && !current.disposed.get()) return current
+            return synchronized(this) {
+                val cur = instance
+                // B1: a project-scoped Disposer used to dispose this app-wide singleton on the
+                // first project close, permanently killing persona configs for every other
+                // project. A disposed instance is now replaced with a fresh one.
+                if (cur != null && !cur.disposed.get()) cur
+                else AgentConfigLoader().also { instance = it }
             }
         }
+
+        /** Current instance WITHOUT creating one — for app-shutdown disposal only. */
+        @JvmStatic
+        internal fun getInstanceIfCreated(): AgentConfigLoader? = instance
 
         /**
          * Reset the singleton for test isolation. Disposes the existing instance.
