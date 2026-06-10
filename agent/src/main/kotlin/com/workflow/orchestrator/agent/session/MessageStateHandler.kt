@@ -36,7 +36,7 @@ class MessageStateHandler(
     private val baseDir: File,
     val sessionId: String,
     val taskText: String,
-    /** Clock seam for the partial-save + global-index throttles (deterministic tests); production default. */
+    /** Clock seam for the partial-save + api-save + global-index throttles (deterministic tests); production default. */
     private val uiSaveClock: () -> Long = { System.currentTimeMillis() },
 ) {
     private val mutex = Mutex()
@@ -76,8 +76,6 @@ class MessageStateHandler(
 
     /** P1-1: coalesce per-message full-file api-history rewrites within a burst; flushed at every boundary. */
     @Volatile private var lastApiSaveMs = 0L
-
-    @Volatile private var apiDirty = false
 
     /** P1-4: running totals for the global index — incremental on append, recomputed on bulk rewrites. */
     @Volatile private var totalTokensInCached = 0L
@@ -236,10 +234,10 @@ class MessageStateHandler(
      * path already tolerates a trailing truncated exchange.
      */
     private fun saveApiHistoryThrottled() {
+        // Skipped windows need no dirty flag: every save rewrites the WHOLE list, so the
+        // next boundary (past-window append, any bulk rewrite, or saveBoth) self-heals.
         if (uiSaveClock() - lastApiSaveMs >= API_SAVE_THROTTLE_MS) {
             saveApiHistoryInternal()
-        } else {
-            apiDirty = true
         }
     }
 
@@ -645,7 +643,6 @@ class MessageStateHandler(
         // P1-1: every full-file write stamps the coalescing window and clears any pending
         // dirty state — bulk-rewrite callers therefore stay immediate AND flush for free.
         lastApiSaveMs = uiSaveClock()
-        apiDirty = false
         sessionDir.mkdirs()
         // Phase 4: emit v2 wrapper { schemaVersion: 2, messages: [...] }.
         // Reader (loadApiHistory) tries this shape first and falls back to the
