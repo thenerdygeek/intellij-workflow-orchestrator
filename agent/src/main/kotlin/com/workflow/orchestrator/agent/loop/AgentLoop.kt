@@ -1027,8 +1027,10 @@ class AgentLoop(
                     // Conditional re-parse: skip when no XML structural character in chunk
                     val needsParse = cachedBlocks == null || text.contains('<') || text.contains('>')
                     val blocks = if (needsParse) {
+                        // Zero-copy: parse takes CharSequence — no full-buffer String copy
+                        // per re-parse (P1-2, plan Wave2-T4).
                         AssistantMessageParser.parse(
-                            accumulatedText.toString(),
+                            accumulatedText,
                             currentToolNames,
                             currentParamNames
                         ).also { cachedBlocks = it }
@@ -1090,7 +1092,7 @@ class AgentLoop(
                         // "<read" and ">" is appended verbatim to the visible stream because
                         // it has no `<` or `>` to force a re-parse, and the leading "<read"
                         // was already stripped by stripPartialTag().
-                        val endsInIncompleteTag = AssistantMessageParser.endsWithIncompleteTag(accumulatedText.toString())
+                        val endsInIncompleteTag = AssistantMessageParser.endsWithIncompleteTag(accumulatedText)
                         if (hasPendingTool || endsInIncompleteTag) {
                             cachedStrippedText  // tool tag in flight — don't leak its body to the display
                         } else {
@@ -1109,7 +1111,10 @@ class AgentLoop(
                     }
 
                     // Persist streaming text to ui_messages.json (C3 fix — awaited inline, NOT in launch{}).
-                    // First chunk: add partial message. Subsequent: update in-place.
+                    // First chunk: add partial message. Subsequent: update in-place — persistence
+                    // is atomic + throttled inside the handler (B17/P0-1, plan Wave2-T1/T4): the
+                    // last-partial index is resolved under the handler's mutex (no snapshot race)
+                    // and disk writes are throttled mid-stream.
                     // Use stripped text (partial XML tags removed), NOT raw accumulatedText.
                     // The raw text includes XML tool call tags which would show as raw XML on resume.
                     // Use `stripped` (always up-to-date) rather than `visibleText` (stale on skip-parse path).
@@ -1125,11 +1130,7 @@ class AgentLoop(
                             ))
                             isFirstStreamChunk = false
                         } else {
-                            val msgs = handler.getClineMessages()
-                            val lastIdx = msgs.lastIndex
-                            if (lastIdx >= 0 && msgs[lastIdx].partial) {
-                                handler.updateClineMessage(lastIdx, msgs[lastIdx].copy(text = persistText))
-                            }
+                            handler.updateLastPartialMessage(persistText)
                         }
                     }
 
@@ -2506,8 +2507,10 @@ class AgentLoop(
     private fun filesModifiedList(): List<String> = modifiedFiles.toList()
 
     /** Build a Failed result with current loop tracking state. */
-    private fun makeFailed(error: String, iterations: Int, reason: FailureReason): LoopResult.Failed {
+    private suspend fun makeFailed(error: String, iterations: Int, reason: FailureReason): LoopResult.Failed {
         promoteSteeringQueueOnFailure()
+        // W2-T3 follow-up: failure exits had no terminal flush — close the ≤1s trailing-append window.
+        runCatching { messageStateHandler?.saveBoth() }
         return LoopResult.Failed(
             error = error,
             reason = reason,
