@@ -1299,11 +1299,10 @@ class AgentLoop(
                                 "errorType" to apiResult.type.name,
                                 "path" to "L2",
                             ))
-                            return LoopResult.Failed(
-                                error = msg,
-                                reason = FailureReason.API_ERROR,
-                                iterations = iteration,
-                            )
+                            // W2-T4 review: route through makeFailed so this exit gains the
+                            // steering-pill promotion, terminal flush, and loop-stat fields
+                            // every other failure exit carries.
+                            return makeFailed(msg, iteration, FailureReason.API_ERROR)
                         }
                         l2TierIdx = nextIdx
                         val oldModel = brain.modelId
@@ -2523,7 +2522,15 @@ class AgentLoop(
     private suspend fun makeFailed(error: String, iterations: Int, reason: FailureReason): LoopResult.Failed {
         promoteSteeringQueueOnFailure()
         // W2-T3 follow-up: failure exits had no terminal flush — close the ≤1s trailing-append window.
-        runCatching { messageStateHandler?.saveBoth() }
+        // Best-effort: a flush failure must not mask the original failure result, but
+        // cancellation must propagate (repo CE-hygiene convention).
+        try {
+            messageStateHandler?.saveBoth()
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            // best-effort terminal flush
+        }
         return LoopResult.Failed(
             error = error,
             reason = reason,
