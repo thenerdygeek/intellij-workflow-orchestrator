@@ -42,4 +42,15 @@ class AtomicFileWriterTest {
         AtomicFileWriter.write(target, "deep")
         assertEquals("deep", target.readText())
     }
+
+    @Test
+    fun `multi-line unicode content round-trips byte-exact through the channel write`() {
+        // B18: the write path moved from Files.newOutputStream to FileChannel + force(true)
+        // so bytes hit the device before the atomic rename. fsync itself isn't unit-assertable;
+        // this pins the content round-trip through the new channel-based path.
+        val target = File(tempDir.toFile(), "test.json")
+        val content = "line one\nümlaut — émoji 🚀\n{\"key\":\"value\"}\n"
+        AtomicFileWriter.write(target, content)
+        assertEquals(content, target.readText(Charsets.UTF_8))
+    }
 }
