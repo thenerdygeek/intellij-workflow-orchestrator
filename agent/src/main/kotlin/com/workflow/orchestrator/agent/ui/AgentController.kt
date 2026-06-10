@@ -4148,6 +4148,9 @@ class AgentController(
     fun showSession(sessionId: String) {
         LOG.info("AgentController.showSession: $sessionId (view-only)")
 
+        // ── EDT phase 1: dialog decisions + cheap state flips BEFORE the expensive load ──
+        // killBackgroundsOnTransition may show a modal confirmation, which must stay on EDT
+        // and must resolve before we commit to switching sessions.
         val leaving = currentSessionId
         if (leaving != null && leaving != sessionId) {
             if (!killBackgroundsOnTransition(leaving, "Switching sessions")) return
@@ -4162,43 +4165,67 @@ class AgentController(
         viewedSessionId = sessionId
 
         val basePath = project.basePath ?: System.getProperty("user.home")
-        val sessionDir = java.io.File(ProjectIdentifier.agentDir(basePath), "sessions/$sessionId")
-        if (!sessionDir.exists()) {
-            LOG.warn("AgentController.showSession: session dir not found for $sessionId")
-            return
+
+        // ── IO phase: disk read + JSON decode + re-encode of a potentially multi-MB
+        // ui_messages.json. P0-7: this ran synchronously in the EDT bridge handler and
+        // froze the UI on every History click. Mirrors showHistory(): load + serialize on
+        // Dispatchers.IO, push on EDT via invokeLater.
+        controllerScope.launch(Dispatchers.IO + CoroutineName("AgentController.showSession")) {
+            val sessionDir = java.io.File(ProjectIdentifier.agentDir(basePath), "sessions/$sessionId")
+            if (!sessionDir.exists()) {
+                LOG.warn("AgentController.showSession: session dir not found for $sessionId")
+                return@launch
+            }
+
+            // Load UI messages from disk
+            val savedUiMessages = MessageStateHandler.loadUiMessages(sessionDir)
+            if (savedUiMessages.isEmpty()) {
+                LOG.warn("AgentController.showSession: no ui messages for $sessionId")
+                return@launch
+            }
+
+            // Trim trailing resume markers
+            val trimmed = ResumeHelper.trimResumeMessages(savedUiMessages)
+
+            // Determine if this session was already completed
+            val isCompleted = ResumeHelper.determineResumeAskType(trimmed) == UiAsk.RESUME_COMPLETED_TASK
+
+            // Serialize off-EDT too — the encode is as heavy as the load for big sessions.
+            val (messagesJson, tasksJson) = encodeStateForWebview(trimmed)
+
+            // ── EDT phase 2: push to the webview ──
+            invokeLater {
+                // Stale-click guard: the user may have clicked another session (or started a
+                // new chat) while this one was loading — drop the late push instead of
+                // stomping the newer view.
+                if (viewedSessionId != sessionId) return@invokeLater
+
+                // Push messages to webview (switches to chat view and shows conversation)
+                dashboard.reset()
+                pushStateToWebview(messagesJson, tasksJson)
+                dashboard.showChatView()
+                dashboard.setBusy(false)
+                dashboard.setInputLocked(false)
+
+                // Show the resume bar if the session is resumable (not completed)
+                if (!isCompleted) {
+                    dashboard.showResumeBar(sessionId)
+                }
+
+                refreshDelegationQuestionBanner(sessionId)
+            }
         }
+    }
 
-        // Load UI messages from disk
-        val savedUiMessages = MessageStateHandler.loadUiMessages(sessionDir)
-        if (savedUiMessages.isEmpty()) {
-            LOG.warn("AgentController.showSession: no ui messages for $sessionId")
-            return
-        }
-
-        // Trim trailing resume markers
-        val trimmed = ResumeHelper.trimResumeMessages(savedUiMessages)
-
-        // Determine if this session was already completed
-        val isCompleted = ResumeHelper.determineResumeAskType(trimmed) == UiAsk.RESUME_COMPLETED_TASK
-
-        // Push messages to webview (switches to chat view and shows conversation)
-        dashboard.reset()
-        postStateToWebview(trimmed)
-        dashboard.showChatView()
-        dashboard.setBusy(false)
-        dashboard.setInputLocked(false)
-
-        // Show the resume bar if the session is resumable (not completed)
-        if (!isCompleted) {
-            dashboard.showResumeBar(sessionId)
-        }
-
-        // M2 fix: re-push delegation-question-pending banner state when the user navigates
-        // to a delegated session. The banner state is normally pushed in
-        // DelegationInboundService.routeQuestion / deliverAnswer, but if the question was
-        // raised while the user was viewing a different session the push was silently skipped
-        // (pushDelegationQuestionPending gates on viewedSessionId == sessionId, which was
-        // not true at question-raise time). We re-check here after viewedSessionId is set.
+    /**
+     * M2 fix: re-push delegation-question-pending banner state when the user navigates
+     * to a delegated session. The banner state is normally pushed in
+     * DelegationInboundService.routeQuestion / deliverAnswer, but if the question was
+     * raised while the user was viewing a different session the push was silently skipped
+     * (pushDelegationQuestionPending gates on viewedSessionId == sessionId, which was
+     * not true at question-raise time). We re-check here after viewedSessionId is set.
+     */
+    private fun refreshDelegationQuestionBanner(sessionId: String) {
         try {
             val inboundService = project.getService(
                 com.workflow.orchestrator.agent.delegation.DelegationInboundService::class.java
@@ -4388,12 +4415,26 @@ class AgentController(
      * active (task store unavailable) an empty array is sent to clear any stale UI state.
      */
     fun postStateToWebview(uiMessages: List<UiMessage>) {
+        val (messagesJson, tasksJson) = encodeStateForWebview(uiMessages)
+        pushStateToWebview(messagesJson, tasksJson)
+    }
+
+    /**
+     * Serialize the session-state payloads for [pushStateToWebview]. Thread-agnostic and
+     * potentially expensive (multi-MB JSON encode for long sessions) — callers on a hot
+     * path (P0-7: [showSession]) run this on Dispatchers.IO and push the result on EDT.
+     */
+    private fun encodeStateForWebview(uiMessages: List<UiMessage>): Pair<String, String> {
         val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
         val messagesJson = json.encodeToString(uiMessages)
-        dashboard.loadSessionState(messagesJson)
-
         val tasks = service.currentTaskStore()?.listTasks().orEmpty()
         val tasksJson = taskEventJson.encodeToString(tasks)
+        return messagesJson to tasksJson
+    }
+
+    /** Push pre-serialized session state to the webview. Cheap; call from EDT. */
+    private fun pushStateToWebview(messagesJson: String, tasksJson: String) {
+        dashboard.loadSessionState(messagesJson)
         dashboard.setTasks(tasksJson)
     }
 
