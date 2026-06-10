@@ -25,6 +25,14 @@ class MessageStateHandlerStreamingCadenceTest {
         partial = true,
     )
 
+    private fun apiMsg(ts: Long, tokensIn: Int, tokensOut: Int, cost: Double, modelId: String) = ApiMessage(
+        role = ApiRole.ASSISTANT,
+        content = listOf(ContentBlock.Text("assistant turn at ts=$ts")),
+        ts = ts,
+        modelInfo = ModelInfo(modelId = modelId),
+        metrics = ApiRequestMetrics(inputTokens = tokensIn, outputTokens = tokensOut, cost = cost),
+    )
+
     @Test
     fun `updateLastPartialMessage updates memory immediately but throttles disk writes`(
         @TempDir dir: File,
@@ -65,6 +73,63 @@ class MessageStateHandlerStreamingCadenceTest {
         h.addToClineMessages(partialMsg(1L, "streaming").copy(partial = false))
         h.updateLastPartialMessage("should not land")
         assertEquals("streaming", h.getClineMessages().last().text)
+    }
+
+    @Test
+    fun `global index token totals are correct after append, truncate, and overwrite`(
+        @TempDir dir: File,
+    ) = runBlocking {
+        val h = handler(dir)
+        h.addToApiConversationHistory(apiMsg(10L, tokensIn = 100, tokensOut = 10, cost = 1.0, modelId = "model-a"))
+        h.addToApiConversationHistory(apiMsg(20L, tokensIn = 200, tokensOut = 20, cost = 2.0, modelId = "model-b"))
+        h.addToApiConversationHistory(apiMsg(30L, tokensIn = 300, tokensOut = 30, cost = 4.0, modelId = "model-c"))
+        h.saveBoth()
+        val afterAppend = MessageStateHandler.loadGlobalIndex(dir).first()
+        assertEquals(600L, afterAppend.tokensIn)
+        assertEquals(60L, afterAppend.tokensOut)
+        assertEquals(7.0, afterAppend.totalCost, 1e-9)
+        assertEquals("model-c", afterAppend.modelId)
+
+        // No UI messages have ts >= 25, so only the trailing api entry (ts=30) is dropped.
+        h.truncateMessagesAtTs(targetMessageTs = 25L, droppedApiCount = 1)
+        h.saveBoth()
+        val afterTruncate = MessageStateHandler.loadGlobalIndex(dir).first()
+        assertEquals(300L, afterTruncate.tokensIn, "P1-4: truncate must recompute, not keep stale counters")
+        assertEquals(30L, afterTruncate.tokensOut)
+        assertEquals(3.0, afterTruncate.totalCost, 1e-9)
+        assertEquals("model-b", afterTruncate.modelId)
+
+        h.overwriteApiConversationHistory(
+            listOf(apiMsg(40L, tokensIn = 50, tokensOut = 5, cost = 0.25, modelId = "model-d")),
+        )
+        h.saveBoth()
+        val afterOverwrite = MessageStateHandler.loadGlobalIndex(dir).first()
+        assertEquals(50L, afterOverwrite.tokensIn, "P1-4: overwrite must recompute, not keep stale counters")
+        assertEquals(5L, afterOverwrite.tokensOut)
+        assertEquals(0.25, afterOverwrite.totalCost, 1e-9)
+        assertEquals("model-d", afterOverwrite.modelId)
+    }
+
+    @Test
+    fun `global index is fresh after addToApiConversationHistory inside the throttle window`(
+        @TempDir dir: File,
+    ) = runBlocking {
+        var now = 10_000L
+        val h = handlerWithClock(dir) { now }
+        h.addToClineMessages(partialMsg(1L, "a")) // first save → index written, throttle window stamped at 10_000
+
+        now = 10_700L // inside the 1s index throttle window
+        h.addToClineMessages(partialMsg(2L, "b")) // index write skipped → globalIndexDirty = true
+
+        // B15: the API append is the turn boundary — it must flush the dirty index immediately,
+        // WITHOUT waiting for a later saveBoth().
+        h.addToApiConversationHistory(apiMsg(30L, tokensIn = 100, tokensOut = 10, cost = 1.0, modelId = "model-a"))
+
+        val item = MessageStateHandler.loadGlobalIndex(dir).first()
+        assertEquals(100L, item.tokensIn, "B15: throttled-skipped index update must flush at the API turn boundary")
+        assertEquals(10L, item.tokensOut)
+        assertEquals(1.0, item.totalCost, 1e-9)
+        assertEquals("model-a", item.modelId)
     }
 
     @Test
