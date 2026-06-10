@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -128,6 +129,32 @@ class BackgroundPoolTest {
         assertTrue(received.first().bgId == "bg_super")
         assertTrue(received.first().state == BackgroundState.EXITED)
         pool.stopSupervisorForTest()
+    }
+
+    @Test
+    fun `supervisor is NOT running after construction`() {
+        val freshPool = BackgroundPool(project, poolScope)
+        assertFalse(freshPool.isSupervisorRunning())
+    }
+
+    @Test
+    fun `supervisor starts on first register and stops after last handle completes`() = runBlocking<Unit> {
+        val handle = StateControlledHandle("bg-1", "session-1")
+        pool.register("session-1", handle)
+        assertTrue(pool.isSupervisorRunning(), "supervisor must be running after first register")
+
+        // Flip to a terminal state so tick() detects completion and removes the handle.
+        handle.markExited(exitCode = 0)
+
+        // Switch to tight-poll cadence (50ms) and wait for supervisor to self-stop.
+        pool.stopSupervisor()
+        pool.startSupervisorForTest()
+        val deadline = System.currentTimeMillis() + 5_000
+        while (pool.isSupervisorRunning() && System.currentTimeMillis() < deadline) {
+            kotlinx.coroutines.delay(50)
+        }
+        assertFalse(pool.isSupervisorRunning(),
+            "supervisor must have self-stopped once all handles are gone")
     }
 }
 
