@@ -37,6 +37,7 @@ import com.workflow.orchestrator.agent.session.UiSay
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.settings.ToolPreferences
 import com.workflow.orchestrator.agent.observability.HaikuPhraseGenerator
+import com.workflow.orchestrator.agent.observability.PhraseActivityGate
 import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
 import com.workflow.orchestrator.agent.tools.subagent.SubagentExecutionStatus
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
@@ -4995,20 +4996,27 @@ class AgentController(
         // The new prompt contract uses this to decide whether the situation has shifted
         // enough to warrant a new line, or whether (no change) is the honest answer.
         var lastDisplayed: String? = null
+        var lastActivitySig: Int? = null
         phraseTimerJob = controllerScope.launch(Dispatchers.IO) {
             delay(30_000)
             while (isActive) {
                 try {
                     val tools = synchronized(recentToolCalls) { recentToolCalls.toList() }
                     val agentThinking = lastStreamSnippet.takeLast(100)
-                    LOG.info("AgentController: requesting Haiku phrase (${tools.size} recent tools)")
-                    val phrase = HaikuPhraseGenerator.generate(task, tools, agentThinking, lastDisplayed)
-                    if (phrase != null) {
-                        LOG.info("AgentController: got Haiku phrase: $phrase")
-                        lastDisplayed = phrase
-                        invokeLater { dashboard.setSmartWorkingPhrase(phrase) }
+                    val sig = PhraseActivityGate.signature(tools, agentThinking)
+                    if (PhraseActivityGate.shouldGenerate(lastActivitySig, sig)) {
+                        lastActivitySig = sig
+                        LOG.info("AgentController: requesting Haiku phrase (${tools.size} recent tools)")
+                        val phrase = HaikuPhraseGenerator.generate(task, tools, agentThinking, lastDisplayed)
+                        if (phrase != null) {
+                            LOG.info("AgentController: got Haiku phrase: $phrase")
+                            lastDisplayed = phrase
+                            invokeLater { dashboard.setSmartWorkingPhrase(phrase) }
+                        } else {
+                            LOG.info("AgentController: Haiku phrase returned null (no-change or failure)")
+                        }
                     } else {
-                        LOG.info("AgentController: Haiku phrase returned null (no-change or failure)")
+                        LOG.info("AgentController: skipping Haiku phrase — no agent activity since last tick (P1-10 gate)")
                     }
                 } catch (e: Exception) {
                     LOG.warn("AgentController: Haiku phrase timer error: ${e.message}")
