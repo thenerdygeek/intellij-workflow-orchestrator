@@ -21,8 +21,18 @@ object AssistantMessageParser {
      */
     val CODE_CARRYING_PARAMS = setOf("content", "new_string", "old_string", "diff", "code")
 
+    /** Hoisted from [stripPartialTag] — avoids one Regex compile per streaming chunk. */
+    private val TAG_BODY_REGEX = Regex("^[a-zA-Z_]+$")
+
+    /** Hoisted from [endsWithIncompleteTag] — avoids one Regex compile per streaming chunk. */
+    private val INCOMPLETE_TAG_BODY_REGEX = Regex("^[a-zA-Z_0-9]*$")
+
     /**
      * Parse assistant message text into content blocks.
+     *
+     * Takes [CharSequence] so the streaming hot path can pass its accumulating
+     * StringBuilder directly — no full-buffer String copy per re-parse (P1-2).
+     * Block contents are still extracted as String copies (by design).
      *
      * @param text The full accumulated assistant message text
      * @param toolNames Known tool names (used to distinguish tool tags from regular XML)
@@ -30,7 +40,7 @@ object AssistantMessageParser {
      * @return List of content blocks, each with a `partial` flag
      */
     fun parse(
-        text: String,
+        text: CharSequence,
         toolNames: Set<String>,
         paramNames: Set<String>
     ): List<AssistantMessageContent> {
@@ -49,41 +59,51 @@ object AssistantMessageParser {
 
         while (i < text.length) {
             if (currentToolUse == null) {
-                // State 1: Scanning text — looking for tool open tag
-                val matchedTool = matchTagEndingAt(text, i, toolOpenTags)
-                if (matchedTool != null) {
-                    // Capture text before the tool tag
-                    val tagLen = "<${matchedTool}>".length
-                    val textEnd = i - tagLen + 1
-                    if (textEnd > textStart) {
-                        val textContent = text.substring(textStart, textEnd)
-                        if (textContent.isNotBlank()) {
-                            blocks.add(TextContent(content = textContent.trim(), partial = false))
+                // State 1: Scanning text — looking for tool open tag.
+                // '>' gate: every key in toolOpenTags ends with '>' by construction
+                // ("<$it>"), so a tag can only END at a '>' character. When text[i]
+                // is not '>', fall through to the bottom `i++` exactly like the
+                // no-match case (P1-2 — skips ~110 tag tests per non-'>' char).
+                if (text[i] == '>') {
+                    val matchedTool = matchTagEndingAt(text, i, toolOpenTags)
+                    if (matchedTool != null) {
+                        // Capture text before the tool tag
+                        val tagLen = "<${matchedTool}>".length
+                        val textEnd = i - tagLen + 1
+                        if (textEnd > textStart) {
+                            val textContent = text.substring(textStart, textEnd)
+                            if (textContent.isNotBlank()) {
+                                blocks.add(TextContent(content = textContent.trim(), partial = false))
+                            }
                         }
+                        currentToolUse = ToolUseContent(name = matchedTool)
+                        i++
+                        continue
                     }
-                    currentToolUse = ToolUseContent(name = matchedTool)
-                    i++
-                    continue
                 }
             } else if (currentParamName == null) {
-                // State 2: Inside tool, not in param — looking for param open or tool close
-                val matchedParam = matchTagEndingAt(text, i, paramOpenTags)
-                if (matchedParam != null) {
-                    currentParamName = matchedParam
-                    currentParamValueStart = i + 1
-                    i++
-                    continue
-                }
+                // State 2: Inside tool, not in param — looking for param open or tool close.
+                // Same '>' gate as state 1: paramOpenTags/toolCloseTags keys all end
+                // with '>', so a non-'>' char falls through to the bottom `i++`.
+                if (text[i] == '>') {
+                    val matchedParam = matchTagEndingAt(text, i, paramOpenTags)
+                    if (matchedParam != null) {
+                        currentParamName = matchedParam
+                        currentParamValueStart = i + 1
+                        i++
+                        continue
+                    }
 
-                val matchedClose = matchTagEndingAt(text, i, toolCloseTags)
-                if (matchedClose != null && matchedClose == currentToolUse!!.name) {
-                    // Tool complete
-                    currentToolUse!!.partial = false
-                    blocks.add(currentToolUse!!)
-                    currentToolUse = null
-                    textStart = i + 1
-                    i++
-                    continue
+                    val matchedClose = matchTagEndingAt(text, i, toolCloseTags)
+                    if (matchedClose != null && matchedClose == currentToolUse!!.name) {
+                        // Tool complete
+                        currentToolUse!!.partial = false
+                        blocks.add(currentToolUse!!)
+                        currentToolUse = null
+                        textStart = i + 1
+                        i++
+                        continue
+                    }
                 }
             } else {
                 // State 3: Inside param value — looking for param close tag only
@@ -147,7 +167,7 @@ object AssistantMessageParser {
      * Uses backward startsWith matching (ported from Cline).
      */
     private fun matchTagEndingAt(
-        text: String,
+        text: CharSequence,
         endIndex: Int,
         tagMap: Map<String, String>
     ): String? {
@@ -169,17 +189,17 @@ object AssistantMessageParser {
      * Known limitation: "Use the < operator" could be false-positive stripped
      * at a chunk boundary. Accepted trade-off (same as Cline).
      */
-    fun stripPartialTag(text: String): String {
+    fun stripPartialTag(text: CharSequence): String {
         val lastOpen = text.lastIndexOf('<')
-        if (lastOpen == -1) return text
+        if (lastOpen == -1) return text.toString()
         val afterOpen = text.substring(lastOpen)
         if ('>' !in afterOpen) {
             val tagBody = afterOpen.removePrefix("</").removePrefix("<").trim()
-            if (tagBody.isEmpty() || tagBody.matches(Regex("^[a-zA-Z_]+$"))) {
+            if (tagBody.isEmpty() || tagBody.matches(TAG_BODY_REGEX)) {
                 return text.substring(0, lastOpen).trimEnd()
             }
         }
-        return text
+        return text.toString()
     }
 
     /**
@@ -194,12 +214,12 @@ object AssistantMessageParser {
      * appended to the visible stream, leaking the underscore-suffix of the
      * tool name into the assistant bubble.
      */
-    fun endsWithIncompleteTag(text: String): Boolean {
+    fun endsWithIncompleteTag(text: CharSequence): Boolean {
         val lastOpen = text.lastIndexOf('<')
         if (lastOpen == -1) return false
         val afterOpen = text.substring(lastOpen)
         if ('>' in afterOpen) return false
         val body = afterOpen.removePrefix("</").removePrefix("<")
-        return body.isEmpty() || body.matches(Regex("^[a-zA-Z_0-9]*$"))
+        return body.isEmpty() || body.matches(INCOMPLETE_TAG_BODY_REGEX)
     }
 }

@@ -346,6 +346,11 @@ class DelegationTrueContinuationE2ETest {
                 ts = 3L,
             )
         )
+        // P1-1: per-append api-history writes are burst-coalesced (1s window); flush the boundary
+        // explicitly before reading from disk. Production's resume path continues into the agent
+        // loop, whose exit/bulk boundaries perform the equivalent flush. This test's contract is
+        // CONTENT (the follow-up turn lands in persisted history), not write-on-append cadence.
+        handler.saveBoth()
 
         val after = MessageStateHandler.loadApiHistory(sessionDir)
         assertEquals(before + 1, after.size, "the follow-up user turn must grow the persisted api history")

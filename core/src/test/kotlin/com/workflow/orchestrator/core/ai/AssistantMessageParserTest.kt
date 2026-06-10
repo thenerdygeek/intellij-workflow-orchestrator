@@ -474,6 +474,152 @@ println(closeTag)</new_string>
         assertFalse(AssistantMessageParser.endsWithIncompleteTag("Use the < operator with spaces"))
     }
 
+    // ── Zero-copy streaming parse path (Wave 2 Task 4, P1-2) ──────────────
+
+    @Test
+    fun `StringBuilder-typed call parses identically to its String form`() {
+        val raw = """Here's the page I'll generate.
+
+<create_file>
+<path>index.html</path>
+<content><html><body><div>a < b</div></body></html></content>
+</create_file>
+
+Done with the file."""
+        val builder = StringBuilder(raw)
+
+        val fromString = AssistantMessageParser.parse(raw, toolNames, paramNames)
+        val fromBuilder = AssistantMessageParser.parse(builder, toolNames, paramNames)
+
+        assertEquals(fromString.size, fromBuilder.size)
+        for (i in fromString.indices) {
+            val a = fromString[i]
+            val b = fromBuilder[i]
+            when (a) {
+                is TextContent -> {
+                    val bt = b as TextContent
+                    assertEquals(a.content, bt.content)
+                    assertEquals(a.partial, bt.partial)
+                }
+                is ToolUseContent -> {
+                    val bt = b as ToolUseContent
+                    assertEquals(a.name, bt.name)
+                    assertEquals(a.params, bt.params)
+                    assertEquals(a.partial, bt.partial)
+                }
+            }
+        }
+        // Sanity: the case actually exercises prose + tool + code-carrying param with XML.
+        val tool = fromBuilder.filterIsInstance<ToolUseContent>().single()
+        assertEquals("create_file", tool.name)
+        assertTrue(tool.params["content"]!!.contains("</html>"))
+    }
+
+    @Test
+    fun `gt gate - tool call mid-prose produces explicit expected blocks`() {
+        val text = "Reading now.\n\n<read_file>\n<path>src/A.kt</path>\n</read_file>\n\nThat was it."
+        val blocks = AssistantMessageParser.parse(text, toolNames, paramNames)
+
+        assertEquals(3, blocks.size)
+        val pre = blocks[0] as TextContent
+        assertEquals("Reading now.", pre.content)
+        assertFalse(pre.partial)
+        val tool = blocks[1] as ToolUseContent
+        assertEquals("read_file", tool.name)
+        assertEquals(mapOf("path" to "src/A.kt"), tool.params.toMap())
+        assertFalse(tool.partial)
+        val post = blocks[2] as TextContent
+        assertEquals("That was it.", post.content)
+        assertTrue(post.partial)
+    }
+
+    @Test
+    fun `gt gate - nested param-like tags inside code-carrying param produce explicit expected blocks`() {
+        val text = """<edit_file>
+<path>src/B.kt</path>
+<old_string>val x = 1</old_string>
+<new_string>// uses <path>nested/C.kt</path> marker
+val x = 2</new_string>
+</edit_file>"""
+        val blocks = AssistantMessageParser.parse(text, toolNames, paramNames)
+
+        assertEquals(1, blocks.size)
+        val tool = blocks[0] as ToolUseContent
+        assertEquals("edit_file", tool.name)
+        assertEquals("src/B.kt", tool.params["path"])
+        assertEquals("val x = 1", tool.params["old_string"])
+        assertEquals("// uses <path>nested/C.kt</path> marker\nval x = 2", tool.params["new_string"])
+        assertFalse(tool.partial)
+    }
+
+    @Test
+    fun `gt gate - partial tool at end of stream produces explicit expected blocks`() {
+        val text = "Working on it.\n\n<edit_file>\n<path>src/D.kt</path>\n<new_string>fun d() ="
+        val blocks = AssistantMessageParser.parse(text, toolNames, paramNames)
+
+        assertEquals(2, blocks.size)
+        val pre = blocks[0] as TextContent
+        assertEquals("Working on it.", pre.content)
+        assertFalse(pre.partial)
+        val tool = blocks[1] as ToolUseContent
+        assertEquals("edit_file", tool.name)
+        assertEquals("src/D.kt", tool.params["path"])
+        assertEquals("fun d() =", tool.params["new_string"])
+        assertTrue(tool.partial)
+    }
+
+    @Test
+    fun `gt gate - stray angle-bracket comparisons in prose stay one text block`() {
+        val text = "Check that a < b and c > d before merging."
+        val blocks = AssistantMessageParser.parse(text, toolNames, paramNames)
+
+        assertEquals(1, blocks.size)
+        val textBlock = blocks[0] as TextContent
+        assertEquals("Check that a < b and c > d before merging.", textBlock.content)
+        assertTrue(textBlock.partial)
+    }
+
+    @Test
+    fun `gt gate - stray comparisons between two tool calls produce explicit expected blocks`() {
+        val text = "<read_file>\n<path>A.kt</path>\n</read_file>\n\nNote: x < 10 and y > 3 here.\n\n<read_file>\n<path>B.kt</path>\n</read_file>"
+        val blocks = AssistantMessageParser.parse(text, toolNames, paramNames)
+
+        assertEquals(3, blocks.size)
+        val tool1 = blocks[0] as ToolUseContent
+        assertEquals(mapOf("path" to "A.kt"), tool1.params.toMap())
+        assertFalse(tool1.partial)
+        val mid = blocks[1] as TextContent
+        assertEquals("Note: x < 10 and y > 3 here.", mid.content)
+        assertFalse(mid.partial)
+        val tool2 = blocks[2] as ToolUseContent
+        assertEquals(mapOf("path" to "B.kt"), tool2.params.toMap())
+        assertFalse(tool2.partial)
+    }
+
+    @Test
+    fun `stripPartialTag accepts CharSequence and behaves like the String form`() {
+        assertEquals("Hello", AssistantMessageParser.stripPartialTag(StringBuilder("Hello <read_fi")))
+        assertEquals("no tags here", AssistantMessageParser.stripPartialTag(StringBuilder("no tags here")))
+        assertEquals(
+            "complete <read_file> stays",
+            AssistantMessageParser.stripPartialTag(StringBuilder("complete <read_file> stays"))
+        )
+        // Prose-like '<' fragment is not stripped (body isn't tag-shaped).
+        assertEquals(
+            "Use the < operator with spaces",
+            AssistantMessageParser.stripPartialTag(StringBuilder("Use the < operator with spaces"))
+        )
+    }
+
+    @Test
+    fun `endsWithIncompleteTag accepts CharSequence and behaves like the String form`() {
+        assertTrue(AssistantMessageParser.endsWithIncompleteTag(StringBuilder("hello <read_")))
+        assertTrue(AssistantMessageParser.endsWithIncompleteTag(StringBuilder("</clos")))
+        assertFalse(AssistantMessageParser.endsWithIncompleteTag(StringBuilder("hello <read_file>")))
+        assertFalse(AssistantMessageParser.endsWithIncompleteTag(StringBuilder("plain text")))
+        assertFalse(AssistantMessageParser.endsWithIncompleteTag(StringBuilder("Use the < operator with spaces")))
+    }
+
     @Test
     fun `edit_file where new_string contains tool-like XML tags`() {
         // The code being inserted contains XML that looks like tool tags

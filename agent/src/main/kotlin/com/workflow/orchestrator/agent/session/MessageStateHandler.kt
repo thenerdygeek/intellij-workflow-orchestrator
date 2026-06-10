@@ -36,6 +36,8 @@ class MessageStateHandler(
     private val baseDir: File,
     val sessionId: String,
     val taskText: String,
+    /** Clock seam for the partial-save + api-save + global-index throttles (deterministic tests); production default. */
+    private val uiSaveClock: () -> Long = { System.currentTimeMillis() },
 ) {
     private val mutex = Mutex()
     // Delegate to the shared, polymorphic-fallback-enabled Json instance in the
@@ -64,10 +66,32 @@ class MessageStateHandler(
      */
     private val dialectDriftFlag = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    /** Throttle global index updates to at most once per second during streaming. */
+    /** Throttle global index updates to at most once per second during streaming; API turn boundaries flush a dirty index immediately (B15). */
     @Volatile private var lastGlobalIndexUpdateMs = 0L
     @Volatile private var globalIndexDirty = false
     private val globalIndexThrottleMs = 1000L
+
+    /** P0-1: throttle PARTIAL streaming UI saves to one disk write per window; memory stays authoritative. */
+    @Volatile private var lastUiSaveMs = 0L
+
+    /** P1-1: coalesce per-message full-file api-history rewrites within a burst; flushed at every boundary. */
+    @Volatile private var lastApiSaveMs = 0L
+
+    /** P1-4: running totals for the global index — incremental on append, recomputed on bulk rewrites. */
+    @Volatile private var totalTokensInCached = 0L
+
+    @Volatile private var totalTokensOutCached = 0L
+
+    @Volatile private var totalCostCached = 0.0
+
+    @Volatile private var lastModelIdCached: String? = null
+
+    /**
+     * B3: guards the two mutable lists for non-suspend snapshot readers. The getters take
+     * it alone; mutators take it while holding `mutex` — when both are held, stateLock is
+     * always the INNER lock, and no suspend call ever runs under it.
+     */
+    private val stateLock = Any()
 
     /**
      * In-memory plan-mode flag for this session. Written by
@@ -91,14 +115,45 @@ class MessageStateHandler(
     private val apiHistoryFile: File get() = File(sessionDir, "api_conversation_history.json")
     private val globalIndexFile: File get() = File(baseDir, "sessions.json")
 
-    fun getClineMessages(): List<UiMessage> = uiMessages.toList()
-    fun getApiConversationHistory(): List<ApiMessage> = apiHistory.toList()
+    fun getClineMessages(): List<UiMessage> = synchronized(stateLock) { uiMessages.toList() }
+    fun getApiConversationHistory(): List<ApiMessage> = synchronized(stateLock) { apiHistory.toList() }
 
     suspend fun addToClineMessages(message: UiMessage) = mutex.withLock {
         val histIdx = if (apiHistory.isEmpty()) null else apiHistory.size - 1
         val indexed = message.copy(conversationHistoryIndex = histIdx)
-        uiMessages.add(indexed)
+        synchronized(stateLock) {
+            uiMessages.add(indexed)
+        }
         saveInternal()
+    }
+
+    /**
+     * Update the trailing PARTIAL streaming message's text in one atomic step (B17: the
+     * pre-Wave2 AgentLoop caller pattern snapshotted lastIndex outside the lock, so a
+     * concurrent append could land the partial text on the wrong message — the streaming
+     * call site now routes through this method). Disk writes are
+     * throttled (P0-1): the
+     * in-memory list is always current; ui_messages.json lags at most [UI_SAVE_THROTTLE_MS]
+     * mid-stream and is flushed by the next non-partial mutation or [saveBoth].
+     *
+     * No-op when the last message is not partial (e.g. a steering card landed after it) —
+     * same semantics as the old call site.
+     */
+    suspend fun updateLastPartialMessage(text: String) = mutex.withLock {
+        val lastIdx = uiMessages.lastIndex
+        if (lastIdx < 0 || !uiMessages[lastIdx].partial) return@withLock
+        synchronized(stateLock) {
+            uiMessages[lastIdx] = uiMessages[lastIdx].copy(text = text)
+        }
+        saveInternalThrottled()
+    }
+
+    private suspend fun saveInternalThrottled() {
+        // Skipped windows need no dirty flag: every save rewrites the WHOLE list, so the
+        // next non-partial mutation or saveBoth() self-heals any throttled skip.
+        if (uiSaveClock() - lastUiSaveMs >= UI_SAVE_THROTTLE_MS) {
+            saveInternal()
+        }
     }
 
     /**
@@ -108,14 +163,16 @@ class MessageStateHandler(
      */
     suspend fun markDelegationQuestionAnswered(questionId: String) = mutex.withLock {
         var changed = false
-        for (i in uiMessages.indices) {
-            val m = uiMessages[i]
-            val card = m.delegationCardData
-            if (card != null && card.kind == DelegationCardKind.ASKED &&
-                card.questionId == questionId && !card.answered
-            ) {
-                uiMessages[i] = m.copy(delegationCardData = card.copy(answered = true))
-                changed = true
+        synchronized(stateLock) {
+            for (i in uiMessages.indices) {
+                val m = uiMessages[i]
+                val card = m.delegationCardData
+                if (card != null && card.kind == DelegationCardKind.ASKED &&
+                    card.questionId == questionId && !card.answered
+                ) {
+                    uiMessages[i] = m.copy(delegationCardData = card.copy(answered = true))
+                    changed = true
+                }
             }
         }
         if (changed) saveInternal()
@@ -123,14 +180,18 @@ class MessageStateHandler(
 
     suspend fun updateClineMessage(index: Int, updated: UiMessage) = mutex.withLock {
         if (index in uiMessages.indices) {
-            uiMessages[index] = updated
+            synchronized(stateLock) {
+                uiMessages[index] = updated
+            }
             saveInternal()
         }
     }
 
     suspend fun deleteClineMessage(index: Int) = mutex.withLock {
         if (index in uiMessages.indices) {
-            uiMessages.removeAt(index)
+            synchronized(stateLock) {
+                uiMessages.removeAt(index)
+            }
             saveInternal()
         }
     }
@@ -156,8 +217,55 @@ class MessageStateHandler(
             dialectDriftFlag.set(true)
             return@withLock
         }
-        apiHistory.add(message)
-        saveApiHistoryInternal()
+        synchronized(stateLock) {
+            apiHistory.add(message)
+        }
+        accumulateMetrics(message)
+        saveApiHistoryThrottled()
+        // B15: a throttled-skipped index update must not strand stale data until saveBoth —
+        // API turns are seconds apart, making this the natural boundary flush (P1-4 cadence).
+        flushGlobalIndexIfDirty()
+    }
+
+    /**
+     * P1-1: within a tool-result burst, skip the full-file rewrite (the in-memory list is
+     * authoritative); the next boundary — another append past the window, any bulk rewrite,
+     * or [saveBoth] — flushes. Crash window ≤ [API_SAVE_THROTTLE_MS] of api turns; the resume
+     * path already tolerates a trailing truncated exchange.
+     */
+    private fun saveApiHistoryThrottled() {
+        // Skipped windows need no dirty flag: every save rewrites the WHOLE list, so the
+        // next boundary (past-window append, any bulk rewrite, or saveBoth) self-heals.
+        if (uiSaveClock() - lastApiSaveMs >= API_SAVE_THROTTLE_MS) {
+            saveApiHistoryInternal()
+        }
+    }
+
+    /** B15: shared dirty-index boundary flush — called from the API-append boundary and [saveBoth]. */
+    private suspend fun flushGlobalIndexIfDirty() {
+        if (globalIndexDirty) {
+            updateGlobalIndex()
+            lastGlobalIndexUpdateMs = uiSaveClock()
+            globalIndexDirty = false
+        }
+    }
+
+    /** P1-4: O(1) counter update for the append path; bulk rewrites use [recomputeMetricsFromHistory]. */
+    private fun accumulateMetrics(message: ApiMessage) {
+        totalTokensInCached += (message.metrics?.inputTokens ?: 0).toLong()
+        totalTokensOutCached += (message.metrics?.outputTokens ?: 0).toLong()
+        totalCostCached += message.metrics?.cost ?: 0.0
+        message.modelInfo?.modelId?.let { lastModelIdCached = it }
+    }
+
+    /** Recompute from scratch after any bulk rewrite (overwrite/truncate/prune/collapse/init). */
+    private fun recomputeMetricsFromHistory() {
+        totalTokensInCached = apiHistory.sumOf { (it.metrics?.inputTokens ?: 0).toLong() }
+        totalTokensOutCached = apiHistory.sumOf { (it.metrics?.outputTokens ?: 0).toLong() }
+        totalCostCached = apiHistory.sumOf { it.metrics?.cost ?: 0.0 }
+        // Align with accumulateMetrics' `?.let` semantics: skip entries whose modelInfo
+        // is present but carries a null modelId, not just entries with no modelInfo.
+        lastModelIdCached = apiHistory.lastOrNull { it.modelInfo?.modelId != null }?.modelInfo?.modelId
     }
 
     /**
@@ -170,11 +278,14 @@ class MessageStateHandler(
      */
     suspend fun pruneTrailingEmptyAssistants(): Int = mutex.withLock {
         var removed = 0
-        while (apiHistory.isNotEmpty() && isEmptyAssistant(apiHistory.last())) {
-            apiHistory.removeAt(apiHistory.size - 1)
-            removed++
+        synchronized(stateLock) {
+            while (apiHistory.isNotEmpty() && isEmptyAssistant(apiHistory.last())) {
+                apiHistory.removeAt(apiHistory.size - 1)
+                removed++
+            }
         }
         if (removed > 0) {
+            recomputeMetricsFromHistory()
             saveApiHistoryInternal()
         }
         removed
@@ -200,22 +311,24 @@ class MessageStateHandler(
      */
     suspend fun redactDialectXmlInHistory(): Int = mutex.withLock {
         var rewritten = 0
-        for (i in apiHistory.indices) {
-            val msg = apiHistory[i]
-            if (msg.role != ApiRole.ASSISTANT) continue
+        synchronized(stateLock) {
+            for (i in apiHistory.indices) {
+                val msg = apiHistory[i]
+                if (msg.role != ApiRole.ASSISTANT) continue
 
-            var msgChanged = false
-            val newContent = msg.content.map { block ->
-                if (block !is ContentBlock.Text) return@map block
-                val result = DialectDriftDetector.redactDialectMarkers(block.text)
-                if (result.modified) {
-                    msgChanged = true
-                    ContentBlock.Text(result.text)
-                } else block
-            }
-            if (msgChanged) {
-                apiHistory[i] = msg.copy(content = newContent)
-                rewritten++
+                var msgChanged = false
+                val newContent = msg.content.map { block ->
+                    if (block !is ContentBlock.Text) return@map block
+                    val result = DialectDriftDetector.redactDialectMarkers(block.text)
+                    if (result.modified) {
+                        msgChanged = true
+                        ContentBlock.Text(result.text)
+                    } else block
+                }
+                if (msgChanged) {
+                    apiHistory[i] = msg.copy(content = newContent)
+                    rewritten++
+                }
             }
         }
         if (rewritten > 0) {
@@ -261,8 +374,11 @@ class MessageStateHandler(
     }
 
     suspend fun overwriteApiConversationHistory(messages: List<ApiMessage>) = mutex.withLock {
-        apiHistory.clear()
-        apiHistory.addAll(messages)
+        synchronized(stateLock) {
+            apiHistory.clear()
+            apiHistory.addAll(messages)
+        }
+        recomputeMetricsFromHistory()
         saveApiHistoryInternal()
     }
 
@@ -331,9 +447,12 @@ class MessageStateHandler(
         }
         val replacement = penult.copy(content = listOf(ContentBlock.Text(combined)))
 
-        apiHistory.removeAt(apiHistory.size - 1)  // tool result (USER w/ ToolResult)
-        apiHistory.removeAt(apiHistory.size - 1)  // assistant w/ ToolUse
-        apiHistory.add(replacement)
+        synchronized(stateLock) {
+            apiHistory.removeAt(apiHistory.size - 1)  // tool result (USER w/ ToolResult)
+            apiHistory.removeAt(apiHistory.size - 1)  // assistant w/ ToolUse
+            apiHistory.add(replacement)
+        }
+        recomputeMetricsFromHistory()
         saveApiHistoryInternal()
         true
     }
@@ -363,8 +482,10 @@ class MessageStateHandler(
     }
 
     suspend fun overwriteClineMessages(messages: List<UiMessage>) = mutex.withLock {
-        uiMessages.clear()
-        uiMessages.addAll(messages)
+        synchronized(stateLock) {
+            uiMessages.clear()
+            uiMessages.addAll(messages)
+        }
         saveInternal()
     }
 
@@ -380,13 +501,18 @@ class MessageStateHandler(
      */
     suspend fun truncateMessagesAtTs(targetMessageTs: Long, droppedApiCount: Int) = mutex.withLock {
         val keptUi = uiMessages.filter { it.ts < targetMessageTs }
-        uiMessages.clear()
-        uiMessages.addAll(keptUi)
+        synchronized(stateLock) {
+            uiMessages.clear()
+            uiMessages.addAll(keptUi)
+        }
 
         val keepApiCount = (apiHistory.size - droppedApiCount).coerceAtLeast(0)
         val keptApi = apiHistory.take(keepApiCount)
-        apiHistory.clear()
-        apiHistory.addAll(keptApi)
+        synchronized(stateLock) {
+            apiHistory.clear()
+            apiHistory.addAll(keptApi)
+        }
+        recomputeMetricsFromHistory()
 
         saveInternal()
         saveApiHistoryInternal()
@@ -416,12 +542,17 @@ class MessageStateHandler(
             }
             if (idx >= 0) {
                 val msg = apiHistory[idx]
-                apiHistory[idx] = msg.copy(
-                    content = msg.content.map { block ->
-                        if (block is ContentBlock.ToolResult && block.toolUseId == legacyToolUseId) block.copy(content = newContent)
-                        else block
-                    }
-                )
+                synchronized(stateLock) {
+                    apiHistory[idx] = msg.copy(
+                        content = msg.content.map { block ->
+                            if (block is ContentBlock.ToolResult && block.toolUseId == legacyToolUseId) {
+                                block.copy(content = newContent)
+                            } else {
+                                block
+                            }
+                        }
+                    )
+                }
                 saveApiHistoryInternal()
                 return@withLock true
             }
@@ -450,12 +581,14 @@ class MessageStateHandler(
         }
 
         val msg = apiHistory[userIdx]
-        apiHistory[userIdx] = msg.copy(
-            content = msg.content.map { block ->
-                if (block is ContentBlock.ToolResult) block.copy(content = newContent)
-                else block
-            }
-        )
+        synchronized(stateLock) {
+            apiHistory[userIdx] = msg.copy(
+                content = msg.content.map { block ->
+                    if (block is ContentBlock.ToolResult) block.copy(content = newContent)
+                    else block
+                }
+            )
+        }
         saveApiHistoryInternal()
         true
     }
@@ -473,21 +606,30 @@ class MessageStateHandler(
     /** Call ONLY during initialization, before [markPublished] is called. */
     fun setClineMessages(messages: List<UiMessage>) {
         check(!published) { "setClineMessages must only be called during init, before markPublished()" }
-        uiMessages.clear()
-        uiMessages.addAll(messages)
+        synchronized(stateLock) {
+            uiMessages.clear()
+            uiMessages.addAll(messages)
+        }
     }
 
     /** Call ONLY during initialization, before [markPublished] is called. */
     fun setApiConversationHistory(messages: List<ApiMessage>) {
         check(!published) { "setApiConversationHistory must only be called during init, before markPublished()" }
-        apiHistory.clear()
-        apiHistory.addAll(messages)
+        synchronized(stateLock) {
+            apiHistory.clear()
+            apiHistory.addAll(messages)
+        }
+        recomputeMetricsFromHistory()
     }
 
     private suspend fun saveInternal() {
+        lastUiSaveMs = uiSaveClock()
         sessionDir.mkdirs()
-        AtomicFileWriter.write(uiMessagesFile, json.encodeToString(uiMessages))
-        val now = System.currentTimeMillis()
+        AtomicFileWriter.write(
+            uiMessagesFile,
+            json.encodeToString(synchronized(stateLock) { uiMessages.toList() }),
+        )
+        val now = uiSaveClock()
         if (now - lastGlobalIndexUpdateMs >= globalIndexThrottleMs) {
             updateGlobalIndex()
             lastGlobalIndexUpdateMs = now
@@ -498,6 +640,9 @@ class MessageStateHandler(
     }
 
     private fun saveApiHistoryInternal() {
+        // P1-1: every full-file write stamps the coalescing window and clears any pending
+        // dirty state — bulk-rewrite callers therefore stay immediate AND flush for free.
+        lastApiSaveMs = uiSaveClock()
         sessionDir.mkdirs()
         // Phase 4: emit v2 wrapper { schemaVersion: 2, messages: [...] }.
         // Reader (loadApiHistory) tries this shape first and falls back to the
@@ -513,9 +658,11 @@ class MessageStateHandler(
      * up) and immediately rewrites `sessions.json` via the same atomic
      * globalIndexMutex + file-lock path used by all other index mutations.
      *
-     * Safe to call from any coroutine — suspends only on the mutex, no EDT.
+     * Safe to call from any coroutine — suspends on the session mutex (B2: the
+     * index rebuild reads the message lists, so it must hold the same lock as
+     * the list mutators), no EDT.
      */
-    suspend fun updateSessionPlanMode(enabled: Boolean) {
+    suspend fun updateSessionPlanMode(enabled: Boolean) = mutex.withLock {
         sessionPlanModeEnabled = enabled
         // Force a full global index flush so the new value lands on disk now,
         // not just on the next token-update throttle tick.
@@ -532,9 +679,11 @@ class MessageStateHandler(
      * Called by [AgentService.startDelegatedSession] before [executeTask] runs, so
      * the index entry is populated even before the first LLM turn.
      *
-     * Safe to call from any coroutine — suspends only on the mutex, no EDT.
+     * Safe to call from any coroutine — suspends on the session mutex (B2: the
+     * index rebuild reads the message lists, so it must hold the same lock as
+     * the list mutators), no EDT.
      */
-    suspend fun updateSessionDelegationMetadata(metadata: DelegationMetadata) {
+    suspend fun updateSessionDelegationMetadata(metadata: DelegationMetadata) = mutex.withLock {
         sessionDelegationMetadata = metadata
         updateGlobalIndex()
     }
@@ -543,11 +692,7 @@ class MessageStateHandler(
         saveInternal()
         saveApiHistoryInternal()
         // Flush any throttled global index update
-        if (globalIndexDirty) {
-            updateGlobalIndex()
-            lastGlobalIndexUpdateMs = System.currentTimeMillis()
-            globalIndexDirty = false
-        }
+        flushGlobalIndexIfDirty()
     }
 
     private suspend fun updateGlobalIndex() = globalIndexMutex.withLock {
@@ -558,19 +703,20 @@ class MessageStateHandler(
         // happen separately) — only the index entry is suppressed.
         if (sessionId.contains('/')) return@withLock
 
-        val totalTokensIn = apiHistory.sumOf { it.metrics?.inputTokens ?: 0 }
-        val totalTokensOut = apiHistory.sumOf { it.metrics?.outputTokens ?: 0 }
-        val totalCost = apiHistory.sumOf { it.metrics?.cost ?: 0.0 }
-        val lastModel = apiHistory.lastOrNull { it.modelInfo != null }?.modelInfo?.modelId
+        // P1-4: token/cost/model values come from the incrementally-maintained counters
+        // (O(1) per index write instead of three O(history) sumOf passes). Counter writes
+        // happen under the session mutex, which every caller of this method also holds.
+        // B3: only the UI timestamp still needs a list read, snapshotted under stateLock.
+        val lastUiTs: Long? = synchronized(stateLock) { uiMessages.lastOrNull()?.ts }
 
         val item = HistoryItem(
             id = sessionId,
-            ts = uiMessages.lastOrNull()?.ts ?: System.currentTimeMillis(),
+            ts = lastUiTs ?: System.currentTimeMillis(),
             task = taskText.take(200),
-            tokensIn = totalTokensIn.toLong(),
-            tokensOut = totalTokensOut.toLong(),
-            totalCost = totalCost,
-            modelId = lastModel,
+            tokensIn = totalTokensInCached,
+            tokensOut = totalTokensOutCached,
+            totalCost = totalCostCached,
+            modelId = lastModelIdCached,
             planModeEnabled = sessionPlanModeEnabled,
             // F2: thread delegation metadata into the index entry so sessions.json
             // carries the delegation marker without a secondary delegation.json read.
@@ -632,6 +778,12 @@ class MessageStateHandler(
          * Phase 4 of multimodal-agent plan.
          */
         const val SCHEMA_VERSION_CURRENT: Int = 2
+
+        /** P0-1: window for partial-stream ui_messages.json writes (memory stays authoritative). */
+        private const val UI_SAVE_THROTTLE_MS = 500L
+
+        /** P1-1: window for coalescing per-append api_conversation_history.json rewrites. */
+        private const val API_SAVE_THROTTLE_MS = 1_000L
 
         /**
          * Maximum number of sessions retained in the global `sessions.json` index.

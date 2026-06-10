@@ -585,6 +585,11 @@ class AgentLoop(
      */
     private var userInputReceivedInToolCall = false
 
+    /** P1-5: tool-definition token estimate is memoized per tool-set; the set only expands within a session. */
+    private var lastToolDefsKey: Pair<Int, Int>? = null
+
+    private var lastToolDefTokens = 0
+
     // Session-scoped approval is handled by the injected sessionApprovalStore
     // (lives at the session level, persists across loop runs within the same session).
 
@@ -962,10 +967,18 @@ class AgentLoop(
 
             // Stage 1: Call LLM (use dynamic definitions if tool_search has loaded new tools)
             val currentToolDefs = toolDefinitionProvider?.invoke() ?: toolDefinitions
-            // Update tool token count if deferred tools were loaded since last iteration
-            contextManager.setToolDefinitionTokens(
-                TokenEstimator.estimateToolDefinitions(currentToolDefs)
-            )
+            // Update tool token count if deferred tools were loaded since last iteration.
+            // P1-5: estimateToolDefinitions serializes the full ~60KB schema list, so only
+            // re-estimate when the tool set actually changed. The provider rebuilds a fresh
+            // list per call (identity compare is useless); size + name-hash catches both
+            // deferred-tool expansion and plan/act schema filtering (which removes write
+            // tools or swaps plan_mode_respond/enable_plan_mode — size or names change).
+            val toolDefsKey = currentToolDefs.size to currentToolDefs.sumOf { it.function.name.hashCode() }
+            if (toolDefsKey != lastToolDefsKey) {
+                lastToolDefsKey = toolDefsKey
+                lastToolDefTokens = TokenEstimator.estimateToolDefinitions(currentToolDefs)
+            }
+            contextManager.setToolDefinitionTokens(lastToolDefTokens)
 
             // Block-based streaming presentation (Cline port)
             // Accumulates text, re-parses on every chunk, sends only TextContent to UI.
@@ -1027,8 +1040,10 @@ class AgentLoop(
                     // Conditional re-parse: skip when no XML structural character in chunk
                     val needsParse = cachedBlocks == null || text.contains('<') || text.contains('>')
                     val blocks = if (needsParse) {
+                        // Zero-copy: parse takes CharSequence — no full-buffer String copy
+                        // per re-parse (P1-2, plan Wave2-T4).
                         AssistantMessageParser.parse(
-                            accumulatedText.toString(),
+                            accumulatedText,
                             currentToolNames,
                             currentParamNames
                         ).also { cachedBlocks = it }
@@ -1090,7 +1105,7 @@ class AgentLoop(
                         // "<read" and ">" is appended verbatim to the visible stream because
                         // it has no `<` or `>` to force a re-parse, and the leading "<read"
                         // was already stripped by stripPartialTag().
-                        val endsInIncompleteTag = AssistantMessageParser.endsWithIncompleteTag(accumulatedText.toString())
+                        val endsInIncompleteTag = AssistantMessageParser.endsWithIncompleteTag(accumulatedText)
                         if (hasPendingTool || endsInIncompleteTag) {
                             cachedStrippedText  // tool tag in flight — don't leak its body to the display
                         } else {
@@ -1109,7 +1124,10 @@ class AgentLoop(
                     }
 
                     // Persist streaming text to ui_messages.json (C3 fix — awaited inline, NOT in launch{}).
-                    // First chunk: add partial message. Subsequent: update in-place.
+                    // First chunk: add partial message. Subsequent: update in-place — persistence
+                    // is atomic + throttled inside the handler (B17/P0-1, plan Wave2-T1/T4): the
+                    // last-partial index is resolved under the handler's mutex (no snapshot race)
+                    // and disk writes are throttled mid-stream.
                     // Use stripped text (partial XML tags removed), NOT raw accumulatedText.
                     // The raw text includes XML tool call tags which would show as raw XML on resume.
                     // Use `stripped` (always up-to-date) rather than `visibleText` (stale on skip-parse path).
@@ -1125,11 +1143,7 @@ class AgentLoop(
                             ))
                             isFirstStreamChunk = false
                         } else {
-                            val msgs = handler.getClineMessages()
-                            val lastIdx = msgs.lastIndex
-                            if (lastIdx >= 0 && msgs[lastIdx].partial) {
-                                handler.updateClineMessage(lastIdx, msgs[lastIdx].copy(text = persistText))
-                            }
+                            handler.updateLastPartialMessage(persistText)
                         }
                     }
 
@@ -1285,11 +1299,10 @@ class AgentLoop(
                                 "errorType" to apiResult.type.name,
                                 "path" to "L2",
                             ))
-                            return LoopResult.Failed(
-                                error = msg,
-                                reason = FailureReason.API_ERROR,
-                                iterations = iteration,
-                            )
+                            // W2-T4 review: route through makeFailed so this exit gains the
+                            // steering-pill promotion, terminal flush, and loop-stat fields
+                            // every other failure exit carries.
+                            return makeFailed(msg, iteration, FailureReason.API_ERROR)
                         }
                         l2TierIdx = nextIdx
                         val oldModel = brain.modelId
@@ -2506,8 +2519,18 @@ class AgentLoop(
     private fun filesModifiedList(): List<String> = modifiedFiles.toList()
 
     /** Build a Failed result with current loop tracking state. */
-    private fun makeFailed(error: String, iterations: Int, reason: FailureReason): LoopResult.Failed {
+    private suspend fun makeFailed(error: String, iterations: Int, reason: FailureReason): LoopResult.Failed {
         promoteSteeringQueueOnFailure()
+        // W2-T3 follow-up: failure exits had no terminal flush — close the ≤1s trailing-append window.
+        // Best-effort: a flush failure must not mask the original failure result, but
+        // cancellation must propagate (repo CE-hygiene convention).
+        try {
+            messageStateHandler?.saveBoth()
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            // best-effort terminal flush
+        }
         return LoopResult.Failed(
             error = error,
             reason = reason,
@@ -2522,7 +2545,18 @@ class AgentLoop(
     }
 
     /** Build a Cancelled result with current loop tracking state. */
-    private fun makeCancelled(iterations: Int): LoopResult.Cancelled = LoopResult.Cancelled(
+    private suspend fun makeCancelled(iterations: Int): LoopResult.Cancelled {
+        // W2 integration review: symmetric with makeFailed — the between-tool-calls cancel
+        // exit bypasses abortStream, so flush the ≤1s coalescing window here too. CE-safe:
+        // cancellation propagates; any other flush failure must not mask the Cancelled result.
+        try {
+            messageStateHandler?.saveBoth()
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            // best-effort terminal flush
+        }
+        return LoopResult.Cancelled(
         iterations = iterations,
         tokensUsed = totalTokensUsed,
         inputTokens = totalInputTokens,
@@ -2530,7 +2564,8 @@ class AgentLoop(
         filesModified = filesModifiedList(),
         linesAdded = totalLinesAdded,
         linesRemoved = totalLinesRemoved
-    )
+        )
+    }
 
     /**
      * Persist abort state when the stream is interrupted mid-flight.
