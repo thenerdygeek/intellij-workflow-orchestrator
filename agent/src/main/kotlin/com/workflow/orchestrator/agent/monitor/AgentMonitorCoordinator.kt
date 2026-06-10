@@ -16,6 +16,7 @@ import com.workflow.orchestrator.core.services.JiraService
 import com.workflow.orchestrator.core.services.SonarService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.isActive
@@ -39,7 +40,8 @@ import java.io.File
  *    `lateinit` (set during tool registration, after construction), so this MUST be a provider —
  *    [monitorPersistence] reads it only on first access, well after registration.
  *
- * Construction wires the process-global [MonitorBridge] router and the 200 ms flush loop; [dispose]
+ * Construction wires the process-global [MonitorBridge] router; the 200 ms flush loop starts
+ * lazily with the first monitor and stops when the last session's monitors are disposed. [dispose]
  * tears the router down. `AgentService` constructs one instance and delegates its monitor methods
  * to it, so existing callers (`AgentController`, `MonitorTool`, `resumeSession`) are unchanged.
  */
@@ -59,6 +61,41 @@ class AgentMonitorCoordinator(
      */
     private val monitorManagers = java.util.concurrent.ConcurrentHashMap<String, MonitorManager>()
 
+    private var flushJob: Job? = null
+
+    /** Visible for tests: whether the 200ms coalesce-flush loop is currently live. */
+    internal fun isFlushLoopRunning(): Boolean = flushJob?.isActive == true
+
+    /**
+     * P1-6: the flush loop used to start in `init` and tick 5x/s for the project lifetime
+     * even with zero monitors. It now starts lazily with the first MonitorManager and is
+     * cancelled when the last session's managers are disposed.
+     */
+    @Synchronized
+    private fun ensureFlushLoop() {
+        if (flushJob?.isActive == true) return
+        // Re-check under the lock: a concurrent disposeMonitorsForSession may have removed
+        // the just-created manager — don't start a loop that has nothing to flush.
+        if (monitorManagers.isEmpty()) return
+        flushJob = cs.launch(Dispatchers.IO) {
+            while (isActive) {
+                // Per-manager isolation: one bad manager's flush must not starve the others.
+                monitorManagers.values.forEach { m ->
+                    runCatching { m.flushDue() }.onFailure { log.warn("monitor flush failed: ${it.message}", it) }
+                }
+                delay(FLUSH_INTERVAL_MS)
+            }
+        }
+    }
+
+    @Synchronized
+    private fun stopFlushLoopIfIdle() {
+        if (monitorManagers.isEmpty()) {
+            flushJob?.cancel()
+            flushJob = null
+        }
+    }
+
     /**
      * Lazy [MonitorPersistence] over the agent dir. Constructed on first access so it is
      * always available after the owning service has set its `agentDir`. Mirrors the
@@ -67,9 +104,9 @@ class AgentMonitorCoordinator(
     private val monitorPersistence: MonitorPersistence by lazy { MonitorPersistence(agentDirProvider().toPath()) }
 
     init {
-        // Task 8 — route MonitorBridge events into the per-session MonitorManager and
-        // drive a single flush loop (coalesce window expiry → steering / idle-wake) on the
-        // service scope. Cleaned up per-session via disposeMonitorsForSession.
+        // Task 8 — route MonitorBridge events into the per-session MonitorManager.
+        // The coalesce flush loop is NOT started here — see ensureFlushLoop() (P1-6:
+        // starts with the first manager, stops when the last session's managers go).
         // Get-only: a late event for a disposed session must NOT recreate its manager
         // (zombie-session resurrection). The manager is pre-created at monitor-start via
         // ensureMonitorManager(); MonitorTool.start calls it before the source emits.
@@ -79,15 +116,6 @@ class AgentMonitorCoordinator(
         // When MonitorPool prunes an old EXITED handle, forget its per-id MonitorManager state
         // (pending/wakeBudget/dormant/autoStopped/recentTimestamps) so the slot doesn't leak.
         MonitorPool.getInstance(project).forgetCallback = { sid, id -> forgetMonitor(sid, id) }
-        cs.launch(Dispatchers.IO) {
-            while (isActive) {
-                // Per-manager isolation: one bad manager's flush must not starve the others.
-                monitorManagers.values.forEach { m ->
-                    runCatching { m.flushDue() }.onFailure { log.warn("monitor flush failed: ${it.message}", it) }
-                }
-                delay(FLUSH_INTERVAL_MS)
-            }
-        }
     }
 
     /**
@@ -123,7 +151,7 @@ class AgentMonitorCoordinator(
                     monitorPersistence.remove(sessionId, id)
                 },
             )
-        }
+        }.also { ensureFlushLoop() }
 
     /**
      * Pre-create the [MonitorManager] for [sessionId] at monitor-start. Paired with the
@@ -136,6 +164,7 @@ class AgentMonitorCoordinator(
     fun disposeMonitorsForSession(sessionId: String) {
         monitorManagers.remove(sessionId)
         MonitorPool.getInstance(project).killAll(sessionId)
+        stopFlushLoopIfIdle()
     }
 
     /** Forget a single monitor's coalesce/wake/flood state after it is stopped. */
