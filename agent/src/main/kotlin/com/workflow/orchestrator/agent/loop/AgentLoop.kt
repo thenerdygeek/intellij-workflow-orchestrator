@@ -585,6 +585,11 @@ class AgentLoop(
      */
     private var userInputReceivedInToolCall = false
 
+    /** P1-5: tool-definition token estimate is memoized per tool-set; the set only expands within a session. */
+    private var lastToolDefsKey: Pair<Int, Int>? = null
+
+    private var lastToolDefTokens = 0
+
     // Session-scoped approval is handled by the injected sessionApprovalStore
     // (lives at the session level, persists across loop runs within the same session).
 
@@ -962,10 +967,18 @@ class AgentLoop(
 
             // Stage 1: Call LLM (use dynamic definitions if tool_search has loaded new tools)
             val currentToolDefs = toolDefinitionProvider?.invoke() ?: toolDefinitions
-            // Update tool token count if deferred tools were loaded since last iteration
-            contextManager.setToolDefinitionTokens(
-                TokenEstimator.estimateToolDefinitions(currentToolDefs)
-            )
+            // Update tool token count if deferred tools were loaded since last iteration.
+            // P1-5: estimateToolDefinitions serializes the full ~60KB schema list, so only
+            // re-estimate when the tool set actually changed. The provider rebuilds a fresh
+            // list per call (identity compare is useless); size + name-hash catches both
+            // deferred-tool expansion and plan/act schema filtering (which removes write
+            // tools or swaps plan_mode_respond/enable_plan_mode — size or names change).
+            val toolDefsKey = currentToolDefs.size to currentToolDefs.sumOf { it.function.name.hashCode() }
+            if (toolDefsKey != lastToolDefsKey) {
+                lastToolDefsKey = toolDefsKey
+                lastToolDefTokens = TokenEstimator.estimateToolDefinitions(currentToolDefs)
+            }
+            contextManager.setToolDefinitionTokens(lastToolDefTokens)
 
             // Block-based streaming presentation (Cline port)
             // Accumulates text, re-parses on every chunk, sends only TextContent to UI.
