@@ -25,8 +25,8 @@ class ContextWindowDivergenceRegressionTest {
 
     /** Fake catalog: the selected (non-thinking) model is 132K; a different running model is 96K. */
     private val catalog: Map<String, ContextWindow> = mapOf(
-        "anthropic::claude-sonnet" to win(132_000),       // the model the user selected
-        "anthropic::claude-opus-thinking" to win(96_000), // currentBrainModelId (auto-picked) — the old bar key
+        "anthropic::claude-sonnet" to win(132_000), // the model the user selected
+        "anthropic::claude-opus-thinking" to win(96_000), // currentBrainModelId (auto-picked) — old bar key
     )
 
     private fun resolver(overrides: MaxTokenOverrides = MaxTokenOverrides(global = null, perModel = emptyMap())) =
@@ -58,7 +58,8 @@ class ContextWindowDivergenceRegressionTest {
         assertEquals(132_000, barAfterFix)
         assertEquals(96_000, barBeforeFix, "documents the pre-fix bug: bar keyed on the running model showed 96K")
         assertNotEquals(
-            barBeforeFix, barAfterFix,
+            barBeforeFix,
+            barAfterFix,
             "the fix changes the bar's value by keying on the selected model instead of the running model",
         )
     }
@@ -69,7 +70,7 @@ class ContextWindowDivergenceRegressionTest {
         val r = resolver(MaxTokenOverrides(global = null, perModel = mapOf(selectedModel to 64_000)))
 
         val pickerRow = r.maxInputTokens(selectedModel) // selector row (m.id)
-        val bar = r.maxInputTokens(selectedModel)       // bar (selectedModelId)
+        val bar = r.maxInputTokens(selectedModel) // bar (selectedModelId)
 
         assertEquals(64_000, pickerRow, "the override replaces the catalog window on the picker row")
         assertEquals(pickerRow, bar, "the override is reflected identically on the bar")
