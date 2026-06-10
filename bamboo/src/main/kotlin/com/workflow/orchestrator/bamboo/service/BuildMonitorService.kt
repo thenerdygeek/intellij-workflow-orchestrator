@@ -12,9 +12,9 @@ import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.workflow.BuildRef
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
+import com.workflow.orchestrator.core.polling.SmartPoller
 import com.workflow.orchestrator.core.services.BuildLogCache
 import com.workflow.orchestrator.core.settings.PluginSettings
-import com.workflow.orchestrator.core.polling.SmartPoller
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -27,8 +27,35 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicBoolean
 
 
+/**
+ * Polls Bamboo for the focused build and emits `BuildFinished` / `BuildLogReady` events.
+ *
+ * ## Observer-gated polling contract (P0-5, 2026-06-10 perf audit)
+ *
+ * The focusBuild auto-seed at project startup (T-AutoSeed) starts polling without any UI
+ * consumer, so polling is gated on an observer signal instead of running at full rate forever:
+ *
+ * - **No observer by default.** [tabVisible] starts false; a freshly created [SmartPoller] is
+ *   immediately put into background mode (4× interval) until the Build tab attaches via
+ *   [setVisible] `(true)`. Previously `SmartPoller.visible` defaulted true, so an unopened
+ *   tab polled at full rate for the project lifetime.
+ * - **Terminal + unobserved → stop.** After each poll, if the focused build is in a terminal
+ *   state (SUCCESS/FAILED) and the tab is not visible, polling stops entirely. The ambient
+ *   consumers (Automation tab docker tags, Handover build status — both EventBus-driven)
+ *   already received `BuildFinished`/`BuildLogReady` for that build; continued polling would
+ *   only serve the (invisible) newer-build banner.
+ * - **Restart triggers.** An auto-stopped poller restarts when (a) the Build tab becomes
+ *   visible again — [setVisible] `(true)` relaunches against [lastPollTarget] WITHOUT
+ *   resetting the dedupe state, so no duplicate events and no log refetch — or (b) the
+ *   focusBuild changes ([wireFocusBuildSubscription] → [startPolling], full reset as before).
+ * - **Running build stays ambient.** A non-terminal build keeps background-rate polling even
+ *   with no observer, so event consumers still see the eventual terminal transition.
+ *
+ * Pinned by `BuildMonitorObserverGatingTest`.
+ */
 @Service(Service.Level.PROJECT)
 open class BuildMonitorService {
 
@@ -146,7 +173,20 @@ open class BuildMonitorService {
     private var previousBuildNumber: Int? = null
     private var previousStatus: BuildStatus? = null
     private var lastLogFetchedForBuild: Int? = null
-    private var poller: SmartPoller? = null
+
+    @Volatile private var poller: SmartPoller? = null
+
+    /** Whether the Build tab (the only direct UI observer) is currently showing. */
+    private val tabVisible = AtomicBoolean(false)
+
+    /** True when polling was auto-stopped (terminal build + no observer) — see class KDoc. */
+    @Volatile private var autoStoppedTerminal = false
+
+    /** Last [startPolling] target, kept so an observer attach can restart an auto-stopped poller. */
+    @Volatile private var lastPollTarget: Triple<String, String, Long>? = null
+
+    /** Guards poller create/stop + the auto-stop/restart handshake between poll loop and EDT. */
+    private val pollerLock = Any()
 
     /**
      * Guards the entire body of [pollOnce] so that the SmartPoller coroutine and
@@ -184,10 +224,48 @@ open class BuildMonitorService {
 
     open fun startPolling(planKey: String, branch: String, intervalMs: Long = 30_000) {
         log.info("[Bamboo:Monitor] Starting polling for planKey=$planKey, branch=$branch, intervalMs=$intervalMs")
-        stopPolling()
-        previousBuildNumber = null
-        previousStatus = null
-        lastLogFetchedForBuild = null
+        synchronized(pollerLock) {
+            stopPollerLocked()
+            autoStoppedTerminal = false
+            lastPollTarget = Triple(planKey, branch, intervalMs)
+            previousBuildNumber = null
+            previousStatus = null
+            lastLogFetchedForBuild = null
+            launchPollerLocked(planKey, branch, intervalMs)
+        }
+    }
+
+    open fun stopPolling() {
+        log.info("[Bamboo:Monitor] Stopping polling")
+        synchronized(pollerLock) {
+            autoStoppedTerminal = false
+            lastPollTarget = null
+            stopPollerLocked()
+        }
+    }
+
+    /**
+     * Observer signal from the Build tab (P0-5). Forwards visibility to the SmartPoller
+     * (hidden tab → 4× background interval) and restarts an auto-stopped poller when the
+     * tab re-attaches — preserving the dedupe state ([previousBuildNumber] /
+     * [lastLogFetchedForBuild]) so the restart emits no duplicate events.
+     */
+    fun setVisible(isVisible: Boolean) {
+        tabVisible.set(isVisible)
+        synchronized(pollerLock) {
+            val target = lastPollTarget
+            if (isVisible && autoStoppedTerminal && target != null) {
+                autoStoppedTerminal = false
+                log.info("[Bamboo:Monitor] Observer attached — restarting auto-stopped polling for ${target.first}")
+                launchPollerLocked(target.first, target.second, target.third)
+            } else {
+                poller?.setVisible(isVisible)
+            }
+        }
+    }
+
+    /** Creates and starts the SmartPoller. Caller must hold [pollerLock]. */
+    private fun launchPollerLocked(planKey: String, branch: String, intervalMs: Long) {
         poller = SmartPoller(
             name = "BuildMonitor",
             baseIntervalMs = intervalMs,
@@ -196,18 +274,38 @@ open class BuildMonitorService {
             val prevNum = previousBuildNumber
             val prevStat = previousStatus
             pollOnce(planKey, branch)
-            previousBuildNumber != prevNum || previousStatus != prevStat
-        }.also { it.start() }
+            val changed = previousBuildNumber != prevNum || previousStatus != prevStat
+            maybeAutoStopAfterPoll()
+            changed
+        }.also {
+            // P0-5: observer-gated — a poller created with no visible Build tab starts in
+            // background mode instead of SmartPoller's visible-by-default full rate.
+            it.setVisible(tabVisible.get())
+            it.start()
+        }
     }
 
-    open fun stopPolling() {
-        log.info("[Bamboo:Monitor] Stopping polling")
+    /** Stops the current poller without touching restart state. Caller must hold [pollerLock]. */
+    private fun stopPollerLocked() {
         poller?.stop()
         poller = null
     }
 
-    fun setVisible(isVisible: Boolean) {
-        poller?.setVisible(isVisible)
+    /**
+     * P0-5 terminal auto-stop: once the focused build reached a terminal state and no observer
+     * is attached, polling stops entirely. Restarts via [setVisible] `(true)` or a focusBuild
+     * change (see class KDoc).
+     */
+    private fun maybeAutoStopAfterPoll() {
+        val status = previousStatus
+        val terminal = status == BuildStatus.SUCCESS || status == BuildStatus.FAILED
+        if (!terminal || tabVisible.get()) return
+        synchronized(pollerLock) {
+            if (poller == null) return
+            log.info("[Bamboo:Monitor] Focused build terminal and Build tab hidden — auto-stopping polling (P0-5)")
+            autoStoppedTerminal = true
+            stopPollerLocked()
+        }
     }
 
     suspend fun pollOnce(planKey: String, branch: String) = pollMutex.withLock {

@@ -84,4 +84,14 @@ class BambooMonitorSource(
 
     override fun diff(previous: BuildResultData?, current: BuildResultData): List<MonitorEvent> =
         BambooDiff.diff(monitorId, level, stageName, jobName, previous, current)
+
+    /**
+     * P1-8 terminal auto-stop: a build whose overall state is Successful/Failed (the same
+     * terminal notion [BambooDiff] uses) can no longer change — [PollingSource.pollOnce]
+     * stops this source after observing the transition into that state. Stage/job-level
+     * monitors also key off the OVERALL build state: once the build is finished, no stage
+     * or job can transition any further.
+     */
+    override fun isTerminal(current: BuildResultData): Boolean =
+        BambooDiff.isTerminalState(current.state)
 }

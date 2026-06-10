@@ -60,6 +60,10 @@ Uses `BitbucketBranchClient` from `:core` — `getBranches`, `getUsers`, `create
 - `PrDetailPanel` — PR metadata, reviewers, merge status, action buttons
 - **UI Overhaul:** Outline-style status badges (OPEN/MERGED/DECLINED), sharp card corners, monospace PR IDs, left border accent colored by PR status.
 
+## PR polling lifecycle (B16, 2026-06-10 perf audit)
+
+`PrListService.stopPolling()` previously had zero callers — the first PR-tab open left Bitbucket polling running for the rest of the IDE session, surviving panel rebuilds. Wiring now: `PrDashboardPanel.dispose()` stops polling (panel rebuild / project close); `ancestorAdded` calls `startPolling()` (no-op while the poll job is active) before `setVisible(true)` so a re-shown panel restarts a stopped poller; `ancestorRemoved` keeps the `setVisible(false)` slowdown (4× background interval) — full stop is reserved for disposal. Pinned by `PrDashboardPanelPollingLifecycleTest` (source-text contract).
+
 ## Bitbucket DC 9.4 audit changes (2026-05-07)
 
 - `PrListService.refresh()` now uses `BitbucketBranchClient.getDashboardPullRequests("AUTHOR")` and `("REVIEWER")` — single cross-repo round-trips replace the old per-repo `?role.1=AUTHOR` loop. The "ALL" bucket still iterates per-repo (no dashboard equivalent for that role). PRs returned by the dashboard are filtered down to repos the user has configured in `PluginSettings.getRepos()`.
