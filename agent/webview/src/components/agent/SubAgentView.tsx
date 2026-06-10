@@ -95,6 +95,9 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
   const liveStatusNote = streamSlice?.statusNote !== undefined ? streamSlice.statusNote : subAgent.statusNote;
 
   const isRunning = subAgent.status === 'RUNNING';
+  // Prefer the live side-channel counter while running so the header doesn't
+  // freeze during streaming; finalized cards read the committed value.
+  const liveTokensUsed = (isRunning ? streamSlice?.tokensUsed : undefined) ?? subAgent.tokensUsed;
   // Default-open while running, default-closed on terminal status (so completed
   // sub-agents — including resume-time ones — don't each occupy ~440px in the chat).
   const [isOpen, setIsOpen] = useState(isRunning);
@@ -255,7 +258,7 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
               <span className="opacity-40">·</span>
             </>
           )}
-          {(subAgent.tokensUsed || 0).toLocaleString()} tkn
+          {(liveTokensUsed || 0).toLocaleString()} tkn
         </span>
 
         {/* Kill button (only when running) */}
@@ -364,8 +367,10 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
             ))}
 
             {/* Live streaming thinking (P0-3: from side-channel, not messages[]).
-                Shown above prose to mirror main-agent ChatFooter ordering. */}
-            {liveThinking && (
+                Shown above prose to mirror main-agent ChatFooter ordering.
+                isRunning guard: a stale slice must never render a streaming
+                shimmer on a completed/killed card. */}
+            {isRunning && liveThinking && (
               <ThinkingView
                 content={liveThinking}
                 isStreaming

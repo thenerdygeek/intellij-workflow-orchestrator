@@ -163,7 +163,33 @@ describe('P0-3 — sub-agent stream side-channel', () => {
     expect(reasoningIdx).toBeLessThan(textIdx); // REASONING before TEXT
   });
 
-  // ── killSubAgent: clears side-channel ──
+  it('completeSubAgent appends leftover thinking AFTER existing child messages (not prepended)', () => {
+    // Final-iteration thinking belongs chronologically AFTER iteration-1 tool
+    // calls. Prepending ([thinkingMsg, ...messages]) would place it before them.
+    chatState().spawnSubAgent(JSON.stringify({ agentId: 'sa-12b', label: 'Thinker' }));
+    // Commit an iteration-1 TOOL child message into sub.messages.
+    chatState().addSubAgentToolCall(JSON.stringify({ agentId: 'sa-12b', toolCallId: 'tc-1', toolName: 'read_file', toolArgs: '{}' }));
+    chatState().updateSubAgentToolCall(JSON.stringify({ agentId: 'sa-12b', toolCallId: 'tc-1', toolName: 'read_file', toolResult: 'ok' }));
+    // Final-iteration leftover thinking + streamed text.
+    chatState().appendSubAgentThinking('sa-12b', 'final thought');
+    chatState().appendSubAgentStreamDelta(JSON.stringify({ agentId: 'sa-12b', delta: 'final text' }));
+
+    chatState().completeSubAgent(JSON.stringify({ agentId: 'sa-12b', textContent: 'ok' }));
+
+    const msg = chatState().messages.find(m => m.subagentData?.agentId === 'sa-12b');
+    const childMsgs = msg?.subagentData?.messages ?? [];
+    const toolIdx = childMsgs.findIndex(m => m.say === 'TOOL');
+    const reasoningIdx = childMsgs.findIndex(m => m.say === 'REASONING');
+    const textIdx = childMsgs.findIndex(m => m.say === 'TEXT');
+    expect(toolIdx).toBeGreaterThanOrEqual(0);
+    expect(reasoningIdx).toBeGreaterThanOrEqual(0);
+    expect(textIdx).toBeGreaterThanOrEqual(0);
+    // Chronological order: TOOL (iter 1) → REASONING (final thinking) → TEXT (final stream).
+    expect(toolIdx).toBeLessThan(reasoningIdx);
+    expect(reasoningIdx).toBeLessThan(textIdx);
+  });
+
+  // ── killSubAgent: commits side-channel content, then clears it ──
 
   it('killSubAgent removes the side-channel entry', () => {
     chatState().spawnSubAgent(JSON.stringify({ agentId: 'sa-13', label: 'Worker' }));
@@ -175,7 +201,54 @@ describe('P0-3 — sub-agent stream side-channel', () => {
     expect(chatState().subAgentStreams['sa-13']).toBeUndefined();
   });
 
-  // ── clearChat clears the side-channel ──
+  it('killSubAgent after deltas preserves partial text in subagentData.messages', () => {
+    // Regression: kill must NOT lose work-in-progress output — mirror
+    // completeSubAgent's flush, only the status differs (KILLED).
+    chatState().spawnSubAgent(JSON.stringify({ agentId: 'sa-17', label: 'Worker' }));
+    chatState().appendSubAgentStreamDelta(JSON.stringify({ agentId: 'sa-17', delta: 'partial ' }));
+    chatState().appendSubAgentStreamDelta(JSON.stringify({ agentId: 'sa-17', delta: 'output' }));
+
+    chatState().killSubAgent('sa-17');
+
+    const msg = chatState().messages.find(m => m.subagentData?.agentId === 'sa-17');
+    expect(msg?.subagentData?.status).toBe('KILLED');
+    const textMsgs = msg?.subagentData?.messages.filter(m => m.say === 'TEXT') ?? [];
+    expect(textMsgs).toHaveLength(1);
+    expect(textMsgs[0]!.text).toBe('partial output');
+    expect(textMsgs[0]!.partial).toBe(false);
+  });
+
+  it('killSubAgent flushes accumulated thinking as REASONING after existing children', () => {
+    chatState().spawnSubAgent(JSON.stringify({ agentId: 'sa-18', label: 'Worker' }));
+    chatState().addSubAgentToolCall(JSON.stringify({ agentId: 'sa-18', toolCallId: 'tc-k1', toolName: 'search_code', toolArgs: '{}' }));
+    chatState().updateSubAgentToolCall(JSON.stringify({ agentId: 'sa-18', toolCallId: 'tc-k1', toolName: 'search_code', toolResult: 'ok' }));
+    chatState().appendSubAgentThinking('sa-18', 'mid-kill reasoning');
+    chatState().appendSubAgentStreamDelta(JSON.stringify({ agentId: 'sa-18', delta: 'some text' }));
+
+    chatState().killSubAgent('sa-18');
+
+    const msg = chatState().messages.find(m => m.subagentData?.agentId === 'sa-18');
+    const childMsgs = msg?.subagentData?.messages ?? [];
+    const toolIdx = childMsgs.findIndex(m => m.say === 'TOOL');
+    const reasoningIdx = childMsgs.findIndex(m => m.say === 'REASONING');
+    const textIdx = childMsgs.findIndex(m => m.say === 'TEXT');
+    expect(reasoningIdx).toBeGreaterThanOrEqual(0);
+    expect(childMsgs.find(m => m.say === 'REASONING')?.text).toBe('mid-kill reasoning');
+    expect(toolIdx).toBeLessThan(reasoningIdx);
+    expect(reasoningIdx).toBeLessThan(textIdx);
+  });
+
+  it('killSubAgent with empty side-channel adds no child messages', () => {
+    chatState().spawnSubAgent(JSON.stringify({ agentId: 'sa-19', label: 'Worker' }));
+
+    chatState().killSubAgent('sa-19');
+
+    const msg = chatState().messages.find(m => m.subagentData?.agentId === 'sa-19');
+    expect(msg?.subagentData?.status).toBe('KILLED');
+    expect(msg?.subagentData?.messages ?? []).toHaveLength(0);
+  });
+
+  // ── Session transitions clear the side-channel (stale-slice bleed guard) ──
 
   it('clearChat resets subAgentStreams to empty', () => {
     chatState().spawnSubAgent(JSON.stringify({ agentId: 'sa-14', label: 'Temp' }));
@@ -185,6 +258,74 @@ describe('P0-3 — sub-agent stream side-channel', () => {
     chatState().clearChat();
 
     expect(chatState().subAgentStreams).toEqual({});
+  });
+
+  it('startSession resets subAgentStreams to empty', () => {
+    chatState().spawnSubAgent(JSON.stringify({ agentId: 'sa-20', label: 'Stale' }));
+    chatState().appendSubAgentStreamDelta(JSON.stringify({ agentId: 'sa-20', delta: 'stale' }));
+    expect(chatState().subAgentStreams['sa-20']).toBeDefined();
+
+    chatState().startSession('new task');
+
+    expect(chatState().subAgentStreams).toEqual({});
+  });
+
+  it('completeSession resets subAgentStreams to empty', () => {
+    chatState().spawnSubAgent(JSON.stringify({ agentId: 'sa-21', label: 'Stale' }));
+    chatState().appendSubAgentStreamDelta(JSON.stringify({ agentId: 'sa-21', delta: 'stale' }));
+    expect(chatState().subAgentStreams['sa-21']).toBeDefined();
+
+    chatState().completeSession({ status: 'COMPLETED', tokensUsed: 0, durationMs: 0, iterations: 0, filesModified: [] });
+
+    expect(chatState().subAgentStreams).toEqual({});
+  });
+
+  it('hydrateFromUiMessages clears a pre-existing subAgentStreams entry', () => {
+    // Resume-path bleed: a slice left over from the previously live session must
+    // not attach to a same-agentId card in the loaded session.
+    chatState().spawnSubAgent(JSON.stringify({ agentId: 'sa-22', label: 'Stale' }));
+    chatState().appendSubAgentStreamDelta(JSON.stringify({ agentId: 'sa-22', delta: 'stale text' }));
+    expect(chatState().subAgentStreams['sa-22']).toBeDefined();
+
+    chatState().hydrateFromUiMessages([]);
+
+    expect(chatState().subAgentStreams).toEqual({});
+  });
+
+  // ── tokensUsed flows through the side-channel while streaming ──
+
+  it('updateSubAgentIteration with active stream carries tokensUsed in side-channel without touching messages[]', () => {
+    chatState().spawnSubAgent(JSON.stringify({ agentId: 'sa-23', label: 'Worker' }));
+    chatState().appendSubAgentStreamDelta(JSON.stringify({ agentId: 'sa-23', delta: 't' }));
+    const msgsBefore = chatState().messages;
+
+    chatState().updateSubAgentIteration(JSON.stringify({ agentId: 'sa-23', iteration: 3, tokensUsed: 4200 }));
+
+    expect(chatState().messages).toBe(msgsBefore);
+    expect(chatState().subAgentStreams['sa-23']?.tokensUsed).toBe(4200);
+  });
+
+  it('completeSubAgent writes back side-channel tokensUsed when payload omits it', () => {
+    chatState().spawnSubAgent(JSON.stringify({ agentId: 'sa-24', label: 'Worker' }));
+    chatState().appendSubAgentStreamDelta(JSON.stringify({ agentId: 'sa-24', delta: 't' }));
+    chatState().updateSubAgentIteration(JSON.stringify({ agentId: 'sa-24', iteration: 2, tokensUsed: 9000 }));
+
+    chatState().completeSubAgent(JSON.stringify({ agentId: 'sa-24', textContent: 'done' }));
+
+    const msg = chatState().messages.find(m => m.subagentData?.agentId === 'sa-24');
+    expect(msg?.subagentData?.tokensUsed).toBe(9000);
+  });
+
+  it('killSubAgent writes back side-channel tokensUsed and iteration', () => {
+    chatState().spawnSubAgent(JSON.stringify({ agentId: 'sa-25', label: 'Worker' }));
+    chatState().appendSubAgentStreamDelta(JSON.stringify({ agentId: 'sa-25', delta: 't' }));
+    chatState().updateSubAgentIteration(JSON.stringify({ agentId: 'sa-25', iteration: 4, tokensUsed: 1234 }));
+
+    chatState().killSubAgent('sa-25');
+
+    const msg = chatState().messages.find(m => m.subagentData?.agentId === 'sa-25');
+    expect(msg?.subagentData?.tokensUsed).toBe(1234);
+    expect(msg?.subagentData?.iteration).toBe(4);
   });
 
   // ── endSubAgentThinking: flushes into messages[], clears thinking in side-channel ──

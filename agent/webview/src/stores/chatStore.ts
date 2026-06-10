@@ -492,13 +492,22 @@ interface ChatState {
    * - thinking:   accumulated <thinking> block (mirrors streamingThinkingText)
    * - iteration:  latest iteration count (updated by updateSubAgentIteration)
    * - statusNote: transient compaction/retry note (updated by setSubAgentStatusNote)
+   * - tokensUsed: live token counter (updated by updateSubAgentIteration so the
+   *               header doesn't freeze while streaming)
    *
-   * On completeSubAgent / killSubAgent the accumulated `text` is committed into
-   * the message's subagentData.messages as a finalized TEXT UiMessage (if non-empty),
-   * the final iteration/statusNote are written back to subagentData, and the
-   * side-channel entry is deleted.
+   * On BOTH finalize paths — completeSubAgent AND killSubAgent — the accumulated
+   * `thinking` (as REASONING) and `text` (as finalized TEXT) are committed into
+   * the message's subagentData.messages APPENDED AFTER existing child messages
+   * (chronological: earlier tool calls precede final-iteration thinking/text),
+   * the final iteration/tokensUsed are written back to subagentData, and the
+   * side-channel entry is deleted. A kill therefore preserves work-in-progress
+   * output instead of dropping it.
+   *
+   * Reset to {} on clearChat / startSession / completeSession /
+   * hydrateFromUiMessages so a stale slice never bleeds into the next or a
+   * resumed session.
    */
-  subAgentStreams: Record<string, { text: string; thinking: string | null; iteration?: number; statusNote?: string | null }>;
+  subAgentStreams: Record<string, { text: string; thinking: string | null; iteration?: number; statusNote?: string | null; tokensUsed?: number }>;
 
   // Actions
   startSession(task: string, mentions?: Mention[], attachments?: ImageRef[]): void;
@@ -813,6 +822,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Non-delegated new session — clear any stale delegated-repo stamp.
       sessionDelegatedRepo: null,
       delegationQuestionPending: { active: false },
+      // Stale-slice bleed guard: a sub-agent stream slice left over from the
+      // previous session must not attach to a same-agentId card later.
+      subAgentStreams: {},
       session: {
         status: 'RUNNING',
         tokensUsed: 0,
@@ -896,6 +908,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // tool call IDs and would otherwise leak for the rest of the app's life.
       toolOutputStreams: {},
       toolCallOpen: {},
+      // Drop any sub-agent stream slices — sub-agents are finalized by session
+      // end; a leftover slice would render a stale shimmer on a completed card.
+      subAgentStreams: {},
       messages,
       queuedSteeringMessages: [],
       handoff: null,
@@ -2168,7 +2183,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return {
           subAgentStreams: {
             ...state.subAgentStreams,
-            [data.agentId]: { ...existing, iteration: newIteration },
+            [data.agentId]: {
+              ...existing,
+              iteration: newIteration,
+              // Kotlin sends tokensUsed alongside iteration — carry it live so
+              // the header counter doesn't freeze while streaming.
+              tokensUsed: data.tokensUsed ?? existing.tokensUsed,
+            },
           },
         };
       }
@@ -2461,7 +2482,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (!m.subagentData || m.subagentData.agentId !== data.agentId) return m;
         const sub = m.subagentData;
 
-        // Flush accumulated streaming text (if any) into a finalized TEXT message.
+        // Flush any remaining thinking buffer as REASONING, then the streamed
+        // text as a finalized TEXT message — BOTH appended AFTER the existing
+        // child messages. This is the final iteration's in-flight content, so
+        // chronologically it belongs after iteration-1..N-1 tool calls
+        // (prepending would put final-iteration thinking before them).
+        const thinkingText = stream?.thinking ?? null;
+        const thinkingMsg: UiMessage | null = thinkingText
+          ? {
+              ts: uniqueTs(),
+              type: 'SAY',
+              say: 'REASONING',
+              text: thinkingText,
+            }
+          : null;
         const accumulatedText = stream?.text ?? '';
         const streamMsg: UiMessage | null = accumulatedText
           ? {
@@ -2472,19 +2506,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
               partial: false,
             }
           : null;
-
-        const finalMessages = streamMsg ? [...sub.messages, streamMsg] : sub.messages;
-        // Flush any remaining thinking buffer as REASONING too.
-        const thinkingText = stream?.thinking ?? null;
-        const thinkingMsg: UiMessage | null = thinkingText
-          ? {
-              ts: uniqueTs(),
-              type: 'SAY',
-              say: 'REASONING',
-              text: thinkingText,
-            }
-          : null;
-        const allMessages = thinkingMsg ? [thinkingMsg, ...finalMessages] : finalMessages;
+        const allMessages = [
+          ...sub.messages,
+          ...(thinkingMsg ? [thinkingMsg] : []),
+          ...(streamMsg ? [streamMsg] : []),
+        ];
 
         return {
           ...m,
@@ -2493,7 +2519,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...sub,
             status: (data.isError ? 'ERROR' : 'COMPLETED') as SubAgentState['status'],
             summary: data.textContent || '',
-            tokensUsed: data.tokensUsed ?? sub.tokensUsed,
+            // Prefer the payload's final count; fall back to the live counter
+            // carried through the side-channel during streaming.
+            tokensUsed: data.tokensUsed ?? stream?.tokensUsed ?? sub.tokensUsed,
             activeToolChain: [], // clear any in-flight tools
             streamingThinkingText: null,
             statusNote: null,
@@ -2509,13 +2537,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   killSubAgent(agentId: string) {
     set((state) => {
-      // P0-3: clear the side-channel entry on kill (no need to persist partial text).
+      // P0-3: commit accumulated side-channel content BEFORE clearing the entry —
+      // mirror completeSubAgent's flush so a kill preserves work-in-progress
+      // output (partial text + thinking) instead of silently dropping it.
+      // Only the status differs (KILLED).
+      const stream = state.subAgentStreams[agentId];
       const nextStreams = { ...state.subAgentStreams };
       delete nextStreams[agentId];
 
       const messages = state.messages.map((m): UiMessage => {
         if (!m.subagentData || m.subagentData.agentId !== agentId) return m;
         const sub = m.subagentData;
+
+        // Same chronology as completeSubAgent: thinking (REASONING) then text
+        // (TEXT), both appended AFTER existing child messages.
+        const thinkingText = stream?.thinking ?? null;
+        const thinkingMsg: UiMessage | null = thinkingText
+          ? { ts: uniqueTs(), type: 'SAY', say: 'REASONING', text: thinkingText }
+          : null;
+        const accumulatedText = stream?.text ?? '';
+        const streamMsg: UiMessage | null = accumulatedText
+          ? { ts: uniqueTs(), type: 'SAY', say: 'TEXT', text: accumulatedText, partial: false }
+          : null;
+        const allMessages = [
+          ...sub.messages,
+          ...(thinkingMsg ? [thinkingMsg] : []),
+          ...(streamMsg ? [streamMsg] : []),
+        ];
+
         return {
           ...m,
           say: 'SUBAGENT_COMPLETED' as const,
@@ -2525,6 +2574,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             activeToolChain: [],
             streamingThinkingText: null,
             statusNote: null,
+            // Write back the live counters from the side-channel (if present).
+            iteration: stream?.iteration ?? sub.iteration,
+            tokensUsed: stream?.tokensUsed ?? sub.tokensUsed,
+            messages: allMessages,
           } as SubAgentState,
         };
       });
@@ -2683,6 +2736,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       questionSummary: null,
       queuedSteeringMessages: [],
       streamingEdits: {},
+      // A slice left over from the previously live session must not bleed into
+      // the loaded one (same agentId would attach stale streaming content).
+      subAgentStreams: {},
       viewMode: 'chat',
       ...(restoredPlan ? { plan: restoredPlan } : {}),
     });
