@@ -441,11 +441,13 @@ class TerminalStreamingPipelineTest {
         fun `TerminalContent reads toolOutputStreams by toolCall id field`() {
             val toolCallChainText = readWebviewSource("components/agent/ToolCallChain.tsx")
 
-            // TerminalContent must read: allStreams[toolCall.id]
-            // This key must be the same as what appendToolOutput uses ([toolCallId])
+            // TerminalContent must subscribe per-key: s.toolOutputStreams[toolCall.id]
+            // (W3-A3 perf rework replaced the whole-map `allStreams` subscription with a
+            // per-key string selector so one tool's chunks don't re-render every terminal.)
+            // The key must be the same as what appendToolOutput uses ([toolCallId]).
             assertTrue(
-                toolCallChainText.contains("allStreams[toolCall.id]"),
-                "TerminalContent must look up toolOutputStreams using toolCall.id. " +
+                toolCallChainText.contains("toolOutputStreams[toolCall.id]"),
+                "TerminalContent must look up toolOutputStreams using toolCall.id (per-key selector). " +
                     "Since addToolCall stores the tool call under the LLM-assigned toolCallId, " +
                     "and appendToolOutput stores output under the same toolCallId, " +
                     "toolCall.id === toolCallId === key in toolOutputStreams — the lookup finds data."
