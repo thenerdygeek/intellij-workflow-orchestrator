@@ -152,12 +152,16 @@ function delegatedStamp(repo: string | null): { delegated?: true; delegatorRepo?
 export const MESSAGES_HARD_CAP = 1000;
 
 // ── Tool-output UI cap (P2-17) ──
-// Finalized toolCallData.output is capped so 50-100KB × 1000 messages don't
-// bloat the React state heap. Full content always lives on disk via the Kotlin
-// ToolOutputSpiller; the UI only needs a bounded tail for the copy-button /
-// expand view. When the raw output exceeds the cap, we keep a head slice +
-// truncation notice + tail slice so both the start and the most-recent lines
-// are visible. The streaming buffer in toolOutputStreams is never touched.
+// toolCallData.output is capped at EVERY tool→message commit site (the
+// appendToken / endThinking / showApproval / promoteQueuedSteeringMessages
+// drains, finalizeToolChain, completeSession, and the sub-agent finalize) so
+// 50-100KB × 1000 messages don't bloat the React state heap. Full content
+// always lives on disk via the Kotlin ToolOutputSpiller; the UI only needs a
+// bounded slice for the copy-button / expand view. When the raw output
+// exceeds the cap, we keep a head slice + truncation notice + tail slice so
+// both the start and the most-recent lines are visible. The LIVE streaming
+// buffer in toolOutputStreams is never capped (Terminal renders it in full
+// while the tool runs); only the committed message string is bounded.
 export const TOOL_OUTPUT_HEAD = 4_000;   // chars kept from the start
 export const TOOL_OUTPUT_TAIL = 16_000;  // chars kept from the end
 export const TOOL_OUTPUT_UI_CAP = TOOL_OUTPUT_HEAD + TOOL_OUTPUT_TAIL;
@@ -860,7 +864,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const remaining = Array.from(state.activeToolCalls.values());
     const toolMessages: UiMessage[] = remaining.map(tc => {
       const stream = streams[tc.id];
-      const output = tc.output || stream || undefined;
+      // P2-17: cap at commit — full output lives on disk via the Kotlin spiller.
+      const output = capToolOutput(tc.output || stream || undefined);
       return {
         ts: uniqueTs(),
         type: 'SAY' as const,
@@ -978,7 +983,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const dlg = delegatedStamp(state.sessionDelegatedRepo);
           const toolMsgs: UiMessage[] = Array.from(state.activeToolCalls.values()).map(tc => {
             const s = streams[tc.id];
-            const output = tc.output || s || undefined;
+            // P2-17: cap at commit — this drain (first token of the next
+            // iteration) is the DOMINANT path for intermediate tool chains.
+            const output = capToolOutput(tc.output || s || undefined);
             return {
               ts: uniqueTs(),
               type: 'SAY' as const,
@@ -1305,7 +1312,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const streams = toolOutputStreams;
         const toolMsgs: UiMessage[] = Array.from(activeToolCalls.values()).map(tc => {
           const s = streams[tc.id];
-          const output = tc.output || s || undefined;
+          // P2-17: cap at commit — same contract as the appendToken drain.
+          const output = capToolOutput(tc.output || s || undefined);
           return {
             ts: uniqueTs(),
             type: 'SAY' as const,
@@ -1883,7 +1891,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const streams = state.toolOutputStreams;
         for (const tc of tools) {
           const s = streams[tc.id];
-          const output = tc.output || s || undefined;
+          // P2-17: cap at commit — same contract as the appendToken drain.
+          const output = capToolOutput(tc.output || s || undefined);
           newMessages.push({
             ts: uniqueTs(),
             type: 'SAY' as const,
@@ -2061,7 +2070,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const toolDrain: UiMessage[] = state.activeToolCalls.size > 0
         ? Array.from(state.activeToolCalls.values()).map(tc => {
             const s = streams[tc.id];
-            const output = tc.output || s || undefined;
+            // P2-17: cap at commit — same contract as the appendToken drain.
+            const output = capToolOutput(tc.output || s || undefined);
             return {
               ts: uniqueTs(),
               type: 'SAY' as const,
@@ -2306,7 +2316,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // main agent's finalizeToolChain merge so the completed message carries the
         // full output instead of losing it when the stream entry is later cleared.
         const streamOutput = state.toolOutputStreams[finalizedId];
-        const mergedOutput = data.toolOutput || streamOutput || undefined;
+        // P2-17: cap at commit — same contract as the main-agent drain paths.
+        const mergedOutput = capToolOutput(data.toolOutput || streamOutput || undefined);
 
         // Release the accumulated stream entry now that its content is baked into
         // the finalized message — prevents unbounded toolOutputStreams growth over

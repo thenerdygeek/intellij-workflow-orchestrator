@@ -7,6 +7,20 @@ import { SessionContextMenu } from './SessionContextMenu';
 import { kotlinBridge } from '../../bridge/jcef-bridge';
 import type { HistoryItem } from '../../bridge/types';
 
+// Module-scope Virtuoso slot components (same convention as MessageList):
+// inline lambdas would get a fresh identity every render and force Virtuoso
+// to remount the Header/Footer slots.
+function HistoryHeaderSpacer() {
+  return <div className="h-1.5" />;
+}
+function HistoryFooterSpacer() {
+  return <div className="h-3" />;
+}
+const HISTORY_LIST_COMPONENTS = {
+  Header: HistoryHeaderSpacer,
+  Footer: HistoryFooterSpacer,
+};
+
 export function HistoryView() {
   const historyItems = useChatStore((s) => s.historyItems);
   const historySearch = useChatStore((s) => s.historySearch);
@@ -306,10 +320,7 @@ export function HistoryView() {
                 </div>
               );
             }}
-            components={{
-              Header: () => <div className="h-1.5" />,
-              Footer: () => <div className="h-3" />,
-            }}
+            components={HISTORY_LIST_COMPONENTS}
           />
         )}
       </div>

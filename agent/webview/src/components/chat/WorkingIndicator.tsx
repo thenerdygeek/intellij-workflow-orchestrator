@@ -5,7 +5,8 @@ import { TextShimmer } from '@/components/ui/prompt-kit/text-shimmer';
 
 /**
  * P2-15: returns true when the user's OS/browser has requested reduced motion.
- * Evaluated once at module load and again on change via matchMedia listener.
+ * Evaluated on mount (matchMedia memoized per component instance) and kept in
+ * sync via the media query's change listener.
  */
 function usePrefersReducedMotion(): boolean {
   const mql = useMemo(() => {

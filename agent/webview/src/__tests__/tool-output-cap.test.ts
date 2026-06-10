@@ -86,4 +86,34 @@ describe('P2-17 — tool output UI cap at finalize', () => {
     expect(msg!.toolCallData!.output).toBe(atCap);
     expect(msg!.toolCallData!.output).not.toContain('[truncated');
   });
+
+  it('appendToken drain (the DOMINANT commit path) caps the streamed output', () => {
+    // Real sessions commit intermediate tool chains via appendToken: when the
+    // next iteration's first token arrives, activeToolCalls drain into
+    // messages[]. The cap must apply there too, not only at finalizeToolChain.
+    const store = useChatStore.getState();
+    const bigStream = 'A'.repeat(TOOL_OUTPUT_HEAD) + 'B'.repeat(TOOL_OUTPUT_TAIL + 5000);
+    expect(bigStream.length).toBeGreaterThan(TOOL_OUTPUT_UI_CAP);
+
+    store.addToolCall('tc5', 'run_command', '{"command":"big"}', 'RUNNING');
+    store.appendToolOutput('tc5', bigStream);
+    // No explicit output param — the drain must fall back to the stream buffer.
+    store.updateToolCall('run_command', 'COMPLETED', '', 300, undefined, undefined, 'tc5');
+    // Next iteration's first token triggers the drain.
+    store.appendToken('next');
+
+    const msg = useChatStore.getState().messages.find(
+      m => m.say === 'TOOL' && m.toolCallData?.toolCallId === 'tc5',
+    );
+    expect(msg).toBeDefined();
+    const stored = msg!.toolCallData!.output!;
+    expect(stored.length).toBeLessThan(bigStream.length);
+    expect(stored).toContain('[truncated, full output on disk]');
+    expect(stored.startsWith('A'.repeat(TOOL_OUTPUT_HEAD))).toBe(true);
+    expect(stored.endsWith('B'.repeat(TOOL_OUTPUT_TAIL))).toBe(true);
+    expect(stored.length).toBeLessThanOrEqual(TOOL_OUTPUT_UI_CAP + 100);
+    // Drain cleared the active tool call + its stream buffer.
+    expect(useChatStore.getState().activeToolCalls.size).toBe(0);
+    expect(Object.keys(useChatStore.getState().toolOutputStreams)).toHaveLength(0);
+  });
 });
