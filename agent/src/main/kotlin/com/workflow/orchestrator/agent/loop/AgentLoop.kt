@@ -2545,7 +2545,18 @@ class AgentLoop(
     }
 
     /** Build a Cancelled result with current loop tracking state. */
-    private fun makeCancelled(iterations: Int): LoopResult.Cancelled = LoopResult.Cancelled(
+    private suspend fun makeCancelled(iterations: Int): LoopResult.Cancelled {
+        // W2 integration review: symmetric with makeFailed — the between-tool-calls cancel
+        // exit bypasses abortStream, so flush the ≤1s coalescing window here too. CE-safe:
+        // cancellation propagates; any other flush failure must not mask the Cancelled result.
+        try {
+            messageStateHandler?.saveBoth()
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Throwable) {
+            // best-effort terminal flush
+        }
+        return LoopResult.Cancelled(
         iterations = iterations,
         tokensUsed = totalTokensUsed,
         inputTokens = totalInputTokens,
@@ -2553,7 +2564,8 @@ class AgentLoop(
         filesModified = filesModifiedList(),
         linesAdded = totalLinesAdded,
         linesRemoved = totalLinesRemoved
-    )
+        )
+    }
 
     /**
      * Persist abort state when the stream is interrupted mid-flight.

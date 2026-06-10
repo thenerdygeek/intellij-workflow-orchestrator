@@ -129,9 +129,9 @@ class MessageStateHandler(
 
     /**
      * Update the trailing PARTIAL streaming message's text in one atomic step (B17: the
-     * live AgentLoop caller pattern snapshots lastIndex outside the lock, so a concurrent
-     * append could land the partial text on the wrong message — that call site migrates to
-     * this method in the follow-up wiring commit, plan Wave2-T4). Disk writes are
+     * pre-Wave2 AgentLoop caller pattern snapshotted lastIndex outside the lock, so a
+     * concurrent append could land the partial text on the wrong message — the streaming
+     * call site now routes through this method). Disk writes are
      * throttled (P0-1): the
      * in-memory list is always current; ui_messages.json lags at most [UI_SAVE_THROTTLE_MS]
      * mid-stream and is flushed by the next non-partial mutation or [saveBoth].
