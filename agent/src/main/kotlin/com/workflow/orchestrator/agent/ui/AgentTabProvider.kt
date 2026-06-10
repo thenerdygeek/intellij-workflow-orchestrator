@@ -40,39 +40,61 @@ class AgentTabProvider : WorkflowTabProvider {
             )
         }
 
-        // Create dashboard with project as parent disposable for JCEF lifecycle
-        val dashboard = AgentDashboardPanel(parentDisposable = project as? Disposable)
-        val controller = AgentController(project, dashboard)
+        // Create a self-parented dashboard (P0-6/B4): AgentDashboardPanel is Disposable
+        // and owns the JCEF lifecycle. The tool-window factory wires
+        // content.setDisposer(dashboard), so when this tab's Content is removed
+        // (rebuild via "Refresh All Tabs"/settings change, or tool-window close) the
+        // whole subtree -- Chromium browser, controller, EventBus scope -- dies with it
+        // instead of surviving parented to the Project until project close.
+        val dashboard = AgentDashboardPanel()
+        try {
+            val controller = AgentController(project, dashboard)
 
-        // Wire mention search provider for @mention and #ticket autocomplete.
-        // Shared between dashboard (autocomplete + validation) and controller (context building)
-        // so that pre-fetched ticket data from validation is reused on send.
-        val mentionSearchProvider = MentionSearchProvider(project)
-        dashboard.setMentionSearchProvider(mentionSearchProvider)
-        controller.setMentionSearchProvider(mentionSearchProvider)
+            // Chain controller disposal from the dashboard FIRST, so the failure path
+            // below (Disposer.dispose(dashboard)) also tears the controller down if any
+            // later wiring line throws. AgentController.dispose() cancels its
+            // controllerScope, clears the auto-wake listener, and compare-and-nulls
+            // itself in AgentControllerRegistry (race-safe: a newer controller that
+            // already re-registered is never clobbered).
+            Disposer.register(dashboard, controller)
 
-        // Subscribe to Sprint tab data so # ticket autocomplete is instant (no re-fetch).
-        // The scope is tied directly to the project Disposable so it is always cancelled
-        // on project close regardless of the cast path. Using Disposer.register on the
-        // concrete project Disposable (never null for a live Project) avoids the silent
-        // scope leak that the previous (project as? Disposable)?.let { … } guard caused
-        // in test harnesses where the cast returns null. Closes audit finding agent-ui:F-6.
-        val eventBus = project.getService(EventBus::class.java)
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        scope.launch {
-            eventBus.events.collect { event ->
-                if (event is WorkflowEvent.SprintDataLoaded) {
-                    mentionSearchProvider.onSprintDataLoaded(event.tickets)
+            // Wire mention search provider for @mention and #ticket autocomplete.
+            // Shared between dashboard (autocomplete + validation) and controller (context building)
+            // so that pre-fetched ticket data from validation is reused on send.
+            val mentionSearchProvider = MentionSearchProvider(project)
+            dashboard.setMentionSearchProvider(mentionSearchProvider)
+            controller.setMentionSearchProvider(mentionSearchProvider)
+
+            // Subscribe to Sprint tab data so # ticket autocomplete is instant (no re-fetch).
+            // The scope is chained to the dashboard panel (Content-scoped, NOT project-scoped):
+            // on tab rebuild the old Content disposes the dashboard, which cancels this scope --
+            // previously the collector kept firing into a detached browser until project close (B4).
+            val eventBus = project.getService(EventBus::class.java)
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            scope.launch {
+                eventBus.events.collect { event ->
+                    if (event is WorkflowEvent.SprintDataLoaded) {
+                        mentionSearchProvider.onSprintDataLoaded(event.tickets)
+                    }
                 }
             }
+            Disposer.register(dashboard, Disposable { scope.cancel() })
+
+            // Register controller in registry for cross-module access (e.g., AgentChatRedirect).
+            // On rebuild the OLD content is disposed first (its controller compare-and-nulls
+            // the registry), then this fresh controller registers on first tab selection --
+            // so the registry never points at a disposed controller. Callers already
+            // null-check getController(); between rebuild and first selection it is null.
+            AgentControllerRegistry.getInstance(project).controller = controller
+        } catch (e: Exception) {
+            // The dashboard is self-parented: if wiring fails after construction, nothing
+            // else roots it (the factory only wires content.setDisposer on the RETURNED
+            // panel), so the live Chromium would leak unrooted until JVM exit. Dispose the
+            // whole subtree (browser + any already-registered children) and rethrow -- the
+            // tool-window factory turns the exception into an EmptyStatePanel.
+            Disposer.dispose(dashboard)
+            throw e
         }
-        Disposer.register(project as Disposable, Disposable { scope.cancel() })
-
-        // Register controller in registry for cross-module access (e.g., AgentChatRedirect)
-        AgentControllerRegistry.getInstance(project).controller = controller
-
-        // Register controller for disposal (same direct-cast pattern as the scope above)
-        Disposer.register(project as Disposable, Disposable { controller.dispose() })
 
         return dashboard
     }

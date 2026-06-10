@@ -439,18 +439,14 @@ class DelegationInboundService(
         // as a NORMAL FOREGROUND session (full agent: tools + IDE-B approval gate + streaming),
         // NOT the old headless AgentService loop. The starter is the controller in production;
         // headless tests inject a fake via [testDelegatedSessionStarter]. When the seam is null
-        // (production), activate the Workflow▸Agent tool window + resolve the controller on the
-        // EDT (handleConnect runs off-EDT on the socket coroutine) and adapt it to the seam type.
+        // (production), activate the Workflow▸Agent tool window + resolve the controller
+        // (handleConnect runs off-EDT on the socket coroutine) and adapt it to the seam type.
+        // The registry read happens INSIDE the activate callback — see
+        // [resolveControllerViaAgentTab]: with lazy extension tabs (P0-6) the controller only
+        // exists after the Agent tab is selected, and the preauth nonce consumed above is
+        // single-use, so a premature null here would burn the consent (auto-launch defeated).
         val starter: DelegatedSessionStarter? = testDelegatedSessionStarter ?: run {
-            val controller = withContext(Dispatchers.EDT) {
-                com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
-                    .getToolWindow("Workflow")?.activate {
-                        val cm = com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
-                            .getToolWindow("Workflow")?.contentManager
-                        cm?.contents?.find { it.displayName == "Agent" }?.let { cm.setSelectedContent(it) }
-                    }
-                com.workflow.orchestrator.agent.ui.AgentControllerRegistry.getInstance(project).controller
-            }
+            val controller = resolveControllerViaAgentTab()
             controller?.let { c ->
                 DelegatedSessionStarter { request, md, reply, onResult, onStarted, onBusy ->
                     c.startDelegatedSession(request, md, reply, onResult, onStarted, onBusy)
@@ -1146,16 +1142,12 @@ class DelegationInboundService(
             delegatorSessionId = item.delegated?.delegatorSessionId ?: sessionId,
             startedAt = System.currentTimeMillis(),
         )
+        // Registry read happens INSIDE the activate callback (see resolveControllerViaAgentTab):
+        // with lazy extension tabs (P0-6) the controller only exists after the Agent tab is
+        // selected; the old read-after-activate shape misreported a LIVE resumable handle as
+        // ide_b_agent_unavailable (mapped to DelegationException.Expired on IDE-A).
         val starter: DelegatedResumeStarter? = testDelegatedResumeStarter ?: run {
-            val controller = withContext(Dispatchers.EDT) {
-                com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
-                    .getToolWindow("Workflow")?.activate {
-                        val cm = com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
-                            .getToolWindow("Workflow")?.contentManager
-                        cm?.contents?.find { it.displayName == "Agent" }?.let { cm.setSelectedContent(it) }
-                    }
-                com.workflow.orchestrator.agent.ui.AgentControllerRegistry.getInstance(project).controller
-            }
+            val controller = resolveControllerViaAgentTab()
             controller?.let { c ->
                 DelegatedResumeStarter { sid, turn, md, reply, onResult, onStarted, onBusy ->
                     c.resumeDelegatedSession(sid, turn, md, reply, onResult, onStarted, onBusy)
@@ -1321,8 +1313,66 @@ class DelegationInboundService(
         }
     }
 
+    /**
+     * Resolves the IDE-B [com.workflow.orchestrator.agent.ui.AgentController] by activating
+     * the Workflow tool window and SELECTING the Agent tab.
+     *
+     * Lazy extension tabs (perf P0-6) mean the Agent panel — and therefore the controller in
+     * [com.workflow.orchestrator.agent.ui.AgentControllerRegistry] — is only created when the
+     * Agent tab is first SELECTED. The registry read therefore MUST happen INSIDE the
+     * tool-window activate callback, AFTER `setSelectedContent`: the factory's
+     * lazy-materialization listener runs synchronously on the EDT during that call, creating
+     * the panel and registering the controller before the next line executes.
+     *
+     * The previous shape read the registry right after `activate { … }` RETURNED — racing the
+     * callback (the platform may run it via invokeLater) and deterministically returning null
+     * on a cold IDE-B. That burned the single-use preauth nonce on auto-launch (`handleConnect`)
+     * and misreported a live handle as `ide_b_agent_unavailable` on `handleChannelResume`.
+     *
+     * The result is bridged out via a [CompletableDeferred] and awaited with a bounded timeout
+     * ([CONTROLLER_RESOLVE_TIMEOUT_MS]); if the callback never runs (no Workflow tool window,
+     * headless environment) this returns null and callers keep their existing
+     * `ide_b_agent_unavailable` fallback reply.
+     */
+    private suspend fun resolveControllerViaAgentTab(): com.workflow.orchestrator.agent.ui.AgentController? {
+        val resolved = CompletableDeferred<com.workflow.orchestrator.agent.ui.AgentController?>()
+        withContext(Dispatchers.EDT) {
+            val toolWindow = com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
+                .getToolWindow("Workflow")
+            if (toolWindow == null) {
+                resolved.complete(null)
+                return@withContext
+            }
+            toolWindow.activate {
+                try {
+                    val cm = com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
+                        .getToolWindow("Workflow")?.contentManager
+                    cm?.contents?.find { it.displayName == "Agent" }?.let { cm.setSelectedContent(it) }
+                    // Read INSIDE the activate callback: setSelectedContent above has already
+                    // synchronously materialized the Agent panel + registered the controller.
+                    resolved.complete(
+                        com.workflow.orchestrator.agent.ui.AgentControllerRegistry
+                            .getInstance(project).controller
+                    )
+                } catch (e: Exception) {
+                    LOG.warn("resolveControllerViaAgentTab: activate callback failed", e)
+                    resolved.complete(null)
+                }
+            }
+        }
+        return withTimeoutOrNull(CONTROLLER_RESOLVE_TIMEOUT_MS) { resolved.await() }
+    }
+
     companion object {
         private val LOG = Logger.getInstance(DelegationInboundService::class.java)
+
+        /**
+         * Bound on waiting for the tool-window activate callback to deliver the
+         * [com.workflow.orchestrator.agent.ui.AgentController] (lazy Agent-tab
+         * materialization). Generous because a cold IDE-B may still be indexing;
+         * on expiry callers fall back to the `ide_b_agent_unavailable` reply.
+         */
+        private const val CONTROLLER_RESOLVE_TIMEOUT_MS = 10_000L
 
         /**
          * Default post-completion retention for a transient ("Allow once") inbound bind: 30 min.

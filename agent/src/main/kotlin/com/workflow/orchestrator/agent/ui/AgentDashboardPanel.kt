@@ -1,15 +1,16 @@
 package com.workflow.orchestrator.agent.ui
 
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.diagnostic.Logger
-import com.intellij.util.ui.JBUI
-import java.awt.BorderLayout
-import java.util.concurrent.CopyOnWriteArrayList
-import javax.swing.JPanel
 import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.util.Disposer
+import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.agent.tools.CompletionData
 import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
 import com.workflow.orchestrator.agent.tools.subagent.SubagentToolName
+import java.awt.BorderLayout
+import java.util.concurrent.CopyOnWriteArrayList
+import javax.swing.JPanel
 import javax.swing.SwingUtilities
 
 /**
@@ -22,19 +23,33 @@ import javax.swing.SwingUtilities
  * Mirror panels can be registered via [addMirror] to receive every output call
  * (e.g. the "View in Editor" editor tab). Mirrors are autonomous panels with
  * their own JCEF instances; they do NOT mirror wiring/callback calls, only output.
+ *
+ * Lifecycle (P0-6/B4): the panel is [Disposable]. When [parentDisposable] is null
+ * (the tool-window tab path) the panel parents the JCEF browser to ITSELF, so the
+ * tool-window factory's `content.setDisposer(panel)` wiring cascades
+ * Content.dispose() -> panel -> AgentCefPanel (Chromium) + everything the CEF
+ * panel registered against its parent (scope cancel, scheme-handler detach).
+ * Callers that pass an explicit [parentDisposable] (e.g. AgentChatEditorTab's
+ * editor-scoped disposer) keep ownership of the CEF lifecycle, unchanged.
  */
 class AgentDashboardPanel(
-    private val parentDisposable: Disposable? = null
-) : JPanel(BorderLayout()) {
+    parentDisposable: Disposable? = null
+) : JPanel(BorderLayout()), Disposable {
 
     companion object {
         private val LOG = Logger.getInstance(AgentDashboardPanel::class.java)
     }
 
+    /** True when this panel owns the JCEF lifecycle (no external parent was supplied). */
+    private val ownsCefLifecycle: Boolean = parentDisposable == null
+
+    /** Disposer parent handed to [AgentCefPanel] -- external owner, or this panel itself. */
+    private val cefLifecycleParent: Disposable = parentDisposable ?: this
+
     // ── Output panel: JCEF or fallback ──
-    private val cefPanel: AgentCefPanel? = if (AgentCefPanel.isAvailable() && parentDisposable != null) {
+    private val cefPanel: AgentCefPanel? = if (AgentCefPanel.isAvailable()) {
         try {
-            AgentCefPanel(parentDisposable).also {
+            AgentCefPanel(cefLifecycleParent).also {
                 LOG.info("AgentDashboardPanel: using JCEF (Chromium) renderer")
             }
         } catch (e: Exception) {
@@ -1023,5 +1038,30 @@ class AgentDashboardPanel(
     private fun runOnEdt(action: () -> Unit) {
         if (SwingUtilities.isEventDispatchThread()) action()
         else invokeLater { action() }
+    }
+
+    /**
+     * Tears down everything this panel owns (P0-6/B4).
+     *
+     * When disposed through Disposer (the tool-window path: Content.dispose() ->
+     * setDisposer(this)), the registered children -- [AgentCefPanel] (Chromium),
+     * its CoroutineScope cancel, the scheme-handler detach, plus anything callers
+     * chained via `Disposer.register(panel, ...)` (AgentController, EventBus scope)
+     * -- are disposed by the tree walk BEFORE this method runs. The explicit
+     * [AgentCefPanel] dispose below covers direct `dispose()` calls that bypass
+     * Disposer (defense-in-depth; guarded so the tree path doesn't double-dispose).
+     */
+    override fun dispose() {
+        if (ownsCefLifecycle) {
+            // AgentCefPanel.dispose() is idempotent (scope.cancel, idempotent
+            // JsBridgeDispatcher.dispose, query list cleared, browser nulled), so a
+            // second call after the Disposer tree walk already disposed it is harmless.
+            cefPanel?.let { Disposer.dispose(it) }
+        }
+        mirrors.clear()
+        replayLog.clear()
+        thinkingFallbackBuffer.setLength(0)
+        onSendMessage = null
+        LOG.info("AgentDashboardPanel disposed (ownsCefLifecycle=$ownsCefLifecycle)")
     }
 }
