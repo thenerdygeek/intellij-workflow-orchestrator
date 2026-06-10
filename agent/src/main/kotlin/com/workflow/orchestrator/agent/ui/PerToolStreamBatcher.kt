@@ -26,6 +26,8 @@ import javax.swing.Timer
  * does this. The injectable form `{ block -> block() }` (direct call, no EDT hop) is safe
  * **in tests only** because the Swing [Timer] is never actually ticked in a headless test
  * environment — callers drive flushing explicitly via [flush] or [flushIfNeeded].
+ * Note: timer START no longer routes through the invoker (Timer.start() is thread-safe —
+ * P2-1); the invoker is still used for onFlush delivery.
  */
 class PerToolStreamBatcher(
     private val onFlush: (toolCallId: String, batched: String) -> Unit,
@@ -36,6 +38,7 @@ class PerToolStreamBatcher(
     private val buffers = LinkedHashMap<String, StringBuilder>()
     private val lock = Any()
     private val disposed = AtomicBoolean(false)
+    private val timerRunning = AtomicBoolean(false)
 
     private val timer = Timer(intervalMs) {
         flushIfNeeded()
@@ -50,8 +53,11 @@ class PerToolStreamBatcher(
 
     /** Stop the timer without flushing (mirrors [StreamBatcher.stop]). */
     fun stop() {
-        timer.stop()
+        stopTimer()
     }
+
+    /** Visible for tests. */
+    internal fun isTimerRunning(): Boolean = timerRunning.get() && timer.isRunning
 
     /**
      * Append [chunk] to the buffer for [toolCallId].
@@ -63,12 +69,9 @@ class PerToolStreamBatcher(
         synchronized(lock) {
             buffers.getOrPut(toolCallId) { StringBuilder() }.append(chunk)
         }
-        if (!disposed.get()) {
-            invoker {
-                if (!timer.isRunning && !disposed.get()) {
-                    timer.start()
-                }
-            }
+        // javax.swing.Timer.start() is thread-safe — the per-chunk invoker hop is gone (P2-1).
+        if (!disposed.get() && timerRunning.compareAndSet(false, true)) {
+            timer.start()
         }
     }
 
@@ -106,7 +109,7 @@ class PerToolStreamBatcher(
      */
     fun flush() {
         if (disposed.get()) return
-        timer.stop()
+        stopTimer()
         // Snapshot and clear all entries under lock
         val entries: List<Pair<String, String>>
         synchronized(lock) {
@@ -126,15 +129,23 @@ class PerToolStreamBatcher(
     //  Timer callback
     // ────────────────────────────────────────────
 
-    private fun flushIfNeeded() {
+    internal fun flushIfNeeded() {
         // Snapshot ALL entries (not just non-empty) and clear the whole map under lock.
         // Clearing all entries (not only non-empty ones) prevents empty StringBuilder
         // entries from accumulating indefinitely when a tool call produces no output.
         val entries: List<Pair<String, String>>
         synchronized(lock) {
-            if (buffers.isEmpty()) return
+            if (buffers.isEmpty()) {
+                stopTimer()   // B12 sibling: per-id flush() drains entries; once empty, stop.
+                return
+            }
             entries = buffers.entries.map { it.key to it.value.toString() }
             buffers.clear()  // always clear all, not just non-empty
+        }
+        // B12: stop on the same tick as the drain rather than waiting for the next empty
+        // tick. If append() races in between, the CAS in append() restarts the timer.
+        synchronized(lock) {
+            if (buffers.isEmpty()) stopTimer()
         }
         // Deliver outside lock; skip delivery if disposed (timer-driven path only)
         if (!disposed.get()) {
@@ -147,12 +158,21 @@ class PerToolStreamBatcher(
     }
 
     // ────────────────────────────────────────────
+    //  Internal helpers
+    // ────────────────────────────────────────────
+
+    private fun stopTimer() {
+        timer.stop()
+        timerRunning.set(false)
+    }
+
+    // ────────────────────────────────────────────
     //  Lifecycle
     // ────────────────────────────────────────────
 
     override fun dispose() {
         disposed.set(true)
-        timer.stop()
+        stopTimer()
         synchronized(lock) { buffers.clear() }
     }
 }

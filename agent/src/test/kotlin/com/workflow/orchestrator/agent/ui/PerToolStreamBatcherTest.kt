@@ -397,4 +397,31 @@ class PerToolStreamBatcherTest {
             }
         }
     }
+
+    // ════════════════════════════════════════════
+    //  9. Timer self-stop (B12 sibling)
+    // ════════════════════════════════════════════
+
+    @Test
+    fun `timer stops itself when all per-tool buffers are drained`() {
+        val batcher = PerToolStreamBatcher(onFlush = { _, _ -> }, intervalMs = 10, invoker = { it() })
+        batcher.append("tool-1", "chunk")
+        // Simulate a timer tick (flush the data); the implementation stops the timer
+        // on the same tick as drain once the buffer is empty (B12 sibling fix).
+        batcher.flushIfNeeded()
+        assertFalse(batcher.isTimerRunning())
+        batcher.dispose()
+    }
+
+    @Test
+    fun `timer stops on an empty tick after per-id flush drained the map`() {
+        val batcher = PerToolStreamBatcher(onFlush = { _, _ -> }, intervalMs = 10, invoker = { it() })
+        batcher.append("tool-1", "chunk")
+        // Per-id flush drains the only entry but intentionally does NOT stop the timer;
+        // the next (empty) tick must stop it — the spec's original B12 branch.
+        batcher.flush("tool-1")
+        batcher.flushIfNeeded()
+        assertFalse(batcher.isTimerRunning())
+        batcher.dispose()
+    }
 }
