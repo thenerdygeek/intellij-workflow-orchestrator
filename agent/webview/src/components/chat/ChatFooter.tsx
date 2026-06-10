@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { AgentMessage } from './AgentMessage';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -58,7 +58,10 @@ export const ChatFooter = memo(function ChatFooter() {
   const handleDeny = useCallback(() => resolveApproval('deny'), [resolveApproval]);
   const handleAllowForSession = useCallback(() => resolveApproval('allowForSession'), [resolveApproval]);
 
-  const toolCallsArray = Array.from(activeToolCalls.values());
+  // P1-14: memoize so ChatFooter's many per-token re-renders don't allocate
+  // a fresh array each time (activeToolCalls Map identity is already stable
+  // between token batches when no tool calls are in flight).
+  const toolCallsArray = useMemo(() => Array.from(activeToolCalls.values()), [activeToolCalls]);
 
   useEffect(() => {
     if (questions && questions.length > 0 && questionsRef.current) {

@@ -452,6 +452,31 @@ interface ChatState {
   // Plan 6 §incoming-delegation-topbar.
   incomingDelegations: Record<string, { delegatorRepo: string; deadlineEpochMs: number }>;
 
+  /**
+   * P0-3 sub-agent stream side-channel (perf Wave 3).
+   *
+   * Live streaming buffers for RUNNING sub-agents. Keyed by agentId.
+   * While a sub-agent streams, per-16ms token deltas land here instead of
+   * mutating messages[]. This means messages[] reference stays stable during
+   * streaming so ChatView's `s => s.messages` selector and renderItems useMemo
+   * do NOT fire per-token — eliminating the 60fps full-list re-render.
+   *
+   * SubAgentView subscribes to ITS OWN slice: `s => s.subAgentStreams[agentId]`
+   * so only that one card re-renders per delta.
+   *
+   * Fields:
+   * - text:       accumulated streaming prose (mirrors main-agent streamingText)
+   * - thinking:   accumulated <thinking> block (mirrors streamingThinkingText)
+   * - iteration:  latest iteration count (updated by updateSubAgentIteration)
+   * - statusNote: transient compaction/retry note (updated by setSubAgentStatusNote)
+   *
+   * On completeSubAgent / killSubAgent the accumulated `text` is committed into
+   * the message's subagentData.messages as a finalized TEXT UiMessage (if non-empty),
+   * the final iteration/statusNote are written back to subagentData, and the
+   * side-channel entry is deleted.
+   */
+  subAgentStreams: Record<string, { text: string; thinking: string | null; iteration?: number; statusNote?: string | null }>;
+
   // Actions
   startSession(task: string, mentions?: Mention[], attachments?: ImageRef[]): void;
   /**
@@ -716,6 +741,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   delegationQuestionPending: { active: false },
   dropActive: false,
   incomingDelegations: {},
+  subAgentStreams: {},
 
   // Actions
   startSession(task: string, mentions?: Mention[], attachments?: ImageRef[]) {
@@ -940,8 +966,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           toolOutputStreams = {};
         }
 
+        // B10: wrap with capMessages so the tool-drain branch enforces the hard
+        // cap like every other path that spreads tool messages into messages[].
         return {
-          messages,
+          messages: capMessages(messages),
           activeToolCalls,
           toolOutputStreams,
           streamingText: token,
@@ -1429,6 +1457,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       sessionDelegatedRepo: null,
       delegationQuestionPending: { active: false },
       monitorHandles: [],
+      subAgentStreams: {},
     });
   },
 
@@ -1783,6 +1812,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const hadStream = state.streamingText != null && state.streamingMsgTs != null;
       const tools = Array.from(state.activeToolCalls.values());
       let newMessages = [...state.messages];
+      const dlg = delegatedStamp(state.sessionDelegatedRepo);
+
+      // B9: flush in-flight thinking buffer FIRST — thinking chronologically
+      // precedes prose (LLM emits <thinking>…</thinking> then text).
+      // Mirrors endStream/completeSession/endThinking drain paths — every
+      // other path that clears streamingThinkingText also persists it;
+      // showApproval was the only path that silently dropped it.
+      if (state.streamingThinkingText != null && state.streamingThinkingTs != null) {
+        newMessages.push({
+          ts: state.streamingThinkingTs,
+          type: 'SAY' as const,
+          say: 'REASONING' as const,
+          text: state.streamingThinkingText,
+          ...dlg,
+        });
+      }
 
       if (hadStream) {
         newMessages.push({
@@ -2091,6 +2136,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
   updateSubAgentIteration(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
+      // P0-3: update the side-channel so messages[] stays stable during streaming.
+      const existing = state.subAgentStreams[data.agentId];
+      if (existing !== undefined) {
+        const newIteration = data.iteration ?? ((existing.iteration ?? 0) + 1);
+        return {
+          subAgentStreams: {
+            ...state.subAgentStreams,
+            [data.agentId]: { ...existing, iteration: newIteration },
+          },
+        };
+      }
+      // Side-channel not yet active (agent not yet streaming) — fall through to
+      // messages[].  This path only fires for the very first iteration update
+      // before any token delta arrives, which is rare and not on the hot path.
       const messages = state.messages.map((m): UiMessage => {
         if (!m.subagentData || m.subagentData.agentId !== data.agentId) return m;
         const sub = m.subagentData;
@@ -2110,6 +2169,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setSubAgentStatusNote(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
+      // P0-3: update the side-channel so messages[] stays stable during streaming.
+      const existing = state.subAgentStreams[data.agentId];
+      if (existing !== undefined) {
+        return {
+          subAgentStreams: {
+            ...state.subAgentStreams,
+            [data.agentId]: { ...existing, statusNote: data.note ?? null },
+          },
+        };
+      }
+      // Side-channel not yet active — fall through to messages[].
       const messages = state.messages.map((m): UiMessage => {
         if (!m.subagentData || m.subagentData.agentId !== data.agentId) return m;
         return {
@@ -2262,109 +2332,135 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   /**
-   * Append a raw streaming token/chunk to the sub-agent card's last partial TEXT
-   * message. Unlike [updateSubAgentMessage] which replaces the whole text, this
-   * incrementally appends — mirroring how the main agent's streaming works —
-   * so the user sees tokens flow in the sub-agent card rather than a single
-   * delayed block.
+   * Append a raw streaming token/chunk to the sub-agent's live stream buffer.
    *
-   * If no partial TEXT message exists yet for this sub-agent, one is created.
+   * P0-3 (perf Wave 3): deltas accumulate in `subAgentStreams[agentId].text`
+   * (the side-channel) instead of being embedded in messages[]. This means
+   * messages[] reference stays stable per 16ms batch — ChatView's
+   * `s => s.messages` selector and renderItems useMemo do NOT fire per token.
+   * SubAgentView subscribes to `s => s.subAgentStreams[agentId]` so only
+   * that one card re-renders per delta.
+   *
+   * The accumulated text is committed into subagentData.messages on
+   * completeSubAgent / killSubAgent (the finalize path).
    */
   appendSubAgentStreamDelta(payload: string) {
     const { agentId, delta } = JSON.parse(payload) as { agentId: string; delta: string };
     if (!delta) return;
     set((state) => {
-      const messages = state.messages.map((m): UiMessage => {
-        if (!m.subagentData || m.subagentData.agentId !== agentId) return m;
-        const agent = m.subagentData;
-        const msgs = agent.messages;
-        const lastIdx = msgs.length - 1;
-        const last = lastIdx >= 0 ? msgs[lastIdx] : undefined;
-        let nextMsgs: UiMessage[];
-        if (last && last.type === 'SAY' && last.say === 'TEXT') {
-          const updated: UiMessage = { ...last, text: (last.text ?? '') + delta };
-          nextMsgs = msgs.slice(0, lastIdx).concat(updated);
-        } else {
-          const textMsg: UiMessage = {
-            ts: uniqueTs(),
-            type: 'SAY',
-            say: 'TEXT',
-            text: delta,
-          };
-          nextMsgs = [...msgs, textMsg];
-        }
-        return {
-          ...m,
-          subagentData: { ...agent, messages: nextMsgs } as SubAgentState,
-        };
-      });
-      return { messages };
+      const existing = state.subAgentStreams[agentId];
+      const prev = existing ?? { text: '', thinking: null };
+      return {
+        subAgentStreams: {
+          ...state.subAgentStreams,
+          [agentId]: { ...prev, text: prev.text + delta },
+        },
+      };
     });
   },
 
   /**
-   * Append a thinking-block delta to the sub-agent's live streaming buffer.
-   * Mirrors the main agent's appendToThinking path. No-op if the agentId is
-   * not found in messages[].
+   * Append a thinking-block delta to the sub-agent's live thinking buffer.
+   *
+   * P0-3: accumulated in `subAgentStreams[agentId].thinking` (side-channel)
+   * so messages[] stays stable. SubAgentView reads thinking from the slice.
    */
   appendSubAgentThinking(agentId: string, delta: string) {
     set((state) => {
-      const messages = state.messages.map((m): UiMessage => {
-        if (!m.subagentData || m.subagentData.agentId !== agentId) return m;
-        const sub = m.subagentData;
-        const prev = sub.streamingThinkingText ?? '';
-        return {
-          ...m,
-          subagentData: { ...sub, streamingThinkingText: prev + delta } as SubAgentState,
-        };
-      });
-      return { messages };
+      const existing = state.subAgentStreams[agentId];
+      const prev = existing ?? { text: '', thinking: null };
+      return {
+        subAgentStreams: {
+          ...state.subAgentStreams,
+          [agentId]: { ...prev, thinking: (prev.thinking ?? '') + delta },
+        },
+      };
     });
   },
 
   /**
-   * Mark the close of the current <thinking> block for agentId. Flushes the
-   * accumulated buffer into the sub-agent's messages as a REASONING UiMessage
-   * and clears the live buffer.
+   * Mark the close of the current <thinking> block for agentId.
+   *
+   * P0-3: flushes the side-channel thinking buffer into messages[].subagentData.messages
+   * as a REASONING UiMessage and clears the thinking field in the side-channel.
+   * This is the one place where a thinking close DOES need to touch messages[],
+   * but it happens at most once per iteration (not per token).
    */
   endSubAgentThinking(agentId: string) {
     set((state) => {
+      const stream = state.subAgentStreams[agentId];
+      const thinkingText = stream?.thinking ?? null;
+      // Clear thinking in side-channel regardless.
+      const nextStreams = stream !== undefined
+        ? { ...state.subAgentStreams, [agentId]: { ...stream, thinking: null } }
+        : state.subAgentStreams;
+
+      if (!thinkingText) {
+        // Empty block — nothing to flush into messages.
+        return { subAgentStreams: nextStreams };
+      }
+
+      const finalised: UiMessage = {
+        ts: uniqueTs(),
+        type: 'SAY',
+        say: 'REASONING',
+        text: thinkingText,
+      };
       const messages = state.messages.map((m): UiMessage => {
         if (!m.subagentData || m.subagentData.agentId !== agentId) return m;
         const sub = m.subagentData;
-        const text = sub.streamingThinkingText ?? '';
-        if (!text) {
-          // Empty thinking block — nothing to finalise.
-          return {
-            ...m,
-            subagentData: { ...sub, streamingThinkingText: null } as SubAgentState,
-          };
-        }
-        const finalised: UiMessage = {
-          ts: uniqueTs(),
-          type: 'SAY',
-          say: 'REASONING',
-          text,
-        };
         return {
           ...m,
           subagentData: {
             ...sub,
             messages: [...sub.messages, finalised],
-            streamingThinkingText: null,
           } as SubAgentState,
         };
       });
-      return { messages };
+      return { messages, subAgentStreams: nextStreams };
     });
   },
 
   completeSubAgent(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
+      // P0-3: merge any accumulated streaming text from the side-channel into
+      // the sub-agent's messages[] before finalising, then drop the side-channel
+      // entry.  The side-channel entry also carries the final iteration /
+      // statusNote which we write back so the completed card shows correct counts.
+      const stream = state.subAgentStreams[data.agentId];
+      const nextStreams = { ...state.subAgentStreams };
+      delete nextStreams[data.agentId];
+
       const messages = state.messages.map((m): UiMessage => {
         if (!m.subagentData || m.subagentData.agentId !== data.agentId) return m;
         const sub = m.subagentData;
+
+        // Flush accumulated streaming text (if any) into a finalized TEXT message.
+        const accumulatedText = stream?.text ?? '';
+        const streamMsg: UiMessage | null = accumulatedText
+          ? {
+              ts: uniqueTs(),
+              type: 'SAY',
+              say: 'TEXT',
+              text: accumulatedText,
+              partial: false,
+            }
+          : null;
+
+        const finalMessages = streamMsg ? [...sub.messages, streamMsg] : sub.messages;
+        // Flush any remaining thinking buffer as REASONING too.
+        const thinkingText = stream?.thinking ?? null;
+        const thinkingMsg: UiMessage | null = thinkingText
+          ? {
+              ts: uniqueTs(),
+              type: 'SAY',
+              say: 'REASONING',
+              text: thinkingText,
+            }
+          : null;
+        const allMessages = thinkingMsg ? [thinkingMsg, ...finalMessages] : finalMessages;
+
         return {
           ...m,
           say: 'SUBAGENT_COMPLETED' as const,
@@ -2374,15 +2470,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
             summary: data.textContent || '',
             tokensUsed: data.tokensUsed ?? sub.tokensUsed,
             activeToolChain: [], // clear any in-flight tools
+            streamingThinkingText: null,
+            statusNote: null,
+            // Write back the final iteration from the side-channel (if present).
+            iteration: stream?.iteration ?? sub.iteration,
+            messages: allMessages,
           } as SubAgentState,
         };
       });
-      return { messages };
+      return { messages, subAgentStreams: nextStreams };
     });
   },
 
   killSubAgent(agentId: string) {
     set((state) => {
+      // P0-3: clear the side-channel entry on kill (no need to persist partial text).
+      const nextStreams = { ...state.subAgentStreams };
+      delete nextStreams[agentId];
+
       const messages = state.messages.map((m): UiMessage => {
         if (!m.subagentData || m.subagentData.agentId !== agentId) return m;
         const sub = m.subagentData;
@@ -2393,10 +2498,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...sub,
             status: 'KILLED' as const,
             activeToolChain: [],
+            streamingThinkingText: null,
+            statusNote: null,
           } as SubAgentState,
         };
       });
-      return { messages };
+      return { messages, subAgentStreams: nextStreams };
     });
     // Notify Kotlin to cancel the worker
     import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
