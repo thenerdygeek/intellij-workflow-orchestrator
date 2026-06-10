@@ -20,6 +20,41 @@ class SessionCheckpointStore(
 
     private val log = Logger.getInstance(SessionCheckpointStore::class.java)
 
+    /** Cache entry for one file's diff; valid while (len, mtime, baselineTs) all match. */
+    private data class DiffCacheEntry(
+        val currentLen: Long,
+        val currentMtime: Long,
+        val baselineTs: Long,
+        val change: FileChange,
+    ) {
+        /** Cache hit iff the on-disk file and the baseline checkpoint are both unchanged. */
+        fun isFreshFor(len: Long, mtime: Long, baselineTs: Long): Boolean =
+            currentLen == len && currentMtime == mtime && this.baselineTs == baselineTs
+    }
+
+    private companion object {
+        /**
+         * P1-3: aggregateDiff runs after EVERY write tool; only re-diff files that changed.
+         *
+         * Process-wide (companion) rather than instance-scoped because the hot path
+         * (AgentService.getAggregateDiff → AgentController push after each write tool)
+         * constructs a FRESH SessionCheckpointStore per call — an instance cache would
+         * never see a second lookup. Keys are "{sessionDir}|{absolutePath}" so sessions
+         * never collide; entries are validated by (currentLen, currentMtime, baselineTs)
+         * and recomputed on any mismatch. Reverts/clear drop this session's entries.
+         * Bounded in practice: one small entry per file ever touched by a session.
+         */
+        private val diffCache = java.util.concurrent.ConcurrentHashMap<String, DiffCacheEntry>()
+    }
+
+    private fun diffCacheKey(path: String): String = "${sessionDir.absolutePath}|$path"
+
+    /** Drop every cached diff belonging to this session (files change underneath on revert). */
+    private fun clearDiffCacheForSession() {
+        val prefix = sessionDir.absolutePath + "|"
+        diffCache.keys.removeIf { it.startsWith(prefix) }
+    }
+
     private val checkpointsDir: File = File(sessionDir, "checkpoints").apply { mkdirs() }
 
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
@@ -39,6 +74,7 @@ class SessionCheckpointStore(
     }
 
     fun clear() {
+        clearDiffCacheForSession()
         if (checkpointsDir.exists()) checkpointsDir.deleteRecursively()
         checkpointsDir.mkdirs()
     }
@@ -103,22 +139,33 @@ class SessionCheckpointStore(
         }
 
         val files = earliestByPath.map { (path, cp) ->
-            val isCreated = path in cp.createdPaths
             val currentFile = File(path)
-            val current = if (currentFile.exists()) currentFile.readText() else ""
-            val baseline = if (isCreated) {
-                ""
+            val len = if (currentFile.exists()) currentFile.length() else -1L
+            val mtime = if (currentFile.exists()) currentFile.lastModified() else -1L
+            val baselineTs = cp.messageTs
+            val cacheKey = diffCacheKey(path)
+            val cached = diffCache[cacheKey]
+            if (cached?.isFreshFor(len, mtime, baselineTs) == true) {
+                cached.change
             } else {
-                File(File(checkpointsDir, "msg-${cp.messageTs}/files"), snapshotRelative(path))
-                    .takeIf { it.exists() }?.readText() ?: ""
+                val isCreated = path in cp.createdPaths
+                val current = if (currentFile.exists()) currentFile.readText() else ""
+                val baseline = if (isCreated) {
+                    ""
+                } else {
+                    File(File(checkpointsDir, "msg-${cp.messageTs}/files"), snapshotRelative(path))
+                        .takeIf { it.exists() }?.readText() ?: ""
+                }
+                val (added, removed) = DiffCalculator.countDiff(baseline, current)
+                val status = when {
+                    isCreated && currentFile.exists() -> FileStatus.CREATED
+                    !currentFile.exists() -> FileStatus.DELETED
+                    else -> FileStatus.MODIFIED
+                }
+                val change = FileChange(path = path, added = added, removed = removed, status = status)
+                diffCache[cacheKey] = DiffCacheEntry(len, mtime, baselineTs, change)
+                change
             }
-            val (added, removed) = DiffCalculator.countDiff(baseline, current)
-            val status = when {
-                isCreated && currentFile.exists() -> FileStatus.CREATED
-                !currentFile.exists() -> FileStatus.DELETED
-                else -> FileStatus.MODIFIED
-            }
-            FileChange(path = path, added = added, removed = removed, status = status)
         }.sortedBy { it.path }
 
         return AggregateDiff(
@@ -143,6 +190,8 @@ class SessionCheckpointStore(
      * chat input.
      */
     fun revertToMessage(targetMessageTs: Long): RevertResult {
+        // Files change underneath the diff cache during a revert — drop this session's entries.
+        clearDiffCacheForSession()
         val all = listMessageCheckpoints()
         val target = all.firstOrNull { it.messageTs == targetMessageTs }
             ?: error("checkpoint for messageTs=$targetMessageTs not found")
@@ -232,6 +281,8 @@ class SessionCheckpointStore(
      *         known but blocked by E3 safety check; both false = path unknown to this store.
      */
     fun revertFileToBaseline(absolutePath: String): SingleFileRevertResult {
+        // Files change underneath the diff cache during a revert — drop this session's entries.
+        clearDiffCacheForSession()
         // E3: validate before touching the filesystem
         if (!isSafeRevertPath(absolutePath)) {
             val all = listMessageCheckpoints()

@@ -205,6 +205,92 @@ class SessionCheckpointStoreTest {
         assertEquals(false, restored.reverted)
     }
 
+    // ── P1-3 per-file diff cache ────────────────────────────────────────────────
+
+    @Test
+    fun `aggregateDiff is stable across repeated calls and re-diffs only the changed file`(@TempDir tmp: java.nio.file.Path) {
+        val store = SessionCheckpointStore(sessionDir = tmp.toFile())
+        val foo = File(tmp.toFile(), "src/Foo.kt").apply { parentFile.mkdirs(); writeText("1\n2\n3") }
+        val bar = File(tmp.toFile(), "src/Bar.kt").apply { parentFile.mkdirs(); writeText("x") }
+
+        store.beginUserMessage(100L, "edit both")
+        store.captureIfFirstTouch(100L, foo.absolutePath)
+        store.captureIfFirstTouch(100L, bar.absolutePath)
+        foo.writeText("1\n2\n3\n4")
+        bar.writeText("x\ny")
+
+        val agg1 = store.aggregateDiff()
+        val agg2 = store.aggregateDiff()
+        assertEquals(agg1, agg2, "no on-disk change between calls — results must be identical")
+
+        // Modify only foo (different length so the cache key cannot accidentally match).
+        foo.writeText("1\n2\n3\n4\n5\n6")
+        val agg3 = store.aggregateDiff()
+        val fooChange = agg3.files.first { it.path == foo.absolutePath }
+        val barChange = agg3.files.first { it.path == bar.absolutePath }
+        assertEquals(3, fooChange.added); assertEquals(0, fooChange.removed)
+        assertEquals(1, barChange.added); assertEquals(0, barChange.removed)
+        assertEquals(4, agg3.totalAdded); assertEquals(0, agg3.totalRemoved)
+    }
+
+    @Test
+    fun `diff cache is memoized on len+mtime and cleared by revertFileToBaseline`(@TempDir tmp: java.nio.file.Path) {
+        val store = SessionCheckpointStore(sessionDir = tmp.toFile())
+        // All three contents are the SAME byte length so only mtime distinguishes them.
+        val foo = File(tmp.toFile(), "src/Foo.kt").apply { parentFile.mkdirs(); writeText("aaa\nbbb") }
+
+        store.beginUserMessage(100L, "edit foo")
+        store.captureIfFirstTouch(100L, foo.absolutePath)
+        foo.writeText("aaa\nccc")
+
+        val agg1 = store.aggregateDiff()
+        assertEquals(1, agg1.files[0].added); assertEquals(1, agg1.files[0].removed)
+        val cachedMtime = foo.lastModified()
+
+        // Same length + same mtime → memo hit (stale by design; proves the cache exists).
+        foo.writeText("aaa\nbbb")
+        foo.setLastModified(cachedMtime)
+        val agg2 = store.aggregateDiff()
+        assertEquals(1, agg2.files[0].added, "len+mtime unchanged — memoized entry must be reused")
+        assertEquals(1, agg2.files[0].removed)
+
+        // revertFileToBaseline must clear the cache: same len + same mtime but fresh diff.
+        store.revertFileToBaseline(foo.absolutePath)
+        assertEquals("aaa\nbbb", foo.readText())
+        foo.setLastModified(cachedMtime)
+        val agg3 = store.aggregateDiff()
+        assertEquals(0, agg3.files[0].added, "cache must be cleared on revertFileToBaseline")
+        assertEquals(0, agg3.files[0].removed)
+    }
+
+    @Test
+    fun `diff cache is cleared by revertToMessage`(@TempDir tmp: java.nio.file.Path) {
+        val store = SessionCheckpointStore(sessionDir = tmp.toFile())
+        // v1 → v3 diffs (2,2); v1 → v2 diffs (1,1). All same byte length.
+        val foo = File(tmp.toFile(), "src/Foo.kt").apply { parentFile.mkdirs(); writeText("a\nb") }
+
+        store.beginUserMessage(100L, "first")
+        store.captureIfFirstTouch(100L, foo.absolutePath)
+        foo.writeText("a\nz")
+
+        store.beginUserMessage(200L, "second")
+        store.captureIfFirstTouch(200L, foo.absolutePath)
+        foo.writeText("x\ny")
+
+        val agg1 = store.aggregateDiff()
+        assertEquals(2, agg1.files[0].added); assertEquals(2, agg1.files[0].removed)
+        val cachedMtime = foo.lastModified()
+
+        // Revert msg-200: foo restored to its msg-200 pre-state "a\nz"; still tracked via msg-100.
+        store.revertToMessage(200L)
+        assertEquals("a\nz", foo.readText())
+        foo.setLastModified(cachedMtime)
+
+        val agg2 = store.aggregateDiff()
+        assertEquals(1, agg2.files[0].added, "cache must be cleared on revertToMessage")
+        assertEquals(1, agg2.files[0].removed)
+    }
+
     @Test
     fun `captureIfFirstTouch handles Windows-style absolute path without corrupting source`(@TempDir tmp: java.nio.file.Path) {
         val store = SessionCheckpointStore(sessionDir = tmp.toFile())
