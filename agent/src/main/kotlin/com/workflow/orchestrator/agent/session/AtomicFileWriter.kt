@@ -40,9 +40,23 @@ object AtomicFileWriter {
             // otherwise redirect the write to an arbitrary file reachable by the IDE process.
             // E2: Set POSIX rw------- (owner-only) before writing content so the file is
             // never readable by other users on shared hosts, even between create and chmod.
-            Files.newOutputStream(tmp, StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW).use { out ->
+            java.nio.channels.FileChannel.open(
+                tmp,
+                StandardOpenOption.WRITE,
+                StandardOpenOption.CREATE_NEW,
+            ).use { ch ->
                 applyOwnerOnlyPerms(tmp)
-                out.write(content.toByteArray(Charsets.UTF_8))
+                // FileChannel.write may legally write fewer bytes than requested; loop to
+                // full delivery — a truncated-but-fsynced file surviving the rename is the
+                // exact failure class B18 closes.
+                val buf = java.nio.ByteBuffer.wrap(content.toByteArray(Charsets.UTF_8))
+                while (buf.hasRemaining()) {
+                    ch.write(buf)
+                }
+                // B18: flush bytes to the device before the atomic rename — the rename is only
+                // atomic for metadata; without force() power loss could leave an empty target.
+                // Affordable now: Wave 2 throttling cut write frequency to ~2/s + turn boundaries.
+                ch.force(true)
             }
             moveWithRetry(tmp, target.toPath())
         } catch (e: Exception) {
