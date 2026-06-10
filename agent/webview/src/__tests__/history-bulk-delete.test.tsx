@@ -16,6 +16,33 @@ import { HistoryView } from '@/components/history/HistoryView';
 import { useChatStore } from '@/stores/chatStore';
 import type { HistoryItem } from '@/bridge/types';
 
+// P1-16: HistoryView uses Virtuoso; replace with a shim that renders all items.
+vi.mock('react-virtuoso', () => ({
+  Virtuoso: ({
+    totalCount,
+    itemContent,
+    computeItemKey,
+    components,
+  }: {
+    totalCount: number;
+    itemContent: (i: number) => React.ReactNode;
+    computeItemKey?: (i: number) => string | number;
+    components?: { Header?: React.ComponentType; Footer?: React.ComponentType };
+  }) => {
+    const Header = components?.Header;
+    const Footer = components?.Footer;
+    return (
+      <div>
+        {Header && <Header />}
+        {Array.from({ length: totalCount }, (_, i) => (
+          <div key={computeItemKey ? computeItemKey(i) : i}>{itemContent(i)}</div>
+        ))}
+        {Footer && <Footer />}
+      </div>
+    );
+  },
+}));
+
 vi.mock('@/bridge/jcef-bridge', () => ({
   kotlinBridge: {
     bulkDeleteSessions: vi.fn(),

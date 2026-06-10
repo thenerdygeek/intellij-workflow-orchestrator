@@ -1,7 +1,26 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { Loader } from '@/components/ui/prompt-kit/loader';
 import { TextShimmer } from '@/components/ui/prompt-kit/text-shimmer';
+
+/**
+ * P2-15: returns true when the user's OS/browser has requested reduced motion.
+ * Evaluated once at module load and again on change via matchMedia listener.
+ */
+function usePrefersReducedMotion(): boolean {
+  const mql = useMemo(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return null;
+    return window.matchMedia('(prefers-reduced-motion: reduce)');
+  }, []);
+  const [reduced, setReduced] = useState(() => mql?.matches ?? false);
+  useEffect(() => {
+    if (!mql) return;
+    const handler = (e: MediaQueryListEvent) => setReduced(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, [mql]);
+  return reduced;
+}
 
 const WORKING_PHRASES = [
   // Dev life — the daily struggle
@@ -268,21 +287,43 @@ export function WorkingIndicator() {
   const phrase = smartPhrase || storedFallback || WORKING_PHRASES[0]!;
   const { display, isAnimating } = useTypewriter(phrase);
 
+  // P2-15: honor the OS/browser prefers-reduced-motion setting. When reduced
+  // motion is active, we suppress the continuous shimmer + wave animations and
+  // show a plain non-animated label instead. Animations are NOT removed for
+  // default users — this only affects users who have opted in to reduced motion.
+  const reducedMotion = usePrefersReducedMotion();
+
   return (
     <div className="flex items-center gap-2 px-3 py-2 animate-[fade-in_200ms_ease-out]">
-      <Loader variant="wave" size="md" />
-      <TextShimmer
-        duration={3}
-        className="text-[12px]"
-        style={{
-          backgroundImage: `linear-gradient(to right, color-mix(in srgb, var(--accent-write, #22C55E) 50%, transparent) 30%, var(--accent-write, #22C55E) 50%, color-mix(in srgb, var(--accent-write, #22C55E) 50%, transparent) 70%)`,
-        }}
-      >
-        {display}
-        {isAnimating && (
-          <span className="inline-block w-[2px] h-[1em] ml-0.5 align-middle animate-pulse" style={{ background: 'var(--accent-write, #22C55E)' }} />
-        )}
-      </TextShimmer>
+      {reducedMotion ? (
+        // Reduced-motion: static spinner dot + plain text — no wave, no shimmer
+        <>
+          <span
+            className="inline-block w-2 h-2 rounded-full shrink-0"
+            style={{ background: 'var(--accent-write, #22C55E)' }}
+            aria-hidden="true"
+          />
+          <span className="text-[12px] font-medium" style={{ color: 'var(--accent-write, #22C55E)' }}>
+            {phrase}
+          </span>
+        </>
+      ) : (
+        <>
+          <Loader variant="wave" size="md" />
+          <TextShimmer
+            duration={3}
+            className="text-[12px]"
+            style={{
+              backgroundImage: `linear-gradient(to right, color-mix(in srgb, var(--accent-write, #22C55E) 50%, transparent) 30%, var(--accent-write, #22C55E) 50%, color-mix(in srgb, var(--accent-write, #22C55E) 50%, transparent) 70%)`,
+            }}
+          >
+            {display}
+            {isAnimating && (
+              <span className="inline-block w-[2px] h-[1em] ml-0.5 align-middle animate-pulse" style={{ background: 'var(--accent-write, #22C55E)' }} />
+            )}
+          </TextShimmer>
+        </>
+      )}
     </div>
   );
 }

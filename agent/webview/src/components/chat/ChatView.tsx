@@ -33,17 +33,22 @@ export const ChatView = memo(function ChatView() {
 
   // When streaming ends on a tall response, scroll to its TOP so the user can
   // read from the start instead of landing at the bottom. The just-finalized
-  // message is at messages.length-1.
-  // P2-14: dependency is the boolean `isStreamingBool` instead of the full
-  // `streamingText` string, so the effect only re-runs on start/stop, not
-  // per token batch.
+  // message is at renderItems.length-1 (tool messages collapse into groups).
+  // B8: track renderItems length via a ref so the scroll effect can read it
+  // without adding renderItems to the effect's dependency array (which would
+  // re-run on every message, defeating the streaming-end-only trigger).
+  // Declared here (before renderItems useMemo) to keep hooks in stable order;
+  // updated immediately after the useMemo below.
+  const renderItemsLengthRef = useRef(0);
+
   useEffect(() => {
     const isStreaming = isStreamingBool;
     const wasStreaming = wasStreamingRef.current;
     wasStreamingRef.current = isStreaming;
     if (!wasStreaming || isStreaming) return;
 
-    const lastIndex = useChatStore.getState().messages.length - 1;
+    // B8: use the renderItems count (what Virtuoso knows about), not raw messages
+    const lastIndex = renderItemsLengthRef.current - 1;
     if (lastIndex < 0) return;
 
     // Defer one frame so Virtuoso has materialized the now-finalized item.
@@ -110,6 +115,9 @@ export const ChatView = memo(function ChatView() {
     }
     return result;
   }, [messages]);
+
+  // B8: keep the ref in sync so the scroll effect reads the post-useMemo value.
+  renderItemsLengthRef.current = renderItems.length;
 
   const renderItem = useCallback((index: number) => {
     const item = renderItems[index];

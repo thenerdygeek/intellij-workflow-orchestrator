@@ -269,10 +269,10 @@ function ToolCallDetails({ toolCall }: { toolCall: ToolCall }) {
 // ── Terminal content for CMD tools ──
 
 function TerminalContent({ toolCall }: { toolCall: ToolCall }) {
-  // Stream output is keyed by the Kotlin-side tool call ID, not the JS-generated ID.
-  // Find any matching stream — for CMD tools there's typically one active at a time.
-  const allStreams = useChatStore(s => s.toolOutputStreams);
-  const streamOutput = allStreams[toolCall.id] ?? '';
+  // P1-15: per-key selector so only THIS terminal re-renders when its own chunk
+  // arrives — previously the whole-map selector caused every visible terminal to
+  // re-render on every append regardless of which tool was streaming.
+  const streamOutput = useChatStore(s => s.toolOutputStreams[toolCall.id] ?? '');
   const isRunning = toolCall.status === 'RUNNING';
 
   const handleKill = useCallback(() => {

@@ -150,6 +150,29 @@ function delegatedStamp(repo: string | null): { delegated?: true; delegatorRepo?
 // caller that ever indexed against an exact size. Exported so tests can
 // refer to the named constant rather than repeating the literal.
 export const MESSAGES_HARD_CAP = 1000;
+
+// ── Tool-output UI cap (P2-17) ──
+// Finalized toolCallData.output is capped so 50-100KB × 1000 messages don't
+// bloat the React state heap. Full content always lives on disk via the Kotlin
+// ToolOutputSpiller; the UI only needs a bounded tail for the copy-button /
+// expand view. When the raw output exceeds the cap, we keep a head slice +
+// truncation notice + tail slice so both the start and the most-recent lines
+// are visible. The streaming buffer in toolOutputStreams is never touched.
+export const TOOL_OUTPUT_HEAD = 4_000;   // chars kept from the start
+export const TOOL_OUTPUT_TAIL = 16_000;  // chars kept from the end
+export const TOOL_OUTPUT_UI_CAP = TOOL_OUTPUT_HEAD + TOOL_OUTPUT_TAIL;
+const TOOL_OUTPUT_TRUNCATION_NOTICE = '\n…[truncated, full output on disk]…\n';
+
+function capToolOutput(output: string | undefined): string | undefined {
+  if (output === undefined) return undefined;
+  if (output.length <= TOOL_OUTPUT_UI_CAP) return output;
+  return (
+    output.slice(0, TOOL_OUTPUT_HEAD) +
+    TOOL_OUTPUT_TRUNCATION_NOTICE +
+    output.slice(output.length - TOOL_OUTPUT_TAIL)
+  );
+}
+
 const SPILL_MARKER_TEXT =
   'Older messages were archived to keep the chat responsive. ' +
   'The agent still sees the full conversation in its context.';
@@ -1395,7 +1418,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const dlg = delegatedStamp(state.sessionDelegatedRepo);
     const toolMessages: UiMessage[] = tools.map(tc => {
       const stream = streams[tc.id];
-      const output = tc.output || stream || undefined;
+      // P2-17: cap the stored output to TOOL_OUTPUT_UI_CAP so 50-100KB ×
+      // 1000 messages don't bloat React state. Full output lives on disk.
+      const output = capToolOutput(tc.output || stream || undefined);
       return {
         ts: uniqueTs(),
         type: 'SAY' as const,
