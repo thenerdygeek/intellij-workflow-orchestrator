@@ -66,13 +66,18 @@ class MessageStateHandler(
      */
     private val dialectDriftFlag = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    /** Throttle global index updates to at most once per second during streaming. */
+    /** Throttle global index updates to at most once per second during streaming; API turn boundaries flush a dirty index immediately (B15). */
     @Volatile private var lastGlobalIndexUpdateMs = 0L
     @Volatile private var globalIndexDirty = false
     private val globalIndexThrottleMs = 1000L
 
     /** P0-1: throttle PARTIAL streaming UI saves to one disk write per window; memory stays authoritative. */
     @Volatile private var lastUiSaveMs = 0L
+
+    /** P1-1: coalesce per-message full-file api-history rewrites within a burst; flushed at every boundary. */
+    @Volatile private var lastApiSaveMs = 0L
+
+    @Volatile private var apiDirty = false
 
     /** P1-4: running totals for the global index — incremental on append, recomputed on bulk rewrites. */
     @Volatile private var totalTokensInCached = 0L
@@ -218,9 +223,28 @@ class MessageStateHandler(
             apiHistory.add(message)
         }
         accumulateMetrics(message)
-        saveApiHistoryInternal()
+        saveApiHistoryThrottled()
         // B15: a throttled-skipped index update must not strand stale data until saveBoth —
         // API turns are seconds apart, making this the natural boundary flush (P1-4 cadence).
+        flushGlobalIndexIfDirty()
+    }
+
+    /**
+     * P1-1: within a tool-result burst, skip the full-file rewrite (the in-memory list is
+     * authoritative); the next boundary — another append past the window, any bulk rewrite,
+     * or [saveBoth] — flushes. Crash window ≤ [API_SAVE_THROTTLE_MS] of api turns; the resume
+     * path already tolerates a trailing truncated exchange.
+     */
+    private fun saveApiHistoryThrottled() {
+        if (uiSaveClock() - lastApiSaveMs >= API_SAVE_THROTTLE_MS) {
+            saveApiHistoryInternal()
+        } else {
+            apiDirty = true
+        }
+    }
+
+    /** B15: shared dirty-index boundary flush — called from the API-append boundary and [saveBoth]. */
+    private suspend fun flushGlobalIndexIfDirty() {
         if (globalIndexDirty) {
             updateGlobalIndex()
             lastGlobalIndexUpdateMs = uiSaveClock()
@@ -241,7 +265,9 @@ class MessageStateHandler(
         totalTokensInCached = apiHistory.sumOf { (it.metrics?.inputTokens ?: 0).toLong() }
         totalTokensOutCached = apiHistory.sumOf { (it.metrics?.outputTokens ?: 0).toLong() }
         totalCostCached = apiHistory.sumOf { it.metrics?.cost ?: 0.0 }
-        lastModelIdCached = apiHistory.lastOrNull { it.modelInfo != null }?.modelInfo?.modelId
+        // Align with accumulateMetrics' `?.let` semantics: skip entries whose modelInfo
+        // is present but carries a null modelId, not just entries with no modelInfo.
+        lastModelIdCached = apiHistory.lastOrNull { it.modelInfo?.modelId != null }?.modelInfo?.modelId
     }
 
     /**
@@ -616,6 +642,10 @@ class MessageStateHandler(
     }
 
     private fun saveApiHistoryInternal() {
+        // P1-1: every full-file write stamps the coalescing window and clears any pending
+        // dirty state — bulk-rewrite callers therefore stay immediate AND flush for free.
+        lastApiSaveMs = uiSaveClock()
+        apiDirty = false
         sessionDir.mkdirs()
         // Phase 4: emit v2 wrapper { schemaVersion: 2, messages: [...] }.
         // Reader (loadApiHistory) tries this shape first and falls back to the
@@ -665,11 +695,7 @@ class MessageStateHandler(
         saveInternal()
         saveApiHistoryInternal()
         // Flush any throttled global index update
-        if (globalIndexDirty) {
-            updateGlobalIndex()
-            lastGlobalIndexUpdateMs = uiSaveClock()
-            globalIndexDirty = false
-        }
+        flushGlobalIndexIfDirty()
     }
 
     private suspend fun updateGlobalIndex() = globalIndexMutex.withLock {
@@ -758,6 +784,9 @@ class MessageStateHandler(
 
         /** P0-1: window for partial-stream ui_messages.json writes (memory stays authoritative). */
         private const val UI_SAVE_THROTTLE_MS = 500L
+
+        /** P1-1: window for coalescing per-append api_conversation_history.json rewrites. */
+        private const val API_SAVE_THROTTLE_MS = 1_000L
 
         /**
          * Maximum number of sessions retained in the global `sessions.json` index.
