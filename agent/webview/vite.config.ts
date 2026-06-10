@@ -33,16 +33,20 @@ export default defineConfig(({ mode }) => ({
       },
       output: {
         manualChunks(id) {
-          // Only force-merge libraries that are genuinely statically imported by
-          // the main entry and whose Rollup default (many tiny per-package chunks)
-          // would be worse than a single shared chunk.
+          // Force-merge only libraries whose Rollup default (many tiny per-package
+          // chunks) would be worse than one shared chunk, AND whose chunk can never
+          // land in the MAIN entry's modulepreload list. Two safe categories:
+          //  - main-entry statics that are preloaded anyway (radix);
+          //  - sandbox-entry statics (cobe/maps/xyflow/react-table/date-fns/colord/
+          //    motion — plus d3/recharts/roughjs which sandbox-main.ts imports
+          //    statically) and dynamic-only subgraphs (katex/chartjs/diff2html):
+          //    a manualChunks name on an async-only or sandbox-only subgraph stays
+          //    out of index.html's preloads.
           //
-          // Libraries whose consumers use dynamic import() — shiki, mermaid/dagre,
-          // d3, recharts, roughjs — are intentionally NOT listed here so that
-          // Rollup's natural dynamic-import code-splitting keeps them as on-demand
-          // chunks and they never appear in the main entry's modulepreload list.
-          // sandbox-main.ts is a separate Rollup entry; without forced merging it
-          // gets its own chunks and does NOT leak into the main entry's graph.
+          // NEVER list a library whose payload is dynamically imported from the
+          // MAIN entry (shiki grammars/themes/wasm, mermaid/dagre, lucide): merging
+          // its static core with its lazy payload turns the whole thing into a
+          // startup-critical static chunk — the audit P0-2 bug (~8MB eager parse).
           if (id.includes('katex')) return 'katex'
           if (id.includes('chart.js')) return 'chartjs'
           if (id.includes('diff2html')) return 'diff2html'
