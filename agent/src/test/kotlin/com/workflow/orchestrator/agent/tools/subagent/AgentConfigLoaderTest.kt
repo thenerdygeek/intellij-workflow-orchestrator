@@ -369,9 +369,11 @@ class AgentConfigLoaderTest {
     // ── Singleton ─────────────────────────────────────────────────
 
     @Test
-    fun `getInstance returns a fresh usable instance after dispose -- project close must not kill other projects`(@TempDir tempDir: Path) {
+    fun `getInstance returns a fresh usable instance after dispose -- project close must not kill other projects`(
+        @TempDir tempDir: Path,
+    ) {
         val first = AgentConfigLoader.getInstance()
-        first.dispose()   // simulates project A closing under the old Disposer.register wiring
+        first.dispose() // simulates project A closing under the old Disposer.register wiring
 
         val second = AgentConfigLoader.getInstance()
         assertNotSame(first, second, "a disposed singleton must be replaced, not returned")

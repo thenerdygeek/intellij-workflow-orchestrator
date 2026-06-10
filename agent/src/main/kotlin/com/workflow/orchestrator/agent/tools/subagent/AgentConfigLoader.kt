@@ -575,8 +575,11 @@ class AgentConfigLoader private constructor() : Disposable {
                 // B1: a project-scoped Disposer used to dispose this app-wide singleton on the
                 // first project close, permanently killing persona configs for every other
                 // project. A disposed instance is now replaced with a fresh one.
-                if (cur != null && !cur.disposed.get()) cur
-                else AgentConfigLoader().also { instance = it }
+                if (cur != null && !cur.disposed.get()) {
+                    cur
+                } else {
+                    AgentConfigLoader().also { instance = it }
+                }
             }
         }
 

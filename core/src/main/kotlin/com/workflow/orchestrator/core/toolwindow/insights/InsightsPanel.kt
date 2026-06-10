@@ -59,7 +59,7 @@ class InsightsPanel(
                 lastApplied = snapshot
                 invokeLater { applySnapshot(snapshot) }
             }
-            changed   // real signal: backoff decays to 300s while nothing changes
+            changed // real signal: backoff decays to 300s while nothing changes
         }
     )
 

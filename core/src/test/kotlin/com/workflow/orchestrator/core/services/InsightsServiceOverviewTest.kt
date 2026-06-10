@@ -24,7 +24,7 @@ class InsightsServiceOverviewTest {
     @Test
     fun `getOverview today and week windows filter correctly from one load`() {
         val now = System.currentTimeMillis()
-        val today = sessionRecord(ts = now - 1_000)                        // 1s ago — valid even right after local midnight
+        val today = sessionRecord(ts = now - 1_000) // 1s ago — valid even right after local midnight
         val thisWeek = sessionRecord(ts = now - 3L * 24 * 60 * 60 * 1000) // 3 days ago
         val ancient = sessionRecord(ts = now - 30L * 24 * 60 * 60 * 1000) // 30 days ago
         val reader = mockk<SessionHistoryReader>()

@@ -19,8 +19,11 @@ class SmartPollerFocusGateTest {
         assertEquals(
             45_000L,
             SmartPoller.effectiveIntervalMs(
-                baseIntervalMs = 30_000, maxIntervalMs = 300_000,
-                backoff = 1.5, visible = true, focused = true,
+                baseIntervalMs = 30_000,
+                maxIntervalMs = 300_000,
+                backoff = 1.5,
+                visible = true,
+                focused = true,
             ),
         )
     }
@@ -30,8 +33,11 @@ class SmartPollerFocusGateTest {
         assertEquals(
             120_000L,
             SmartPoller.effectiveIntervalMs(
-                baseIntervalMs = 30_000, maxIntervalMs = 300_000,
-                backoff = 1.0, visible = true, focused = false,
+                baseIntervalMs = 30_000,
+                maxIntervalMs = 300_000,
+                backoff = 1.0,
+                visible = true,
+                focused = false,
             ),
         )
     }
@@ -41,8 +47,11 @@ class SmartPollerFocusGateTest {
         assertEquals(
             120_000L,
             SmartPoller.effectiveIntervalMs(
-                baseIntervalMs = 30_000, maxIntervalMs = 300_000,
-                backoff = 1.0, visible = false, focused = true,
+                baseIntervalMs = 30_000,
+                maxIntervalMs = 300_000,
+                backoff = 1.0,
+                visible = false,
+                focused = true,
             ),
         )
     }
@@ -52,8 +61,11 @@ class SmartPollerFocusGateTest {
         assertEquals(
             300_000L,
             SmartPoller.effectiveIntervalMs(
-                baseIntervalMs = 30_000, maxIntervalMs = 300_000,
-                backoff = 10.0, visible = false, focused = false,
+                baseIntervalMs = 30_000,
+                maxIntervalMs = 300_000,
+                backoff = 10.0,
+                visible = false,
+                focused = false,
             ),
         )
     }
@@ -75,14 +87,28 @@ class SmartPollerFocusGateTest {
         val unfocusedPolls = AtomicInteger(0)
 
         val focused = SmartPoller(
-            name = "focused", baseIntervalMs = 30_000, maxIntervalMs = 300_000,
-            scope = this, networkProbe = null, ideFocused = { true },
-            action = { focusedPolls.incrementAndGet(); false },
+            name = "focused",
+            baseIntervalMs = 30_000,
+            maxIntervalMs = 300_000,
+            scope = this,
+            networkProbe = null,
+            ideFocused = { true },
+            action = {
+                focusedPolls.incrementAndGet()
+                false
+            },
         )
         val unfocused = SmartPoller(
-            name = "unfocused", baseIntervalMs = 30_000, maxIntervalMs = 300_000,
-            scope = this, networkProbe = null, ideFocused = { false },
-            action = { unfocusedPolls.incrementAndGet(); false },
+            name = "unfocused",
+            baseIntervalMs = 30_000,
+            maxIntervalMs = 300_000,
+            scope = this,
+            networkProbe = null,
+            ideFocused = { false },
+            action = {
+                unfocusedPolls.incrementAndGet()
+                false
+            },
         )
 
         focused.start()

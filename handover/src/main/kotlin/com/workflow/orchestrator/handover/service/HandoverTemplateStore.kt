@@ -456,7 +456,10 @@ class HandoverTemplateStore {
                     if (!key.reset()) {
                         // B14: ONE invalid dir (e.g. deleted) must not kill the watch loop
                         // for every other directory. Drop just this key and keep watching.
-                        log.warn("HandoverTemplateStore: watch key for ${key.watchable()} became invalid; continuing with remaining watches")
+                        log.warn(
+                            "HandoverTemplateStore: watch key for ${key.watchable()} became invalid;" +
+                                " continuing with remaining watches",
+                        )
                         continue
                     }
                 }

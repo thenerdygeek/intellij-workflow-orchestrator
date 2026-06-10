@@ -153,8 +153,10 @@ class BackgroundPoolTest {
         while (pool.isSupervisorRunning() && System.currentTimeMillis() < deadline) {
             kotlinx.coroutines.delay(50)
         }
-        assertFalse(pool.isSupervisorRunning(),
-            "supervisor must have self-stopped once all handles are gone")
+        assertFalse(
+            pool.isSupervisorRunning(),
+            "supervisor must have self-stopped once all handles are gone",
+        )
     }
 }
 

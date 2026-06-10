@@ -7,9 +7,11 @@ package com.workflow.orchestrator.agent.observability
  */
 object PhraseActivityGate {
 
+    private const val HASH_PRIME = 31
+
     /** Cheap fingerprint of "what the agent has done lately". */
     fun signature(recentTools: List<Any?>, streamSnippet: String): Int =
-        recentTools.hashCode() * 31 + streamSnippet.hashCode()
+        recentTools.hashCode() * HASH_PRIME + streamSnippet.hashCode()
 
     /** Generate on the first tick, and whenever activity changed since the previous tick. */
     fun shouldGenerate(previousSignature: Int?, signature: Int): Boolean =
