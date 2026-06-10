@@ -1,5 +1,9 @@
 # Performance Audit — 2026-06-10
 
+## Fix status
+
+**Wave 1 (`perf/wave1-quick-wins`, 2026-06-10) — FIXED:** P0-4 (`a3f3cc8cb` SmartPoller focus gate), P1-11 (`f78caeacd` Insights single load + backoff), P1-6 (`a1dfc222e` lazy monitor flush loop), P1-7 (`69f2bd0f3` lazy BackgroundPool supervisor), P1-9 + B14 (`6f37dd707` handover watcher take()), P1-10 (`8fedfe530` Haiku phrase activity gate), P2-1 + B12 (`0b2a3b2e2` stream batcher timers), B1 (`8f87daf6e` AgentConfigLoader app-level lifecycle). All other findings remain OPEN — see `docs/superpowers/plans/2026-06-10-perf-campaign-overview.md` for the wave map.
+
 Full-plugin performance audit (emphasis `:agent`). Six parallel code-reading passes: agent backend, JCEF bridge (Kotlin), React webview, `:core`, background/periodic work, feature-module Swing UI. All findings verified against source unless marked SUSPECTED. No fixes applied yet.
 
 **Target hardware:** must be usable on Intel i3. Symptom: plugin "takes a toll" even on Core Ultra 7.
