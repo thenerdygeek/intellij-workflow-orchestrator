@@ -484,11 +484,23 @@ class ManualStageDialog(
             // renderer calls on every pixel. RESIZE_DEBOUNCE_MS is a one-shot
             // swing Timer restarted on each resize event; only the last event in
             // a burst triggers the recompute.
+            //
+            // The FIRST resize (fired by the initial layout when the dialog opens)
+            // is measured immediately — debouncing it would render wrapped rows
+            // clipped for RESIZE_DEBOUNCE_MS on open (W6-D3 review M3). Only
+            // subsequent resizes (user drags) are debounced.
             val resizeDebounce = javax.swing.Timer(RESIZE_DEBOUNCE_MS) { updateRowHeights(this@apply) }
                 .apply { isRepeats = false }
             addComponentListener(object : java.awt.event.ComponentAdapter() {
+                private var firstMeasureDone = false
+
                 override fun componentResized(e: java.awt.event.ComponentEvent) {
-                    resizeDebounce.restart()
+                    if (!firstMeasureDone) {
+                        firstMeasureDone = true
+                        updateRowHeights(this@apply)
+                    } else {
+                        resizeDebounce.restart()
+                    }
                 }
             })
         }

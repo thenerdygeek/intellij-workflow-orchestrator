@@ -17,7 +17,10 @@ import java.awt.Rectangle
  * B5 fix: artifact "Download"/"Open" buttons were painted but unclickable because
  * they were inside a JList rubber-stamp renderer. A [java.awt.event.MouseAdapter]
  * on the list now forwards clicks via hit-testing; [resolveButtonAction] is the
- * pure decision function.
+ * pure decision function and IS the production decision —
+ * `ArtifactCellRenderer.buttonActionAt` delegates to it, mapping a button that is
+ * absent from the current row (`parent == null`) to null bounds so its stale
+ * rectangle from a previously rendered row can never produce a hit (W6-D3 review I2).
  */
 class ArtifactButtonHitTestTest {
 
@@ -73,6 +76,26 @@ class ArtifactButtonHitTestTest {
     @Test
     fun `both null bounds - any click returns null`() {
         assertNull(StageDetailPanel.resolveButtonAction(Point(10, 10), null, null))
+    }
+
+    @Test
+    fun `null downloadBounds does not short-circuit - click on open still returns open`() {
+        // Pins the null-parent → null-bounds mapping contract used by
+        // buttonActionAt: a null first argument must be skipped, not treated
+        // as a miss for the whole resolver.
+        val pt = Point(90, 10)
+        assertEquals(
+            StageDetailPanel.ARTIFACT_ACTION_OPEN,
+            StageDetailPanel.resolveButtonAction(pt, downloadBounds = null, openBounds = openBounds)
+        )
+    }
+
+    @Test
+    fun `null downloadBounds - click where download would be returns null`() {
+        // A button absent from the current row (parent == null) is passed as
+        // null bounds; its stale rectangle must never produce a hit.
+        val pt = Point(35, 10)
+        assertNull(StageDetailPanel.resolveButtonAction(pt, downloadBounds = null, openBounds = openBounds))
     }
 
     @Test

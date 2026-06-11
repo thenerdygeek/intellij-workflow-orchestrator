@@ -292,6 +292,9 @@ class StageDetailPanel(
         // its laid-out bounds), then invoke the correct action.
         artifactsList.addMouseListener(object : java.awt.event.MouseAdapter() {
             override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                // Left-button only — JButtons only ever responded to left-click,
+                // and right-click/middle-click must not trigger downloads.
+                if (!SwingUtilities.isLeftMouseButton(e)) return
                 dispatchArtifactClick(e)
             }
         })
@@ -588,13 +591,15 @@ class StageDetailPanel(
      * Identifies which artifact action ("download" or "open") is under [point]
      * in [artifactsList] coordinates, or null if the point is not over a button.
      *
-     * Pure function — no side effects. Extracted so the logic can be tested
-     * without a running IDE (see [ArtifactButtonHitTestTest]).
+     * NOT pure — this mutates the shared rubber-stamp renderer (it reconfigures
+     * the stamp for the target row and re-lays it out). The pure decision
+     * function is [resolveButtonAction] (see [ArtifactButtonHitTestTest]).
      *
      * The cell renderer is configured for the row at [point] so that its layout
      * reflects the row's actual content (some rows show only "Download", others
-     * show both buttons). The rendered component is then asked for its preferred
-     * size to lay it out at the cell bounds, and button sub-rects are tested.
+     * show both buttons). The renderer then deterministically lays out the
+     * stamp AND its nested containers at the cell size, and button sub-rects
+     * are tested.
      *
      * @return "download", "open", or null.
      */
@@ -611,15 +616,14 @@ class StageDetailPanel(
         // Configure the renderer for this row so actionsPanel layout reflects the
         // current row's data (number of buttons present).
         val renderer = list.cellRenderer as? ArtifactCellRenderer ?: return null
-        val rendered = renderer.getListCellRendererComponent(
+        renderer.getListCellRendererComponent(
             list,
             artifact,
             index,
             list.isSelectedIndex(index),
             list.hasFocus()
         )
-        rendered.setBounds(cellBounds.x, cellBounds.y, cellBounds.width, cellBounds.height)
-        rendered.doLayout()
+        renderer.layoutForHitTest(cellBounds.width, cellBounds.height)
 
         // Translate click point into cell-relative coordinates.
         val cellPt = Point(point.x - cellBounds.x, point.y - cellBounds.y)
@@ -813,12 +817,33 @@ class StageDetailPanel(
         }
 
         /**
+         * Deterministically lays out the rubber-stamp [panel] and its nested
+         * containers at the given cell size, so that button bounds reflect the
+         * CURRENTLY CONFIGURED row.
+         *
+         * `Container.doLayout()` is NOT recursive — it positions only direct
+         * children. Laying out [panel] positions infoPanel/actionsPanel, but
+         * the buttons INSIDE [actionsPanel] would keep stale bounds from the
+         * last paint-pass `CellRendererPane.validate()` (i.e. the layout of the
+         * last painted row, not the row being hit-tested). So [actionsPanel] is
+         * laid out explicitly as well. (W6-D3 review I1)
+         */
+        fun layoutForHitTest(cellWidth: Int, cellHeight: Int) {
+            panel.setBounds(0, 0, cellWidth, cellHeight)
+            panel.doLayout()
+            actionsPanel.doLayout()
+        }
+
+        /**
          * Returns the action name for the button whose rendered bounds contain
          * [cellPt] (in cell-local coordinates), or null if no button is hit.
          *
-         * Must be called AFTER [getListCellRendererComponent] has been called
-         * for the same row (so the panel has been fully configured) AND the
-         * panel has been laid out at the correct cell bounds.
+         * Must be called AFTER [getListCellRendererComponent] has configured the
+         * stamp for the same row AND [layoutForHitTest] has laid it out at the
+         * cell size. Delegates the actual decision to the pure, unit-tested
+         * [resolveButtonAction] (W6-D3 review I2): a button removed from
+         * [actionsPanel] for the current row (`parent == null`) is passed as
+         * null bounds so its stale rectangle can never produce a hit.
          */
         fun buttonActionAt(cellPt: Point): String? {
             // actionsPanel is in BorderLayout.EAST of panel; translate into its
@@ -826,16 +851,11 @@ class StageDetailPanel(
             if (!actionsPanel.bounds.contains(cellPt)) return null
             val apLoc = actionsPanel.location
             val apPt = Point(cellPt.x - apLoc.x, cellPt.y - apLoc.y)
-
-            // Check download button bounds (always present when actionsPanel has children)
-            if (downloadButton.parent != null && downloadButton.bounds.contains(apPt)) {
-                return ARTIFACT_ACTION_DOWNLOAD
-            }
-            // Check open button bounds (only present for .html artifacts)
-            if (openButton.parent != null && openButton.bounds.contains(apPt)) {
-                return ARTIFACT_ACTION_OPEN
-            }
-            return null
+            return resolveButtonAction(
+                apPt,
+                downloadBounds = downloadButton.bounds.takeIf { downloadButton.parent != null },
+                openBounds = openButton.bounds.takeIf { openButton.parent != null }
+            )
         }
     }
 }

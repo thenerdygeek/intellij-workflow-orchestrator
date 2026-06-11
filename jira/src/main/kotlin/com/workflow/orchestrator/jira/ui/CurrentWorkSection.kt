@@ -187,9 +187,10 @@ class CurrentWorkSection(
     }
 
     private fun showBranchPicker() {
-        // P2-20: move the readAction off EDT. Previously called runReadAction { }
+        // P2-20: move the read off EDT. Previously called runReadAction { }
         // synchronously on the EDT (flagged in phase4-closeout.md §"Two intentional
-        // debt items" as deferred — now resolved via scope.launch + readAction).
+        // debt items" as deferred — now resolved via scope.launch + a blocking
+        // runReadAction on the IO dispatcher, which is safe off-EDT).
         // The popup is created and shown back on the EDT after the read completes.
         scope.launch {
             val repo = runReadAction {
@@ -203,6 +204,12 @@ class CurrentWorkSection(
             // Back to EDT for Swing popup construction — use invokeLater (already imported)
             // so no additional EDT import is needed (baseline pinned for this file).
             invokeLater {
+                // The click→popup path is now async: the ticket may have cleared
+                // mid-flight (buildEmptyState removes editTargetLabel from the
+                // hierarchy), and showUnderneathOf on a non-showing component
+                // throws. Bail out silently in that case (W6-D3 review M4).
+                if (!editTargetLabel.isShowing) return@invokeLater
+
                 val list = com.intellij.ui.components.JBList(branches)
                 list.selectionMode = ListSelectionModel.SINGLE_SELECTION
 
