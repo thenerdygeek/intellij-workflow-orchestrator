@@ -17,43 +17,55 @@ internal fun resolveStepFile(project: Project, path: String): VirtualFile? {
     return LocalFileSystem.getInstance().findFileByPath(full)
 }
 
-/** Per-step existence + line-bound validation inside a readAction (spec §3). */
-suspend fun defaultStepValidator(project: Project, steps: List<WalkthroughStep>): StepValidation =
-    validateSteps(project, steps, ::resolveStepFile)
+/**
+ * What the platform can tell us about a step's file. Kept as a small value type so the
+ * per-step bounds + error-message logic ([validateStepsWith]) stays PURE and unit-testable
+ * without a platform fixture (which would collide on the headless "Indexing timeout").
+ */
+sealed interface StepFileProbe {
+    data object NotFound : StepFileProbe
+    data object NotText : StepFileProbe
+    data class Text(val lineCount: Int) : StepFileProbe
+}
 
 /**
- * Validation body with an injectable resolver seam. Platform-fixture tests must NOT touch
- * LocalFileSystem/disk (a real-disk refresh spawns UnindexedFilesScanner work that outlives
- * the light fixture and hangs the NEXT BasePlatformTestCase setUp on "Indexing timeout"),
- * so they inject a LightVirtualFile-backed resolver instead.
+ * PURE per-step existence + line-bound validation (no platform deps). Invalid steps are rejected
+ * individually with a precise message (the LLM reads these to re-`append` corrected steps); valid
+ * steps in the same call are kept. The error strings are the contract — pinned by unit tests.
  */
-internal suspend fun validateSteps(
-    project: Project,
+internal fun validateStepsWith(
     steps: List<WalkthroughStep>,
-    resolve: (Project, String) -> VirtualFile?,
-): StepValidation =
-    readAction {
-        val valid = mutableListOf<WalkthroughStep>()
-        val errors = mutableListOf<String>()
-        steps.forEachIndexed { i, s ->
-            val n = i + 1
-            val vfile = resolve(project, s.file)
-            if (vfile == null || vfile.isDirectory) {
-                errors += "step $n: file not found: ${s.file}"
-                return@forEachIndexed
-            }
-            val doc = FileDocumentManager.getInstance().getDocument(vfile)
-            if (doc == null) {
-                errors += "step $n: not a text file: ${s.file}"
-                return@forEachIndexed
-            }
-            when {
-                s.startLine > doc.lineCount ->
-                    errors += "step $n: start_line ${s.startLine} exceeds file length ${doc.lineCount} (${s.file})"
-                s.endLine > doc.lineCount ->
-                    errors += "step $n: end_line ${s.endLine} exceeds file length ${doc.lineCount} (${s.file})"
+    probe: (WalkthroughStep) -> StepFileProbe,
+): StepValidation {
+    val valid = mutableListOf<WalkthroughStep>()
+    val errors = mutableListOf<String>()
+    steps.forEachIndexed { i, s ->
+        val n = i + 1
+        when (val p = probe(s)) {
+            StepFileProbe.NotFound -> errors += "step $n: file not found: ${s.file}"
+            StepFileProbe.NotText -> errors += "step $n: not a text file: ${s.file}"
+            is StepFileProbe.Text -> when {
+                s.startLine > p.lineCount ->
+                    errors += "step $n: start_line ${s.startLine} exceeds file length ${p.lineCount} (${s.file})"
+                s.endLine > p.lineCount ->
+                    errors += "step $n: end_line ${s.endLine} exceeds file length ${p.lineCount} (${s.file})"
                 else -> valid += s
             }
         }
-        StepValidation(valid, errors)
+    }
+    return StepValidation(valid, errors)
+}
+
+/** Real platform probe: resolve the file + read its line count, all inside a `readAction` (spec §3). */
+suspend fun defaultStepValidator(project: Project, steps: List<WalkthroughStep>): StepValidation =
+    readAction {
+        validateStepsWith(steps) { s ->
+            val vfile = resolveStepFile(project, s.file)
+            if (vfile == null || vfile.isDirectory) {
+                StepFileProbe.NotFound
+            } else {
+                val doc = FileDocumentManager.getInstance().getDocument(vfile)
+                if (doc == null) StepFileProbe.NotText else StepFileProbe.Text(doc.lineCount)
+            }
+        }
     }

@@ -33,13 +33,10 @@ class WalkthroughNavigator(private val project: Project) {
         return editor
     }
 
-    /** Visible for the fixture test: clamps to the document and swaps the single highlighter. */
     internal fun highlightRange(editor: Editor, startLine: Int, endLine: Int) {
         clearHighlight()
         val doc = editor.document
-        val lastLine = doc.lineCount.coerceAtLeast(1)
-        val start = startLine.coerceIn(1, lastLine)
-        val end = endLine.coerceIn(start, lastLine)
+        val (start, end) = clampLineRange(startLine, endLine, doc.lineCount)
         val attributes = TextAttributes().apply {
             backgroundColor = HIGHLIGHT_COLOR
         }
@@ -61,4 +58,16 @@ class WalkthroughNavigator(private val project: Project) {
         /** Selection-blue at ~18% alpha; same value both themes (JBColor keeps it LAF-safe). */
         val HIGHLIGHT_COLOR = JBColor(Color(0x56, 0x8A, 0xF2, 46), Color(0x56, 0x8A, 0xF2, 46))
     }
+}
+
+/**
+ * Pure 1-based line-range clamp (no platform deps, unit-testable): `start` into `[1, lineCount]`,
+ * `end` into `[start, lineCount]`. `lineCount` is floored at 1 so an empty document still yields a
+ * valid 1..1 range. Extracted from [WalkthroughNavigator.highlightRange].
+ */
+internal fun clampLineRange(startLine: Int, endLine: Int, lineCount: Int): Pair<Int, Int> {
+    val lastLine = lineCount.coerceAtLeast(1)
+    val start = startLine.coerceIn(1, lastLine)
+    val end = endLine.coerceIn(start, lastLine)
+    return start to end
 }

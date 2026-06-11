@@ -551,11 +551,15 @@ stored step by 1-based index).
 `WalkthroughMarkdownTest`, `WalkthroughServiceTest`, `WalkthroughToolTest`;
 source-text contracts `WalkthroughRegistrationContractTest` (registration + sub-agent name-filter +
 not-in-WRITE_TOOLS) and `WalkthroughControllerWiringContractTest` (auto-finish ordering + pause
-set/clear symmetry + Ask arm/consume wiring). Platform fixture: `WalkthroughFixtureTest` — ONE `BasePlatformTestCase` class,
-ONE method (navigator highlight + validator seam), injecting a `LightVirtualFile` resolver (NO
-LocalFileSystem/disk: a real-disk refresh leaks UnindexedFilesScanner work that hangs the next
-fixture class's setUp). ⚠ Two heavy fixture classes in one test JVM collide on the documented
-headless "Indexing timeout" (issue #51) — run fixture classes in isolation locally.
+set/clear symmetry + Ask arm/consume wiring). **No `BasePlatformTestCase` here on purpose:** the
+validator's bounds/message logic is a PURE `validateStepsWith(steps, probe)` over a `StepFileProbe`
+(`defaultStepValidator` supplies the real readAction+FileDocumentManager probe), and the navigator's
+clamp is the PURE `clampLineRange(start, end, lineCount)` — both unit-tested headlessly
+(`WalkthroughStepValidatorTest`, `WalkthroughNavigatorClampTest`). The earlier heavy
+`WalkthroughFixtureTest` was deleted: a SECOND `BasePlatformTestCase` class in the same test JVM
+collides with the existing `EditFilePersistenceFixtureTest` on the headless "Indexing timeout"
+(issue #51) and failed CI. The markup add/dispose + editor-open glue is the only untested surface
+(trivial, covered by in-IDE smoke).
 
 ## Run/Test Tool Disposal — RunInvocation Pattern
 
