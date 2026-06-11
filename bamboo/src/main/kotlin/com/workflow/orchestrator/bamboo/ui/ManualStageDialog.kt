@@ -95,6 +95,11 @@ class ManualStageDialog(
     private val suiteDisplayName: String? = null
 ) : DialogWrapper(project) {
 
+    companion object {
+        /** Debounce delay (ms) for the table row-height recompute on resize. */
+        private const val RESIZE_DEBOUNCE_MS = 200
+    }
+
     private val log = Logger.getInstance(ManualStageDialog::class.java)
     private val bambooService = project.getService(BambooService::class.java)
     private val variableEditors = mutableMapOf<String, JComponent>()
@@ -474,10 +479,16 @@ class ManualStageDialog(
             // Ensure the table fills the viewport width so the value column is flex.
             fillsViewportHeight = false
             autoResizeMode = JTable.AUTO_RESIZE_LAST_COLUMN
-            // Recalculate row heights once the table is laid out so wrapping works.
+            // P2-20: debounce the full-table re-measure so rapid resize events
+            // (e.g. user dragging the dialog edge) do not trigger O(rows*cols)
+            // renderer calls on every pixel. RESIZE_DEBOUNCE_MS is a one-shot
+            // swing Timer restarted on each resize event; only the last event in
+            // a burst triggers the recompute.
+            val resizeDebounce = javax.swing.Timer(RESIZE_DEBOUNCE_MS) { updateRowHeights(this@apply) }
+                .apply { isRepeats = false }
             addComponentListener(object : java.awt.event.ComponentAdapter() {
                 override fun componentResized(e: java.awt.event.ComponentEvent) {
-                    updateRowHeights(this@apply)
+                    resizeDebounce.restart()
                 }
             })
         }

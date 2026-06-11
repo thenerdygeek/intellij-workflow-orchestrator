@@ -59,6 +59,16 @@ class CurrentWorkSection(
 
     init {
         buildEmptyState()
+
+        // P2-20: register the editTargetLabel mouse listener ONCE here in init, not
+        // per buildActiveState call. buildActiveState previously removed all listeners
+        // and re-added one on every refresh — a no-op correctness-wise but wasteful.
+        editTargetLabel.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent?) {
+                showBranchPicker()
+            }
+        })
+
         scope.launch {
             project.getService(EventBus::class.java).events.collect { event ->
                 when (event) {
@@ -128,12 +138,7 @@ class CurrentWorkSection(
         inner.add(summaryLabel)
         inner.add(javax.swing.Box.createVerticalStrut(JBUI.scale(4)))
 
-        editTargetLabel.mouseListeners.forEach { editTargetLabel.removeMouseListener(it) }
-        editTargetLabel.addMouseListener(object : java.awt.event.MouseAdapter() {
-            override fun mouseClicked(e: java.awt.event.MouseEvent?) {
-                showBranchPicker()
-            }
-        })
+        // editTargetLabel listener is registered once in init — not re-added here.
 
         // Branch rows: rendered by CurrentWorkChipRenderer based on the
         // LocateResult returned by TicketBranchLocator. The renderer is pure
@@ -182,39 +187,49 @@ class CurrentWorkSection(
     }
 
     private fun showBranchPicker() {
-        val repo = runReadAction {
-            GitRepositoryManager.getInstance(project).repositories.firstOrNull()
-        } ?: return
-        val branches = repo.branches.remoteBranches
-            .map { it.nameForRemoteOperations }
-            .filter { it != "HEAD" }
-            .sorted()
+        // P2-20: move the readAction off EDT. Previously called runReadAction { }
+        // synchronously on the EDT (flagged in phase4-closeout.md §"Two intentional
+        // debt items" as deferred — now resolved via scope.launch + readAction).
+        // The popup is created and shown back on the EDT after the read completes.
+        scope.launch {
+            val repo = runReadAction {
+                GitRepositoryManager.getInstance(project).repositories.firstOrNull()
+            } ?: return@launch
+            val branches = repo.branches.remoteBranches
+                .map { it.nameForRemoteOperations }
+                .filter { it != "HEAD" }
+                .sorted()
 
-        val list = com.intellij.ui.components.JBList(branches)
-        list.selectionMode = ListSelectionModel.SINGLE_SELECTION
+            // Back to EDT for Swing popup construction — use invokeLater (already imported)
+            // so no additional EDT import is needed (baseline pinned for this file).
+            invokeLater {
+                val list = com.intellij.ui.components.JBList(branches)
+                list.selectionMode = ListSelectionModel.SINGLE_SELECTION
 
-        val popup = JBPopupFactory.getInstance()
-            .createListPopupBuilder(list)
-            .setTitle("Select Target Branch")
-            .setFilterAlwaysVisible(true)
-            .setItemChoosenCallback {
-                val selected = list.selectedValue as? String ?: return@setItemChoosenCallback
-                val resolver = DefaultBranchResolver.getInstance(project)
-                val repoPath = repo.root.path
-                resolver.setOverride(repoPath, repo.currentBranchName ?: "", selected)
-                // Invalidate locator cache, then refresh on EDT so the re-render
-                // picks up the new target branch (sequenced to avoid a race
-                // between invalidate and locate).
-                val ticketId = settings.state.activeTicketId.orEmpty()
-                scope.launch {
-                    locator.invalidate(ticketId)
-                    com.intellij.openapi.application.ApplicationManager.getApplication()
-                        .invokeLater { refresh() }
-                }
+                val popup = JBPopupFactory.getInstance()
+                    .createListPopupBuilder(list)
+                    .setTitle("Select Target Branch")
+                    .setFilterAlwaysVisible(true)
+                    .setItemChoosenCallback {
+                        val selected = list.selectedValue as? String ?: return@setItemChoosenCallback
+                        val resolver = DefaultBranchResolver.getInstance(project)
+                        val repoPath = repo.root.path
+                        resolver.setOverride(repoPath, repo.currentBranchName ?: "", selected)
+                        // Invalidate locator cache, then refresh on EDT so the re-render
+                        // picks up the new target branch (sequenced to avoid a race
+                        // between invalidate and locate).
+                        val ticketId = settings.state.activeTicketId.orEmpty()
+                        scope.launch {
+                            locator.invalidate(ticketId)
+                            com.intellij.openapi.application.ApplicationManager.getApplication()
+                                .invokeLater { refresh() }
+                        }
+                    }
+                    .createPopup()
+
+                popup.showUnderneathOf(editTargetLabel)
             }
-            .createPopup()
-
-        popup.showUnderneathOf(editTargetLabel)
+        }
     }
 
     private fun buildEmptyState() {

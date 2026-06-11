@@ -44,12 +44,20 @@ class ChecksTab(private val project: Project) : JPanel(BorderLayout()), Disposab
     }
 
     // -----------------------------------------------------------------------
-    // Checklist row panels (rebuilt on each updateState)
+    // Checklist row panels (rebuilt only when checklist flags change)
     // -----------------------------------------------------------------------
     private val checklistPanel = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         isOpaque = false
     }
+
+    /**
+     * P2-20: last rendered checklist flags. When [updateState] is called and the
+     * four boolean flags are identical to the previous emission, [rebuildChecklist]
+     * is skipped entirely — avoiding removeAll + 4-row widget reconstruction on
+     * every HandoverState emission even when the checklist is unchanged.
+     */
+    private var lastChecklistFlags: BooleanArray? = null
 
     // Row indices — kept as constants so the mapping is explicit and testable.
     companion object {
@@ -79,6 +87,20 @@ class ChecksTab(private val project: Project) : JPanel(BorderLayout()), Disposab
             "Jira comment posted",
             "Time logged"
         )
+
+        /**
+         * P2-20 equality gate: returns true when the new checklist flags differ from
+         * the previously rendered flags, meaning a rebuild is needed. Returns false
+         * (skip rebuild) when all four flags are identical.
+         *
+         * Extracted as a pure function so the gate can be tested without Swing
+         * or IntelliJ infrastructure (see [ChecksTabEqualityGateTest]).
+         *
+         * @param prev the flags from the last successful rebuild, or null on first call.
+         * @param next the flags for the incoming [HandoverState].
+         */
+        internal fun checklistNeedsRebuild(prev: BooleanArray?, next: BooleanArray): Boolean =
+            prev == null || !prev.contentEquals(next)
     }
 
     // -----------------------------------------------------------------------
@@ -246,15 +268,19 @@ class ChecksTab(private val project: Project) : JPanel(BorderLayout()), Disposab
     // -----------------------------------------------------------------------
 
     private fun rebuildChecklist(state: HandoverState) {
-        checklistPanel.removeAll()
-        val doneFlags = booleanArrayOf(
+        val newFlags = booleanArrayOf(
             state.copyrightFixed,
             state.prCreated,
             state.jiraCommentPosted,
             state.todayWorkLogged
         )
+        // P2-20: equality gate — skip rebuild when checklist flags are unchanged.
+        if (!checklistNeedsRebuild(lastChecklistFlags, newFlags)) return
+
+        lastChecklistFlags = newFlags
+        checklistPanel.removeAll()
         CHECKLIST_LABELS.forEachIndexed { i, label ->
-            checklistPanel.add(checklistItem(label, doneFlags[i]))
+            checklistPanel.add(checklistItem(label, newFlags[i]))
             checklistPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
         }
     }

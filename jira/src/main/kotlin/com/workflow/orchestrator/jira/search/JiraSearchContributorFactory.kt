@@ -39,18 +39,24 @@ private class JiraSearchContributor(
     override fun getSortWeight(): Int = 500
     override fun showInFindResults(): Boolean = false
 
+    /**
+     * P2-20: hoist a single reusable [JBLabel] as the rubber-stamp renderer instead
+     * of allocating a fresh instance per Search Everywhere result row. All per-row
+     * properties are reset on every call (rubber-stamp hygiene).
+     */
     override fun getElementsRenderer(): ListCellRenderer<in JiraTicketData> {
+        val label = JBLabel()
         return ListCellRenderer<JiraTicketData> { _: JList<out JiraTicketData>?, value: JiraTicketData?, _, isSelected, _ ->
-            val label = JBLabel()
+            // Reset ALL per-row properties on every call.
             if (value != null) {
                 val typeName = value.type.ifBlank { "Issue" }
-                val statusName = value.status
-                label.text = "[${value.key}] ${value.summary} ($statusName)"
+                label.text = "[${value.key}] ${value.summary} (${value.status})"
                 label.toolTipText = "$typeName - ${value.summary}"
+            } else {
+                label.text = ""
+                label.toolTipText = null
             }
-            if (isSelected) {
-                label.isOpaque = true
-            }
+            label.isOpaque = isSelected
             label
         }
     }

@@ -171,6 +171,34 @@ class StageDetailPanel(
     companion object {
         private const val MAX_DISPLAY_CHARS = 50_000
 
+        /** Action name returned by [hitTestArtifactButton] for the Download button. */
+        internal const val ARTIFACT_ACTION_DOWNLOAD = "download"
+
+        /** Action name returned by [hitTestArtifactButton] for the Open button. */
+        internal const val ARTIFACT_ACTION_OPEN = "open"
+
+        /**
+         * Pure hit-test function: returns the action name for the button whose
+         * bounds (in local coordinates) contain [pt], or null if no button is hit.
+         *
+         * Extracted as a pure function so it can be tested without a running IDE
+         * (see [ArtifactButtonHitTestTest]).
+         *
+         * @param pt the click point in the local coordinate space of the actionsPanel.
+         * @param downloadBounds bounds of the Download button in actionsPanel coords.
+         * @param openBounds bounds of the Open button in actionsPanel coords, or null
+         *   when the artifact has no Open button (non-HTML artifacts).
+         */
+        internal fun resolveButtonAction(
+            pt: Point,
+            downloadBounds: java.awt.Rectangle?,
+            openBounds: java.awt.Rectangle?
+        ): String? {
+            if (downloadBounds != null && downloadBounds.contains(pt)) return ARTIFACT_ACTION_DOWNLOAD
+            if (openBounds != null && openBounds.contains(pt)) return ARTIFACT_ACTION_OPEN
+            return null
+        }
+
         /**
          * Returns the safe basename for a server-supplied artifact name, stripping
          * all path separators and `..` components so the resulting name can be
@@ -257,6 +285,26 @@ class StageDetailPanel(
         // Artifacts list setup
         artifactsList.cellRenderer = ArtifactCellRenderer()
         artifactsList.selectionMode = ListSelectionModel.SINGLE_SELECTION
+
+        // B5 — artifact buttons are inside a rubber-stamp renderer and cannot receive
+        // mouse events directly. We hit-test the click point ourselves via a
+        // MouseAdapter on the list, configure the renderer for the target row (to get
+        // its laid-out bounds), then invoke the correct action.
+        artifactsList.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                dispatchArtifactClick(e)
+            }
+        })
+        artifactsList.addMouseMotionListener(object : java.awt.event.MouseMotionAdapter() {
+            override fun mouseMoved(e: java.awt.event.MouseEvent) {
+                val action = hitTestArtifactButton(e.point)
+                artifactsList.cursor = if (action != null) {
+                    Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                } else {
+                    Cursor.getDefaultCursor()
+                }
+            }
+        })
 
         createConsoleView()
     }
@@ -536,6 +584,59 @@ class StageDetailPanel(
         }
     }
 
+    /**
+     * Identifies which artifact action ("download" or "open") is under [point]
+     * in [artifactsList] coordinates, or null if the point is not over a button.
+     *
+     * Pure function — no side effects. Extracted so the logic can be tested
+     * without a running IDE (see [ArtifactButtonHitTestTest]).
+     *
+     * The cell renderer is configured for the row at [point] so that its layout
+     * reflects the row's actual content (some rows show only "Download", others
+     * show both buttons). The rendered component is then asked for its preferred
+     * size to lay it out at the cell bounds, and button sub-rects are tested.
+     *
+     * @return "download", "open", or null.
+     */
+    internal fun hitTestArtifactButton(point: Point): String? {
+        val list = artifactsList
+        val index = list.locationToIndex(point)
+        if (index < 0) return null
+        val cellBounds = list.getCellBounds(index, index) ?: return null
+        if (!cellBounds.contains(point)) return null
+
+        val artifact = artifactsModel.getElementAt(index)
+        if (artifact.downloadUrl.isEmpty()) return null
+
+        // Configure the renderer for this row so actionsPanel layout reflects the
+        // current row's data (number of buttons present).
+        val renderer = list.cellRenderer as? ArtifactCellRenderer ?: return null
+        val rendered = renderer.getListCellRendererComponent(
+            list,
+            artifact,
+            index,
+            list.isSelectedIndex(index),
+            list.hasFocus()
+        )
+        rendered.setBounds(cellBounds.x, cellBounds.y, cellBounds.width, cellBounds.height)
+        rendered.doLayout()
+
+        // Translate click point into cell-relative coordinates.
+        val cellPt = Point(point.x - cellBounds.x, point.y - cellBounds.y)
+        return renderer.buttonActionAt(cellPt)
+    }
+
+    private fun dispatchArtifactClick(e: java.awt.event.MouseEvent) {
+        val action = hitTestArtifactButton(e.point) ?: return
+        val index = artifactsList.locationToIndex(e.point)
+        if (index < 0) return
+        val artifact = artifactsModel.getElementAt(index)
+        when (action) {
+            ARTIFACT_ACTION_DOWNLOAD -> downloadArtifact(artifact)
+            ARTIFACT_ACTION_OPEN -> BrowserUtil.browse(artifact.downloadUrl)
+        }
+    }
+
     private fun downloadArtifact(artifact: ArtifactData) {
         val descriptor = FileChooserDescriptor(false, true, false, false, false, false)
             .withTitle("Select Download Directory")
@@ -625,17 +726,28 @@ class StageDetailPanel(
     }
 
     /**
-     * Cached cell renderer for artifact list items.
+     * Rubber-stamp cell renderer for artifact list items.
      * Stitch design: left border accent (INFO color), monospace artifact name,
      * sharp corners, tonal background shifts.
+     *
+     * The "Download" and "Open" buttons are PAINTED ONLY — they are part of a
+     * rubber-stamp component and cannot receive mouse events. Actual click
+     * dispatch is handled by the [MouseAdapter] on [artifactsList] via
+     * [hitTestArtifactButton] + [dispatchArtifactClick].
+     *
+     * P2-20: the [cachedBorder] is allocated once at class init (stable across
+     * the renderer's lifetime) instead of on every render call.
      */
-    private inner class ArtifactCellRenderer : ListCellRenderer<ArtifactData> {
-        private val panel = JPanel(BorderLayout()).apply {
-            border = javax.swing.border.CompoundBorder(
-                StitchLeftAccentBorder(StatusColors.INFO, JBUI.scale(3)),
-                JBUI.Borders.empty(4, 8, 4, 4)
-            )
-        }
+    internal inner class ArtifactCellRenderer : ListCellRenderer<ArtifactData> {
+
+        // P2-20: border cached once — avoids re-allocating CompoundBorder + inner
+        // JBUI border on every rendered row.
+        private val cachedBorder: javax.swing.border.Border = javax.swing.border.CompoundBorder(
+            StitchLeftAccentBorder(StatusColors.INFO, JBUI.scale(3)),
+            JBUI.Borders.empty(4, 8, 4, 4)
+        )
+
+        private val panel = JPanel(BorderLayout()).apply { border = cachedBorder }
         private val nameLabel = JBLabel().apply {
             // Monospace bold for artifact names
             font = Font(Font.MONOSPACED, Font.BOLD, JBUI.Fonts.label().size)
@@ -645,6 +757,9 @@ class StageDetailPanel(
             foreground = StatusColors.SECONDARY_TEXT
             border = JBUI.Borders.emptyLeft(8)
         }
+
+        // Buttons are pure rubber-stamp widgets — no ActionListeners. Clicks are
+        // forwarded by the list-level MouseAdapter via hitTestArtifactButton().
         private val downloadButton = JButton("Download").apply {
             font = JBUI.Fonts.smallFont()
             margin = JBUI.insets(1, 6)
@@ -667,19 +782,6 @@ class StageDetailPanel(
         init {
             panel.add(infoPanel, BorderLayout.CENTER)
             panel.add(actionsPanel, BorderLayout.EAST)
-
-            downloadButton.addActionListener {
-                val selectedArtifact = artifactsList.selectedValue
-                if (selectedArtifact != null && selectedArtifact.downloadUrl.isNotEmpty()) {
-                    downloadArtifact(selectedArtifact)
-                }
-            }
-            openButton.addActionListener {
-                val selectedArtifact = artifactsList.selectedValue
-                if (selectedArtifact != null && selectedArtifact.downloadUrl.isNotEmpty()) {
-                    BrowserUtil.browse(selectedArtifact.downloadUrl)
-                }
-            }
         }
 
         override fun getListCellRendererComponent(
@@ -700,17 +802,40 @@ class StageDetailPanel(
                 }
             }
 
+            // Reset ALL per-row properties on every call (rubber-stamp hygiene).
             panel.background = if (isSelected) list.selectionBackground else list.background
-            nameLabel.foreground = if (isSelected) list.selectionForeground else StatusColors.LINK
             panel.isOpaque = true
-
-            // Re-apply left accent border on each render (border instance is stable)
-            panel.border = javax.swing.border.CompoundBorder(
-                StitchLeftAccentBorder(StatusColors.INFO, JBUI.scale(3)),
-                JBUI.Borders.empty(4, 8, 4, 4)
-            )
+            nameLabel.foreground = if (isSelected) list.selectionForeground else StatusColors.LINK
+            // border is stable — no re-allocation needed (P2-20 fix)
+            panel.border = cachedBorder
 
             return panel
+        }
+
+        /**
+         * Returns the action name for the button whose rendered bounds contain
+         * [cellPt] (in cell-local coordinates), or null if no button is hit.
+         *
+         * Must be called AFTER [getListCellRendererComponent] has been called
+         * for the same row (so the panel has been fully configured) AND the
+         * panel has been laid out at the correct cell bounds.
+         */
+        fun buttonActionAt(cellPt: Point): String? {
+            // actionsPanel is in BorderLayout.EAST of panel; translate into its
+            // local coordinate space and bail early if the click misses it entirely.
+            if (!actionsPanel.bounds.contains(cellPt)) return null
+            val apLoc = actionsPanel.location
+            val apPt = Point(cellPt.x - apLoc.x, cellPt.y - apLoc.y)
+
+            // Check download button bounds (always present when actionsPanel has children)
+            if (downloadButton.parent != null && downloadButton.bounds.contains(apPt)) {
+                return ARTIFACT_ACTION_DOWNLOAD
+            }
+            // Check open button bounds (only present for .html artifacts)
+            if (openButton.parent != null && openButton.bounds.contains(apPt)) {
+                return ARTIFACT_ACTION_OPEN
+            }
+            return null
         }
     }
 }

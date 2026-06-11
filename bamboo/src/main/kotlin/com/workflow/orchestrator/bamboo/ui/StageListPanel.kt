@@ -26,6 +26,16 @@ class StageListPanel : JPanel(BorderLayout()) {
 
     var onRunStage: ((StageState) -> Unit)? = null
 
+    /**
+     * P2-20: cached snapshot of the list model for use in mouse-motion handlers.
+     * Rebuilt only in [updateStages] when data actually changes, not on every
+     * mouse-move event (which fired an O(n) `.map { getElementAt(it) }` per pixel).
+     * Volatile so the EDT write in [updateStages] is visible to reads in the
+     * mouse-motion listener (both run on EDT, but the annotation is cheap insurance).
+     */
+    @Volatile
+    private var cachedStages: List<StageState> = emptyList()
+
     private val cardLayout = CardLayout()
     private val cardPanel = JPanel(cardLayout)
     private val emptyLabel = JBLabel("No stages found.").apply {
@@ -50,7 +60,8 @@ class StageListPanel : JPanel(BorderLayout()) {
                     val index = stageList.locationToIndex(e.point)
                     if (index >= 0) {
                         val stage = listModel.getElementAt(index)
-                        val allStages = (0 until listModel.size()).map { listModel.getElementAt(it) }
+                        // P2-20: use the cached snapshot — not rebuilt per mouse event
+                        val allStages = cachedStages
                         if (StageRunnabilityPolicy.isNextRunnable(allStages, stage)) {
                             onRunStage?.invoke(stage)
                         }
@@ -73,7 +84,8 @@ class StageListPanel : JPanel(BorderLayout()) {
                     stageList.toolTipText = null
                     return
                 }
-                val allStages = (0 until listModel.size()).map { listModel.getElementAt(it) }
+                // P2-20: use the cached snapshot — not rebuilt per mouse-move pixel
+                val allStages = cachedStages
                 if (StageRunnabilityPolicy.isNextRunnable(allStages, stage)) {
                     stageList.toolTipText = "Double-click to run"
                 } else {
@@ -97,6 +109,7 @@ class StageListPanel : JPanel(BorderLayout()) {
         listModel.clear()
 
         if (stages.isEmpty()) {
+            cachedStages = emptyList()
             cardLayout.show(cardPanel, "empty")
             return
         }
@@ -119,6 +132,10 @@ class StageListPanel : JPanel(BorderLayout()) {
             }
             listModel.addElement(stage)
         }
+
+        // P2-20: update the cached snapshot once after all model mutations — not
+        // per mouse-move event. The renderer also reads this cache.
+        cachedStages = (0 until listModel.size()).map { listModel.getElementAt(it) }
 
         if (selectedIndex in 0 until listModel.size()) {
             stageList.selectedIndex = selectedIndex
@@ -191,8 +208,9 @@ class StageListPanel : JPanel(BorderLayout()) {
 
             // Manual indicator — link-style when the stage is the next runnable
             // step, grayed when blocked by prior stages (PR 7 audit P1 #2).
+            // P2-20: use the cached snapshot rather than rebuilding O(n) per render.
             if (value.manual && value.status != BuildStatus.IN_PROGRESS) {
-                val allStages = (0 until listModel.size()).map { listModel.getElementAt(it) }
+                val allStages = cachedStages
                 val runnable = StageRunnabilityPolicy.isNextRunnable(allStages, value)
                 val attrs = if (runnable) SimpleTextAttributes.LINK_ATTRIBUTES
                             else SimpleTextAttributes.GRAYED_ATTRIBUTES
