@@ -133,6 +133,11 @@ internal class WalkthroughCalloutPopup(
             .setCancelOnWindowDeactivation(false)
             .setCancelKeyEnabled(false)
             .setMovable(true)
+            .setResizable(true)
+            // Persist the user's size app-wide so it survives the per-step popup recreation
+            // (and future sessions); the position is NOT persisted (each step re-anchors).
+            .setDimensionServiceKey(null, DIMENSION_KEY, false)
+            .setMinSize(Dimension(JBUI.scale(MIN_WIDTH), JBUI.scale(MIN_HEIGHT)))
             .createPopup()
     }
 
@@ -202,6 +207,9 @@ internal class WalkthroughCalloutPopup(
     private companion object {
         const val POPUP_WIDTH = 380
         const val POPUP_HEIGHT = 220
+        const val MIN_WIDTH = 260
+        const val MIN_HEIGHT = 140
+        const val DIMENSION_KEY = "WalkthroughCalloutPopup.size"
         val GAP = JBUI.scale(8)
         val GAP_SMALL = JBUI.scale(4)
         const val PAD_V = 6
