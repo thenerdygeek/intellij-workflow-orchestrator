@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.core.psi
 
 import com.intellij.openapi.application.readAction
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -62,6 +63,12 @@ class PsiContextEnricher(private val project: Project) {
             mavenManager.projects.find { mavenProject ->
                 VfsUtilCore.isAncestor(mavenProject.directoryFile, vFile, false)
             }?.mavenId?.artifactId
+        } catch (pce: ProcessCanceledException) {
+            // C2 review: this catch now runs INSIDE the single cancellable readAction
+            // (P2-22/B19). Swallowing a PCE (e.g. thrown for a pending write action)
+            // would let the read complete "successfully" with mavenModule = null
+            // instead of restarting — rethrow so the read action machinery retries.
+            throw pce
         } catch (_: Exception) {
             null
         }

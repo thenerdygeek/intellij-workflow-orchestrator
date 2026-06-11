@@ -489,6 +489,9 @@ class WorkflowContextService(
         // takes the chain key that [ChainKeyResolver] produces (`build = chainKey?.let`),
         // so there is nothing independent to run concurrently here. The remaining work in
         // this cascade (quality scope, prRepoBranch) is local/cheap — not worth an async.
+        // Async fill (emit now, patch focusBuild in a later second emission) was likewise
+        // rejected: it would violate the single-merged-emission invariant (§4.4) this
+        // function's KDoc preserves, and both lookups are 5s-bounded so the cost is capped.
         val chainKey = resolvedPr.bambooPlanKey?.let { parent ->
             withTimeoutOrNull(5_000) {
                 ChainKeyResolver.getInstance()?.resolveChainKey(project, parent, resolvedPr.fromBranch)

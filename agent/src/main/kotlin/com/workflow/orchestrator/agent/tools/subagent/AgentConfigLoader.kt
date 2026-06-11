@@ -107,12 +107,30 @@ class AgentConfigLoader private constructor() : Disposable {
      * macOS) is NOT started by [loadFromDisk] any more — it is armed lazily on the first
      * config read ([getCachedConfig] / [getAllCachedConfigs]). Merely constructing and
      * loading the loader (e.g. a settings page instantiating AgentService) no longer spins
-     * up a watcher thread; hot-reload starts the moment configs are actually consumed.
+     * up a watcher thread.
+     *
+     * Arming exceptions (deliberate): [getAllCachedConfigsWithToolNames] (init-time bulk
+     * read used by AgentService tool registration) and [resolveSubagentNameForTool] /
+     * [isDynamicSubagentTool] (name resolution) consume the caches WITHOUT arming — that
+     * keeps service init watcher-free. Hot-reload therefore starts at the first REAL
+     * consumer read ([getCachedConfig] / [getAllCachedConfigs]), which arms the watcher
+     * AND performs one rescan so any user edit made between [loadFromDisk] and arming
+     * (a window the new WatchService cannot see) is picked up rather than served stale.
      */
     private val watcherArmed = AtomicBoolean(false)
 
+    @Volatile
     var configDir: Path = DEFAULT_CONFIG_DIR
         private set
+
+    /**
+     * True once [loadFromDisk] has populated the caches. Gates the rescan-on-arm in
+     * [ensureWatcherStarted]: the missed-event window only exists between a load and the
+     * first armed read — a never-loaded instance keeps its empty-cache contract (and the
+     * rescan never touches [DEFAULT_CONFIG_DIR] uninvited, e.g. in tests).
+     */
+    @Volatile
+    private var loadedFromDisk = false
 
     // ----- Public API -----
 
@@ -143,6 +161,7 @@ class AgentConfigLoader private constructor() : Disposable {
             merged[key] = config
         }
         rebuildCaches(merged.values.toList())
+        loadedFromDisk = true
         // P2-12: watcher start is deferred to the first config read (lazy). If a watcher
         // is already live (reload, possibly with a new directory), restart it now so it
         // tracks the directory that was just loaded.
@@ -151,11 +170,23 @@ class AgentConfigLoader private constructor() : Disposable {
         }
     }
 
-    /** Lazily starts the user-config file watcher on first cache access (P2-12). */
+    /**
+     * Lazily starts the user-config file watcher on first cache access (P2-12).
+     *
+     * After arming, performs ONE rescan (same bundled+user merge as [watchLoop]): a user
+     * edit made between [loadFromDisk] and this first read predates the WatchService, so
+     * it would otherwise be served stale forever (the watcher only sees future events).
+     * Arm first, then rescan — an edit landing during the rescan is caught by the watcher.
+     * Runs once per process; gated on [loadedFromDisk] (no load → no window to close).
+     */
     private fun ensureWatcherStarted() {
         if (disposed.get()) return
         if (watcherArmed.compareAndSet(false, true)) {
-            startWatching(configDir)
+            val directory = configDir
+            startWatching(directory)
+            if (loadedFromDisk) {
+                rescanFromDisk(directory)
+            }
         }
     }
 
@@ -171,6 +202,11 @@ class AgentConfigLoader private constructor() : Disposable {
 
     /**
      * Returns a map of generated tool name -> [AgentConfig] for all cached configs.
+     *
+     * Deliberately does NOT arm the file watcher (P2-12): this is the init-time bulk read
+     * AgentService uses for tool registration, and arming here would undo the lazy-watcher
+     * perf win. The first [getCachedConfig] / [getAllCachedConfigs] call arms + rescans,
+     * closing the stale window — see [watcherArmed].
      */
     fun getAllCachedConfigsWithToolNames(): Map<String, AgentConfig> {
         val result = mutableMapOf<String, AgentConfig>()
@@ -210,6 +246,9 @@ class AgentConfigLoader private constructor() : Disposable {
     /**
      * Given a generated tool name (e.g. `use_subagent_my_helper`), resolve the
      * original agent name. Returns `null` if not a known dynamic tool.
+     *
+     * Does NOT arm the file watcher (P2-12) — pure name resolution, not config
+     * consumption. See [watcherArmed] for the arming contract.
      */
     fun resolveSubagentNameForTool(toolName: String): String? =
         toolNameToAgentName[toolName]
@@ -395,6 +434,32 @@ class AgentConfigLoader private constructor() : Disposable {
 
     // ----- File Watching -----
 
+    /**
+     * Reload bundled + user configs from [directory], rebuild caches, notify listeners.
+     * Same merge logic as [loadFromDisk]; shared by [watchLoop] and the rescan-on-arm in
+     * [ensureWatcherStarted].
+     */
+    private fun rescanFromDisk(directory: Path) {
+        val bundled = loadBundledAgents()
+        val user = scanDirectory(directory)
+        val merged = mutableMapOf<String, AgentConfig>()
+        for (c in bundled) {
+            merged[c.name.lowercase()] = c
+        }
+        for (c in user) {
+            merged[c.name.lowercase()] = c
+        }
+        rebuildCaches(merged.values.toList())
+        notifyListeners()
+    }
+
+    /**
+     * `@Synchronized` (C2 review): reachable concurrently from [ensureWatcherStarted]
+     * (any reader thread) and [loadFromDisk] (reload path). Without the lock two threads
+     * could each create a WatchService and the loser's service/thread would leak — its
+     * [watchService] field reference gets overwritten, so [stopWatching] never closes it.
+     */
+    @Synchronized
     private fun startWatching(directory: Path) {
         stopWatching()
         if (disposed.get()) return
@@ -432,13 +497,7 @@ class AgentConfigLoader private constructor() : Disposable {
                 if (disposed.get()) break
 
                 // Reload: bundled + user (same merge logic as loadFromDisk)
-                val bundled = loadBundledAgents()
-                val user = scanDirectory(directory)
-                val merged = mutableMapOf<String, AgentConfig>()
-                for (c in bundled) { merged[c.name.lowercase()] = c }
-                for (c in user) { merged[c.name.lowercase()] = c }
-                rebuildCaches(merged.values.toList())
-                notifyListeners()
+                rescanFromDisk(directory)
             }
         } catch (_: InterruptedException) {
             // Expected on dispose
