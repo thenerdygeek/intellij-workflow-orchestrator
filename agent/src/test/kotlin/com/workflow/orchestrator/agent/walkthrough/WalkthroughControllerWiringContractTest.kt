@@ -65,6 +65,32 @@ class WalkthroughControllerWiringContractTest {
     }
 
     @Test
+    fun `wizard-mode question both sets and clears the walkthrough paused state (spec section 4)`() {
+        // The wizard presentation (showQuestionsCallback) suspends on its own deferred and
+        // never reaches onLoopAwaitingUserInput, so it must pause the tour itself.
+        val wizardShow = controller.substringAfter("showQuestionsCallback = { questionsJson ->")
+            .substringBefore("AskUserInputTool.showInputCallback")
+        assertTrue(
+            wizardShow.contains("setGenerationPaused(true)"),
+            "the wizard-mode question callback must pause walkthrough generation",
+        )
+        // Wizard submit/cancel route through resolveQuestions()/cancelQuestions(), NOT executeTask,
+        // so the parked-channel / pending-question clears never fire — both must clear here.
+        val onSubmitted = controller.substringAfter("onSubmitted = {")
+            .substringBefore("onCancelled = {")
+        assertTrue(
+            onSubmitted.contains("setGenerationPaused(false)"),
+            "submitting wizard answers must clear the walkthrough paused state",
+        )
+        val onCancelled = controller.substringAfter("onCancelled = {")
+            .substringBefore("setCefProcessInputCallbacks")
+        assertTrue(
+            onCancelled.contains("setGenerationPaused(false)"),
+            "cancelling the wizard must clear the walkthrough paused state",
+        )
+    }
+
+    @Test
     fun `controller exposes the wizard-pending query for Ask gating`() {
         assertTrue(
             controller.contains("fun isChatAwaitingUserReply()"),

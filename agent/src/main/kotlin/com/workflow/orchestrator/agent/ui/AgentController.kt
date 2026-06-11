@@ -1081,6 +1081,9 @@ class AgentController(
             },
             onChatAbout = { _, _, _ -> /* Chat about option not used for tool flow */ },
             onSubmitted = {
+                // Wizard answers route through resolveQuestions(), not executeTask(), so the
+                // walkthrough paused state set in showQuestionsCallback must be cleared here.
+                walkthroughService()?.setGenerationPaused(false)
                 dashboard.finalizeQuestionsAsMessage()
                 if (pendingApprovalChoice) {
                     handleApprovalChoice(collectedAnswers)
@@ -1101,6 +1104,9 @@ class AgentController(
                 skippedQuestionIds.clear()
             },
             onCancelled = {
+                // Wizard cancel routes through cancelQuestions(), not executeTask(), so the
+                // walkthrough paused state set in showQuestionsCallback must be cleared here.
+                walkthroughService()?.setGenerationPaused(false)
                 liveQuestions = null
                 if (pendingApprovalChoice) {
                     pendingApprovalChoice = false
@@ -1783,6 +1789,9 @@ class AgentController(
                 dashboard.setBusy(false)
                 dashboard.setInputLocked(false)
                 dashboard.setSteeringMode(true)
+                // Walkthrough pause: the wizard suspends on its own deferred and never
+                // reaches onLoopAwaitingUserInput, so pause the tour spinner here (spec §4).
+                walkthroughService()?.setGenerationPaused(true)
                 try {
                     dashboard.showQuestions(questionsJson)
                 } catch (e: Exception) {
