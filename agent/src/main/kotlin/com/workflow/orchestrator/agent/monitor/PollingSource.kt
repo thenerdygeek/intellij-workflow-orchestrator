@@ -22,6 +22,16 @@ abstract class PollingSource<T>(
     @Volatile private var snapshot: T? = null
 
     /**
+     * Invoked exactly once at the P1-8 terminal self-stop — AFTER the final NOTABLE
+     * auto-stop event was emitted and the poller stopped. Wired at registration time
+     * (`MonitorTool.startBamboo`, `AgentMonitorCoordinator.reArmMonitors`) to
+     * `MonitorPool.markExited(sessionId, id, null)` so the pool handle doesn't stay
+     * RUNNING forever (untruthful `monitor status` + a permanently consumed per-session
+     * slot). Exceptions are swallowed — pool bookkeeping must never break the poll cycle.
+     */
+    @Volatile var onSelfStop: (() -> Unit)? = null
+
+    /**
      * Fetch current state from the domain service.
      * Return null on transient error — [pollOnce] treats null as no-change so the
      * [SmartPoller] backs off rather than emitting spurious events.
@@ -71,6 +81,7 @@ abstract class PollingSource<T>(
                 ),
             )
             stop()
+            runCatching { onSelfStop?.invoke() }
             return true
         }
         return events.isNotEmpty()

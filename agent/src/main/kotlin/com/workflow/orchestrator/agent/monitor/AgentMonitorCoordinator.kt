@@ -269,6 +269,11 @@ class AgentMonitorCoordinator(
                         // wake the freshly resumed session (markAllDormant left it dormant on
                         // the previous abnormal exit; forget() clears all per-id state).
                         monitorManagers[sessionId]?.forget(spec.id)
+                        // P1-8 (W5-C1 review): mirror MonitorTool.startBamboo — a terminal
+                        // self-stop marks the pool handle EXITED. Persistence intentionally
+                        // NOT removed (first-poll rule keeps waiting-for-next-build semantics
+                        // across resumes).
+                        (src as? PollingSource<*>)?.onSelfStop = { pool.markExited(sessionId, spec.id, null) }
                         src.start { event ->
                             handle.appendLine(event.formatLine())
                             MonitorBridge.emit(project, sessionId, event)

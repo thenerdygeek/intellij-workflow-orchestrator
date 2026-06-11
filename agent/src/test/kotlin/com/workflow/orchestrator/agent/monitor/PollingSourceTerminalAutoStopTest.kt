@@ -1,7 +1,15 @@
 package com.workflow.orchestrator.agent.monitor
 
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.tools.background.BackgroundState
+import com.workflow.orchestrator.core.events.EventBus
+import io.mockk.every
+import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -116,5 +124,85 @@ class PollingSourceTerminalAutoStopTest {
         advanceTimeBy(900_000) // would be several more background polls if still running
         runCurrent()
         assertEquals(2, fetches.get(), "source must not poll again after terminal auto-stop")
+    }
+
+    // ------------------------------------------------------------------ P1-8 review: pool handle
+
+    @Test
+    fun `self-stop invokes onSelfStop after the final auto-stop event`() = runTest {
+        val src = FakeTerminalSource(mutableListOf("running", "finished"), this)
+        val emitted = mutableListOf<MonitorEvent>()
+        var autoStopEventSeenAtCallback = false
+        src.onSelfStop = {
+            autoStopEventSeenAtCallback = emitted.any { it.line.contains("monitor auto-stopped") }
+        }
+
+        src.pollOnce { emitted += it } // baseline (non-terminal) — callback must NOT fire yet
+        assertFalse(autoStopEventSeenAtCallback)
+
+        src.pollOnce { emitted += it } // terminal transition → final event, stop(), then callback
+        assertTrue(
+            autoStopEventSeenAtCallback,
+            "onSelfStop must run AFTER the final NOTABLE auto-stop event was emitted",
+        )
+    }
+
+    @Test
+    fun `self-stop marks the pool handle EXITED — no zombie RUNNING slot`() = runTest {
+        val project = mockk<Project>(relaxed = true)
+        every { project.getService(EventBus::class.java) } returns EventBus()
+        val poolScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+        val pool = MonitorPool(project, poolScope)
+        try {
+            val src = FakeTerminalSource(mutableListOf("running", "finished"), this)
+            val handle = MonitorHandle(src, "s1", System.currentTimeMillis())
+            pool.register("s1", handle)
+            // Mirrors the registration-time wiring in MonitorTool.startBamboo /
+            // AgentMonitorCoordinator.reArmMonitors.
+            src.onSelfStop = { pool.markExited("s1", src.monitorId, null) }
+
+            src.pollOnce {} // baseline
+            assertEquals(BackgroundState.RUNNING, pool.get("s1", "term-id")!!.state())
+
+            src.pollOnce {} // terminal transition → self-stop → pool handle marked EXITED
+            assertEquals(
+                BackgroundState.EXITED,
+                pool.get("s1", "term-id")!!.state(),
+                "a self-stopped source must not leave its handle RUNNING (untruthful status + " +
+                    "permanently consumed per-session slot)",
+            )
+        } finally {
+            pool.dispose()
+            poolScope.cancel()
+        }
+    }
+
+    @Test
+    fun `startBamboo and reArmMonitors wire onSelfStop to pool markExited`() {
+        // Source-text pin: both registration sites must install the pool-exit callback.
+        // (Behavioral coverage of the callback itself is above; these paths need live
+        // IntelliJ DI, so the wiring is pinned structurally.)
+        val toolSrc = java.io.File(
+            "src/main/kotlin/com/workflow/orchestrator/agent/tools/builtin/MonitorTool.kt"
+        ).readText()
+        val bambooStart = toolSrc.indexOf("private suspend fun startBamboo")
+        assertTrue(bambooStart >= 0)
+        val bambooBody = toolSrc.substring(bambooStart, toolSrc.indexOf("private suspend fun", bambooStart + 1))
+        assertTrue(
+            bambooBody.contains("onSelfStop") && bambooBody.contains("markExited"),
+            "MonitorTool.startBamboo must wire onSelfStop → pool.markExited",
+        )
+
+        val coordSrc = java.io.File(
+            "src/main/kotlin/com/workflow/orchestrator/agent/monitor/AgentMonitorCoordinator.kt"
+        ).readText()
+        val reArm = coordSrc.indexOf("suspend fun reArmMonitors")
+        assertTrue(reArm >= 0)
+        val reArmEnd = coordSrc.indexOf("\n    fun ", reArm).let { if (it < 0) coordSrc.length else it }
+        val reArmBody = coordSrc.substring(reArm, reArmEnd)
+        assertTrue(
+            reArmBody.contains("onSelfStop") && reArmBody.contains("markExited"),
+            "AgentMonitorCoordinator.reArmMonitors must wire onSelfStop → pool.markExited",
+        )
     }
 }
