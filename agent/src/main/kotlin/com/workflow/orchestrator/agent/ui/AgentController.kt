@@ -1683,6 +1683,9 @@ class AgentController(
                     dashboard.setBusy(false)
                     dashboard.setInputLocked(false)
                     dashboard.setSteeringMode(true)
+                    // Walkthrough pause: the wizard suspends on its own deferred and never
+                    // reaches onLoopAwaitingUserInput, so pause the tour spinner here (spec §4).
+                    walkthroughService()?.setGenerationPaused(true)
 
                     // Parse options if provided
                     val options = if (!optionsJson.isNullOrBlank()) {
@@ -2277,6 +2280,7 @@ class AgentController(
             displayUserMessage(uiText, displayMentionsJson, attachments = attachments, files = files)
             dashboard.setBusy(true)
             dashboard.setSteeringMode(true)
+            walkthroughService()?.setGenerationPaused(false)
             pending.complete(task)
             return
         }
@@ -2299,6 +2303,7 @@ class AgentController(
             dashboard.setSteeringMode(true)
             // Input is NOT locked — user can always type freely (Cline behavior)
             loopWaitingForInput = false
+            walkthroughService()?.setGenerationPaused(false)
             // Stash the typed UI message override so the loop can persist it when it
             // consumes this channel message (e.g. PLAN_APPROVED instead of raw XML).
             if (uiMessageOverride != null) {
@@ -3010,6 +3015,7 @@ class AgentController(
             dashboard.setBusy(false)
             dashboard.setSteeringMode(true)
             dashboard.setInputLocked(false)
+            walkthroughService()?.setGenerationPaused(true)
             dashboard.appendStatus(reason, RichStreamingPanel.StatusType.INFO)
             // Mirror the post-exit Failed(EMPTY_RESPONSES / NO_TOOLS_USED) surface:
             // show the Retry button so the user has a one-click affordance identical
@@ -3020,6 +3026,15 @@ class AgentController(
             }
             dashboard.focusInput()
         }
+    }
+
+    private fun walkthroughService(): com.workflow.orchestrator.agent.walkthrough.WalkthroughService? =
+        project.getServiceIfCreated(com.workflow.orchestrator.agent.walkthrough.WalkthroughService::class.java)
+
+    /** True while ask_followup_question has an unanswered wizard pending (walkthrough Ask gating). */
+    fun isChatAwaitingUserReply(): Boolean {
+        val pending = askQuestionsTool.pendingQuestions
+        return pending != null && !pending.isCompleted
     }
 
     private fun onComplete(result: LoopResult) {
@@ -3045,6 +3060,10 @@ class AgentController(
             // The spinner-cleanup footer below MUST run even if rendering inside the
             // when-block throws (e.g. a bad completion card breaks appendCompletionCard).
             // Without this guard, the UI was left "working" forever after any UI-side error.
+            // Walkthrough auto-finish: must run BEFORE the result-kind dispatch — the
+            // SessionHandoff branch early-returns before the cleanup footer (spec §4).
+            walkthroughService()?.markGenerationEnded()
+
             var handledHandoff = false
             try {
             when (result) {
@@ -3298,6 +3317,7 @@ class AgentController(
         LOG.info("AgentController.newChat")
         val leaving = currentSessionId
         if (leaving != null && !killBackgroundsOnTransition(leaving, "Starting a new chat")) return
+        walkthroughService()?.endTour(byUser = false)
         resetForNewChat()
     }
 
@@ -4113,6 +4133,7 @@ class AgentController(
         if (currentJob?.isActive == true) {
             service.cancelCurrentTask()
         }
+        walkthroughService()?.endTour(byUser = false)
         currentJob = null
         viewedSessionId = sessionId
 

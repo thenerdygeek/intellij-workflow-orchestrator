@@ -39,7 +39,8 @@ class WalkthroughService(private val project: Project) : WalkthroughServiceApi, 
             AgentControllerRegistry.getInstance(project).controller
                 ?.executeTask(modelText, displayText = displayText)
         }
-        override fun isChatAwaitingUserReply(): Boolean = false // Task 10 wires the real query
+        override fun isChatAwaitingUserReply(): Boolean =
+            AgentControllerRegistry.getInstance(project).controller?.isChatAwaitingUserReply() == true
     }
     private var ui: WalkthroughUi? = null
 
