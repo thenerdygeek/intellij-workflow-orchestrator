@@ -114,12 +114,18 @@ class WalkthroughService(private val project: Project) : WalkthroughServiceApi, 
     fun canAsk(): Boolean =
         machine.isActive && machine.pendingQuestion == null && !controllerGateway.isChatAwaitingUserReply()
 
-    /** @return false when gated (question already pending / no active tour). */
+    /** @return false when gated (question already pending / no active tour / delivery failed). */
     fun submitQuestion(question: String): Boolean {
         val step = machine.currentStep() ?: return false
         if (!machine.askQuestion(question)) return false
         val envelope = QuestionEnvelope.format(machine.cursor + 1, step, question)
-        controllerGateway.submitUserTurn(envelope, question)
+        try {
+            controllerGateway.submitUserTurn(envelope, question)
+        } catch (e: Exception) {
+            LOG.warn("Walkthrough question delivery failed — rolling back pending question", e)
+            machine.answerDelivered() // roll back so canAsk() recovers
+            return false
+        }
         ui?.showAnswering(question)
         return true
     }
@@ -173,7 +179,6 @@ class WalkthroughService(private val project: Project) : WalkthroughServiceApi, 
     }
 
     private companion object {
-        @Suppress("unused")
         val LOG = Logger.getInstance(WalkthroughService::class.java)
     }
 }

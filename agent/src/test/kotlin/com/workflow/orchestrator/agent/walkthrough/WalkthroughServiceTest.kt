@@ -27,7 +27,11 @@ class WalkthroughServiceTest {
     private class FakeGateway : WalkthroughService.ControllerGateway {
         val submitted = mutableListOf<Pair<String, String>>()
         var chatAwaitingReply = false
-        override fun submitUserTurn(modelText: String, displayText: String) { submitted += modelText to displayText }
+        var throwOnSubmit = false
+        override fun submitUserTurn(modelText: String, displayText: String) {
+            check(!throwOnSubmit) { "gateway down" }
+            submitted += modelText to displayText
+        }
         override fun isChatAwaitingUserReply(): Boolean = chatAwaitingReply
     }
 
@@ -139,5 +143,40 @@ class WalkthroughServiceTest {
         service.onNext()
         service.onBack()
         assertTrue(ui.calls.last().startsWith("showStep:f1.kt"))
+    }
+
+    @Test
+    fun `submitQuestion rolls back the pending question when the gateway throws`() {
+        service.startTour("T", listOf(step(1)))
+        gateway.throwOnSubmit = true
+        assertFalse(service.submitQuestion("Why?"))
+        assertTrue(service.canAsk()) // pending question rolled back
+        assertTrue(ui.calls.none { it.startsWith("showAnswering") })
+    }
+
+    @Test
+    fun `deliverAnswer after markGenerationEnded hits the no-pending-question error`() {
+        service.startTour("T", listOf(step(1)))
+        service.submitQuestion("Why?")
+        service.markGenerationEnded()
+        assertTrue(ui.calls.contains("showAnswerFallbackNote"))
+        val feedback = service.deliverAnswer("Too late.")
+        assertFalse(feedback.ok)
+        assertTrue(ui.calls.none { it.startsWith("showAnswer:") })
+    }
+
+    @Test
+    fun `canAsk and submitQuestion are false after endTour`() {
+        service.startTour("T", listOf(step(1)))
+        service.endTour(byUser = true)
+        assertFalse(service.canAsk())
+        assertFalse(service.submitQuestion("x"))
+    }
+
+    @Test
+    fun `appendSteps mid-step refreshes counter only`() {
+        service.startTour("T", listOf(step(1), step(2)))
+        service.appendSteps(listOf(step(3)))
+        assertTrue(ui.calls.last().startsWith("updateCounter"))
     }
 }
