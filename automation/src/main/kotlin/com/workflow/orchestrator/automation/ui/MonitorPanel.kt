@@ -382,6 +382,10 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
             it.bambooResultKey != null && it.status in BAMBOO_POLLABLE_STATUSES
         }
 
+        // P1-21: collect every per-entry update during this poll cycle and apply them in ONE
+        // EDT hop at the end, instead of one invokeLater + full list re-apply per entry.
+        val polledUpdates = mutableListOf<RunEntry>()
+
         for (queueEntry in pollable) {
             val resultKey = queueEntry.bambooResultKey ?: continue
 
@@ -441,21 +445,21 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                         }
                     }
 
-                    val finalEntry = runEntry
-                    invokeLater {
-                        // PR 8: keep allEntries (the unfiltered cache) in sync so a
-                        // later chip switch sees the latest stage/test data. Then
-                        // re-apply the filter — if the bucket changed (e.g. RUNNING
-                        // → COMPLETED) and the user is on a different chip, the row
-                        // falls out of the displayed list cleanly.
-                        allEntries = allEntries.map {
-                            if (it.queueId == finalEntry.queueId) finalEntry else it
-                        }
-                        applyNewEntryList(visibleEntries(allEntries))
-                    }
+                    polledUpdates.add(runEntry)
                 }
             } catch (e: Exception) {
                 log.warn("[Automation:Monitor] Poll failed for $resultKey: ${e.message}")
+            }
+        }
+
+        if (polledUpdates.isNotEmpty()) {
+            invokeLater {
+                // PR 8: keep allEntries (the unfiltered cache) in sync so a later chip
+                // switch sees the latest stage/test data. Then re-apply the filter — if
+                // a bucket changed (e.g. RUNNING → COMPLETED) and the user is on a
+                // different chip, the row falls out of the displayed list cleanly.
+                allEntries = mergePolledEntries(allEntries, polledUpdates)
+                applyNewEntryList(visibleEntries(allEntries))
             }
         }
     }
@@ -464,7 +468,17 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
     // Detail panel
     // -------------------------------------------------------------------------
 
+    /**
+     * Rendered model behind the current detail pane: the [RunEntry] last passed to
+     * [showRunDetail], or null when the empty state is showing. Detail teardown/rebuild is
+     * skipped when the next entry is structurally equal (P1-21) — [RunEntry] is a data class,
+     * so equality covers every field the pane renders (status, stages, tests, duration, ...).
+     */
+    private var lastDetailEntry: RunEntry? = null
+
     private fun showRunDetail(entry: RunEntry) {
+        if (!shouldRenderDetail(lastDetailEntry, entry)) return
+        lastDetailEntry = entry
         detailPanel.removeAll()
 
         // Header
@@ -659,10 +673,12 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
                 foreground = StatusColors.SECONDARY_TEXT
             })
             content.add(Box.createVerticalStrut(JBUI.scale(4)))
+            // One shared monospace font for all rows — not one allocation per label (P2-20).
+            val failedTestFont = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scale(11))
             for (testName in entry.failedTestNames.take(20)) {
                 content.add(JBLabel("  ✗ $testName").apply {
                     foreground = StatusColors.ERROR
-                    font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scale(11))
+                    font = failedTestFont
                 })
             }
             if (entry.failedTestNames.size > 20) {
@@ -678,6 +694,7 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
     }
 
     private fun showEmptyState() {
+        lastDetailEntry = null
         detailPanel.removeAll()
         // Filter-aware empty message: tell the user whether the list is truly
         // empty or whether the current chip just hides everything.
@@ -784,6 +801,30 @@ class MonitorPanel(private val project: Project) : JPanel(BorderLayout()), com.i
             QueueEntryStatus.RUNNING
         )
         private val BAMBOO_TERMINAL_STATES = setOf("Successful", "Failed", "Unknown")
+
+        /**
+         * Pure batch-merge for one poll cycle (P1-21): replaces each entry in [current] with
+         * its freshest update from [updates] (matched by [RunEntry.queueId], last update wins),
+         * preserving list order. Updates for entries no longer in [current] are dropped —
+         * matching the previous per-entry behaviour, where a row removed between poll start
+         * and apply was not resurrected.
+         */
+        @JvmStatic
+        fun mergePolledEntries(current: List<RunEntry>, updates: List<RunEntry>): List<RunEntry> {
+            if (updates.isEmpty()) return current
+            val byId = updates.associateBy { it.queueId }
+            return current.map { byId[it.queueId] ?: it }
+        }
+
+        /**
+         * Pure detail-pane gate (P1-21): rebuild only when the rendered model actually
+         * changed. Compares structurally (data-class equality), NOT by identity — a fresh
+         * but field-identical [RunEntry] (the common case on a quiet 15s poll tick) must
+         * NOT tear the detail pane down.
+         */
+        @JvmStatic
+        fun shouldRenderDetail(lastRendered: RunEntry?, entry: RunEntry): Boolean =
+            lastRendered != entry
 
         /**
          * Pure helper that maps a persisted [QueueEntry] to a [RunEntry] view-model.

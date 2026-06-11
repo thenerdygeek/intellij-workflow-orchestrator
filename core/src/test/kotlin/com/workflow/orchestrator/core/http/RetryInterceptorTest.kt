@@ -92,6 +92,54 @@ class RetryInterceptorTest {
         assertEquals(4, server.requestCount) // 1 original + 3 retries
     }
 
+    // ── Cumulative delay budget (P2-10, 2026-06-10 perf audit) ──
+
+    @Test
+    fun `cumulative delay budget stops retries early under sustained 429s`() {
+        // Each 429 asks for a 1s retry-after; with a 150ms total budget the first retry
+        // sleeps only the truncated remainder, the budget hits zero, and no further
+        // retry fires even though maxRetries (3) is not exhausted.
+        repeat(3) {
+            server.enqueue(
+                MockResponse().setResponseCode(429).setHeader("retry-after", "1")
+            )
+        }
+        server.enqueue(MockResponse().setBody("ok").setResponseCode(200))
+
+        val client = OkHttpClient.Builder()
+            .addInterceptor(
+                RetryInterceptor(maxRetries = 3, baseDelayMs = 10, maxTotalDelayMs = 150)
+            )
+            .build()
+
+        val response = client.newCall(
+            Request.Builder().url(server.url("/test")).build()
+        ).execute()
+
+        assertEquals(429, response.code)
+        assertEquals(2, server.requestCount) // 1 original + 1 budget-truncated retry
+    }
+
+    @Test
+    fun `cumulative delay budget does not interfere when retries stay under budget`() {
+        server.enqueue(MockResponse().setResponseCode(503))
+        server.enqueue(MockResponse().setResponseCode(503))
+        server.enqueue(MockResponse().setBody("ok").setResponseCode(200))
+
+        val client = OkHttpClient.Builder()
+            .addInterceptor(
+                RetryInterceptor(maxRetries = 3, baseDelayMs = 10, maxTotalDelayMs = 15_000)
+            )
+            .build()
+
+        val response = client.newCall(
+            Request.Builder().url(server.url("/test")).build()
+        ).execute()
+
+        assertEquals(200, response.code)
+        assertEquals(3, server.requestCount)
+    }
+
     // ── Rate-limit header parsing tests (ported from Cline's retry.ts) ──
 
     @Test

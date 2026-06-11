@@ -17,6 +17,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
+import java.lang.ref.SoftReference
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
@@ -138,6 +140,65 @@ class DocumentArtifactStore(
     }
 
     /**
+     * Single-slot soft-ref memo of the full decoded content, keyed by (path, contentHash) — P2-19
+     * (2026-06-10 perf audit). [search] genuinely needs a full-text scan so a ranged read cannot
+     * help it; the memo makes repeat scans free while letting the GC reclaim the tens-of-MB string
+     * under memory pressure. Single slot because document navigation is one-artifact-at-a-time in
+     * practice; an interleaved second document merely degrades to the old read-per-call behavior.
+     */
+    @Volatile
+    private var contentMemo: ContentMemo? = null
+
+    private class ContentMemo(val path: Path, val contentHash: String, val ref: SoftReference<String>)
+
+    private fun memoizedContent(artifact: DocumentArtifact): String? {
+        val memo = contentMemo ?: return null
+        val sameArtifact = memo.path == artifact.contentPath && memo.contentHash == artifact.meta.contentHash
+        return if (sameArtifact) memo.ref.get() else null
+    }
+
+    private suspend fun fullContentMemoized(artifact: DocumentArtifact): String =
+        memoizedContent(artifact) ?: readContent(artifact).also {
+            contentMemo = ContentMemo(artifact.contentPath, artifact.meta.contentHash, SoftReference(it))
+        }
+
+    /**
+     * Reads [count] chars of `content.md` starting at char offset [startChar] WITHOUT materializing
+     * the whole file (P2-19). The persisted index anchors and [DocumentArtifactMeta.contentLength]
+     * are CHAR (UTF-16 code-unit) offsets — they are produced from and applied against the Kotlin
+     * String — while content.md is stored as UTF-8 bytes, so a byte-ranged read would corrupt any
+     * multi-byte text. The read therefore happens in char space: [java.io.Reader.skip] decodes and
+     * discards the prefix (cheap, no allocation) and only the requested window is materialized.
+     * Serves from the search memo first when it happens to be populated.
+     */
+    private suspend fun readContentRange(artifact: DocumentArtifact, startChar: Int, count: Int): String {
+        if (count <= 0) return ""
+        val memoized = memoizedContent(artifact)
+        if (memoized != null) {
+            val start = startChar.coerceIn(0, memoized.length)
+            return memoized.substring(start, (start + count).coerceAtMost(memoized.length))
+        }
+        return withContext(Dispatchers.IO) {
+            Files.newBufferedReader(artifact.contentPath, StandardCharsets.UTF_8).use { reader ->
+                var toSkip = startChar.toLong()
+                while (toSkip > 0) {
+                    val skipped = reader.skip(toSkip)
+                    if (skipped <= 0) break
+                    toSkip -= skipped
+                }
+                val buf = CharArray(count)
+                var filled = 0
+                while (filled < count) {
+                    val n = reader.read(buf, filled, count - filled)
+                    if (n < 0) break
+                    filled += n
+                }
+                String(buf, 0, filled)
+            }
+        }
+    }
+
+    /**
      * Resolves [cursor] to an absolute offset via [index], then returns the [DocumentSlice].
      *
      * A [DocumentCursor.Section] that resolves to nothing is reported as an explicit miss
@@ -158,7 +219,9 @@ class DocumentArtifactStore(
         cursor: DocumentCursor,
         maxChars: Int,
     ): DocumentSlice {
-        val md = readContent(artifact)
+        // P2-19: the slice never needs the whole document — total length comes from the persisted
+        // meta (written atomically with the content) and the window itself is a ranged char read.
+        val totalChars = artifact.meta.contentLength
 
         // For a section cursor, distinguish a real hit from a miss so the caller never confuses a
         // fallback-to-0 with a heading legitimately at offset 0.
@@ -171,10 +234,11 @@ class DocumentArtifactStore(
                 sectionMatched = hit != null
                 hit ?: 0
             }
-        }.coerceIn(0, md.length)
+        }.coerceIn(0, totalChars)
 
-        val end = (resolved + maxChars).coerceAtMost(md.length)
-        val content = md.substring(resolved, end)
+        val requested = ((resolved + maxChars).coerceAtMost(totalChars) - resolved).coerceAtLeast(0)
+        val content = readContentRange(artifact, resolved, requested)
+        val end = resolved + content.length
 
         // On a section= MISS, bias the surfaced window toward the query's number-prefix
         // neighborhood so the family the LLM was reaching for (e.g. the 2.4.x subsections) is
@@ -191,7 +255,7 @@ class DocumentArtifactStore(
             content = content,
             startOffset = resolved,
             endOffset = end,
-            remaining = md.length - end,
+            remaining = (totalChars - end).coerceAtLeast(0),
             pageOfStart = index.pageAt(resolved),
             totalPages = artifact.meta.pageCount,
             availableSections = surfacedSections,
@@ -254,7 +318,9 @@ class DocumentArtifactStore(
         contextChars: Int = DEFAULT_SNIPPET_CONTEXT,
         resultCap: Int = DEFAULT_RESULT_CAP,
     ): DocumentSearchResult = withContext(Dispatchers.IO) {
-        val md = readContent(artifact)
+        // P2-19: search is a full-text scan by nature, so serve the content from the soft-ref memo
+        // (repeat searches over a big PDF stop re-reading tens of MB from disk per call).
+        val md = fullContentMemoized(artifact)
         DocumentSearchEngine.run(
             content = md,
             query = query,

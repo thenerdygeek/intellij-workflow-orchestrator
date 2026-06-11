@@ -352,6 +352,26 @@ class AgentConfigLoaderTest {
         assertTrue(loader.isDynamicSubagentTool(betaToolName))
     }
 
+    // ── Rescan-on-arm (P2-12 lazy watcher, C2 review) ─────────────
+
+    @Test
+    fun `user edit between loadFromDisk and first armed read is picked up by rescan-on-arm`() {
+        // loadFromDisk populates the cache but does NOT arm the watcher (P2-12 lazy start)
+        writeConfigFile(tempDir, "agent.yaml", "Window Agent", "Original description", "read_file")
+        loader.loadFromDisk(tempDir)
+
+        // A user edits the persona AFTER load but BEFORE the first armed read — the
+        // WatchService doesn't exist yet, so this event would be missed forever without
+        // the rescan-on-arm in ensureWatcherStarted().
+        writeConfigFile(tempDir, "agent.yaml", "Window Agent", "Edited description", "read_file")
+
+        // First armed read (getCachedConfig arms the watcher + rescans synchronously)
+        // must reflect the edit, not the stale t0 cache.
+        val config = loader.getCachedConfig("Window Agent")
+        assertNotNull(config)
+        assertEquals("Edited description", config!!.description)
+    }
+
     // ── Listener ──────────────────────────────────────────────────
 
     @Test

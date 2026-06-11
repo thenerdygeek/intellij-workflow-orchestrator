@@ -1,5 +1,5 @@
 import { Clock, Star, MessageSquare, Trash2, Check, X, CheckSquare2, Square } from 'lucide-react';
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import type { HistoryItem } from '../../bridge/types';
 import { DelegationBadge } from './DelegationBadge';
 
@@ -47,7 +47,9 @@ interface SessionCardProps {
   onContextMenu?: (e: React.MouseEvent, item: HistoryItem) => void;
 }
 
-export function SessionCard({
+// P1-16: memo prevents re-render of unchanged cards when other cards change
+// (e.g., a different card is clicked to show its action bar).
+export const SessionCard = memo(function SessionCard({
   item, onResume, onDelete, onToggleFavorite,
   showCheckbox, selected, onToggleSelect,
   isActive, onActivate, onContextMenu,
@@ -188,4 +190,4 @@ export function SessionCard({
       )}
     </div>
   );
-}
+});

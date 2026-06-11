@@ -12,13 +12,14 @@ import com.workflow.orchestrator.agent.monitor.MonitorPersistence
 import com.workflow.orchestrator.agent.monitor.MonitorPool
 import com.workflow.orchestrator.agent.monitor.MonitorSpec
 import com.workflow.orchestrator.agent.monitor.MonitorSourceFactory
+import com.workflow.orchestrator.agent.monitor.PollingSource
 import com.workflow.orchestrator.agent.monitor.PullRequestMonitorSource
-import com.workflow.orchestrator.agent.tools.integration.sonar.IssueSeverity
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
 import com.workflow.orchestrator.agent.tools.estimateTokens
 import com.workflow.orchestrator.agent.tools.integration.ServiceLookup
+import com.workflow.orchestrator.agent.tools.integration.sonar.IssueSeverity
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.util.ProjectIdentifier
@@ -263,6 +264,13 @@ class MonitorTool(
         }
         project.service<AgentService>().ensureMonitorManager(sessionId)
         monitorPersistenceProvider(project).add(sessionId, spec)
+        // P1-8 (W5-C1 review): a source that self-stops on a terminal transition must not leave
+        // its handle RUNNING in the pool (untruthful status + a permanently consumed slot of the
+        // 5-per-session cap) — mirror the shell path's onExit and mark the handle EXITED.
+        // Persistence is deliberately KEPT: a session resume re-arms the watch with a fresh
+        // snapshot, and the first-poll rule means it waits for the NEXT build instead of
+        // insta-stopping on the already-terminal one.
+        (src as? PollingSource<*>)?.onSelfStop = { pool.markExited(sessionId, id, null) }
         src.start { event -> handle.appendLine(event.formatLine()); MonitorBridge.emit(project, sessionId, event) }
         return ok("Started monitor $id (bamboo $planKey level=$level). Notifications delivered on state transitions.")
     }

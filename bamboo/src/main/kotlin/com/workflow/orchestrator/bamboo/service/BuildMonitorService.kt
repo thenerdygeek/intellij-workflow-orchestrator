@@ -12,9 +12,9 @@ import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.workflow.BuildRef
 import com.workflow.orchestrator.core.notifications.WorkflowNotificationService
+import com.workflow.orchestrator.core.polling.SmartPoller
 import com.workflow.orchestrator.core.services.BuildLogCache
 import com.workflow.orchestrator.core.settings.PluginSettings
-import com.workflow.orchestrator.core.polling.SmartPoller
 import com.workflow.orchestrator.core.workflow.WorkflowContextService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -27,8 +27,43 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicBoolean
 
 
+/**
+ * Polls Bamboo for the focused build and emits `BuildFinished` / `BuildLogReady` events.
+ *
+ * ## Observer-gated polling contract (P0-5, 2026-06-10 perf audit)
+ *
+ * The focusBuild auto-seed at project startup (T-AutoSeed) starts polling without any UI
+ * consumer, so polling is gated on an observer signal instead of running at full rate forever:
+ *
+ * - **No observer by default.** [tabVisible] starts false; a freshly created [SmartPoller] is
+ *   immediately put into background mode (4× interval) until the Build tab attaches via
+ *   [setVisible] `(true)`. Previously `SmartPoller.visible` defaulted true, so an unopened
+ *   tab polled at full rate for the project lifetime.
+ * - **Terminal + unobserved → heartbeat, not stop.** After each poll, if the focused build is
+ *   in a terminal state (SUCCESS/FAILED) and the tab is not visible, polling drops to a long
+ *   heartbeat cadence ([HEARTBEAT_INTERVAL_MS], ~5 min) instead of stopping. A full stop would
+ *   strand the ambient consumers: a remotely-triggered NEW build on the same plan has no other
+ *   trigger path, so `BuildFinished` would never fire — `HandoverStateService.buildStatus`
+ *   would stay stale indefinitely and the Automation docker-tag cache would keep serving the
+ *   PREVIOUS build's tag. The heartbeat keeps exactly that next-build watch alive at ~1 HTTP
+ *   poll per 5 minutes.
+ * - **Heartbeat → normal resume.** When a heartbeat poll observes new activity — a changed
+ *   build number/status, or a newer running/queued build (`newerBuild` from
+ *   [checkForNewerBuild]) — normal background polling resumes against [lastPollTarget]. The
+ *   dedupe state ([previousBuildNumber]/[lastLogFetchedForBuild]) is never reset on cadence
+ *   switches, so the new build's `BuildFinished`/`BuildLogReady` fire exactly once.
+ * - **Observer attach resumes too.** [setVisible] `(true)` during heartbeat relaunches at the
+ *   normal cadence WITHOUT resetting the dedupe state (no duplicate events, no log refetch).
+ *   A focusBuild change ([wireFocusBuildSubscription] → [startPolling]) stays the full-reset
+ *   path, as before.
+ * - **Running build stays ambient.** A non-terminal build keeps background-rate polling even
+ *   with no observer, so event consumers still see the eventual terminal transition.
+ *
+ * Pinned by `BuildMonitorObserverGatingTest`.
+ */
 @Service(Service.Level.PROJECT)
 open class BuildMonitorService {
 
@@ -146,7 +181,20 @@ open class BuildMonitorService {
     private var previousBuildNumber: Int? = null
     private var previousStatus: BuildStatus? = null
     private var lastLogFetchedForBuild: Int? = null
-    private var poller: SmartPoller? = null
+
+    @Volatile private var poller: SmartPoller? = null
+
+    /** Whether the Build tab (the only direct UI observer) is currently showing. */
+    private val tabVisible = AtomicBoolean(false)
+
+    /** True while polling at the long heartbeat cadence (terminal build + no observer) — see class KDoc. */
+    @Volatile private var heartbeatActive = false
+
+    /** Last [startPolling] target, kept so heartbeat/observer transitions can relaunch the poller. */
+    @Volatile private var lastPollTarget: Triple<String, String, Long>? = null
+
+    /** Guards poller create/stop + the heartbeat/resume handshake between poll loop and EDT. */
+    private val pollerLock = Any()
 
     /**
      * Guards the entire body of [pollOnce] so that the SmartPoller coroutine and
@@ -184,10 +232,49 @@ open class BuildMonitorService {
 
     open fun startPolling(planKey: String, branch: String, intervalMs: Long = 30_000) {
         log.info("[Bamboo:Monitor] Starting polling for planKey=$planKey, branch=$branch, intervalMs=$intervalMs")
-        stopPolling()
-        previousBuildNumber = null
-        previousStatus = null
-        lastLogFetchedForBuild = null
+        synchronized(pollerLock) {
+            stopPollerLocked()
+            heartbeatActive = false
+            lastPollTarget = Triple(planKey, branch, intervalMs)
+            previousBuildNumber = null
+            previousStatus = null
+            lastLogFetchedForBuild = null
+            launchPollerLocked(planKey, branch, intervalMs)
+        }
+    }
+
+    open fun stopPolling() {
+        log.info("[Bamboo:Monitor] Stopping polling")
+        synchronized(pollerLock) {
+            heartbeatActive = false
+            lastPollTarget = null
+            stopPollerLocked()
+        }
+    }
+
+    /**
+     * Observer signal from the Build tab (P0-5). Forwards visibility to the SmartPoller
+     * (hidden tab → 4× background interval) and, when the tab attaches during a heartbeat,
+     * resumes the normal cadence — preserving the dedupe state ([previousBuildNumber] /
+     * [lastLogFetchedForBuild]) so the resume emits no duplicate events.
+     */
+    fun setVisible(isVisible: Boolean) {
+        tabVisible.set(isVisible)
+        synchronized(pollerLock) {
+            val target = lastPollTarget
+            if (isVisible && heartbeatActive && target != null) {
+                heartbeatActive = false
+                log.info("[Bamboo:Monitor] Observer attached — resuming polling for ${target.first}")
+                stopPollerLocked()
+                launchPollerLocked(target.first, target.second, target.third)
+            } else {
+                poller?.setVisible(isVisible)
+            }
+        }
+    }
+
+    /** Creates and starts the SmartPoller. Caller must hold [pollerLock]. */
+    private fun launchPollerLocked(planKey: String, branch: String, intervalMs: Long) {
         poller = SmartPoller(
             name = "BuildMonitor",
             baseIntervalMs = intervalMs,
@@ -196,18 +283,62 @@ open class BuildMonitorService {
             val prevNum = previousBuildNumber
             val prevStat = previousStatus
             pollOnce(planKey, branch)
-            previousBuildNumber != prevNum || previousStatus != prevStat
-        }.also { it.start() }
+            val changed = previousBuildNumber != prevNum || previousStatus != prevStat
+            maybeAdjustCadenceAfterPoll(changed)
+            changed
+        }.also {
+            // P0-5: observer-gated — a poller created with no visible Build tab starts in
+            // background mode instead of SmartPoller's visible-by-default full rate.
+            it.setVisible(tabVisible.get())
+            it.start()
+        }
     }
 
-    open fun stopPolling() {
-        log.info("[Bamboo:Monitor] Stopping polling")
+    /** Stops the current poller without touching restart state. Caller must hold [pollerLock]. */
+    private fun stopPollerLocked() {
         poller?.stop()
         poller = null
     }
 
-    fun setVisible(isVisible: Boolean) {
-        poller?.setVisible(isVisible)
+    /**
+     * P0-5 cadence control, evaluated after every poll (see class KDoc):
+     *
+     * - Normal mode, terminal build + no observer + no newer build in flight → drop to the
+     *   long heartbeat cadence ([HEARTBEAT_INTERVAL_MS]). NOT a full stop: a remotely-triggered
+     *   NEW build on the same plan has no other trigger path, and the ambient consumers
+     *   (HandoverStateService build status, Automation docker-tag cache) depend on its
+     *   `BuildFinished`/`BuildLogReady`.
+     * - Heartbeat mode, new activity observed ([changed] build number/status, or a newer
+     *   running/queued build detected) → resume the normal cadence from [lastPollTarget].
+     *
+     * Cadence switches relaunch the SmartPoller WITHOUT touching the dedupe state, so events
+     * stay one-shot. Both relaunch paths poll immediately on start (SmartPoller semantics) —
+     * one extra poll per transition, accepted for simplicity.
+     */
+    private fun maybeAdjustCadenceAfterPoll(changed: Boolean) {
+        val status = previousStatus
+        val terminal = status == BuildStatus.SUCCESS || status == BuildStatus.FAILED
+        val newerBuildDetected = _stateFlow.value?.newerBuild != null
+        synchronized(pollerLock) {
+            if (poller == null) return
+            val target = lastPollTarget ?: return
+            if (heartbeatActive) {
+                if (changed || newerBuildDetected) {
+                    log.info("[Bamboo:Monitor] Heartbeat observed new build activity — resuming normal polling (P0-5)")
+                    heartbeatActive = false
+                    stopPollerLocked()
+                    launchPollerLocked(target.first, target.second, target.third)
+                }
+            } else if (terminal && !newerBuildDetected && !tabVisible.get()) {
+                log.info(
+                    "[Bamboo:Monitor] Focused build terminal and Build tab hidden — dropping to " +
+                        "the ${HEARTBEAT_INTERVAL_MS}ms heartbeat cadence (P0-5)"
+                )
+                heartbeatActive = true
+                stopPollerLocked()
+                launchPollerLocked(target.first, target.second, HEARTBEAT_INTERVAL_MS)
+            }
+        }
     }
 
     suspend fun pollOnce(planKey: String, branch: String) = pollMutex.withLock {
@@ -377,6 +508,13 @@ open class BuildMonitorService {
     }
 
     companion object {
+        /**
+         * Cadence while terminal + unobserved (P0-5): one poll per ~5 min. Equal to the
+         * SmartPoller's default maxIntervalMs, so backoff math degenerates to a fixed period
+         * (cap ratio = 1.0). Hidden-tab 4× multiplication is capped at the same value.
+         */
+        internal const val HEARTBEAT_INTERVAL_MS = 300_000L
+
         fun getInstance(project: Project): BuildMonitorService {
             return project.getService(BuildMonitorService::class.java)
         }

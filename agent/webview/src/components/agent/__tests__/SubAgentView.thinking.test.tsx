@@ -9,9 +9,15 @@ vi.mock('@/util/file-link-scanner', () => ({
   PATH_REGEX: /(?:never-match-please)/g,
 }));
 
-// chatStore: SubAgentView calls useChatStore to get killSubAgent — provide a no-op.
+// chatStore: SubAgentView calls useChatStore for killSubAgent and the P0-3
+// subAgentStreams side-channel slice.  The mock must include subAgentStreams
+// so the optional chaining in SubAgentView resolves correctly.
+// streamingThinkingText was previously read from the SubAgentState prop; it
+// is now read from the side-channel (subAgentStreams[agentId].thinking).
+let mockSubAgentStreams: Record<string, { text: string; thinking: string | null }> = {};
 vi.mock('@/stores/chatStore', () => ({
-  useChatStore: (selector: (s: any) => any) => selector({ killSubAgent: vi.fn() }),
+  useChatStore: (selector: (s: any) => any) =>
+    selector({ killSubAgent: vi.fn(), subAgentStreams: mockSubAgentStreams }),
 }));
 
 const baseState: SubAgentState = {
@@ -30,16 +36,23 @@ const baseState: SubAgentState = {
 describe('SubAgentView thinking parity', () => {
   beforeEach(() => {
     cleanup();
+    mockSubAgentStreams = {};
   });
 
   afterEach(() => {
     cleanup();
+    mockSubAgentStreams = {};
   });
 
   it('renders streaming thinking through <ThinkingView> (collapsible), not as plain italic text', () => {
+    // P0-3: streaming thinking now comes from the side-channel (subAgentStreams),
+    // not from subagentData.streamingThinkingText on the prop.
+    mockSubAgentStreams = { 'a-1': { text: '', thinking: 'planning the next move' } };
     const state: SubAgentState = {
       ...baseState,
-      streamingThinkingText: 'planning the next move',
+      // streamingThinkingText on the prop is no longer the live-stream source;
+      // it may still be present for legacy/hydration purposes but is not rendered.
+      streamingThinkingText: null,
     };
     render(<SubAgentView subAgent={state} />);
     // ThinkingView's streaming label is "Thinking..." (per ThinkingView.tsx:32).

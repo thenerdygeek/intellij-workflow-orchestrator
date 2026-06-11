@@ -100,6 +100,13 @@ class PrListPanel : JPanel(BorderLayout()) {
     /** Called when the user clicks the "Refresh" action link in the empty state. */
     var onRefreshClicked: (() -> Unit)? = null
 
+    /** Single scroll pane instance, reused across empty-state ↔ list swaps (P2-20). */
+    private val listScrollPane = JBScrollPane(prList).apply {
+        border = JBUI.Borders.empty()
+        isOpaque = false
+        viewport.isOpaque = false
+    }
+
     init {
         isOpaque = false
         background = JBColor.PanelBackground
@@ -111,12 +118,7 @@ class PrListPanel : JPanel(BorderLayout()) {
         }
         add(searchPanel, BorderLayout.NORTH)
 
-        val scrollPane = JBScrollPane(prList).apply {
-            border = JBUI.Borders.empty()
-            isOpaque = false
-            viewport.isOpaque = false
-        }
-        add(scrollPane, BorderLayout.CENTER)
+        add(listScrollPane, BorderLayout.CENTER)
 
         prList.addListSelectionListener { e ->
             if (!e.valueIsAdjusting) {
@@ -187,16 +189,14 @@ class PrListPanel : JPanel(BorderLayout()) {
         applyFilter(searchField.text.orEmpty())
     }
 
-    /** Swap the CENTER component to the scroll pane if it's not already showing. */
+    /** Swap the CENTER component to the (reused) scroll pane if it's not already showing. */
     private fun ensureScrollPaneVisible() {
         val centerComponent = (layout as BorderLayout).getLayoutComponent(BorderLayout.CENTER)
-        if (centerComponent !is JBScrollPane) {
+        if (centerComponent !== listScrollPane) {
             if (centerComponent != null) remove(centerComponent)
-            add(JBScrollPane(prList).apply {
-                border = JBUI.Borders.empty()
-                isOpaque = false
-                viewport.isOpaque = false
-            }, BorderLayout.CENTER)
+            add(listScrollPane, BorderLayout.CENTER)
+            revalidate()
+            repaint()
         }
     }
 
@@ -344,7 +344,7 @@ class PrListPanel : JPanel(BorderLayout()) {
         private val topRow = JPanel(BorderLayout()).apply { isOpaque = false }
         private val topLeft = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply { isOpaque = false }
         private val idLabel = JBLabel().apply {
-            font = Font(Font.MONOSPACED, Font.BOLD, JBUI.scale(11))
+            font = RendererFonts.monospaced(Font.BOLD, JBUI.scale(ID_FONT_SIZE))
             foreground = LINK_COLOR
         }
         private val repoBadgePanel = RepoBadgePanel()
@@ -418,6 +418,8 @@ class PrListPanel : JPanel(BorderLayout()) {
             }
 
             idLabel.text = "#${value.id}"
+            // Cached lookup — refreshes the monospace font if the UI scale changed (P2-20).
+            idLabel.font = RendererFonts.monospaced(Font.BOLD, JBUI.scale(ID_FONT_SIZE))
             idLabel.foreground = if (isSelected) JBColor.foreground() else LINK_COLOR
 
             titleLabel.text = StringUtils.truncate(value.title, 45)
@@ -461,27 +463,37 @@ class PrListPanel : JPanel(BorderLayout()) {
             return prPanel
         }
 
+        /**
+         * Shared badge-font factory for the two badge panels below. B20: the font + metrics
+         * used to be cached in static `lazy`/`var` fields that went stale after a LAF/theme
+         * switch or UI-scale change; [LafFontCache] re-derives when the LAF label font
+         * instance or the scaled size actually differs.
+         */
+        private companion object {
+            private const val BADGE_FONT_SIZE = 9
+            private const val ID_FONT_SIZE = 11
+
+            fun newBadgeFontCache(): LafFontCache = LafFontCache(
+                currentBaseFont = { UIManager.getFont("Label.font") },
+                currentSize = { JBUI.scale(BADGE_FONT_SIZE).toFloat() },
+                deriveFont = { size -> JBUI.Fonts.smallFont().deriveFont(Font.BOLD, size) },
+            )
+        }
+
         /** Repo name badge shown when multiple repos are configured. */
         private class RepoBadgePanel : JPanel() {
             private var badgeText: String = ""
 
-            companion object {
-                private val BADGE_FONT by lazy { JBUI.Fonts.smallFont().deriveFont(Font.BOLD, JBUI.scale(9).toFloat()) }
-                private var cachedFontMetrics: FontMetrics? = null
-            }
+            private val badgeFont = newBadgeFontCache()
 
             init {
                 isOpaque = false
                 border = JBUI.Borders.emptyRight(4)
             }
 
-            private fun getBadgeFontMetrics(): FontMetrics {
-                return cachedFontMetrics ?: getFontMetrics(BADGE_FONT).also { cachedFontMetrics = it }
-            }
-
             fun update(repoName: String) {
                 badgeText = repoName
-                val fm = getBadgeFontMetrics()
+                val fm = badgeFont.metrics(this)
                 val textW = fm.stringWidth(badgeText)
                 preferredSize = Dimension(textW + JBUI.scale(10), fm.height + JBUI.scale(4))
             }
@@ -497,7 +509,7 @@ class PrListPanel : JPanel(BorderLayout()) {
                     JBUI.scale(2).toFloat(), JBUI.scale(2).toFloat()
                 ))
                 g2.color = JBColor.WHITE
-                g2.font = BADGE_FONT
+                g2.font = badgeFont.font()
                 val fm = g2.fontMetrics
                 val textX = (width - fm.stringWidth(badgeText)) / 2
                 val textY = (height + fm.ascent - fm.descent) / 2
@@ -511,17 +523,10 @@ class PrListPanel : JPanel(BorderLayout()) {
             private var badgeColor: Color = SECONDARY_TEXT
             private var badgeText: String = ""
 
-            companion object {
-                private val BADGE_FONT by lazy { JBUI.Fonts.smallFont().deriveFont(Font.BOLD, JBUI.scale(9).toFloat()) }
-                private var cachedFontMetrics: FontMetrics? = null
-            }
+            private val badgeFont = newBadgeFontCache()
 
             init {
                 isOpaque = false
-            }
-
-            private fun getBadgeFontMetrics(): FontMetrics {
-                return cachedFontMetrics ?: getFontMetrics(BADGE_FONT).also { cachedFontMetrics = it }
             }
 
             fun update(status: String) {
@@ -532,7 +537,7 @@ class PrListPanel : JPanel(BorderLayout()) {
                     PrState.DECLINED -> STATUS_DECLINED
                     else -> SECONDARY_TEXT
                 }
-                val fm = getBadgeFontMetrics()
+                val fm = badgeFont.metrics(this)
                 val textW = fm.stringWidth(badgeText)
                 preferredSize = Dimension(textW + JBUI.scale(10), fm.height + JBUI.scale(4))
             }
@@ -551,7 +556,7 @@ class PrListPanel : JPanel(BorderLayout()) {
                     width.toFloat() - 1f, height.toFloat() - 1f, r, r
                 ))
                 // Text in status color
-                g2.font = BADGE_FONT
+                g2.font = badgeFont.font()
                 val fm = g2.fontMetrics
                 val textX = (width - fm.stringWidth(badgeText)) / 2
                 val textY = (height + fm.ascent - fm.descent) / 2

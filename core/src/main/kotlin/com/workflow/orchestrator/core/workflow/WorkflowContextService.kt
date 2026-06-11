@@ -483,6 +483,15 @@ class WorkflowContextService(
         // Both EP calls are bounded by [withTimeoutOrNull] (5s, per spec §4.1 R2). The
         // [ChainKeyResolver] / [LatestBuildLookup] EP impls dispatch to `Dispatchers.IO`
         // internally (Bamboo's `BambooApiClient.get()` already wraps), so no double-wrap.
+        //
+        // P2-8 (2026-06-10 perf audit) — parallelization evaluated and REJECTED: the two
+        // HTTP lookups are strictly sequential by data dependency. [LatestBuildLookup]
+        // takes the chain key that [ChainKeyResolver] produces (`build = chainKey?.let`),
+        // so there is nothing independent to run concurrently here. The remaining work in
+        // this cascade (quality scope, prRepoBranch) is local/cheap — not worth an async.
+        // Async fill (emit now, patch focusBuild in a later second emission) was likewise
+        // rejected: it would violate the single-merged-emission invariant (§4.4) this
+        // function's KDoc preserves, and both lookups are 5s-bounded so the cost is capped.
         val chainKey = resolvedPr.bambooPlanKey?.let { parent ->
             withTimeoutOrNull(5_000) {
                 ChainKeyResolver.getInstance()?.resolveChainKey(project, parent, resolvedPr.fromBranch)

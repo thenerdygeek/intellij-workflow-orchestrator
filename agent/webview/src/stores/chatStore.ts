@@ -150,6 +150,33 @@ function delegatedStamp(repo: string | null): { delegated?: true; delegatorRepo?
 // caller that ever indexed against an exact size. Exported so tests can
 // refer to the named constant rather than repeating the literal.
 export const MESSAGES_HARD_CAP = 1000;
+
+// ── Tool-output UI cap (P2-17) ──
+// toolCallData.output is capped at EVERY tool→message commit site (the
+// appendToken / endThinking / showApproval / promoteQueuedSteeringMessages
+// drains, finalizeToolChain, completeSession, and the sub-agent finalize) so
+// 50-100KB × 1000 messages don't bloat the React state heap. Full content
+// always lives on disk via the Kotlin ToolOutputSpiller; the UI only needs a
+// bounded slice for the copy-button / expand view. When the raw output
+// exceeds the cap, we keep a head slice + truncation notice + tail slice so
+// both the start and the most-recent lines are visible. The LIVE streaming
+// buffer in toolOutputStreams is never capped (Terminal renders it in full
+// while the tool runs); only the committed message string is bounded.
+export const TOOL_OUTPUT_HEAD = 4_000;   // chars kept from the start
+export const TOOL_OUTPUT_TAIL = 16_000;  // chars kept from the end
+export const TOOL_OUTPUT_UI_CAP = TOOL_OUTPUT_HEAD + TOOL_OUTPUT_TAIL;
+const TOOL_OUTPUT_TRUNCATION_NOTICE = '\n…[truncated, full output on disk]…\n';
+
+function capToolOutput(output: string | undefined): string | undefined {
+  if (output === undefined) return undefined;
+  if (output.length <= TOOL_OUTPUT_UI_CAP) return output;
+  return (
+    output.slice(0, TOOL_OUTPUT_HEAD) +
+    TOOL_OUTPUT_TRUNCATION_NOTICE +
+    output.slice(output.length - TOOL_OUTPUT_TAIL)
+  );
+}
+
 const SPILL_MARKER_TEXT =
   'Older messages were archived to keep the chat responsive. ' +
   'The agent still sees the full conversation in its context.';
@@ -452,6 +479,40 @@ interface ChatState {
   // Plan 6 §incoming-delegation-topbar.
   incomingDelegations: Record<string, { delegatorRepo: string; deadlineEpochMs: number }>;
 
+  /**
+   * P0-3 sub-agent stream side-channel (perf Wave 3).
+   *
+   * Live streaming buffers for RUNNING sub-agents. Keyed by agentId.
+   * While a sub-agent streams, per-16ms token deltas land here instead of
+   * mutating messages[]. This means messages[] reference stays stable during
+   * streaming so ChatView's `s => s.messages` selector and renderItems useMemo
+   * do NOT fire per-token — eliminating the 60fps full-list re-render.
+   *
+   * SubAgentView subscribes to ITS OWN slice: `s => s.subAgentStreams[agentId]`
+   * so only that one card re-renders per delta.
+   *
+   * Fields:
+   * - text:       accumulated streaming prose (mirrors main-agent streamingText)
+   * - thinking:   accumulated <thinking> block (mirrors streamingThinkingText)
+   * - iteration:  latest iteration count (updated by updateSubAgentIteration)
+   * - statusNote: transient compaction/retry note (updated by setSubAgentStatusNote)
+   * - tokensUsed: live token counter (updated by updateSubAgentIteration so the
+   *               header doesn't freeze while streaming)
+   *
+   * On BOTH finalize paths — completeSubAgent AND killSubAgent — the accumulated
+   * `thinking` (as REASONING) and `text` (as finalized TEXT) are committed into
+   * the message's subagentData.messages APPENDED AFTER existing child messages
+   * (chronological: earlier tool calls precede final-iteration thinking/text),
+   * the final iteration/tokensUsed are written back to subagentData, and the
+   * side-channel entry is deleted. A kill therefore preserves work-in-progress
+   * output instead of dropping it.
+   *
+   * Reset to {} on clearChat / startSession / completeSession /
+   * hydrateFromUiMessages so a stale slice never bleeds into the next or a
+   * resumed session.
+   */
+  subAgentStreams: Record<string, { text: string; thinking: string | null; iteration?: number; statusNote?: string | null; tokensUsed?: number }>;
+
   // Actions
   startSession(task: string, mentions?: Mention[], attachments?: ImageRef[]): void;
   /**
@@ -716,6 +777,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   delegationQuestionPending: { active: false },
   dropActive: false,
   incomingDelegations: {},
+  subAgentStreams: {},
 
   // Actions
   startSession(task: string, mentions?: Mention[], attachments?: ImageRef[]) {
@@ -764,6 +826,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Non-delegated new session — clear any stale delegated-repo stamp.
       sessionDelegatedRepo: null,
       delegationQuestionPending: { active: false },
+      // Stale-slice bleed guard: a sub-agent stream slice left over from the
+      // previous session must not attach to a same-agentId card later.
+      subAgentStreams: {},
       session: {
         status: 'RUNNING',
         tokensUsed: 0,
@@ -799,7 +864,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const remaining = Array.from(state.activeToolCalls.values());
     const toolMessages: UiMessage[] = remaining.map(tc => {
       const stream = streams[tc.id];
-      const output = tc.output || stream || undefined;
+      // P2-17: cap at commit — full output lives on disk via the Kotlin spiller.
+      const output = capToolOutput(tc.output || stream || undefined);
       return {
         ts: uniqueTs(),
         type: 'SAY' as const,
@@ -847,6 +913,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // tool call IDs and would otherwise leak for the rest of the app's life.
       toolOutputStreams: {},
       toolCallOpen: {},
+      // Drop any sub-agent stream slices — sub-agents are finalized by session
+      // end; a leftover slice would render a stale shimmer on a completed card.
+      subAgentStreams: {},
       messages,
       queuedSteeringMessages: [],
       handoff: null,
@@ -914,7 +983,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const dlg = delegatedStamp(state.sessionDelegatedRepo);
           const toolMsgs: UiMessage[] = Array.from(state.activeToolCalls.values()).map(tc => {
             const s = streams[tc.id];
-            const output = tc.output || s || undefined;
+            // P2-17: cap at commit — this drain (first token of the next
+            // iteration) is the DOMINANT path for intermediate tool chains.
+            const output = capToolOutput(tc.output || s || undefined);
             return {
               ts: uniqueTs(),
               type: 'SAY' as const,
@@ -940,8 +1011,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           toolOutputStreams = {};
         }
 
+        // B10: wrap with capMessages so the tool-drain branch enforces the hard
+        // cap like every other path that spreads tool messages into messages[].
         return {
-          messages,
+          messages: capMessages(messages),
           activeToolCalls,
           toolOutputStreams,
           streamingText: token,
@@ -1239,7 +1312,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const streams = toolOutputStreams;
         const toolMsgs: UiMessage[] = Array.from(activeToolCalls.values()).map(tc => {
           const s = streams[tc.id];
-          const output = tc.output || s || undefined;
+          // P2-17: cap at commit — same contract as the appendToken drain.
+          const output = capToolOutput(tc.output || s || undefined);
           return {
             ts: uniqueTs(),
             type: 'SAY' as const,
@@ -1367,7 +1441,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const dlg = delegatedStamp(state.sessionDelegatedRepo);
     const toolMessages: UiMessage[] = tools.map(tc => {
       const stream = streams[tc.id];
-      const output = tc.output || stream || undefined;
+      // P2-17: cap the stored output to TOOL_OUTPUT_UI_CAP so 50-100KB ×
+      // 1000 messages don't bloat React state. Full output lives on disk.
+      const output = capToolOutput(tc.output || stream || undefined);
       return {
         ts: uniqueTs(),
         type: 'SAY' as const,
@@ -1429,6 +1505,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       sessionDelegatedRepo: null,
       delegationQuestionPending: { active: false },
       monitorHandles: [],
+      subAgentStreams: {},
     });
   },
 
@@ -1783,6 +1860,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const hadStream = state.streamingText != null && state.streamingMsgTs != null;
       const tools = Array.from(state.activeToolCalls.values());
       let newMessages = [...state.messages];
+      const dlg = delegatedStamp(state.sessionDelegatedRepo);
+
+      // B9: flush in-flight thinking buffer FIRST — thinking chronologically
+      // precedes prose (LLM emits <thinking>…</thinking> then text).
+      // Mirrors endStream/completeSession/endThinking drain paths — every
+      // other path that clears streamingThinkingText also persists it;
+      // showApproval was the only path that silently dropped it.
+      if (state.streamingThinkingText != null && state.streamingThinkingTs != null) {
+        newMessages.push({
+          ts: state.streamingThinkingTs,
+          type: 'SAY' as const,
+          say: 'REASONING' as const,
+          text: state.streamingThinkingText,
+          ...dlg,
+        });
+      }
 
       if (hadStream) {
         newMessages.push({
@@ -1798,7 +1891,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const streams = state.toolOutputStreams;
         for (const tc of tools) {
           const s = streams[tc.id];
-          const output = tc.output || s || undefined;
+          // P2-17: cap at commit — same contract as the appendToken drain.
+          const output = capToolOutput(tc.output || s || undefined);
           newMessages.push({
             ts: uniqueTs(),
             type: 'SAY' as const,
@@ -1976,7 +2070,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const toolDrain: UiMessage[] = state.activeToolCalls.size > 0
         ? Array.from(state.activeToolCalls.values()).map(tc => {
             const s = streams[tc.id];
-            const output = tc.output || s || undefined;
+            // P2-17: cap at commit — same contract as the appendToken drain.
+            const output = capToolOutput(tc.output || s || undefined);
             return {
               ts: uniqueTs(),
               type: 'SAY' as const,
@@ -2091,6 +2186,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
   updateSubAgentIteration(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
+      // P0-3: update the side-channel so messages[] stays stable during streaming.
+      const existing = state.subAgentStreams[data.agentId];
+      if (existing !== undefined) {
+        const newIteration = data.iteration ?? ((existing.iteration ?? 0) + 1);
+        return {
+          subAgentStreams: {
+            ...state.subAgentStreams,
+            [data.agentId]: {
+              ...existing,
+              iteration: newIteration,
+              // Kotlin sends tokensUsed alongside iteration — carry it live so
+              // the header counter doesn't freeze while streaming.
+              tokensUsed: data.tokensUsed ?? existing.tokensUsed,
+            },
+          },
+        };
+      }
+      // Side-channel not yet active (agent not yet streaming) — fall through to
+      // messages[].  This path only fires for the very first iteration update
+      // before any token delta arrives, which is rare and not on the hot path.
       const messages = state.messages.map((m): UiMessage => {
         if (!m.subagentData || m.subagentData.agentId !== data.agentId) return m;
         const sub = m.subagentData;
@@ -2110,6 +2225,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setSubAgentStatusNote(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
+      // P0-3: update the side-channel so messages[] stays stable during streaming.
+      const existing = state.subAgentStreams[data.agentId];
+      if (existing !== undefined) {
+        return {
+          subAgentStreams: {
+            ...state.subAgentStreams,
+            [data.agentId]: { ...existing, statusNote: data.note ?? null },
+          },
+        };
+      }
+      // Side-channel not yet active — fall through to messages[].
       const messages = state.messages.map((m): UiMessage => {
         if (!m.subagentData || m.subagentData.agentId !== data.agentId) return m;
         return {
@@ -2190,7 +2316,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // main agent's finalizeToolChain merge so the completed message carries the
         // full output instead of losing it when the stream entry is later cleared.
         const streamOutput = state.toolOutputStreams[finalizedId];
-        const mergedOutput = data.toolOutput || streamOutput || undefined;
+        // P2-17: cap at commit — same contract as the main-agent drain paths.
+        const mergedOutput = capToolOutput(data.toolOutput || streamOutput || undefined);
 
         // Release the accumulated stream entry now that its content is baked into
         // the finalized message — prevents unbounded toolOutputStreams growth over
@@ -2262,109 +2389,140 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   /**
-   * Append a raw streaming token/chunk to the sub-agent card's last partial TEXT
-   * message. Unlike [updateSubAgentMessage] which replaces the whole text, this
-   * incrementally appends — mirroring how the main agent's streaming works —
-   * so the user sees tokens flow in the sub-agent card rather than a single
-   * delayed block.
+   * Append a raw streaming token/chunk to the sub-agent's live stream buffer.
    *
-   * If no partial TEXT message exists yet for this sub-agent, one is created.
+   * P0-3 (perf Wave 3): deltas accumulate in `subAgentStreams[agentId].text`
+   * (the side-channel) instead of being embedded in messages[]. This means
+   * messages[] reference stays stable per 16ms batch — ChatView's
+   * `s => s.messages` selector and renderItems useMemo do NOT fire per token.
+   * SubAgentView subscribes to `s => s.subAgentStreams[agentId]` so only
+   * that one card re-renders per delta.
+   *
+   * The accumulated text is committed into subagentData.messages on
+   * completeSubAgent / killSubAgent (the finalize path).
    */
   appendSubAgentStreamDelta(payload: string) {
     const { agentId, delta } = JSON.parse(payload) as { agentId: string; delta: string };
     if (!delta) return;
     set((state) => {
-      const messages = state.messages.map((m): UiMessage => {
-        if (!m.subagentData || m.subagentData.agentId !== agentId) return m;
-        const agent = m.subagentData;
-        const msgs = agent.messages;
-        const lastIdx = msgs.length - 1;
-        const last = lastIdx >= 0 ? msgs[lastIdx] : undefined;
-        let nextMsgs: UiMessage[];
-        if (last && last.type === 'SAY' && last.say === 'TEXT') {
-          const updated: UiMessage = { ...last, text: (last.text ?? '') + delta };
-          nextMsgs = msgs.slice(0, lastIdx).concat(updated);
-        } else {
-          const textMsg: UiMessage = {
-            ts: uniqueTs(),
-            type: 'SAY',
-            say: 'TEXT',
-            text: delta,
-          };
-          nextMsgs = [...msgs, textMsg];
-        }
-        return {
-          ...m,
-          subagentData: { ...agent, messages: nextMsgs } as SubAgentState,
-        };
-      });
-      return { messages };
+      const existing = state.subAgentStreams[agentId];
+      const prev = existing ?? { text: '', thinking: null };
+      return {
+        subAgentStreams: {
+          ...state.subAgentStreams,
+          [agentId]: { ...prev, text: prev.text + delta },
+        },
+      };
     });
   },
 
   /**
-   * Append a thinking-block delta to the sub-agent's live streaming buffer.
-   * Mirrors the main agent's appendToThinking path. No-op if the agentId is
-   * not found in messages[].
+   * Append a thinking-block delta to the sub-agent's live thinking buffer.
+   *
+   * P0-3: accumulated in `subAgentStreams[agentId].thinking` (side-channel)
+   * so messages[] stays stable. SubAgentView reads thinking from the slice.
    */
   appendSubAgentThinking(agentId: string, delta: string) {
     set((state) => {
-      const messages = state.messages.map((m): UiMessage => {
-        if (!m.subagentData || m.subagentData.agentId !== agentId) return m;
-        const sub = m.subagentData;
-        const prev = sub.streamingThinkingText ?? '';
-        return {
-          ...m,
-          subagentData: { ...sub, streamingThinkingText: prev + delta } as SubAgentState,
-        };
-      });
-      return { messages };
+      const existing = state.subAgentStreams[agentId];
+      const prev = existing ?? { text: '', thinking: null };
+      return {
+        subAgentStreams: {
+          ...state.subAgentStreams,
+          [agentId]: { ...prev, thinking: (prev.thinking ?? '') + delta },
+        },
+      };
     });
   },
 
   /**
-   * Mark the close of the current <thinking> block for agentId. Flushes the
-   * accumulated buffer into the sub-agent's messages as a REASONING UiMessage
-   * and clears the live buffer.
+   * Mark the close of the current <thinking> block for agentId.
+   *
+   * P0-3: flushes the side-channel thinking buffer into messages[].subagentData.messages
+   * as a REASONING UiMessage and clears the thinking field in the side-channel.
+   * This is the one place where a thinking close DOES need to touch messages[],
+   * but it happens at most once per iteration (not per token).
    */
   endSubAgentThinking(agentId: string) {
     set((state) => {
+      const stream = state.subAgentStreams[agentId];
+      const thinkingText = stream?.thinking ?? null;
+      // Clear thinking in side-channel regardless.
+      const nextStreams = stream !== undefined
+        ? { ...state.subAgentStreams, [agentId]: { ...stream, thinking: null } }
+        : state.subAgentStreams;
+
+      if (!thinkingText) {
+        // Empty block — nothing to flush into messages.
+        return { subAgentStreams: nextStreams };
+      }
+
+      const finalised: UiMessage = {
+        ts: uniqueTs(),
+        type: 'SAY',
+        say: 'REASONING',
+        text: thinkingText,
+      };
       const messages = state.messages.map((m): UiMessage => {
         if (!m.subagentData || m.subagentData.agentId !== agentId) return m;
         const sub = m.subagentData;
-        const text = sub.streamingThinkingText ?? '';
-        if (!text) {
-          // Empty thinking block — nothing to finalise.
-          return {
-            ...m,
-            subagentData: { ...sub, streamingThinkingText: null } as SubAgentState,
-          };
-        }
-        const finalised: UiMessage = {
-          ts: uniqueTs(),
-          type: 'SAY',
-          say: 'REASONING',
-          text,
-        };
         return {
           ...m,
           subagentData: {
             ...sub,
             messages: [...sub.messages, finalised],
-            streamingThinkingText: null,
           } as SubAgentState,
         };
       });
-      return { messages };
+      return { messages, subAgentStreams: nextStreams };
     });
   },
 
   completeSubAgent(payload: string) {
     const data = JSON.parse(payload);
     set((state) => {
+      // P0-3: merge any accumulated streaming text from the side-channel into
+      // the sub-agent's messages[] before finalising, then drop the side-channel
+      // entry.  The side-channel entry also carries the final iteration /
+      // statusNote which we write back so the completed card shows correct counts.
+      const stream = state.subAgentStreams[data.agentId];
+      const nextStreams = { ...state.subAgentStreams };
+      delete nextStreams[data.agentId];
+
       const messages = state.messages.map((m): UiMessage => {
         if (!m.subagentData || m.subagentData.agentId !== data.agentId) return m;
         const sub = m.subagentData;
+
+        // Flush any remaining thinking buffer as REASONING, then the streamed
+        // text as a finalized TEXT message — BOTH appended AFTER the existing
+        // child messages. This is the final iteration's in-flight content, so
+        // chronologically it belongs after iteration-1..N-1 tool calls
+        // (prepending would put final-iteration thinking before them).
+        const thinkingText = stream?.thinking ?? null;
+        const thinkingMsg: UiMessage | null = thinkingText
+          ? {
+              ts: uniqueTs(),
+              type: 'SAY',
+              say: 'REASONING',
+              text: thinkingText,
+            }
+          : null;
+        const accumulatedText = stream?.text ?? '';
+        const streamMsg: UiMessage | null = accumulatedText
+          ? {
+              ts: uniqueTs(),
+              type: 'SAY',
+              say: 'TEXT',
+              text: accumulatedText,
+              partial: false,
+            }
+          : null;
+        const allMessages = [
+          ...sub.messages,
+          ...(thinkingMsg ? [thinkingMsg] : []),
+          ...(streamMsg ? [streamMsg] : []),
+        ];
+
         return {
           ...m,
           say: 'SUBAGENT_COMPLETED' as const,
@@ -2372,20 +2530,52 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...sub,
             status: (data.isError ? 'ERROR' : 'COMPLETED') as SubAgentState['status'],
             summary: data.textContent || '',
-            tokensUsed: data.tokensUsed ?? sub.tokensUsed,
+            // Prefer the payload's final count; fall back to the live counter
+            // carried through the side-channel during streaming.
+            tokensUsed: data.tokensUsed ?? stream?.tokensUsed ?? sub.tokensUsed,
             activeToolChain: [], // clear any in-flight tools
+            streamingThinkingText: null,
+            statusNote: null,
+            // Write back the final iteration from the side-channel (if present).
+            iteration: stream?.iteration ?? sub.iteration,
+            messages: allMessages,
           } as SubAgentState,
         };
       });
-      return { messages };
+      return { messages, subAgentStreams: nextStreams };
     });
   },
 
   killSubAgent(agentId: string) {
     set((state) => {
+      // P0-3: commit accumulated side-channel content BEFORE clearing the entry —
+      // mirror completeSubAgent's flush so a kill preserves work-in-progress
+      // output (partial text + thinking) instead of silently dropping it.
+      // Only the status differs (KILLED).
+      const stream = state.subAgentStreams[agentId];
+      const nextStreams = { ...state.subAgentStreams };
+      delete nextStreams[agentId];
+
       const messages = state.messages.map((m): UiMessage => {
         if (!m.subagentData || m.subagentData.agentId !== agentId) return m;
         const sub = m.subagentData;
+
+        // Same chronology as completeSubAgent: thinking (REASONING) then text
+        // (TEXT), both appended AFTER existing child messages.
+        const thinkingText = stream?.thinking ?? null;
+        const thinkingMsg: UiMessage | null = thinkingText
+          ? { ts: uniqueTs(), type: 'SAY', say: 'REASONING', text: thinkingText }
+          : null;
+        const accumulatedText = stream?.text ?? '';
+        const streamMsg: UiMessage | null = accumulatedText
+          ? { ts: uniqueTs(), type: 'SAY', say: 'TEXT', text: accumulatedText, partial: false }
+          : null;
+        const allMessages = [
+          ...sub.messages,
+          ...(thinkingMsg ? [thinkingMsg] : []),
+          ...(streamMsg ? [streamMsg] : []),
+        ];
+
         return {
           ...m,
           say: 'SUBAGENT_COMPLETED' as const,
@@ -2393,10 +2583,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ...sub,
             status: 'KILLED' as const,
             activeToolChain: [],
+            streamingThinkingText: null,
+            statusNote: null,
+            // Write back the live counters from the side-channel (if present).
+            iteration: stream?.iteration ?? sub.iteration,
+            tokensUsed: stream?.tokensUsed ?? sub.tokensUsed,
+            messages: allMessages,
           } as SubAgentState,
         };
       });
-      return { messages };
+      return { messages, subAgentStreams: nextStreams };
     });
     // Notify Kotlin to cancel the worker
     import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
@@ -2551,6 +2747,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       questionSummary: null,
       queuedSteeringMessages: [],
       streamingEdits: {},
+      // A slice left over from the previously live session must not bleed into
+      // the loaded one (same agentId would attach stale streaming content).
+      subAgentStreams: {},
       viewMode: 'chat',
       ...(restoredPlan ? { plan: restoredPlan } : {}),
     });

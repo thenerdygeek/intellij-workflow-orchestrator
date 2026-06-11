@@ -1,6 +1,5 @@
 import { memo, useCallback, useRef, useEffect, useState, useMemo } from 'react';
-import { useChatStore, selectActiveSubAgents } from '@/stores/chatStore';
-import { useShallow } from 'zustand/react/shallow';
+import { useChatStore } from '@/stores/chatStore';
 import { AgentMessage, AnsweredQuestionsCard } from './AgentMessage';
 import { ChatFooter } from './ChatFooter';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -23,8 +22,9 @@ import { ScrollButton } from '@/components/ui/prompt-kit/scroll-button';
 
 export const ChatView = memo(function ChatView() {
   const messages = useChatStore(s => s.messages);
-  const streamingText = useChatStore(s => s.streamingText);
-  const activeSubAgents = useChatStore(useShallow(selectActiveSubAgents));
+  // P2-14: subscribe to a boolean instead of the full streamingText string so
+  // this effect only fires when streaming starts/stops, not per token.
+  const isStreamingBool = useChatStore(s => s.streamingText != null);
   const editorTabMode = useChatStore(s => s.editorTabMode);
 
   const messageListRef = useRef<MessageListHandle>(null);
@@ -33,14 +33,22 @@ export const ChatView = memo(function ChatView() {
 
   // When streaming ends on a tall response, scroll to its TOP so the user can
   // read from the start instead of landing at the bottom. The just-finalized
-  // message is at messages.length-1.
+  // message is at renderItems.length-1 (tool messages collapse into groups).
+  // B8: track renderItems length via a ref so the scroll effect can read it
+  // without adding renderItems to the effect's dependency array (which would
+  // re-run on every message, defeating the streaming-end-only trigger).
+  // Declared here (before renderItems useMemo) to keep hooks in stable order;
+  // updated immediately after the useMemo below.
+  const renderItemsLengthRef = useRef(0);
+
   useEffect(() => {
-    const isStreaming = streamingText != null;
+    const isStreaming = isStreamingBool;
     const wasStreaming = wasStreamingRef.current;
     wasStreamingRef.current = isStreaming;
     if (!wasStreaming || isStreaming) return;
 
-    const lastIndex = useChatStore.getState().messages.length - 1;
+    // B8: use the renderItems count (what Virtuoso knows about), not raw messages
+    const lastIndex = renderItemsLengthRef.current - 1;
     if (lastIndex < 0) return;
 
     // Defer one frame so Virtuoso has materialized the now-finalized item.
@@ -54,11 +62,14 @@ export const ChatView = memo(function ChatView() {
       }
     });
     return () => cancelAnimationFrame(raf);
-  }, [streamingText]);
+  }, [isStreamingBool]);
 
-  // Group consecutive TOOL messages into tool chains for compact rendering
+  // Group consecutive TOOL messages into tool chains for compact rendering.
+  // P1-13: ToolCall[] objects are derived HERE (inside the useMemo) so they
+  // are stable while messages[] is stable — renderItem's useCallback sees the
+  // same object reference and ToolCallChain/ToolCallItem memo can bail out.
   type RenderItem = { kind: 'message'; msg: UiMessage; idx: number }
-                  | { kind: 'toolGroup'; tools: UiMessage[]; idx: number };
+                  | { kind: 'toolGroup'; tools: UiMessage[]; toolCalls: ToolCall[]; idx: number };
 
   const renderItems: RenderItem[] = useMemo(() => {
     const result: RenderItem[] = [];
@@ -71,24 +82,25 @@ export const ChatView = memo(function ChatView() {
         toolBuffer.push(msg);
       } else {
         if (toolBuffer.length > 0) {
-          result.push({ kind: 'toolGroup', tools: toolBuffer, idx: toolStartIdx });
+          const toolCalls: ToolCall[] = toolBuffer.map(t => ({
+            id: t.toolCallData!.toolCallId,
+            name: t.toolCallData!.toolName,
+            args: t.toolCallData!.args ?? '',
+            status: (t.toolCallData!.status as any) ?? 'COMPLETED',
+            result: t.toolCallData!.result,
+            output: t.toolCallData!.output,
+            durationMs: t.toolCallData!.durationMs,
+            diff: t.toolCallData!.diff,
+            imageRefs: t.toolCallData!.imageRefs,
+          }));
+          result.push({ kind: 'toolGroup', tools: toolBuffer, toolCalls, idx: toolStartIdx });
           toolBuffer = [];
         }
         result.push({ kind: 'message', msg, idx: i });
       }
     }
     if (toolBuffer.length > 0) {
-      result.push({ kind: 'toolGroup', tools: toolBuffer, idx: toolStartIdx });
-    }
-    return result;
-  }, [messages]);
-
-  const renderItem = useCallback((index: number) => {
-    const item = renderItems[index];
-    if (!item) return null;
-
-    if (item.kind === 'toolGroup') {
-      const toolCalls: ToolCall[] = item.tools.map(t => ({
+      const toolCalls: ToolCall[] = toolBuffer.map(t => ({
         id: t.toolCallData!.toolCallId,
         name: t.toolCallData!.toolName,
         args: t.toolCallData!.args ?? '',
@@ -99,9 +111,23 @@ export const ChatView = memo(function ChatView() {
         diff: t.toolCallData!.diff,
         imageRefs: t.toolCallData!.imageRefs,
       }));
+      result.push({ kind: 'toolGroup', tools: toolBuffer, toolCalls, idx: toolStartIdx });
+    }
+    return result;
+  }, [messages]);
+
+  // B8: keep the ref in sync so the scroll effect reads the post-useMemo value.
+  renderItemsLengthRef.current = renderItems.length;
+
+  const renderItem = useCallback((index: number) => {
+    const item = renderItems[index];
+    if (!item) return null;
+
+    if (item.kind === 'toolGroup') {
+      // P1-13: toolCalls is pre-computed in renderItems useMemo — stable identity.
       return (
         <ErrorBoundary key={`toolgroup-${item.tools[0]!.ts}-${item.idx}`}>
-          <ToolCallChain toolCalls={toolCalls} />
+          <ToolCallChain toolCalls={item.toolCalls} />
         </ErrorBoundary>
       );
     }
@@ -119,9 +145,10 @@ export const ChatView = memo(function ChatView() {
     }
 
     if (msg.say === 'SUBAGENT_STARTED' || msg.say === 'SUBAGENT_PROGRESS' || msg.say === 'SUBAGENT_COMPLETED') {
-      // subagentData IS the SubAgentState (single source of truth since P4.T2).
-      // activeSubAgents is a derived selector that reads from the same messages[].
-      const subAgentState = activeSubAgents.get(msg.subagentData?.agentId ?? '') ?? msg.subagentData;
+      // P0-3 / P2-13: SubAgentView subscribes to its own subAgentStreams[agentId]
+      // slice directly for live streaming data. ChatView only needs the committed
+      // subagentData from messages[] — no activeSubAgents Map needed here.
+      const subAgentState = msg.subagentData;
       if (!subAgentState) return null;
       return (
         <ErrorBoundary key={key}>
@@ -258,7 +285,9 @@ export const ChatView = memo(function ChatView() {
     }
 
     return null;
-  }, [renderItems, activeSubAgents]);
+  // P2-13: activeSubAgents removed from deps — SubAgentView subscribes to the
+  // side-channel directly so ChatView doesn't need the full Map selector.
+  }, [renderItems]);
 
   // Stable identity per row so Virtuoso keeps its measured-height cache across
   // re-renders (keeps the scrollbar thumb tracking the cursor while dragging).

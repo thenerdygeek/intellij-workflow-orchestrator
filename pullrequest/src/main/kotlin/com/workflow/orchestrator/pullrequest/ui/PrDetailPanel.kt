@@ -2213,6 +2213,11 @@ class PrDetailPanel(
         }
 
         init {
+            // Rubber-stamp (P2-20): children are added ONCE and reconfigured per cell —
+            // the old removeAll()+add() per render forced a layout invalidation per paint.
+            leftRow.add(badgeLabel)
+            leftRow.add(fileNameLabel)
+            leftRow.add(dirPathLabel)
             rootPanel.add(leftRow, BorderLayout.CENTER)
             rootPanel.add(diffIconLabel, BorderLayout.EAST)
         }
@@ -2229,10 +2234,9 @@ class PrDetailPanel(
                 rootPanel.background = UIManager.getColor("List.selectionBackground")
             }
 
-            leftRow.removeAll()
-
             // Change type badge
-            val letter = when (value.changeType.uppercase()) {
+            val changeType = value.changeType.uppercase()
+            badgeLabel.text = when (changeType) {
                 "ADD" -> "A"
                 "MODIFY" -> "M"
                 "DELETE" -> "D"
@@ -2240,25 +2244,19 @@ class PrDetailPanel(
                 "COPY" -> "C"
                 else -> "?"
             }
-            val color = when (value.changeType.uppercase()) {
+            badgeLabel.foreground = when (changeType) {
                 "ADD" -> StatusColors.SUCCESS
                 "MODIFY" -> StatusColors.LINK
                 "DELETE" -> StatusColors.ERROR
                 "RENAME" -> StatusColors.WARNING
                 else -> SECONDARY_TEXT
             }
-            badgeLabel.text = letter
-            badgeLabel.foreground = color
-            leftRow.add(badgeLabel)
 
             fileNameLabel.text = value.fileName
             fileNameLabel.foreground = JBColor.foreground()
-            leftRow.add(fileNameLabel)
 
-            if (value.dirPath.isNotBlank()) {
-                dirPathLabel.text = value.dirPath
-                leftRow.add(dirPathLabel)
-            }
+            dirPathLabel.text = value.dirPath
+            dirPathLabel.isVisible = value.dirPath.isNotBlank()
 
             return rootPanel
         }
@@ -2305,7 +2303,7 @@ class PrDetailPanel(
             border = JBUI.Borders.empty(4, 8)
         }
         private val hashLabel = JBLabel().apply {
-            font = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scale(12))
+            font = RendererFonts.monospaced(Font.PLAIN, JBUI.scale(12))
             foreground = StatusColors.LINK
         }
         private val messageLabel = JBLabel().apply {

@@ -35,6 +35,10 @@ interface TerminalProps {
 }
 
 
+// P1-15: tail-bound for live ANSI highlighting while RUNNING+expanded.
+// Limits the per-chunk O(n²) ansi_to_html call to at most this many lines.
+const RUNNING_HIGHLIGHT_TAIL = 400;
+
 export function Terminal({
   command,
   stdout,
@@ -49,24 +53,43 @@ export function Terminal({
   const [expanded, setExpanded] = useState(false);
   const outputRef = useRef<HTMLPreElement>(null);
 
-  const output = [stdout, stderr].filter(Boolean).join('\n');
-  const lines = output.split('\n');
+  // P1-15: memoize expensive splits on stdout/stderr identity so re-renders
+  // caused by parent state changes (non-output) don't re-run these.
+  const output = useMemo(
+    () => [stdout, stderr].filter(Boolean).join('\n'),
+    [stdout, stderr],
+  );
+  const lines = useMemo(() => output.split('\n'), [output]);
   const needsCollapse = lines.length > maxCollapsedLines;
   // When collapsed, show the LAST N lines (most recent output is most relevant)
   const displayOutput = !expanded && needsCollapse
     ? lines.slice(-maxCollapsedLines).join('\n')
     : output;
 
-  const hasAnsi = output !== stripAnsi(output);
+  // P1-15: while RUNNING + expanded, highlight only the last RUNNING_HIGHLIGHT_TAIL
+  // lines to bound the O(n²) ansi_to_html cost. A header shows skipped line count.
+  // Once finalized (isRunning=false) the full output is highlighted.
+  const { highlightInput, hiddenLineCount } = useMemo(() => {
+    if (isRunning && expanded && lines.length > RUNNING_HIGHLIGHT_TAIL) {
+      const tail = lines.slice(-RUNNING_HIGHLIGHT_TAIL);
+      return {
+        highlightInput: tail.join('\n'),
+        hiddenLineCount: lines.length - RUNNING_HIGHLIGHT_TAIL,
+      };
+    }
+    return { highlightInput: displayOutput, hiddenLineCount: 0 };
+  }, [isRunning, expanded, lines, displayOutput]);
+
+  const hasAnsi = useMemo(() => output !== stripAnsi(output), [output]);
   // ANSI output: let ansi_up handle coloring. Plain text: apply heuristic token highlights.
   const displayHtml = useMemo(
     () => {
-      const strippedDisplay = stripAnsi(displayOutput);
-      return strippedDisplay === displayOutput
-        ? highlightPlainText(displayOutput)
-        : ansiUp.ansi_to_html(displayOutput);
+      const strippedDisplay = stripAnsi(highlightInput);
+      return strippedDisplay === highlightInput
+        ? highlightPlainText(highlightInput)
+        : ansiUp.ansi_to_html(highlightInput);
     },
-    [displayOutput],
+    [highlightInput],
   );
 
   // Auto-scroll to bottom when output changes or when expanding
@@ -129,6 +152,15 @@ export function Terminal({
       {/* Output body — max-height keeps it bounded; the inner <pre> handles its own scroll. */}
       {output.length > 0 && (
         <div className="relative">
+          {/* P1-15: while running+expanded, show only the tail; header says how many were omitted */}
+          {hiddenLineCount > 0 && (
+            <div
+              className="px-3 py-1 text-[10px] italic select-none"
+              style={{ color: 'var(--fg-muted)', borderBottom: '1px solid var(--border)' }}
+            >
+              … {hiddenLineCount.toLocaleString()} earlier lines (live view)
+            </div>
+          )}
           <pre
             ref={outputRef}
             className="px-3 py-2 text-[11px] leading-relaxed font-mono overflow-x-auto overflow-y-auto whitespace-pre-wrap"

@@ -6,6 +6,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vcs.BranchChangeListener
 import com.workflow.orchestrator.core.settings.RepoContextResolver
+import com.workflow.orchestrator.core.util.WorkflowPluginDisposable
 import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,7 +27,9 @@ class BranchChangedEventEmitter(private val project: Project) : BranchChangeList
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
-        Disposer.register(project, this)
+        // P2-21: parent to the plugin-lifetime project service, not the bare Project —
+        // a bare-Project parent survives dynamic plugin unload until project close.
+        Disposer.register(WorkflowPluginDisposable.getInstance(project), this)
     }
 
     override fun branchWillChange(branchName: String) {

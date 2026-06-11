@@ -28,6 +28,7 @@ import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.SwingConstants
@@ -37,32 +38,78 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
     private val log = Logger.getInstance(WorkflowToolWindowFactory::class.java)
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        buildTabs(project, toolWindow)
+        // Per-ToolWindow lazy-tab state. Scoped here (NOT a factory instance field) so two
+        // open projects sharing the factory instance can't clobber each other's tracking.
+        val materializedTabs = mutableSetOf<String>()
+        val rebuildInProgress = AtomicBoolean(false)
+        val rebuildTabs: () -> Unit = {
+            // While removeAllContents(true) runs, the content manager shifts selection onto
+            // soon-to-be-removed contents and fires selectionChanged(add). Without this guard
+            // the lazy-materialization listener below would materialize a doomed placeholder
+            // (for the Agent tab that means a transient Chromium spawn per rebuild).
+            rebuildInProgress.set(true)
+            try {
+                buildTabs(project, toolWindow, materializedTabs)
+            } finally {
+                rebuildInProgress.set(false)
+            }
+        }
+
+        rebuildTabs()
+
+        // Listen for tab selection to materialize lazy tabs on demand.
+        // Registered exactly ONCE per ToolWindow (P0-6): buildTabs() is re-run by
+        // "Refresh All Tabs" and the settings-change toolWindowShown path, and registering
+        // inside buildTabs stacked one listener per rebuild.
+        toolWindow.contentManager.addContentManagerListener(object : ContentManagerListener {
+            override fun selectionChanged(event: ContentManagerEvent) {
+                if (rebuildInProgress.get()) return
+                val content = event.content
+                val tabTitle = content.displayName ?: return
+                if (event.operation != ContentManagerEvent.ContentOperation.add) return
+                if (tabTitle in materializedTabs) return
+                val realPanel = materializeByTitle(project, tabTitle, materializedTabs) ?: return
+                content.component = realPanel
+                // Now that the placeholder is replaced by the real panel, wire the
+                // dispose cascade. LazyTabPlaceholder isn't Disposable, so no prior
+                // disposer was registered at buildTabs time -- this is a fresh set,
+                // not a replacement. On the next rebuild, removeAllContents(true)
+                // disposes this content and the disposer cascade tears the panel down.
+                if (realPanel is Disposable) {
+                    content.setDisposer(realPanel)
+                }
+                log.info("[Workflow:UI] Lazy-loaded tab: $tabTitle")
+            }
+        })
+
         setupTitleActions(project, toolWindow)
-        setupGearActions(project, toolWindow)
+        setupGearActions(project, toolWindow, rebuildTabs)
         setupActiveTicketBar(project, toolWindow)
 
         // Rebuild tabs when the tool window is shown, so settings changes take effect
         project.messageBus.connect(toolWindow.disposable)
-            .subscribe(ToolWindowManagerListener.TOPIC, object : ToolWindowManagerListener {
-                private var lastSettingsSnapshot = settingsSnapshot(project)
+            .subscribe(
+                ToolWindowManagerListener.TOPIC,
+                object : ToolWindowManagerListener {
+                    private var lastSettingsSnapshot = settingsSnapshot(project)
 
-                override fun toolWindowShown(tw: ToolWindow) {
-                    if (tw.id != toolWindow.id) return
-                    val current = settingsSnapshot(project)
-                    if (current != lastSettingsSnapshot) {
-                        lastSettingsSnapshot = current
-                        val selectedTab = toolWindow.contentManager.selectedContent?.displayName
-                        buildTabs(project, toolWindow)
-                        // Restore previously selected tab
-                        if (selectedTab != null) {
-                            toolWindow.contentManager.contents
-                                .firstOrNull { it.displayName == selectedTab }
-                                ?.let { toolWindow.contentManager.setSelectedContent(it) }
+                    override fun toolWindowShown(tw: ToolWindow) {
+                        if (tw.id != toolWindow.id) return
+                        val current = settingsSnapshot(project)
+                        if (current != lastSettingsSnapshot) {
+                            lastSettingsSnapshot = current
+                            val selectedTab = toolWindow.contentManager.selectedContent?.displayName
+                            rebuildTabs()
+                            // Restore previously selected tab
+                            if (selectedTab != null) {
+                                toolWindow.contentManager.contents
+                                    .firstOrNull { it.displayName == selectedTab }
+                                    ?.let { toolWindow.contentManager.setSelectedContent(it) }
+                            }
                         }
                     }
                 }
-            })
+            )
     }
 
     // ---------------------------------------------------------------
@@ -183,7 +230,7 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
     // Gear menu actions (wrench dropdown at top-right)
     // ---------------------------------------------------------------
 
-    private fun setupGearActions(project: Project, toolWindow: ToolWindow) {
+    private fun setupGearActions(project: Project, toolWindow: ToolWindow, rebuildTabs: () -> Unit) {
         val gearGroup = DefaultActionGroup().apply {
             // Settings shortcut
             add(object : DumbAwareAction("Settings", "Configure Workflow Orchestrator", AllIcons.General.Settings) {
@@ -198,7 +245,7 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
             add(object : DumbAwareAction("Refresh All Tabs", "Rebuild all tabs with latest settings", AllIcons.Actions.ForceRefresh) {
                 override fun actionPerformed(e: AnActionEvent) {
                     val selectedTab = toolWindow.contentManager.selectedContent?.displayName
-                    buildTabs(project, toolWindow)
+                    rebuildTabs()
                     if (selectedTab != null) {
                         toolWindow.contentManager.contents
                             .firstOrNull { it.displayName == selectedTab }
@@ -284,34 +331,37 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
     // Tab building (C-05 / X-01: lazy tab loading)
     // ---------------------------------------------------------------
 
-    // Tracks which tabs have been materialized (created for real).
-    // Reset on each buildTabs() call so settings changes re-create everything.
-    private val materializedTabs = mutableSetOf<String>()
+    // Default tab descriptors. Immutable -- safe to share across projects/tool windows.
+    private val defaultTabs = listOf(
+        DefaultTab("Sprint", 0, "No tickets assigned.\nConnect to Jira in Settings to get started."),
+        DefaultTab("PR", 1, "No pull requests found.\nConnect to Bitbucket in Settings."),
+        DefaultTab("Build", 2, "No builds found.\nPush your changes to trigger a CI build."),
+        DefaultTab("Quality", 3, "No quality data available.\nConnect to SonarQube in Settings."),
+        DefaultTab("Automation", 4, "Automation suite not configured.\nSet up Bamboo in Settings."),
+        DefaultTab("Handover", 5, "No active task to hand over.\nStart work on a ticket first.")
+    )
 
-    private fun buildTabs(project: Project, toolWindow: ToolWindow) {
-        val contentManager = toolWindow.contentManager
-        contentManager.removeAllContents(true)
-        materializedTabs.clear()
-
-        val providers = WorkflowTabProvider.EP_NAME.extensionList
+    private fun currentProviders(): Map<String, WorkflowTabProvider> =
+        WorkflowTabProvider.EP_NAME.extensionList
             .sortedBy { it.order }
             .associateBy { it.tabTitle }
 
-        val defaultTabs = listOf(
-            DefaultTab("Sprint", 0, "No tickets assigned.\nConnect to Jira in Settings to get started."),
-            DefaultTab("PR", 1, "No pull requests found.\nConnect to Bitbucket in Settings."),
-            DefaultTab("Build", 2, "No builds found.\nPush your changes to trigger a CI build."),
-            DefaultTab("Quality", 3, "No quality data available.\nConnect to SonarQube in Settings."),
-            DefaultTab("Automation", 4, "Automation suite not configured.\nSet up Bamboo in Settings."),
-            DefaultTab("Handover", 5, "No active task to hand over.\nStart work on a ticket first.")
-        )
+    private fun buildTabs(project: Project, toolWindow: ToolWindow, materializedTabs: MutableSet<String>) {
+        val contentManager = toolWindow.contentManager
+        // removeAllContents(true) disposes each Content, which cascades into any
+        // content.setDisposer(panel) wiring -- this is what actually tears down
+        // previously materialized panels (incl. the Agent tab's JCEF browser) on rebuild.
+        contentManager.removeAllContents(true)
+        materializedTabs.clear()
+
+        val providers = currentProviders()
 
         // Add default tabs (matched with providers by title)
         defaultTabs.forEach { tab ->
             val isFirstTab = tab.order == 0
             val panel = if (isFirstTab) {
                 // Eagerly create the first/default tab so the user sees content immediately
-                materializeTab(project, tab, providers)
+                materializeTab(project, tab, providers, materializedTabs)
             } else {
                 // Lightweight placeholder -- real panel created on first selection
                 LazyTabPlaceholder()
@@ -321,64 +371,61 @@ class WorkflowToolWindowFactory : ToolWindowFactory, DumbAware {
             // Cascade Content.dispose() -> panel.dispose() so panel-owned CoroutineScopes/
             // subscribers are released when the tool window (or the whole project) closes.
             // The placeholder isn't Disposable, so this is a no-op for lazy tabs here;
-            // the real panel is wired in selectionChanged below.
+            // the real panel is wired in the selectionChanged listener.
             if (panel is Disposable) {
                 content.setDisposer(panel)
             }
             contentManager.addContent(content)
         }
 
-        // Add any extension-provided tabs not in the default list (e.g., Agent tab)
+        // Add any extension-provided tabs not in the default list (e.g., Agent tab).
+        // These are LAZY like the non-first default tabs (P0-6): the real panel is
+        // created only on first selection (see materializeByTitle) -- the Agent tab's
+        // Chromium process must not spawn just because the tool window opened on
+        // the Sprint tab.
         val defaultTitles = defaultTabs.map { it.title }.toSet()
         providers.filter { it.key !in defaultTitles }
             .values
             .sortedBy { it.order }
             .forEach { provider ->
-                val panel = try {
-                    provider.createPanel(project)
-                } catch (e: Exception) {
-                    log.warn("[Workflow:UI] Failed to create ${provider.tabTitle} tab: ${e.message}", e)
-                    EmptyStatePanel(project, "Failed to load ${provider.tabTitle} tab.\n${e.message}")
-                }
-                val content = ContentFactory.getInstance().createContent(panel, provider.tabTitle, false)
+                val content = ContentFactory.getInstance()
+                    .createContent(LazyTabPlaceholder(), provider.tabTitle, false)
                 content.isCloseable = false
-                if (panel is Disposable) {
-                    content.setDisposer(panel)
-                }
                 contentManager.addContent(content)
             }
-
-        // Listen for tab selection to materialize lazy tabs on demand
-        contentManager.addContentManagerListener(object : ContentManagerListener {
-            override fun selectionChanged(event: ContentManagerEvent) {
-                val content = event.content
-                val tabTitle = content.displayName
-                if (event.operation == ContentManagerEvent.ContentOperation.add
-                    && tabTitle !in materializedTabs
-                ) {
-                    val tab = defaultTabs.firstOrNull { it.title == tabTitle } ?: return
-                    val realPanel = materializeTab(project, tab, providers)
-                    content.component = realPanel
-                    // Now that the placeholder is replaced by the real panel, wire
-                    // dispose cascade. LazyTabPlaceholder isn't Disposable, so no
-                    // prior disposer was registered at buildTabs time -- this is a
-                    // fresh set, not a replacement.
-                    if (realPanel is Disposable) {
-                        content.setDisposer(realPanel)
-                    }
-                    log.info("[Workflow:UI] Lazy-loaded tab: $tabTitle")
-                }
-            }
-        })
     }
 
     /**
-     * Creates the real panel for a tab and marks it as materialized.
+     * Materializes the real panel for the tab with the given title -- a default tab
+     * (with provider override by matching title) or an extension-provided tab.
+     * Returns null when the title matches neither (nothing to materialize).
+     */
+    private fun materializeByTitle(
+        project: Project,
+        tabTitle: String,
+        materializedTabs: MutableSet<String>
+    ): JComponent? {
+        val providers = currentProviders()
+        val defaultTab = defaultTabs.firstOrNull { it.title == tabTitle }
+        if (defaultTab != null) return materializeTab(project, defaultTab, providers, materializedTabs)
+        val provider = providers[tabTitle] ?: return null
+        materializedTabs.add(tabTitle)
+        return try {
+            provider.createPanel(project)
+        } catch (e: Exception) {
+            log.warn("[Workflow:UI] Failed to create ${provider.tabTitle} tab: ${e.message}", e)
+            EmptyStatePanel(project, "Failed to load ${provider.tabTitle} tab.\n${e.message}")
+        }
+    }
+
+    /**
+     * Creates the real panel for a default tab and marks it as materialized.
      */
     private fun materializeTab(
         project: Project,
         tab: DefaultTab,
-        providers: Map<String, WorkflowTabProvider>
+        providers: Map<String, WorkflowTabProvider>,
+        materializedTabs: MutableSet<String>
     ): JComponent {
         materializedTabs.add(tab.title)
         return try {
