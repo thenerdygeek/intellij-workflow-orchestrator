@@ -9,10 +9,23 @@ import javax.swing.Timer
 /**
  * Coalesces rapid-fire stream chunks into a single bridge dispatch per frame (~16ms).
  * Reduces JCEF callJs() calls from ~5000 per response to ~300.
+ *
+ * **[invoker] delivery contract** (mirrors [PerToolStreamBatcher]): in production the
+ * invoker must dispatch [onFlush] to the EDT. The default posts via `invokeLater`
+ * (guarded on a live Application for headless tests). An **EDT-inline** invoker
+ * (`{ block -> if (isEventDispatchThread()) block() else invokeLater { block() } }`)
+ * also satisfies the contract and is required when a caller needs `flush()` invoked
+ * FROM the EDT to deliver synchronously, before the caller's next statement — P1-12:
+ * the main-thinking close runs `flush(); endThinking()` inside ONE EDT runnable, and a
+ * re-posted delivery would let `endThinking` overtake the tail delta. Timer ticks run
+ * on the EDT, so the inline branch is correct for them too.
  */
 class StreamBatcher(
     private val onFlush: (String) -> Unit,
-    private val intervalMs: Int = 16
+    private val intervalMs: Int = 16,
+    private val invoker: (() -> Unit) -> Unit = { block ->
+        if (ApplicationManager.getApplication() != null) invokeLater { block() }
+    }
 ) : Disposable {
 
     private val buffer = StringBuilder()
@@ -82,8 +95,8 @@ class StreamBatcher(
         synchronized(lock) {
             if (buffer.isEmpty()) stopTimer()
         }
-        if (!disposed.get() && ApplicationManager.getApplication() != null) {
-            invokeLater {
+        if (!disposed.get()) {
+            invoker {
                 onFlush(text)
             }
         }

@@ -77,4 +77,39 @@ class AgentControllerShowSessionOffEdtTest {
             "the async load must guard against the user having navigated away while loading"
         )
     }
+
+    // ── W4-B2 review Important #1: generation pin ──
+    // showHistory() does not clear viewedSessionId, so the sessionId check alone cannot
+    // catch "user navigated to the history view while the load was in flight" — a late
+    // push would yank them back into the chat view. A monotonic showSessionGeneration
+    // counter is incremented + captured in phase 1 and compared at push time; any
+    // navigation that changes the view WITHOUT a new viewedSessionId (showHistory,
+    // resetForNewChat) also increments it, invalidating in-flight pushes.
+
+    @Test
+    fun `generation is captured in phase 1 and compared at push time`() {
+        val captureIdx = slice.indexOf("showSessionGeneration.incrementAndGet()")
+        val launchIdx = slice.indexOf("controllerScope.launch(Dispatchers.IO")
+        assertTrue(captureIdx >= 0, "showSession must increment+capture showSessionGeneration")
+        assertTrue(captureIdx < launchIdx, "the generation must be captured on EDT phase 1, before the IO hop")
+        assertTrue(
+            slice.contains("generation != showSessionGeneration.get()"),
+            "the push must compare the captured generation alongside the sessionId check"
+        )
+    }
+
+    @Test
+    fun `showHistory and resetForNewChat invalidate in-flight showSession pushes`() {
+        val showHistory = src.substringAfter("fun showHistory() {").substringBefore("fun handleDeleteSession(")
+        assertTrue(
+            showHistory.contains("showSessionGeneration.incrementAndGet()"),
+            "showHistory must bump the generation — it leaves viewedSessionId unchanged, so the " +
+                "sessionId check alone lets a late showSession push yank the user out of the history view"
+        )
+        val reset = src.substringAfter("private fun resetForNewChat() {").substringBefore("fun showHistory() {")
+        assertTrue(
+            reset.contains("showSessionGeneration.incrementAndGet()"),
+            "resetForNewChat must bump the generation so a late push can't repopulate a fresh chat"
+        )
+    }
 }

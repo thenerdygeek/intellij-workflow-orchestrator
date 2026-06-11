@@ -38,6 +38,9 @@ class AgentDashboardPanel(
 
     companion object {
         private val LOG = Logger.getInstance(AgentDashboardPanel::class.java)
+
+        /** Cap on retained replay actions — oldest evicted on overflow (P2-2/B7). */
+        private const val MAX_REPLAY_LOG_SIZE = 5000
     }
 
     /** True when this panel owns the JCEF lifecycle (no external parent was supplied). */
@@ -82,15 +85,32 @@ class AgentDashboardPanel(
     @Volatile private var cachedBusy: Boolean = false
     @Volatile private var cachedInputLocked: Boolean = false
 
-    /** Ordered log of output calls to replay chat content to late-joining mirrors. */
-    private val replayLog = java.util.concurrent.CopyOnWriteArrayList<(AgentDashboardPanel) -> Unit>()
-    private val maxReplayLogSize = 5000
+    /**
+     * Ordered log of output calls to replay chat content to late-joining mirrors.
+     *
+     * P2-2/B7: bounded [ReplayRing] (ArrayDeque under a lock) — the OLDEST action is
+     * evicted on overflow so a late mirror replays the NEWEST content. The previous
+     * CopyOnWriteArrayList log full-array-copied on every add (one per batched stream
+     * token; P2-2) and had its cap inverted: it stopped ADDING at 5000, so a late
+     * mirror replayed the oldest 5000 actions and silently missed everything newer (B7).
+     *
+     * Recording is UNCONDITIONAL: [replayStateTo] is the ONLY content source for a
+     * late-opened mirror (the editor tab has no other hydration path), so the log must
+     * exist before the first mirror registers. A mirror-presence gate here was tried in
+     * W4-B3 and reverted in review — it left the FIRST late-opened mirror (and any
+     * close-then-reopen) completely blank. Memory stays bounded by the ring's 5000-entry
+     * cap; [dispose] and [reset] clear it.
+     */
+    private val replayLog = ReplayRing<(AgentDashboardPanel) -> Unit>(MAX_REPLAY_LOG_SIZE)
 
     fun addMirror(panel: AgentDashboardPanel) {
         mirrors.add(panel)
         replayStateTo(panel)
     }
-    fun removeMirror(panel: AgentDashboardPanel) { mirrors.remove(panel) }
+
+    fun removeMirror(panel: AgentDashboardPanel) {
+        mirrors.remove(panel)
+    }
 
     /**
      * Replay cached state + chat history to a late-joining mirror panel.
@@ -106,15 +126,13 @@ class AgentDashboardPanel(
         if (cachedBusy) panel.setBusy(true)
         if (cachedInputLocked) panel.setInputLocked(true)
         // Replay chat content log
-        for (action in replayLog) {
+        for (action in replayLog.snapshot()) {
             try { action(panel) } catch (_: Exception) {}
         }
     }
 
     private fun recordReplay(action: (AgentDashboardPanel) -> Unit) {
-        if (replayLog.size < maxReplayLogSize) {
-            replayLog.add(action)
-        }
+        replayLog.add(action)
     }
 
     /**

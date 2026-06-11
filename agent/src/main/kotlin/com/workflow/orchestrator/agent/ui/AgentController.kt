@@ -169,6 +169,9 @@ class AgentController(
          */
         const val SESSION_START_TIMEOUT_MS = 15_000L
 
+        /** Tool window hosting the Agent tab — id registered by `WorkflowToolWindowFactory`. */
+        private const val WORKFLOW_TOOL_WINDOW_ID = "Workflow"
+
         /**
          * Test-only seam — constructs a minimal controller from a mocked
          * dashboard and delegates to the **real** [handleSteeringDrained]
@@ -380,6 +383,20 @@ class AgentController(
     private var viewedSessionId: String? = null
 
     /**
+     * Monotonic generation for [showSession]'s async push (W4-B2 review Important #1).
+     *
+     * The push-time `viewedSessionId != sessionId` check alone cannot catch navigations
+     * that change the view WITHOUT setting a new viewedSessionId — [showHistory] leaves
+     * it untouched, so a late showSession load would yank the user out of the history
+     * view they just navigated to. [showSession] increments + captures the generation on
+     * EDT phase 1 and compares the captured value at push time; [showHistory] and
+     * [resetForNewChat] increment it (inline — no new functions between the
+     * showSession/resumeViewedSession source-test sentinels), invalidating any in-flight
+     * push. AtomicLong because the IO coroutine reads it while the EDT writes it.
+     */
+    private val showSessionGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+
+    /**
      * Structured plan data from the last plan_mode_respond call.
      * Populated in [onPlanResponse] and used by [openPlanInEditor] to open the plan
      * in a full JCEF editor tab.
@@ -476,6 +493,26 @@ class AgentController(
     )
 
     /**
+     * P1-12: coalesces THINKING deltas the way [streamBatcher] coalesces prose. Thinking
+     * models emit thousands of `<thinking>` chunks per response; pre-fix each chunk fired
+     * one `dashboard.appendToThinking` → one JCEF executeJavaScript. Lifecycle is lockstep
+     * with [streamBatcher]/[thinkingSplitter]: flushed in [flushStream], cleared in
+     * [clearStream], disposed with the controller.
+     *
+     * The invoker is EDT-INLINE on purpose: on block close, [dispatchSplitParts] posts ONE
+     * EDT runnable that runs `flush()` then `endThinking()` — final drain and close
+     * execute in the same EDT event, so the tail delta can never be overtaken. (A
+     * separate flush-then-post pair was the W4-B3 review hole: an EDT timer tick could
+     * have drained the buffer without delivering yet, letting the close land first.)
+     */
+    private val thinkingStreamBatcher = StreamBatcher(
+        onFlush = { batched -> dashboard.appendToThinking(batched) },
+        invoker = { block ->
+            if (javax.swing.SwingUtilities.isEventDispatchThread()) block() else invokeLater { block() }
+        }
+    )
+
+    /**
      * Splits inline `<thinking>...</thinking>` blocks out of the assistant text
      * so they render via the prompt-kit Reasoning collapsible (`<ThinkingView>`)
      * instead of as raw XML in the chat. Lockstep with [streamBatcher] — flushed
@@ -494,6 +531,26 @@ class AgentController(
         }
     )
     private val firstFlushSeen = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * P1-12: coalesces per-sub-agent THINKING deltas, keyed by agentId (up to 5 parallel
+     * sub-agents). Sub-agent PROSE is already batched at the source
+     * (`SubagentRunner.textBatcher`, 16ms, flushed before the terminal progress event),
+     * but thinking deltas were forwarded per SSE chunk — one `invokeLater` + one
+     * executeJavaScript each (see the fast path in [onSubagentProgress]).
+     *
+     * The invoker is EDT-INLINE on purpose: `flush(agentId)` is called from inside
+     * [onSubagentProgress]'s EDT block right before `endSubAgentThinking` / the
+     * completion card, and the tail delta must be delivered BEFORE the next statement —
+     * a re-posted invokeLater delivery would land after it. Timer ticks also run on the
+     * EDT, so the inline branch is correct for them too.
+     */
+    private val subAgentThinkingBatcher = PerToolStreamBatcher(
+        onFlush = { agentId, batched -> dashboard.appendSubAgentThinking(agentId, batched) },
+        invoker = { block ->
+            if (javax.swing.SwingUtilities.isEventDispatchThread()) block() else invokeLater { block() }
+        }
+    )
 
     /**
      * Resolves @file, @folder, @symbol, @tool, /skill, #ticket mentions into rich context for the LLM.
@@ -525,7 +582,9 @@ class AgentController(
 
     init {
         Disposer.register(this, streamBatcher)
+        Disposer.register(this, thinkingStreamBatcher)
         Disposer.register(this, toolStreamBatcher)
+        Disposer.register(this, subAgentThinkingBatcher)
         wireCallbacks()
         // Register the push callback used by RenderArtifactTool → ArtifactResultRegistry
         // to forward interactive artifacts into the webview. The tool drives the full
@@ -567,6 +626,56 @@ class AgentController(
         // Wire document-extraction progress so SessionDocumentArtifactService can push
         // live "page X of Y" updates to the JCEF chat panel while read_document blocks.
         service.onDocumentProgress = ::pushDocumentProgress
+
+        // P2-11: push real tool-window visibility into the webview (document.hidden
+        // never flips in embedded JCEF, so webview tickers need this signal).
+        subscribeToToolWindowVisibility()
+    }
+
+    /**
+     * P2-11 — Tool-window visibility signal for the embedded webview.
+     *
+     * `document.hidden` never flips inside an embedded JCEF browser: the Chromium page
+     * stays "visible" even when the Workflow tool window is hidden, so webview 1s
+     * tickers (UsageIndicator etc.) that gate on it keep polling forever. The Kotlin
+     * side is the only layer that knows the real visibility, so it is pushed in.
+     *
+     * Contract (the webview does NOT consume this yet — landing the signal is the
+     * deliverable; a webview-side consumer can be added later):
+     *  - `window.__wfToolWindowVisible: boolean` — current visibility of the "Workflow"
+     *    tool window. `undefined` until the first show/hide transition after the chat
+     *    panel was created; consumers must treat `undefined` as visible.
+     *  - `wf-visibility-change` — `CustomEvent` dispatched on `window` after each
+     *    transition, with `detail: { visible: boolean }`.
+     *
+     * Only the primary (tool-window) browser receives the signal — editor-tab mirrors
+     * are independent, always-visible browsers (accepted P2-3, see agent/CLAUDE.md).
+     */
+    private fun subscribeToToolWindowVisibility() {
+        project.messageBus.connect(this).subscribe(
+            com.intellij.openapi.wm.ex.ToolWindowManagerListener.TOPIC,
+            object : com.intellij.openapi.wm.ex.ToolWindowManagerListener {
+                /** stateChanged fires for ANY tool-window change — dedupe on transition. */
+                private var lastVisible: Boolean? = null
+
+                override fun stateChanged(toolWindowManager: com.intellij.openapi.wm.ToolWindowManager) {
+                    val visible = toolWindowManager
+                        .getToolWindow(WORKFLOW_TOOL_WINDOW_ID)?.isVisible ?: return
+                    if (visible == lastVisible) return
+                    lastVisible = visible
+                    pushToolWindowVisibility(visible)
+                }
+            }
+        )
+    }
+
+    /** Push one visibility transition into the page (see [subscribeToToolWindowVisibility]). */
+    private fun pushToolWindowVisibility(visible: Boolean) {
+        dashboard.callJs(
+            "window.__wfToolWindowVisible = $visible; " +
+                "window.dispatchEvent(new CustomEvent('wf-visibility-change', " +
+                "{ detail: { visible: $visible } }));"
+        )
     }
 
     /**
@@ -2573,12 +2682,21 @@ class AgentController(
             is ThinkingTagSplitter.Part.Text -> streamBatcher.append(part.text)
             is ThinkingTagSplitter.Part.ThinkingDelta -> {
                 if (thinkingBlockStartedAt == 0L) thinkingBlockStartedAt = System.currentTimeMillis()
-                dashboard.appendToThinking(part.text)
+                // P1-12: coalesce instead of one bridge call per SSE chunk.
+                thinkingStreamBatcher.append(part.text)
             }
             ThinkingTagSplitter.Part.ThinkingEnd -> {
                 val durationMs = if (thinkingBlockStartedAt > 0L) System.currentTimeMillis() - thinkingBlockStartedAt else 0L
                 thinkingBlockStartedAt = 0L
-                dashboard.endThinking(durationMs)
+                // Ordering: ONE EDT runnable drains the batcher AND closes the block.
+                // flush() delivers inline here (EDT-inline invoker), so the tail delta
+                // lands before endThinking within the same EDT event — EDT serialization
+                // closes the drained-but-undelivered window a flush-then-post pair left
+                // open (an EDT timer tick could drain without having delivered yet).
+                invokeLater {
+                    thinkingStreamBatcher.flush()
+                    dashboard.endThinking(durationMs)
+                }
             }
         }
     }
@@ -2590,13 +2708,18 @@ class AgentController(
      */
     private fun flushStream() {
         dispatchSplitParts(thinkingSplitter.flush())
+        thinkingStreamBatcher.flush()
         streamBatcher.flush()
     }
 
-    /** Reset both pre-bridge buffers — used on cancel / new task. */
+    /** Reset the pre-bridge buffers — used on cancel / new task. */
     private fun clearStream() {
         thinkingSplitter.reset()
+        thinkingStreamBatcher.clear()
         streamBatcher.clear()
+        // Sub-agent thinking buffers die with the session too — a cancelled run's tail
+        // deltas must not deliver into the next chat (W4-B3 review minor #2).
+        subAgentThinkingBatcher.clear()
     }
 
     /**
@@ -2761,11 +2884,32 @@ class AgentController(
     }
 
     /**
+     * True when this update carries ONLY a thinking delta (plus the stats snapshot every
+     * update carries) — the P1-12 fast-path predicate for [onSubagentProgress]. Stats on
+     * these updates only change at API-call and tool boundaries, which emit their own
+     * dedicated updates, so the fast path may skip the per-chunk iteration repaint.
+     */
+    private fun isThinkingOnlyDelta(update: SubagentProgressUpdate): Boolean {
+        if (update.thinkingDelta == null || update.thinkingEnd) return false
+        if (update.status != null || update.streamDelta != null) return false
+        return update.toolStartName == null && update.toolCompleteName == null && !update.statusNoteSet
+    }
+
+    /**
      * Sub-agent progress callback — streams sub-agent lifecycle events to the dashboard.
      * Called by SpawnAgentTool via AgentService when sub-agents report status changes.
      * Not a suspend function — wraps UI updates in invokeLater.
      */
     private fun onSubagentProgress(agentId: String, update: SubagentProgressUpdate) {
+        // P1-12 fast path: thinking-only deltas arrive once per SSE chunk (thousands per
+        // response on thinking models, × up to 5 parallel sub-agents). Append to the
+        // agentId-keyed 16ms batcher and return — no per-chunk invokeLater, no per-chunk
+        // iteration repaint.
+        val thinkingDelta = update.thinkingDelta
+        if (thinkingDelta != null && isThinkingOnlyDelta(update)) {
+            subAgentThinkingBatcher.append(agentId, thinkingDelta)
+            return
+        }
         invokeLater {
             when (update.status) {
                 SubagentExecutionStatus.RUNNING -> {
@@ -2781,6 +2925,9 @@ class AgentController(
                     dashboard.spawnSubAgent(agentId, label, displayModel)
                 }
                 SubagentExecutionStatus.COMPLETED -> {
+                    // P1-12 ordering: deliver any tail batched thinking BEFORE the
+                    // completion card (EDT-inline invoker → synchronous delivery here).
+                    subAgentThinkingBatcher.flush(agentId)
                     update.stats?.let { s ->
                         subagentAccumIn += s.inputTokens.toLong()
                         subagentAccumOut += s.outputTokens.toLong()
@@ -2796,6 +2943,8 @@ class AgentController(
                     )
                 }
                 SubagentExecutionStatus.FAILED -> {
+                    // P1-12 ordering: tail batched thinking before the failure card.
+                    subAgentThinkingBatcher.flush(agentId)
                     update.stats?.let { s ->
                         subagentAccumIn += s.inputTokens.toLong()
                         subagentAccumOut += s.outputTokens.toLong()
@@ -2853,12 +3002,16 @@ class AgentController(
                         dashboard.appendSubAgentStreamDelta(agentId, delta)
                     }
                     // Thinking delta — incremental <thinking> block byte for the sub-agent
-                    // card's collapsible REASONING bubble. Mirrors the main agent's
-                    // appendToThinking path via the new bridge methods added in P2.T4.
+                    // card's collapsible REASONING bubble. Thinking-ONLY updates take the
+                    // fast path above; a delta riding on a mixed update still goes through
+                    // the same keyed batcher (P1-12) so bytes never reorder across paths.
                     update.thinkingDelta?.let { delta ->
-                        dashboard.appendSubAgentThinking(agentId, delta)
+                        subAgentThinkingBatcher.append(agentId, delta)
                     }
                     if (update.thinkingEnd) {
+                        // P1-12 ordering: tail bytes must land inside the block — the
+                        // EDT-inline invoker delivers synchronously before the close.
+                        subAgentThinkingBatcher.flush(agentId)
                         dashboard.endSubAgentThinking(agentId)
                     }
                     update.stats?.let { stats ->
@@ -3886,6 +4039,9 @@ class AgentController(
         pendingApproval = null
         pendingApprovalToolName = null
         viewedSessionId = null
+        // Invalidate in-flight showSession pushes (W4-B2 review Important #1) so a late
+        // load can't repopulate the freshly reset chat view.
+        showSessionGeneration.incrementAndGet()
 
         // Reset ALL dashboard UI components to clean state
         dashboard.reset()                                          // Clear chat messages + replay log
@@ -3921,6 +4077,10 @@ class AgentController(
      * File I/O runs on Dispatchers.IO to avoid blocking the CEF thread.
      */
     fun showHistory() {
+        // Invalidate any in-flight showSession push — it must not yank the user back
+        // out of the history view (W4-B2 review Important #1; viewedSessionId is
+        // intentionally NOT cleared here, so the generation is the only guard).
+        showSessionGeneration.incrementAndGet()
         val basePath = project.basePath ?: return
         val baseDir = ProjectIdentifier.agentDir(basePath)
         controllerScope.launch(Dispatchers.IO) {
@@ -4163,6 +4323,9 @@ class AgentController(
         walkthroughService()?.endTour(byUser = false)
         currentJob = null
         viewedSessionId = sessionId
+        // W4-B2 review Important #1: capture the generation on EDT phase 1; compared at
+        // push time alongside the sessionId check (showHistory/resetForNewChat bump it).
+        val generation = showSessionGeneration.incrementAndGet()
 
         val basePath = project.basePath ?: System.getProperty("user.home")
 
@@ -4197,8 +4360,9 @@ class AgentController(
             invokeLater {
                 // Stale-click guard: the user may have clicked another session (or started a
                 // new chat) while this one was loading — drop the late push instead of
-                // stomping the newer view.
-                if (viewedSessionId != sessionId) return@invokeLater
+                // stomping the newer view. The generation check additionally catches
+                // navigations that DON'T change viewedSessionId (history view, new chat).
+                if (viewedSessionId != sessionId || generation != showSessionGeneration.get()) return@invokeLater
 
                 // Push messages to webview (switches to chat view and shows conversation)
                 dashboard.reset()
