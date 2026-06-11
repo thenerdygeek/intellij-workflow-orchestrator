@@ -6038,6 +6038,7 @@
     <ID>MagicNumber:WebFetchTool.kt$WebFetchTool$200</ID>
     <ID>MagicNumber:WebSearchTool.kt$WebSearchTool$5</ID>
     <ID>MatchingDeclarationName:DbProfileResolver.kt$DbProfileLookup</ID>
+    <ID>MatchingDeclarationName:WalkthroughStepValidator.kt$StepValidation</ID>
     <ID>MatchingDeclarationName:MavenImportHelper.kt$MavenDetectResult</ID>
     <ID>MatchingDeclarationName:PlanData.kt$PlanJson</ID>
     <ID>MatchingDeclarationName:ProjectStructureHelpers.kt$SourceRootKind</ID>
