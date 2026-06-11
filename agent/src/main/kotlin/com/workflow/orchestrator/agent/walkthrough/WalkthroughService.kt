@@ -10,6 +10,7 @@ interface WalkthroughServiceApi {
     fun startTour(title: String?, steps: List<WalkthroughStep>): WalkthroughFeedback
     fun appendSteps(steps: List<WalkthroughStep>): WalkthroughFeedback
     fun finishTour(): WalkthroughFeedback
+    fun cancelTour(): WalkthroughFeedback
     fun updateStep(index: Int, bodyMarkdown: String, append: Boolean): WalkthroughFeedback
 }
 
@@ -48,17 +49,16 @@ class WalkthroughService(private val project: Project) : WalkthroughServiceApi, 
     // ── Agent side (via WalkthroughTool, on EDT) ─────────────────────────────
 
     override fun startTour(title: String?, steps: List<WalkthroughStep>): WalkthroughFeedback {
-        if (machine.isActive) {
-            return WalkthroughFeedback(
-                false,
-                "A walkthrough is already active — append to it, call action=finish, " +
-                    "or wait for the user to end it before starting a new one."
-            )
-        }
+        // Recovery-friendly: if a tour is somehow still active (e.g. the user never finished a
+        // prior one, or a stuck UI), REPLACE it instead of refusing — so the agent can always
+        // reset by calling start again. The old popup + highlight are torn down first.
+        val replaced = machine.isActive
+        if (replaced) endTour(byUser = false)
         machine.start(title, steps)
         ui = uiFactory(project, this)
         showCurrent()
-        return WalkthroughFeedback(true, machine.toolStatusLine())
+        val note = if (replaced) " (replaced the previously active walkthrough)" else ""
+        return WalkthroughFeedback(true, machine.toolStatusLine() + note)
     }
 
     override fun appendSteps(steps: List<WalkthroughStep>): WalkthroughFeedback {
@@ -73,6 +73,17 @@ class WalkthroughService(private val project: Project) : WalkthroughServiceApi, 
         machine.finish()
         showCurrent()
         return WalkthroughFeedback(true, machine.toolStatusLine())
+    }
+
+    /**
+     * Forcibly end the tour (the action=cancel escape hatch): tears down the popup + highlight and
+     * moves the tour to ENDED so a fresh `start` works. Distinct from `finish` (which only marks
+     * the queue done while the user keeps paging). Idempotent — safe on an already-ended tour.
+     */
+    override fun cancelTour(): WalkthroughFeedback {
+        if (!machine.isActive) return WalkthroughFeedback(true, "No active walkthrough to cancel.")
+        endTour(byUser = false)
+        return WalkthroughFeedback(true, "Walkthrough cancelled and torn down — you can start a new one.")
     }
 
     /** Agent revises/enriches a step (the update_step tool action). Re-renders only if it's the shown step. */

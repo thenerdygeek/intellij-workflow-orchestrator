@@ -104,7 +104,11 @@ class WalkthroughStateMachineTest {
     fun `end records byUser and toolStatusLine reports position`() {
         val m = startedMachine(3)
         m.next()
-        assertEquals("Tour \"Tour\": 3 steps queued (queue complete: no), user is on step 2.", m.toolStatusLine())
+        assertEquals(
+            "Walkthrough \"Tour\": ACTIVE, still generating — you may append more steps. " +
+                "3 step(s); user is on step 2 of 3.",
+            m.toolStatusLine(),
+        )
         m.end(byUser = true)
         assertTrue(m.endedByUser)
         assertFalse(m.isActive)

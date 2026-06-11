@@ -5,7 +5,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopup
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.AnimatedIcon
-import com.intellij.ui.awt.RelativePoint
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.HTMLEditorKitBuilder
@@ -104,31 +103,24 @@ internal class WalkthroughCalloutPopup(
         grip.addMouseMotionListener(listener)
     }
 
-    /** Show (or move) the popup anchored under [anchorLine] of [editor]; flips above when cramped. */
-    fun showAt(editor: Editor, anchorLine: Int) {
+    /**
+     * Show a FRESH popup anchored near [editor]'s caret (the navigator already moved it to the
+     * step's start line and scrolled it into view). Each step gets a NEW popup: a JBPopup cannot
+     * be reliably re-shown once it has been shown/hidden, and a just-opened editor whose component
+     * isn't laid out yet makes manual screen-coordinate math throw — both of which left step 2+
+     * with the file highlighted but no callout. `showInBestPositionFor` is the platform's
+     * editor-aware positioning (same path intentions/quick-fixes use) and is robust to both.
+     */
+    fun showAt(editor: Editor) {
+        cancelPopupWindow()
         ensurePopup()
-        val doc = editor.document
-        val line = (anchorLine - 1).coerceIn(0, doc.lineCount - 1)
-        val xy = editor.offsetToXY(doc.getLineEndOffset(line))
-        val visible = editor.scrollingModel.visibleArea
-        val height = root.preferredSize.height
-        val below = Point(
-            xy.x.coerceAtMost(visible.x + visible.width - root.preferredSize.width),
-            xy.y + editor.lineHeight,
-        )
-        val flipsAbove = below.y + height > visible.y + visible.height &&
-            xy.y - height - editor.lineHeight > visible.y
-        val point = if (flipsAbove) {
-            Point(below.x, xy.y - height - editor.lineHeight) // flip above
-        } else {
-            below
-        }
-        val currentPopup = this.popup ?: return
-        if (currentPopup.isVisible) {
-            currentPopup.setLocation(RelativePoint(editor.contentComponent, point).screenPoint)
-        } else {
-            currentPopup.show(RelativePoint(editor.contentComponent, point))
-        }
+        popup?.showInBestPositionFor(editor)
+    }
+
+    /** Cancel just the popup window (per-step recreate); the highlight is owned by the navigator. */
+    private fun cancelPopupWindow() {
+        popup?.cancel()
+        popup = null
     }
 
     private fun ensurePopup() {

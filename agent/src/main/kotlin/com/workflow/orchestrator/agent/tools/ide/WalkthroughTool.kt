@@ -44,22 +44,26 @@ class WalkthroughTool(
         "Guided code tour: open files, highlight line ranges, and explain code step-by-step in a callout " +
             "box the user pages through with Next/Back. STREAMING PATTERN — call action=start as soon as you " +
             "know the first 1-2 steps, then keep exploring and call action=append for further steps as you " +
-            "find them; call action=finish when the tour is complete. Do NOT batch the whole tour into one " +
-            "start call. When the user asks a question it arrives as a normal chat message prefixed with the " +
-            "step location — answer it in chat. Optionally call action=update_step to revise or enrich a step " +
-            "you already showed (e.g. distill your chat answer into the step's box): step=<1-based index>, " +
-            "body_md=<markdown>, mode=append|replace. Append is non-jarring; prefer it for live tours. Each " +
-            "call returns the tour status including which step the user is on; if it reports the user ended " +
-            "the tour, stop appending."
+            "find them. Do NOT batch the whole tour into one start call. action=finish only marks that you " +
+            "are done ADDING steps — the tour stays ACTIVE while the user pages through it; it ends when the " +
+            "user reaches the end (Done) or you call action=cancel. action=cancel forcibly tears the tour " +
+            "down (use it to abandon/reset a tour, e.g. if the user seems stuck); after cancel you can start " +
+            "a fresh one. Calling action=start while a tour is active REPLACES it. When the user asks a " +
+            "question it arrives as a normal chat message prefixed with the step location — answer it in chat. " +
+            "Optionally call action=update_step to revise or enrich an already-shown step (e.g. distill your " +
+            "chat answer into the step's box): step=<1-based index>, body_md=<markdown>, mode=append|replace. " +
+            "Append is non-jarring; prefer it for live tours. Each call returns the tour status (lifecycle " +
+            "phase + which step the user is on)."
 
     override val parameters = FunctionParameters(
         properties = mapOf(
             "action" to ParameterProperty(
                 type = "string",
-                description = "One of: start (create tour + show step 1), append (add steps to the active " +
-                    "tour), finish (mark the queue complete), update_step (revise/enrich an already-shown " +
-                    "step's body by 1-based index).",
-                enumValues = listOf("start", "append", "finish", "update_step"),
+                description = "One of: start (create tour + show step 1; replaces any active tour), append " +
+                    "(add steps to the active tour), finish (mark you're done adding steps — tour stays " +
+                    "active for the user), cancel (forcibly end/tear down the tour so you can start fresh), " +
+                    "update_step (revise/enrich an already-shown step's body by 1-based index).",
+                enumValues = listOf("start", "append", "finish", "cancel", "update_step"),
             ),
             "title" to ParameterProperty(
                 type = "string",
@@ -141,6 +145,14 @@ class WalkthroughTool(
                     )
                 }
             }
+            "cancel" -> {
+                val feedback = withContext(edt) { service.cancelTour() }
+                ToolResult(
+                    content = feedback.message,
+                    summary = "Walkthrough cancelled — ${feedback.message}",
+                    tokenEstimate = estimateTokens(feedback.message),
+                )
+            }
             "update_step" -> {
                 val stepIndex = (params["step"] as? JsonPrimitive)?.contentOrNull?.trim()?.toIntOrNull()
                     ?: return ToolResult.error(
@@ -162,7 +174,7 @@ class WalkthroughTool(
                 }
             }
             else -> ToolResult.error(
-                "walkthrough: unknown action '$action' — expected start | append | finish | update_step"
+                "walkthrough: unknown action '$action' — expected start | append | finish | cancel | update_step"
             )
         }
     }

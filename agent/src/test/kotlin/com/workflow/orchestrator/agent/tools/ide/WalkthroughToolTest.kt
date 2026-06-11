@@ -37,6 +37,10 @@ class WalkthroughToolTest {
             calls += "finish"
             return feedback
         }
+        override fun cancelTour(): WalkthroughFeedback {
+            calls += "cancel"
+            return feedback
+        }
         override fun updateStep(index: Int, bodyMarkdown: String, append: Boolean): WalkthroughFeedback {
             calls += "updateStep:$index:${if (append) "append" else "replace"}:$bodyMarkdown"
             return feedback
@@ -82,10 +86,11 @@ class WalkthroughToolTest {
     }
 
     @Test
-    fun `append and finish dispatch`() = runTest {
+    fun `append, finish and cancel dispatch`() = runTest {
         tool().execute(params("action" to "append", "steps" to oneStepJson), project)
         tool().execute(params("action" to "finish"), project)
-        assertEquals(listOf("append:1", "finish"), fakeService.calls)
+        tool().execute(params("action" to "cancel"), project)
+        assertEquals(listOf("append:1", "finish", "cancel"), fakeService.calls)
     }
 
     @Test

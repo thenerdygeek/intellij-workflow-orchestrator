@@ -45,12 +45,26 @@ class WalkthroughServiceTest {
     }
 
     @Test
-    fun `startTour shows step 1 and double start errors without touching the live tour`() {
+    fun `startTour shows step 1 and a second start replaces the active tour`() {
         assertTrue(service.startTour("T", listOf(step(1))).ok)
         assertEquals("showStep:f1.kt:Step 1 of 1+:done=false:back=false", ui.calls.single())
+        // recovery-friendly: starting again tears down the old tour and starts fresh
         val second = service.startTour("T2", listOf(step(9)))
-        assertFalse(second.ok)
-        assertTrue(second.message.contains("already active"))
+        assertTrue(second.ok)
+        assertTrue(second.message.contains("replaced"))
+        assertTrue(ui.calls.contains("dispose")) // old tour's UI was torn down
+        assertTrue(ui.calls.last().startsWith("showStep:f9.kt")) // new tour showing
+    }
+
+    @Test
+    fun `cancelTour tears down an active tour and is a no-op otherwise`() {
+        service.startTour("T", listOf(step(1)))
+        val r = service.cancelTour()
+        assertTrue(r.ok)
+        assertTrue(r.message.contains("cancelled"))
+        assertEquals("dispose", ui.calls.last())
+        assertFalse(service.machine.isActive)
+        assertTrue(service.cancelTour().message.contains("No active")) // idempotent
     }
 
     @Test

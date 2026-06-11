@@ -490,13 +490,20 @@ Shipped in commits `09a6940d0` (settings UI), `8a390ec56` (markAllDormant), `842
 ## Code Walkthrough (guided tours)
 
 Agent-driven guided code tours. The `walkthrough` meta-tool (deferred, "Code Intelligence"
-category; actions `start`/`append`/`finish`/`update_step`) streams steps into a project-level
+category; actions `start`/`append`/`finish`/`cancel`/`update_step`) streams steps into a project-level
 `WalkthroughService` (`walkthrough/`), which drives a single `RangeHighlighter` + a draggable
 callout popup (`ui/WalkthroughCalloutPopup` — header drag-grip, markdown body via
-`WalkthroughMarkdown`/intellij-markdown, Back/Ask/Next footer, flip-above positioning) the
+`WalkthroughMarkdown`/intellij-markdown, syntax-highlighted code, Back/Ask/Next footer) the
 user pages through. **Producer/consumer:** every tool action returns immediately; a user who
 outruns the agent gets a "Writing next step…" loading state that auto-advances on the next
-`append`. Pure core: `WalkthroughStep`/`parseStepsJson` (steps arrive as a JSON-array **string**
+`append`. **Lifecycle actions:** `finish` only marks the queue done (the tour stays ACTIVE while
+the user pages); `cancel` force-ends/tears down the tour (recovery from a stuck UI); `start` on an
+active tour REPLACES it. `toolStatusLine()` reports the lifecycle phase (ACTIVE-generating /
+ACTIVE-complete / ENDED) + the user's step — not an ambiguous "queue complete".
+⚠ **Popup must be RECREATED per step** (`showAt` cancels the old popup + creates a fresh one shown
+via `showInBestPositionFor(editor)`): a JBPopup can't be reliably re-shown after it's been
+shown/hidden, and manual `RelativePoint(...).screenPoint` on a just-opened (not-yet-laid-out)
+editor throws — both left step 2+ highlighted but with NO callout (the v0.86.0-walkthrough.2 bug). Pure core: `WalkthroughStep`/`parseStepsJson` (steps arrive as a JSON-array **string**
 — BrainRouter primitive serialization), `WalkthroughStateMachine` (IDLE→GENERATING→COMPLETE→ENDED,
 cursor, pendingNext auto-advance, generationPaused; `updateStep(index, body, append)` revises a
 stored step by 1-based index).

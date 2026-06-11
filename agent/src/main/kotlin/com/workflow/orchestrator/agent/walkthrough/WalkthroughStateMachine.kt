@@ -132,7 +132,12 @@ class WalkthroughStateMachine {
 
     fun toolStatusLine(): String {
         val tourName = title?.let { "\"$it\"" } ?: "(untitled)"
-        val complete = if (status == Status.GENERATING) "no" else "yes"
-        return "Tour $tourName: ${steps.size} steps queued (queue complete: $complete), user is on step ${cursor + 1}."
+        val phase = when (status) {
+            Status.GENERATING -> "ACTIVE, still generating — you may append more steps"
+            Status.COMPLETE ->
+                "ACTIVE, queue complete — the user is paging through it (call action=cancel to end it early)"
+            else -> "ENDED"
+        }
+        return "Walkthrough $tourName: $phase. ${steps.size} step(s); user is on step ${cursor + 1} of ${steps.size}."
     }
 }

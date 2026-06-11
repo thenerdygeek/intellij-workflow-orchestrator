@@ -32,7 +32,7 @@ internal class WalkthroughUiImpl(
             nextIsDone,
             backEnabled,
         )
-        popup.showAt(editor, anchorLine = step.endLine)
+        popup.showAt(editor)
     }
 
     override fun showLoading(counter: String) = popup.renderLoading(counter)
