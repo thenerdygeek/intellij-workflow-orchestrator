@@ -70,6 +70,16 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
     /** Container for the list side (filter + scroll/empty). Used by applyFilters() for add/remove. */
     private val listContent = JPanel(BorderLayout())
 
+    /**
+     * Tracks which center component is currently shown in [listContent] so
+     * [applyFilters] can skip the remove/add/revalidate cycle when the
+     * empty-vs-non-empty state hasn't changed (P2-20).
+     *
+     * Values: null = nothing yet, "scroll" = scrollPane, "empty" = emptyLabel,
+     * "filteredEmpty" = filteredEmptyLabel.
+     */
+    private var listContentCenter: String? = null
+
     init {
         border = JBUI.Borders.empty(8)
 
@@ -255,21 +265,26 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
             "${filtered.size} item(s)"
         }
 
-        // Show empty state or list — operate on listContent, not this (splitter owns this)
-        listContent.remove(scrollPane)
-        listContent.remove(emptyLabel)
-        listContent.remove(filteredEmptyLabel)
-        if (sorted.isEmpty()) {
-            if (filtersActive && totalItems > 0) {
-                listContent.add(filteredEmptyLabel, BorderLayout.CENTER)
-            } else {
-                listContent.add(emptyLabel, BorderLayout.CENTER)
-            }
-        } else {
-            listContent.add(scrollPane, BorderLayout.CENTER)
+        // Show empty state or list — operate on listContent, not this (splitter owns this).
+        // P2-20: skip the remove/add/revalidate cycle when the shown component hasn't changed.
+        val wantCenter = when {
+            sorted.isEmpty() && filtersActive && totalItems > 0 -> "filteredEmpty"
+            sorted.isEmpty() -> "empty"
+            else -> "scroll"
         }
-        listContent.revalidate()
-        listContent.repaint()
+        if (wantCenter != listContentCenter) {
+            listContent.remove(scrollPane)
+            listContent.remove(emptyLabel)
+            listContent.remove(filteredEmptyLabel)
+            when (wantCenter) {
+                "filteredEmpty" -> listContent.add(filteredEmptyLabel, BorderLayout.CENTER)
+                "empty" -> listContent.add(emptyLabel, BorderLayout.CENTER)
+                else -> listContent.add(scrollPane, BorderLayout.CENTER)
+            }
+            listContentCenter = wantCenter
+            listContent.revalidate()
+            listContent.repaint()
+        }
     }
 
     /** Sort order: IssueItems by severity ordinal (0-4), HotspotItems by probability (5-7). */
@@ -366,24 +381,102 @@ class IssueListPanel(private val project: Project) : JPanel(BorderLayout()), com
     }
 }
 
+/**
+ * Two-line cell renderer for the issues/hotspots list.
+ *
+ * P1-19: the paint path is allocation-free where it matters —
+ * - text is appended to [com.intellij.ui.SimpleColoredComponent]s (no HTML string
+ *   building or HTML parsing per cell per paint, unlike the previous JBLabel +
+ *   `<html>` implementation);
+ * - accent borders and colored badge attributes are cached per color;
+ * - creation-date PARSING is cached per issue (`Instant.parse` is the expensive
+ *   part); the cheap [TimeFormatter.relative] arithmetic still runs per paint so
+ *   the displayed age keeps advancing ("5 minutes ago" becomes "2 hours ago").
+ *
+ * All caches are EDT-confined (Swing renderers only run on the EDT), so plain
+ * HashMaps suffice.
+ */
 private class IssueListCellRenderer : JPanel(), ListCellRenderer<QualityListItem> {
-    private val mainLabel = JBLabel()
-    private val detailLabel = JBLabel()
+    private val mainLine = com.intellij.ui.SimpleColoredComponent().apply { isOpaque = false }
+    private val detailLine = com.intellij.ui.SimpleColoredComponent().apply {
+        isOpaque = false
+        font = SMALL_FONT
+    }
+
+    /**
+     * Parsed epoch millis keyed by the raw Sonar creationDate string;
+     * [UNPARSEABLE_DATE] marks dates that failed parsing.
+     */
+    private val creationEpochCache = HashMap<String, Long>()
 
     companion object {
         private val SMALL_FONT by lazy { com.intellij.util.ui.JBFont.small() }
+
+        /** Inner cell padding inside the accent border (Stitch design). */
+        private const val CELL_PAD_TOP_BOTTOM = 4
+        private const val CELL_PAD_LEFT_RIGHT = 8
+
+        /** Safety valve so an unbounded stream of distinct dates cannot grow the cache forever. */
+        private const val CREATION_EPOCH_CACHE_MAX = 512
+
+        /** Sentinel cached for creationDate strings that fail [Instant.parse]. */
+        private const val UNPARSEABLE_DATE = Long.MIN_VALUE
+
+        /**
+         * Pre-built borders keyed by accent color.  Borders are immutable once
+         * constructed and safe to share across cells — allocating a fresh
+         * CompoundBorder per cell per paint was the P1-19 hot allocation.
+         * JBColor keys resolve light/dark at paint time, so cached borders stay
+         * theme-correct across LAF switches.
+         */
+        private val borderCache = HashMap<JBColor, javax.swing.border.Border>()
+
+        private fun accentBorder(color: JBColor): javax.swing.border.Border =
+            borderCache.getOrPut(color) {
+                javax.swing.BorderFactory.createCompoundBorder(
+                    javax.swing.BorderFactory.createMatteBorder(0, 2, 0, 0, color),
+                    JBUI.Borders.empty(CELL_PAD_TOP_BOTTOM, CELL_PAD_LEFT_RIGHT)
+                )
+            }
+
+        /** Bold colored badge attributes, cached per color. */
+        private val badgeAttrCache = HashMap<JBColor, com.intellij.ui.SimpleTextAttributes>()
+
+        /**
+         * Selection-aware attributes for the `[SEVERITY]` badge: selected rows use the
+         * list's selection foreground (null fg falls through to the component foreground
+         * set in the render methods); unselected rows use the cached severity color.
+         */
+        private fun badgeAttributes(
+            color: JBColor,
+            isSelected: Boolean
+        ): com.intellij.ui.SimpleTextAttributes =
+            if (isSelected) {
+                com.intellij.ui.SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES
+            } else {
+                badgeAttrCache.getOrPut(color) {
+                    com.intellij.ui.SimpleTextAttributes(
+                        com.intellij.ui.SimpleTextAttributes.STYLE_BOLD,
+                        color
+                    )
+                }
+            }
+
+        private val REGULAR = com.intellij.ui.SimpleTextAttributes.REGULAR_ATTRIBUTES
     }
 
     init {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
-        add(mainLabel)
-        add(detailLabel.apply { font = SMALL_FONT })
+        add(mainLine)
+        add(detailLine)
     }
 
     override fun getListCellRendererComponent(
         list: JList<out QualityListItem>, value: QualityListItem,
         index: Int, isSelected: Boolean, cellHasFocus: Boolean
     ): Component {
+        mainLine.clear()
+        detailLine.clear()
         when (value) {
             is QualityListItem.IssueItem -> renderIssue(list, value, isSelected)
             is QualityListItem.HotspotItem -> renderHotspot(list, value, isSelected)
@@ -398,60 +491,55 @@ private class IssueListCellRenderer : JPanel(), ListCellRenderer<QualityListItem
 
     private fun renderIssue(list: JList<out QualityListItem>, item: QualityListItem.IssueItem, isSelected: Boolean) {
         val issue = item.issue
-        // Severity color — htmlColor resolves JBColor for current theme at render time
         val severityColor = when (issue.severity) {
             IssueSeverity.BLOCKER, IssueSeverity.CRITICAL -> StatusColors.ERROR
             IssueSeverity.MAJOR, IssueSeverity.MINOR -> StatusColors.WARNING
             IssueSeverity.INFO -> StatusColors.INFO
         }
-        val htmlColor = StatusColors.htmlColor(severityColor as JBColor)
         val typeStr = issue.type.name.replace("_", " ")
         val fileName = item.displayFileName
 
-        // Left accent border by severity (2px) + inner padding (Stitch design)
-        border = javax.swing.BorderFactory.createCompoundBorder(
-            javax.swing.BorderFactory.createMatteBorder(0, 2, 0, 0, severityColor),
-            JBUI.Borders.empty(4, 8)
-        )
+        // Left accent border by severity (2px) + inner padding (Stitch design).
+        // P1-19: border is fetched from a per-color cache instead of being
+        // allocated fresh on every cell paint.
+        border = accentBorder(severityColor)
 
-        // Clean Code impacts badge (Sonar 9.6+) \u2014 colored by highest-severity impact.
+        // Main line: type + severity badge + optional impact badge + message + file:line
+        mainLine.foreground = if (isSelected) list.selectionForeground else list.foreground
+        mainLine.append("$typeStr ", REGULAR)
+        mainLine.append("[${issue.severity}]", badgeAttributes(severityColor, isSelected))
+
+        // Clean Code impacts badge (Sonar 9.6+) — colored by highest-severity impact.
         // Empty/older Sonar leaves `impacts` empty so the badge is suppressed.
-        val impactBadge = ImpactRendering.htmlBadge(issue)
+        val impact = ImpactRendering.highest(issue.impacts)
+        if (impact != null) {
+            mainLine.append(
+                " [${ImpactRendering.shortName(impact.softwareQuality)}/${impact.severity.name}]",
+                badgeAttributes(ImpactRendering.colorFor(impact.severity), isSelected)
+            )
+        }
+        mainLine.append("  ${issue.message} — $fileName:${issue.startLine}", REGULAR)
 
-        // Main line: type + severity label + optional impact badge + message + file:line
-        mainLabel.text = "<html>$typeStr " +
-            "<font color='$htmlColor'><b>[${issue.severity}]</b></font>" +
-            impactBadge +
-            "  ${issue.message} \u2014 $fileName:${issue.startLine}</html>"
-        mainLabel.foreground = if (isSelected) list.selectionForeground else list.foreground
-
-        // Detail line: effort + age
+        // Detail line: effort + age (relative time cached per creation date — I1)
         val effort = issue.effort
-        val creationDate = issue.creationDate
-        if (effort != null || creationDate != null) {
+        val relativeTime = issue.creationDate?.let { relativeTimeFor(it) }.orEmpty()
+        if (effort != null || relativeTime.isNotEmpty()) {
             val sb = StringBuilder("  ")
             if (effort != null) sb.append(effort).append(" to fix")
-            if (creationDate != null) {
-                try {
-                    val relativeTime = TimeFormatter.relative(Instant.parse(creationDate).toEpochMilli())
-                    if (relativeTime.isNotEmpty()) {
-                        if (effort != null) sb.append(" \u2022 ")
-                        sb.append(relativeTime)
-                    }
-                } catch (_: Exception) {
-                    // Sonar dates may be in different format — skip if unparseable
-                }
+            if (relativeTime.isNotEmpty()) {
+                if (effort != null) sb.append(" • ")
+                sb.append(relativeTime)
             }
-            detailLabel.text = sb.toString()
-            detailLabel.foreground = if (isSelected) list.selectionForeground else StatusColors.SECONDARY_TEXT
-            detailLabel.isVisible = true
+            detailLine.foreground = if (isSelected) list.selectionForeground else StatusColors.SECONDARY_TEXT
+            detailLine.append(sb.toString(), REGULAR)
+            detailLine.isVisible = true
         } else {
-            detailLabel.isVisible = false
+            detailLine.isVisible = false
         }
 
         // Tooltip
         toolTipText = buildString {
-            append("[${issue.rule}] ${issue.message} \u2014 ${issue.filePath}:${issue.startLine}")
+            append("[${issue.rule}] ${issue.message} — ${issue.filePath}:${issue.startLine}")
             issue.effort?.let { append(" | Effort: $it") }
             append(" | Status: ${issue.status}")
         }
@@ -459,27 +547,23 @@ private class IssueListCellRenderer : JPanel(), ListCellRenderer<QualityListItem
 
     private fun renderHotspot(list: JList<out QualityListItem>, item: QualityListItem.HotspotItem, isSelected: Boolean) {
         val hotspot = item.hotspot
-        // Probability color badge
         val probabilityColor = when (hotspot.probability) {
             "HIGH" -> StatusColors.ERROR
             "MEDIUM" -> StatusColors.WARNING
             else -> StatusColors.INFO // LOW
         }
-        val htmlColor = StatusColors.htmlColor(probabilityColor as JBColor)
         val fileName = item.displayFileName
         val lineStr = hotspot.line?.toString() ?: "?"
 
-        // Left accent border by probability (2px) + inner padding
-        border = javax.swing.BorderFactory.createCompoundBorder(
-            javax.swing.BorderFactory.createMatteBorder(0, 2, 0, 0, probabilityColor),
-            JBUI.Borders.empty(4, 8)
-        )
+        // Left accent border by probability (2px) + inner padding.
+        // P1-19: fetched from cache — no per-render allocation.
+        border = accentBorder(probabilityColor)
 
         // Main line: SECURITY HOTSPOT + probability badge + message + file:line
-        mainLabel.text = "<html>SECURITY HOTSPOT " +
-            "<font color='$htmlColor'><b>[${hotspot.probability}]</b></font>" +
-            "  ${hotspot.message} \u2014 $fileName:$lineStr</html>"
-        mainLabel.foreground = if (isSelected) list.selectionForeground else list.foreground
+        mainLine.foreground = if (isSelected) list.selectionForeground else list.foreground
+        mainLine.append("SECURITY HOTSPOT ", REGULAR)
+        mainLine.append("[${hotspot.probability}]", badgeAttributes(probabilityColor, isSelected))
+        mainLine.append("  ${hotspot.message} — $fileName:$lineStr", REGULAR)
 
         // Detail line: review status + security category
         val statusText = when (hotspot.status) {
@@ -487,17 +571,30 @@ private class IssueListCellRenderer : JPanel(), ListCellRenderer<QualityListItem
             "REVIEWED" -> hotspot.resolution?.let { "Reviewed ($it)" } ?: "Reviewed"
             else -> hotspot.status
         }
-        detailLabel.text = "  $statusText \u2022 ${hotspot.securityCategory.replace("-", " ")}"
-        detailLabel.foreground = if (isSelected) list.selectionForeground else StatusColors.SECONDARY_TEXT
-        detailLabel.isVisible = true
+        detailLine.foreground = if (isSelected) list.selectionForeground else StatusColors.SECONDARY_TEXT
+        detailLine.append("  $statusText • ${hotspot.securityCategory.replace("-", " ")}", REGULAR)
+        detailLine.isVisible = true
 
         // Tooltip
         toolTipText = buildString {
             append("[${hotspot.securityCategory}] ${hotspot.message}")
-            append(" \u2014 ${hotspot.component}")
+            append(" — ${hotspot.component}")
             hotspot.line?.let { append(":$it") }
             append(" | Probability: ${hotspot.probability}")
             append(" | Status: $statusText")
         }
+    }
+
+    private fun relativeTimeFor(creationDate: String): String {
+        if (creationEpochCache.size > CREATION_EPOCH_CACHE_MAX) creationEpochCache.clear()
+        val epochMillis = creationEpochCache.getOrPut(creationDate) {
+            try {
+                Instant.parse(creationDate).toEpochMilli()
+            } catch (_: Exception) {
+                UNPARSEABLE_DATE // Sonar dates may be in a different format — skip if unparseable
+            }
+        }
+        // Format per paint — cheap arithmetic, and the displayed age keeps advancing.
+        return if (epochMillis == UNPARSEABLE_DATE) "" else TimeFormatter.relative(epochMillis)
     }
 }
