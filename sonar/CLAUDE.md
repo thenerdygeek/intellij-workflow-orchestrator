@@ -48,7 +48,7 @@ polling is introduced; if the Quality tab is not visible, no fetch occurs, no em
 
 ## UI
 
-- `QualityDashboardPanel` — 3 sub-panels: overview, issue list (with detail split pane), coverage table (with preview pane). GateStatusBanner shown when gate fails.
+- `QualityDashboardPanel` — 3 sub-panels: overview, issue list (with detail split pane), coverage table (with preview pane). GateStatusBanner shown when gate fails. **Perf (P1-19/B11/P2-20, 2026-06-10 audit):** the issue-list renderer is allocation-free on the paint path (cached accent borders, badge attributes, parsed creation dates); `CoverageTablePanel`'s model has an equality gate + pre-formatted cell cache, and search is 300 ms-debounced and preserves selection/preview (`CoverageFilterSelection`).
 - `IssueDetailPanel` — Split pane detail view: code snippet, rule info, severity/type badges, Fix with AI Agent
 - `CoveragePreviewPanel` — Uncovered region preview with file metrics, Open in Editor action. `Disposable` (Phase 4 C5/C5b) — owned by `CoverageTablePanel`, which is also `Disposable`, completing the `QualityDashboardPanel → CoverageTablePanel → CoveragePreviewPanel` cascade via the tool-window `setDisposer` chain (see `:core` "Service & threading conventions").
 - `GateStatusBanner` — Full-width error banner for failed quality gate with Show Blocking Issues cross-tab action
@@ -57,6 +57,7 @@ polling is introduced; if the Quality tab is not visible, no fetch occurs, no em
 - `CoverageLineMarkerProvider` — gutter markers for coverage (on-demand fetch via getSourceLines)
   - Colors: red (blocker/critical), yellow (major), grey (minor)
   - Sizes: 12x12 Classic UI, 14x14 New UI
+  - **Perf (P1-18/B21, 2026-06-10 audit):** per-file header data (settings/repo/branch resolution) is cached in `CoverageFileHeaderCache` — invalidated via `SonarDataService.clearLineCoverageCache` and project close; partially-resolved headers (blank projectKey / null branch) are never cached. Exactly one marker per line via `CoverageMarkerEmitGate` (first non-whitespace leaf on the line).
 - `CoverageBannerProvider` — `EditorNotificationProvider` for low-coverage files
 - `CoverageTreeDecorator` — `ProjectViewNodeDecorator` for coverage badges
 - `CoverageDiffExtension` — diff view coverage highlighting

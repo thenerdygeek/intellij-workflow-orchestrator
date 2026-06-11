@@ -64,6 +64,7 @@ Build variables include `dockerTagsAsJson` — JSON payload of service-to-docker
 ## UI
 
 - `BuildDashboardPanel` — build list + stage detail + log viewer. **T-B2/B3-b (2026-05-11, landed):** direct `startPolling`/`switchBranch`/`stopPolling` calls removed; polling lifecycle fully owned by `BuildMonitorService`'s focusBuild subscription. Dropdown branch selection rerouted through `WorkflowContextService.focusPr(...)` via `reroutableFocusPr()` helper (matching PR found → focusPr cascade; no PR → ambient polling unchanged). `BuildDashboardPanel.findMatchingPrForBranch(List<PrRef>, String)` is the pure companion-object selector (testable without infra).
+- `StageDetailPanel` artifact "Download"/"Open" buttons live inside a JList cell renderer (rubber stamp — painted, never receive events). Clicks are resolved by a mouse-listener hit-test that maps the click point through a deterministic nested layout to the button bounds (B5, 2026-06-10 perf audit; left-click only). Pinned by `ArtifactButtonHitTestTest` — don't add live components to renderers expecting them to be clickable.
 - `CveAnnotator` / `CveIntentionAction` — inline CVE warnings + auto-fix in pom.xml
 - `BambooBuildConfigurationType` — run configuration for manual stage triggers
 - **UI Overhaul:** StitchLeftAccentBorder utility for status-colored left borders on cards. Uppercase section headers, monospace build numbers in cell renderers.

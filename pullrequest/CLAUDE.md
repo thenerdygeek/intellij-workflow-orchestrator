@@ -59,6 +59,7 @@ Uses `BitbucketBranchClient` from `:core` — `getBranches`, `getUsers`, `create
 - `PrListPanel` — filterable PR list with status indicators
 - `PrDetailPanel` — PR metadata, reviewers, merge status, action buttons
 - **UI Overhaul:** Outline-style status badges (OPEN/MERGED/DECLINED), sharp card corners, monospace PR IDs, left border accent colored by PR status.
+- **Renderer perf (P1-20/B20/P2-20, 2026-06-10 audit):** `FindingRowRenderer`/`CommentRowRenderer`/`PrDetailPanel.FileCellRenderer` are rubber-stamp renderers (widgets allocated once, mutated per call). Fonts/metrics come from the LAF-safe caches `RendererFonts` (derived/monospace fonts keyed by base-font instance + style + size) and `LafFontCache` (single-slot font+FontMetrics, re-derived when the LAF base font or scaled size changes) — never cache a static `Font`/`FontMetrics` snapshot (goes stale on theme/scale switch).
 
 ## PR polling lifecycle (B16, 2026-06-10 perf audit)
 
