@@ -490,7 +490,7 @@ Shipped in commits `09a6940d0` (settings UI), `8a390ec56` (markAllDormant), `842
 ## Code Walkthrough (guided tours)
 
 Agent-driven guided code tours. The `walkthrough` meta-tool (deferred, "Code Intelligence"
-category; actions `start`/`append`/`finish`/`answer`) streams steps into a project-level
+category; actions `start`/`append`/`finish`/`update_step`) streams steps into a project-level
 `WalkthroughService` (`walkthrough/`), which drives a single `RangeHighlighter` + a draggable
 callout popup (`ui/WalkthroughCalloutPopup` — header drag-grip, markdown body via
 `WalkthroughMarkdown`/intellij-markdown, Back/Ask/Next footer, flip-above positioning) the
@@ -498,19 +498,37 @@ user pages through. **Producer/consumer:** every tool action returns immediately
 outruns the agent gets a "Writing next step…" loading state that auto-advances on the next
 `append`. Pure core: `WalkthroughStep`/`parseStepsJson` (steps arrive as a JSON-array **string**
 — BrainRouter primitive serialization), `WalkthroughStateMachine` (IDLE→GENERATING→COMPLETE→ENDED,
-cursor, pendingNext auto-advance, generationPaused, pendingQuestion), `QuestionEnvelope`.
+cursor, pendingNext auto-advance, generationPaused; `updateStep(index, body, append)` revises a
+stored step by 1-based index).
 
-- **Q&A** ("Ask about this step"): the callout's Ask field routes the question (wrapped by
-  `QuestionEnvelope`) through `AgentController.executeTask(envelope, displayText = question)` —
-  the existing input ladder — and the agent answers via `action=answer`, rendered inline in the box.
+- **Q&A v2 — Ask routes to the MAIN chat (Kotlin-only, no composer change):** clicking "Ask about
+  this step" calls `WalkthroughService.askInChat()`, which arms a one-shot step-context ref on
+  `AgentController` (`armWalkthroughQuestionContext(stepRef)`) and focuses the chat input
+  (`focusChatInputForWalkthrough()` → `dashboard.focusInput()`). The user types the question in the
+  working chat input; the NEXT fresh user turn has the ref prepended to the **MODEL text only**
+  (`[Walkthrough · file:start-end] …`) inside `executeTaskInternal` — consumed on the genuine
+  fresh-turn path (after the delegation-localAnswer, pending-ask_followup, parked-channel, steering,
+  and viewed-session short-circuits), so `displayText`/`uiText` stay the user's raw words in chat.
+  The agent answers in chat (full multi-turn) and may call `action=update_step` (step=<1-based>,
+  body_md, mode=append|replace) to distill the answer into a step's box — re-rendered only if it's
+  the currently-shown step. This replaced the v1 in-popup Ask field (which couldn't receive typing —
+  JBPopup focus bug) and the whole inline-answer machinery (`pendingQuestion` gate, `action=answer`,
+  `showAnswering/showAnswer/showAnswerFallbackNote`, `QuestionEnvelope` — all removed).
+- **Syntax-highlighted code blocks:** `WalkthroughMarkdown.toHtml(markdown, project)` emits an inline
+  `<style>` block (code background + IDE editor font; JEditorPane honors inline `style=`, ignores
+  `class=`) and lex-colors fenced blocks via `HtmlSyntaxInfoUtil
+  .appendHighlightedByLexerAndEncodedAsHtmlCodeSnippet(sb, project, language, code, scale)`. The
+  language is resolved by id then file extension; unknown languages keep the styled-but-uncolored
+  block. The 0-arg `toHtml(markdown)` overload stays headless-safe for the unit test.
 - **Lifecycle wiring (`AgentController`):** `onComplete` calls `markGenerationEnded()` **before**
   the result-kind dispatch (the `SessionHandoff` branch early-returns before the cleanup footer —
   a footer placement would leak a permanent spinner); `newChat`/`showSession` call
   `endTour(byUser=false)` (a live tour always belongs to the shown session); the loop-parks-for-input
   paths (`onLoopAwaitingUserInput`, **both** simple- and wizard-mode `ask_followup_question` show
-  callbacks) set `generationPaused`, and the resume/answer paths (parked-channel branch,
-  pending-question branch, wizard `onSubmitted`/`onCancelled`) clear it — so a question mid-tour
-  shows a "waiting in chat" state, not an unresolvable spinner.
+  callbacks) set `generationPaused`, and the resume paths (parked-channel branch, pending-question
+  branch, wizard `onSubmitted`/`onCancelled`) clear it — so a plan-mode/question pause mid-tour
+  shows a "waiting in chat" state, not an unresolvable spinner. (These pause hooks are about the
+  loop being parked, orthogonal to the Ask feature, which no longer touches the state machine.)
 - **Guards:** sub-agent exclusion is the **name filter** in `SpawnAgentTool.resolveConfigToolsTiered`
   (alongside `render_artifact`) — `allowedWorkers` gates nothing at the sub-agent boundary, it is
   documentation only. An interactive-controller guard in the tool blocks delegated/background runs
@@ -523,10 +541,10 @@ cursor, pendingNext auto-advance, generationPaused, pendingQuestion), `QuestionE
   reposition, saved/replayable tours. Spec: `docs/superpowers/specs/2026-06-11-code-walkthrough-design.md`.
 
 **Tests:** pure-logic units `WalkthroughStepParsingTest`, `WalkthroughStateMachineTest`,
-`QuestionEnvelopeTest`, `WalkthroughMarkdownTest`, `WalkthroughServiceTest`, `WalkthroughToolTest`;
+`WalkthroughMarkdownTest`, `WalkthroughServiceTest`, `WalkthroughToolTest`;
 source-text contracts `WalkthroughRegistrationContractTest` (registration + sub-agent name-filter +
 not-in-WRITE_TOOLS) and `WalkthroughControllerWiringContractTest` (auto-finish ordering + pause
-set/clear symmetry). Platform fixture: `WalkthroughFixtureTest` — ONE `BasePlatformTestCase` class,
+set/clear symmetry + Ask arm/consume wiring). Platform fixture: `WalkthroughFixtureTest` — ONE `BasePlatformTestCase` class,
 ONE method (navigator highlight + validator seam), injecting a `LightVirtualFile` resolver (NO
 LocalFileSystem/disk: a real-disk refresh leaks UnindexedFilesScanner work that hangs the next
 fixture class's setUp). ⚠ Two heavy fixture classes in one test JVM collide on the documented
