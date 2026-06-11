@@ -14,13 +14,20 @@ class WalkthroughStateMachine {
         data object TourFinished : NextOutcome()
     }
 
-    var status: Status = Status.IDLE; private set
-    var title: String? = null; private set
-    var cursor: Int = 0; private set
-    var pendingNext: Boolean = false; private set
-    var generationPaused: Boolean = false; private set
-    var pendingQuestion: String? = null; private set
-    var endedByUser: Boolean = false; private set
+    var status: Status = Status.IDLE
+        private set
+    var title: String? = null
+        private set
+    var cursor: Int = 0
+        private set
+    var pendingNext: Boolean = false
+        private set
+    var generationPaused: Boolean = false
+        private set
+    var pendingQuestion: String? = null
+        private set
+    var endedByUser: Boolean = false
+        private set
 
     private val steps = mutableListOf<WalkthroughStep>()
 
@@ -35,9 +42,13 @@ class WalkthroughStateMachine {
         if (isActive) return false
         require(initial.isNotEmpty()) { "start requires at least one step" }
         this.title = title
-        steps.clear(); steps.addAll(initial)
+        steps.clear()
+        steps.addAll(initial)
         cursor = 0
-        pendingNext = false; generationPaused = false; pendingQuestion = null; endedByUser = false
+        pendingNext = false
+        generationPaused = false
+        pendingQuestion = null
+        endedByUser = false
         status = Status.GENERATING
         return true
     }
@@ -80,8 +91,12 @@ class WalkthroughStateMachine {
             cursor++
             return NextOutcome.Advanced(steps[cursor], cursor)
         }
-        return if (status == Status.COMPLETE) NextOutcome.TourFinished
-        else { pendingNext = true; NextOutcome.AwaitingMore }
+        return if (status == Status.COMPLETE) {
+            NextOutcome.TourFinished
+        } else {
+            pendingNext = true
+            NextOutcome.AwaitingMore
+        }
     }
 
     fun back(): WalkthroughStep? {
@@ -96,7 +111,9 @@ class WalkthroughStateMachine {
         if (!isActive) return
         status = Status.ENDED
         endedByUser = byUser
-        pendingNext = false; generationPaused = false; pendingQuestion = null
+        pendingNext = false
+        generationPaused = false
+        pendingQuestion = null
     }
 
     fun setGenerationPaused(paused: Boolean) {

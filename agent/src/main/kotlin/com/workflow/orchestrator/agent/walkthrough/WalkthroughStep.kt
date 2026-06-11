@@ -44,17 +44,38 @@ fun parseStepsJson(element: JsonElement?): StepsParse {
     arr.forEachIndexed { i, el ->
         val n = i + 1
         val obj = el as? JsonObject
-            ?: run { errors += "step $n: not a JSON object"; return@forEachIndexed }
+            ?: run {
+                errors += "step $n: not a JSON object"
+                return@forEachIndexed
+            }
         val file = (obj["file"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
-            ?: run { errors += "step $n: missing required field 'file'"; return@forEachIndexed }
+            ?: run {
+                errors += "step $n: missing required field 'file'"
+                return@forEachIndexed
+            }
         val start = (obj["start_line"] as? JsonPrimitive)?.intOrNull
-            ?: run { errors += "step $n: missing or non-numeric 'start_line'"; return@forEachIndexed }
+            ?: run {
+                errors += "step $n: missing or non-numeric 'start_line'"
+                return@forEachIndexed
+            }
         val end = (obj["end_line"] as? JsonPrimitive)?.intOrNull
-            ?: run { errors += "step $n: missing or non-numeric 'end_line'"; return@forEachIndexed }
-        if (start < 1) { errors += "step $n: start_line must be >= 1 (got $start)"; return@forEachIndexed }
-        if (end < start) { errors += "step $n: end_line $end is before start_line $start"; return@forEachIndexed }
+            ?: run {
+                errors += "step $n: missing or non-numeric 'end_line'"
+                return@forEachIndexed
+            }
+        if (start < 1) {
+            errors += "step $n: start_line must be >= 1 (got $start)"
+            return@forEachIndexed
+        }
+        if (end < start) {
+            errors += "step $n: end_line $end is before start_line $start"
+            return@forEachIndexed
+        }
         val body = (obj["body_md"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
-            ?: run { errors += "step $n: missing or blank 'body_md'"; return@forEachIndexed }
+            ?: run {
+                errors += "step $n: missing or blank 'body_md'"
+                return@forEachIndexed
+            }
         val title = (obj["title"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
         steps += WalkthroughStep(file, start, end, title, body)
     }

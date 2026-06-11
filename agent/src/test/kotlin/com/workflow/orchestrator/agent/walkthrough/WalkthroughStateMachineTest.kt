@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 
 class WalkthroughStateMachineTest {
 
@@ -27,7 +28,7 @@ class WalkthroughStateMachineTest {
         assertTrue(m.next() is WalkthroughStateMachine.NextOutcome.Advanced)
         assertEquals(WalkthroughStateMachine.NextOutcome.AwaitingMore, m.next())
         assertTrue(m.pendingNext)
-        assertEquals(2, m.append(listOf(step(3))))   // auto-advanced to index 2
+        assertEquals(2, m.append(listOf(step(3)))) // auto-advanced to index 2
         assertFalse(m.pendingNext)
         assertEquals("f3.kt", m.currentStep()!!.file)
     }
@@ -42,10 +43,11 @@ class WalkthroughStateMachineTest {
     @Test
     fun `back steps backwards and clears pendingNext, stops at first step`() {
         val m = startedMachine(2)
-        m.next(); m.next()                            // cursor=1, pendingNext=true
+        m.next() // cursor=1
+        m.next() // pendingNext=true
         assertEquals("f1.kt", m.back()!!.file)
         assertFalse(m.pendingNext)
-        assertNull(m.back())                          // already at first step
+        assertNull(m.back()) // already at first step
     }
 
     @Test
@@ -61,11 +63,11 @@ class WalkthroughStateMachineTest {
         val m = startedMachine()
         m.setGenerationPaused(true)
         assertTrue(m.askQuestion("why?"))
-        assertTrue(m.markGenerationEnded())           // had a pending question
+        assertTrue(m.markGenerationEnded()) // had a pending question
         assertEquals(WalkthroughStateMachine.Status.COMPLETE, m.status)
         assertFalse(m.generationPaused)
         assertNull(m.pendingQuestion)
-        assertFalse(m.markGenerationEnded())          // idempotent, no question now
+        assertFalse(m.markGenerationEnded()) // idempotent, no question now
     }
 
     @Test
@@ -74,7 +76,7 @@ class WalkthroughStateMachineTest {
         assertTrue(m.askQuestion("q1"))
         assertFalse(m.askQuestion("q2"))
         assertTrue(m.answerDelivered())
-        assertFalse(m.answerDelivered())              // nothing pending -> tool error case
+        assertFalse(m.answerDelivered()) // nothing pending -> tool error case
     }
 
     @Test
@@ -93,5 +95,24 @@ class WalkthroughStateMachineTest {
         m.end(byUser = true)
         assertTrue(m.endedByUser)
         assertFalse(m.isActive)
+    }
+
+    @Test
+    fun `mutating operations throw on a fresh IDLE machine`() {
+        val m = WalkthroughStateMachine()
+        assertThrows<IllegalStateException> { m.next() }
+        assertThrows<IllegalStateException> { m.append(listOf(step(1))) }
+        assertThrows<IllegalStateException> { m.back() }
+        assertThrows<IllegalStateException> { m.finish() }
+    }
+
+    @Test
+    fun `mutating operations throw after the user ended the tour`() {
+        val m = startedMachine()
+        m.end(byUser = true)
+        assertThrows<IllegalStateException> { m.next() }
+        assertThrows<IllegalStateException> { m.append(listOf(step(1))) }
+        assertThrows<IllegalStateException> { m.back() }
+        assertThrows<IllegalStateException> { m.finish() }
     }
 }
