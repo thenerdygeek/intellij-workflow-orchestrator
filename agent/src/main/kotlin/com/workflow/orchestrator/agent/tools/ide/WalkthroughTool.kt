@@ -154,10 +154,13 @@ class WalkthroughTool(
  * never reach AgentController.onComplete, so the auto-finish guarantee can't hold there.
  */
 internal fun defaultInteractiveGuard(project: Project): String? {
-    val controller = AgentControllerRegistry.getInstance(project).controller
+    AgentControllerRegistry.getInstance(project).controller
         ?: return "walkthrough requires the interactive agent chat (no controller attached)"
-    val service = project.getService(com.workflow.orchestrator.agent.AgentService::class.java)
-    if (service.currentSessionState()?.delegated != null) {
+    // getServiceIfCreated + null-safe chain: during teardown/partial init the service may be
+    // null or uninitialized — degrade to "allowed" (the controller check above gates the
+    // real concern) instead of crashing the tool.
+    val service = project.getServiceIfCreated(com.workflow.orchestrator.agent.AgentService::class.java)
+    if (service?.currentSessionState()?.delegated != null) {
         return "walkthrough is unavailable in delegated sessions — it requires the interactive agent chat"
     }
     return null

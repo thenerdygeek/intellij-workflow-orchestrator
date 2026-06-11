@@ -2,10 +2,12 @@ package com.workflow.orchestrator.agent.tools.ide
 
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.agent.ui.AgentControllerRegistry
 import com.workflow.orchestrator.agent.walkthrough.StepValidation
 import com.workflow.orchestrator.agent.walkthrough.WalkthroughFeedback
 import com.workflow.orchestrator.agent.walkthrough.WalkthroughServiceApi
 import com.workflow.orchestrator.agent.walkthrough.WalkthroughStep
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
@@ -127,5 +129,34 @@ class WalkthroughToolTest {
     @Test
     fun `answer without body_md is an error`() = runTest {
         assertTrue(tool().execute(params("action" to "answer"), project).isError)
+    }
+
+    @Test
+    fun `blank steps param on start is a parse error and never reaches the service`() = runTest {
+        val result = tool().execute(params("action" to "start", "steps" to ""), project)
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("JSON array"), result.content)
+        assertTrue(fakeService.calls.isEmpty())
+    }
+
+    @Test
+    fun `append with all-invalid steps preserves the live tour (service untouched)`() = runTest {
+        val result = tool(validator = { _, _ -> StepValidation(emptyList(), listOf("step 1: file not found: X.kt")) })
+            .execute(params("action" to "append", "steps" to oneStepJson), project)
+        assertTrue(result.isError)
+        assertTrue(fakeService.calls.isEmpty())
+    }
+
+    @Test
+    fun `default guard reports missing controller gracefully instead of throwing`() = runTest {
+        // Real defaultInteractiveGuard against a registry with no controller attached.
+        every { project.getService(AgentControllerRegistry::class.java) } returns AgentControllerRegistry()
+        val result = WalkthroughTool(
+            serviceProvider = { fakeService },
+            edtDispatcherOverride = kotlinx.coroutines.Dispatchers.Unconfined,
+        ).execute(params("action" to "start", "steps" to oneStepJson), project)
+        assertTrue(result.isError)
+        assertTrue(result.content.contains("no controller attached"), result.content)
+        assertTrue(fakeService.calls.isEmpty())
     }
 }
