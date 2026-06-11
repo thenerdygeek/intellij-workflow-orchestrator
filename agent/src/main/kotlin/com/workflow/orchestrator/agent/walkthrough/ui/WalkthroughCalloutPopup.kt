@@ -11,6 +11,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.HTMLEditorKitBuilder
 import com.intellij.util.ui.JBUI
+import com.workflow.orchestrator.core.util.HtmlEscape
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.Point
@@ -188,7 +189,7 @@ internal class WalkthroughCalloutPopup(
         renderStep(
             counter,
             null,
-            "<i>File no longer exists — step skipped:</i> <code>$filePath</code>",
+            "<i>File no longer exists — step skipped:</i> <code>${HtmlEscape.escapeHtml(filePath)}</code>",
             nextIsDone = false,
             backEnabled = backEnabled,
         )
