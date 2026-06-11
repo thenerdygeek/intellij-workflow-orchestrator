@@ -247,13 +247,20 @@ class ConnectionsConfigurable(
             row {
                 button("Test Connection") {
                     val url = currentUrl.trim()
-                    val token = currentToken.ifBlank { credentialStore.getToken(serviceType) }
-                    if (url.isBlank() || token.isNullOrBlank()) {
+                    val typedToken = currentToken
+                    if (url.isBlank()) {
                         statusLabel.text = "Please enter URL and token"
                         return@button
                     }
                     statusLabel.text = "Testing..."
                     runBackgroundableTask("Testing $title", project, false) {
+                        // P2-9: PasswordSafe fallback read stays OFF the EDT — first access
+                        // on Windows can take seconds (credential vault unlock).
+                        val token = typedToken.ifBlank { credentialStore.getToken(serviceType) }
+                        if (token.isNullOrBlank()) {
+                            invokeLater { statusLabel.text = "Please enter URL and token" }
+                            return@runBackgroundableTask
+                        }
                         val result = runBlockingCancellable {
                             authTestService.testConnection(serviceType, url, token)
                         }
@@ -347,13 +354,20 @@ class ConnectionsConfigurable(
             row {
                 button("Test Connection") {
                     val url = currentUrl.trim()
-                    val token = currentToken.ifBlank { credentialStore.getToken(ServiceType.BITBUCKET) }
-                    if (url.isBlank() || token.isNullOrBlank()) {
+                    val typedToken = currentToken
+                    if (url.isBlank()) {
                         statusLabel.text = "Please enter URL and token"
                         return@button
                     }
                     statusLabel.text = "Testing..."
                     runBackgroundableTask("Testing $title", project, false) {
+                        // P2-9: PasswordSafe fallback read stays OFF the EDT — first access
+                        // on Windows can take seconds (credential vault unlock).
+                        val token = typedToken.ifBlank { credentialStore.getToken(ServiceType.BITBUCKET) }
+                        if (token.isNullOrBlank()) {
+                            invokeLater { statusLabel.text = "Please enter URL and token" }
+                            return@runBackgroundableTask
+                        }
                         val result = runBlockingCancellable {
                             authTestService.testConnection(ServiceType.BITBUCKET, url, token)
                         }

@@ -1,12 +1,12 @@
 package com.workflow.orchestrator.core.autodetect
 
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.workflow.orchestrator.core.util.WorkflowPluginDisposable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,12 +30,14 @@ class AutoDetectFileListener : BulkFileListener, Disposable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
-        // Register with the Application Disposable so the scope is cancelled
+        // Register with the app-level plugin disposable so the scope is cancelled
         // when the plugin is unloaded / the IDE session ends. Without this the
         // SupervisorJob and any pending debounce coroutines would leak for the
         // process lifetime, and could fire against already-disposed services on
-        // plugin reload. Closes audit finding core:F-9.
-        Disposer.register(ApplicationManager.getApplication() as Disposable, this)
+        // plugin reload. Closes audit finding core:F-9. P2-21: parented to the
+        // plugin-lifetime service (disposed on plugin unload) rather than the bare
+        // Application, which would only dispose at IDE shutdown.
+        Disposer.register(WorkflowPluginDisposable.getInstance(), this)
     }
 
     override fun dispose() {

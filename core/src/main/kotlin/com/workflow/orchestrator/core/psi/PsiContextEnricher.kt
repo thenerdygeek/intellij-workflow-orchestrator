@@ -20,37 +20,25 @@ class PsiContextEnricher(private val project: Project) {
         val isTestFile: Boolean
     )
 
-    suspend fun enrich(filePath: String): PsiContext {
-        // Read 1: Resolve file and basic structural info (fast)
-        val basicInfo = readAction {
-            val vFile = LocalFileSystem.getInstance().findFileByPath(filePath)
-                ?: return@readAction null
-            val psiFile = PsiManager.getInstance(project).findFile(vFile)
-                ?: return@readAction null
-            val fileIndex = ProjectFileIndex.getInstance(project)
-            val isTest = fileIndex.isInTestSourceContent(vFile)
-            val psiClass = PsiTreeUtil.findChildOfType(psiFile, PsiClass::class.java)
-            Triple(psiFile, psiClass, isTest)
-        } ?: return emptyContext()
-
-        val (_, psiClass, isTest) = basicInfo
-
-        // Read 2: Extract lightweight metadata (fast)
-        val className = readAction { psiClass?.qualifiedName }
-        val classAnnotations = readAction { psiClass?.let { extractAnnotations(it) } ?: emptyList() }
-        val methodAnnotations = readAction { psiClass?.let { extractMethodAnnotations(it) } ?: emptyMap() }
-
-        // Read 3: Maven module detection
-        val mavenModule = readAction {
-            val vFile = LocalFileSystem.getInstance().findFileByPath(filePath)
-            if (vFile != null) detectMavenModule(vFile) else null
-        }
-
-        return PsiContext(
-            className = className,
-            classAnnotations = classAnnotations,
-            methodAnnotations = methodAnnotations,
-            mavenModule = mavenModule,
+    /**
+     * P2-22 + B19 (2026-06-10 perf audit): ONE read action computing a plain-data
+     * snapshot. The previous shape ran 5 sequential read actions, resolved the file
+     * twice, and carried a [PsiClass] across read-action boundaries — a
+     * PsiInvalidElementAccessException risk while the user types. No PSI element
+     * escapes the lambda: [PsiContext] is pure data (strings/lists/maps/boolean).
+     */
+    suspend fun enrich(filePath: String): PsiContext = readAction {
+        val vFile = LocalFileSystem.getInstance().findFileByPath(filePath)
+            ?: return@readAction emptyContext()
+        val psiFile = PsiManager.getInstance(project).findFile(vFile)
+            ?: return@readAction emptyContext()
+        val isTest = ProjectFileIndex.getInstance(project).isInTestSourceContent(vFile)
+        val psiClass = PsiTreeUtil.findChildOfType(psiFile, PsiClass::class.java)
+        PsiContext(
+            className = psiClass?.qualifiedName,
+            classAnnotations = psiClass?.let { extractAnnotations(it) } ?: emptyList(),
+            methodAnnotations = psiClass?.let { extractMethodAnnotations(it) } ?: emptyMap(),
+            mavenModule = detectMavenModule(vFile),
             isTestFile = isTest
         )
     }

@@ -14,11 +14,18 @@ import okhttp3.Response
  * - Falls back to exponential backoff when no headers are present
  *
  * @see <a href="https://github.com/cline/cline/blob/main/src/core/api/retry.ts">Cline retry.ts</a>
+ *
+ * P2-10 (2026-06-10 perf audit): [maxTotalDelayMs] caps the CUMULATIVE sleep across all
+ * retry attempts of one call. Without it, sustained 429s with `retry-after: 10` could hold
+ * an OkHttp dispatcher thread for ~30s (3 x 10s per-attempt cap). Per-attempt caps are
+ * unchanged; once the cumulative budget is spent, the last sleep is truncated to the
+ * remainder and no further retry fires (worst case now ~= maxTotalDelayMs).
  */
 class RetryInterceptor(
     private val maxRetries: Int = 3,
     private val baseDelayMs: Long = 1000,
-    private val maxDelayMs: Long = 10_000
+    private val maxDelayMs: Long = 10_000,
+    private val maxTotalDelayMs: Long = 15_000
 ) : Interceptor {
 
     private val log = Logger.getInstance(RetryInterceptor::class.java)
@@ -51,8 +58,19 @@ class RetryInterceptor(
     ): Response {
         var response = firstResponse
         var attempt = 0
+        var totalSleptMs = 0L
 
         while (response.code in retryableCodes && attempt < maxRetries) {
+            // Cumulative budget guard (P2-10): never hold the OkHttp thread longer
+            // than maxTotalDelayMs in total across all attempts of this call.
+            val remainingBudgetMs = maxTotalDelayMs - totalSleptMs
+            if (remainingBudgetMs <= 0) {
+                log.warn(
+                    "[Core:HTTP] Cumulative retry-delay budget (${maxTotalDelayMs}ms) exhausted for " +
+                        "${request.url} after $attempt attempt(s) — returning status ${response.code}"
+                )
+                break
+            }
             attempt++
 
             // Parse retry-after headers (ported from Cline's retry.ts)
@@ -65,11 +83,16 @@ class RetryInterceptor(
                 val exponential = baseDelayMs * (1L shl (attempt - 1))
                 exponential.coerceAtMost(maxDelayMs)
             }
+            val boundedDelay = delay.coerceAtMost(remainingBudgetMs)
 
-            log.warn("[Core:HTTP] Retry attempt $attempt/$maxRetries for ${request.url} — status ${response.code}, waiting ${delay}ms" +
-                if (headerDelay != null) " (from retry-after header)" else " (exponential backoff)")
+            log.warn(
+                "[Core:HTTP] Retry attempt $attempt/$maxRetries for ${request.url} — " +
+                    "status ${response.code}, waiting ${boundedDelay}ms" +
+                    if (headerDelay != null) " (from retry-after header)" else " (exponential backoff)"
+            )
             response.close()
-            Thread.sleep(delay)
+            Thread.sleep(boundedDelay)
+            totalSleptMs += boundedDelay
             response = chain.proceed(request)
         }
 

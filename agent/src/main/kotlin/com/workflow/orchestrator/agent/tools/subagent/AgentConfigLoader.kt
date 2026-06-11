@@ -102,6 +102,15 @@ class AgentConfigLoader private constructor() : Disposable {
     private var watchService: WatchService? = null
     private val disposed = AtomicBoolean(false)
 
+    /**
+     * P2-12 (2026-06-10 perf audit): the WatchService (an internal stat-polling thread on
+     * macOS) is NOT started by [loadFromDisk] any more — it is armed lazily on the first
+     * config read ([getCachedConfig] / [getAllCachedConfigs]). Merely constructing and
+     * loading the loader (e.g. a settings page instantiating AgentService) no longer spins
+     * up a watcher thread; hot-reload starts the moment configs are actually consumed.
+     */
+    private val watcherArmed = AtomicBoolean(false)
+
     var configDir: Path = DEFAULT_CONFIG_DIR
         private set
 
@@ -134,14 +143,31 @@ class AgentConfigLoader private constructor() : Disposable {
             merged[key] = config
         }
         rebuildCaches(merged.values.toList())
-        startWatching(directory)
+        // P2-12: watcher start is deferred to the first config read (lazy). If a watcher
+        // is already live (reload, possibly with a new directory), restart it now so it
+        // tracks the directory that was just loaded.
+        if (watcherArmed.get()) {
+            startWatching(directory)
+        }
     }
 
-    fun getCachedConfig(name: String): AgentConfig? =
-        configCache[name.lowercase()]
+    /** Lazily starts the user-config file watcher on first cache access (P2-12). */
+    private fun ensureWatcherStarted() {
+        if (disposed.get()) return
+        if (watcherArmed.compareAndSet(false, true)) {
+            startWatching(configDir)
+        }
+    }
 
-    fun getAllCachedConfigs(): List<AgentConfig> =
-        configCache.values.toList()
+    fun getCachedConfig(name: String): AgentConfig? {
+        ensureWatcherStarted()
+        return configCache[name.lowercase()]
+    }
+
+    fun getAllCachedConfigs(): List<AgentConfig> {
+        ensureWatcherStarted()
+        return configCache.values.toList()
+    }
 
     /**
      * Returns a map of generated tool name -> [AgentConfig] for all cached configs.
