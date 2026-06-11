@@ -20,6 +20,9 @@ data class WalkthroughStep(
 /** Valid steps + itemized positional errors ("step 3: …") for the LLM to self-correct. */
 data class StepsParse(val steps: List<WalkthroughStep>, val errors: List<String>)
 
+/** Steps that passed file-existence/line-bound validation + itemized positional errors. */
+data class StepValidation(val valid: List<WalkthroughStep>, val errors: List<String>)
+
 /**
  * Parse the `steps` param. The XML-in-content tool path serializes every param as a
  * [JsonPrimitive] STRING (see BrainRouter / `parseModules` precedent), so the JSON

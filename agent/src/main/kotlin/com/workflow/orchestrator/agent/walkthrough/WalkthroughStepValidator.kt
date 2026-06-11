@@ -7,8 +7,6 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
 import java.io.File
 
-data class StepValidation(val valid: List<WalkthroughStep>, val errors: List<String>)
-
 /**
  * Resolve a step's file like other file tools: absolute as-is, else project-relative.
  * NON-refreshing lookup (`findFileByPath`, the ReadFileTool.kt:154 precedent) — this is
