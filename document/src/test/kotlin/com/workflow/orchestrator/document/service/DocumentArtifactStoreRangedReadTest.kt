@@ -113,4 +113,41 @@ class DocumentArtifactStoreRangedReadTest {
         assertEquals(1, second.totalHits, "second search must hit the in-memory memo, not re-read disk")
         assertTrue(second.matches.first().snippet.contains("Frobnicator"))
     }
+
+    @Test
+    fun `slice serves from the populated memo instead of re-reading the file`() = runTest {
+        // Discriminating pin for the slice ranged-read path (C3 review): a slice() that silently
+        // reverts to "always read the whole file" would still pass every other test in the suite.
+        // Populate the memo via search, overwrite the file on disk, then slice the SAME artifact
+        // handle — the ORIGINAL content must come back (memo-served), not the overwritten bytes.
+        val original = "alpha beta gamma ORIGINAL-WINDOW delta " + "filler ".repeat(20)
+        val window = original.indexOf("ORIGINAL-WINDOW")
+        val index = DocumentIndex(pages = emptyList(), sections = emptyList())
+        val art = materialize(original, index)
+
+        store.search(art, index, "ORIGINAL-WINDOW") // populates the soft-ref memo
+
+        Files.writeString(art.contentPath, "Z".repeat(original.length))
+        val slice = store.slice(art, index, DocumentCursor.Offset(window), maxChars = "ORIGINAL-WINDOW".length)
+        assertEquals(
+            "ORIGINAL-WINDOW",
+            slice.content,
+            "slice must serve the memoized content; reading the file would return the overwritten Zs",
+        )
+    }
+
+    @Test
+    fun `negative maxChars yields an empty slice instead of throwing`() = runTest {
+        // Pre-P2-19 code computed end < start and substring() threw StringIndexOutOfBoundsException;
+        // the ranged-read path clamps the requested window at 0.
+        val md = "hello world, a perfectly ordinary document"
+        val index = DocumentIndex(pages = emptyList(), sections = emptyList())
+        val art = materialize(md, index)
+
+        val slice = store.slice(art, index, DocumentCursor.Offset(5), maxChars = -10)
+        assertEquals("", slice.content)
+        assertEquals(5, slice.startOffset)
+        assertEquals(5, slice.endOffset, "an empty window must end where it starts")
+        assertEquals(md.length - 5, slice.remaining)
+    }
 }
