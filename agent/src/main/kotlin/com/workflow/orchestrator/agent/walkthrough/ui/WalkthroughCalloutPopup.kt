@@ -136,11 +136,12 @@ internal class WalkthroughCalloutPopup(
             .createPopup()
     }
 
+    /** [bodyHtml] must be a COMPLETE `<html>…</html>` document (style in `<head>`); see WalkthroughMarkdown. */
     fun renderStep(counter: String, title: String?, bodyHtml: String, nextIsDone: Boolean, backEnabled: Boolean) {
         counterLabel.text = counter
         titleLabel.text = title ?: ""
         titleLabel.isVisible = title != null
-        bodyPane.text = "<html><body>$bodyHtml</body></html>"
+        bodyPane.text = bodyHtml
         bodyPane.caretPosition = 0
         clearStatus()
         nextButton.text = if (nextIsDone) "Done ✓" else "Next →"
@@ -152,7 +153,8 @@ internal class WalkthroughCalloutPopup(
         renderStep(
             counter,
             null,
-            "<i>File no longer exists — step skipped:</i> <code>${HtmlEscape.escapeHtml(filePath)}</code>",
+            "<html><body><i>File no longer exists — step skipped:</i> " +
+                "<code>${HtmlEscape.escapeHtml(filePath)}</code></body></html>",
             nextIsDone = false,
             backEnabled = backEnabled,
         )

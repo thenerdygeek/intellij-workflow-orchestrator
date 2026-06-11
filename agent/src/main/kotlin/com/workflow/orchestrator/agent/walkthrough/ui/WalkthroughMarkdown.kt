@@ -35,11 +35,20 @@ object WalkthroughMarkdown {
     )
 
     /** 0-arg path: plain markdown -> HTML (no syntax-highlighting). Kept for the headless unit test. */
-    fun toHtml(markdown: String): String = baseStyle() + render(markdown)
+    fun toHtml(markdown: String): String = document(render(markdown))
 
     /** Project-aware path: same markdown, with IDE-themed colored code blocks. */
     fun toHtml(markdown: String, project: Project): String =
-        baseStyle() + highlightCodeBlocks(render(markdown), project)
+        document(highlightCodeBlocks(render(markdown), project))
+
+    /**
+     * Wrap body content in a full document with the `<style>` in `<head>`. Swing's
+     * HTML 3.2 [javax.swing.text.html.HTMLEditorKit] only applies a `<style>` block that
+     * lives in `<head>` — a `<style>` inside `<body>` is rendered as literal text (the
+     * `body { margin: 0 }…` leak). So the document shell is built here, not by the caller.
+     */
+    private fun document(body: String): String =
+        "<html><head>${baseStyle()}</head><body>$body</body></html>"
 
     private fun render(markdown: String): String {
         val tree = MarkdownParser(flavour).buildMarkdownTreeFromString(markdown)
