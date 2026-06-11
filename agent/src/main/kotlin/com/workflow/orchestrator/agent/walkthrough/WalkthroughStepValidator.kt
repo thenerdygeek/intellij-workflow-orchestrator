@@ -19,12 +19,25 @@ internal fun resolveStepFile(project: Project, path: String): VirtualFile? {
 
 /** Per-step existence + line-bound validation inside a readAction (spec §3). */
 suspend fun defaultStepValidator(project: Project, steps: List<WalkthroughStep>): StepValidation =
+    validateSteps(project, steps, ::resolveStepFile)
+
+/**
+ * Validation body with an injectable resolver seam. Platform-fixture tests must NOT touch
+ * LocalFileSystem/disk (a real-disk refresh spawns UnindexedFilesScanner work that outlives
+ * the light fixture and hangs the NEXT BasePlatformTestCase setUp on "Indexing timeout"),
+ * so they inject a LightVirtualFile-backed resolver instead.
+ */
+internal suspend fun validateSteps(
+    project: Project,
+    steps: List<WalkthroughStep>,
+    resolve: (Project, String) -> VirtualFile?,
+): StepValidation =
     readAction {
         val valid = mutableListOf<WalkthroughStep>()
         val errors = mutableListOf<String>()
         steps.forEachIndexed { i, s ->
             val n = i + 1
-            val vfile = resolveStepFile(project, s.file)
+            val vfile = resolve(project, s.file)
             if (vfile == null || vfile.isDirectory) {
                 errors += "step $n: file not found: ${s.file}"
                 return@forEachIndexed
