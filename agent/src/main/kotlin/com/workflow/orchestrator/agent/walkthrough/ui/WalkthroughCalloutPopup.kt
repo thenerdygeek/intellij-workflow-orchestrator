@@ -8,7 +8,6 @@ import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.awt.RelativePoint
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.HTMLEditorKitBuilder
 import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.core.util.HtmlEscape
@@ -35,8 +34,7 @@ internal class WalkthroughCalloutPopup(
     private val onNext: () -> Unit,
     private val onBack: () -> Unit,
     private val onClose: () -> Unit,
-    private val onAsk: (String) -> Unit,
-    private val canAsk: () -> Boolean,
+    private val onAsk: () -> Unit,
 ) {
     private val counterLabel = JBLabel("", SwingConstants.LEFT)
     private val titleLabel = JBLabel("").apply { font = JBUI.Fonts.label().asBold() }
@@ -48,28 +46,9 @@ internal class WalkthroughCalloutPopup(
     private val statusLabel = JBLabel("")
     private val backButton = JButton("← Back").apply { addActionListener { onBack() } }
     private val nextButton = JButton("Next →").apply { addActionListener { onNext() } }
-    private val askButton = JButton("Ask…").apply { addActionListener { toggleAskField() } }
-    private val askField = JBTextField().apply {
-        isVisible = false
-        addActionListener {
-            val q = text.trim()
-            if (q.isNotEmpty()) {
-                onAsk(q)
-                text = ""
-                isVisible = false
-                refreshAskEnabled()
-            }
-        }
-    }
+    private val askButton = JButton("Ask…").apply { addActionListener { onAsk() } }
     private val root: JPanel = buildRoot()
     private var popup: JBPopup? = null
-
-    /**
-     * Source HTML of the current step body. JEditorPane.getText() re-serializes the
-     * document (indented, with <head>), so the answer append MUST rebuild from this
-     * field — never string-strip bodyPane.text (review finding 4).
-     */
-    private var currentBodyHtml: String = ""
 
     private fun buildRoot(): JPanel {
         val header = JPanel(BorderLayout(GAP, 0)).apply {
@@ -95,13 +74,7 @@ internal class WalkthroughCalloutPopup(
             border = JBUI.Borders.empty(0, PAD_H)
             add(titleLabel, BorderLayout.NORTH)
             add(JBScrollPane(bodyPane).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)
-            add(
-                JPanel(BorderLayout()).apply {
-                    add(statusLabel, BorderLayout.NORTH)
-                    add(askField, BorderLayout.SOUTH)
-                },
-                BorderLayout.SOUTH,
-            )
+            add(statusLabel, BorderLayout.SOUTH)
         }
         return JPanel(BorderLayout()).apply {
             preferredSize = Dimension(JBUI.scale(POPUP_WIDTH), JBUI.scale(POPUP_HEIGHT))
@@ -161,7 +134,7 @@ internal class WalkthroughCalloutPopup(
     private fun ensurePopup() {
         if (popup != null && popup?.isDisposed != true) return
         popup = JBPopupFactory.getInstance()
-            .createComponentPopupBuilder(root, askField)
+            .createComponentPopupBuilder(root, null)
             .setFocusable(true)
             .setRequestFocus(false)
             .setCancelOnClickOutside(false)
@@ -175,14 +148,12 @@ internal class WalkthroughCalloutPopup(
         counterLabel.text = counter
         titleLabel.text = title ?: ""
         titleLabel.isVisible = title != null
-        currentBodyHtml = bodyHtml
-        bodyPane.text = "<html><body>$currentBodyHtml</body></html>"
+        bodyPane.text = "<html><body>$bodyHtml</body></html>"
         bodyPane.caretPosition = 0
         clearStatus()
         nextButton.text = if (nextIsDone) "Done ✓" else "Next →"
         nextButton.isEnabled = true
         backButton.isEnabled = backEnabled
-        refreshAskEnabled()
     }
 
     fun renderMissingFile(counter: String, filePath: String, backEnabled: Boolean) {
@@ -216,24 +187,10 @@ internal class WalkthroughCalloutPopup(
         nextButton.isEnabled = false
     }
 
-    fun renderAnswering(question: String) {
-        statusLabel.text = "Q: $question — answering…"
-        statusLabel.icon = AnimatedIcon.Default.INSTANCE
-        askButton.isEnabled = false
-        askButton.toolTipText = ASK_PENDING_TOOLTIP
-    }
-
-    fun renderAnswer(answerHtml: String) {
-        clearStatus()
-        currentBodyHtml += "<hr/><b>Answer:</b><br/>$answerHtml"
-        bodyPane.text = "<html><body>$currentBodyHtml</body></html>"
-        refreshAskEnabled()
-    }
-
-    fun renderAnswerFallbackNote() {
-        statusLabel.text = "The agent may have answered in the chat panel ↗"
+    /** Ask was clicked: the question is routed to the main chat input below. */
+    fun showDiscussingInChat() {
+        statusLabel.text = "Discussing this step in the chat below ↗"
         statusLabel.icon = null
-        refreshAskEnabled()
     }
 
     fun updateCounter(counter: String) { counterLabel.text = counter }
@@ -241,19 +198,6 @@ internal class WalkthroughCalloutPopup(
     private fun clearStatus() {
         statusLabel.text = ""
         statusLabel.icon = null
-    }
-
-    private fun toggleAskField() {
-        askField.isVisible = !askField.isVisible
-        root.revalidate()
-        root.repaint()
-        if (askField.isVisible) askField.requestFocusInWindow()
-    }
-
-    private fun refreshAskEnabled() {
-        val enabled = canAsk()
-        askButton.isEnabled = enabled
-        askButton.toolTipText = if (enabled) null else ASK_PENDING_TOOLTIP
     }
 
     fun dispose() {
@@ -268,6 +212,5 @@ internal class WalkthroughCalloutPopup(
         val GAP_SMALL = JBUI.scale(4)
         const val PAD_V = 6
         const val PAD_H = 10
-        const val ASK_PENDING_TOOLTIP = "The agent is waiting for your answer in chat — reply there first."
     }
 }

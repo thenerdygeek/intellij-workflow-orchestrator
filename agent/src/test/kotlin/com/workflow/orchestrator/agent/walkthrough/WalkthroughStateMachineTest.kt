@@ -59,24 +59,37 @@ class WalkthroughStateMachineTest {
     }
 
     @Test
-    fun `markGenerationEnded is idempotent, completes queue, clears paused and pending question`() {
+    fun `markGenerationEnded is idempotent, completes queue, and clears paused`() {
         val m = startedMachine()
         m.setGenerationPaused(true)
-        assertTrue(m.askQuestion("why?"))
-        assertTrue(m.markGenerationEnded()) // had a pending question
+        m.markGenerationEnded()
         assertEquals(WalkthroughStateMachine.Status.COMPLETE, m.status)
         assertFalse(m.generationPaused)
-        assertNull(m.pendingQuestion)
-        assertFalse(m.markGenerationEnded()) // idempotent, no question now
+        m.markGenerationEnded() // idempotent
+        assertEquals(WalkthroughStateMachine.Status.COMPLETE, m.status)
     }
 
     @Test
-    fun `question gating - one at a time, answerDelivered clears`() {
-        val m = startedMachine()
-        assertTrue(m.askQuestion("q1"))
-        assertFalse(m.askQuestion("q2"))
-        assertTrue(m.answerDelivered())
-        assertFalse(m.answerDelivered()) // nothing pending -> tool error case
+    fun `updateStep replaces or appends body and reports whether it hit the current step`() {
+        val m = startedMachine(3)
+        m.next() // cursor = 1 (step 2)
+        // append to a non-current step: stored, not current
+        val r1 = m.updateStep(1, "extra for step 1", append = true)
+        assertFalse(r1.isCurrent)
+        assertEquals("body 1\n\nextra for step 1", m.stepAt(1)!!.bodyMarkdown)
+        // replace the current step: isCurrent = true
+        val r2 = m.updateStep(2, "rewritten step 2", append = false)
+        assertTrue(r2.isCurrent)
+        assertEquals("rewritten step 2", m.currentStep()!!.bodyMarkdown)
+    }
+
+    @Test
+    fun `updateStep rejects out-of-range index and inactive tour`() {
+        val m = startedMachine(2)
+        assertFalse(m.updateStep(0, "x", append = true).ok)
+        assertFalse(m.updateStep(99, "x", append = true).ok)
+        m.end(byUser = true)
+        assertFalse(m.updateStep(1, "x", append = true).ok)
     }
 
     @Test

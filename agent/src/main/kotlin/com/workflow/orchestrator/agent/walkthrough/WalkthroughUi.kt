@@ -15,14 +15,8 @@ interface WalkthroughUi {
     /** Loop parked awaiting chat input: "Agent is waiting for your input in chat ↗". */
     fun showPaused(counter: String)
 
-    /** Question submitted: disable Ask, show "Answering…" under the question. */
-    fun showAnswering(question: String)
-
-    /** action=answer arrived: render the markdown under the question, re-enable Ask. */
-    fun showAnswer(bodyMarkdown: String)
-
-    /** Run ended with a question pending: "The agent may have answered in the chat panel ↗". */
-    fun showAnswerFallbackNote()
+    /** Ask was clicked: hint that the question is being routed to the main chat below. */
+    fun showDiscussingInChat()
 
     /** Queue grew or completed while the user reads: refresh the counter only. */
     fun updateCounter(counter: String)

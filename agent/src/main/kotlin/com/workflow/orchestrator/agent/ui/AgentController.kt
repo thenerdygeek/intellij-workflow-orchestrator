@@ -2349,6 +2349,14 @@ class AgentController(
             }
         }
 
+        // fresh user turn — apply any armed walkthrough step context to the MODEL text only
+        // (the chat still shows the user's raw words via uiText/displayUserMessage). This is the
+        // genuine fresh-turn block: all delegation/pending/parked/steering/viewed short-circuits
+        // returned above, so prefixing here cannot corrupt their raw `task` payloads.
+        val armedRef = armedWalkthroughQuestionRef
+        armedWalkthroughQuestionRef = null
+        val modelTask = if (armedRef != null) "[Walkthrough · $armedRef] $task" else task
+
         // Show user message in the chat UI
         displayUserMessage(uiText, displayMentionsJson, uiMessageOverride, attachments, files)
         LOG.info("executeTask: setting busy=true, steeringMode=true (turn start)")
@@ -2389,14 +2397,14 @@ class AgentController(
         // Launch the agent loop
         val debugEnabled = AgentSettings.getInstance(project).state.showDebugLog
         if (debugEnabled) {
-            dashboard.pushDebugLogEntry("session", "task_start", task.take(200), null)
+            dashboard.pushDebugLogEntry("session", "task_start", modelTask.take(200), null)
         }
         // Single source of truth: build the full controller→loop UI-callback bundle once
         // (see [buildSessionUiCallbacks] / [SessionUiCallbacks]). The SAME builder feeds the
         // cross-IDE delegated entry points, so a callback added here flows to both paths.
         val ui = buildSessionUiCallbacks()
         currentJob = service.executeTask(
-            task = task,
+            task = modelTask,
             sessionId = currentSessionId,
             attachments = attachments,
             contextManager = contextManager,
@@ -3040,11 +3048,12 @@ class AgentController(
     private fun walkthroughService(): com.workflow.orchestrator.agent.walkthrough.WalkthroughService? =
         project.getServiceIfCreated(com.workflow.orchestrator.agent.walkthrough.WalkthroughService::class.java)
 
-    /** True while ask_followup_question has an unanswered wizard pending (walkthrough Ask gating). */
-    fun isChatAwaitingUserReply(): Boolean {
-        val pending = askQuestionsTool.pendingQuestions
-        return pending != null && !pending.isCompleted
-    }
+    @Volatile private var armedWalkthroughQuestionRef: String? = null
+
+    /** Walkthrough "Ask" arms a one-shot step ref; the next user turn is prefixed with it (model text only). */
+    fun armWalkthroughQuestionContext(stepRef: String) { armedWalkthroughQuestionRef = stepRef }
+
+    fun focusChatInputForWalkthrough() { dashboard.focusInput() }
 
     private fun onComplete(result: LoopResult) {
         phraseTimerJob?.cancel()

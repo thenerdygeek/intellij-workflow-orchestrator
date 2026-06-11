@@ -17,22 +17,16 @@ class WalkthroughServiceTest {
         }
         override fun showLoading(counter: String) { calls += "showLoading:$counter" }
         override fun showPaused(counter: String) { calls += "showPaused:$counter" }
-        override fun showAnswering(question: String) { calls += "showAnswering:$question" }
-        override fun showAnswer(bodyMarkdown: String) { calls += "showAnswer:$bodyMarkdown" }
-        override fun showAnswerFallbackNote() { calls += "showAnswerFallbackNote" }
+        override fun showDiscussingInChat() { calls += "showDiscussingInChat" }
         override fun updateCounter(counter: String) { calls += "updateCounter:$counter" }
         override fun dispose() { calls += "dispose" }
     }
 
     private class FakeGateway : WalkthroughService.ControllerGateway {
-        val submitted = mutableListOf<Pair<String, String>>()
-        var chatAwaitingReply = false
-        var throwOnSubmit = false
-        override fun submitUserTurn(modelText: String, displayText: String) {
-            check(!throwOnSubmit) { "gateway down" }
-            submitted += modelText to displayText
-        }
-        override fun isChatAwaitingUserReply(): Boolean = chatAwaitingReply
+        val armed = mutableListOf<String>()
+        var focused = 0
+        override fun armWalkthroughQuestion(stepRef: String) { armed += stepRef }
+        override fun focusChatInput() { focused++ }
     }
 
     private lateinit var ui: FakeUi
@@ -87,43 +81,35 @@ class WalkthroughServiceTest {
     }
 
     @Test
-    fun `submitQuestion routes the envelope to the controller and shows answering state`() {
+    fun `askInChat arms step context, focuses chat, and shows the discussing hint`() {
         service.startTour("T", listOf(step(1)))
-        assertTrue(service.submitQuestion("Why?"))
-        val (model, display) = gateway.submitted.single()
-        assertTrue(model.startsWith("[Walkthrough question about step 1 — f1.kt:1-2] Why?"))
-        assertEquals("Why?", display)
-        assertEquals("showAnswering:Why?", ui.calls.last())
-        assertFalse(service.submitQuestion("Second?")) // one at a time
+        assertTrue(service.askInChat())
+        assertEquals("f1.kt:1-2", gateway.armed.single())
+        assertEquals(1, gateway.focused)
+        assertEquals("showDiscussingInChat", ui.calls.last())
+        // no active tour -> false, nothing armed
+        service.endTour(byUser = true)
+        assertFalse(service.askInChat())
+        assertEquals(1, gateway.armed.size)
     }
 
     @Test
-    fun `deliverAnswer renders inline, errors when nothing pending`() {
-        service.startTour("T", listOf(step(1)))
-        assertFalse(service.deliverAnswer("orphan").ok)
-        service.submitQuestion("Why?")
-        assertTrue(service.deliverAnswer("Because.").ok)
-        assertEquals("showAnswer:Because.", ui.calls.last())
+    fun `updateStep re-renders only when it hits the current step`() {
+        service.startTour("T", listOf(step(1), step(2)))
+        val before = ui.calls.size
+        // not current (user is on step 1) -> no re-render
+        assertTrue(service.updateStep(2, "note", append = true).ok)
+        assertEquals(before, ui.calls.size)
+        // current step -> re-render
+        assertTrue(service.updateStep(1, "note", append = true).ok)
+        assertTrue(ui.calls.last().startsWith("showStep:f1.kt"))
     }
 
     @Test
-    fun `canAsk respects wizard-pending gate and pending question`() {
+    fun `markGenerationEnded resolves loading and completes the counter`() {
         service.startTour("T", listOf(step(1)))
-        assertTrue(service.canAsk())
-        gateway.chatAwaitingReply = true
-        assertFalse(service.canAsk())
-        gateway.chatAwaitingReply = false
-        service.submitQuestion("Why?")
-        assertFalse(service.canAsk())
-    }
-
-    @Test
-    fun `markGenerationEnded resolves loading, completes counter, and falls back pending question`() {
-        service.startTour("T", listOf(step(1)))
-        service.submitQuestion("Why?")
         service.onNext() // loading
         service.markGenerationEnded()
-        assertTrue(ui.calls.contains("showAnswerFallbackNote"))
         assertTrue(ui.calls.last().startsWith("showStep:f1.kt:Step 1 of 1:done=true"))
     }
 
@@ -146,31 +132,20 @@ class WalkthroughServiceTest {
     }
 
     @Test
-    fun `submitQuestion rolls back the pending question when the gateway throws`() {
+    fun `updateStep on a non-existent index returns an error and does not re-render`() {
         service.startTour("T", listOf(step(1)))
-        gateway.throwOnSubmit = true
-        assertFalse(service.submitQuestion("Why?"))
-        assertTrue(service.canAsk()) // pending question rolled back
-        assertTrue(ui.calls.none { it.startsWith("showAnswering") })
-    }
-
-    @Test
-    fun `deliverAnswer after markGenerationEnded hits the no-pending-question error`() {
-        service.startTour("T", listOf(step(1)))
-        service.submitQuestion("Why?")
-        service.markGenerationEnded()
-        assertTrue(ui.calls.contains("showAnswerFallbackNote"))
-        val feedback = service.deliverAnswer("Too late.")
+        val before = ui.calls.size
+        val feedback = service.updateStep(99, "x", append = true)
         assertFalse(feedback.ok)
-        assertTrue(ui.calls.none { it.startsWith("showAnswer:") })
+        assertEquals(before, ui.calls.size)
     }
 
     @Test
-    fun `canAsk and submitQuestion are false after endTour`() {
+    fun `askInChat and updateStep are inert after endTour`() {
         service.startTour("T", listOf(step(1)))
         service.endTour(byUser = true)
-        assertFalse(service.canAsk())
-        assertFalse(service.submitQuestion("x"))
+        assertFalse(service.askInChat())
+        assertFalse(service.updateStep(1, "x", append = true).ok)
     }
 
     @Test

@@ -2,7 +2,6 @@ package com.workflow.orchestrator.agent.walkthrough
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
-import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.ui.AgentControllerRegistry
 
@@ -11,7 +10,7 @@ interface WalkthroughServiceApi {
     fun startTour(title: String?, steps: List<WalkthroughStep>): WalkthroughFeedback
     fun appendSteps(steps: List<WalkthroughStep>): WalkthroughFeedback
     fun finishTour(): WalkthroughFeedback
-    fun deliverAnswer(bodyMarkdown: String): WalkthroughFeedback
+    fun updateStep(index: Int, bodyMarkdown: String, append: Boolean): WalkthroughFeedback
 }
 
 data class WalkthroughFeedback(val ok: Boolean, val message: String)
@@ -27,20 +26,22 @@ class WalkthroughService(private val project: Project) : WalkthroughServiceApi, 
 
     /** Two AgentController touchpoints, abstracted for headless tests. */
     interface ControllerGateway {
-        fun submitUserTurn(modelText: String, displayText: String)
-        fun isChatAwaitingUserReply(): Boolean
+        fun armWalkthroughQuestion(stepRef: String)
+        fun focusChatInput()
     }
 
     internal val machine = WalkthroughStateMachine()
     internal var uiFactory: (Project, WalkthroughService) -> WalkthroughUi =
         { p, s -> WalkthroughUiImpl(p, s) }
     internal var controllerGateway: ControllerGateway = object : ControllerGateway {
-        override fun submitUserTurn(modelText: String, displayText: String) {
+        override fun armWalkthroughQuestion(stepRef: String) {
             AgentControllerRegistry.getInstance(project).controller
-                ?.executeTask(modelText, displayText = displayText)
+                ?.armWalkthroughQuestionContext(stepRef)
         }
-        override fun isChatAwaitingUserReply(): Boolean =
-            AgentControllerRegistry.getInstance(project).controller?.isChatAwaitingUserReply() == true
+        override fun focusChatInput() {
+            AgentControllerRegistry.getInstance(project).controller
+                ?.focusChatInputForWalkthrough()
+        }
     }
     private var ui: WalkthroughUi? = null
 
@@ -74,12 +75,12 @@ class WalkthroughService(private val project: Project) : WalkthroughServiceApi, 
         return WalkthroughFeedback(true, machine.toolStatusLine())
     }
 
-    override fun deliverAnswer(bodyMarkdown: String): WalkthroughFeedback {
+    /** Agent revises/enriches a step (the update_step tool action). Re-renders only if it's the shown step. */
+    override fun updateStep(index: Int, bodyMarkdown: String, append: Boolean): WalkthroughFeedback {
         notActive()?.let { return it }
-        if (!machine.answerDelivered()) {
-            return WalkthroughFeedback(false, "No pending walkthrough question — the user has not asked anything.")
-        }
-        ui?.showAnswer(bodyMarkdown)
+        val outcome = machine.updateStep(index, bodyMarkdown, append)
+        if (!outcome.ok) return WalkthroughFeedback(false, outcome.message)
+        if (outcome.isCurrent) showCurrent()
         return WalkthroughFeedback(true, machine.toolStatusLine())
     }
 
@@ -112,22 +113,14 @@ class WalkthroughService(private val project: Project) : WalkthroughServiceApi, 
         ui = null
     }
 
-    fun canAsk(): Boolean =
-        machine.isActive && machine.pendingQuestion == null && !controllerGateway.isChatAwaitingUserReply()
-
-    /** @return false when gated (question already pending / no active tour / delivery failed). */
-    fun submitQuestion(question: String): Boolean {
+    /** Route the user's question to the main chat: arm step context + focus chat. @return false if no active tour. */
+    fun askInChat(): Boolean {
+        if (!machine.isActive) return false
         val step = machine.currentStep() ?: return false
-        if (!machine.askQuestion(question)) return false
-        val envelope = QuestionEnvelope.format(machine.cursor + 1, step, question)
-        try {
-            controllerGateway.submitUserTurn(envelope, question)
-        } catch (e: Exception) {
-            LOG.warn("Walkthrough question delivery failed — rolling back pending question", e)
-            machine.answerDelivered() // roll back so canAsk() recovers
-            return false
-        }
-        ui?.showAnswering(question)
+        val ref = "${step.file}:${step.startLine}-${step.endLine}"
+        controllerGateway.armWalkthroughQuestion(ref)
+        controllerGateway.focusChatInput()
+        ui?.showDiscussingInChat()
         return true
     }
 
@@ -136,8 +129,7 @@ class WalkthroughService(private val project: Project) : WalkthroughServiceApi, 
     /** Run teardown: Completed/Failed/Cancelled/SessionHandoff all funnel here. Idempotent. */
     fun markGenerationEnded() {
         if (!machine.isActive) return
-        val hadQuestion = machine.markGenerationEnded()
-        if (hadQuestion) ui?.showAnswerFallbackNote()
+        machine.markGenerationEnded()
         showCurrent() // resolves a parked loading spinner; counter drops the "+"
     }
 
@@ -177,9 +169,5 @@ class WalkthroughService(private val project: Project) : WalkthroughServiceApi, 
             message = "The user ended the walkthrough — stop appending steps and continue without the tour.",
         )
         else -> WalkthroughFeedback(false, "No active walkthrough — call action=start first.")
-    }
-
-    private companion object {
-        val LOG = Logger.getInstance(WalkthroughService::class.java)
     }
 }

@@ -91,10 +91,14 @@ class WalkthroughControllerWiringContractTest {
     }
 
     @Test
-    fun `controller exposes the wizard-pending query for Ask gating`() {
+    fun `controller arms walkthrough question context and consumes it on the next turn`() {
+        assertTrue(controller.contains("fun armWalkthroughQuestionContext("))
+        assertTrue(controller.contains("fun focusChatInputForWalkthrough("))
+        // the armed prefix is consumed/prepended inside executeTaskInternal
+        val consume = controller.substringAfter("executeTaskInternal").substringBefore("private fun onComplete")
         assertTrue(
-            controller.contains("fun isChatAwaitingUserReply()"),
-            "Ask gating needs AgentController.isChatAwaitingUserReply()",
+            consume.contains("armedWalkthroughQuestionRef"),
+            "executeTaskInternal must consume the armed walkthrough step ref",
         )
     }
 }

@@ -24,8 +24,6 @@ class WalkthroughStateMachine {
         private set
     var generationPaused: Boolean = false
         private set
-    var pendingQuestion: String? = null
-        private set
     var endedByUser: Boolean = false
         private set
 
@@ -47,10 +45,24 @@ class WalkthroughStateMachine {
         cursor = 0
         pendingNext = false
         generationPaused = false
-        pendingQuestion = null
         endedByUser = false
         status = Status.GENERATING
         return true
+    }
+
+    /** 1-based read access for update targeting. */
+    fun stepAt(index: Int): WalkthroughStep? = steps.getOrNull(index - 1)
+
+    data class UpdateOutcome(val ok: Boolean, val isCurrent: Boolean, val message: String = "")
+
+    /** Replace or append a step's body by 1-based index. */
+    fun updateStep(index: Int, bodyMarkdown: String, append: Boolean): UpdateOutcome {
+        if (!isActive) return UpdateOutcome(false, false, "no active walkthrough")
+        val existing = steps.getOrNull(index - 1)
+            ?: return UpdateOutcome(false, false, "step $index does not exist (tour has ${steps.size} step(s))")
+        val newBody = if (append) "${existing.bodyMarkdown}\n\n$bodyMarkdown" else bodyMarkdown
+        steps[index - 1] = existing.copy(bodyMarkdown = newBody)
+        return UpdateOutcome(true, isCurrent = (index - 1 == cursor))
     }
 
     /** @return the index auto-advanced to when a parked pendingNext was consumed, else null. */
@@ -71,18 +83,12 @@ class WalkthroughStateMachine {
         status = Status.COMPLETE
     }
 
-    /**
-     * Run-teardown signal (idempotent). GENERATING -> COMPLETE; clears paused/pendingNext.
-     * @return true when a pending question was force-resolved (caller shows fallback note).
-     */
-    fun markGenerationEnded(): Boolean {
-        if (status != Status.GENERATING) return false
+    /** Run-teardown signal (idempotent). GENERATING -> COMPLETE; clears paused/pendingNext. */
+    fun markGenerationEnded() {
+        if (status != Status.GENERATING) return
         status = Status.COMPLETE
         generationPaused = false
         pendingNext = false
-        val hadQuestion = pendingQuestion != null
-        pendingQuestion = null
-        return hadQuestion
     }
 
     fun next(): NextOutcome {
@@ -113,25 +119,10 @@ class WalkthroughStateMachine {
         endedByUser = byUser
         pendingNext = false
         generationPaused = false
-        pendingQuestion = null
     }
 
     fun setGenerationPaused(paused: Boolean) {
         if (status == Status.GENERATING) generationPaused = paused
-    }
-
-    /** @return false when a question is already pending or no tour is active. */
-    fun askQuestion(question: String): Boolean {
-        if (!isActive || pendingQuestion != null) return false
-        pendingQuestion = question
-        return true
-    }
-
-    /** @return false when there was no pending question (the tool-error case). */
-    fun answerDelivered(): Boolean {
-        if (pendingQuestion == null) return false
-        pendingQuestion = null
-        return true
     }
 
     fun counterText(): String {

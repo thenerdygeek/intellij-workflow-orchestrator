@@ -45,18 +45,21 @@ class WalkthroughTool(
             "box the user pages through with Next/Back. STREAMING PATTERN — call action=start as soon as you " +
             "know the first 1-2 steps, then keep exploring and call action=append for further steps as you " +
             "find them; call action=finish when the tour is complete. Do NOT batch the whole tour into one " +
-            "start call. Use action=answer (with body_md) when a tool result reports the user asked a " +
-            "walkthrough question. Each call returns the tour status including which step the user is on; " +
-            "if it reports the user ended the tour, stop appending."
+            "start call. When the user asks a question it arrives as a normal chat message prefixed with the " +
+            "step location — answer it in chat. Optionally call action=update_step to revise or enrich a step " +
+            "you already showed (e.g. distill your chat answer into the step's box): step=<1-based index>, " +
+            "body_md=<markdown>, mode=append|replace. Append is non-jarring; prefer it for live tours. Each " +
+            "call returns the tour status including which step the user is on; if it reports the user ended " +
+            "the tour, stop appending."
 
     override val parameters = FunctionParameters(
         properties = mapOf(
             "action" to ParameterProperty(
                 type = "string",
                 description = "One of: start (create tour + show step 1), append (add steps to the active " +
-                    "tour), finish (mark the queue complete), answer (deliver body_md as the inline answer " +
-                    "to the user's pending walkthrough question).",
-                enumValues = listOf("start", "append", "finish", "answer"),
+                    "tour), finish (mark the queue complete), update_step (revise/enrich an already-shown " +
+                    "step's body by 1-based index).",
+                enumValues = listOf("start", "append", "finish", "update_step"),
             ),
             "title" to ParameterProperty(
                 type = "string",
@@ -69,9 +72,19 @@ class WalkthroughTool(
                     """{"file": "path (project-relative or absolute)", "start_line": 1-based, """ +
                     """"end_line": 1-based inclusive, "title": "optional", "body_md": "markdown explanation"}.""",
             ),
+            "step" to ParameterProperty(
+                type = "string",
+                description = "1-based index of the step to update (update_step only).",
+            ),
+            "mode" to ParameterProperty(
+                type = "string",
+                description = "update_step write mode: append (default) adds under the existing text; " +
+                    "replace rewrites it.",
+                enumValues = listOf("append", "replace"),
+            ),
             "body_md" to ParameterProperty(
                 type = "string",
-                description = "Markdown answer to the user's pending walkthrough question (answer only).",
+                description = "Markdown body for the step (update_step only).",
             ),
         ),
         required = listOf("action"),
@@ -128,22 +141,28 @@ class WalkthroughTool(
                     )
                 }
             }
-            "answer" -> {
+            "update_step" -> {
+                val stepIndex = (params["step"] as? JsonPrimitive)?.contentOrNull?.trim()?.toIntOrNull()
+                    ?: return ToolResult.error(
+                        "walkthrough update_step: 'step' must be a 1-based integer index"
+                    )
                 val body = (params["body_md"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
-                    ?: return ToolResult.error("walkthrough answer: missing required parameter 'body_md'")
-                val feedback = withContext(edt) { service.deliverAnswer(body) }
+                    ?: return ToolResult.error("walkthrough update_step: missing required parameter 'body_md'")
+                val mode = (params["mode"] as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase() ?: "append"
+                val append = mode != "replace"
+                val feedback = withContext(edt) { service.updateStep(stepIndex, body, append) }
                 if (!feedback.ok) {
                     ToolResult.error(feedback.message)
                 } else {
                     ToolResult(
                         content = feedback.message,
-                        summary = "Walkthrough answer delivered",
+                        summary = "Walkthrough step $stepIndex updated (${if (append) "append" else "replace"})",
                         tokenEstimate = estimateTokens(feedback.message),
                     )
                 }
             }
             else -> ToolResult.error(
-                "walkthrough: unknown action '$action' — expected start | append | finish | answer"
+                "walkthrough: unknown action '$action' — expected start | append | finish | update_step"
             )
         }
     }

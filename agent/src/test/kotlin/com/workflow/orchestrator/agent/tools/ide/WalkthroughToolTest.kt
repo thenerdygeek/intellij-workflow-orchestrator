@@ -37,8 +37,8 @@ class WalkthroughToolTest {
             calls += "finish"
             return feedback
         }
-        override fun deliverAnswer(bodyMarkdown: String): WalkthroughFeedback {
-            calls += "answer:$bodyMarkdown"
+        override fun updateStep(index: Int, bodyMarkdown: String, append: Boolean): WalkthroughFeedback {
+            calls += "updateStep:$index:${if (append) "append" else "replace"}:$bodyMarkdown"
             return feedback
         }
     }
@@ -64,10 +64,10 @@ class WalkthroughToolTest {
         """[{"file": "A.kt", "start_line": 1, "end_line": 3, "body_md": "hello"}]"""
 
     @Test
-    fun `schema declares all four params and orchestrator-only workers`() {
+    fun `schema declares all params and orchestrator-only workers`() {
         val t = tool()
         assertEquals("walkthrough", t.name)
-        assertEquals(setOf("action", "title", "steps", "body_md"), t.parameters.properties.keys)
+        assertEquals(setOf("action", "title", "steps", "step", "mode", "body_md"), t.parameters.properties.keys)
         assertEquals(listOf("action"), t.parameters.required)
         assertEquals(setOf(WorkerType.ORCHESTRATOR), t.allowedWorkers)
         assertTrue(t.description.contains("append"), "description must teach the streaming pattern")
@@ -82,11 +82,31 @@ class WalkthroughToolTest {
     }
 
     @Test
-    fun `append and finish and answer dispatch`() = runTest {
+    fun `append and finish dispatch`() = runTest {
         tool().execute(params("action" to "append", "steps" to oneStepJson), project)
         tool().execute(params("action" to "finish"), project)
-        tool().execute(params("action" to "answer", "body_md" to "Because."), project)
-        assertEquals(listOf("append:1", "finish", "answer:Because."), fakeService.calls)
+        assertEquals(listOf("append:1", "finish"), fakeService.calls)
+    }
+
+    @Test
+    fun `update_step parses index + mode and forwards to the service`() = runTest {
+        val r = tool().execute(
+            params("action" to "update_step", "step" to "2", "body_md" to "note", "mode" to "append"),
+            project,
+        )
+        assertFalse(r.isError)
+        assertEquals("updateStep:2:append:note", fakeService.calls.single())
+    }
+
+    @Test
+    fun `update_step requires step and body_md, defaults mode to append`() = runTest {
+        // no step
+        assertTrue(tool().execute(params("action" to "update_step", "body_md" to "x"), project).isError)
+        // no body
+        assertTrue(tool().execute(params("action" to "update_step", "step" to "1"), project).isError)
+        // mode omitted defaults to append
+        tool().execute(params("action" to "update_step", "step" to "1", "body_md" to "x"), project)
+        assertEquals("updateStep:1:append:x", fakeService.calls.last())
     }
 
     @Test
@@ -127,8 +147,9 @@ class WalkthroughToolTest {
     }
 
     @Test
-    fun `answer without body_md is an error`() = runTest {
-        assertTrue(tool().execute(params("action" to "answer"), project).isError)
+    fun `update_step with a non-numeric step is an error`() = runTest {
+        val r = tool().execute(params("action" to "update_step", "step" to "two", "body_md" to "x"), project)
+        assertTrue(r.isError)
     }
 
     @Test
