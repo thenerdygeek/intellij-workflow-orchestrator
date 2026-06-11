@@ -735,12 +735,14 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
     ): Pair<Map<String, AgentTool>, Map<String, Pair<AgentTool, String>>> {
         // --- Core ---
         // Filter out "agent" (recursion guard), "attempt_completion" (orchestrator-only; sub-agents
-        // receive task_report instead), and "render_artifact" (orchestrator-only — a sub-agent has
+        // receive task_report instead), "render_artifact" (orchestrator-only — a sub-agent has
         // no chat surface to render into; output flows to the parent via task_report, and a render
-        // call would just return Skipped(headless)). Some persona configs list these in their tools
-        // field — silently drop them here so the LLM isn't confused or wasting calls.
+        // call would just return Skipped(headless)), and "walkthrough" (orchestrator-only — requires
+        // the interactive chat UI; a sub-agent has no popup or editor-highlight surface to drive).
+        // Some persona configs list these in their tools field — silently drop them here so the LLM
+        // isn't confused or wasting calls.
         val core = config.tools
-            .filter { it != "agent" && it != "attempt_completion" && it != "render_artifact" }
+            .filter { it != "agent" && it != "attempt_completion" && it != "render_artifact" && it != "walkthrough" }
             .mapNotNull { name ->
                 val tool = toolRegistry.get(name)
                 if (tool == null) LOG.warn("[SpawnAgent] Config '${config.name}' references unknown core tool: $name")
@@ -757,7 +759,7 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
 
         // --- Deferred ---
         val deferred = config.deferredTools
-            .filter { it != "agent" && it != "render_artifact" && it !in core }
+            .filter { it != "agent" && it != "render_artifact" && it != "walkthrough" && it !in core }
             .mapNotNull { name ->
                 val tool = toolRegistry.get(name)
                 if (tool == null) LOG.warn("[SpawnAgent] Config '${config.name}' references unknown deferred tool: $name")

@@ -1081,6 +1081,9 @@ class AgentController(
             },
             onChatAbout = { _, _, _ -> /* Chat about option not used for tool flow */ },
             onSubmitted = {
+                // Wizard answers route through resolveQuestions(), not executeTask(), so the
+                // walkthrough paused state set in showQuestionsCallback must be cleared here.
+                walkthroughService()?.setGenerationPaused(false)
                 dashboard.finalizeQuestionsAsMessage()
                 if (pendingApprovalChoice) {
                     handleApprovalChoice(collectedAnswers)
@@ -1101,6 +1104,9 @@ class AgentController(
                 skippedQuestionIds.clear()
             },
             onCancelled = {
+                // Wizard cancel routes through cancelQuestions(), not executeTask(), so the
+                // walkthrough paused state set in showQuestionsCallback must be cleared here.
+                walkthroughService()?.setGenerationPaused(false)
                 liveQuestions = null
                 if (pendingApprovalChoice) {
                     pendingApprovalChoice = false
@@ -1683,6 +1689,9 @@ class AgentController(
                     dashboard.setBusy(false)
                     dashboard.setInputLocked(false)
                     dashboard.setSteeringMode(true)
+                    // Walkthrough pause: the wizard suspends on its own deferred and never
+                    // reaches onLoopAwaitingUserInput, so pause the tour spinner here (spec §4).
+                    walkthroughService()?.setGenerationPaused(true)
 
                     // Parse options if provided
                     val options = if (!optionsJson.isNullOrBlank()) {
@@ -1780,6 +1789,9 @@ class AgentController(
                 dashboard.setBusy(false)
                 dashboard.setInputLocked(false)
                 dashboard.setSteeringMode(true)
+                // Walkthrough pause: the wizard suspends on its own deferred and never
+                // reaches onLoopAwaitingUserInput, so pause the tour spinner here (spec §4).
+                walkthroughService()?.setGenerationPaused(true)
                 try {
                     dashboard.showQuestions(questionsJson)
                 } catch (e: Exception) {
@@ -2208,6 +2220,14 @@ class AgentController(
         // The text shown in the UI — clean text without mention XML
         val uiText = displayText ?: task
 
+        // Capture-and-clear any armed walkthrough step context at the very top so it is
+        // strictly "next message or nothing": if this message hits a short-circuit branch
+        // (delegation answer / pending question / parked channel / steering / viewed session)
+        // the arm is dropped rather than leaking a stale prefix onto a later fresh turn.
+        // It is only APPLIED on the genuine fresh-turn path below.
+        val armedRef = armedWalkthroughQuestionRef
+        armedWalkthroughQuestionRef = null
+
         // Gap 15+17: Track last task for retry and session title
         lastTaskText = task
         lastDisplayText = displayText
@@ -2277,6 +2297,7 @@ class AgentController(
             displayUserMessage(uiText, displayMentionsJson, attachments = attachments, files = files)
             dashboard.setBusy(true)
             dashboard.setSteeringMode(true)
+            walkthroughService()?.setGenerationPaused(false)
             pending.complete(task)
             return
         }
@@ -2299,6 +2320,7 @@ class AgentController(
             dashboard.setSteeringMode(true)
             // Input is NOT locked — user can always type freely (Cline behavior)
             loopWaitingForInput = false
+            walkthroughService()?.setGenerationPaused(false)
             // Stash the typed UI message override so the loop can persist it when it
             // consumes this channel message (e.g. PLAN_APPROVED instead of raw XML).
             if (uiMessageOverride != null) {
@@ -2334,6 +2356,12 @@ class AgentController(
                 service.cancelCurrentTask()
             }
         }
+
+        // fresh user turn — apply the armed walkthrough step context (captured + cleared at the
+        // top) to the MODEL text only; the chat still shows the user's raw words via
+        // uiText/displayUserMessage. All delegation/pending/parked/steering/viewed short-circuits
+        // returned above, so this is the only place the prefix is applied.
+        val modelTask = if (armedRef != null) "[Walkthrough · $armedRef] $task" else task
 
         // Show user message in the chat UI
         displayUserMessage(uiText, displayMentionsJson, uiMessageOverride, attachments, files)
@@ -2375,14 +2403,14 @@ class AgentController(
         // Launch the agent loop
         val debugEnabled = AgentSettings.getInstance(project).state.showDebugLog
         if (debugEnabled) {
-            dashboard.pushDebugLogEntry("session", "task_start", task.take(200), null)
+            dashboard.pushDebugLogEntry("session", "task_start", modelTask.take(200), null)
         }
         // Single source of truth: build the full controller→loop UI-callback bundle once
         // (see [buildSessionUiCallbacks] / [SessionUiCallbacks]). The SAME builder feeds the
         // cross-IDE delegated entry points, so a callback added here flows to both paths.
         val ui = buildSessionUiCallbacks()
         currentJob = service.executeTask(
-            task = task,
+            task = modelTask,
             sessionId = currentSessionId,
             attachments = attachments,
             contextManager = contextManager,
@@ -3010,6 +3038,7 @@ class AgentController(
             dashboard.setBusy(false)
             dashboard.setSteeringMode(true)
             dashboard.setInputLocked(false)
+            walkthroughService()?.setGenerationPaused(true)
             dashboard.appendStatus(reason, RichStreamingPanel.StatusType.INFO)
             // Mirror the post-exit Failed(EMPTY_RESPONSES / NO_TOOLS_USED) surface:
             // show the Retry button so the user has a one-click affordance identical
@@ -3021,6 +3050,16 @@ class AgentController(
             dashboard.focusInput()
         }
     }
+
+    private fun walkthroughService(): com.workflow.orchestrator.agent.walkthrough.WalkthroughService? =
+        project.getServiceIfCreated(com.workflow.orchestrator.agent.walkthrough.WalkthroughService::class.java)
+
+    @Volatile private var armedWalkthroughQuestionRef: String? = null
+
+    /** Walkthrough "Ask" arms a one-shot step ref; the next user turn is prefixed with it (model text only). */
+    fun armWalkthroughQuestionContext(stepRef: String) { armedWalkthroughQuestionRef = stepRef }
+
+    fun focusChatInputForWalkthrough() { dashboard.focusInput() }
 
     private fun onComplete(result: LoopResult) {
         phraseTimerJob?.cancel()
@@ -3045,6 +3084,10 @@ class AgentController(
             // The spinner-cleanup footer below MUST run even if rendering inside the
             // when-block throws (e.g. a bad completion card breaks appendCompletionCard).
             // Without this guard, the UI was left "working" forever after any UI-side error.
+            // Walkthrough auto-finish: must run BEFORE the result-kind dispatch — the
+            // SessionHandoff branch early-returns before the cleanup footer (spec §4).
+            walkthroughService()?.markGenerationEnded()
+
             var handledHandoff = false
             try {
             when (result) {
@@ -3298,6 +3341,7 @@ class AgentController(
         LOG.info("AgentController.newChat")
         val leaving = currentSessionId
         if (leaving != null && !killBackgroundsOnTransition(leaving, "Starting a new chat")) return
+        walkthroughService()?.endTour(byUser = false)
         resetForNewChat()
     }
 
@@ -4113,6 +4157,7 @@ class AgentController(
         if (currentJob?.isActive == true) {
             service.cancelCurrentTask()
         }
+        walkthroughService()?.endTour(byUser = false)
         currentJob = null
         viewedSessionId = sessionId
 

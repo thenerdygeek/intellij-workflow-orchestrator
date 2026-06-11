@@ -487,6 +487,80 @@ Shipped in commits `09a6940d0` (settings UI), `8a390ec56` (markAllDormant), `842
 
 `MonitorEventTest`, `MonitorSourceContractTest`, `MonitorManagerTest`, `MonitorWakeRoutingTest`, `ShellCommandSourceTest`, `MonitorHandleTest`, `MonitorSettingsDefaultsTest`, `MonitorToolTest`, `EnvironmentDetailsMonitorSectionTest`, `PollingSourceTest`, `EventBusSourceTest`, `BambooDiffTest`, `BambooMonitorSourceTest`, `PrStateSourceTest`, `PrReviewsSourceTest`, `PrCommentsSourcesTest`, `PullRequestMonitorSourceTest`, `JiraTicketMonitorSourceTest`, `JiraSprintMonitorSourceTest`, `ListDiffTest`, `SonarGateSourceTest`, `SonarIssuesSourceTest`, `MonitorPersistenceTest`, `MonitorNotificationsTest`, `MonitorSourceFactoryTest`, `MonitorPoolEmitSnapshotTest`, `AgentMonitorCoordinatorTest` (Phase 3 extraction — behavioral pin on the now-instantiable coordinator), `monitor-indicator.test.tsx`. Tool-side running-visibility fix: `BambooBuildsToolRunningVisibilityTest` (covers `build_status`/`recent_builds` composite poll on the resolved branch chainKey only — no master fallback — + non-silent running-check warning).
 
+## Code Walkthrough (guided tours)
+
+Agent-driven guided code tours. The `walkthrough` meta-tool (deferred, "Code Intelligence"
+category; actions `start`/`append`/`finish`/`cancel`/`update_step`) streams steps into a project-level
+`WalkthroughService` (`walkthrough/`), which drives a single `RangeHighlighter` + a draggable
+callout popup (`ui/WalkthroughCalloutPopup` — header drag-grip, markdown body via
+`WalkthroughMarkdown`/intellij-markdown, syntax-highlighted code, Back/Ask/Next footer) the
+user pages through. **Producer/consumer:** every tool action returns immediately; a user who
+outruns the agent gets a "Writing next step…" loading state that auto-advances on the next
+`append`. **Lifecycle actions:** `finish` only marks the queue done (the tour stays ACTIVE while
+the user pages); `cancel` force-ends/tears down the tour (recovery from a stuck UI); `start` on an
+active tour REPLACES it. `toolStatusLine()` reports the lifecycle phase (ACTIVE-generating /
+ACTIVE-complete / ENDED) + the user's step — not an ambiguous "queue complete".
+⚠ **Popup must be RECREATED per step** (`showAt` cancels the old popup + creates a fresh one shown
+via `showInBestPositionFor(editor)`): a JBPopup can't be reliably re-shown after it's been
+shown/hidden, and manual `RelativePoint(...).screenPoint` on a just-opened (not-yet-laid-out)
+editor throws — both left step 2+ highlighted but with NO callout (the v0.86.0-walkthrough.2 bug). Pure core: `WalkthroughStep`/`parseStepsJson` (steps arrive as a JSON-array **string**
+— BrainRouter primitive serialization), `WalkthroughStateMachine` (IDLE→GENERATING→COMPLETE→ENDED,
+cursor, pendingNext auto-advance, generationPaused; `updateStep(index, body, append)` revises a
+stored step by 1-based index).
+
+- **Q&A v2 — Ask routes to the MAIN chat (Kotlin-only, no composer change):** clicking "Ask about
+  this step" calls `WalkthroughService.askInChat()`, which arms a one-shot step-context ref on
+  `AgentController` (`armWalkthroughQuestionContext(stepRef)`) and focuses the chat input
+  (`focusChatInputForWalkthrough()` → `dashboard.focusInput()`). The user types the question in the
+  working chat input; the NEXT fresh user turn has the ref prepended to the **MODEL text only**
+  (`[Walkthrough · file:start-end] …`) inside `executeTaskInternal` — consumed on the genuine
+  fresh-turn path (after the delegation-localAnswer, pending-ask_followup, parked-channel, steering,
+  and viewed-session short-circuits), so `displayText`/`uiText` stay the user's raw words in chat.
+  The agent answers in chat (full multi-turn) and may call `action=update_step` (step=<1-based>,
+  body_md, mode=append|replace) to distill the answer into a step's box — re-rendered only if it's
+  the currently-shown step. This replaced the v1 in-popup Ask field (which couldn't receive typing —
+  JBPopup focus bug) and the whole inline-answer machinery (`pendingQuestion` gate, `action=answer`,
+  `showAnswering/showAnswer/showAnswerFallbackNote`, `QuestionEnvelope` — all removed).
+- **Syntax-highlighted code blocks:** `WalkthroughMarkdown.toHtml(markdown, project)` emits an inline
+  `<style>` block (code background + IDE editor font; JEditorPane honors inline `style=`, ignores
+  `class=`) and lex-colors fenced blocks via `HtmlSyntaxInfoUtil
+  .appendHighlightedByLexerAndEncodedAsHtmlCodeSnippet(sb, project, language, code, scale)`. The
+  language is resolved by id then file extension; unknown languages keep the styled-but-uncolored
+  block. The 0-arg `toHtml(markdown)` overload stays headless-safe for the unit test.
+- **Lifecycle wiring (`AgentController`):** `onComplete` calls `markGenerationEnded()` **before**
+  the result-kind dispatch (the `SessionHandoff` branch early-returns before the cleanup footer —
+  a footer placement would leak a permanent spinner); `newChat`/`showSession` call
+  `endTour(byUser=false)` (a live tour always belongs to the shown session); the loop-parks-for-input
+  paths (`onLoopAwaitingUserInput`, **both** simple- and wizard-mode `ask_followup_question` show
+  callbacks) set `generationPaused`, and the resume paths (parked-channel branch, pending-question
+  branch, wizard `onSubmitted`/`onCancelled`) clear it — so a plan-mode/question pause mid-tour
+  shows a "waiting in chat" state, not an unresolvable spinner. (These pause hooks are about the
+  loop being parked, orthogonal to the Ask feature, which no longer touches the state machine.)
+- **Guards:** sub-agent exclusion is the **name filter** in `SpawnAgentTool.resolveConfigToolsTiered`
+  (alongside `render_artifact`) — `allowedWorkers` gates nothing at the sub-agent boundary, it is
+  documentation only. An interactive-controller guard in the tool blocks delegated/background runs
+  (they never reach `onComplete`, so auto-finish couldn't hold). **Not** in `WRITE_TOOLS` →
+  plan-mode legal ("explain this code" is a natural plan-mode ask).
+- **Step validation** runs in a `readAction` via the `validateSteps(project, steps, resolve)` seam
+  (non-refreshing `findFileByPath` — a sync VFS refresh under a read lock is a platform violation);
+  invalid steps are rejected individually so the LLM can re-`append` corrected ones.
+- Ephemeral v1 (no persistence/replay). v2 candidates in the spec: arrow notch, scroll-tracking
+  reposition, saved/replayable tours. Spec: `docs/superpowers/specs/2026-06-11-code-walkthrough-design.md`.
+
+**Tests:** pure-logic units `WalkthroughStepParsingTest`, `WalkthroughStateMachineTest`,
+`WalkthroughMarkdownTest`, `WalkthroughServiceTest`, `WalkthroughToolTest`;
+source-text contracts `WalkthroughRegistrationContractTest` (registration + sub-agent name-filter +
+not-in-WRITE_TOOLS) and `WalkthroughControllerWiringContractTest` (auto-finish ordering + pause
+set/clear symmetry + Ask arm/consume wiring). **No `BasePlatformTestCase` here on purpose:** the
+validator's bounds/message logic is a PURE `validateStepsWith(steps, probe)` over a `StepFileProbe`
+(`defaultStepValidator` supplies the real readAction+FileDocumentManager probe), and the navigator's
+clamp is the PURE `clampLineRange(start, end, lineCount)` — both unit-tested headlessly
+(`WalkthroughStepValidatorTest`, `WalkthroughNavigatorClampTest`). The earlier heavy
+`WalkthroughFixtureTest` was deleted: a SECOND `BasePlatformTestCase` class in the same test JVM
+collides with the existing `EditFilePersistenceFixtureTest` on the headless "Indexing timeout"
+(issue #51) and failed CI. The markup add/dispose + editor-open glue is the only untested surface
+(trivial, covered by in-IDE smoke).
+
 ## Run/Test Tool Disposal — RunInvocation Pattern
 
 `java_runtime_exec.run_tests` and `coverage.run_with_coverage` route all per-launch IntelliJ listener/descriptor/connection tracking through `RunInvocation` (`agent/tools/runtime/RunInvocation.kt`) — a per-launch `Disposable` parented to the current session. Every run starts with:

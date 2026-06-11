@@ -413,6 +413,8 @@
         <projectService
             serviceImplementation="com.workflow.orchestrator.agent.AgentService"/>
         <projectService
+            serviceImplementation="com.workflow.orchestrator.agent.walkthrough.WalkthroughService"/>
+        <projectService
             serviceImplementation="com.workflow.orchestrator.agent.delegation.DelegationInboundService"/>
         <projectService
             serviceImplementation="com.workflow.orchestrator.agent.delegation.DelegationOutboundService"/>
