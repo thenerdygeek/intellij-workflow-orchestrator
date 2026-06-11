@@ -1059,6 +1059,7 @@ class AgentService(
         } else {
             safeRegisterDeferred("Code Intelligence") { com.workflow.orchestrator.agent.tools.project.ProjectStructureTool() }
         }
+        safeRegisterDeferred("Code Intelligence") { WalkthroughTool() }
 
         // Code Quality — formatting, refactoring, inspections
         safeRegisterDeferred("Code Quality") { FormatCodeTool() }
