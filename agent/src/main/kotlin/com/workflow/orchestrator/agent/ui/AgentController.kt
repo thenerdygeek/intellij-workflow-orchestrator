@@ -2220,6 +2220,14 @@ class AgentController(
         // The text shown in the UI — clean text without mention XML
         val uiText = displayText ?: task
 
+        // Capture-and-clear any armed walkthrough step context at the very top so it is
+        // strictly "next message or nothing": if this message hits a short-circuit branch
+        // (delegation answer / pending question / parked channel / steering / viewed session)
+        // the arm is dropped rather than leaking a stale prefix onto a later fresh turn.
+        // It is only APPLIED on the genuine fresh-turn path below.
+        val armedRef = armedWalkthroughQuestionRef
+        armedWalkthroughQuestionRef = null
+
         // Gap 15+17: Track last task for retry and session title
         lastTaskText = task
         lastDisplayText = displayText
@@ -2349,12 +2357,10 @@ class AgentController(
             }
         }
 
-        // fresh user turn — apply any armed walkthrough step context to the MODEL text only
-        // (the chat still shows the user's raw words via uiText/displayUserMessage). This is the
-        // genuine fresh-turn block: all delegation/pending/parked/steering/viewed short-circuits
-        // returned above, so prefixing here cannot corrupt their raw `task` payloads.
-        val armedRef = armedWalkthroughQuestionRef
-        armedWalkthroughQuestionRef = null
+        // fresh user turn — apply the armed walkthrough step context (captured + cleared at the
+        // top) to the MODEL text only; the chat still shows the user's raw words via
+        // uiText/displayUserMessage. All delegation/pending/parked/steering/viewed short-circuits
+        // returned above, so this is the only place the prefix is applied.
         val modelTask = if (armedRef != null) "[Walkthrough · $armedRef] $task" else task
 
         // Show user message in the chat UI
