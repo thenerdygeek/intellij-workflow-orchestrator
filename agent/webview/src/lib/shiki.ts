@@ -10,7 +10,7 @@ import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
  *
  * Code-splitting: this module is only reached via a dynamic `import()` at the call sites
  * (e.g. `CodeBlock.tsx`), so Vite/Rollup emits shiki and its language grammars as separate
- * async chunks that are only the heavy payloads stay off the startup-critical path. Do NOT add a
+ * async chunks, keeping the heavy payloads off the startup-critical path. Do NOT add a
  * `manualChunks` rule for 'shiki' in vite.config.ts — that would collapse these lazy chunks
  * back into a single chunk and force it into the main entry's modulepreload list.
  *

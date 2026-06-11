@@ -38,8 +38,7 @@ export default defineConfig(({ mode }) => ({
           // land in the MAIN entry's modulepreload list. Two safe categories:
           //  - main-entry statics that are preloaded anyway (radix);
           //  - sandbox-entry statics (cobe/maps/xyflow/react-table/date-fns/colord/
-          //    motion — plus d3/recharts/roughjs which sandbox-main.ts imports
-          //    statically) and dynamic-only subgraphs (katex/chartjs/diff2html):
+          //    motion) and dynamic-only subgraphs (katex/chartjs/diff2html):
           //    a manualChunks name on an async-only or sandbox-only subgraph stays
           //    out of index.html's preloads.
           //
