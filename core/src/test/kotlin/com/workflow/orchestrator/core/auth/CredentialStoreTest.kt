@@ -46,6 +46,21 @@ class CredentialStoreTest {
     }
 
     @Test
+    fun `storeToken returns true when the write is verified readable`() {
+        assertTrue(store.storeToken(ServiceType.JIRA, "tok"))
+    }
+
+    @Test
+    fun `storeToken returns false when the store silently drops the write`() {
+        // Simulate PasswordSafe.set() no-op (locked/denied KeePass db): backing map never updated,
+        // so the read-back verification returns null and the store reports failure.
+        every { mockPasswordSafe.set(any(), any()) } answers { /* silently drop the write */ }
+        assertFalse(store.storeToken(ServiceType.JIRA, "tok"))
+        // The phantom value must not linger in the cache either.
+        assertNull(store.getToken(ServiceType.JIRA))
+    }
+
+    @Test
     fun `retrieve missing token returns null`() {
         assertNull(store.getToken(ServiceType.BAMBOO))
     }

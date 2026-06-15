@@ -169,10 +169,11 @@ class ConnectionsConfigurable(
             }
         }
 
-        // Save credentials only on explicit Apply — not on every keystroke
+        // Save credentials only on explicit Apply — not on every keystroke.
+        // storeToken verifies the write landed; surface a failure instead of silently dropping it.
         for ((serviceType, token) in pendingTokens) {
-            if (token.isNotBlank()) {
-                credentialStore.storeToken(serviceType, token)
+            if (token.isNotBlank() && !credentialStore.storeToken(serviceType, token)) {
+                notifyTokenSaveFailure(serviceType)
             }
         }
         pendingTokens.clear()
@@ -196,6 +197,19 @@ class ConnectionsConfigurable(
 
     override fun disposeUIResources() {
         dialogPanel = null
+    }
+
+    private fun notifyTokenSaveFailure(service: ServiceType) {
+        log.warn("[Settings:Connections] Token write verification failed for ${service.name}")
+        com.intellij.notification.NotificationGroupManager.getInstance()
+            .getNotificationGroup("Workflow Orchestrator")
+            ?.createNotification(
+                "${service.displayName} token not saved",
+                "Your IDE password storage did not persist the token. Check " +
+                    "Settings → Appearance & Behavior → System Settings → Passwords, then try again.",
+                com.intellij.notification.NotificationType.ERROR
+            )
+            ?.notify(project)
     }
 
     // ========== Service group helpers ==========
