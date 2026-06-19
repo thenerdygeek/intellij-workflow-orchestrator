@@ -8,15 +8,22 @@ import {
   ChainOfThoughtContent,
 } from '@/components/ui/prompt-kit/chain-of-thought';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
 import { cn } from '@/lib/utils';
 import { formatElapsedMs, formatElapsedSeconds } from '@/lib/time';
-import { Loader2, Check, X, Clock } from 'lucide-react';
+import { Loader2, Check, X, Clock, Square } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
 import { useShiki } from '@/hooks/useShiki';
 
 // Lazy-load DiffHtml — only needed when expanding edit/write tool calls
 const DiffHtml = lazy(() => import('@/components/rich/DiffHtml').then(m => ({ default: m.DiffHtml })));
+
+// Tools that must NOT show the universal header Stop button:
+//  - run_command / background_process: have their own in-terminal Stop (terminal.tsx)
+//  - ask_user_input: awaiting the user; has its own answer affordance
+// (the `agent` tool is added in Phase 2 — it uses the per-worker SubAgentView Kill)
+const STOP_SUPPRESSED_TOOLS = new Set(['run_command', 'background_process', 'ask_user_input'])
 
 // ── Category helpers ──
 
@@ -362,6 +369,21 @@ const ToolCallItem = memo(function ToolCallItem({ tc }: { tc: ToolCall }) {
               </span>
             )}
             <span className="flex-1" />
+            {/* Universal Stop button — shown for any RUNNING tool that doesn't
+                have its own stop affordance (run_command/background_process have
+                the in-terminal Stop; ask_user_input has its own answer). */}
+            {isRunning && !STOP_SUPPRESSED_TOOLS.has(tc.name) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 w-5 p-0 shrink-0"
+                onClick={(e) => { e.stopPropagation(); useChatStore.getState().killToolCall(tc.id) }}
+                title="Stop"
+                aria-label="Stop"
+              >
+                <Square className="h-3 w-3" style={{ color: 'var(--error)' }} />
+              </Button>
+            )}
             {/* Elapsed time / duration. Hidden on row hover so it doesn't sit
                 under the absolutely-positioned hover copy button on the right
                 (they previously overlapped). */}
