@@ -143,9 +143,7 @@ class AgentService(
     private val backgroundCompletionCoordinator =
         com.workflow.orchestrator.agent.tools.background.BackgroundCompletionCoordinator(
             project = project,
-            agentDirProvider = { agentDir },
-            activeLoopForSession = ::activeLoopForSession,
-            autoWake = { sessionId, text, source -> autoWakeIdleSession(sessionId, text, source) },
+            enqueue = ::enqueueToSession,
         )
 
     /**
