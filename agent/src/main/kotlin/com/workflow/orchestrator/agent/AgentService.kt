@@ -136,9 +136,9 @@ class AgentService(
      * Background-process completion routing + auto-resume message building, extracted into
      * [com.workflow.orchestrator.agent.tools.background.BackgroundCompletionCoordinator] (Phase 3
      * cut F). Subscribes to [com.workflow.orchestrator.agent.tools.background.BackgroundPool] on
-     * construction; registered under this service for disposal in `init`. The shared auto-wake
-     * substrate ([idleWaker] via [autoWakeIdleSession]) and [activeLoopForSession] are injected so
-     * monitor / background / delegation wakes keep sharing one guard.
+     * construction; registered under this service for disposal in `init`. Routes background
+     * completions through the unified queue via [enqueueToSession] — the sole collaborator
+     * injected after the unified-queue migration (Task 2.2).
      */
     private val backgroundCompletionCoordinator =
         com.workflow.orchestrator.agent.tools.background.BackgroundCompletionCoordinator(

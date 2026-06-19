@@ -3846,10 +3846,10 @@ class AgentController(
                 //    local prompt-submit hook does not apply (it runs only in executeTaskInternal).
                 //  - Local mid-turn STEERING of a delegated session is unsupported: cross-IDE
                 //    interaction flows through the routed question/answer channel
-                //    (DelegationInboundService), not the local steering queue. The bundle's
-                //    messageQueue is still forwarded (harmless — no local typing path feeds it for
-                //    a delegated session), so no behavior is lost; the human path is the routed
-                //    Q&A channel.
+                //    (DelegationInboundService), not the local steering queue. The loop resolves
+                //    its queue directly via queueForSession(sessionId) inside executeTask/
+                //    resumeSession; there is no messageQueue bundle field to forward (removed in
+                //    the unified-queue migration).
                 //
                 // SINGLE SOURCE OF TRUTH: source the full callback set from the SAME builder the
                 // interactive path uses, then .copy() ONLY the two delegated-specific overrides:

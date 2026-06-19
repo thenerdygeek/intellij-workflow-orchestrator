@@ -20,7 +20,8 @@ import java.util.concurrent.atomic.AtomicLong
  *  - [Decision.PROCEED]     — all checks passed; counter is incremented and timestamp updated
  *
  * Note: iteration-budget and session-lock guards are deferred — see the
- * `// TODO: iteration budget guard` note in AgentService.autoResumeForBackgroundCompletion.
+ * `// TODO: iteration budget guard` note in the background-completion path
+ * (BackgroundCompletionCoordinator, routed via AgentService.enqueueToSession).
  */
 class AutoWakeGuardState {
 
