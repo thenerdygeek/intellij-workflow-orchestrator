@@ -64,7 +64,13 @@ class BackgroundCompletionCoordinator(
                 timestamp = System.currentTimeMillis(),
                 priority = BackgroundQueuePolicy.priority,
                 coalesceKey = event.bgId,
-                meta = mapOf("bgId" to event.bgId),
+                meta = mapOf(
+                    "bgId" to event.bgId,
+                    "card" to kotlinx.serialization.json.Json.encodeToString(
+                        com.workflow.orchestrator.agent.session.AsyncEventCardData.serializer(),
+                        com.workflow.orchestrator.agent.ui.AsyncEventCardPresenter.fromBackground(event),
+                    ),
+                ),
             ),
         )
     }
