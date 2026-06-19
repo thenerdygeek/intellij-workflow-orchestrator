@@ -1,10 +1,25 @@
 import { Search, Plus, MessageSquareDashed, X, CheckSquare, Download, Trash2 } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
+import { Virtuoso } from 'react-virtuoso';
 import { useChatStore } from '../../stores/chatStore';
 import { SessionCard } from './SessionCard';
 import { SessionContextMenu } from './SessionContextMenu';
 import { kotlinBridge } from '../../bridge/jcef-bridge';
 import type { HistoryItem } from '../../bridge/types';
+
+// Module-scope Virtuoso slot components (same convention as MessageList):
+// inline lambdas would get a fresh identity every render and force Virtuoso
+// to remount the Header/Footer slots.
+function HistoryHeaderSpacer() {
+  return <div className="h-1.5" />;
+}
+function HistoryFooterSpacer() {
+  return <div className="h-3" />;
+}
+const HISTORY_LIST_COMPONENTS = {
+  Header: HistoryHeaderSpacer,
+  Footer: HistoryFooterSpacer,
+};
 
 export function HistoryView() {
   const historyItems = useChatStore((s) => s.historyItems);
@@ -42,33 +57,34 @@ export function HistoryView() {
     [filteredItems, selectedIds],
   );
 
-  const handleResume = (id: string) => {
+  // P1-16: useCallback so memoized SessionCard can bail out on unchanged handlers
+  const handleResume = useCallback((id: string) => {
     // Stash delegation metadata before handing off to Kotlin so the banner
     // is ready by the time _loadSessionState switches the view to 'chat'.
     const item = historyItems.find((h) => h.id === id);
     setActiveSessionDelegated(item?.delegated ?? null);
     kotlinBridge.showSession(id);
-  };
+  }, [historyItems, setActiveSessionDelegated]);
 
-  const handleDelete = (id: string) => {
+  const handleDelete = useCallback((id: string) => {
     kotlinBridge.deleteSession(id);
-  };
+  }, []);
 
-  const handleToggleFavorite = (id: string) => {
+  const handleToggleFavorite = useCallback((id: string) => {
     kotlinBridge.toggleFavorite(id);
-  };
+  }, []);
 
-  const handleNewChat = () => {
+  const handleNewChat = useCallback(() => {
     kotlinBridge.startNewSession();
-  };
+  }, []);
 
-  const handleExport = (id: string) => {
+  const handleExport = useCallback((id: string) => {
     kotlinBridge.exportSession(id);
-  };
+  }, []);
 
-  const handleExportAll = () => {
+  const handleExportAll = useCallback(() => {
     kotlinBridge.exportAllSessions();
-  };
+  }, []);
 
   // ── Bulk selection handlers ──
 
@@ -251,9 +267,9 @@ export function HistoryView() {
       )}
 
       {/* Content area */}
-      <div className="flex-1 overflow-y-auto px-3 pb-3">
+      <div className="flex-1 min-h-0">
         {isEmpty ? (
-          <div className="flex flex-col items-center justify-center h-full text-center">
+          <div className="flex flex-col items-center justify-center h-full text-center px-3">
             <MessageSquareDashed size={48} className="text-[var(--fg-muted)] mb-3" />
             <p className="text-base font-semibold text-[var(--fg-secondary)] mb-1">No sessions yet</p>
             <p className="text-xs text-[var(--fg-muted)] max-w-[240px] mb-4">
@@ -269,7 +285,7 @@ export function HistoryView() {
             </button>
           </div>
         ) : filteredItems.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center">
+          <div className="flex flex-col items-center justify-center h-full text-center px-3">
             <Search size={32} className="text-[var(--fg-muted)] mb-3" />
             <p className="text-sm text-[var(--fg-secondary)]">No matching sessions</p>
             <p className="text-xs text-[var(--fg-muted)] mt-1">
@@ -277,23 +293,35 @@ export function HistoryView() {
             </p>
           </div>
         ) : (
-          <div className="flex flex-col gap-1.5">
-            {filteredItems.map((item) => (
-              <SessionCard
-                key={item.id}
-                item={item}
-                onResume={handleResume}
-                onDelete={handleDelete}
-                onToggleFavorite={handleToggleFavorite}
-                showCheckbox={selectionMode}
-                selected={selectedIds.has(item.id)}
-                onToggleSelect={handleToggleSelect}
-                isActive={activeCardId === item.id}
-                onActivate={setActiveCardId}
-                onContextMenu={handleContextMenu}
-              />
-            ))}
-          </div>
+          // P1-16: virtualize with react-virtuoso so large history lists (100s of
+          // sessions) don't mount all DOM nodes at once. SessionCard is memoized
+          // so only the changed row re-renders when e.g. a card is clicked.
+          // Do NOT wrap Virtuoso in a flex container — it must size itself.
+          <Virtuoso
+            style={{ height: '100%' }}
+            totalCount={filteredItems.length}
+            computeItemKey={(index) => filteredItems[index]!.id}
+            itemContent={(index) => {
+              const item = filteredItems[index]!;
+              return (
+                <div className="px-3 pb-1.5">
+                  <SessionCard
+                    item={item}
+                    onResume={handleResume}
+                    onDelete={handleDelete}
+                    onToggleFavorite={handleToggleFavorite}
+                    showCheckbox={selectionMode}
+                    selected={selectedIds.has(item.id)}
+                    onToggleSelect={handleToggleSelect}
+                    isActive={activeCardId === item.id}
+                    onActivate={setActiveCardId}
+                    onContextMenu={handleContextMenu}
+                  />
+                </div>
+              );
+            }}
+            components={HISTORY_LIST_COMPONENTS}
+          />
         )}
       </div>
 

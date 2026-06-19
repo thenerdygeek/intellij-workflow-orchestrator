@@ -169,10 +169,11 @@ class ConnectionsConfigurable(
             }
         }
 
-        // Save credentials only on explicit Apply — not on every keystroke
+        // Save credentials only on explicit Apply — not on every keystroke.
+        // storeToken verifies the write landed; surface a failure instead of silently dropping it.
         for ((serviceType, token) in pendingTokens) {
-            if (token.isNotBlank()) {
-                credentialStore.storeToken(serviceType, token)
+            if (token.isNotBlank() && !credentialStore.storeToken(serviceType, token)) {
+                notifyTokenSaveFailure(serviceType)
             }
         }
         pendingTokens.clear()
@@ -196,6 +197,19 @@ class ConnectionsConfigurable(
 
     override fun disposeUIResources() {
         dialogPanel = null
+    }
+
+    private fun notifyTokenSaveFailure(service: ServiceType) {
+        log.warn("[Settings:Connections] Token write verification failed for ${service.name}")
+        com.intellij.notification.NotificationGroupManager.getInstance()
+            .getNotificationGroup("Workflow Orchestrator")
+            ?.createNotification(
+                "${service.displayName} token not saved",
+                "Your IDE password storage did not persist the token. Check " +
+                    "Settings → Appearance & Behavior → System Settings → Passwords, then try again.",
+                com.intellij.notification.NotificationType.ERROR
+            )
+            ?.notify(project)
     }
 
     // ========== Service group helpers ==========
@@ -247,13 +261,20 @@ class ConnectionsConfigurable(
             row {
                 button("Test Connection") {
                     val url = currentUrl.trim()
-                    val token = currentToken.ifBlank { credentialStore.getToken(serviceType) }
-                    if (url.isBlank() || token.isNullOrBlank()) {
+                    val typedToken = currentToken
+                    if (url.isBlank()) {
                         statusLabel.text = "Please enter URL and token"
                         return@button
                     }
                     statusLabel.text = "Testing..."
                     runBackgroundableTask("Testing $title", project, false) {
+                        // P2-9: PasswordSafe fallback read stays OFF the EDT — first access
+                        // on Windows can take seconds (credential vault unlock).
+                        val token = typedToken.ifBlank { credentialStore.getToken(serviceType) }
+                        if (token.isNullOrBlank()) {
+                            invokeLater { statusLabel.text = "Please enter URL and token" }
+                            return@runBackgroundableTask
+                        }
                         val result = runBlockingCancellable {
                             authTestService.testConnection(serviceType, url, token)
                         }
@@ -347,13 +368,20 @@ class ConnectionsConfigurable(
             row {
                 button("Test Connection") {
                     val url = currentUrl.trim()
-                    val token = currentToken.ifBlank { credentialStore.getToken(ServiceType.BITBUCKET) }
-                    if (url.isBlank() || token.isNullOrBlank()) {
+                    val typedToken = currentToken
+                    if (url.isBlank()) {
                         statusLabel.text = "Please enter URL and token"
                         return@button
                     }
                     statusLabel.text = "Testing..."
                     runBackgroundableTask("Testing $title", project, false) {
+                        // P2-9: PasswordSafe fallback read stays OFF the EDT — first access
+                        // on Windows can take seconds (credential vault unlock).
+                        val token = typedToken.ifBlank { credentialStore.getToken(ServiceType.BITBUCKET) }
+                        if (token.isNullOrBlank()) {
+                            invokeLater { statusLabel.text = "Please enter URL and token" }
+                            return@runBackgroundableTask
+                        }
                         val result = runBlockingCancellable {
                             authTestService.testConnection(ServiceType.BITBUCKET, url, token)
                         }

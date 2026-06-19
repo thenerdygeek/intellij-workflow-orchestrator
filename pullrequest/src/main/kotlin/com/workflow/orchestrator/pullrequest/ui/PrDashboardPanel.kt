@@ -356,7 +356,10 @@ class PrDashboardPanel(
     private fun setupVisibilityListener() {
         addAncestorListener(object : javax.swing.event.AncestorListener {
             override fun ancestorAdded(e: javax.swing.event.AncestorEvent) {
-                // Panel became visible — notify poller (resets backoff, polls immediately)
+                // Panel became visible — restart polling if a prior dispose() stopped it
+                // (B16: SmartPoller.start() is a no-op while the poll job is still active),
+                // then notify the poller (resets backoff, polls immediately).
+                PrListService.getInstance(project).startPolling()
                 PrListService.getInstance(project).setVisible(true)
             }
 
@@ -618,6 +621,13 @@ class PrDashboardPanel(
 
     override fun dispose() {
         autoSelectTimer?.stop()
+        // B16 (2026-06-10 perf audit): stop PR polling when the panel goes away (project close
+        // or "Refresh All Tabs" rebuild) — previously stopPolling() had zero callers, so the
+        // first PR-tab open left Bitbucket polling running for the rest of the IDE session
+        // even after the panel was rebuilt. A rebuilt/re-shown panel restarts polling via
+        // startDataCollection() / the ancestorAdded visibility hook. runCatching: service
+        // lookup may fail when dispose runs during project teardown.
+        runCatching { PrListService.getInstance(project).stopPolling() }
         // detailPanel disposed via Disposer.register(this, detailPanel) in init.
         scope.cancel()
     }

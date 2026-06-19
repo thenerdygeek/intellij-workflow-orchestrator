@@ -99,9 +99,9 @@ Card header helper (`handoverPanelHeader`) lives in `ui/cards/CardPanelHeader.kt
 
 | Component | Actions wired |
 |---|---|
-| `CopyrightFixCard` | Rescan walks `ChangeListManager.allChanges` → `CopyrightFixService.analyzeFile`. Fix All applies year-consolidation / template-insertion in a single `WriteCommandAction` (one-step undo). On success, flips `markCopyrightFixed()`. |
+| `CopyrightFixCard` | Rescan walks `ChangeListManager.allChanges` → `CopyrightFixService.analyzeFile`. Fix All applies year-consolidation / template-insertion in a single `WriteCommandAction` (one-step undo). On success, flips `markCopyrightFixed()`. File list uses a rubber-stamp cell renderer — widgets allocated once, ALL per-row properties reset per call (P2-20, 2026-06-10 perf audit). |
 | `TimeLogCard` | Log Work calls `JiraService.logWork(ticketId, timeSpent, started)` via `TimeTrackingService.hoursToJiraTimeString`. Live validation on hours/date. On success, flips `markWorkLogged()` and disables button to discourage double-log. |
-| `ChecksTab` | Driven by `HandoverStateService.stateFlow`; dots update on every state emission via `Dispatchers.EDT`. |
+| `ChecksTab` | Driven by `HandoverStateService.stateFlow`; dots update on every state emission via `Dispatchers.EDT`. Checklist rows rebuild only when the four checklist flags actually change (P2-20 equality gate, 2026-06-10 perf audit). |
 | `ShareTab` | `TemplateEditorCard`s resolve placeholders from `HandoverPlaceholderResolver`; `QuickValueChipsPanel` copies formatted text to clipboard. |
 | `HandoverOverrideBanner` | Persisted via `HandoverOverrideTracker`; shown when active ticket diverges from branch. |
 

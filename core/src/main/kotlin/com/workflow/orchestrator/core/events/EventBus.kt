@@ -19,7 +19,9 @@ class EventBus {
     val events: SharedFlow<WorkflowEvent> = _events.asSharedFlow()
 
     fun emit(event: WorkflowEvent) {
-        log.info("[Core:Events] Emitting event: ${event::class.simpleName}")
+        // P2-24: per-event logging stays at DEBUG — emit() is on hot paths (polling,
+        // task/monitor updates) and INFO-per-event floods idea.log.
+        log.debug("[Core:Events] Emitting event: ${event::class.simpleName}")
         if (!_events.tryEmit(event)) {
             log.warn("[Core:Events] Failed to emit event (buffer full): ${event::class.simpleName}")
         }

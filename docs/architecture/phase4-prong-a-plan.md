@@ -1,6 +1,6 @@
 # Phase 4 Prong A — `runBlocking` correctness fixes
 
-**Status:** draft, pending user approval before any code commit
+**Status:** COMPLETE — all 5 EDT `runBlocking` sites in `AgentController.kt` removed (see `phase4-closeout.md` Prong A row). This document is a historical plan record.
 **Branch:** `refactor/cleanup-perf-caching`
 **Date:** 2026-04-25
 **Author:** agent pass, dogfood-verified

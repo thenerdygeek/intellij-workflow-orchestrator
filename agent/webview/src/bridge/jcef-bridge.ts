@@ -974,13 +974,23 @@ export function initBridge(storeAccessors: StoreAccessors): void {
 
   // Sub-agent thinking hooks (P2.T5) — called by AgentCefPanel via
   // callJs("if (window._appendSubAgentThinking) window._appendSubAgentThinking(...)").
-  // Payload is a parsed JS object (Kotlin passes a JSON string as a JS literal via
-  // JsEscape.toJsString, so the JS engine already evaluates it as an object).
+  // Kotlin delivers the payload as a JSON STRING (via JsEscape.toJsString), so parse
+  // defensively — the same way sibling handlers like _receiveSessionStats do.
   window._appendSubAgentThinking = (payload) => {
-    stores?.getChatStore().appendSubAgentThinking(payload.agentId, payload.delta);
+    try {
+      const p = typeof payload === 'string' ? JSON.parse(payload) : payload;
+      stores?.getChatStore().appendSubAgentThinking(p.agentId, p.delta);
+    } catch (e) {
+      console.warn('[bridge] _appendSubAgentThinking: malformed JSON', e);
+    }
   };
   window._endSubAgentThinking = (payload) => {
-    stores?.getChatStore().endSubAgentThinking(payload.agentId);
+    try {
+      const p = typeof payload === 'string' ? JSON.parse(payload) : payload;
+      stores?.getChatStore().endSubAgentThinking(p.agentId);
+    } catch (e) {
+      console.warn('[bridge] _endSubAgentThinking: malformed JSON', e);
+    }
   };
 
   // Session stats push — called by Kotlin after each API response

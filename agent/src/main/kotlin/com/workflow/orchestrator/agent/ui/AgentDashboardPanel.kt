@@ -1,15 +1,16 @@
 package com.workflow.orchestrator.agent.ui
 
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.diagnostic.Logger
-import com.intellij.util.ui.JBUI
-import java.awt.BorderLayout
-import java.util.concurrent.CopyOnWriteArrayList
-import javax.swing.JPanel
 import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.util.Disposer
+import com.intellij.util.ui.JBUI
 import com.workflow.orchestrator.agent.tools.CompletionData
 import com.workflow.orchestrator.agent.tools.subagent.AgentConfigLoader
 import com.workflow.orchestrator.agent.tools.subagent.SubagentToolName
+import java.awt.BorderLayout
+import java.util.concurrent.CopyOnWriteArrayList
+import javax.swing.JPanel
 import javax.swing.SwingUtilities
 
 /**
@@ -22,19 +23,36 @@ import javax.swing.SwingUtilities
  * Mirror panels can be registered via [addMirror] to receive every output call
  * (e.g. the "View in Editor" editor tab). Mirrors are autonomous panels with
  * their own JCEF instances; they do NOT mirror wiring/callback calls, only output.
+ *
+ * Lifecycle (P0-6/B4): the panel is [Disposable]. When [parentDisposable] is null
+ * (the tool-window tab path) the panel parents the JCEF browser to ITSELF, so the
+ * tool-window factory's `content.setDisposer(panel)` wiring cascades
+ * Content.dispose() -> panel -> AgentCefPanel (Chromium) + everything the CEF
+ * panel registered against its parent (scope cancel, scheme-handler detach).
+ * Callers that pass an explicit [parentDisposable] (e.g. AgentChatEditorTab's
+ * editor-scoped disposer) keep ownership of the CEF lifecycle, unchanged.
  */
 class AgentDashboardPanel(
-    private val parentDisposable: Disposable? = null
-) : JPanel(BorderLayout()) {
+    parentDisposable: Disposable? = null
+) : JPanel(BorderLayout()), Disposable {
 
     companion object {
         private val LOG = Logger.getInstance(AgentDashboardPanel::class.java)
+
+        /** Cap on retained replay actions — oldest evicted on overflow (P2-2/B7). */
+        private const val MAX_REPLAY_LOG_SIZE = 5000
     }
 
+    /** True when this panel owns the JCEF lifecycle (no external parent was supplied). */
+    private val ownsCefLifecycle: Boolean = parentDisposable == null
+
+    /** Disposer parent handed to [AgentCefPanel] -- external owner, or this panel itself. */
+    private val cefLifecycleParent: Disposable = parentDisposable ?: this
+
     // ── Output panel: JCEF or fallback ──
-    private val cefPanel: AgentCefPanel? = if (AgentCefPanel.isAvailable() && parentDisposable != null) {
+    private val cefPanel: AgentCefPanel? = if (AgentCefPanel.isAvailable()) {
         try {
-            AgentCefPanel(parentDisposable).also {
+            AgentCefPanel(cefLifecycleParent).also {
                 LOG.info("AgentDashboardPanel: using JCEF (Chromium) renderer")
             }
         } catch (e: Exception) {
@@ -67,15 +85,32 @@ class AgentDashboardPanel(
     @Volatile private var cachedBusy: Boolean = false
     @Volatile private var cachedInputLocked: Boolean = false
 
-    /** Ordered log of output calls to replay chat content to late-joining mirrors. */
-    private val replayLog = java.util.concurrent.CopyOnWriteArrayList<(AgentDashboardPanel) -> Unit>()
-    private val maxReplayLogSize = 5000
+    /**
+     * Ordered log of output calls to replay chat content to late-joining mirrors.
+     *
+     * P2-2/B7: bounded [ReplayRing] (ArrayDeque under a lock) — the OLDEST action is
+     * evicted on overflow so a late mirror replays the NEWEST content. The previous
+     * CopyOnWriteArrayList log full-array-copied on every add (one per batched stream
+     * token; P2-2) and had its cap inverted: it stopped ADDING at 5000, so a late
+     * mirror replayed the oldest 5000 actions and silently missed everything newer (B7).
+     *
+     * Recording is UNCONDITIONAL: [replayStateTo] is the ONLY content source for a
+     * late-opened mirror (the editor tab has no other hydration path), so the log must
+     * exist before the first mirror registers. A mirror-presence gate here was tried in
+     * W4-B3 and reverted in review — it left the FIRST late-opened mirror (and any
+     * close-then-reopen) completely blank. Memory stays bounded by the ring's 5000-entry
+     * cap; [dispose] and [reset] clear it.
+     */
+    private val replayLog = ReplayRing<(AgentDashboardPanel) -> Unit>(MAX_REPLAY_LOG_SIZE)
 
     fun addMirror(panel: AgentDashboardPanel) {
         mirrors.add(panel)
         replayStateTo(panel)
     }
-    fun removeMirror(panel: AgentDashboardPanel) { mirrors.remove(panel) }
+
+    fun removeMirror(panel: AgentDashboardPanel) {
+        mirrors.remove(panel)
+    }
 
     /**
      * Replay cached state + chat history to a late-joining mirror panel.
@@ -91,15 +126,13 @@ class AgentDashboardPanel(
         if (cachedBusy) panel.setBusy(true)
         if (cachedInputLocked) panel.setInputLocked(true)
         // Replay chat content log
-        for (action in replayLog) {
+        for (action in replayLog.snapshot()) {
             try { action(panel) } catch (_: Exception) {}
         }
     }
 
     private fun recordReplay(action: (AgentDashboardPanel) -> Unit) {
-        if (replayLog.size < maxReplayLogSize) {
-            replayLog.add(action)
-        }
+        replayLog.add(action)
     }
 
     /**
@@ -1023,5 +1056,30 @@ class AgentDashboardPanel(
     private fun runOnEdt(action: () -> Unit) {
         if (SwingUtilities.isEventDispatchThread()) action()
         else invokeLater { action() }
+    }
+
+    /**
+     * Tears down everything this panel owns (P0-6/B4).
+     *
+     * When disposed through Disposer (the tool-window path: Content.dispose() ->
+     * setDisposer(this)), the registered children -- [AgentCefPanel] (Chromium),
+     * its CoroutineScope cancel, the scheme-handler detach, plus anything callers
+     * chained via `Disposer.register(panel, ...)` (AgentController, EventBus scope)
+     * -- are disposed by the tree walk BEFORE this method runs. The explicit
+     * [AgentCefPanel] dispose below covers direct `dispose()` calls that bypass
+     * Disposer (defense-in-depth; guarded so the tree path doesn't double-dispose).
+     */
+    override fun dispose() {
+        if (ownsCefLifecycle) {
+            // AgentCefPanel.dispose() is idempotent (scope.cancel, idempotent
+            // JsBridgeDispatcher.dispose, query list cleared, browser nulled), so a
+            // second call after the Disposer tree walk already disposed it is harmless.
+            cefPanel?.let { Disposer.dispose(it) }
+        }
+        mirrors.clear()
+        replayLog.clear()
+        thinkingFallbackBuffer.setLength(0)
+        onSendMessage = null
+        LOG.info("AgentDashboardPanel disposed (ownsCefLifecycle=$ownsCefLifecycle)")
     }
 }

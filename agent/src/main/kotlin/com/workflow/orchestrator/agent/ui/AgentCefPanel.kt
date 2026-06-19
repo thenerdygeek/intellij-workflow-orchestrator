@@ -696,27 +696,35 @@ class AgentCefPanel(
         // Phase 5: chunked-by-sha256 upload pre-flight. The webview's
         // AttachmentManager calls this BEFORE shipping bytes so we can skip
         // the upload entirely on a hash collision (within-session dedup).
-        // Returns JSON: {"exists": true|false}. The query is text-only — the
-        // multi-MB upload itself goes through AttachmentUploadHandler via
+        // P2-18: the directory scan used to run synchronously in this bridge
+        // handler (per attached file, on the UI-blocking bridge thread). The
+        // JS side awaits a Promise, so the handler now ACKs immediately and
+        // resolves the promise asynchronously: the existence check runs on
+        // [scope] (Dispatchers.IO) and delivers via the injected
+        // `window.__resolveAttachmentExists(sha, exists)` callback. A wrong
+        // `false` is safe (the upload path dedups by sha anyway); the JS side
+        // also self-resolves `false` after a timeout so a dropped callback
+        // can never hang the send. The multi-MB upload itself still goes
+        // through AttachmentUploadHandler via
         // fetch('http://workflow-agent/upload/<sha256>').
         attachmentExistsQuery = registerQuery(b) { sha256 ->
             val dir = currentSessionDirProvider?.invoke()
-            val exists = if (dir != null) {
-                try {
-                    val store = com.workflow.orchestrator.agent.session.AttachmentStore(dir)
-                    // Synchronous readBlocking — JBCefJSQuery handlers run off
-                    // the IDE's coroutine context so runBlockingCancellable
-                    // throws "There is no ProgressIndicator or Job". The op is
-                    // pure JDK file I/O (single directory scan + small read).
-                    store.readBlocking(sha256) != null
-                } catch (e: Exception) {
-                    LOG.warn("attachmentExistsQuery: read failed for $sha256", e)
-                    false
-                }
+            if (dir == null) {
+                resolveAttachmentExists(sha256, exists = false)
             } else {
-                false
+                scope.launch {
+                    val exists = try {
+                        // Cheap existence probe: directory scan only, no byte read.
+                        com.workflow.orchestrator.agent.session.AttachmentStore(dir)
+                            .findExtensionForBlocking(sha256) != null
+                    } catch (e: Exception) {
+                        LOG.warn("attachmentExistsQuery: existence check failed for $sha256", e)
+                        false
+                    }
+                    resolveAttachmentExists(sha256, exists)
+                }
             }
-            JBCefJSQuery.Response("""{"exists":$exists}""")
+            JBCefJSQuery.Response("ok")
         }
 
         // Multimodal-agent Phase 7 — chat input usage indicator. JS calls
@@ -942,12 +950,32 @@ class AgentCefPanel(
                     // whether bytes for a given sha256 already exist in the
                     // active session's attachments/ dir, so we can skip the
                     // upload on a hash collision.
+                    // P2-18 async pattern: the query ACKs immediately ("ok");
+                    // the real answer arrives later via
+                    // window.__resolveAttachmentExists(sha, exists) pushed
+                    // from Kotlin (resolveAttachmentExists → callJs) once the
+                    // off-thread directory scan finishes. Waiters are keyed by
+                    // sha (an array — concurrent calls for the same sha all
+                    // resolve together) and self-resolve {exists:false} after
+                    // 10s so a dropped callback degrades to a redundant upload
+                    // instead of a hung send.
                     injectBridge("_attachmentExists") {
                         attachmentExistsQuery?.let { q ->
                             js(
-                                "window._attachmentExists = function(sha256) {" +
+                                "window.__attachmentExistsWaiters = window.__attachmentExistsWaiters || {};" +
+                                    " window.__resolveAttachmentExists = function(sha, exists) {" +
+                                    " var ws = window.__attachmentExistsWaiters[sha] || [];" +
+                                    " delete window.__attachmentExistsWaiters[sha];" +
+                                    " ws.forEach(function(w) { clearTimeout(w.t); w.resolve({exists: !!exists}); }); };" +
+                                    " window._attachmentExists = function(sha256) {" +
                                     " return new Promise(function(resolve) {" +
-                                    " ${q.inject("sha256", "function(r) { try { resolve(JSON.parse(r)); } catch(e) { resolve({exists:false}); } }", "function(err) { resolve({exists:false}); }")}" +
+                                    " var w = { resolve: resolve };" +
+                                    " w.t = setTimeout(function() {" +
+                                    " var ws = window.__attachmentExistsWaiters[sha256] || [];" +
+                                    " var i = ws.indexOf(w); if (i >= 0) { ws.splice(i, 1); }" +
+                                    " resolve({exists: false}); }, 10000);" +
+                                    " (window.__attachmentExistsWaiters[sha256] = window.__attachmentExistsWaiters[sha256] || []).push(w);" +
+                                    " ${q.inject("sha256", "function(r) {}", "function(err) { window.__resolveAttachmentExists(sha256, false); }")}" +
                                     " }); };"
                             )
                         }
@@ -1858,6 +1886,20 @@ class AgentCefPanel(
         // quotes, newlines, CR, tab, and U+2028/U+2029 (audit finding agent-ui:F-3).
         val jsLiteral = JsEscape.toJsString(payload)   // returns 'escaped-content'
         callJs("if (window.__applyImageSettings) { window.__applyImageSettings($jsLiteral); }")
+    }
+
+    /**
+     * P2-18: deliver the asynchronous answer for an `_attachmentExists` pre-flight query.
+     * The bridge handler ACKs immediately and runs the directory scan off-thread; this
+     * callback resolves the webview's pending Promise (see the `_attachmentExists`
+     * injection — `window.__resolveAttachmentExists` consumes the waiter list for [sha256]).
+     * Safe from any thread: [callJs] routes through the bridge dispatcher.
+     */
+    private fun resolveAttachmentExists(sha256: String, exists: Boolean) {
+        callJs(
+            "if (window.__resolveAttachmentExists) { " +
+                "window.__resolveAttachmentExists(${JsEscape.toJsString(sha256)}, $exists); }"
+        )
     }
 
     /**

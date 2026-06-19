@@ -6,6 +6,8 @@ import com.workflow.orchestrator.core.network.NetworkProbe
 import com.workflow.orchestrator.core.network.NetworkState
 import com.workflow.orchestrator.core.network.NetworkStateService
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.random.Random
 
@@ -30,7 +32,20 @@ class SmartPoller(
     private val log = Logger.getInstance(SmartPoller::class.java)
     private var job: Job? = null
     private val visible = AtomicBoolean(true)
+
+    // B13: mutated from both the poll-loop coroutine and setVisible's resume coroutine —
+    // @Volatile so a reset from one context is visible to the other.
+    @Volatile
     private var currentBackoff = 1.0
+
+    /**
+     * B13: serializes [action] between the poll loop and the visibility-resume poll launched
+     * by [setVisible]. Without it, `setVisible(true)` fires the action CONCURRENTLY with an
+     * in-flight loop poll — a duplicate overlapping HTTP refresh of the same resource. The
+     * lock is uncontended on the loop's hot path (no suspension when free), so it does not
+     * change the loop's delay math.
+     */
+    private val pollMutex = Mutex()
 
     // C-04: Debounce visibility changes to prevent rapid tab switching from
     // generating bursts of HTTP requests (e.g., 5 clicks -> 5 immediate polls)
@@ -90,7 +105,7 @@ class SmartPoller(
                     delay(Random.nextLong(baseIntervalMs + 1))
                 }
                 try {
-                    val changed = action()
+                    val changed = pollMutex.withLock { action() }
                     currentBackoff = if (changed) {
                         1.0
                     } else {
@@ -142,7 +157,9 @@ class SmartPoller(
 
             scope.launch {
                 try {
-                    action()
+                    // B13: same serialization as the loop — if a loop poll is in flight,
+                    // wait for it instead of firing a duplicate overlapping refresh.
+                    pollMutex.withLock { action() }
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
                     // Swallow; normal polling will handle errors

@@ -16,7 +16,14 @@ object BambooDiff {
         else -> Severity.NOTABLE
     }
 
-    private fun isTerminal(state: String) = state.lowercase() in TERMINAL_STATES
+    /**
+     * Whether [state] is a terminal Bamboo build state. Internal (not private) so
+     * [BambooMonitorSource.isTerminal] reuses the SAME terminal notion for its
+     * P1-8 auto-stop signal.
+     */
+    internal fun isTerminalState(state: String) = state.lowercase() in TERMINAL_STATES
+
+    private fun isTerminal(state: String) = isTerminalState(state)
 
     /**
      * Main entry point.  Delegates to the appropriate sub-differ based on [level].

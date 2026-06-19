@@ -23,11 +23,17 @@ import javax.swing.Timer
  *
  * **[invoker] EDT requirement:** In production the [invoker] parameter must dispatch work
  * to the EDT (e.g. `{ block -> invokeLater { block() } }`). The default argument already
- * does this. The injectable form `{ block -> block() }` (direct call, no EDT hop) is safe
- * **in tests only** because the Swing [Timer] is never actually ticked in a headless test
- * environment — callers drive flushing explicitly via [flush] or [flushIfNeeded].
- * Note: timer START no longer routes through the invoker (Timer.start() is thread-safe —
- * P2-1); the invoker is still used for onFlush delivery.
+ * does this. An **EDT-inline** invoker (`{ block -> if (isEventDispatchThread()) block()
+ * else invokeLater { block() } }`) also satisfies the requirement and is used where a
+ * caller needs `flush(id)` invoked FROM the EDT to deliver synchronously, before the
+ * caller's next statement (P1-12: AgentController flushes a sub-agent's thinking batcher
+ * inside the EDT completion handler, before pushing the completion card — a re-posted
+ * delivery would land AFTER the card). Timer ticks also run on the EDT, so the inline
+ * branch is correct for them too. The unconditional direct form `{ block -> block() }`
+ * (no EDT check) remains safe **in tests only** because the Swing [Timer] is never ticked
+ * in a headless test environment — callers drive flushing explicitly via [flush] or
+ * [flushIfNeeded]. Note: timer START no longer routes through the invoker (Timer.start()
+ * is thread-safe — P2-1); the invoker is still used for onFlush delivery.
  */
 class PerToolStreamBatcher(
     private val onFlush: (toolCallId: String, batched: String) -> Unit,
@@ -54,6 +60,16 @@ class PerToolStreamBatcher(
     /** Stop the timer without flushing (mirrors [StreamBatcher.stop]). */
     fun stop() {
         stopTimer()
+    }
+
+    /**
+     * Drop ALL pending buffers without delivering (mirrors [StreamBatcher.clear]).
+     * Used on cancel / new chat: a cancelled run's tail deltas must not deliver into
+     * the next session (W4-B3 review minor #2).
+     */
+    fun clear() {
+        stopTimer()
+        synchronized(lock) { buffers.clear() }
     }
 
     /** Visible for tests. */

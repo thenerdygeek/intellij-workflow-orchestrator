@@ -6,8 +6,13 @@ import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
  *
  * Shiki's default `import { createHighlighter } from 'shiki'` side-effect-imports the entire
  * 347-language registry (~10 MB uncompressed in agent.jar). Switching to `shiki/core` plus
- * explicit dynamic imports lets Vite tree-shake the rest while keeping lazy-loaded code-splitting
- * (each language becomes its own async chunk loaded on first use).
+ * explicit dynamic imports lets Vite tree-shake the rest.
+ *
+ * Code-splitting: this module is only reached via a dynamic `import()` at the call sites
+ * (e.g. `CodeBlock.tsx`), so Vite/Rollup emits shiki and its language grammars as separate
+ * async chunks, keeping the heavy payloads off the startup-critical path. Do NOT add a
+ * `manualChunks` rule for 'shiki' in vite.config.ts — that would collapse these lazy chunks
+ * back into a single chunk and force it into the main entry's modulepreload list.
  *
  * Selection criteria: languages users actually paste into the agent chat or that the agent
  * itself emits in tool output. Anything outside this set renders as plain unhighlighted text.

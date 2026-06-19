@@ -59,6 +59,11 @@ Uses `BitbucketBranchClient` from `:core` — `getBranches`, `getUsers`, `create
 - `PrListPanel` — filterable PR list with status indicators
 - `PrDetailPanel` — PR metadata, reviewers, merge status, action buttons
 - **UI Overhaul:** Outline-style status badges (OPEN/MERGED/DECLINED), sharp card corners, monospace PR IDs, left border accent colored by PR status.
+- **Renderer perf (P1-20/B20/P2-20, 2026-06-10 audit):** `FindingRowRenderer`/`CommentRowRenderer`/`PrDetailPanel.FileCellRenderer` are rubber-stamp renderers (widgets allocated once, mutated per call). Fonts/metrics come from the LAF-safe caches `RendererFonts` (derived/monospace fonts keyed by base-font instance + style + size) and `LafFontCache` (single-slot font+FontMetrics, re-derived when the LAF base font or scaled size changes) — never cache a static `Font`/`FontMetrics` snapshot (goes stale on theme/scale switch).
+
+## PR polling lifecycle (B16, 2026-06-10 perf audit)
+
+`PrListService.stopPolling()` previously had zero callers — the first PR-tab open left Bitbucket polling running for the rest of the IDE session, surviving panel rebuilds. Wiring now: `PrDashboardPanel.dispose()` stops polling (panel rebuild / project close); `ancestorAdded` calls `startPolling()` (no-op while the poll job is active) before `setVisible(true)` so a re-shown panel restarts a stopped poller; `ancestorRemoved` keeps the `setVisible(false)` slowdown (4× background interval) — full stop is reserved for disposal. Pinned by `PrDashboardPanelPollingLifecycleTest` (source-text contract).
 
 ## Bitbucket DC 9.4 audit changes (2026-05-07)
 

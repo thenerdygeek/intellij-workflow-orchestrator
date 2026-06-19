@@ -265,7 +265,33 @@ class CopyrightFixCard(private val project: Project) : JPanel(BorderLayout()), D
     }
 }
 
+/**
+ * P2-20: rubber-stamp cell renderer for copyright file entries. All widgets are
+ * allocated once as instance fields and mutated per render call, avoiding per-row
+ * JPanel + JBLabel allocations on every scroll/repaint event.
+ *
+ * Rubber-stamp hygiene: ALL per-row properties (text, icon, foreground, background,
+ * opacity) are reset on EVERY [getListCellRendererComponent] call — no property
+ * leaks from the "selected" branch to the "normal" branch or vice versa.
+ */
 private class CopyrightCellRenderer : ListCellRenderer<CopyrightFileEntry> {
+
+    private val row = JPanel(BorderLayout()).apply {
+        border = JBUI.Borders.empty(2, 6)
+    }
+    private val left = JBLabel("", SwingConstants.LEFT).apply {
+        font = font.deriveFont(Font.PLAIN)
+    }
+    private val right = JBLabel("").apply {
+        font = font.deriveFont(Font.PLAIN, font.size - 1f)
+        border = JBUI.Borders.emptyLeft(8)
+    }
+
+    init {
+        row.add(left, BorderLayout.CENTER)
+        row.add(right, BorderLayout.EAST)
+    }
+
     override fun getListCellRendererComponent(
         list: JList<out CopyrightFileEntry>,
         value: CopyrightFileEntry,
@@ -273,7 +299,7 @@ private class CopyrightCellRenderer : ListCellRenderer<CopyrightFileEntry> {
         isSelected: Boolean,
         cellHasFocus: Boolean
     ): Component {
-        val (icon, color, suffix) = when (value.status) {
+        val (icon, statusColor, suffix) = when (value.status) {
             CopyrightStatus.OK -> Triple(AllIcons.General.InspectionsOK, StatusColors.SUCCESS, "OK")
             CopyrightStatus.YEAR_OUTDATED -> {
                 val transition = "${value.oldYear ?: "?"} → ${value.newYear ?: "?"}"
@@ -281,32 +307,24 @@ private class CopyrightCellRenderer : ListCellRenderer<CopyrightFileEntry> {
             }
             CopyrightStatus.MISSING_HEADER -> Triple(AllIcons.General.Add, StatusColors.ERROR, "missing")
         }
-        val rel = relativeProjectPath(value.filePath)
 
-        val left = JBLabel(rel, icon, SwingConstants.LEFT).apply {
-            font = font.deriveFont(Font.PLAIN)
-        }
-        val right = JBLabel(suffix).apply {
-            foreground = color
-            font = font.deriveFont(Font.PLAIN, font.size - 1f)
-            border = JBUI.Borders.emptyLeft(8)
-        }
-        val row = JPanel(BorderLayout()).apply {
-            border = JBUI.Borders.empty(2, 6)
-            add(left, BorderLayout.CENTER)
-            add(right, BorderLayout.EAST)
-        }
+        // Reset ALL per-row properties on every call (rubber-stamp hygiene).
+        left.text = relativeProjectPath(value.filePath)
+        left.icon = icon
+        right.text = suffix
+
         if (isSelected) {
             row.background = list.selectionBackground
+            row.isOpaque = true
             left.foreground = list.selectionForeground
             right.foreground = list.selectionForeground
-            row.isOpaque = true
         } else {
             row.background = list.background
-            left.foreground = list.foreground
-            // right.foreground = status color above
             row.isOpaque = false
+            left.foreground = list.foreground
+            right.foreground = statusColor
         }
+
         return row
     }
 

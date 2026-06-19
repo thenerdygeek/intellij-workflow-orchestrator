@@ -8,6 +8,7 @@ import com.workflow.orchestrator.core.services.SessionHistoryReader
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.util.ProjectIdentifier
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -20,13 +21,20 @@ class WeeklyDigestStartupActivity : ProjectActivity {
         val settings = PluginSettings.getInstance(project)
         if (!settings.state.weeklyDigestEnabled) return
 
+        // P2-7 (2026-06-10 perf audit): the digest runs a full 7-day session collection plus
+        // a REAL LLM call, and even the report-exists check does file IO. None of that may
+        // compete with project startup — defer until the IDE has long quiesced. The activity
+        // coroutine is project-scoped, so a project close during the delay just cancels it.
+        delay(STARTUP_QUIESCE_DELAY_MS)
+
         val today = LocalDate.now()
         if (today.dayOfWeek != DayOfWeek.MONDAY) return
 
-        if (reportExistsForThisWeek(project, today)) return
-
         runCatching {
             withContext(Dispatchers.IO) {
+                // File IO (reports-dir listing) belongs inside the IO context too (P2-7).
+                if (reportExistsForThisWeek(project, today)) return@withContext
+
                 val reader = ExtensionPointName
                     .create<SessionHistoryReader>("com.workflow.orchestrator.sessionHistoryReader")
                     .extensionList.firstOrNull() ?: return@withContext
@@ -81,5 +89,10 @@ class WeeklyDigestStartupActivity : ProjectActivity {
                             fileDate.get(weekFields.weekBasedYear()) == currentYear
                 }.getOrElse { false }
             } ?: false
+    }
+
+    companion object {
+        /** P2-7: keep Monday-digest work far away from the startup window. */
+        private const val STARTUP_QUIESCE_DELAY_MS = 4L * 60 * 1000
     }
 }

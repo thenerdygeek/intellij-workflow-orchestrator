@@ -33,22 +33,24 @@ export default defineConfig(({ mode }) => ({
       },
       output: {
         manualChunks(id) {
-          // Viz libraries get predictable chunk names for debugging AND to
-          // deduplicate between the main entry and the sandbox entry — without
-          // these rules, large libraries like d3 would be duplicated into
-          // both bundles since Vite's default shared-chunk heuristic is
-          // conservative with dynamic-lookup scoped imports.
-          if (id.includes('shiki')) return 'shiki'
-          if (id.includes('mermaid') || id.includes('dagre')) return 'mermaid'
+          // Force-merge only libraries whose Rollup default (many tiny per-package
+          // chunks) would be worse than one shared chunk, AND whose chunk can never
+          // land in the MAIN entry's modulepreload list. Two safe categories:
+          //  - main-entry statics that are preloaded anyway (radix);
+          //  - sandbox-entry statics (cobe/maps/xyflow/react-table/date-fns/colord/
+          //    motion) and dynamic-only subgraphs (katex/chartjs/diff2html):
+          //    a manualChunks name on an async-only or sandbox-only subgraph stays
+          //    out of index.html's preloads.
+          //
+          // NEVER list a library whose payload is dynamically imported from the
+          // MAIN entry (shiki grammars/themes/wasm, mermaid/dagre, lucide): merging
+          // its static core with its lazy payload turns the whole thing into a
+          // startup-critical static chunk — the audit P0-2 bug (~8MB eager parse).
           if (id.includes('katex')) return 'katex'
           if (id.includes('chart.js')) return 'chartjs'
           if (id.includes('diff2html')) return 'diff2html'
-          if (id.includes('recharts')) return 'recharts'
-          if (id.includes('lucide-react')) return 'lucide'
-          if (id.includes('node_modules/d3')) return 'd3'
           if (id.includes('cobe')) return 'cobe'
           if (id.includes('motion')) return 'motion'
-          if (id.includes('roughjs')) return 'roughjs'
           if (id.includes('react-simple-maps') || id.includes('topojson')) return 'maps'
           // New sandbox libs (Tier A expansion): split into their own chunks
           // so the sandbox iframe only pays for them on first artifact render.

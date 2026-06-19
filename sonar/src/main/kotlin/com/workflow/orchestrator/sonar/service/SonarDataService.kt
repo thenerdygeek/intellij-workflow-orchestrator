@@ -313,8 +313,14 @@ class SonarDataService(
     /**
      * Clear the line coverage cache. Called when branch changes or build finishes
      * to ensure stale coverage data is not displayed.
+     *
+     * Also drops the gutter provider's per-file header cache (resolved repo
+     * relativePath/projectKey/branch) — headers were resolved against the old
+     * branch/config and would otherwise feed stale parameters into the very next
+     * line-coverage fetch (C2).
      */
     fun clearLineCoverageCache() {
+        com.workflow.orchestrator.sonar.ui.CoverageLineMarkerProvider.clearFileHeaderCaches(project)
         val size = lineCoverageCache.size
         lineCoverageCache.clear()
         if (size > 0) {

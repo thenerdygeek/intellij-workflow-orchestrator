@@ -22,6 +22,16 @@ abstract class PollingSource<T>(
     @Volatile private var snapshot: T? = null
 
     /**
+     * Invoked exactly once at the P1-8 terminal self-stop — AFTER the final NOTABLE
+     * auto-stop event was emitted and the poller stopped. Wired at registration time
+     * (`MonitorTool.startBamboo`, `AgentMonitorCoordinator.reArmMonitors`) to
+     * `MonitorPool.markExited(sessionId, id, null)` so the pool handle doesn't stay
+     * RUNNING forever (untruthful `monitor status` + a permanently consumed per-session
+     * slot). Exceptions are swallowed — pool bookkeeping must never break the poll cycle.
+     */
+    @Volatile var onSelfStop: (() -> Unit)? = null
+
+    /**
      * Fetch current state from the domain service.
      * Return null on transient error — [pollOnce] treats null as no-change so the
      * [SmartPoller] backs off rather than emitting spurious events.
@@ -35,14 +45,45 @@ abstract class PollingSource<T>(
     protected abstract fun diff(previous: T?, current: T): List<MonitorEvent>
 
     /**
+     * Terminality signal (P1-8). Return true when [current] shows the watched resource in a
+     * state that can no longer change (finished build, merged PR). Default false — sources
+     * whose snapshot cannot carry terminality (participant lists, comment counts, issue lists)
+     * simply never auto-stop.
+     *
+     * Auto-stop fires only on an OBSERVED transition (previous snapshot non-terminal → current
+     * terminal), never on a first poll that is already terminal: a monitor started on a plan
+     * whose last build finished long ago must keep waiting for the NEXT build rather than
+     * killing itself on its first snapshot.
+     */
+    protected open fun isTerminal(current: T): Boolean = false
+
+    /**
      * One poll cycle. Returns true if any event was emitted (SmartPoller "data changed" signal,
-     * which resets backoff). Extracted so unit tests can drive it without a live SmartPoller.
+     * which resets backoff). Extracted so unit tests can drive it directly without a live
+     * SmartPoller.
+     *
+     * When [isTerminal] reports an observed non-terminal → terminal transition, the source
+     * emits a final NOTABLE "monitor auto-stopped" event and stops its own poller — a finished
+     * build / merged PR no longer justifies HTTP polling until session end (P1-8).
      */
     internal suspend fun pollOnce(emit: (MonitorEvent) -> Unit): Boolean {
         val current = fetch() ?: return false
-        val events = diff(snapshot, current)
+        val previous = snapshot
+        val events = diff(previous, current)
         snapshot = current
         events.forEach(emit)
+        if (previous != null && !isTerminal(previous) && isTerminal(current)) {
+            emit(
+                MonitorEvent(
+                    monitorId,
+                    Severity.NOTABLE,
+                    "monitor auto-stopped: watched resource reached terminal state",
+                ),
+            )
+            stop()
+            runCatching { onSelfStop?.invoke() }
+            return true
+        }
         return events.isNotEmpty()
     }
 

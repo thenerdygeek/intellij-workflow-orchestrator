@@ -145,11 +145,14 @@ class BambooMonitorSourceTest {
         val changed1 = src.pollOnce { events.add(it) }
         assertFalse(changed1)
         assertTrue(events.isEmpty())
-        // Second poll: no running → getLatestBuild returns Failed → ALERT
+        // Second poll: no running → getLatestBuild returns Failed → ALERT.
+        // P1-8: the observed InProgress→Failed terminal transition ALSO appends the
+        // final NOTABLE "monitor auto-stopped" event after the diff event.
         val changed2 = src.pollOnce { events.add(it) }
         assertTrue(changed2)
-        assertEquals(1, events.size)
+        assertEquals(2, events.size)
         assertEquals(Severity.ALERT, events[0].severity)
+        assertTrue(events[1].line.contains("monitor auto-stopped"))
     }
 
     // -------------------------------------------------------------------------
@@ -230,5 +233,45 @@ class BambooMonitorSourceTest {
         val events2 = mutableListOf<MonitorEvent>()
         src.pollOnce { events2.add(it) }
         assertTrue(events2.isEmpty()) // same buildNumber + state + lifeCycle → no event
+    }
+
+    // -------------------------------------------------------------------------
+    // P1-8: terminal-state auto-stop (W5-C1)
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `terminal build state after a running snapshot auto-stops the source`() = runTest {
+        val bamboo = mockk<BambooService>()
+        // Poll 1: live in-progress build #7. Poll 2: no live builds, latest finished #7 Successful.
+        coEvery { bamboo.getRunningBuilds("PROJ-PLAN") } returnsMany listOf(
+            okRunningResult(listOf(okBuild(state = "Unknown", lifeCycle = "InProgress", buildNumber = 7))),
+            emptyRunningResult(),
+        )
+        coEvery { bamboo.getLatestBuild("PROJ-PLAN") } returns
+            okResult(okBuild(state = "Successful", lifeCycle = "Finished", buildNumber = 7))
+        val src = source(bamboo, scope = this)
+        val events = mutableListOf<MonitorEvent>()
+        src.pollOnce { events.add(it) } // baseline: running (non-terminal)
+        src.pollOnce { events.add(it) } // running -> Successful = observed terminal transition
+        assertTrue(
+            events.any { it.line.contains("monitor auto-stopped") },
+            "BambooMonitorSource must auto-stop after an observed transition to a terminal build state",
+        )
+    }
+
+    @Test
+    fun `already-finished build on first poll does not auto-stop`() = runTest {
+        val bamboo = mockk<BambooService>()
+        coEvery { bamboo.getRunningBuilds("PROJ-PLAN") } returns emptyRunningResult()
+        coEvery { bamboo.getLatestBuild("PROJ-PLAN") } returns
+            okResult(okBuild(state = "Successful", lifeCycle = "Finished", buildNumber = 7))
+        val src = source(bamboo, scope = this)
+        val events = mutableListOf<MonitorEvent>()
+        src.pollOnce { events.add(it) } // first poll, already terminal
+        src.pollOnce { events.add(it) } // still the same finished build
+        assertFalse(
+            events.any { it.line.contains("monitor auto-stopped") },
+            "a monitor on a plan whose last build already finished must keep waiting for the next build",
+        )
     }
 }

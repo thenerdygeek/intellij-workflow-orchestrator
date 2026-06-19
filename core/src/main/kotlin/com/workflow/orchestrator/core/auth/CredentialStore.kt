@@ -81,13 +81,41 @@ class CredentialStore(
         ""
     }
 
-    fun storeToken(service: ServiceType, token: String) {
+    /**
+     * Persists [token] for [service] and verifies the write actually landed.
+     *
+     * Returns `true` when the value was confirmed readable from PasswordSafe afterwards, `false`
+     * when the backing store silently rejected the write. `PasswordSafe.set()` can no-op WITHOUT
+     * throwing (e.g. a locked/denied KeePass database or native keychain), which previously made a
+     * Settings → Apply token change look successful while persisting nothing — the user only found
+     * out later via a 401. Callers should surface a `false` result to the user.
+     */
+    fun storeToken(service: ServiceType, token: String): Boolean {
         val attributes = credentialAttributes(service)
         val credentials = Credentials(service.name, token)
         safe().set(attributes, credentials)
         val key = service to serverUrlFor(service)
         tokenCache[key] = CachedToken(token, System.currentTimeMillis() + CACHE_TTL_MS)
-        log.info("[Core:Credentials] Stored credential for ${service.name}")
+
+        // Read straight back from the store (bypassing the cache) to confirm the write persisted.
+        val readBack = try {
+            safe().get(attributes)?.getPasswordAsString()
+        } catch (e: Exception) {
+            log.warn("[Core:Credentials] Read-back after store threw for ${service.name}", e)
+            null
+        }
+        if (readBack != token) {
+            tokenCache.remove(key)
+            // warn, not error: this is a user-environment condition (password store rejected the
+            // write) that the caller handles by notifying the user — not an internal assertion.
+            log.warn(
+                "[Core:Credentials] Write verification FAILED for ${service.name} — " +
+                    "password storage did not persist the token"
+            )
+            return false
+        }
+        log.info("[Core:Credentials] Stored and verified credential for ${service.name}")
+        return true
     }
 
     fun getToken(service: ServiceType): String? {
@@ -117,8 +145,15 @@ class CredentialStore(
     }
 
     private fun credentialAttributes(service: ServiceType): CredentialAttributes {
+        // The username MUST match the one carried by Credentials(service.name, token) below.
+        // With a null username here, PasswordSafe's KeePass backend could not reliably target the
+        // existing entry (whose username is service.name) on set(), so a changed token persisted
+        // ambiguously and a later read returned the stale value — i.e. the Settings → Apply token
+        // change appeared to do nothing. Including service.name makes set() and get() address the
+        // same unique entry. (Existing entries already carry this username, so no migration.)
         return CredentialAttributes(
-            generateServiceName("WorkflowOrchestrator", service.name)
+            generateServiceName("WorkflowOrchestrator", service.name),
+            service.name
         )
     }
 }

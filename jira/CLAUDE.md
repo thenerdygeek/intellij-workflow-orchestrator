@@ -39,7 +39,7 @@ Server quirk: `/rest/api/2/user/search` requires `username=` (NOT `query=` — C
 - `BranchingService` — Start Work flow: creates branch on Bitbucket + transitions Jira ticket. PSI/VFS reads use `readAction { }` (see `:core` "Service & threading conventions").
 - `BranchChangeTicketDetector` — detects ticket from branch name on branch switch, shows confirmation popup (dismissed branches tracked in-memory)
 
-Phase 4 survivor: `CurrentWorkSection.showBranchPicker` keeps `runReadAction { }` because `MouseAdapter.mouseClicked` is a non-suspend EDT callback (see TODO at `ui/CurrentWorkSection.kt:185`, retire on 2026.1 platform bump).
+Phase 4 survivor RESOLVED (P2-20, 2026-06-10 perf audit): `CurrentWorkSection.showBranchPicker` no longer runs `runReadAction { }` on the EDT — the git read happens in `scope.launch` off-EDT, then the popup is built back on the EDT behind an `editTargetLabel.isShowing` guard (the click→popup path is async; the ticket may clear mid-flight). The `editTargetLabel` mouse listener is registered once in `init`, not re-added per `buildActiveState`.
 
 ## UI
 
@@ -48,7 +48,7 @@ Phase 4 survivor: `CurrentWorkSection.showBranchPicker` keeps `runReadAction { }
 - `StartWorkDialog` — branch creation + Jira transition dialog
 - `TicketDetectionPopup` — confirmation popup for branch-detected tickets (Set as Active / Dismiss)
 - `TransitionDialog` — manual status transitions
-- `JiraSearchContributorFactory` — Search Everywhere integration for tickets
+- `JiraSearchContributorFactory` — Search Everywhere integration for tickets (single hoisted cell-renderer instance + cached fonts — no per-cell JBLabel allocation; P2-20, 2026-06-10 perf audit)
 - `TicketDetailPanel` sections (lazy-loaded, dispose-cascading): `DevStatusSection`, `WorklogSection`, `ChangelogSection` (history feed), `LinkedDocsSection` (Confluence + external links). Watch toggle in the header row. Transition / Comment / Watch / Log-Work buttons are gated by `PermissionGate` against `JiraService.getMyPermissions(projectKey)` — fail-open on API error.
 - **UI Overhaul:** SprintPaginationCache (file-based cache at `~/.workflow-orchestrator/`) for sprint pagination state. Cell renderer uses left border accents by status, side-by-side SprintTimeBar, worklog table layout, and PR badge styling in DevStatusSection.
 

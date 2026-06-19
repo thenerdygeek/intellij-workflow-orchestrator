@@ -80,7 +80,24 @@ interface SubAgentViewProps {
 
 export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentViewProps) {
   const killSubAgent = useChatStore((state) => state.killSubAgent);
+  // P0-3: subscribe only to this agent's slice of the side-channel so only
+  // this card re-renders per streaming delta (not the whole message list).
+  // Optional chaining guards against mocked stores that don't include the field.
+  const streamSlice = useChatStore((s) => s.subAgentStreams?.[subAgent.agentId]);
+
+  // Merge side-channel live data with the committed subagentData from messages[].
+  // During streaming: streamSlice carries live text/thinking/iteration/statusNote.
+  // After finalize (completeSubAgent/killSubAgent): streamSlice is undefined;
+  // subAgent already has committed final values.
+  const liveText = streamSlice?.text ?? null;
+  const liveThinking = streamSlice?.thinking ?? null;
+  const liveIteration = streamSlice?.iteration ?? subAgent.iteration;
+  const liveStatusNote = streamSlice?.statusNote !== undefined ? streamSlice.statusNote : subAgent.statusNote;
+
   const isRunning = subAgent.status === 'RUNNING';
+  // Prefer the live side-channel counter while running so the header doesn't
+  // freeze during streaming; finalized cards read the committed value.
+  const liveTokensUsed = (isRunning ? streamSlice?.tokensUsed : undefined) ?? subAgent.tokensUsed;
   // Default-open while running, default-closed on terminal status (so completed
   // sub-agents — including resume-time ones — don't each occupy ~440px in the chat).
   const [isOpen, setIsOpen] = useState(isRunning);
@@ -126,7 +143,8 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
     if (!userScrolledUp.current && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [subAgent.messages.length, subAgent.activeToolChain?.length]);
+  // P0-3: also trigger scroll when live stream text changes.
+  }, [subAgent.messages.length, subAgent.activeToolChain?.length, liveText]);
 
   const handleKill = useCallback((e: React.MouseEvent) => {
     e.stopPropagation(); // Don't toggle collapse
@@ -236,11 +254,11 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
         >
           {isRunning && (
             <>
-              <span>iter {subAgent.iteration}</span>
+              <span>iter {liveIteration}</span>
               <span className="opacity-40">·</span>
             </>
           )}
-          {(subAgent.tokensUsed || 0).toLocaleString()} tkn
+          {(liveTokensUsed || 0).toLocaleString()} tkn
         </span>
 
         {/* Kill button (only when running) */}
@@ -283,13 +301,13 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
       )}
 
       {/* ── Transient status note (retry / compaction) ── */}
-      {isRunning && subAgent.statusNote && (
+      {isRunning && liveStatusNote && (
         <div
           className="px-3 py-1 text-[10px] font-medium flex items-center gap-1.5"
           style={{ color: 'var(--fg-muted)', backgroundColor: 'var(--tool-bg, rgba(0,0,0,0.08))' }}
         >
           <Loader2 className="size-2.5 animate-spin shrink-0" style={{ color: 'var(--accent)' }} />
-          <span className="truncate">{subAgent.statusNote}</span>
+          <span className="truncate">{liveStatusNote}</span>
         </div>
       )}
 
@@ -302,7 +320,7 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
           style={{ backgroundColor: 'var(--tool-bg, rgba(0,0,0,0.08))' }}
         >
           <div className="space-y-3">
-            {subAgent.messages.map((msg, i) => (
+            {subAgent.messages.map((msg) => (
               <div key={String(msg.ts)} className="relative">
                 {/* Nesting guard — 1 level only */}
                 {msg.subagentData ? (
@@ -336,9 +354,11 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
                       </div>
                     )}
                     {msg.text && msg.say !== 'REASONING' && msg.say !== 'ERROR' && !msg.toolCallData && (
+                      // P0-3: messages[] only contains committed (finalized) content.
+                      // Live streaming text is rendered separately from liveText below.
                       <AgentMessage
                         message={msg}
-                        isStreaming={isRunning && i === subAgent.messages.length - 1}
+                        isStreaming={false}
                       />
                     )}
                   </>
@@ -346,10 +366,22 @@ export const SubAgentView = memo(function SubAgentView({ subAgent }: SubAgentVie
               </div>
             ))}
 
-            {/* Live streaming thinking (mirrors main-agent ChatFooter) */}
-            {subAgent.streamingThinkingText && (
+            {/* Live streaming thinking (P0-3: from side-channel, not messages[]).
+                Shown above prose to mirror main-agent ChatFooter ordering.
+                isRunning guard: a stale slice must never render a streaming
+                shimmer on a completed/killed card. */}
+            {isRunning && liveThinking && (
               <ThinkingView
-                content={subAgent.streamingThinkingText}
+                content={liveThinking}
+                isStreaming
+              />
+            )}
+
+            {/* Live streaming text (P0-3: from side-channel, not messages[]).
+                Accumulates here per delta; committed to messages[] on finalize. */}
+            {isRunning && liveText && (
+              <AgentMessage
+                message={{ ts: Date.now(), type: 'SAY', say: 'TEXT', text: liveText, partial: true }}
                 isStreaming
               />
             )}
