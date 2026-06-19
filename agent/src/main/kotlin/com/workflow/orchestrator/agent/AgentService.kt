@@ -461,6 +461,32 @@ class AgentService(
         return if (task.sessionId == sessionId) task.loop else null
     }
 
+    // ── Per-session queue ownership (Task 2.1) ─────────────────────────────────────────────────
+    // The single-instance invariant: EVERY path that constructs an AgentLoop for a session AND
+    // every producer that enqueues into that session's queue MUST go through queueForSession().
+    // Never call UnifiedMessageQueue(...) directly outside this method.
+
+    private val queuePersistence by lazy {
+        com.workflow.orchestrator.agent.loop.queue.QueuePersistence(agentDir.toPath())
+    }
+    private val sessionQueues =
+        java.util.concurrent.ConcurrentHashMap<String, com.workflow.orchestrator.agent.loop.queue.UnifiedMessageQueue>()
+
+    /** Return (or lazily create) the per-session [UnifiedMessageQueue] for [sessionId]. */
+    fun queueForSession(sessionId: String): com.workflow.orchestrator.agent.loop.queue.UnifiedMessageQueue =
+        sessionQueues.getOrPut(sessionId) {
+            com.workflow.orchestrator.agent.loop.queue.UnifiedMessageQueue(sessionId, queuePersistence)
+        }
+
+    /** Enqueue an async message for [sessionId]; auto-wake the session if it is idle and the source policy allows it. */
+    fun enqueueToSession(sessionId: String, msg: com.workflow.orchestrator.agent.loop.queue.QueuedMessage) {
+        queueForSession(sessionId).enqueue(msg)
+        if (activeLoopForSession(sessionId) == null) {
+            val policy = com.workflow.orchestrator.agent.loop.queue.QueueSourceRegistry.policyFor(msg.kind)
+            if (policy.autoWakesIdle) autoWakeIdleSession(sessionId, syntheticText = "", source = msg.kind.name)
+        }
+    }
+
     /**
      * Inject a synthetic nudge message into the loop that owns [sessionId].
      *
@@ -2408,7 +2434,9 @@ class AgentService(
                             sessionId = sid,
                         )
                     },
-                    messageQueue = messageQueue,
+                    // Task 2.1: resolve from the service's per-session map so that both the loop
+                    // drain path and any async producer (enqueueToSession) share ONE instance.
+                    messageQueue = queueForSession(sid),
                     onSteeringDrained = onSteeringDrained,
                     onAwaitingUserInput = onAwaitingUserInput,
                     brainFactory = brainFactory,
@@ -2994,7 +3022,9 @@ class AgentService(
                 onSessionStats = onSessionStats,
                 onDebugLog = onDebugLog,
                 onSessionStarted = onSessionStarted,
-                messageQueue = messageQueue,
+                // Task 2.1: resolve from the service so the resumed loop drains the same queue
+                // instance that enqueueToSession (and AgentController) enqueue into.
+                messageQueue = queueForSession(sessionId),
                 onSteeringDrained = onSteeringDrained,
                 sessionApprovalStore = sessionApprovalStore,
                 onAwaitingUserInput = onAwaitingUserInput,
