@@ -22,8 +22,8 @@ import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.FailureReason
 import com.workflow.orchestrator.agent.loop.LoopResult
-import com.workflow.orchestrator.agent.loop.SteeringMessage
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
+import com.workflow.orchestrator.agent.loop.queue.UnifiedMessageQueue
 import com.workflow.orchestrator.agent.prompt.EnvironmentDetailsBuilder
 import com.workflow.orchestrator.agent.prompt.InstructionLoader
 import com.workflow.orchestrator.agent.prompt.SystemPrompt
@@ -1594,11 +1594,11 @@ class AgentService(
          */
         onSessionStarted: ((sessionId: String) -> Unit)? = null,
         /**
-         * Thread-safe queue for mid-turn steering messages.
+         * Unified message queue for mid-turn steering messages.
          * When provided, the loop drains this at the start of each iteration and
          * injects queued user messages into the conversation context.
          */
-        steeringQueue: java.util.concurrent.ConcurrentLinkedQueue<SteeringMessage>? = null,
+        messageQueue: UnifiedMessageQueue? = null,
         /**
          * Callback fired after steering messages are drained and injected.
          * The UI promotes queued messages to regular chat messages.
@@ -2408,7 +2408,7 @@ class AgentService(
                             sessionId = sid,
                         )
                     },
-                    steeringQueue = steeringQueue,
+                    messageQueue = messageQueue,
                     onSteeringDrained = onSteeringDrained,
                     onAwaitingUserInput = onAwaitingUserInput,
                     brainFactory = brainFactory,
@@ -2657,7 +2657,7 @@ class AgentService(
         onSessionStats: ((modelId: String, tokensIn: Long, tokensOut: Long, costUsd: Double?) -> Unit)? = null,
         onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)? = null,
         onSessionStarted: ((sessionId: String) -> Unit)? = null,
-        steeringQueue: java.util.concurrent.ConcurrentLinkedQueue<SteeringMessage>? = null,
+        messageQueue: UnifiedMessageQueue? = null,
         onSteeringDrained: ((drainedIds: List<String>) -> Unit)? = null,
         sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
         onAwaitingUserInput: ((reason: String) -> Unit)? = null,
@@ -2994,7 +2994,7 @@ class AgentService(
                 onSessionStats = onSessionStats,
                 onDebugLog = onDebugLog,
                 onSessionStarted = onSessionStarted,
-                steeringQueue = steeringQueue,
+                messageQueue = messageQueue,
                 onSteeringDrained = onSteeringDrained,
                 sessionApprovalStore = sessionApprovalStore,
                 onAwaitingUserInput = onAwaitingUserInput,
@@ -3278,7 +3278,7 @@ class AgentService(
                 onSessionStats = callbacks.onSessionStats,
                 onDebugLog = callbacks.onDebugLog,
                 onSessionStarted = callbacks.onSessionStarted,
-                steeringQueue = callbacks.steeringQueue,
+                messageQueue = callbacks.messageQueue,
                 onSteeringDrained = callbacks.onSteeringDrained,
                 onAwaitingUserInput = callbacks.onAwaitingUserInput,
                 onUserInputReceived = callbacks.onUserInputReceived,
@@ -3430,7 +3430,7 @@ class AgentService(
                 onSessionStats = callbacks.onSessionStats,
                 onDebugLog = callbacks.onDebugLog,
                 onSessionStarted = callbacks.onSessionStarted,
-                steeringQueue = callbacks.steeringQueue,
+                messageQueue = callbacks.messageQueue,
                 onSteeringDrained = callbacks.onSteeringDrained,
                 onAwaitingUserInput = callbacks.onAwaitingUserInput,
                 onUserInputReceived = callbacks.onUserInputReceived,

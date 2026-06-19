@@ -26,14 +26,16 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.util.concurrent.ConcurrentLinkedQueue
+import com.workflow.orchestrator.agent.loop.queue.QueuedMessage
+import com.workflow.orchestrator.agent.loop.queue.QueueSourceKind
+import com.workflow.orchestrator.agent.loop.queue.UnifiedMessageQueue
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Pins the pre-exit steering-queue drain behavior added to fix the
  * "queued message disappears just before attempt_completion" bug.
  *
- * The producer (UI) and consumer (loop) of [SteeringMessage] have asymmetric
+ * The producer (UI) and consumer (loop) of [UnifiedMessageQueue] have asymmetric
  * lifetimes: the user can enqueue any time up to onComplete, but the loop only
  * consumes at the top of each iteration. The final iteration of a successful
  * task has no successor — without an exit-time drain the message is silently
@@ -129,7 +131,7 @@ class AgentLoopExitDrainTest {
     private fun buildLoop(
         brain: LlmBrain,
         tools: List<AgentTool>,
-        steeringQueue: ConcurrentLinkedQueue<SteeringMessage>?,
+        messageQueue: UnifiedMessageQueue?,
         onSteeringDrained: ((List<String>) -> Unit)?,
         maxIterations: Int = 10,
         feedbackEnabled: Boolean = false,
@@ -143,7 +145,7 @@ class AgentLoopExitDrainTest {
             contextManager = contextManager,
             project = project,
             maxIterations = maxIterations,
-            steeringQueue = steeringQueue,
+            messageQueue = messageQueue,
             onSteeringDrained = onSteeringDrained,
             feedbackEnabled = feedbackEnabled,
         )
@@ -151,7 +153,7 @@ class AgentLoopExitDrainTest {
 
     @Test
     fun `attempt_completion with queued steering drains and continues instead of exiting`() = runTest {
-        val steeringQueue = ConcurrentLinkedQueue<SteeringMessage>()
+        val steeringQueue = UnifiedMessageQueue("test", null)
         val drainedIds = mutableListOf<List<String>>()
 
         // Iteration 1: LLM calls attempt_completion. The tool's execute() enqueues a
@@ -170,7 +172,7 @@ class AgentLoopExitDrainTest {
             override val allowedWorkers = setOf(WorkerType.CODER)
             override suspend fun execute(params: JsonObject, project: Project): ToolResult {
                 if (enqueueCount.getAndIncrement() == 0) {
-                    steeringQueue.offer(SteeringMessage(id = "steer-1", text = "actually, also do X"))
+                    steeringQueue.enqueue(QueuedMessage(id = "steer-1", kind = QueueSourceKind.USER, body = "actually, also do X", timestamp = 0L, priority = 100))
                 }
                 return ToolResult(content = "Done.", summary = "Done.", tokenEstimate = 5, isCompletion = true)
             }
@@ -184,7 +186,7 @@ class AgentLoopExitDrainTest {
         val loop = buildLoop(
             brain = brain,
             tools = listOf(gatedCompletion),
-            steeringQueue = steeringQueue,
+            messageQueue = steeringQueue,
             onSteeringDrained = { ids -> drainedIds.add(ids) }
         )
 
@@ -212,7 +214,7 @@ class AgentLoopExitDrainTest {
 
     @Test
     fun `new_task SessionHandoff with queued steering defers handoff and continues`() = runTest {
-        val steeringQueue = ConcurrentLinkedQueue<SteeringMessage>()
+        val steeringQueue = UnifiedMessageQueue("test", null)
         val drainedIds = mutableListOf<List<String>>()
 
         val enqueueCount = AtomicInteger(0)
@@ -223,7 +225,7 @@ class AgentLoopExitDrainTest {
             override val allowedWorkers = setOf(WorkerType.CODER)
             override suspend fun execute(params: JsonObject, project: Project): ToolResult {
                 if (enqueueCount.getAndIncrement() == 0) {
-                    steeringQueue.offer(SteeringMessage(id = "steer-2", text = "wait, do this first"))
+                    steeringQueue.enqueue(QueuedMessage(id = "steer-2", kind = QueueSourceKind.USER, body = "wait, do this first", timestamp = 0L, priority = 100))
                     return ToolResult.sessionHandoff(
                         content = "Handing off",
                         summary = "Handoff",
@@ -247,7 +249,7 @@ class AgentLoopExitDrainTest {
         val loop = buildLoop(
             brain = brain,
             tools = listOf(handoffTool),
-            steeringQueue = steeringQueue,
+            messageQueue = steeringQueue,
             onSteeringDrained = { ids -> drainedIds.add(ids) }
         )
 
@@ -270,7 +272,7 @@ class AgentLoopExitDrainTest {
 
     @Test
     fun `Failed exit with queued steering promotes the message to UI via makeFailed drain`() = runTest {
-        val steeringQueue = ConcurrentLinkedQueue<SteeringMessage>()
+        val steeringQueue = UnifiedMessageQueue("test", null)
         val drainedIds = mutableListOf<List<String>>()
 
         // Drive the failure via 3 consecutive empty responses (MAX_CONSECUTIVE_EMPTIES = 3).
@@ -301,7 +303,7 @@ class AgentLoopExitDrainTest {
                 // (with an empty queue); enqueueing here means the message survives
                 // until makeFailed runs at the bottom of iter 3.
                 if (callIndex.getAndIncrement() == 2) {
-                    steeringQueue.offer(SteeringMessage(id = "steer-3", text = "abandon all hope"))
+                    steeringQueue.enqueue(QueuedMessage(id = "steer-3", kind = QueueSourceKind.USER, body = "abandon all hope", timestamp = 0L, priority = 100))
                 }
                 return ApiResult.Success(emptyResponse())
             }
@@ -313,7 +315,7 @@ class AgentLoopExitDrainTest {
         val loop = buildLoop(
             brain = brain,
             tools = listOf(benignTool("attempt_completion")),
-            steeringQueue = steeringQueue,
+            messageQueue = steeringQueue,
             onSteeringDrained = { ids -> drainedIds.add(ids) }
         )
 
@@ -337,7 +339,7 @@ class AgentLoopExitDrainTest {
 
     @Test
     fun `feedbackEnabled attempt_completion with queued steering drains symmetrically`() = runTest {
-        val steeringQueue = ConcurrentLinkedQueue<SteeringMessage>()
+        val steeringQueue = UnifiedMessageQueue("test", null)
         val drainedIds = mutableListOf<List<String>>()
 
         // Iter 1: LLM emits attempt_completion. The tool's execute() enqueues steering.
@@ -358,7 +360,7 @@ class AgentLoopExitDrainTest {
             override val allowedWorkers = setOf(WorkerType.CODER)
             override suspend fun execute(params: JsonObject, project: Project): ToolResult {
                 if (enqueueCount.getAndIncrement() == 0) {
-                    steeringQueue.offer(SteeringMessage(id = "steer-fb", text = "one more thing"))
+                    steeringQueue.enqueue(QueuedMessage(id = "steer-fb", kind = QueueSourceKind.USER, body = "one more thing", timestamp = 0L, priority = 100))
                 }
                 return ToolResult(content = "Done.", summary = "Done.", tokenEstimate = 5, isCompletion = true)
             }
@@ -372,7 +374,7 @@ class AgentLoopExitDrainTest {
         val loop = buildLoop(
             brain = brain,
             tools = listOf(gatedCompletion),
-            steeringQueue = steeringQueue,
+            messageQueue = steeringQueue,
             onSteeringDrained = { ids -> drainedIds.add(ids) },
             feedbackEnabled = true,
         )

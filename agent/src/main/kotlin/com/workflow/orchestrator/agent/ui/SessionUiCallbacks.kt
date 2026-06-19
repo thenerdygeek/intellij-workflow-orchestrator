@@ -3,12 +3,11 @@ package com.workflow.orchestrator.agent.ui
 import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.SessionApprovalStore
-import com.workflow.orchestrator.agent.loop.SteeringMessage
 import com.workflow.orchestrator.agent.loop.StreamingEditCallback
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
+import com.workflow.orchestrator.agent.loop.queue.UnifiedMessageQueue
 import com.workflow.orchestrator.agent.session.UiMessage
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
-import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * Single source of truth for the full set of controller→loop UI callbacks that
@@ -59,7 +58,7 @@ data class SessionUiCallbacks(
     val onSessionStats: ((modelId: String, tokensIn: Long, tokensOut: Long, costUsd: Double?) -> Unit)?,
     val onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)?,
     val onSessionStarted: ((sessionId: String) -> Unit)?,
-    val steeringQueue: ConcurrentLinkedQueue<SteeringMessage>?,
+    val messageQueue: UnifiedMessageQueue?,
     val onSteeringDrained: ((drainedIds: List<String>) -> Unit)?,
     val onAwaitingUserInput: ((reason: String) -> Unit)?,
     val onUserInputReceived: ((task: String) -> UiMessage?)?,

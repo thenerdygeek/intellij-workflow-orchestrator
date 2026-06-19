@@ -45,7 +45,11 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
-import java.util.concurrent.ConcurrentLinkedQueue
+import com.workflow.orchestrator.agent.loop.queue.DrainGroup
+import com.workflow.orchestrator.agent.loop.queue.QueuedMessage
+import com.workflow.orchestrator.agent.loop.queue.QueueSourceKind
+import com.workflow.orchestrator.agent.loop.queue.UnifiedMessageQueue
+import com.workflow.orchestrator.agent.loop.queue.UserQueuePolicy
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -272,12 +276,12 @@ class AgentLoop(
      */
     val environmentDetailsProvider: (suspend () -> String?)? = null,
     /**
-     * Thread-safe queue of user messages sent while the agent is actively running.
+     * Unified message queue carrying all async sources (USER, DELEGATION, BACKGROUND, MONITOR).
      * Drained at the start of each loop iteration (between compaction and LLM call).
      * Ported from Claude Code's mid-turn steering: messages appear as user-role context
      * so the LLM incorporates feedback without restarting the task.
      */
-    private val steeringQueue: ConcurrentLinkedQueue<SteeringMessage>? = null,
+    private val messageQueue: UnifiedMessageQueue? = null,
     /**
      * Callback fired after steering messages are drained and injected into context.
      * The UI uses this to promote queued steering messages to regular chat messages.
@@ -722,14 +726,6 @@ class AgentLoop(
             "If you need more information, use the ask_followup_question tool. " +
             "Otherwise proceed with the next step using an appropriate tool. " +
             "(This is an automated message — do not respond to it conversationally.)"
-        /**
-         * Prefix for mid-turn steering messages injected from the user's queued input.
-         * Frames the message so the LLM continues its current task rather than treating
-         * the steering input as a new task.
-         */
-        private const val STEERING_MESSAGE_PREFIX =
-            "The user sent an additional message while you were working. " +
-            "Incorporate their feedback while continuing your current task:\n\n"
         private const val LOOP_SOFT_WARNING =
             "WARNING: You have called the same tool with identical arguments multiple times in a row. " +
             "This is not making progress. Please try a different approach, use different parameters, " +
@@ -944,18 +940,17 @@ class AgentLoop(
                     mapOf("tokensBefore" to tokensBefore, "tokensAfter" to tokensAfter))
             }
 
-            // Stage 0.5: Drain steering messages (ported from Claude Code's mid-turn steering)
-            // User messages sent while the loop was running are queued in steeringQueue.
-            // We drain them here — after compaction (so context is fresh) but before the
-            // LLM call (so the model sees the user's feedback in context).
-            if (steeringQueue != null && steeringQueue.isNotEmpty()) {
-                val drained = generateSequence { steeringQueue.poll() }.toList()
-                if (drained.isNotEmpty()) {
-                    val combinedText = drained.joinToString("\n\n") { it.text }
-                    contextManager.addUserMessage(withEnvDetails(STEERING_MESSAGE_PREFIX + combinedText))
-                    iterationsSinceLastUser = 0
-                    LOG.info("[Loop] Injected ${drained.size} steering message(s) into context")
-                    onSteeringDrained?.invoke(drained.map { it.id })
+            // Stage 0.5: Drain queued async messages (user steering + async sources).
+            // Combined single user message + single withEnvDetails (per-group wrapping would strip
+            // earlier in-batch env blocks). Sections are framed per source, in timestamp order.
+            if (messageQueue != null && !messageQueue.isEmpty()) {
+                val groups = messageQueue.drainGrouped()
+                if (groups.isNotEmpty()) {
+                    val combined = groups.joinToString("\n\n") { it.framedText }
+                    contextManager.addUserMessage(withEnvDetails(combined))
+                    if (groups.any { it.resetsUserSilenceCounter }) iterationsSinceLastUser = 0
+                    LOG.info("[Loop] Injected ${groups.sumOf { it.ids.size }} queued message(s) in ${groups.size} group(s)")
+                    onSteeringDrained?.invoke(groups.flatMap { it.ids })
                 }
             }
 
@@ -1818,8 +1813,8 @@ class AgentLoop(
     /**
      * Enqueue a steering message into the loop's steering queue so it gets
      * injected at the next iteration boundary. No-op if the loop was built
-     * without a steering queue (e.g. sub-agents). Safe to call from any thread —
-     * [ConcurrentLinkedQueue.offer] is thread-safe.
+     * without a message queue (e.g. sub-agents). Safe to call from any thread —
+     * [UnifiedMessageQueue.enqueue] is guarded by a plain JVM lock.
      *
      * Used by [com.workflow.orchestrator.agent.AgentService] to route
      * [com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent]
@@ -1827,7 +1822,15 @@ class AgentLoop(
      */
     fun enqueueSteeringMessage(text: String) {
         val id = "auto-${System.nanoTime()}"
-        steeringQueue?.offer(SteeringMessage(id = id, text = text))
+        messageQueue?.enqueue(
+            QueuedMessage(
+                id = id,
+                kind = QueueSourceKind.USER,
+                body = text,
+                timestamp = System.currentTimeMillis(),
+                priority = UserQueuePolicy.priority,
+            ),
+        )
     }
 
     /**
@@ -2684,15 +2687,16 @@ class AgentLoop(
      * queued (caller proceeds with the normal exit).
      */
     private suspend fun drainSteeringIntoContextOnExit(): Boolean {
-        val q = steeringQueue ?: return false
+        val q = messageQueue ?: return false
         if (q.isEmpty()) return false
-        val drained = generateSequence { q.poll() }.toList()
-        if (drained.isEmpty()) return false
-        val combinedText = drained.joinToString("\n\n") { it.text }
-        contextManager.addUserMessage(withEnvDetails(STEERING_MESSAGE_PREFIX + combinedText))
-        LOG.info("[Loop] Pre-exit drain: injected ${drained.size} steering message(s) — continuing loop instead of exiting")
-        onSteeringDrained?.invoke(drained.map { it.id })
-        return true
+        val groups = q.drainGrouped()
+        if (groups.isEmpty()) return false
+        val combined = groups.joinToString("\n\n") { it.framedText }
+        contextManager.addUserMessage(withEnvDetails(combined))
+        onSteeringDrained?.invoke(groups.flatMap { it.ids })
+        LOG.info("[Loop] Pre-exit drain: ${groups.sumOf { it.ids.size }} message(s)")
+        // Defer exit only if a source that defers completion is present (USER/DELEGATION/BACKGROUND).
+        return groups.any { it.defersCompletion }
     }
 
     /**
@@ -2705,12 +2709,13 @@ class AgentLoop(
      * typed message vanish without explanation.
      */
     private fun promoteSteeringQueueOnFailure() {
-        val q = steeringQueue ?: return
+        val q = messageQueue ?: return
         if (q.isEmpty()) return
-        val drained = generateSequence { q.poll() }.toList()
-        if (drained.isEmpty()) return
-        LOG.info("[Loop] Failure exit with ${drained.size} pending steering message(s); promoting to UI bubbles")
-        onSteeringDrained?.invoke(drained.map { it.id })
+        val ids = q.pendingIds()
+        if (ids.isEmpty()) return
+        q.clear(ids)
+        LOG.info("[Loop] Failure exit with ${ids.size} pending message(s); promoting to UI bubbles")
+        onSteeringDrained?.invoke(ids)
     }
 
     /**
