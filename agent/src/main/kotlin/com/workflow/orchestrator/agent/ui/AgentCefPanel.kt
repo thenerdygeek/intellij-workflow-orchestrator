@@ -1742,6 +1742,15 @@ class AgentCefPanel(
     }
 
     /**
+     * Live-push an async-event card (background completion or monitor event) into the
+     * viewed session's chat timeline. Calls `window._pushAsyncEventCard` registered by
+     * jcef-bridge.ts — the handler JSON.parses the single JSON-object string argument.
+     */
+    fun pushAsyncEventCard(cardJson: String) {
+        callJs("window._pushAsyncEventCard && window._pushAsyncEventCard(${JsEscape.toJsString(cardJson)})")
+    }
+
+    /**
      * Push a full background-process snapshot to the webview.
      * Calls `window.__receiveBackgroundUpdate(snapshotJson)` which the top-bar
      * indicator registers in jcef-bridge.ts.

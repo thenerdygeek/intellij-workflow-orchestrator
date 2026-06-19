@@ -561,6 +561,33 @@ class AgentService(
         }
     }
 
+    /**
+     * Persist an [UiSay.ASYNC_EVENT] background/monitor card into [sessionId]'s ui_messages.json
+     * (UI-only — never api history). Sibling of [appendDelegationCardToSession]: active-session-only;
+     * no-op when no active handler matches (the idle case is covered by resume synthesis).
+     */
+    fun appendAsyncEventCardToSession(
+        sessionId: String,
+        card: com.workflow.orchestrator.agent.session.AsyncEventCardData,
+    ) {
+        val handler = activeMessageStateHandler ?: return
+        if (handler.sessionId != sessionId) return
+        cs.launch(Dispatchers.IO) {
+            try {
+                handler.addToClineMessages(
+                    com.workflow.orchestrator.agent.session.UiMessage(
+                        ts = System.currentTimeMillis(),
+                        type = com.workflow.orchestrator.agent.session.UiMessageType.SAY,
+                        say = com.workflow.orchestrator.agent.session.UiSay.ASYNC_EVENT,
+                        asyncEventData = card,
+                    )
+                )
+            } catch (e: Exception) {
+                log.warn("[Agent] appendAsyncEventCardToSession: persist failed for $sessionId", e)
+            }
+        }
+    }
+
     /** Current session's message state handler — non-null while a task is running. */
     @Volatile var activeMessageStateHandler: MessageStateHandler? = null
         private set

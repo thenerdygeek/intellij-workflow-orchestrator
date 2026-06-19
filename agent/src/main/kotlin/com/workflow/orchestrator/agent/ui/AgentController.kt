@@ -825,27 +825,9 @@ class AgentController(
                 LOG.info("[Background] completion for session=${event.sessionId} — not active (active=$active); skipping UI bubble")
                 return@addCompletionListener
             }
-            val stateLabel = when (event.state) {
-                com.workflow.orchestrator.agent.tools.background.BackgroundState.EXITED ->
-                    if (event.exitCode == 0) "completed" else "exited with code ${event.exitCode}"
-                com.workflow.orchestrator.agent.tools.background.BackgroundState.KILLED -> "was killed"
-                com.workflow.orchestrator.agent.tools.background.BackgroundState.TIMED_OUT -> "timed out"
-                com.workflow.orchestrator.agent.tools.background.BackgroundState.RUNNING -> "finished"
-            }
-            val label = event.label.take(80)
-            val message = "Background ${event.bgId} ($label) $stateLabel · ${event.runtimeMs / 1000}s"
-            val statusType = when (event.state) {
-                com.workflow.orchestrator.agent.tools.background.BackgroundState.EXITED ->
-                    if (event.exitCode == 0) RichStreamingPanel.StatusType.SUCCESS
-                    else RichStreamingPanel.StatusType.WARNING
-                com.workflow.orchestrator.agent.tools.background.BackgroundState.KILLED,
-                com.workflow.orchestrator.agent.tools.background.BackgroundState.TIMED_OUT ->
-                    RichStreamingPanel.StatusType.WARNING
-                com.workflow.orchestrator.agent.tools.background.BackgroundState.RUNNING ->
-                    RichStreamingPanel.StatusType.INFO
-            }
-            LOG.info("[Background] pushing completion bubble — $message")
-            invokeLater { dashboard.appendStatus(message, statusType) }
+            val card = com.workflow.orchestrator.agent.ui.AsyncEventCardPresenter.fromBackground(event)
+            LOG.info("[Background] pushing completion card — ${card.id} (${card.status})")
+            invokeLater { pushAsyncEventCard(active, card) }
         })
     }
 
@@ -1643,6 +1625,15 @@ class AgentController(
                 "if (window._appendDelegatedResult) " +
                     "window._appendDelegatedResult(${historyJson.encodeToString(payload)})"
             )
+        }
+    }
+
+    /** Persist an async-event card and live-push it when the target session is the one on screen. */
+    fun pushAsyncEventCard(sessionId: String, card: com.workflow.orchestrator.agent.session.AsyncEventCardData) {
+        service.appendAsyncEventCardToSession(sessionId, card)
+        if (viewedSessionId != sessionId) return
+        controllerScope.launch(Dispatchers.EDT) {
+            dashboard.pushAsyncEventCard(historyJson.encodeToString(com.workflow.orchestrator.agent.session.AsyncEventCardData.serializer(), card))
         }
     }
 
