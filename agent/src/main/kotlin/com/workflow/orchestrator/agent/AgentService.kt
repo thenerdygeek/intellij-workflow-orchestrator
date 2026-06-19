@@ -1586,12 +1586,6 @@ class AgentService(
          */
         onSessionStarted: ((sessionId: String) -> Unit)? = null,
         /**
-         * Unified message queue for mid-turn steering messages.
-         * When provided, the loop drains this at the start of each iteration and
-         * injects queued user messages into the conversation context.
-         */
-        messageQueue: UnifiedMessageQueue? = null,
-        /**
          * Callback fired after steering messages are drained and injected.
          * The UI promotes queued messages to regular chat messages.
          */
@@ -2651,7 +2645,6 @@ class AgentService(
         onSessionStats: ((modelId: String, tokensIn: Long, tokensOut: Long, costUsd: Double?) -> Unit)? = null,
         onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)? = null,
         onSessionStarted: ((sessionId: String) -> Unit)? = null,
-        messageQueue: UnifiedMessageQueue? = null,
         onSteeringDrained: ((drainedIds: List<String>) -> Unit)? = null,
         sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
         onAwaitingUserInput: ((reason: String) -> Unit)? = null,
@@ -2762,6 +2755,23 @@ class AgentService(
             wasPreviouslyCompleted = (resumeAskType == UiAsk.RESUME_COMPLETED_TASK),
         )
 
+        // Task 2.5A — drain the unified queue so newly-persisted async events are replayed.
+        // drainGrouped() clears pending_queue.json atomically, so items are consumed exactly once.
+        // Queue items are DISJOINT from the legacy-file items below (new writes go here; legacy
+        // files hold only pre-upgrade items written by the old stores before Tasks 2.2/2.3/2.4).
+        val queueDrain = runCatching {
+            val groups = queueForSession(sessionId).drainGrouped()
+            if (groups.isNotEmpty()) {
+                log.info("[AgentService] resume pickup: delivered ${groups.sumOf { it.ids.size }} queued item(s) from unified queue for $sessionId")
+            }
+            groups.joinToString("\n") { it.framedText }
+        }.getOrElse { err ->
+            log.warn("[AgentService] unified queue drain failed for $sessionId — continuing without queue items: ${err.message}", err)
+            ""
+        }
+        val baseWithQueue = if (queueDrain.isBlank()) basePreamble else basePreamble + queueDrain
+
+        // LEGACY: retire next release
         // Task 6.2 — append any background-completion events that landed while the
         // session was idle. BackgroundPersistence accumulates them under
         // sessions/{id}/background/pending_completions.json; we splice them into
@@ -2777,7 +2787,7 @@ class AgentService(
                 }
             val completionsPreamble = ResumeHelper.formatBackgroundCompletionsSection(pending)
             if (completionsPreamble.isEmpty()) {
-                basePreamble
+                baseWithQueue
             } else {
                 // Consume entries only after we've built the combined preamble — if
                 // the join fails or the caller aborts, we'd prefer to redeliver than
@@ -2789,10 +2799,11 @@ class AgentService(
                         }
                 }
                 log.info("[AgentService] resume pickup: delivered ${pending.size} persisted background completion(s) for $sessionId")
-                basePreamble + completionsPreamble
+                baseWithQueue + completionsPreamble
             }
         }
 
+        // LEGACY: retire next release
         // BUG #2 — append any cross-IDE delegation result/question nudges that landed while
         // the session was idle but whose auto-wake was rejected (cooldown/cap/disabled/
         // no-listener) or DEFERRED because a different session was active (BUG #4). Mirrors
@@ -2821,6 +2832,7 @@ class AgentService(
             }
         }
 
+        // LEGACY: retire next release
         // Task 6F — append any monitor notifications that were persisted by the idle-wake path
         // (Task 6E) while the session was paused.  Mirrors the background-completion and
         // delegation-nudge pickup blocks above: splice into the preamble, then clear so they
@@ -2988,9 +3000,6 @@ class AgentService(
                 onSessionStats = onSessionStats,
                 onDebugLog = onDebugLog,
                 onSessionStarted = onSessionStarted,
-                // Task 2.1: resolve from the service so the resumed loop drains the same queue
-                // instance that enqueueToSession (and AgentController) enqueue into.
-                messageQueue = queueForSession(sessionId),
                 onSteeringDrained = onSteeringDrained,
                 sessionApprovalStore = sessionApprovalStore,
                 onAwaitingUserInput = onAwaitingUserInput,
@@ -3274,7 +3283,6 @@ class AgentService(
                 onSessionStats = callbacks.onSessionStats,
                 onDebugLog = callbacks.onDebugLog,
                 onSessionStarted = callbacks.onSessionStarted,
-                messageQueue = callbacks.messageQueue,
                 onSteeringDrained = callbacks.onSteeringDrained,
                 onAwaitingUserInput = callbacks.onAwaitingUserInput,
                 onUserInputReceived = callbacks.onUserInputReceived,
@@ -3426,7 +3434,6 @@ class AgentService(
                 onSessionStats = callbacks.onSessionStats,
                 onDebugLog = callbacks.onDebugLog,
                 onSessionStarted = callbacks.onSessionStarted,
-                messageQueue = callbacks.messageQueue,
                 onSteeringDrained = callbacks.onSteeringDrained,
                 onAwaitingUserInput = callbacks.onAwaitingUserInput,
                 onUserInputReceived = callbacks.onUserInputReceived,

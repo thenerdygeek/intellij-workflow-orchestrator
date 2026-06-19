@@ -5,7 +5,6 @@ import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.SessionApprovalStore
 import com.workflow.orchestrator.agent.loop.StreamingEditCallback
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
-import com.workflow.orchestrator.agent.loop.queue.UnifiedMessageQueue
 import com.workflow.orchestrator.agent.session.UiMessage
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 
@@ -58,7 +57,6 @@ data class SessionUiCallbacks(
     val onSessionStats: ((modelId: String, tokensIn: Long, tokensOut: Long, costUsd: Double?) -> Unit)?,
     val onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)?,
     val onSessionStarted: ((sessionId: String) -> Unit)?,
-    val messageQueue: UnifiedMessageQueue?,
     val onSteeringDrained: ((drainedIds: List<String>) -> Unit)?,
     val onAwaitingUserInput: ((reason: String) -> Unit)?,
     val onUserInputReceived: ((task: String) -> UiMessage?)?,

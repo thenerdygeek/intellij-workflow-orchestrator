@@ -2552,7 +2552,6 @@ class AgentController(
             onSessionStats = ui.onSessionStats,
             onDebugLog = ui.onDebugLog,
             onSessionStarted = ui.onSessionStarted,
-            messageQueue = ui.messageQueue,
             onSteeringDrained = ui.onSteeringDrained,
             onAwaitingUserInput = ui.onAwaitingUserInput,
             uiMessageOverride = uiMessageOverride,
@@ -2651,9 +2650,6 @@ class AgentController(
                 dashboard.pushDebugLogEntry(level, event, detail, meta)
             } else null,
             onSessionStarted = { sid -> currentSessionId = sid },
-            // Task 2.1: obtain the queue from the service so the bundle always holds the same
-            // instance the loop will drain (both resolve via queueForSession(sid)).
-            messageQueue = currentSessionId?.let { service.queueForSession(it) },
             onSteeringDrained = { drainedIds ->
                 invokeLater { handleSteeringDrained(drainedIds) }
             },
@@ -4526,8 +4522,6 @@ class AgentController(
                 dashboard.pushDebugLogEntry(level, event, detail, meta)
             } else null,
             onSessionStarted = { sid -> currentSessionId = sid },
-            // Task 2.1: resolve via service so resumed loop and producers share ONE instance.
-            messageQueue = currentSessionId?.let { service.queueForSession(it) },
             onSteeringDrained = { drainedIds ->
                 invokeLater { handleSteeringDrained(drainedIds) }
             },
