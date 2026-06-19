@@ -17,7 +17,7 @@ Provide a **unified, per-tool-call Stop** that works for *every* running tool, r
 |---|---|
 | Stop semantics | **Abort the tool, agent continues.** The stopped tool returns a `ToolResult("[Stopped by user]")` to the LLM; the loop keeps running. Mirrors the existing `run_command` behavior (kill → partial result → loop continues). |
 | UI scope | **Universal** — the Stop button shows on any tool card whose status is `RUNNING`. Fast tools finish too quickly to show it; it naturally surfaces only on slow ones. |
-| Implementation scope | **Phases 1–3** (core + sub-agent stop + real hard-cancel hooks for blocking PSI/JDBC tools). Phase 4 (distinct `STOPPED` badge) deferred. |
+| Implementation scope | **Phases 1–3** (core + sub-agent stop + real hard-cancel hooks for blocking PSI/JDBC tools). Phase 4 (distinct `STOPPED` badge) deferred. **Note (verified 2026-06-20):** Phase 2 collapsed to a one-line UI suppression — sub-agent stop reuses the pre-existing `agentId`-keyed Kill path (see §6); the substantive remaining work is Phase 1 + Phase 3. |
 | Location | New isolated git worktree off `origin/main`. |
 
 ## 3. Why this is the right shape (architecture facts, verified against code)
@@ -37,24 +37,25 @@ Provide a **unified, per-tool-call Stop** that works for *every* running tool, r
                           │
                           ▼
             ToolStopCoordinator.requestStop(toolCallId)        ← NEW (rewires existing callback)
-              │                 │                   │
-   process?   │  sub-agent?     │      else         │
-              ▼                 ▼                   ▼
-   ProcessRegistry.kill   SubAgentRegistry.abort   ToolCancellationRegistry.cancel
-   (unchanged hard kill)  (Phase 2)                (Phase 1: cancel per-call child Job
-                                                    with UserStopCancellationException)
-                                                         │
-                                                         ▼
+              │                                 │
+   process?   │              else                │
+              ▼                                 ▼
+   ProcessRegistry.kill              ToolCancellationRegistry.cancel
+   (unchanged hard kill)             (Phase 1: cancel per-call child Job
+                                      with UserStopCancellationException)
+                                                 │
+                                                 ▼
            executeToolCancellable() (the funnel wrapper) catches the cancel,
            returns ToolResult("[Stopped by user]"), the loop continues.
 ```
 
-`ToolStopCoordinator.requestStop` uses **layered precedence**:
+`ToolStopCoordinator.requestStop` uses **layered precedence** (two layers — the sub-agent
+case is handled entirely by the *pre-existing* `agentId`-keyed kill path + a UI suppression,
+see §6, so it never enters this coordinator):
 
 ```kotlin
 fun requestStop(toolCallId: String): Boolean {
     if (ProcessRegistry.kill(toolCallId)) return true        // process tools: hard kill, partial output preserved
-    if (SubAgentRegistry.abort(toolCallId)) return true      // agent tool: abort child (Phase 2)
     return ToolCancellationRegistry.cancel(toolCallId)       // cooperative coroutine cancel
 }
 ```
@@ -163,7 +164,10 @@ panel.setCefKillCallback { toolCallId ->
 
 - **`ToolCallChain.tsx`:** today only `TerminalContent` (`:271–308`, rendered for `isCmdTool` at `:384`) wires a kill handler. Add a Stop control to the **generic** card header — `ChainOfThoughtTrigger` / `ToolCallItem` (`:344–382`), which already renders `<StatusIcon status={tc.status}/>` + `tc.name` + `<LiveElapsedTimer>` when running. Render the `Square` button (reuse from `terminal.tsx`) when `tc.status === 'RUNNING'`, calling the existing `useChatStore.getState().killToolCall(tc.id)`.
 - **Status field:** `ToolCall.status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'ERROR'` (`bridge/types.ts:27`); `RUNNING` shows a spinning `Loader2` (`ToolCallChain.tsx:108–119`).
-- **Suppression:** suppress the generic Stop button for **`ask_user_input` only** (name-based; `tc.name` is in scope at `:358`). The other interactive tools (`plan_mode_respond`, `ask_followup_question`, `ask_questions`, `attempt_completion`) already early-return in `AgentController.onToolCall` (`:3081`) and never render a generic running card, so they need no suppression.
+- **Suppression:** suppress the generic Stop button for **`ask_user_input` and `agent`** (name-based; `tc.name` is in scope at `:358`).
+  - `ask_user_input` renders a generic running card while it awaits the user, but has its own answer affordance.
+  - `agent` renders a generic parent card (it is **not** in the `onToolCall` skip set at `AgentController.kt:3073`), but its children are stopped via the pre-existing per-worker `SubAgentView` Kill buttons (`killSubAgent(agentId)` → `cancelAgent(agentId)` → `runner.abort()`). Letting the universal Stop attach to the parent card would route the parent `toolCallId` into `ToolCancellationRegistry.cancel`, which `SubagentRunner`'s `catch(Exception)` swallows (`:489`) → the click would silently do nothing. Suppressing it keeps the proven per-worker Kill as the single, correct affordance. See §6.
+  - The other interactive tools (`plan_mode_respond`, `ask_followup_question`, `ask_questions`, `attempt_completion`) already early-return in `AgentController.onToolCall` (`:3073`) and never render a generic running card, so they need no suppression.
 
 ### 5.7 Phase 1 invariants
 
@@ -173,15 +177,32 @@ panel.setCefKillCallback { toolCallId ->
 
 ---
 
-## 6. Phase 2 — Sub-agent stop (`agent` tool)
+## 6. Phase 2 — Sub-agent stop (`agent` tool) — **reuse the existing path**
 
-**Problem (review showstopper).** The `agent` tool runs a child `AgentLoop` via `SpawnAgentTool.executeSingle` → `runner.run` → `runInternal` (`SubagentRunner.kt`), where the child `loop.run(prompt)` is a direct child coroutine (`~:423`). But `runInternal` wraps everything in `catch (e: Exception)` (`:489`), and `CancellationException` **is** an `Exception`. It only maps a cancellation to a cancelled result when `abortRequested` is `true` (`:497`); a raw coroutine job-cancel never sets that flag, so the cancellation falls through to the generic `FAILED` branch (`:509–524`) and is **swallowed**. Net: a raw job-cancel of the `agent` tool would *not* stop the child's in-flight LLM stream or its child `run_command` processes.
+> **Verified 2026-06-20 (revises the original design).** The review feared we'd have to *build* sub-agent teardown. In fact a complete `agentId`-keyed stop path **already exists end-to-end** and works — so Phase 2 collapses to a one-line UI suppression.
 
-**Fix.**
-1. **`SubAgentRegistry` (new):** maps `toolCallId → child agentId(s)`, populated by `SpawnAgentTool` when it spawns (single and `executeParallel`/`supervisorScope` at `:925`). `abort(toolCallId): Boolean` calls `SpawnAgentTool.cancelAgent(agentId)` for each child → `runner.abort()` (`:160`), which sets `abortRequested = true` **and** calls `brain.cancelActiveRequest()` (cancels the child's LLM stream) and tears the child down. Returns `true` if it was an agent tool-call. This is the **precedence** entry in `ToolStopCoordinator` (§4), mirroring run_command's process-kill precedence.
-2. **Fix the swallow:** `SubagentRunner.runInternal`'s `catch (e: Exception)` must **re-throw `CancellationException`** before the generic branch — complying with the codebase's own "never swallow cancellation" rule (the orchestrator funnel already does `catch (CancellationException) { throw e }`).
+**What already exists** (parallel to the `toolCallId`-keyed `_killToolCall` path, but keyed by `agentId`):
 
-Because `abort()` sets `abortRequested`, the child loop exits cleanly and `runInternal` returns a *cancelled* `SubagentRunResult` mapped to a normal `ToolResult` — so the parent funnel sees a normal result and the parent loop continues (consistent with §2 semantics). The exact child-abort API (`SpawnAgentTool.cancelAgent` / `runner.abort`) and how `toolCallId → agentId` is known at spawn time must be confirmed during implementation.
+| Layer | Existing sub-agent stop | Evidence |
+|---|---|---|
+| UI | `SubAgentView` worker card Kill button, shown when `isRunning` | `SubAgentView.tsx:152` |
+| Store → bridge | `killSubAgent(agentId)` → `_killSubAgent` | `chatStore.ts:2549,2599`; `jcef-bridge.ts:738` |
+| Kotlin bridge | `onKillSubAgent` query | `AgentCefPanel.kt:304,654,875` |
+| Controller | `setCefKillSubAgentCallback { agentId -> cancelAgent(agentId) }` | `AgentController.kt:1268` |
+| Teardown | `SpawnAgentTool.cancelAgent(agentId)` → `runner.abort()` → sets `abortRequested` **+** `brain.cancelActiveRequest()` | `SpawnAgentTool.kt:701`; `SubagentRunner.kt:160` |
+| Registry | `runningAgents: ConcurrentHashMap<agentId, SubagentRunner>`, cleaned in `finally` | `SpawnAgentTool.kt:694` |
+
+Each child sub-agent (single **and** parallel fan-out) renders its own `SubAgentView` worker card with its own working Kill button. The `agent` tool *also* renders a generic parent card (it is **not** in the `onToolCall` skip set at `AgentController.kt:3073`).
+
+**The `SubagentRunner` swallow is real but NOT load-bearing.** `runInternal`'s `catch (e: Exception)` (`SubagentRunner.kt:489`) catches `CancellationException`, mapping it to a cancelled result only when `abortRequested` is `true` (`:497`). The existing Kill path calls `abort()`, which *sets* `abortRequested` first — so it maps cleanly to a cancelled `SubagentRunResult` and cancels the LLM stream. The swallow only bites a **raw** job-cancel (one that doesn't set the flag) — which this design now never does to a sub-agent.
+
+**Therefore Phase 2 is:**
+1. **Suppress the universal Stop button for the `agent` tool** (the §5.6 carve-out — add `agent` alongside `ask_user_input`). Without this, the new button on the parent card would route the parent `toolCallId` into `ToolCancellationRegistry.cancel`, hit the swallow, and **silently do nothing**. Suppressing it leaves the proven per-worker Kill as the single, correct affordance. This is the entire required change — no `SubAgentRegistry`, no `ToolStopCoordinator` sub-agent layer, no new teardown.
+2. **(Optional, defensive hygiene — not required for this feature.)** Make `SubagentRunner.runInternal` re-throw `CancellationException` before the generic branch, to comply with the codebase's "never swallow cancellation" rule. Decoupled from the stop feature; can be its own tiny commit or deferred.
+
+**Minor edge:** in the brief window between the `agent` tool starting and its first child spawning, the parent card shows no Stop and no worker card yet exists — the user falls back to the global stop-the-agent action. Acceptable (the window is sub-second).
+
+**Deferred (Phase 4 nicety):** a parent-card "cancel all children at once" button would need a `toolCallId → Set<agentId>` map; not built in v1 since per-worker Kill already covers it.
 
 ---
 
@@ -213,12 +234,12 @@ A distinct `STOPPED` status/badge. It would require opening **two** status-colla
 ## 9. Testing plan
 
 - **`ToolCancellationRegistryTest`** (pure JVM): register/cancel/unregister; `cancel` returns `false` when absent; `cancel` actually cancels the job with a `UserStopCancellationException` cause.
-- **`ToolStopCoordinatorTest`**: layered precedence — process found → only `ProcessRegistry.kill`; agent tool-call → only `SubAgentRegistry.abort`; otherwise → `ToolCancellationRegistry.cancel`. Use seams/fakes for the three registries.
+- **`ToolStopCoordinatorTest`**: two-layer precedence — process found → only `ProcessRegistry.kill` (don't touch the cancellation registry); otherwise → `ToolCancellationRegistry.cancel`. Use seams/fakes for the two registries.
 - **Behavioral funnel test via the `AgentLoopTest` harness** (real, not source-text): a fake tool that suspends forever → `requestStop(toolCallId)` → assert the tool result is "Stopped by user", the loop continues to the next iteration, the loop's `cancelled` flag stays `false`, and the ThreadLocal cleanup ran. Add a sibling test where the *whole loop* is cancelled → the funnel re-throws (propagates).
 - **`isUserStop` unit test**: sentinel directly, sentinel nested as `cause`, and an unrelated `CancellationException` → only the first two are user-stops.
-- **Sub-agent teardown test** (Phase 2): stopping an `agent` tool-call aborts the child (sets `abortRequested`, cancels the child brain stream); `SubagentRunner` no longer swallows `CancellationException`.
 - **Source-text contract test** for the `AgentController` callback rewire — **mind the sentinel-slice trap**: place any new private helper *outside* the source-text-sliced ranges other tests assert on, and run the **full** `:agent:test`, not just `--tests`.
-- **vitest** (`ToolCallChain.test.tsx`): generic Stop button renders on `RUNNING`, hidden otherwise, suppressed for `ask_user_input`, and calls `killToolCall(tc.id)`.
+- **vitest** (`ToolCallChain.test.tsx`): generic Stop button renders on `RUNNING`, hidden otherwise, **suppressed for both `ask_user_input` and `agent`**, and calls `killToolCall(tc.id)`.
+- *(Phase 2 optional)* if the defensive `SubagentRunner` re-throw is included, a small test that `runInternal` re-throws `CancellationException` rather than mapping it to `FAILED`. Not required for the stop feature itself.
 
 Build/verify: `./gradlew :agent:clean :agent:test --rerun --no-build-cache` (suspend-signature/ctor changes can trigger the build-cache `NoSuchMethodError` trap) + `./gradlew verifyPlugin`.
 
@@ -227,21 +248,20 @@ Build/verify: `./gradlew :agent:clean :agent:test --rerun --no-build-cache` (sus
 **New**
 - `tools/cancel/ToolCancellationRegistry.kt` (+ `UserStopCancellationException`)
 - `tools/cancel/ToolStopCoordinator.kt`
-- `tools/cancel/SubAgentRegistry.kt` (Phase 2)
-- Tests: `ToolCancellationRegistryTest`, `ToolStopCoordinatorTest`, funnel behavioral test, `isUserStop` test, sub-agent teardown test, `AgentController` source-text contract test.
+- Tests: `ToolCancellationRegistryTest`, `ToolStopCoordinatorTest`, funnel behavioral test, `isUserStop` test, `AgentController` source-text contract test.
 
 **Modified**
 - `loop/AgentLoop.kt` — funnel wrapper (`coroutineScope` + register/unregister), discriminating `catch`, keep existing `finally` cleanup; `isUserStop`/`stoppedByUserResult` helpers (placed outside source-text-sliced ranges).
 - `ui/AgentController.kt:1115–1118` — rewire `setCefKillCallback` target to `ToolStopCoordinator.requestStop`.
 - `tools/AgentTool.kt` — add `interruptible: Boolean get() = true` (Phase 3).
-- `tools/builtin/SpawnAgentTool.kt` + `.../SubagentRunner.kt` — populate `SubAgentRegistry`; re-throw `CancellationException` (Phase 2).
 - `FindReferencesTool.kt` / `FindDefinitionTool.kt` / `RunInspectionsTool.kt` / `SemanticDiagnosticsTool.kt` — `ProgressIndicator` hook (Phase 3).
 - `DbQueryTool.kt` — `Statement.cancel()` hook (Phase 3).
-- webview `components/agent/ToolCallChain.tsx` — generic Stop button + `ask_user_input` suppression; vitest.
+- webview `components/agent/ToolCallChain.tsx` — generic Stop button + `{ask_user_input, agent}` suppression; vitest.
+- *(Phase 2 optional/defensive)* `tools/subagent/SubagentRunner.kt` — re-throw `CancellationException` in `runInternal`'s `catch`. **No `SubAgentRegistry`, no `SpawnAgentTool` change** — sub-agent stop reuses the existing `agentId`-keyed Kill path (§6).
 
 ## 11. Risks & open questions
 
-1. **Sub-agent abort API** — confirm `SpawnAgentTool.cancelAgent` / `runner.abort()` exist and how `toolCallId → agentId` is captured at spawn (single + parallel). (Phase 2.)
+1. **~~Sub-agent abort API~~ — RESOLVED 2026-06-20.** Verified against the code: `SpawnAgentTool.cancelAgent(agentId)` (`:701`) → `runner.abort()` (`SubagentRunner.kt:160`, sets `abortRequested` + `brain.cancelActiveRequest()`) and a complete `agentId`-keyed UI kill path already exist (`SubAgentView.tsx:152` → `killSubAgent` → `_killSubAgent` → `cancelAgent`). No `toolCallId → agentId` mapping is needed — Phase 2 reduces to suppressing the universal Stop button for `agent` (§6). The `SubagentRunner` `catch(Exception)` swallow is real but **not load-bearing** (the existing path sets `abortRequested` before the swallow runs).
 2. **run_command spawn-after-cancel TOCTOU** — between funnel `register` and the tool's `ProcessRegistry.register`, a Stop finds no process and falls back to coroutine cancel; if the process spawns *after*, it could orphan. Mitigation: process-precedence usually wins (process registers early); optionally have `RunCommandTool` check `callJob.isActive` around spawn. Low severity.
-3. **ProgressIndicator wiring** for `ReadAction.nonBlocking().executeSynchronously()` — confirm the indicator-cancel actually aborts the synchronous read action in this platform version. (Phase 3.)
+3. **ProgressIndicator wiring** for `ReadAction.nonBlocking().executeSynchronously()` — confirm the indicator-cancel actually aborts the synchronous read action in this platform version. (Phase 3 — now the main genuine unknown.)
 4. **Status double-collapse** — accepted for v1 (renders as `COMPLETED`); revisit only if a distinct badge is wanted (Phase 4).
