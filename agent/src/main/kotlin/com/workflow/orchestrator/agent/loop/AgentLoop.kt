@@ -46,10 +46,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
 import com.workflow.orchestrator.agent.loop.queue.DrainGroup
-import com.workflow.orchestrator.agent.loop.queue.QueuedMessage
-import com.workflow.orchestrator.agent.loop.queue.QueueSourceKind
 import com.workflow.orchestrator.agent.loop.queue.UnifiedMessageQueue
-import com.workflow.orchestrator.agent.loop.queue.UserQueuePolicy
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -97,12 +94,6 @@ private class ApprovalGatedTool(
  * - Loop detection (from Cline): warns at 3, fails at 5 identical consecutive tool calls.
  * - Context overflow detection: catches API errors for context exceeded, compacts + retries.
  */
-
-/**
- * A user message queued while the agent loop is actively running.
- * Drained at the start of each iteration and injected into the conversation context.
- */
-data class SteeringMessage(val id: String, val text: String, val timestamp: Long = System.currentTimeMillis())
 
 /**
  * UI fan-out for the live `edit_file` diff preview during streaming.
@@ -1808,29 +1799,6 @@ class AgentLoop(
         } catch (_: Throwable) {
             // best-effort — never let a cancel-side bug block the brain cancel
         }
-    }
-
-    /**
-     * Enqueue a steering message into the loop's steering queue so it gets
-     * injected at the next iteration boundary. No-op if the loop was built
-     * without a message queue (e.g. sub-agents). Safe to call from any thread —
-     * [UnifiedMessageQueue.enqueue] is guarded by a plain JVM lock.
-     *
-     * Used by [com.workflow.orchestrator.agent.AgentService] to route
-     * [com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent]
-     * messages into the active loop when a background process exits.
-     */
-    fun enqueueSteeringMessage(text: String) {
-        val id = "auto-${System.nanoTime()}"
-        messageQueue?.enqueue(
-            QueuedMessage(
-                id = id,
-                kind = QueueSourceKind.USER,
-                body = text,
-                timestamp = System.currentTimeMillis(),
-                priority = UserQueuePolicy.priority,
-            ),
-        )
     }
 
     /**
