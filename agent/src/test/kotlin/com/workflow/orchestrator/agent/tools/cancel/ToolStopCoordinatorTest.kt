@@ -13,7 +13,10 @@ class ToolStopCoordinatorTest {
         val result = ToolStopCoordinator.requestStop(
             "t1",
             killProcess = { true },
-            cancelCoroutine = { coroutineAttempted = true; true },
+            cancelCoroutine = {
+                coroutineAttempted = true
+                true
+            },
         )
         assertTrue(result)
         assertFalse(coroutineAttempted, "coroutine cancel must not run when a process was killed")
@@ -25,7 +28,10 @@ class ToolStopCoordinatorTest {
         val result = ToolStopCoordinator.requestStop(
             "t2",
             killProcess = { false },
-            cancelCoroutine = { cancelledId = it; true },
+            cancelCoroutine = {
+                cancelledId = it
+                true
+            },
         )
         assertTrue(result)
         assertEquals("t2", cancelledId)

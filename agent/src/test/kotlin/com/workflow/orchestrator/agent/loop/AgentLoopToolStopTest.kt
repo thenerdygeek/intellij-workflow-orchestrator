@@ -110,7 +110,7 @@ class AgentLoopToolStopTest {
         }
 
         override fun estimateTokens(text: String): Int = text.toByteArray().size / 4
-        override fun cancelActiveRequest() {}
+        override fun cancelActiveRequest() { /* no-op: test brain has no live request to cancel */ }
     }
 
     private fun sequenceBrain(vararg responses: ChatCompletionResponse): SequenceBrain =
@@ -122,7 +122,10 @@ class AgentLoopToolStopTest {
         override val parameters = FunctionParameters(properties = emptyMap())
         override val allowedWorkers = setOf(WorkerType.CODER)
         override suspend fun execute(params: JsonObject, project: Project) = ToolResult(
-            content = summary, summary = summary, tokenEstimate = 5, isCompletion = true
+            content = summary,
+            summary = summary,
+            tokenEstimate = 5,
+            isCompletion = true,
         )
     }
 
@@ -153,6 +156,7 @@ class AgentLoopToolStopTest {
         override val description = "Test tool slow_tool"
         override val parameters = FunctionParameters(properties = emptyMap())
         override val allowedWorkers = setOf(WorkerType.CODER)
+
         // CRITICAL: avoids runTest's virtual clock fast-forwarding to the default 120s
         // withTimeoutOrNull and returning a *timeout* result before our stop lands.
         override val timeoutMs = Long.MAX_VALUE
@@ -178,8 +182,11 @@ class AgentLoopToolStopTest {
         // must stop (it is non-deterministic — call_${idx}_${nanoTime()}), and the
         // post-execution one carries the recorded tool result (summary/output).
         val progress = java.util.concurrent.CopyOnWriteArrayList<ToolCallProgress>()
-        val loop = buildLoop(brain, listOf(slow, completionTool("Continued past the stop.")),
-            onToolCall = { progress.add(it) })
+        val loop = buildLoop(
+            brain,
+            listOf(slow, completionTool("Continued past the stop.")),
+            onToolCall = { progress.add(it) },
+        )
 
         lateinit var result: LoopResult
         val loopJob = launch { result = loop.run("do the slow thing") }
@@ -221,8 +228,11 @@ class AgentLoopToolStopTest {
         )
 
         val progress = java.util.concurrent.CopyOnWriteArrayList<ToolCallProgress>()
-        val loop = buildLoop(brain, listOf(slow, completionTool()),
-            onToolCall = { progress.add(it) })
+        val loop = buildLoop(
+            brain,
+            listOf(slow, completionTool()),
+            onToolCall = { progress.add(it) },
+        )
 
         var caught: Throwable? = null
         val loopJob = launch {
