@@ -49,6 +49,17 @@ class QueueSourcePolicyTest {
     }
 
     @Test
+    fun `delegation policy flags`() {
+        assertEquals(QueueSourceKind.DELEGATION, DelegationQueuePolicy.kind)
+        assertEquals(70, DelegationQueuePolicy.priority)
+        assertTrue(DelegationQueuePolicy.autoWakesIdle)
+        assertTrue(DelegationQueuePolicy.durable)
+        assertTrue(DelegationQueuePolicy.defersCompletion)
+        assertFalse(DelegationQueuePolicy.resetsUserSilenceCounter)
+        assertNull(DelegationQueuePolicy.coalesceKey(msg(QueueSourceKind.DELEGATION, "x")))
+    }
+
+    @Test
     fun `registry resolves every kind`() {
         QueueSourceKind.values().forEach { assertEquals(it, QueueSourceRegistry.policyFor(it).kind) }
     }

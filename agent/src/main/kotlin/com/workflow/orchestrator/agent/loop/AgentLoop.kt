@@ -2638,21 +2638,21 @@ class AgentLoop(
 
     /**
      * Pre-exit drain for loop paths where the loop can productively continue
-     * (Completion, SessionHandoff). If the user typed a steering message during
-     * the stream that produced the exit-triggering tool call, inject it as a
-     * user turn and signal the caller to NOT return — the LLM will see the
-     * follow-up on the next iteration instead of having it silently dropped by
-     * the controller's queue clear at onComplete.
+     * (Completion, SessionHandoff). Drains all pending messages from the unified
+     * [messageQueue] via [drainGrouped], groups them by source, frames each group
+     * via its [QueueSourcePolicy.frame], and injects the combined text as a single
+     * user turn (via [withEnvDetails]) so the LLM sees every queued source on the
+     * next iteration instead of having them silently dropped.
      *
-     * Mirrors Stage 0.5 in [run]: same [STEERING_MESSAGE_PREFIX], same
-     * [withEnvDetails], same [onSteeringDrained] callback so the UI promotes
-     * the queued pills to real user-message bubbles. The caller is responsible
-     * for collapsing any dangling tool pair *before* invoking, so the steering
-     * text lands after a clean assistant turn (not a tool_result).
+     * [onSteeringDrained] is fired with the drained message ids so the UI promotes
+     * queued pills to visible user-message bubbles. The caller is responsible for
+     * collapsing any dangling tool pair *before* invoking, so the injected text
+     * lands after a clean assistant turn (not a tool_result).
      *
-     * Returns true when a drain happened (caller should `return null` from
-     * [executeToolCalls] to continue the loop) or false when there was nothing
-     * queued (caller proceeds with the normal exit).
+     * Returns true when at least one drained group's policy has [defersCompletion]
+     * set (caller should `return null` from [executeToolCalls] to continue the loop),
+     * or false when the queue was empty or all drained groups are non-deferring
+     * (caller proceeds with the normal exit).
      */
     private suspend fun drainSteeringIntoContextOnExit(): Boolean {
         val q = messageQueue ?: return false
