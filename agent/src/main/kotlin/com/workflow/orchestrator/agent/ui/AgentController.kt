@@ -42,7 +42,7 @@ import com.workflow.orchestrator.agent.tools.background.BackgroundPool
 import com.workflow.orchestrator.agent.tools.builtin.ArtifactResultRegistry
 import com.workflow.orchestrator.agent.tools.builtin.Question
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
-import com.workflow.orchestrator.agent.tools.process.ProcessRegistry
+import com.workflow.orchestrator.agent.tools.cancel.ToolStopCoordinator
 import com.workflow.orchestrator.agent.tools.subagent.SubagentExecutionStatus
 import com.workflow.orchestrator.agent.tools.subagent.SubagentProgressUpdate
 import com.workflow.orchestrator.agent.ui.plan.AgentPlanEditor
@@ -1100,8 +1100,8 @@ class AgentController(
 
         // Tool kill callback
         panel.setCefKillCallback { toolCallId ->
-            LOG.info("AgentController: kill requested for tool call $toolCallId")
-            ProcessRegistry.kill(toolCallId)
+            LOG.info("AgentController: stop requested for tool call $toolCallId")
+            ToolStopCoordinator.requestStop(toolCallId)
         }
 
         // Artifact render-result callback — sandbox iframe posts render outcome back
