@@ -979,6 +979,9 @@ Per-session metrics accumulator (`observability/SessionMetrics.kt`). Records too
 ### AgentFileLogger
 Structured JSONL agent logs (`observability/AgentFileLogger.kt`). Location: `~/.workflow-orchestrator/{proj}/logs/agent-YYYY-MM-DD.jsonl`. 7-day retention.
 
+### API Debug Dumps (opt-in, default OFF)
+Full per-call request/response dumps (`sessions/{id}/api-debug/call-NNN-{request,response,error}.txt`, plus sub-agent `subagents/.../api-debug/` and recycle breadcrumbs) power the in-IDE API Debug viewer. Each request dump is a full copy of the request body (200–280 KB on a long session) written on **every** LLM call — heavy on antivirus-scanned / OneDrive-synced disks. Gated by `AgentSettings.writeApiDebugDumps` (default `false`; Settings → AI Agent → Advanced → "Write API debug dumps to disk"). `AgentService` is the single gate: it computes `apiDebugDir = sessionDebugDir.takeIf { writeApiDebugDumps }` (null when off) and threads it to the initial brain, recycled/fallback brains, the recycle marker, and `SpawnAgentTool.sessionDebugDir`. `SpawnAgentTool` itself stays decoupled from the setting — a null `sessionDebugDir` is the only signal it needs. Pinned by `ApiDebugDumpGatingContractTest` + `AgentSettingsApiDebugDumpTest`.
+
 ## Security
 
 - **PathValidator** (`tools/builtin/PathValidator.kt`) — canonical path comparison prevents traversal (`../../etc/passwd`)

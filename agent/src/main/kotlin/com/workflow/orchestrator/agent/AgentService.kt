@@ -1801,17 +1801,26 @@ class AgentService(
                 // Cleared wholesale in [resetForNewChat].
                 val runtime = getOrCreateSessionRuntime(sid)
                 val sharedApiCounter = runtime.apiCallCounter
+                val agentSettings = AgentSettings.getInstance(project)
+                // API-debug request/response dumps are OFF by default. Each request dump is a full
+                // copy of the request body (200-280 KB on a long session) written to
+                // sessions/{id}/api-debug/ on EVERY call, which contends with the IDE on
+                // antivirus-scanned / OneDrive-synced disks. `apiDebugDir` is the SINGLE gate —
+                // null disables dumping at the brain (initial + recycled), the recycle breadcrumb,
+                // and the sub-agent path alike. Opt in via AI Agent > Advanced > Diagnostics.
+                val apiDebugDir: java.io.File? =
+                    sessionDebugDir.takeIf { agentSettings.state.writeApiDebugDumps }
                 // Wire api-debug + shared call counter on the underlying brain.
                 // After Phase 6, `brain` is a BrainRouter wrapping OpenAiCompatBrain,
                 // so we use `rawBrain` here (held above the wrap-call) to reach the
                 // OpenAiCompatBrain instance directly.
                 if (rawBrain is OpenAiCompatBrain) {
-                    rawBrain.setApiDebugDir(sessionDebugDir)
+                    rawBrain.setApiDebugDir(apiDebugDir)
                     rawBrain.setSharedApiCallCounter(sharedApiCounter)
-                    log.debug("[Agent] API debug dir: ${sessionDebugDir.absolutePath}/api-debug/")
+                    if (apiDebugDir != null) {
+                        log.debug("[Agent] API debug dir: ${apiDebugDir.absolutePath}/api-debug/")
+                    }
                 }
-
-                val agentSettings = AgentSettings.getInstance(project)
 
                 // Network error strategy — the L2-tier-escalation gating decision is the pure
                 // [com.workflow.orchestrator.agent.loop.NetworkRecoveryPolicy] (Phase 3 cut B).
@@ -1867,7 +1876,7 @@ class AgentService(
                         toolNameSet = currentToolNames,
                         paramNameSet = currentParamNames
                     ).also { b ->
-                        b.setApiDebugDir(sessionDebugDir)
+                        b.setApiDebugDir(apiDebugDir)
                         // Inherit the shared API call counter so call-NNN-*.txt filenames
                         // stay monotonic across the new brain's calls.
                         b.setSharedApiCallCounter(sharedApiCounter)
@@ -1890,20 +1899,24 @@ class AgentService(
                     try {
                         val recycleIdx = recycleMarkerCounter.incrementAndGet()
                         val lastCallNum = sharedApiCounter.get()
-                        val markerFile = java.io.File(
-                            sessionDebugDir,
-                            "api-debug/recycle-${String.format("%03d", recycleIdx)}.txt"
-                        )
-                        markerFile.writeText(buildString {
-                            appendLine("=== Brain Recycle #$recycleIdx === ${java.time.Instant.now()} ===")
-                            appendLine("Model:        $modelId")
-                            appendLine("After call #: $lastCallNum")
-                            appendLine("Reason:       ${reason ?: "(unspecified)"}")
-                            appendLine()
-                            appendLine("The previous OpenAiCompatBrain (and its OkHttpClient + ConnectionPool +")
-                            appendLine("activeCall ref) was discarded. The fresh brain shares the session's API")
-                            appendLine("call counter, so the next call dump will be call-${String.format("%03d", lastCallNum + 1)}-request.txt")
-                        })
+                        // Only write the breadcrumb when api-debug dumps are on — otherwise there is
+                        // no api-debug/ directory to annotate (apiDebugDir == sessionDebugDir here).
+                        apiDebugDir?.let { dbgDir ->
+                            val markerFile = java.io.File(
+                                dbgDir,
+                                "api-debug/recycle-${String.format("%03d", recycleIdx)}.txt"
+                            )
+                            markerFile.writeText(buildString {
+                                appendLine("=== Brain Recycle #$recycleIdx === ${java.time.Instant.now()} ===")
+                                appendLine("Model:        $modelId")
+                                appendLine("After call #: $lastCallNum")
+                                appendLine("Reason:       ${reason ?: "(unspecified)"}")
+                                appendLine()
+                                appendLine("The previous OpenAiCompatBrain (and its OkHttpClient + ConnectionPool +")
+                                appendLine("activeCall ref) was discarded. The fresh brain shares the session's API")
+                                appendLine("call counter, so the next call dump will be call-${String.format("%03d", lastCallNum + 1)}-request.txt")
+                            })
+                        }
                         log.info("[Agent] Brain recycled (#$recycleIdx) — model=$modelId, after call #$lastCallNum, reason: ${reason?.take(120)}")
                     } catch (e: Exception) {
                         log.debug("[Agent] Failed to write recycle marker: ${e.message}")
@@ -2123,7 +2136,8 @@ class AgentService(
                     // FALLBACK_MAX_INPUT_TOKENS the orchestrator uses on cold cache.
                     spawnAgentTool.contextBudget = ctx.effectiveMaxInputTokens()
                     spawnAgentTool.maxOutputTokens = agentSettings.state.maxOutputTokens
-                    spawnAgentTool.sessionDebugDir = sessionDebugDir
+                    // Gated: null when api-debug dumps are off, so sub-agents write nothing to disk.
+                    spawnAgentTool.sessionDebugDir = apiDebugDir
                     spawnAgentTool.toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate"
                     spawnAgentTool.approvalGate = approvalGate
                     spawnAgentTool.sessionApprovalStore = sessionApprovalStore
