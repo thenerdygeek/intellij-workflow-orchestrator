@@ -1219,4 +1219,13 @@ export function initBridge(storeAccessors: StoreAccessors): void {
       console.error('[bridge] _appendDelegatedResult: bad payload', e);
     }
   };
+
+  window._pushAsyncEventCard = (json: string) => {
+    try {
+      const card = JSON.parse(json);
+      stores?.getChatStore().addAsyncEventCard(card);
+    } catch (e) {
+      console.error('[bridge] _pushAsyncEventCard: bad payload', e);
+    }
+  };
 }
