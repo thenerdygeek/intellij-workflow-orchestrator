@@ -105,6 +105,18 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
          */
         var autoApproveMemoryOperations by property(false)
 
+        /**
+         * When true, every LLM request/response is dumped to disk under
+         * `sessions/{id}/api-debug/call-NNN-{request,response,error}.txt` (and the sub-agent
+         * equivalents) to power the in-IDE API Debug viewer. Default OFF: each request dump is a
+         * full copy of the request body (200–280 KB on a long session) written on EVERY call, so
+         * on antivirus-scanned or network-synced (OneDrive) filesystems it adds real disk I/O that
+         * contends with the IDE. Turn on only while actively inspecting raw API traffic. Gated at
+         * the wiring layer — [com.workflow.orchestrator.agent.AgentService] (main session) and
+         * [com.workflow.orchestrator.agent.tools.builtin.SpawnAgentTool] (sub-agents).
+         */
+        var writeApiDebugDumps by property(false)
+
         fun maxTokenOverridesSnapshot(): com.workflow.orchestrator.agent.model.MaxTokenOverrides {
             val perModel = try {
                 kotlinx.serialization.json.Json.decodeFromString<Map<String, Int>>(

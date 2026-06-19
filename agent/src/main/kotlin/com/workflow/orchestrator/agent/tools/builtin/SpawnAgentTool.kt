@@ -714,6 +714,9 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
      * Layout: `sessions/{sid}/subagents/subagent-{N}-{sanitizedDesc}/`
      */
     private fun subagentDebugDir(description: String): java.io.File? {
+        // `sessionDebugDir` is the single gate for sub-agent api-debug dumps: AgentService assigns
+        // it only when the api-debug setting is on (off by default), so a null here means dumps are
+        // disabled and we write nothing to disk.
         val parentDir = sessionDebugDir ?: return null
         val idx = subagentCounter.incrementAndGet()
         val safeName = description.take(40).replace(Regex("[^a-zA-Z0-9_-]"), "_").lowercase()

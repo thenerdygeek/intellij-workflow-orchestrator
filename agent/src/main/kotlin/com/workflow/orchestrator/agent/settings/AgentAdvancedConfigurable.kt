@@ -75,6 +75,19 @@ class AgentAdvancedConfigurable(
                         .bindSelected(::cmdEnabled)
                         .comment("When disabled, the agent will not offer cmd.exe as a shell option in run_command")
                 }
+                row {
+                    checkBox("Write API debug dumps to disk (powers the API Debug viewer)")
+                        .bindSelected(agentSettings.state::writeApiDebugDumps)
+                        .comment(
+                            "When ON, every LLM request/response is saved to " +
+                                "<code>sessions/{id}/api-debug/call-NNN-*.txt</code> for inspection. " +
+                                "Each request dump is a full copy of the request body (200–280&nbsp;KB on a " +
+                                "long session) written on <b>every</b> call — on antivirus-scanned or " +
+                                "OneDrive-synced disks this adds I/O that can make the IDE feel sluggish. " +
+                                "<b>Off by default</b>; turn on only while inspecting raw API traffic. " +
+                                "Takes effect on the next task/session."
+                        )
+                }
             }
 
             group("Tool Calling") {
