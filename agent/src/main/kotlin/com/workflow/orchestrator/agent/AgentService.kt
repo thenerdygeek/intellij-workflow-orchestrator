@@ -223,6 +223,10 @@ class AgentService(
         agentDirProvider = { agentDir },
         idleWaker = idleWaker,
         activeLoopForSession = ::activeLoopForSession,
+        // Task 2.4 — plain enqueue primitive (NO auto-wake); the coordinator's wakeIdle
+        // callback fires idleWaker.wake() separately after enqueuing, preserving the
+        // per-monitor wake-budget/flood accounting contract.
+        enqueueToQueue = { sid, msg -> queueForSession(sid).enqueue(msg) },
     )
 
     /** @see AgentMonitorCoordinator.ensureMonitorManager */

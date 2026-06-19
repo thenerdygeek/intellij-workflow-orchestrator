@@ -2,6 +2,7 @@ package com.workflow.orchestrator.agent.monitor
 
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.loop.AgentLoop
+import com.workflow.orchestrator.agent.loop.queue.QueuedMessage
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.background.IdleSessionWaker
 import io.mockk.every
@@ -22,6 +23,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertDoesNotThrow
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Files
 import java.nio.file.Path
 
 /**
@@ -72,18 +74,28 @@ class AgentMonitorCoordinatorTest {
 
     private fun buildCoordinator(
         activeLoopForSession: (String) -> AgentLoop? = { null },
+        enqueueToQueue: (String, QueuedMessage) -> Unit = { _, _ -> },
     ): AgentMonitorCoordinator = AgentMonitorCoordinator(
         project = project,
         cs = cs,
         agentDirProvider = { agentDir.toFile() },
         idleWaker = idleWaker,
         activeLoopForSession = activeLoopForSession,
+        enqueueToQueue = enqueueToQueue,
     )
 
+    /** Seed a legacy monitor-notifications.json directly (the writer was removed in Task 2.4). */
+    private fun seedLegacyNotifications(sessionId: String, vararg texts: String) {
+        val sessionDir = agentDir.resolve("sessions").resolve(sessionId)
+        Files.createDirectories(sessionDir)
+        val json = texts.joinToString(separator = "\",\"", prefix = "[\"", postfix = "\"]")
+        Files.writeString(sessionDir.resolve("monitor-notifications.json"), json)
+    }
+
     @Test
-    fun `loadPendingNotifications reads notifications persisted under the injected agentDir`() {
-        seed.appendPendingNotification("s1", "note-A")
-        seed.appendPendingNotification("s1", "note-B")
+    fun `loadPendingNotifications reads legacy notifications from the injected agentDir`() {
+        // Seed the legacy file directly (appendPendingNotification writer removed in Task 2.4)
+        seedLegacyNotifications("s1", "note-A", "note-B")
 
         val coordinator = buildCoordinator()
 
@@ -91,8 +103,8 @@ class AgentMonitorCoordinatorTest {
     }
 
     @Test
-    fun `clearPendingNotifications empties the persisted notifications for the session`() {
-        seed.appendPendingNotification("s1", "note-A")
+    fun `clearPendingNotifications deletes the legacy notifications file`() {
+        seedLegacyNotifications("s1", "note-A")
         val coordinator = buildCoordinator()
 
         coordinator.clearPendingNotifications("s1")
@@ -101,8 +113,8 @@ class AgentMonitorCoordinatorTest {
     }
 
     @Test
-    fun `clearPersistedMonitors also clears pending notifications`() {
-        seed.appendPendingNotification("s2", "stale")
+    fun `clearPersistedMonitors also clears legacy pending notifications file`() {
+        seedLegacyNotifications("s2", "stale")
         val coordinator = buildCoordinator()
 
         coordinator.clearPersistedMonitors("s2")

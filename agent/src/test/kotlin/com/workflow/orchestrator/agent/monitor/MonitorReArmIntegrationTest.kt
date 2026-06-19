@@ -248,7 +248,10 @@ class MonitorReArmIntegrationTest {
         )
 
         persistence.add(sid, spec)
-        persistence.appendPendingNotification(sid, "build failed while away")
+        // Seed the legacy notifications file directly (appendPendingNotification writer removed in Task 2.4).
+        val sessionDir = agentDir.resolve("sessions").resolve(sid)
+        Files.createDirectories(sessionDir)
+        Files.writeString(sessionDir.resolve("monitor-notifications.json"), """["build failed while away"]""")
 
         // Pre-conditions: both present before clear.
         val specsBeforeClear = persistence.load(sid)

@@ -5,6 +5,9 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.loop.AgentLoop
+import com.workflow.orchestrator.agent.loop.queue.MonitorQueuePolicy
+import com.workflow.orchestrator.agent.loop.queue.QueueSourceKind
+import com.workflow.orchestrator.agent.loop.queue.QueuedMessage
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.background.IdleSessionWaker
 import com.workflow.orchestrator.agent.tools.integration.ServiceLookup
@@ -51,6 +54,7 @@ class AgentMonitorCoordinator(
     private val agentDirProvider: () -> File,
     private val idleWaker: IdleSessionWaker,
     private val activeLoopForSession: (String) -> AgentLoop?,
+    private val enqueueToQueue: (sessionId: String, msg: QueuedMessage) -> Unit = { _, _ -> },
 ) : Disposable {
 
     private val log = Logger.getInstance(AgentMonitorCoordinator::class.java)
@@ -119,6 +123,20 @@ class AgentMonitorCoordinator(
     }
 
     /**
+     * Build a kind=MONITOR [QueuedMessage] from coalesced [text]. No coalesceKey is set because
+     * the monitorId is not available at this callback level; [MonitorManager] coalesces upstream
+     * so queue-level deduplication is intentionally skipped.
+     */
+    private fun monitorMsg(text: String): QueuedMessage = QueuedMessage(
+        id = "mon-${System.nanoTime()}",
+        kind = QueueSourceKind.MONITOR,
+        body = text,
+        timestamp = System.currentTimeMillis(),
+        priority = MonitorQueuePolicy.priority,
+        coalesceKey = null,
+    )
+
+    /**
      * Build (or fetch) the [MonitorManager] for [sessionId]. All side effects are injected
      * so monitor routing reuses the live-loop steering path and the shared idle-waker
      * (guard cap/cooldown honoured across background + delegation + monitor wakes).
@@ -136,14 +154,17 @@ class AgentMonitorCoordinator(
                 // Documented TOCTOU: if the loop exits between isLoopLive() and deliverToLoop(),
                 // the `?.` drops the message safely — acceptable, the loop was terminating anyway.
                 isLoopLive = { activeLoopForSession(sessionId) != null },
-                deliverToLoop = { text -> activeLoopForSession(sessionId)?.enqueueSteeringMessage(text) },
+                deliverToLoop = { text -> enqueueToQueue(sessionId, monitorMsg(text)) },
                 wakeIdle = { text ->
-                    // Task 6E — persist FIRST (mirror onBackgroundCompletion's persist-then-wake ordering).
-                    // The notification survives even when the wake route is SKIP_GUARD or DEFER
-                    // (global guard hit / another session active) — Task 6F replays it on resume.
-                    runCatching { monitorPersistence.appendPendingNotification(sessionId, text) }
-                        .onFailure { log.warn("appendPendingNotification failed for $sessionId: ${it.message}", it) }
-                    wakeOutcomeFor(idleWaker.wake(sessionId, text, "monitor"))
+                    // Task 2.4 — durable persist via the queue (MonitorQueuePolicy.durable=true)
+                    // replaces appendPendingNotification. The queue's QueuePersistence atomically
+                    // writes pending_queue.json before the wake is attempted, so the notification
+                    // survives a SKIP_GUARD or DEFER route (Task 6F's resume reader is Task 2.5).
+                    enqueueToQueue(sessionId, monitorMsg(text))
+                    // The blank synthetic text is the carrier for the wake signal; the actual
+                    // notification body is already in the queue item above. The WakeOutcome
+                    // MUST still be returned so the per-monitor wake-budget/flood accounting works.
+                    wakeOutcomeFor(idleWaker.wake(sessionId, "", "monitor"))
                 },
                 onFloodStop = { id ->
                     MonitorPool.getInstance(project).stop(sessionId, id)

@@ -10,10 +10,14 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 
 /**
- * Atomic per-session persistence of active monitor specs.
+ * Atomic per-session persistence of active monitor specs and (legacy-read-only) pending
+ * notification texts.
  *
  * File layout (under [agentDir]):
- *   sessions/{sessionId}/monitors.json
+ *   sessions/{sessionId}/monitors.json            — active MonitorSpec list (read/write)
+ *   sessions/{sessionId}/monitor-notifications.json — one-release legacy reader (Task 2.5);
+ *                                                      write path removed in Task 2.4 (notifications
+ *                                                      are now persisted via UnifiedMessageQueue).
  *
  * Writes are atomic via tmp-file + ATOMIC_MOVE so a crash mid-write cannot leave a
  * half-written list. Callers are expected to serialize mutations per session externally
@@ -95,7 +99,13 @@ class MonitorPersistence(private val agentDir: Path) {
         Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
     }
 
-    // ─── Pending notification persistence (Task 6E) ──────────────────────────────────────────────
+    // ─── Pending notification persistence — READER ONLY (Task 2.4 / Task 2.5) ─────────────────────
+    //
+    // The WRITER half (appendPendingNotification + writeAtomicNotifications) was removed in
+    // Task 2.4: notifications are now persisted durably via UnifiedMessageQueue (kind=MONITOR,
+    // durable=true). This reader half is kept for one-release legacy compatibility (Task 2.5)
+    // so that sessions persisted before the Task 2.4 migration can still drain their
+    // monitor-notifications.json file on resume.
 
     private fun notificationsFile(sessionId: String): Path {
         val dir = agentDir.resolve("sessions").resolve(sessionId)
@@ -104,28 +114,12 @@ class MonitorPersistence(private val agentDir: Path) {
     }
 
     /**
-     * Append [text] to the pending notifications list for [sessionId].
+     * Load all pending notification texts for [sessionId] from the legacy
+     * `monitor-notifications.json` file.
      *
-     * Called BEFORE waking the idle session so the notification survives even when the
-     * wake is rejected (SKIP_GUARD / DEFER — e.g. global guard hit or another session
-     * active). Mirrors [BackgroundPersistence.appendCompletion]'s persist-first pattern.
-     *
-     * Writes are atomic via tmp-file + ATOMIC_MOVE. runCatching-wrapped; a persistence
-     * failure is logged but never propagated.
-     */
-    fun appendPendingNotification(sessionId: String, text: String) {
-        runCatching {
-            val file = notificationsFile(sessionId)
-            val existing = loadPendingNotifications(sessionId)
-            writeAtomicNotifications(file, existing + text)
-        }.onFailure { e ->
-            log.warn("MonitorPersistence.appendPendingNotification failed for session $sessionId", e)
-        }
-    }
-
-    /**
-     * Load all pending notification texts for [sessionId].
-     * Returns emptyList() when the file is absent or contains corrupt JSON.
+     * Returns emptyList() when the file is absent or contains corrupt JSON. The file will be
+     * absent for any session created after Task 2.4; this method is retained for the one-release
+     * legacy resume reader in Task 2.5.
      */
     fun loadPendingNotifications(sessionId: String): List<String> {
         return runCatching {
@@ -143,7 +137,7 @@ class MonitorPersistence(private val agentDir: Path) {
 
     /**
      * Delete the pending notifications file for [sessionId] (idempotent).
-     * Called by Task 6F after draining notifications on resume.
+     * Called by Task 6F / clearPersistedMonitors after draining notifications on resume.
      */
     fun clearPendingNotifications(sessionId: String) {
         runCatching {
@@ -151,18 +145,5 @@ class MonitorPersistence(private val agentDir: Path) {
         }.onFailure { e ->
             log.warn("MonitorPersistence.clearPendingNotifications failed for session $sessionId", e)
         }
-    }
-
-    private fun writeAtomicNotifications(target: Path, texts: List<String>) {
-        val tmp = Files.createTempFile(target.parent, target.fileName.toString(), ".tmp")
-        Files.writeString(
-            tmp,
-            json.encodeToString(
-                ListSerializer(String.serializer()),
-                texts
-            )
-        )
-        AtomicFileWriter.applyOwnerOnlyPerms(tmp)
-        Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
     }
 }
