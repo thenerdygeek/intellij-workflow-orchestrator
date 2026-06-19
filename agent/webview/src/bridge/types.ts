@@ -334,6 +334,9 @@ export type UiSay =
   // DelegationCardData. Persisted to ui_messages.json so a reopened delegated
   // session shows the full conversation.
   | 'DELEGATION_CARD'
+  // Async background/monitor event timeline card. See UiMessageAsyncEventData.
+  // Persisted to ui_messages.json; deduped by id on resume.
+  | 'ASYNC_EVENT'
   // UI-only spill marker inserted by chatStore.capMessages when the
   // messages[] hard cap evicts an older prefix (see MESSAGES_HARD_CAP).
   // Never emitted by Kotlin; never persisted to api_conversation_history.json.
@@ -410,6 +413,22 @@ export interface UiMessageToolCallData {
   imageRefs?: ImageRef[];
 }
 
+export type AsyncEventKind = 'BACKGROUND' | 'MONITOR';
+export type AsyncEventStatus = 'SUCCESS' | 'FAILURE' | 'NOTABLE' | 'ALERT';
+
+/** Mirrors Kotlin AsyncEventCardData. UI-only timeline card for a background/monitor event. */
+export interface UiMessageAsyncEventData {
+  id: string;
+  kind: AsyncEventKind;
+  sourceId: string;
+  label: string;
+  status: AsyncEventStatus;
+  summary: string;
+  details: string;
+  timestamp: number;
+  spillPath?: string | null;
+}
+
 /** Which leg of the IDE-B delegation conversation a DELEGATION_CARD represents. */
 export type DelegationCardKind = 'ASKED' | 'ANSWERED' | 'RESULT';
 
@@ -482,6 +501,8 @@ export interface UiMessage {
   toolCallData?: UiMessageToolCallData;
   /** Payload for `say='DELEGATION_CARD'` — IDE-B delegation conversation narration. */
   delegationCardData?: DelegationCardData;
+  /** Payload for `say='ASYNC_EVENT'` — background/monitor event timeline card. */
+  asyncEventData?: UiMessageAsyncEventData;
   completionData?: CompletionData;
   planApprovalData?: UiMessagePlanApprovalData;
   /** Payload for `say='COMPACTION_MARKER'` divider message. */
