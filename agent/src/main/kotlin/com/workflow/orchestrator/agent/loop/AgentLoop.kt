@@ -796,6 +796,11 @@ class AgentLoop(
             Regex("(input|prompt).{0,20}too.{0,10}(long|large)", RegexOption.IGNORE_CASE)
         )
 
+        /** Classify a raw shell command. Single source of truth for the approval gate
+         *  risk AND the auto-approve decision (avoids drift between two classify calls). */
+        fun classifyCommandRisk(command: String): CommandRisk =
+            CommandSafetyAnalyzer.classify(command)
+
     }
 
     /**
@@ -2794,7 +2799,7 @@ class AgentLoop(
             try {
                 val args = json.decodeFromString<JsonObject>(argsJson)
                 val command = (args["command"] as? JsonPrimitive)?.contentOrNull ?: ""
-                when (CommandSafetyAnalyzer.classify(command)) {
+                when (classifyCommandRisk(command)) {
                     CommandRisk.DANGEROUS -> "high"
                     CommandRisk.RISKY -> "medium"
                     CommandRisk.SAFE -> "low"
