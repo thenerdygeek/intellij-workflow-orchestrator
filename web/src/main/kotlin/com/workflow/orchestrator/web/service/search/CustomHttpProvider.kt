@@ -3,6 +3,8 @@ package com.workflow.orchestrator.web.service.search
 import com.squareup.moshi.Moshi
 import com.workflow.orchestrator.core.web.SearchProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -10,6 +12,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * [SearchProvider] that issues HTTP GET or POST to a user-configured URL template.
@@ -81,8 +84,11 @@ class CustomHttpProvider(
         return Result.success(Unit)
     }
 
-    override suspend fun search(query: String, maxResults: Int): Result<List<SearchProvider.RawHit>> =
-        withContext(Dispatchers.IO) {
+    override suspend fun search(query: String, maxResults: Int): Result<List<SearchProvider.RawHit>> {
+        // Fix C (web_search) — capture the Job BEFORE entering withContext so the cancel hook
+        // can close the OkHttp socket immediately when the coroutine is stopped.
+        val callJob = currentCoroutineContext()[Job]
+        return withContext(Dispatchers.IO) {
             try {
                 val encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8)
                 val resolvedUrl = urlTemplate.replace("{query}", encodedQuery)
@@ -102,65 +108,74 @@ class CustomHttpProvider(
 
                 val request = requestBuilder.build()
 
-                client.newCall(request).execute().use { response ->
-                    if (response.code == 401) {
-                        return@withContext Result.failure(
-                            IllegalStateException("PROVIDER_AUTH_FAILED")
-                        )
-                    }
-                    if (!response.isSuccessful) {
-                        return@withContext Result.failure(
-                            IllegalStateException("CustomHttpProvider received HTTP ${response.code}")
-                        )
-                    }
-
-                    val body = readBodyCapped(response) ?: ""
-                    val root = try {
-                        @Suppress("UNCHECKED_CAST")
-                        moshi.adapter(Any::class.java).fromJson(body) as? Map<String, Any?>
-                    } catch (_: Exception) {
-                        null
-                    }
-
-                    if (root == null) {
-                        return@withContext Result.failure(
-                            IllegalStateException("PROVIDER_MALFORMED_RESPONSE")
-                        )
-                    }
-
-                    // Walk resultsPath to get the array of items
-                    val itemsRaw = walkPath(root, resultsPath)
-                    if (itemsRaw !is List<*>) {
-                        return@withContext Result.failure(
-                            IllegalStateException("PROVIDER_MALFORMED_RESPONSE")
-                        )
-                    }
-
-                    val hits = itemsRaw
-                        .take(maxResults)
-                        .mapIndexedNotNull { index, item ->
-                            @Suppress("UNCHECKED_CAST")
-                            val itemMap = item as? Map<String, Any?> ?: return@mapIndexedNotNull null
-                            val title = walkPath(itemMap, titlePath)?.toString() ?: ""
-                            val url = walkPath(itemMap, urlPath)?.toString() ?: ""
-                            val snippet = walkPath(itemMap, snippetPath)?.toString() ?: ""
-                            SearchProvider.RawHit(
-                                title = title,
-                                url = url,
-                                snippet = snippet,
-                                rank = index,
+                val call = client.newCall(request)
+                val cancelHook = callJob?.invokeOnCompletion { cause ->
+                    if (cause is CancellationException) runCatching { call.cancel() }
+                }
+                try {
+                    call.execute().use { response ->
+                        if (response.code == 401) {
+                            return@withContext Result.failure(
+                                IllegalStateException("PROVIDER_AUTH_FAILED")
+                            )
+                        }
+                        if (!response.isSuccessful) {
+                            return@withContext Result.failure(
+                                IllegalStateException("CustomHttpProvider received HTTP ${response.code}")
                             )
                         }
 
-                    Result.success(hits)
+                        val body = readBodyCapped(response) ?: ""
+                        val root = try {
+                            @Suppress("UNCHECKED_CAST")
+                            moshi.adapter(Any::class.java).fromJson(body) as? Map<String, Any?>
+                        } catch (_: Exception) {
+                            null
+                        }
+
+                        if (root == null) {
+                            return@withContext Result.failure(
+                                IllegalStateException("PROVIDER_MALFORMED_RESPONSE")
+                            )
+                        }
+
+                        // Walk resultsPath to get the array of items
+                        val itemsRaw = walkPath(root, resultsPath)
+                        if (itemsRaw !is List<*>) {
+                            return@withContext Result.failure(
+                                IllegalStateException("PROVIDER_MALFORMED_RESPONSE")
+                            )
+                        }
+
+                        val hits = itemsRaw
+                            .take(maxResults)
+                            .mapIndexedNotNull { index, item ->
+                                @Suppress("UNCHECKED_CAST")
+                                val itemMap = item as? Map<String, Any?> ?: return@mapIndexedNotNull null
+                                val title = walkPath(itemMap, titlePath)?.toString() ?: ""
+                                val url = walkPath(itemMap, urlPath)?.toString() ?: ""
+                                val snippet = walkPath(itemMap, snippetPath)?.toString() ?: ""
+                                SearchProvider.RawHit(
+                                    title = title,
+                                    url = url,
+                                    snippet = snippet,
+                                    rank = index,
+                                )
+                            }
+
+                        Result.success(hits)
+                    }
+                } finally {
+                    cancelHook?.dispose()
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) {
+            } catch (e: CancellationException) {
                 // I13 — re-throw, never swallow. Per agent/CLAUDE.md contract.
                 throw e
             } catch (e: Exception) {
                 Result.failure(e)
             }
         }
+    }
 
     // ── JsonPath-lite ──────────────────────────────────────────────────────────
 
