@@ -2,14 +2,13 @@ package com.workflow.orchestrator.agent.loop.queue
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class QueueSourcePolicyTest {
 
-    private fun msg(kind: QueueSourceKind, body: String, key: String? = null, meta: Map<String, String> = emptyMap()) =
-        QueuedMessage("id-$body", kind, body, 0L, 0, key, meta)
+    private fun msg(kind: QueueSourceKind, body: String) =
+        QueuedMessage("id-$body", kind, body, 0L, 0)
 
     @Test
     fun `user frame reproduces the legacy steering prefix byte-for-byte`() {
@@ -25,12 +24,10 @@ class QueueSourcePolicyTest {
         assertTrue(UserQueuePolicy.resetsUserSilenceCounter)
         assertFalse(UserQueuePolicy.durable)
         assertTrue(UserQueuePolicy.defersCompletion)
-        assertNull(UserQueuePolicy.coalesceKey(msg(QueueSourceKind.USER, "x")))
     }
 
     @Test
-    fun `background coalesces by bgId and never resets the user counter`() {
-        assertEquals("bg-7", BackgroundQueuePolicy.coalesceKey(msg(QueueSourceKind.BACKGROUND, "b", meta = mapOf("bgId" to "bg-7"))))
+    fun `background never resets the user counter and is durable`() {
         assertFalse(BackgroundQueuePolicy.resetsUserSilenceCounter)
         assertTrue(BackgroundQueuePolicy.durable)
     }
@@ -43,8 +40,7 @@ class QueueSourcePolicyTest {
     }
 
     @Test
-    fun `monitor coalesces by monitorId and does not defer completion`() {
-        assertEquals("mon-3", MonitorQueuePolicy.coalesceKey(msg(QueueSourceKind.MONITOR, "m", meta = mapOf("monitorId" to "mon-3"))))
+    fun `monitor does not defer completion`() {
         assertFalse(MonitorQueuePolicy.defersCompletion)
     }
 
@@ -56,7 +52,6 @@ class QueueSourcePolicyTest {
         assertTrue(DelegationQueuePolicy.durable)
         assertTrue(DelegationQueuePolicy.defersCompletion)
         assertFalse(DelegationQueuePolicy.resetsUserSilenceCounter)
-        assertNull(DelegationQueuePolicy.coalesceKey(msg(QueueSourceKind.DELEGATION, "x")))
     }
 
     @Test

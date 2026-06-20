@@ -14,9 +14,6 @@ interface QueueSourcePolicy {
     /** Arriving mid-`attempt_completion` stream, does this source block the loop exit? */
     val defersCompletion: Boolean
 
-    /** Coalescing key for [msg]; null = never coalesce. */
-    fun coalesceKey(msg: QueuedMessage): String?
-
     /** Build the framed user-message section for a same-source [group] (in drain order). */
     fun frame(group: List<QueuedMessage>): String
 }

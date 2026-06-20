@@ -13,7 +13,6 @@ object UserQueuePolicy : QueueSourcePolicy {
     override val autoWakesIdle = false
     override val durable = false
     override val defersCompletion = true
-    override fun coalesceKey(msg: QueuedMessage): String? = null
     override fun frame(group: List<QueuedMessage>): String =
         STEERING_MESSAGE_PREFIX + group.joinToString("\n\n") { it.body }
 }
@@ -25,7 +24,6 @@ object DelegationQueuePolicy : QueueSourcePolicy {
     override val autoWakesIdle = true
     override val durable = true
     override val defersCompletion = true
-    override fun coalesceKey(msg: QueuedMessage): String? = null
     override fun frame(group: List<QueuedMessage>): String =
         "[DELEGATION RESULTS]\n" +
             "These cross-IDE delegation results/questions arrived. Decide whether each needs " +
@@ -40,7 +38,6 @@ object BackgroundQueuePolicy : QueueSourcePolicy {
     override val autoWakesIdle = true
     override val durable = true
     override val defersCompletion = true
-    override fun coalesceKey(msg: QueuedMessage): String? = msg.meta["bgId"]
     override fun frame(group: List<QueuedMessage>): String = buildString {
         group.forEach { appendLine(it.body) }
         appendLine()
@@ -58,7 +55,6 @@ object MonitorQueuePolicy : QueueSourcePolicy {
     override val autoWakesIdle = true
     override val durable = true
     override val defersCompletion = false
-    override fun coalesceKey(msg: QueuedMessage): String? = msg.meta["monitorId"]
     override fun frame(group: List<QueuedMessage>): String =
         "# Monitor notifications\n" +
             "While you were working, these monitor events fired:\n\n" +

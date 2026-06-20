@@ -31,9 +31,10 @@ object AsyncEventResumeSynthesis {
         existingIds: Set<String>,
     ): List<AsyncEventCardData> =
         items
-            .mapNotNull { it.meta["card"] }
-            .mapNotNull { raw ->
-                runCatching { json.decodeFromString(AsyncEventCardData.serializer(), raw) }.getOrNull()
+            .mapNotNull { msg ->
+                msg.meta["card"]?.let { raw ->
+                    runCatching { json.decodeFromString(AsyncEventCardData.serializer(), raw) }.getOrNull()
+                }
             }
             .filter { it.id !in existingIds }
 }

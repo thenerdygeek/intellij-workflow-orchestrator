@@ -66,8 +66,7 @@ class BackgroundCompletionCoordinator(
                 coalesceKey = event.bgId,
                 meta = mapOf(
                     "bgId" to event.bgId,
-                    "card" to kotlinx.serialization.json.Json.encodeToString(
-                        com.workflow.orchestrator.agent.session.AsyncEventCardData.serializer(),
+                    "card" to com.workflow.orchestrator.agent.ui.AsyncEventCardPresenter.encodeCard(
                         com.workflow.orchestrator.agent.ui.AsyncEventCardPresenter.fromBackground(event),
                     ),
                 ),

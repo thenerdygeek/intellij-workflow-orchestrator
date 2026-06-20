@@ -137,24 +137,22 @@ class AgentMonitorCoordinator(
      */
     private fun monitorCardMeta(id: String, sev: Severity, text: String, ts: Long): Map<String, String> = mapOf(
         "monitorId" to id,
-        "card" to kotlinx.serialization.json.Json.encodeToString(
-            AsyncEventCardData.serializer(),
-            AsyncEventCardPresenter.fromMonitor(id, sev, text, ts),
-        ),
+        "card" to AsyncEventCardPresenter.encodeCard(AsyncEventCardPresenter.fromMonitor(id, sev, text, ts)),
     )
 
     /**
-     * Build a kind=MONITOR [QueuedMessage] from coalesced [text]. No coalesceKey is set because
-     * the monitorId is not available at this callback level; [MonitorManager] coalesces upstream
-     * so queue-level deduplication is intentionally skipped.
+     * Build a complete kind=MONITOR [QueuedMessage] (body + card meta) for [text] at [ts].
+     * coalesceKey stays null: [MonitorManager] coalesces upstream, so queue-level deduplication is
+     * intentionally skipped. [ts] feeds both the card id and the live-emitted card so they dedup.
      */
-    private fun monitorMsg(text: String): QueuedMessage = QueuedMessage(
+    private fun monitorMsg(id: String, sev: Severity, text: String, ts: Long): QueuedMessage = QueuedMessage(
         id = "mon-${System.nanoTime()}",
         kind = QueueSourceKind.MONITOR,
         body = text,
         timestamp = System.currentTimeMillis(),
         priority = MonitorQueuePolicy.priority,
         coalesceKey = null,
+        meta = monitorCardMeta(id, sev, text, ts),
     )
 
     /**
@@ -177,7 +175,7 @@ class AgentMonitorCoordinator(
                 isLoopLive = { activeLoopForSession(sessionId) != null },
                 deliverToLoop = { id, sev, text ->
                     val now = System.currentTimeMillis()
-                    enqueueToQueue(sessionId, monitorMsg(text).copy(meta = monitorCardMeta(id, sev, text, now)))
+                    enqueueToQueue(sessionId, monitorMsg(id, sev, text, now))
                     emitCard(sessionId, AsyncEventCardPresenter.fromMonitor(id, sev, text, now))
                 },
                 wakeIdle = { id, sev, text ->
@@ -186,7 +184,7 @@ class AgentMonitorCoordinator(
                     // writes pending_queue.json before the wake is attempted, so the notification
                     // survives a SKIP_GUARD or DEFER route (Task 6F's resume reader is Task 2.5).
                     val now = System.currentTimeMillis()
-                    enqueueToQueue(sessionId, monitorMsg(text).copy(meta = monitorCardMeta(id, sev, text, now)))
+                    enqueueToQueue(sessionId, monitorMsg(id, sev, text, now))
                     // The blank synthetic text is the carrier for the wake signal; the actual
                     // notification body is already in the queue item above. The WakeOutcome
                     // MUST still be returned so the per-monitor wake-budget/flood accounting works.

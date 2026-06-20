@@ -36,7 +36,16 @@ class UnifiedMessageQueue(
     fun pendingIds(): List<String> = synchronized(lock) { items.map { it.id } }
 
     fun clear(ids: List<String>) = synchronized(lock) {
-        if (items.removeIf { it.id in ids }) persist()
+        val idSet = ids.toHashSet()
+        if (items.removeIf { it.id in idSet }) persist()
+    }
+
+    /** Drop every pending item in one locked op (no `pendingIds()` round-trip). */
+    fun clearAll() = synchronized(lock) {
+        if (items.isNotEmpty()) {
+            items.clear()
+            persist()
+        }
     }
 
     /** Sort by (timestamp asc, priority desc), group by kind in first-appearance order, frame, clear. */

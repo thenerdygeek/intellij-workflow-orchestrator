@@ -3396,7 +3396,7 @@ class AgentController(
             userInputChannel = null
             loopWaitingForInput = false
             // Clear any orphaned steering messages that were queued after the last drain
-            activeSessionQueue()?.let { q -> q.clear(q.pendingIds()) }
+            activeSessionQueue()?.clearAll()
 
         }
     }
@@ -3435,7 +3435,7 @@ class AgentController(
         loopWaitingForInput = false
         pendingUiMessageOverride.set(null)
         pendingReplyImageRefs.set(emptyList())
-        activeSessionQueue()?.let { q -> q.clear(q.pendingIds()) }
+        activeSessionQueue()?.clearAll()
         clearStream()
         toolStreamBatcher.flush()   // drain any buffered output on cancel
         firstFlushSeen.clear()
@@ -3814,7 +3814,7 @@ class AgentController(
             userInputChannel?.close(CancellationException("delegated agent loop completed"))
             userInputChannel = null
             loopWaitingForInput = false
-            activeSessionQueue()?.let { q -> q.clear(q.pendingIds()) }
+            activeSessionQueue()?.clearAll()
         }
     }
 

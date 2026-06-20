@@ -6,11 +6,20 @@ import com.workflow.orchestrator.agent.session.AsyncEventKind
 import com.workflow.orchestrator.agent.session.AsyncEventStatus
 import com.workflow.orchestrator.agent.tools.background.BackgroundCompletionEvent
 import com.workflow.orchestrator.agent.tools.background.BackgroundState
+import kotlinx.serialization.json.Json
 
 /** Pure mapping of producer events → [AsyncEventCardData] timeline cards. */
 object AsyncEventCardPresenter {
 
     private const val LABEL_MAX = 80
+
+    private val json = Json { ignoreUnknownKeys = true }
+
+    /**
+     * JSON-encode a card for transport in `QueuedMessage.meta["card"]`. Single encode path for all
+     * producers; symmetric with the decode in [AsyncEventResumeSynthesis].
+     */
+    fun encodeCard(card: AsyncEventCardData): String = json.encodeToString(AsyncEventCardData.serializer(), card)
 
     fun fromBackground(e: BackgroundCompletionEvent): AsyncEventCardData {
         val status = if (e.state == BackgroundState.EXITED && e.exitCode == 0)
@@ -39,14 +48,15 @@ object AsyncEventCardPresenter {
             Severity.ALERT -> AsyncEventStatus.ALERT
             else -> AsyncEventStatus.NOTABLE
         }
-        val lineCount = text.lines().count { it.isNotBlank() }
+        val lines = text.lines()
+        val lineCount = lines.count { it.isNotBlank() }
         return AsyncEventCardData(
             id = "mon-$monitorId-$ts",
             kind = AsyncEventKind.MONITOR,
             sourceId = monitorId,
             label = monitorId,
             status = status,
-            summary = if (lineCount <= 1) text.lines().firstOrNull()?.take(LABEL_MAX) ?: "" else "$lineCount events",
+            summary = if (lineCount <= 1) lines.firstOrNull()?.take(LABEL_MAX) ?: "" else "$lineCount events",
             details = text,
             timestamp = ts,
             spillPath = null,
