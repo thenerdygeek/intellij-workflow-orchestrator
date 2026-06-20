@@ -2,13 +2,22 @@ package com.workflow.orchestrator.agent.loop.queue
 
 import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * Drain-priority tiers — tiebreaker only; the queue drains by timestamp first (see
+ * [UnifiedMessageQueue]). Higher = drained first when timestamps tie; USER outranks async sources.
+ */
+private const val PRIORITY_USER = 100
+private const val PRIORITY_DELEGATION = 70
+private const val PRIORITY_BACKGROUND = 50
+private const val PRIORITY_MONITOR = 30
+
 object UserQueuePolicy : QueueSourcePolicy {
     /** Canonical mid-turn steering prefix. The AgentLoop copy is removed in Phase 1. */
     const val STEERING_MESSAGE_PREFIX =
         "The user sent an additional message while you were working. " +
             "Incorporate their feedback while continuing your current task:\n\n"
     override val kind = QueueSourceKind.USER
-    override val priority = 100
+    override val priority = PRIORITY_USER
     override val resetsUserSilenceCounter = true
     override val autoWakesIdle = false
     override val durable = false
@@ -19,7 +28,7 @@ object UserQueuePolicy : QueueSourcePolicy {
 
 object DelegationQueuePolicy : QueueSourcePolicy {
     override val kind = QueueSourceKind.DELEGATION
-    override val priority = 70
+    override val priority = PRIORITY_DELEGATION
     override val resetsUserSilenceCounter = false
     override val autoWakesIdle = true
     override val durable = true
@@ -33,7 +42,7 @@ object DelegationQueuePolicy : QueueSourcePolicy {
 
 object BackgroundQueuePolicy : QueueSourcePolicy {
     override val kind = QueueSourceKind.BACKGROUND
-    override val priority = 50
+    override val priority = PRIORITY_BACKGROUND
     override val resetsUserSilenceCounter = false
     override val autoWakesIdle = true
     override val durable = true
@@ -50,7 +59,7 @@ object BackgroundQueuePolicy : QueueSourcePolicy {
 
 object MonitorQueuePolicy : QueueSourcePolicy {
     override val kind = QueueSourceKind.MONITOR
-    override val priority = 30
+    override val priority = PRIORITY_MONITOR
     override val resetsUserSilenceCounter = false
     override val autoWakesIdle = true
     override val durable = true
