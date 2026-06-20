@@ -14,6 +14,8 @@ interface ApprovalViewProps {
   onApprove: () => void;
   onDeny: () => void;
   onAllowForSession?: () => void;
+  commandPrefix?: string;
+  onApproveCommandPrefix?: (prefix: string) => void;
   originAgentId?: string | null;
   originLabel?: string | null;
 }
@@ -29,6 +31,8 @@ export function ApprovalView({
   onApprove,
   onDeny,
   onAllowForSession,
+  commandPrefix,
+  onApproveCommandPrefix,
   originAgentId: _originAgentId,
   originLabel,
 }: ApprovalViewProps) {
@@ -62,6 +66,8 @@ export function ApprovalView({
         onConfirm={onApprove}
         onCancel={onDeny}
         onAllowForSession={onAllowForSession}
+        commandPrefix={commandPrefix}
+        onApproveCommandPrefix={onApproveCommandPrefix}
       />
     </div>
   );

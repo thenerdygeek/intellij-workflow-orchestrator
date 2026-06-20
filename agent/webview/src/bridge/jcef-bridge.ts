@@ -212,7 +212,15 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
   appendToken(token: string) {
     stores?.getChatStore().appendToken(token);
   },
-  appendToolCall(toolCallId: string, toolName: string, args: string, status: string, toolTimeoutSeconds?: number | null) {
+  appendToolCall(
+    toolCallId: string,
+    toolName: string,
+    args: string,
+    status: string,
+    toolTimeoutSeconds?: number | null,
+    autoApproved?: boolean,
+    autoApproveReason?: string | null,
+  ) {
     stores?.getChatStore().addToolCall(
       toolCallId,
       toolName,
@@ -221,6 +229,8 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
       typeof toolTimeoutSeconds === 'number' && Number.isFinite(toolTimeoutSeconds) && toolTimeoutSeconds > 0
         ? toolTimeoutSeconds
         : undefined,
+      autoApproved === true,
+      autoApproveReason ?? undefined,
     );
   },
   updateToolResult(
@@ -478,6 +488,7 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
     originAgentId?: string | null,
     originLabel?: string | null,
     path?: string | null,
+    commandPrefix?: string | null,
   ) {
     // Preload diff2html immediately so the module is ready (or nearly ready) by the time
     // ApprovalView mounts and DiffHtml's useEffect fires — eliminates the loading skeleton.
@@ -502,6 +513,7 @@ const bridgeFunctions: Record<string, (...args: any[]) => void> = {
       originAgentId ?? undefined,
       originLabel ?? undefined,
       path ?? undefined,
+      commandPrefix ?? undefined,
     );
   },
   showProcessInput(processId: string, description: string, prompt: string, command: string) {
@@ -743,6 +755,7 @@ export const kotlinBridge = {
   approveToolCall(): void { callKotlin('_approveToolCall'); },
   denyToolCall(): void { callKotlin('_denyToolCall'); },
   allowToolForSession(toolName: string): void { callKotlin('_allowToolForSession', toolName); },
+  approveCommandPrefix(prefix: string): void { callKotlin('_approveCommandPrefix', prefix); },
   deactivateSkill(): void { callKotlin('_deactivateSkill'); },
   navigateToFile(filePath: string, line?: number): void {
     const path = line && line > 0 ? `${filePath}:${line}` : filePath;
