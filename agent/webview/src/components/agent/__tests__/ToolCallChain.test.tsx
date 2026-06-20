@@ -74,3 +74,20 @@ describe('ToolCallChain universal Stop button', () => {
     expect(screen.queryByRole('button', { name: /^stop$/i })).toBeNull()
   })
 })
+
+describe('ToolCallChain auto-approved badge', () => {
+  it('renders an "auto-approved · {reason}" badge when autoApproved is true', () => {
+    render(
+      <ToolCallChain
+        toolCalls={[tc({ name: 'run_command', status: 'COMPLETED', autoApproved: true, autoApproveReason: 'safe' })]}
+      />,
+    )
+    expect(screen.getByText(/auto-approved/i)).toBeTruthy()
+    expect(screen.getByText(/safe/)).toBeTruthy()
+  })
+
+  it('does not render the auto-approved badge when autoApproved is absent', () => {
+    render(<ToolCallChain toolCalls={[tc({ name: 'run_command', status: 'COMPLETED' })]} />)
+    expect(screen.queryByText(/auto-approved/i)).toBeNull()
+  })
+})

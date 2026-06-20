@@ -374,6 +374,18 @@ const ToolCallItem = memo(function ToolCallItem({ tc }: { tc: ToolCall }) {
                 {isCmdTool ? `(${target})` : target}
               </span>
             )}
+            {tc.autoApproved && (
+              <span
+                className="shrink-0 rounded px-1 py-0 text-[9px] font-medium tracking-wide"
+                style={{
+                  color: 'var(--fg-muted)',
+                  background: 'var(--hover-overlay, rgba(255,255,255,0.05))',
+                }}
+                title={tc.autoApproveReason ? `Auto-approved: ${tc.autoApproveReason}` : 'Auto-approved'}
+              >
+                {tc.autoApproveReason ? `auto-approved · ${tc.autoApproveReason}` : 'auto-approved'}
+              </span>
+            )}
             <span className="flex-1" />
             {/* Universal Stop button — shown for any RUNNING tool that doesn't
                 have its own stop affordance. Suppressed for: run_command
