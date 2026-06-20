@@ -69,6 +69,9 @@ object CommandShape {
         if (firstLc in WRAPPER_DENYLIST) return false
         if (firstLc in SHELL_INTERPRETERS) return false
         if (firstLc in CODE_INTERPRETERS && vals.drop(1).any { it in INLINE_EVAL_FLAGS }) return false
+        val baseName = firstLc.substringAfterLast('/')
+        if (baseName in SHELL_INTERPRETERS) return false
+        if (baseName in CODE_INTERPRETERS && vals.drop(1).any { it in INLINE_EVAL_FLAGS }) return false
         return true
     }
 
