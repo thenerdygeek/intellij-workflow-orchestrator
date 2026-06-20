@@ -37,7 +37,7 @@ class MonitorNotificationsTest {
             config = MonitorConfig(coalesceWindowMs = 100, wakeBudgetPerMonitor = 3, floodThresholdPerMin = 20),
             clock = { clock },
             isLoopLive = { false },  // forces the idle (wakeIdle) path
-            deliverToLoop = { text ->
+            deliverToLoop = { _, _, text ->
                 enqueuedMessages.add(
                     QueuedMessage(
                         id = "deliver-${System.nanoTime()}",
@@ -48,7 +48,7 @@ class MonitorNotificationsTest {
                     )
                 )
             },
-            wakeIdle = { text ->
+            wakeIdle = { _, _, text ->
                 // Mirrors the Task 2.4 wiring in AgentMonitorCoordinator:
                 // enqueueToQueue first, then return wakeOutcomeFor(idleWaker.wake(...))
                 val msg = QueuedMessage(
@@ -90,8 +90,8 @@ class MonitorNotificationsTest {
             config = MonitorConfig(coalesceWindowMs = 100, wakeBudgetPerMonitor = 3, floodThresholdPerMin = 20),
             clock = { clock },
             isLoopLive = { false },
-            deliverToLoop = {},
-            wakeIdle = { _ ->
+            deliverToLoop = { _, _, _ -> },
+            wakeIdle = { _, _, _ ->
                 WakeOutcome.SKIPPED.also { outcomeReturned = it }
             },
         )
@@ -116,8 +116,8 @@ class MonitorNotificationsTest {
             config = MonitorConfig(coalesceWindowMs = 100, wakeBudgetPerMonitor = 3, floodThresholdPerMin = 20),
             clock = { clock },
             isLoopLive = { true },   // forces the live (deliverToLoop) path
-            deliverToLoop = { text -> liveDeliveries.add(text) },
-            wakeIdle = { WakeOutcome.SKIPPED },
+            deliverToLoop = { _, _, text -> liveDeliveries.add(text) },
+            wakeIdle = { _, _, _ -> WakeOutcome.SKIPPED },
         )
 
         mgr.onEvent(MonitorEvent("m3", Severity.NOTABLE, "live alert text"))
@@ -142,8 +142,8 @@ class MonitorNotificationsTest {
             config = MonitorConfig(coalesceWindowMs = 100, wakeBudgetPerMonitor = 3, floodThresholdPerMin = 20),
             clock = { clock },
             isLoopLive = { false },
-            deliverToLoop = {},
-            wakeIdle = { text ->
+            deliverToLoop = { _, _, _ -> },
+            wakeIdle = { _, _, text ->
                 captured.add(
                     QueuedMessage(
                         id = "mon-${System.nanoTime()}",
@@ -183,8 +183,8 @@ class MonitorNotificationsTest {
             config = MonitorConfig(coalesceWindowMs = 100, wakeBudgetPerMonitor = 3, floodThresholdPerMin = 20),
             clock = { clock },
             isLoopLive = { false },
-            deliverToLoop = {},
-            wakeIdle = { text ->
+            deliverToLoop = { _, _, _ -> },
+            wakeIdle = { _, _, text ->
                 capturedBodies.add(text)
                 WakeOutcome.WOKE
             },

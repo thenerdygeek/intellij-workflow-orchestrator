@@ -8,9 +8,11 @@ import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.queue.MonitorQueuePolicy
 import com.workflow.orchestrator.agent.loop.queue.QueueSourceKind
 import com.workflow.orchestrator.agent.loop.queue.QueuedMessage
+import com.workflow.orchestrator.agent.session.AsyncEventCardData
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.background.IdleSessionWaker
 import com.workflow.orchestrator.agent.tools.integration.ServiceLookup
+import com.workflow.orchestrator.agent.ui.AsyncEventCardPresenter
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.services.BambooService
@@ -55,6 +57,7 @@ class AgentMonitorCoordinator(
     private val idleWaker: IdleSessionWaker,
     private val activeLoopForSession: (String) -> AgentLoop?,
     private val enqueueToQueue: (sessionId: String, msg: QueuedMessage) -> Unit = { _, _ -> },
+    private val emitCard: (sessionId: String, card: AsyncEventCardData) -> Unit = { _, _ -> },
 ) : Disposable {
 
     private val log = Logger.getInstance(AgentMonitorCoordinator::class.java)
@@ -123,6 +126,19 @@ class AgentMonitorCoordinator(
     }
 
     /**
+     * Encode a monitor-event presenter card into the [QueuedMessage.meta] map so the
+     * resume-synthesis path can reconstruct the card from the persisted queue item
+     * (Phase 4 — idle-wake card synthesis on resume).
+     */
+    private fun monitorCardMeta(id: String, sev: Severity, text: String): Map<String, String> = mapOf(
+        "monitorId" to id,
+        "card" to kotlinx.serialization.json.Json.encodeToString(
+            AsyncEventCardData.serializer(),
+            AsyncEventCardPresenter.fromMonitor(id, sev, text, System.currentTimeMillis()),
+        ),
+    )
+
+    /**
      * Build a kind=MONITOR [QueuedMessage] from coalesced [text]. No coalesceKey is set because
      * the monitorId is not available at this callback level; [MonitorManager] coalesces upstream
      * so queue-level deduplication is intentionally skipped.
@@ -154,16 +170,21 @@ class AgentMonitorCoordinator(
                 // Documented TOCTOU: if the loop exits between isLoopLive() and deliverToLoop(),
                 // the `?.` drops the message safely — acceptable, the loop was terminating anyway.
                 isLoopLive = { activeLoopForSession(sessionId) != null },
-                deliverToLoop = { text -> enqueueToQueue(sessionId, monitorMsg(text)) },
-                wakeIdle = { text ->
+                deliverToLoop = { id, sev, text ->
+                    enqueueToQueue(sessionId, monitorMsg(text).copy(meta = monitorCardMeta(id, sev, text)))
+                    emitCard(sessionId, AsyncEventCardPresenter.fromMonitor(id, sev, text, System.currentTimeMillis()))
+                },
+                wakeIdle = { id, sev, text ->
                     // Task 2.4 — durable persist via the queue (MonitorQueuePolicy.durable=true)
                     // replaces appendPendingNotification. The queue's QueuePersistence atomically
                     // writes pending_queue.json before the wake is attempted, so the notification
                     // survives a SKIP_GUARD or DEFER route (Task 6F's resume reader is Task 2.5).
-                    enqueueToQueue(sessionId, monitorMsg(text))
+                    enqueueToQueue(sessionId, monitorMsg(text).copy(meta = monitorCardMeta(id, sev, text)))
                     // The blank synthetic text is the carrier for the wake signal; the actual
                     // notification body is already in the queue item above. The WakeOutcome
                     // MUST still be returned so the per-monitor wake-budget/flood accounting works.
+                    // wakeIdle is the idle path — it stashes meta but does NOT emit a live card
+                    // (the idle card is synthesized on resume in Phase 4).
                     wakeOutcomeFor(idleWaker.wake(sessionId, "", "monitor"))
                 },
                 onFloodStop = { id ->

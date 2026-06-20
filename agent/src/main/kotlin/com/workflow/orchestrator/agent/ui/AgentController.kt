@@ -625,6 +625,11 @@ class AgentController(
         // a real session resume through AgentController so all UI callbacks are attached.
         wireAutoWakeListener()
 
+        // Phase 3 Task 3.1 — wire the monitor card listener so monitor events on focused
+        // sessions render a visible async-event card in the chat panel (same as background
+        // process completions — persisted + live-pushed iff the session is on screen).
+        service.setAsyncEventCardListener { sessionId, card -> pushAsyncEventCard(sessionId, card) }
+
         // Wire document-extraction progress so SessionDocumentArtifactService can push
         // live "page X of Y" updates to the JCEF chat panel while read_document blocks.
         service.onDocumentProgress = ::pushDocumentProgress

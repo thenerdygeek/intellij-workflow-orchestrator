@@ -201,8 +201,8 @@ class MonitorReArmIntegrationTest {
             config = MonitorConfig(coalesceWindowMs = 0L, wakeBudgetPerMonitor = 3),
             clock = { System.currentTimeMillis() },
             isLoopLive = { false },  // loop is idle so wakeIdle is used
-            deliverToLoop = { deliverToLoopInvoked = true },
-            wakeIdle = { _ ->
+            deliverToLoop = { _, _, _ -> deliverToLoopInvoked = true },
+            wakeIdle = { _, _, _ ->
                 wakeIdleInvoked = true
                 WakeOutcome.WOKE
             },

@@ -227,6 +227,8 @@ class AgentService(
         // callback fires idleWaker.wake() separately after enqueuing, preserving the
         // per-monitor wake-budget/flood accounting contract.
         enqueueToQueue = { sid, msg -> queueForSession(sid).enqueue(msg) },
+        // Phase 3 Task 3.1 — live card delivery (focused sessions only).
+        emitCard = ::emitAsyncEventCard,
     )
 
     /** @see AgentMonitorCoordinator.ensureMonitorManager */
@@ -243,6 +245,21 @@ class AgentService(
 
     /** @see AgentMonitorCoordinator.clearPersistedMonitors */
     fun clearPersistedMonitors(sessionId: String) = monitorCoordinator.clearPersistedMonitors(sessionId)
+
+    // ── Async-event card seam (Phase 3 Task 3.1) ─────────────────────────────────
+    // Placed OUTSIDE the sentinel range (delegatedIncomingTaskText..mapLoopResultToDelegationResult)
+    // so source-text contract tests in DelegationConversationNarrationTest are not affected.
+
+    @Volatile private var asyncEventCardListener: ((String, com.workflow.orchestrator.agent.session.AsyncEventCardData) -> Unit)? = null
+
+    fun setAsyncEventCardListener(l: (String, com.workflow.orchestrator.agent.session.AsyncEventCardData) -> Unit) {
+        asyncEventCardListener = l
+    }
+
+    /** Persist a card and notify the controller (live push happens there iff the session is on screen). */
+    fun emitAsyncEventCard(sessionId: String, card: com.workflow.orchestrator.agent.session.AsyncEventCardData) {
+        asyncEventCardListener?.invoke(sessionId, card)
+    }
 
     /**
      * Document-extraction progress sink wired by [AgentController] after construction.

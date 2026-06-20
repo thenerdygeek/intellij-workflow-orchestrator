@@ -22,8 +22,8 @@ class MonitorSourceManagerWiringTest {
             config = MonitorConfig(coalesceWindowMs = 100, wakeBudgetPerMonitor = 3, floodThresholdPerMin = 100),
             clock = { now.get() },
             isLoopLive = { true },                       // simulate a live loop
-            deliverToLoop = { text -> synchronized(delivered) { delivered.add(text) } },
-            wakeIdle = { WakeOutcome.WOKE },
+            deliverToLoop = { _, _, text -> synchronized(delivered) { delivered.add(text) } },
+            wakeIdle = { _, _, _ -> WakeOutcome.WOKE },
         )
         val src = ShellCommandSource(
             monitorId = "wire-1",
