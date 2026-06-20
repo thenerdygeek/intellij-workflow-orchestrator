@@ -503,6 +503,20 @@ class AgentLoop(
      */
     private val autoApproveMemoryOperations: Boolean = false,
     /**
+     * Part A — when true, run_command invocations classified SAFE (and structurally
+     * auto-approvable) bypass the approval prompt. Read from
+     * [com.workflow.orchestrator.core.settings.AgentSettings.autoApproveSafeCommands].
+     * Default false (tests, sub-agents) keeps the prompt.
+     */
+    private val autoApproveSafeCommands: Boolean = false,
+    /**
+     * Part B — per-session allowlist of command PREFIXES the user approved via
+     * "Approve all <prefix> this session". A run_command whose every sub-command is
+     * covered by an allowed prefix bypasses the prompt regardless of [autoApproveSafeCommands].
+     * Injected from the controller/session level so it persists across follow-up messages.
+     */
+    private val sessionCommandAllowlist: SessionCommandAllowlist = SessionCommandAllowlist(),
+    /**
      * Optional callback that lets the loop push a streaming `edit_file` diff into
      * the chat panel while the LLM is still emitting `<new_string>`. When non-null,
      * an internal [com.workflow.orchestrator.agent.preview.StreamingEditTracker] is
@@ -1930,8 +1944,32 @@ class AgentLoop(
             //  - OFF → force per-invocation approval (no allow-for-session) AND ignore any
             //    prior session approval, so a generic "Allow for session" on edit_file cannot
             //    silence memory writes.
+            // run_command auto-approval (Part A toggle + Part B session prefix allowlist).
+            // Bypasses ONLY the approvalGate prompt — logging/metrics/PreToolUse/checkpoint still run.
+            var autoApproveReason: String? = null
+            if (toolName == "run_command") {
+                val cmd = try {
+                    json.decodeFromString<JsonObject>(call.function.arguments)["command"]
+                        ?.let { (it as? JsonPrimitive)?.contentOrNull } ?: ""
+                } catch (_: Exception) { "" }
+                when (val d = com.workflow.orchestrator.agent.security.CommandApprovalDecision.evaluate(
+                    command = cmd,
+                    risk = classifyCommandRisk(cmd),
+                    autoApproveSafe = autoApproveSafeCommands,
+                    sessionAllowedPrefixes = sessionCommandAllowlist.snapshot(),
+                )) {
+                    is com.workflow.orchestrator.agent.security.ApprovalDecision.Skip ->
+                        autoApproveReason = when (val r = d.reason) {
+                            is com.workflow.orchestrator.agent.security.AutoApproveReason.Safe -> "safe"
+                            is com.workflow.orchestrator.agent.security.AutoApproveReason.SessionRule ->
+                                "session rule: " + r.prefixes.joinToString(", ")
+                        }
+                    com.workflow.orchestrator.agent.security.ApprovalDecision.Prompt -> { /* fall through to gate */ }
+                }
+            }
+
             val isMemoryWrite = MemoryWriteClassifier.isMemoryWrite(toolName, call.function.arguments, memoryDirPath)
-            if (!(isMemoryWrite && autoApproveMemoryOperations)) {
+            if (autoApproveReason == null && !(isMemoryWrite && autoApproveMemoryOperations)) {
                 val policy = if (isMemoryWrite) {
                     ApprovalPolicy(requiresApproval = true, allowSessionApproval = false)
                 } else {
@@ -2006,7 +2044,9 @@ class AgentLoop(
                 ToolCallProgress(
                     toolName = toolName,
                     args = call.function.arguments,
-                    toolCallId = toolCallId
+                    toolCallId = toolCallId,
+                    autoApproved = autoApproveReason != null,
+                    autoApproveReason = autoApproveReason,
                 )
             )
 
