@@ -718,6 +718,14 @@ class RunCommandTool(
             // Register in ProcessRegistry for kill/killAll/stdin support
             val managed = ProcessRegistry.register(toolCallId, process, command)
 
+            // Graceful-stop safety net: kill the foreground OS process on ANY exit path —
+            // normal exit (ProcessRegistry.unregister already removed it → kill is a no-op),
+            // timeout (already killed inline → no-op), per-tool Stop (already killed by
+            // ToolStopCoordinator → no-op), and global loop cancellation (newly covered).
+            // ProcessRegistry.kill is non-suspending and idempotent (remove+gracefulKill
+            // offloads the blocking wait to a daemon executor, so this never blocks the
+            // coroutine dispatcher).
+            try {
             // Determine idle threshold — caller-supplied param wins, otherwise read from
             // AgentSettings (defaults: 15s / 60s for build commands).
             val agentSettings = com.workflow.orchestrator.agent.settings.AgentSettings.getInstance(project).state
@@ -886,6 +894,14 @@ class RunCommandTool(
             }
             @Suppress("UNREACHABLE_CODE")
             error("unreachable: while(true) always returns")
+            } finally {
+                // Safety net: kill the foreground OS process regardless of exit path.
+                // No-op when the process already exited normally (unregistered in the
+                // process-exited branch above) or was killed by the inline timeout /
+                // per-tool Stop (ToolStopCoordinator). Covers the global loop-cancel
+                // path where none of the inline kills have run.
+                ProcessRegistry.kill(toolCallId)
+            }
         } catch (e: CancellationException) {
             throw e // Propagate for structured concurrency
         } catch (e: Exception) {
