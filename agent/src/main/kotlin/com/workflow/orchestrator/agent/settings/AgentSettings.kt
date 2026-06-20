@@ -106,6 +106,14 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         var autoApproveMemoryOperations by property(false)
 
         /**
+         * When true, read-only/build/test commands the analyzer rates SAFE run without a
+         * per-invocation approval prompt.  Dangerous commands are always blocked; anything with
+         * redirection, subshells, or variable expansion still asks.  Commands may also be
+         * approved per-type for the current session from the approval card.
+         */
+        var autoApproveSafeCommands by property(false)
+
+        /**
          * When true, every LLM request/response is dumped to disk under
          * `sessions/{id}/api-debug/call-NNN-{request,response,error}.txt` (and the sub-agent
          * equivalents) to power the in-IDE API Debug viewer. Default OFF: each request dump is a
