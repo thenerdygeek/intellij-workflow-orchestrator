@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.coroutines.coroutineContext
 
 /**
@@ -485,6 +486,23 @@ class SubagentRunner(
             } finally {
                 textBatcher?.flush()
                 textBatcher?.dispose()
+            }
+        } catch (e: CancellationException) {
+            // Never swallow a genuine cancellation. A user-driven abort sets abortRequested
+            // and is handled in the catch (e: Exception) block below; any OTHER
+            // CancellationException is structured-concurrency teardown and must propagate so
+            // callers/the loop unwind correctly.
+            textBatcher?.dispose()
+            if (!abortRequested.get()) throw e
+            // abortRequested is true: fall through to return the cancelled result below.
+            return cancelledResult(stats).also { cancelResult ->
+                onProgress(
+                    SubagentProgressUpdate(
+                        status = SubagentExecutionStatus.FAILED,
+                        stats = cancelResult.stats,
+                        error = cancelResult.error
+                    )
+                )
             }
         } catch (e: Exception) {
             // Defense in depth: if an exception fires AFTER textBatcher allocation but
