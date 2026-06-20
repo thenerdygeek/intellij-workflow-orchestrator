@@ -488,10 +488,13 @@ class SubagentRunner(
                 textBatcher?.dispose()
             }
         } catch (e: CancellationException) {
-            // Never swallow a genuine cancellation. A user-driven abort sets abortRequested
-            // and is handled in the catch (e: Exception) block below; any OTHER
-            // CancellationException is structured-concurrency teardown and must propagate so
-            // callers/the loop unwind correctly.
+            // Never swallow a genuine cancellation. When abortRequested is FALSE, this is a
+            // structured-concurrency teardown (parent scope cancelled) and must re-throw so
+            // callers unwind correctly. When abortRequested is TRUE, a user-driven abort set
+            // the flag and also cancelled the brain's active request, which caused this
+            // CancellationException — return the cancelled result here in THIS block rather
+            // than re-throwing. Non-cancellation failures are handled in the separate
+            // catch (e: Exception) block below.
             textBatcher?.dispose()
             if (!abortRequested.get()) throw e
             // abortRequested is true: fall through to return the cancelled result below.
