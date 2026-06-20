@@ -568,6 +568,30 @@ collides with the existing `EditFilePersistenceFixtureTest` on the headless "Ind
 (issue #51) and failed CI. The markup add/dispose + editor-open glue is the only untested surface
 (trivial, covered by in-IDE smoke).
 
+## Async Event Cards
+
+UI-only timeline cards for background-completion and monitor events — rendered in the chat timeline but invisible to the LLM (persisted to `ui_messages.json` only, never to `api_conversation_history.json`). Mirrors `DELEGATION_CARD`.
+
+**Model** (`session/UiMessage.kt`): `UiSay.ASYNC_EVENT` carries `UiMessage.asyncEventData: AsyncEventCardData`. `AsyncEventCardData(id, kind, sourceId, label, status, summary, details, timestamp, spillPath)` — `kind ∈ {BACKGROUND, MONITOR}`, `status ∈ {SUCCESS, FAILURE, NOTABLE, ALERT}`. Stable dedup id: `"bg-{bgId}-{occurredAt}"` (background) / `"mon-{monitorId}-{batchTs}"` (monitor).
+
+**Presenter** (`ui/AsyncEventCardPresenter.kt`, pure object):
+- `fromBackground(e)` → `EXITED+exit0 → SUCCESS`, else `FAILURE`.
+- `fromMonitor(monitorId, severity, text, ts)` → `ALERT → ALERT`, else `NOTABLE`.
+
+**Focused-session emit — background:** `BackgroundCompletionCoordinator.onBackgroundCompletion` stashes the card as `meta["card"]` (JSON-encoded) on the `QueuedMessage` alongside the steering body; `AgentController.pushAsyncEventCard` (wired via `AgentService.setAsyncEventCardListener`/`emitAsyncEventCard`) persists via `appendAsyncEventCardToSession` and live-pushes to the webview when `viewedSessionId == sessionId`. This replaces the former `subscribeToBackgroundCompletions` status bubble.
+
+**Focused-session emit — monitor:** `AgentMonitorCoordinator` receives the widened `deliverToLoop(monitorId, severity, text)` callback; when the loop is live it calls `emitCard(sessionId, AsyncEventCardPresenter.fromMonitor(...))` (injected as `AgentService::emitAsyncEventCard` at construction). `AgentController.pushAsyncEventCard` handles the persist + webview push identically to the background path.
+
+**Persist seam:** `AgentService.appendAsyncEventCardToSession` — active-handler-guarded (`activeMessageStateHandler ?: return`), calls `handler.addToClineMessages` only (no api history write).
+
+**Queue-backed idle path:** when the loop is idle the card rides in `meta["card"]` of the durable `pending_queue.json` item. On `AgentService.resumeSession`, `AsyncEventResumeSynthesis.cardsToAppend(items, existingIds)` decodes cards from the drain groups' meta, deduplicates by `AsyncEventCardData.id` against the loaded `savedUiMessages`, and appends the new ones onto the resume-local `handler` inside the `cs.launch` job (NOT via `appendAsyncEventCardToSession` — the session is not yet active at this point).
+
+**Bridge:** `AgentCefPanel.pushAsyncEventCard(cardJson)` calls `window._pushAsyncEventCard`. The JS handler (`jcef-bridge.ts`) does `JSON.parse(json)` → `chatStore.addAsyncEventCard(card)`. `<AsyncEventCard>` component (`webview/src/components/agent/AsyncEventCard.tsx`) is dispatched from `ChatView.renderItem` on `say === "ASYNC_EVENT"`.
+
+**Separate fix (commit `866f00db3`):** top-bar `BackgroundIndicator`/`MonitorIndicator` chips never populated because the bridge treated a JSON-string snapshot as an array — fixed by `coerceSnapshotArray` in the webview bridge.
+
+**Tests:** `AsyncEventCardPresenterTest`, `AsyncEventResumeSynthesisTest`, `AsyncEventResumeSynthesisPinTest`, `AsyncEventCardDataTest`, `AsyncEventCardWiringContractTest`; webview: `async-event-card.test.ts`, `AsyncEventCard.test.tsx`, `push-async-event-card.test.ts`.
+
 ## Run/Test Tool Disposal — RunInvocation Pattern
 
 `java_runtime_exec.run_tests` and `coverage.run_with_coverage` route all per-launch IntelliJ listener/descriptor/connection tracking through `RunInvocation` (`agent/tools/runtime/RunInvocation.kt`) — a per-launch `Disposable` parented to the current session. Every run starts with:
