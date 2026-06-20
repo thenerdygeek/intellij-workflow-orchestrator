@@ -20,10 +20,16 @@ import { useShiki } from '@/hooks/useShiki';
 const DiffHtml = lazy(() => import('@/components/rich/DiffHtml').then(m => ({ default: m.DiffHtml })));
 
 // Tools that must NOT show the universal header Stop button:
-//  - run_command / background_process: have their own in-terminal Stop (terminal.tsx)
+//  - run_command: has its own in-terminal Stop (terminal.tsx)
+//  - background_process: a fast management meta-tool with its own `kill` action; maps to
+//    the TOOL category (not CMD) so it does NOT render a terminal UI — a per-call Stop
+//    isn't meaningful here
 //  - ask_user_input: awaiting the user; has its own answer affordance
-// (the `agent` tool is added in Phase 2 — it uses the per-worker SubAgentView Kill)
-const STOP_SUPPRESSED_TOOLS = new Set(['run_command', 'background_process', 'ask_user_input'])
+//  - agent: renders a generic parent card, but its children are stopped via the per-worker
+//    SubAgentView Kill button (killSubAgent(agentId) → cancelAgent → abort); attaching the
+//    universal Stop to the parent card would route the parent toolCallId into a raw coroutine
+//    cancel that SubagentRunner swallows instead of going through the proper SSE teardown
+const STOP_SUPPRESSED_TOOLS = new Set(['run_command', 'background_process', 'ask_user_input', 'agent'])
 
 // ── Category helpers ──
 
@@ -370,8 +376,10 @@ const ToolCallItem = memo(function ToolCallItem({ tc }: { tc: ToolCall }) {
             )}
             <span className="flex-1" />
             {/* Universal Stop button — shown for any RUNNING tool that doesn't
-                have its own stop affordance (run_command/background_process have
-                the in-terminal Stop; ask_user_input has its own answer). */}
+                have its own stop affordance. Suppressed for: run_command
+                (in-terminal Stop), background_process (own `kill` action, no
+                terminal UI), ask_user_input (own answer affordance), agent
+                (per-worker SubAgentView Kill button handles child teardown). */}
             {isRunning && !STOP_SUPPRESSED_TOOLS.has(tc.name) && (
               <Button
                 variant="ghost"

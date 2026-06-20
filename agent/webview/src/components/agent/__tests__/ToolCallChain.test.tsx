@@ -68,4 +68,9 @@ describe('ToolCallChain universal Stop button', () => {
       expect(screen.queryByRole('button', { name: /^stop$/i })).toBeNull()
     }
   })
+
+  it('suppresses Stop for the agent tool (per-worker Kill is used instead)', () => {
+    render(<ToolCallChain toolCalls={[tc({ name: 'agent' })]} />)
+    expect(screen.queryByRole('button', { name: /^stop$/i })).toBeNull()
+  })
 })
