@@ -1,9 +1,9 @@
-# Background Tool Execution — Design Spec (v2, post-review)
+# Background Tool Execution — Design Spec (v3, post-review + re-verified)
 
 **Date:** 2026-06-21
 **Module:** `:agent` (no `:core` change)
 **Branch:** `worktree-feature+background-tool-execution` (worktree, fresh from `origin/main` @ `cf3d22873`)
-**Status:** Design v2 — revised after adversarial review (all findings verified against code). Awaiting user review before plan.
+**Status:** Design v3 — revised after adversarial review + direct re-verification of the two hardest claims (sub-agent cancellation teardown; the drain/thread-boundary). All findings checked against code. Awaiting user review before plan.
 
 ---
 
@@ -33,7 +33,7 @@ Results deliver through the existing `UnifiedMessageQueue` (PR #61) as a `BACKGR
 | D4 | Agent trigger | **Loop-level reserved tag** `run_in_background`, read+stripped from the decoded params (no schema/DTO change). |
 | D5 | Concurrency cap | **5, configurable.** Beyond the cap → inline fallback (never an error). |
 | D6 | Feature gate | **On by default + kill switch** setting. OFF → attribute and button ignored; everything inline. |
-| D7 | Sub-agent tool (`agent`) | **Eligible.** Backgrounding wraps the tool at its `execute()` boundary; a per-tool Stop cancels the tool's job → its sub-agents via structured concurrency. Sub-agents' own per-worker controls remain the inline affordance. A sub-agent's *internal* loop does **not** honor `run_in_background` in v1 (it is parsed-and-stripped there). |
+| D7 | Sub-agent tool (`agent`) | **Eligible.** Backgrounding wraps the tool at its `execute()` boundary; a per-tool Stop cancels the tool's job → its sub-agents via structured concurrency. **Verified:** `executeParallel` runs children in `supervisorScope { mapIndexed { async { runner.run() } } }` (`SpawnAgentTool.kt:925`) and each `runner.run` wraps the inner loop in a descendant `coroutineScope` (`SubagentRunner.kt:461`); `supervisorScope` isolates only *sibling* failure, so parent-job cancellation tears the whole tree down. Sub-agents' own per-worker controls remain the inline affordance. A sub-agent's *internal* loop does **not** honor `run_in_background` in v1 (parsed-and-stripped there). |
 | D8 | Session/chat switch | **Survive on session-switch, cancel on new-chat.** Viewing another session lets A's job run on and deliver to A's durable queue (replayed on resume). `resetForNewChat()`/new chat cancels all of A's background jobs; `dispose()` cancels everything. |
 
 ## 3. Architecture
@@ -116,24 +116,31 @@ On completion the handler enqueues via the existing `AgentService.enqueueToSessi
 3. `select` resolves to detach → loop synthesizes `User moved '<tool>' (id=<toolCallId>) to the background; still running. Continuing.`
    The job survives.
 
-### 5.3 Completion delivery (both paths) — the thread boundary (I-fix)
+### 5.3 Completion delivery (both paths) — the thread boundary (verified)
 
-The background completion handler runs on an **executor coroutine**, NOT the loop thread, so it must
-do **only** the work that is safe off-thread:
+The background completion handler runs on an **executor coroutine**, NOT the loop thread, so it does
+**only** off-thread-safe work:
 
 1. **Post-process** the `ToolResult` via the extracted **pure** helper (grep/spill/truncate/token
-   re-estimate) — see §11.
+   re-estimate, §11), producing the framed body — which carries the tool name + `toolCallId` so the
+   agent correlates it with the call it backgrounded.
 2. `enqueueToSession(sessionId, QueuedMessage(kind=BACKGROUND, body=framedResult, coalesceKey=toolCallId,
-   meta=card))` — `enqueue` is `synchronized` (`UnifiedMessageQueue.kt:20`), safe off-thread. This rides
-   the existing async-card `meta` channel (#61).
+   meta=card))` — `enqueue` is `synchronized` (`UnifiedMessageQueue.kt:20`), safe off-thread; it rides the
+   existing async-card `meta` channel (#61) so the UI card flips to SUCCESS/FAILURE.
 3. Unregister from both registries.
 
-It must **NOT** call `contextManager.addToolResult`, `messageStateHandler.addToApiConversationHistory`/
-`addToClineMessages`, the POST_TOOL_USE hook, `modifiedFiles`/`countDiffChanges`, or `onToolCall` — those
-mutate loop state and are not thread-safe mid-iteration (verified live at `AgentLoop.kt:2186/2213/2269/2275/2298/2303/2307`).
-Instead, when the queued `BACKGROUND` message is **drained on the loop thread** at the next iteration
-boundary, the loop performs the context insertion and (for a backgrounded tool) the deferred
-POST_TOOL_USE + diff/modified-file accounting there. **One owner of loop state: the loop thread.**
+**Delivery reuses the existing drain path unchanged — no net-new plumbing.** Verified: the queue drain
+injects framed async text via `contextManager.addUserMessage(withEnvDetails(combined))` (`AgentLoop.kt:943-952`)
+on the loop thread — exactly how DELEGATION/MONITOR/background-completion already deliver. A backgrounded
+tool's result therefore arrives as a framed **user** message; the original tool call already received its
+synthetic tool-result (§5.1/§5.2), so API tool_use/tool_result pairing stays intact.
+
+The handler does **NOT** call `contextManager.addToolResult`, `addToApiConversationHistory`/`addToClineMessages`,
+POST_TOOL_USE, `modifiedFiles`/`countDiffChanges`, or `onToolCall` (verified non-thread-safe mid-iteration at
+`AgentLoop.kt:2186/2213/2269/2275/2298/2303/2307`). Consistent with every other async source, these **do
+not run for backgrounded tools** (§14). For the real background use cases (run_command, build/test, grep,
+web_fetch, agent) this is lossless — they emit no `ToolResult.diff` and POST_TOOL_USE is observation-only.
+UI completion state is carried by the async card, not `onToolCall`. **One owner of loop state: the loop thread.**
 
 ## 6. The `run_in_background` plumbing (B1 + B2 fix) — `:core` untouched
 
@@ -194,6 +201,11 @@ an async event card SUCCESS/FAILURE with id **`bg-<toolCallId>-<occurredAt>`** (
 
   Only an explicit detach lets a job outlive its await; an un-detached inline tool still dies with the
   loop, preserving today's structured-concurrency semantics.
+- **Tools that catch cancellation and return a partial result** (notably `agent`/`SpawnAgentTool`, which
+  returns the completed children on cancel) complete the `Deferred` **normally** with that partial result
+  rather than throwing. So per-tool Stop on a backgrounded `agent` delivers its partial aggregate — not the
+  generic stopped-by-user message — matching today's inline behavior. The truth-table "cancel the job" row
+  applies to tools that propagate the `CancellationException`.
 - **`select` never rethrows tool exceptions:** the executor catches throwables inside the job and
   completes the `Deferred` with an error `ToolResult` (§4) — exactly one error-reporting site.
 - **defersCompletion (D3):** a result already queued at the `attempt_completion` boundary defers exit
@@ -230,8 +242,10 @@ private suspend fun processToolOutput(
 Both the inline path and the executor completion handler call it. **The helper is pure (output only);
 it does NOT touch loop state.** The ~8 side effects that follow it in the inline path
 (`addToolResult`, history/clineMessages, POST_TOOL_USE, `modifiedFiles`/`countDiffChanges`, `onToolCall`,
-`when(type)` dispatch) stay on the loop thread — run inline for inline tools, and at drain time for
-backgrounded results (§5.3). This is the **core of the work**, not a trivial extraction.
+`when(type)` dispatch) stay on the loop thread and run **only for inline tools**. For backgrounded tools
+they are intentionally **not** run (§5.3, §14) — delivery is the framed user message via the existing
+drain, and UI completion is the async card. The extraction itself is contained; the thread-safety win
+comes from *not* duplicating those side effects off-thread, not from re-running them at drain time.
 
 ### 11.1 ThreadLocal / context propagation (must-fix)
 
@@ -270,6 +284,10 @@ when run through the executor.
   user-stop yields stopped result; tool exception → single error `ToolResult` (no `onAwait` rethrow).
 - `cancelAllForSession` (new chat) cancels A's jobs; session-switch leaves them running.
 - ThreadLocal/context: tool body observes correct `toolCallId`/`sessionId` via the executor (§11.1).
+- backgrounded `agent` tool: cancelling the handle's job tears down its sub-agents (assert via a fake
+  runner that records cancellation); a partial result is delivered on stop (D7).
+- delivery: a backgrounded result reaches the conversation as a framed `addUserMessage` (not `addToolResult`),
+  and POST_TOOL_USE / diff accounting do **not** fire for it (§5.3, §14).
 
 **In-IDE smoke (deferred, like #62):** real `run_command` backgrounded by button; agent-initiated
 background grep while the loop keeps working; background completion auto-wakes after `attempt_completion`
@@ -278,6 +296,11 @@ background grep while the loop keeps working; background completion auto-wakes a
 ## 14. Out of scope (YAGNI)
 
 - A sub-agent's **internal** loop honoring `run_in_background` (parsed-and-stripped only in v1).
+- For backgrounded tools: POST_TOOL_USE hooks and the in-conversation file-modified/diff accounting do
+  not fire (consistent with DELEGATION/MONITOR async delivery). The tool's actual disk changes still
+  occur; only the conversation-side summary/hook is skipped. The agent must not background a tool whose
+  result a subsequent inline step immediately depends on — it is told what is pending via env_details (§7).
+  (Lossless for the real candidates — run_command/build/test/grep/web_fetch/agent emit no `diff`.)
 - Durable in-flight jobs across IDE restart (queued results remain durable).
 - Backgrounding control-flow/interactive tools (D2).
 - A dedicated `wait_for_background` tool (auto-wake/defersCompletion make it unnecessary).
@@ -292,7 +315,8 @@ background grep while the loop keeps working; background completion auto-wakes a
 | `allParamNames()` + injection sites | `agent/.../tools/ToolRegistry.kt:265`; `AgentService.kt:734`, `:1901`, `:2464`; sub-agent `SubagentRunner`. |
 | Inline exec + ThreadLocals + context | `AgentLoop.kt` — `executeToolCalls` (1838+); ThreadLocals (2015–2017); `STREAMING_TOOLS` (770); `runWithStore` (2042); post-processing (2111–2159); side effects (2186/2213/2269/2275/2298/2303/2307); type dispatch (2330); exit-drain `drainSteeringIntoContextOnExit` (2687). |
 | Cancel infra (#62) | `agent/.../tools/cancel/ToolCancellationRegistry.kt`, `ToolStopCoordinator.kt`; `UserStopCancellationException`; `ProcessRegistry`. |
-| Queue (#61) | `agent/.../loop/queue/UnifiedMessageQueue.kt` (`enqueue` synchronized, `:20`); `QueueSourceKind.BACKGROUND`; `BackgroundQueuePolicy` (`durable/autoWakesIdle=true, defersCompletion=true, priority=50`). |
+| Sub-agent (`agent`) | `agent/.../tools/builtin/SpawnAgentTool.kt` — `executeParallel` `supervisorScope`/`async` (`:925`), `executeSingle` (`:797`); `agent/.../tools/subagent/SubagentRunner.kt` — descendant `coroutineScope`/`abortableRunJob` (`:461`); `SubagentRunnerCancellationTest`. |
+| Queue (#61) + drain | `agent/.../loop/queue/UnifiedMessageQueue.kt` (`enqueue` synchronized, `:20`); `QueueSourceKind.BACKGROUND`; `BackgroundQueuePolicy` (`durable/autoWakesIdle=true, defersCompletion=true, priority=50`); drain → `addUserMessage(withEnvDetails(...))` (`AgentLoop.kt:943-952`). |
 | Enqueue + wake | `AgentService.enqueueToSession` (`:501`); `activeLoopForSession`; `IdleSessionWaker` (`:172/:186`, `DEFER_ACTIVE_SESSION`). |
 | Single-active-task / lifecycle | `AgentService.kt` — `ActiveTask`/`activeTask` (`:109/110`); `executeTask`/install (`:2491`); null-on-exit (`:2609`); `cancelCurrentTask` (`:3579`); `resetForNewChat` (`:3643`); `@Service(PROJECT)`, `cs`, `Disposable`. |
 | env_details | `agent/.../prompt/EnvironmentDetailsBuilder.kt` — `build(...)` (`:31`), running-processes/monitors. |
