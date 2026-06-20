@@ -16,6 +16,8 @@ import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.ai.OpenAiCompatBrain
 import com.workflow.orchestrator.core.ai.ToolPromptBuilder
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -144,6 +146,18 @@ class SubagentRunner(
     private val abortRequested = AtomicBoolean(false)
 
     /**
+     * Job of the child [coroutineScope] that wraps the sub-agent's inner [AgentLoop.run]
+     * (set in [runInternal]). Cancelling this job — done by [abort] — tears down the inner
+     * loop AND its in-flight tool coroutine (the tool runs inside a `coroutineScope` that is
+     * a descendant of this job, so cancellation propagates down to it) without cancelling
+     * [runInternal]'s own coroutine, so the parent `agent` tool-call returns a normal
+     * "sub-agent aborted" result and the orchestrator loop continues. Null when no loop is
+     * currently running (before start / after the scope completes — cleared in a `finally`).
+     */
+    @Volatile
+    private var abortableRunJob: Job? = null
+
+    /**
      * Effective tool execution mode for this sub-agent. Always `"stream_interrupt"`
      * regardless of what the caller passed, because sub-agents must ReAct one
      * tool at a time. The constructor arg is retained for API compatibility but
@@ -155,12 +169,23 @@ class SubagentRunner(
     internal val effectiveToolExecutionMode: String = "stream_interrupt"
 
     /**
-     * Abort the subagent run. Sets the abort flag and cancels the brain's active request.
-     * Safe to call from any thread.
+     * Abort the subagent run. Sets the abort flag, cancels the brain's active request (SSE
+     * stream), AND cancels the child scope that wraps the inner [AgentLoop.run] so the
+     * sub-agent's IN-FLIGHT tool coroutine is cancelled too (not just the LLM stream) — a
+     * mid-`run_command` tool's coroutine is cancelled, which (combined with the tool's own
+     * `finally` cleanup) kills the grandchild OS process instead of letting it run until the
+     * next iteration boundary. Order matters: [abortRequested] is set BEFORE the cancel so
+     * that when the resulting [CancellationException] reaches [runInternal]'s
+     * `catch (CancellationException)` block the flag is already `true` → it returns the
+     * cancelled result rather than re-throwing. Cancelling the CHILD job leaves
+     * [runInternal]'s own coroutine alive, so the parent `agent` tool-call returns normally
+     * and the orchestrator loop continues. Safe to call from any thread (`Job.cancel` and
+     * `AtomicBoolean.set` are thread-safe; `abort()` fires from the EDT/JCEF bridge).
      */
     fun abort() {
         abortRequested.set(true)
         brain.cancelActiveRequest()
+        abortableRunJob?.cancel(CancellationException("Sub-agent aborted by user"))
     }
 
     /**
@@ -421,7 +446,25 @@ class SubagentRunner(
             // and disposed regardless of normal completion, abort, or exception so
             // any tail prose bytes reach the UI before the final status event).
             try {
-                val loopResult = loop.run(prompt)
+                // Wrap loop.run in its OWN child coroutineScope and expose that scope's Job
+                // via abortableRunJob, mirroring the main funnel's "cancel a CHILD scope,
+                // parent survives" pattern (AgentLoop.executeToolCalls). abort() cancels this
+                // job → the inner loop AND its in-flight tool coroutine (which runs inside a
+                // coroutineScope that is a descendant of this job) are cancelled, but
+                // runInternal's own coroutine is NOT, so this function still returns the
+                // cancelled SubagentRunResult normally and the parent agent tool-call (and the
+                // orchestrator loop) continue. The enclosing catch (CancellationException)
+                // below still wraps this — when abortRequested is true it returns the cancelled
+                // result; a genuine structured-concurrency teardown (flag false) re-throws.
+                // Cleared in finally so a stale job can never be cancelled across runs.
+                val loopResult = try {
+                    coroutineScope {
+                        abortableRunJob = coroutineContext[Job]
+                        loop.run(prompt)
+                    }
+                } finally {
+                    abortableRunJob = null
+                }
 
                 // 9. Check abort after loop finishes
                 if (abortRequested.get()) {

@@ -11,21 +11,32 @@ import com.workflow.orchestrator.agent.tools.builtin.AttemptCompletionTool
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.dto.ChatCompletionResponse
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
+import com.workflow.orchestrator.core.ai.dto.Choice
+import com.workflow.orchestrator.core.ai.dto.FunctionCall
 import com.workflow.orchestrator.core.ai.dto.StreamChunk
+import com.workflow.orchestrator.core.ai.dto.ToolCall
 import com.workflow.orchestrator.core.ai.dto.ToolDefinition
+import com.workflow.orchestrator.core.ai.dto.UsageInfo
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ModelPricingRegistry
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
@@ -220,4 +231,165 @@ class SubagentRunnerCancellationTest {
             "Error message should contain 'cancelled' but was: ${result.error}",
         )
     }
+
+    // ---- Fix B: abort cancels the sub-agent's IN-FLIGHT tool ----
+
+    /**
+     * A fake tool that signals it has started (via [started]) and then suspends forever via
+     * [awaitCancellation]. When the surrounding coroutine is cancelled, `awaitCancellation`
+     * throws [CancellationException], which runs the `finally` block — flipping
+     * [wasCancelled]. This lets the test prove the tool's OWN coroutine was cancelled (not
+     * merely abandoned).
+     */
+    private class BlockingTool(
+        private val started: CompletableDeferred<Unit>,
+        private val wasCancelled: AtomicBoolean,
+    ) : AgentTool {
+        override val name = "blocking_tool"
+        override val description = "Signals started, then suspends until cancelled."
+        override val parameters = FunctionParameters(properties = emptyMap())
+        override val allowedWorkers = setOf(WorkerType.CODER)
+        override suspend fun execute(params: JsonObject, project: Project): ToolResult {
+            try {
+                started.complete(Unit)
+                awaitCancellation() // suspend forever; only cancellation ends this
+            } finally {
+                // Runs on cancellation (and only then — we never complete normally).
+                wasCancelled.set(true)
+            }
+        }
+    }
+
+    /**
+     * A scripted brain that emits ONE tool call (for [toolName]) on its first chatStream
+     * call, then errors on any subsequent call. Mirrors SubagentRunnerTest.SequenceBrain's
+     * tool-call response shape. Used to drive the sub-agent's inner AgentLoop into executing
+     * a real (fake) tool so we can abort mid-tool.
+     */
+    private class SingleToolCallBrain(private val toolName: String) : LlmBrain {
+        override val modelId: String = "test-single-tool-call-brain"
+        override var toolNameSet: Set<String> = emptySet()
+        override var paramNameSet: Set<String> = emptySet()
+        private var callIndex = 0
+        var cancelled = false
+            private set
+
+        override suspend fun chat(
+            messages: List<ChatMessage>,
+            tools: List<ToolDefinition>?,
+            maxTokens: Int?,
+            toolChoice: JsonElement?
+        ): ApiResult<ChatCompletionResponse> {
+            throw UnsupportedOperationException("AgentLoop uses chatStream")
+        }
+
+        override suspend fun chatStream(
+            messages: List<ChatMessage>,
+            tools: List<ToolDefinition>?,
+            maxTokens: Int?,
+            onChunk: suspend (StreamChunk) -> Unit
+        ): ApiResult<ChatCompletionResponse> {
+            if (callIndex++ > 0) {
+                return ApiResult.Error(
+                    com.workflow.orchestrator.core.model.ErrorType.SERVER_ERROR,
+                    "No more scripted responses",
+                )
+            }
+            return ApiResult.Success(
+                ChatCompletionResponse(
+                    id = "resp-${System.nanoTime()}",
+                    choices = listOf(
+                        Choice(
+                            index = 0,
+                            message = ChatMessage(
+                                role = "assistant",
+                                content = null,
+                                toolCalls = listOf(
+                                    ToolCall(
+                                        id = "call_0_${System.nanoTime()}",
+                                        type = "function",
+                                        function = FunctionCall(name = toolName, arguments = "{}"),
+                                    )
+                                )
+                            ),
+                            finishReason = "tool_calls"
+                        )
+                    ),
+                    usage = UsageInfo(promptTokens = 100, completionTokens = 30, totalTokens = 130)
+                )
+            )
+        }
+
+        override fun estimateTokens(text: String): Int = text.toByteArray().size / 4
+        override fun cancelActiveRequest() { cancelled = true }
+    }
+
+    @Test
+    @kotlinx.coroutines.ExperimentalCoroutinesApi // UnconfinedTestDispatcher
+    fun `abort cancels the sub-agent's in-flight tool and run returns without throwing`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The sub-agent's inner AgentLoop will dispatch blocking_tool, whose execute()
+            // signals `toolStarted` then awaitCancellation()s. We then call runner.abort().
+            // abort() cancels the child scope wrapping loop.run → the tool's own coroutine
+            // (a descendant) is cancelled → its finally flips `toolWasCancelled`. Because
+            // abortRequested was set BEFORE the cancel, runInternal's
+            // catch(CancellationException) returns the cancelled result (NOT a re-throw), so
+            // run() RETURNS a FAILED SubagentRunResult to the caller — proving the parent
+            // coroutine was not cancelled.
+            val toolStarted = CompletableDeferred<Unit>()
+            val toolWasCancelled = AtomicBoolean(false)
+
+            val tools = mutableMapOf<String, AgentTool>(
+                "blocking_tool" to BlockingTool(toolStarted, toolWasCancelled),
+            )
+            tools["attempt_completion"] = AttemptCompletionTool()
+
+            val brain = SingleToolCallBrain("blocking_tool")
+            val runner = SubagentRunner(
+                brain = brain,
+                coreTools = tools,
+                systemPrompt = "You are a test sub-agent.",
+                project = project,
+                maxIterations = 50,
+                planMode = false,
+                contextBudget = 50_000,
+            )
+
+            // Launch the run as a sibling child so the test body can abort it while it is
+            // suspended in the tool. UnconfinedTestDispatcher runs the launch eagerly up to
+            // the awaitCancellation() suspension point.
+            var result: SubagentRunResult? = null
+            val runJob = launch {
+                result = runner.run("Do the blocking thing", "test-agent", "test (unit-test)") {}
+            }
+
+            // Wait until the fake tool is actually executing (mid-flight).
+            toolStarted.await()
+            assertFalse(
+                toolWasCancelled.get(),
+                "Tool should still be running before abort()",
+            )
+
+            // Abort: cancels the child run scope → the in-flight tool coroutine is cancelled.
+            runner.abort()
+
+            // Let the cancellation unwind and the run() coroutine finish returning.
+            runJob.join()
+
+            // (2) The fake tool's coroutine was actually cancelled (its finally ran).
+            assertTrue(
+                toolWasCancelled.get(),
+                "abort() must cancel the in-flight tool's coroutine (its awaitCancellation should have thrown)",
+            )
+            // (1) run() RETURNED (did not throw to the caller) with a cancelled/FAILED result —
+            // proving the parent coroutine was NOT cancelled by the child-scope abort.
+            assertNotNull(result, "run() must return a result (not throw) when its tool is aborted")
+            assertEquals(SubagentRunStatus.FAILED, result!!.status)
+            assertTrue(
+                result!!.error!!.contains("cancelled", ignoreCase = true),
+                "Error message should contain 'cancelled' but was: ${result!!.error}",
+            )
+            // The brain's stream-cancel path was also exercised by abort().
+            assertTrue(brain.cancelled, "abort() must also cancel the brain's active request")
+        }
 }
