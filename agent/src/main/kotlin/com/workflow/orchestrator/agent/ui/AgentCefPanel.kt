@@ -102,6 +102,7 @@ class AgentCefPanel(
     private var approveToolCallQuery: JBCefJSQuery? = null
     private var denyToolCallQuery: JBCefJSQuery? = null
     private var allowToolForSessionQuery: JBCefJSQuery? = null
+    private var approveCommandPrefixQuery: JBCefJSQuery? = null
     private var interactiveHtmlMessageQuery: JBCefJSQuery? = null
     private var acceptDiffHunkQuery: JBCefJSQuery? = null
     private var rejectDiffHunkQuery: JBCefJSQuery? = null
@@ -292,6 +293,8 @@ class AgentCefPanel(
     var onDenyToolCall: (() -> Unit)? = null
     /** Callback when user clicks "Allow for session" on a tool in the approval card. Param: toolName. */
     var onAllowToolForSession: ((String) -> Unit)? = null
+    /** Callback when user clicks "Approve all <prefix> this session" on a run_command approval card. Param: prefix. */
+    var onApproveCommandPrefix: ((String) -> Unit)? = null
     /** Callback when user interacts with an interactive HTML message. Param: JSON payload. */
     var onInteractiveHtmlMessage: ((String) -> Unit)? = null
     /** Callback when user accepts a diff hunk. Params: filePath, hunkIndex, editedContent (nullable). */
@@ -626,6 +629,7 @@ class AgentCefPanel(
         approveToolCallQuery = registerQuery(b) { _ -> onApproveToolCall?.invoke(); JBCefJSQuery.Response("ok") }
         denyToolCallQuery = registerQuery(b) { _ -> onDenyToolCall?.invoke(); JBCefJSQuery.Response("ok") }
         allowToolForSessionQuery = registerQuery(b) { toolName -> onAllowToolForSession?.invoke(toolName); JBCefJSQuery.Response("ok") }
+        approveCommandPrefixQuery = registerQuery(b) { prefix -> onApproveCommandPrefix?.invoke(prefix); JBCefJSQuery.Response("ok") }
         interactiveHtmlMessageQuery = registerQuery(b) { json -> onInteractiveHtmlMessage?.invoke(json); JBCefJSQuery.Response("ok") }
         acceptDiffHunkQuery = registerQuery(b) { data ->
             try {
@@ -868,6 +872,7 @@ class AgentCefPanel(
                     injectBridge("_approveToolCall") { approveToolCallQuery?.let { q -> js("window._approveToolCall = function() { ${q.inject("'approve'")} }") } }
                     injectBridge("_denyToolCall") { denyToolCallQuery?.let { q -> js("window._denyToolCall = function() { ${q.inject("'deny'")} }") } }
                     injectBridge("_allowToolForSession") { allowToolForSessionQuery?.let { q -> js("window._allowToolForSession = function(toolName) { ${q.inject("toolName")} }") } }
+                    injectBridge("_approveCommandPrefix") { approveCommandPrefixQuery?.let { q -> js("window._approveCommandPrefix = function(prefix) { ${q.inject("prefix")} }") } }
                     injectBridge("_interactiveHtmlMessage") { interactiveHtmlMessageQuery?.let { q -> js("window._interactiveHtmlMessage = function(json) { ${q.inject("json")} }") } }
                     injectBridge("_acceptDiffHunk") { acceptDiffHunkQuery?.let { q -> js("window._acceptDiffHunk = function(fp,hi,ec) { ${q.inject("JSON.stringify({filePath:fp,hunkIndex:hi,editedContent:ec||null})")} }") } }
                     injectBridge("_rejectDiffHunk") { rejectDiffHunkQuery?.let { q -> js("window._rejectDiffHunk = function(fp,hi) { ${q.inject("JSON.stringify({filePath:fp,hunkIndex:hi})")} }") } }
@@ -1154,10 +1159,16 @@ class AgentCefPanel(
         // the suffix entirely in that case. Single source of truth lives in
         // Kotlin (`RunCommandTool.resolveTimeoutSeconds`) so the displayed cap
         // matches the actual cap that the in-tool monitor enforces.
-        toolTimeoutSeconds: Long? = null
+        toolTimeoutSeconds: Long? = null,
+        // Auto-approve badge: when the run_command auto-approve skip fired in AgentLoop, the tool
+        // card renders an "auto-approved" badge with the reason as a tooltip. Defaults are the
+        // not-auto-approved case; the JS handler ignores trailing args it doesn't yet read.
+        autoApproved: Boolean = false,
+        autoApproveReason: String? = null,
     ) {
         val timeoutArg = toolTimeoutSeconds?.toString() ?: "null"
-        callJs("appendToolCall(${JsEscape.toJsString(toolCallId)},${JsEscape.toJsString(toolName)},${JsEscape.toJsString(args)},'${status.name}',$timeoutArg)")
+        val autoApproveReasonArg = if (autoApproveReason != null) JsEscape.toJsString(autoApproveReason) else "null"
+        callJs("appendToolCall(${JsEscape.toJsString(toolCallId)},${JsEscape.toJsString(toolName)},${JsEscape.toJsString(args)},'${status.name}',$timeoutArg,$autoApproved,$autoApproveReasonArg)")
     }
 
     fun updateLastToolCall(
@@ -1601,12 +1612,14 @@ class AgentCefPanel(
         originAgentId: String? = null,
         originLabel: String? = null,
         path: String? = null,
+        commandPrefix: String? = null,
     ) {
         val diffArg = if (diffContent != null) JsEscape.toJsString(diffContent) else "null"
         val previewArg = if (commandPreviewJson != null) JsEscape.toJsString(commandPreviewJson) else "null"
         val originAgentIdArg = if (originAgentId != null) JsEscape.toJsString(originAgentId) else "null"
         val originLabelArg = if (originLabel != null) JsEscape.toJsString(originLabel) else "null"
         val pathArg = if (path != null) JsEscape.toJsString(path) else "null"
+        val commandPrefixArg = if (commandPrefix != null) JsEscape.toJsString(commandPrefix) else "null"
         callJs(
             "showApproval(" +
                 "${JsEscape.toJsString(toolName)}," +
@@ -1618,7 +1631,8 @@ class AgentCefPanel(
                 "$allowSessionApproval," +
                 "$originAgentIdArg," +
                 "$originLabelArg," +
-                "$pathArg" +
+                "$pathArg," +
+                "$commandPrefixArg" +
                 ")"
         )
     }

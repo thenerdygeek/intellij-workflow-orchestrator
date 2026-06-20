@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.ui
 import com.workflow.orchestrator.agent.loop.ApprovalResult
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.SessionApprovalStore
+import com.workflow.orchestrator.agent.loop.SessionCommandAllowlist
 import com.workflow.orchestrator.agent.loop.StreamingEditCallback
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
 import com.workflow.orchestrator.agent.session.UiMessage
@@ -52,6 +53,7 @@ data class SessionUiCallbacks(
     val onPlanDiscarded: (() -> Unit)?,
     val approvalGate: (suspend (toolName: String, args: String, riskLevel: String, allowSessionApproval: Boolean) -> ApprovalResult)?,
     val sessionApprovalStore: SessionApprovalStore,
+    val sessionCommandAllowlist: SessionCommandAllowlist,
     val onSubagentProgress: ((agentId: String, update: SubagentProgressUpdate) -> Unit)?,
     val onTokenUpdate: ((inputTokens: Int, outputTokens: Int) -> Unit)?,
     val onSessionStats: ((modelId: String, tokensIn: Long, tokensOut: Long, costUsd: Double?) -> Unit)?,

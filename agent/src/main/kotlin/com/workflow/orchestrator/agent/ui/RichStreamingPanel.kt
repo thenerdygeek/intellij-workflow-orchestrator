@@ -166,7 +166,12 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
 
     fun appendToolCall(
         toolName: String, args: String = "",
-        status: ToolCallStatus = ToolCallStatus.RUNNING
+        status: ToolCallStatus = ToolCallStatus.RUNNING,
+        // Accepted for signature parity with the JCEF path (AgentDashboardPanel forwards these to
+        // whichever panel is live). This Swing fallback renders a minimal "auto-approved" chip with
+        // the reason as a hover tooltip when the run_command auto-approve skip fired.
+        autoApproved: Boolean = false,
+        autoApproveReason: String? = null,
     ) = runOnEdt {
         flushStreamBuffer()
         val (badge, accent) = toolToBadge(toolName)
@@ -179,10 +184,14 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
         val argsHtml = if (args.isNotBlank() && args.length > 2) {
             "<div class='tool-detail'>${HtmlEscape.escapeHtml(args.take(300))}</div>"
         } else ""
+        val autoApprovedHtml = if (autoApproved) {
+            val tip = autoApproveReason?.let { " title='${HtmlEscape.escapeHtml(it)}'" } ?: ""
+            "<span class='timing'$tip style='color:${AgentColors.hex(AgentColors.secondaryText)}'>auto-approved</span> "
+        } else ""
 
         appendHtml("""
             <div class="tool-card" style="border-left: 3px solid $accent;">
-                <div class="tool-header">$badge<span class="target">$target</span>$statusHtml</div>
+                <div class="tool-header">$badge<span class="target">$target</span>$autoApprovedHtml$statusHtml</div>
                 $argsHtml
             </div>
         """.trimIndent())
