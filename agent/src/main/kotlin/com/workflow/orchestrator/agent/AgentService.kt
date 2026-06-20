@@ -2799,20 +2799,17 @@ class AgentService(
             wasPreviouslyCompleted = (resumeAskType == UiAsk.RESUME_COMPLETED_TASK),
         )
 
-        // Task 2.5A — drain the unified queue so newly-persisted async events are replayed.
-        // drainGrouped() clears pending_queue.json atomically, so items are consumed exactly once.
-        // Queue items are DISJOINT from the legacy-file items below (new writes go here; legacy
-        // files hold only pre-upgrade items written by the old stores before Tasks 2.2/2.3/2.4).
-        val queueDrain = runCatching {
-            val groups = queueForSession(sessionId).drainGrouped()
-            if (groups.isNotEmpty()) {
-                log.info("[AgentService] resume pickup: delivered ${groups.sumOf { it.ids.size }} queued item(s) from unified queue for $sessionId")
-            }
-            groups.joinToString("\n") { it.framedText }
-        }.getOrElse { err ->
+        // Task 4.1 — drain the unified queue ONCE; reuse `drainedGroups` for BOTH the preamble
+        // text (here) and the async-event card synthesis (inside the cs.launch job below).
+        // The drain call clears the queue; a second drain call would lose items.
+        val drainedGroups = runCatching { queueForSession(sessionId).drainGrouped() }.getOrElse { err ->
             log.warn("[AgentService] unified queue drain failed for $sessionId — continuing without queue items: ${err.message}", err)
-            ""
+            emptyList()
         }
+        if (drainedGroups.isNotEmpty()) {
+            log.info("[AgentService] resume pickup: delivered ${drainedGroups.sumOf { it.ids.size }} queued item(s) from unified queue for $sessionId")
+        }
+        val queueDrain = drainedGroups.joinToString("\n") { it.framedText }
         val baseWithQueue = if (queueDrain.isBlank()) basePreamble else basePreamble + queueDrain
 
         // LEGACY: retire next release
@@ -2939,6 +2936,29 @@ class AgentService(
                 ask = resumeAskType,
                 text = "Task was interrupted $agoText. Resuming..."
             ))
+
+            // Task 4.1 — async-event cards (queue-backed idle path, review B1). The session is NOT
+            // active here (activeMessageStateHandler is set later in executeTask), so append onto
+            // THIS resume-local `handler` directly — not appendAsyncEventCardToSession (which would
+            // no-op). Dedup against the in-memory savedUiMessages so a card already shown live on
+            // the focused session isn't duplicated. addToClineMessages is suspend → callable here.
+            runCatching {
+                val existingIds = savedUiMessages.mapNotNull { it.asyncEventData?.id }.toSet()
+                val items = drainedGroups
+                    .filter {
+                        it.kind == com.workflow.orchestrator.agent.loop.queue.QueueSourceKind.BACKGROUND ||
+                        it.kind == com.workflow.orchestrator.agent.loop.queue.QueueSourceKind.MONITOR
+                    }
+                    .flatMap { it.items }
+                com.workflow.orchestrator.agent.ui.AsyncEventResumeSynthesis.cardsToAppend(items, existingIds).forEach { card ->
+                    handler.addToClineMessages(UiMessage(
+                        ts = System.currentTimeMillis(),
+                        type = UiMessageType.SAY,
+                        say = UiSay.ASYNC_EVENT,
+                        asyncEventData = card,
+                    ))
+                }
+            }.onFailure { log.warn("[AgentService] async-event resume synthesis failed for $sessionId: ${it.message}", it) }
 
             // TASK_RESUME hook — now safe to call suspend functions (we're on IO dispatcher)
             if (hookManager.hasHooks(HookType.TASK_RESUME)) {

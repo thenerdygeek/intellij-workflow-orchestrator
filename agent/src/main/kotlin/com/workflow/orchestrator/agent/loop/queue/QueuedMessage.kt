@@ -25,4 +25,5 @@ data class DrainGroup(
     val ids: List<String>,
     val resetsUserSilenceCounter: Boolean,
     val defersCompletion: Boolean,
+    val items: List<QueuedMessage> = emptyList(),
 )

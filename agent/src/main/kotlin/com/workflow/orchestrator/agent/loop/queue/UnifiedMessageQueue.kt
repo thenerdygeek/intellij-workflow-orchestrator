@@ -55,6 +55,7 @@ class UnifiedMessageQueue(
                 ids = group.map { it.id },
                 resetsUserSilenceCounter = policy.resetsUserSilenceCounter,
                 defersCompletion = policy.defersCompletion,
+                items = group,
             )
         }
     }
