@@ -1,7 +1,7 @@
 # Background Tool Execution — Design Spec (v3, post-review + re-verified)
 
 **Date:** 2026-06-21
-**Module:** `:agent` (no `:core` change)
+**Module:** `:agent` (plus one documentation bullet in `:core` `ToolPromptBuilder.FORMAT_INSTRUCTIONS`)
 **Branch:** `worktree-feature+background-tool-execution` (worktree, fresh from `origin/main` @ `cf3d22873`)
 **Status:** Design v3 — revised after adversarial review + direct re-verification of the two hardest claims (sub-agent cancellation teardown; the drain/thread-boundary). All findings checked against code. Awaiting user review before plan.
 
@@ -325,7 +325,11 @@ background grep while the loop keeps working; background completion auto-wakes a
 
 ## 16. Service-architecture compliance
 
-`:agent` depends only on `:core`; **this feature touches no `:core` code**. The reserved-tag plumbing is
-agent-side (`paramNames` augmentation + read/strip in the loop). The executor, registry, eligibility, UI,
-and settings live in `:agent`. Delivery reuses the existing `:core`-typed `UnifiedMessageQueue` and
-`AgentService.enqueueToSession`. No new cross-module client methods.
+`:agent` depends only on `:core`. The **only** `:core` edit is one documentation bullet in
+`ToolPromptBuilder.FORMAT_INSTRUCTIONS` (the shared tool-call-format preamble) describing the
+`run_in_background` attribute — sub-agents see it too but parse-and-strip it (they don't honor it in v1),
+which is harmless. No `:core` *behavior* change: the reserved-tag plumbing is agent-side (`paramNames`
+augmentation at the provider boundary + read/strip in the loop), and `ToolCall`/`AssistantMessageParser`
+are untouched. The executor, registry, eligibility, UI, and settings live in `:agent`. Delivery reuses the
+existing `:core`-typed `UnifiedMessageQueue` and `AgentService.enqueueToSession`. No new cross-module
+client methods.
