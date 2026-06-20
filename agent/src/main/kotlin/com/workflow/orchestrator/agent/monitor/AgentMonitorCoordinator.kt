@@ -129,12 +129,17 @@ class AgentMonitorCoordinator(
      * Encode a monitor-event presenter card into the [QueuedMessage.meta] map so the
      * resume-synthesis path can reconstruct the card from the persisted queue item
      * (Phase 4 — idle-wake card synthesis on resume).
+     *
+     * [ts] is passed in by the caller so that the stashed card id (`mon-{id}-{ts}`) and any
+     * live-emitted card id are derived from the **same** timestamp — avoiding the duplicate-card
+     * dedup miss that occurred when [monitorCardMeta] called [System.currentTimeMillis]
+     * internally while [deliverToLoop] called it again inline (the two calls could differ by ≥1 ms).
      */
-    private fun monitorCardMeta(id: String, sev: Severity, text: String): Map<String, String> = mapOf(
+    private fun monitorCardMeta(id: String, sev: Severity, text: String, ts: Long): Map<String, String> = mapOf(
         "monitorId" to id,
         "card" to kotlinx.serialization.json.Json.encodeToString(
             AsyncEventCardData.serializer(),
-            AsyncEventCardPresenter.fromMonitor(id, sev, text, System.currentTimeMillis()),
+            AsyncEventCardPresenter.fromMonitor(id, sev, text, ts),
         ),
     )
 
@@ -171,15 +176,17 @@ class AgentMonitorCoordinator(
                 // the `?.` drops the message safely — acceptable, the loop was terminating anyway.
                 isLoopLive = { activeLoopForSession(sessionId) != null },
                 deliverToLoop = { id, sev, text ->
-                    enqueueToQueue(sessionId, monitorMsg(text).copy(meta = monitorCardMeta(id, sev, text)))
-                    emitCard(sessionId, AsyncEventCardPresenter.fromMonitor(id, sev, text, System.currentTimeMillis()))
+                    val now = System.currentTimeMillis()
+                    enqueueToQueue(sessionId, monitorMsg(text).copy(meta = monitorCardMeta(id, sev, text, now)))
+                    emitCard(sessionId, AsyncEventCardPresenter.fromMonitor(id, sev, text, now))
                 },
                 wakeIdle = { id, sev, text ->
                     // Task 2.4 — durable persist via the queue (MonitorQueuePolicy.durable=true)
                     // replaces appendPendingNotification. The queue's QueuePersistence atomically
                     // writes pending_queue.json before the wake is attempted, so the notification
                     // survives a SKIP_GUARD or DEFER route (Task 6F's resume reader is Task 2.5).
-                    enqueueToQueue(sessionId, monitorMsg(text).copy(meta = monitorCardMeta(id, sev, text)))
+                    val now = System.currentTimeMillis()
+                    enqueueToQueue(sessionId, monitorMsg(text).copy(meta = monitorCardMeta(id, sev, text, now)))
                     // The blank synthetic text is the carrier for the wake signal; the actual
                     // notification body is already in the queue item above. The WakeOutcome
                     // MUST still be returned so the per-monitor wake-budget/flood accounting works.

@@ -3,6 +3,7 @@ package com.workflow.orchestrator.agent.monitor
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.queue.QueuedMessage
+import com.workflow.orchestrator.agent.session.AsyncEventCardData
 import com.workflow.orchestrator.agent.settings.AgentSettings
 import com.workflow.orchestrator.agent.tools.background.IdleSessionWaker
 import io.mockk.every
@@ -15,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -75,6 +77,7 @@ class AgentMonitorCoordinatorTest {
     private fun buildCoordinator(
         activeLoopForSession: (String) -> AgentLoop? = { null },
         enqueueToQueue: (String, QueuedMessage) -> Unit = { _, _ -> },
+        emitCard: (String, AsyncEventCardData) -> Unit = { _, _ -> },
     ): AgentMonitorCoordinator = AgentMonitorCoordinator(
         project = project,
         cs = cs,
@@ -82,6 +85,7 @@ class AgentMonitorCoordinatorTest {
         idleWaker = idleWaker,
         activeLoopForSession = activeLoopForSession,
         enqueueToQueue = enqueueToQueue,
+        emitCard = emitCard,
     )
 
     /** Seed a legacy monitor-notifications.json directly (the writer was removed in Task 2.4). */
@@ -165,5 +169,59 @@ class AgentMonitorCoordinatorTest {
         assertTrue(coordinator.isFlushLoopRunning(), "one session still has monitors")
         coordinator.disposeMonitorsForSession("session-2")
         assertFalse(coordinator.isFlushLoopRunning())
+    }
+
+    /**
+     * Regression test: the live-emitted card id and the stashed meta card id for a single
+     * [AgentMonitorCoordinator.deliverToLoop] invocation must be identical so the
+     * resume-synthesis dedup path catches the un-drained queue item.
+     *
+     * The bug: [monitorCardMeta] called [System.currentTimeMillis] internally while
+     * [deliverToLoop] called it again inline — the two values could differ by ≥1 ms,
+     * producing `mon-{id}-{ts1}` vs `mon-{id}-{ts2}` (different ids, dedup miss on resume).
+     * The fix: compute [now] once and pass it to both callers.
+     */
+    @Test
+    fun `deliverToLoop live-emitted card id equals stashed meta card id`() {
+        // Use coalesceWindowMs = 0 so the first flush tick sees the event immediately.
+        every { AgentSettings.getInstance(any()) } returns mockk {
+            every { state } returns AgentSettings.State().apply {
+                monitorCoalesceWindowMs = 0L
+            }
+        }
+
+        val liveLoop: AgentLoop = mockk(relaxed = true)
+        val enqueuedMessages = mutableListOf<QueuedMessage>()
+        val emittedCards = mutableListOf<AsyncEventCardData>()
+
+        val coordinator = buildCoordinator(
+            activeLoopForSession = { liveLoop }, // loop is always live → deliverToLoop is called
+            enqueueToQueue = { _, msg -> enqueuedMessages += msg },
+            emitCard = { _, card -> emittedCards += card },
+        )
+
+        coordinator.ensureMonitorManager("sess-ts")
+
+        // Emit a single monitor event via the bridge so the MonitorManager picks it up.
+        MonitorBridge.emit(project, "sess-ts", MonitorEvent("shell-abc123", Severity.NOTABLE, "build finished"))
+
+        // The flush loop ticks every 200 ms. With coalesceWindowMs = 0 the event is ready on
+        // the very first tick. Wait up to 1 s (5× the interval) for it to arrive.
+        val deadline = System.currentTimeMillis() + 1_000L
+        while ((enqueuedMessages.isEmpty() || emittedCards.isEmpty()) && System.currentTimeMillis() < deadline) {
+            Thread.sleep(50)
+        }
+
+        assertEquals(1, enqueuedMessages.size, "expected exactly one enqueued message")
+        assertEquals(1, emittedCards.size, "expected exactly one live-emitted card")
+
+        val metaCardJson = enqueuedMessages[0].meta["card"]
+            ?: error("meta[\"card\"] not found on enqueued message")
+        val metaCard = Json { ignoreUnknownKeys = true }.decodeFromString(AsyncEventCardData.serializer(), metaCardJson)
+
+        assertEquals(
+            emittedCards[0].id, metaCard.id,
+            "live-emitted card id must equal stashed meta card id so resume dedup works",
+        )
     }
 }
