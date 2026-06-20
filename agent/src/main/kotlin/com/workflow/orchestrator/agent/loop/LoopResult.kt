@@ -98,5 +98,9 @@ data class ToolCallProgress(
      * `ContentBlock.ImageRef` on the next turn. Empty for tools that do not
      * produce images (the common case).
      */
-    val imageRefs: List<com.workflow.orchestrator.core.services.ToolResult.ImageRefData> = emptyList()
+    val imageRefs: List<com.workflow.orchestrator.core.services.ToolResult.ImageRefData> = emptyList(),
+    /** True when this run_command was auto-approved (no user prompt). UI shows a badge. */
+    val autoApproved: Boolean = false,
+    /** Short reason label for the badge: "safe" or "session rule: <prefix>". Null when not auto-approved. */
+    val autoApproveReason: String? = null,
 )
