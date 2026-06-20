@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.tools.ide
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.smartReadAction
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -180,9 +181,9 @@ class SemanticDiagnosticsTool(
         // lines 77–79, and ProblemViewTool.kt lines 106–111.
         //
         // Why the top-level guard is sufficient for the provider delegate:
-        // `ReadAction.nonBlocking { … }.inSmartMode(project).executeSynchronously()`
-        // blocks until indexing completes (platform contract), so the lambda
-        // body is guaranteed to run in smart mode. Inside the lambda, both
+        // `smartReadAction(project) { … }` suspends until smart mode (platform
+        // contract), so the lambda body is guaranteed to run in smart mode.
+        // Inside the lambda, both
         // JavaKotlinProvider.getDiagnostics and PythonProvider.getDiagnostics
         // do index-dependent work — PsiRecursiveElementWalkingVisitor over
         // the file, PsiReference.resolve() / multiResolve() for unresolved
@@ -200,16 +201,17 @@ class SemanticDiagnosticsTool(
         val endLine = params["end_line"]?.jsonPrimitive?.intOrNull
 
         return try {
-            val result = ReadAction.nonBlocking<ToolResult?> {
+            val result = smartReadAction(project) {
+                ProgressManager.checkCanceled()
                 val vf = LocalFileSystem.getInstance().findFileByIoFile(java.io.File(path))
-                    ?: return@nonBlocking ToolResult("File not found: $path", "Not found", 5, isError = true)
+                    ?: return@smartReadAction ToolResult("File not found: $path", "Not found", 5, isError = true)
                 val psiFile = PsiManager.getInstance(project).findFile(vf)
-                    ?: return@nonBlocking ToolResult("Cannot parse: $path", "Parse error", 5, isError = true)
-                if (!psiFile.isValid) return@nonBlocking null
+                    ?: return@smartReadAction ToolResult("Cannot parse: $path", "Parse error", 5, isError = true)
+                if (!psiFile.isValid) return@smartReadAction null
 
                 // Resolve the provider for this file's language
                 val provider = registry.forFile(psiFile)
-                    ?: return@nonBlocking ToolResult(
+                    ?: return@smartReadAction ToolResult(
                         "Code intelligence not available for ${psiFile.language.displayName}",
                         "Unsupported type",
                         5
@@ -290,7 +292,7 @@ class SemanticDiagnosticsTool(
                     // Phase 7: outer coroutine will call spillOrFormat on the full body.
                     ToolResult(content, "${relevantProblems.size} issues", TokenEstimator.estimate(content), isError = false)
                 }
-            }.inSmartMode(project).executeSynchronously()
+            }
 
             if (result == null) {
                 return ToolResult("PSI file became invalid during analysis.", "Invalid", 5, isError = true)
@@ -317,6 +319,7 @@ class SemanticDiagnosticsTool(
                 result
             }
         } catch (e: Exception) {
+            if (e is com.intellij.openapi.progress.ProcessCanceledException || e is kotlinx.coroutines.CancellationException) throw e
             ToolResult("Error: ${e.message}", "Error", 5, isError = true)
         }
     }

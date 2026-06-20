@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.psi
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.smartReadAction
 import com.intellij.openapi.project.Project
 import com.intellij.psi.PsiClass
 import com.intellij.psi.PsiField
@@ -97,7 +97,7 @@ class FindDefinitionTool(
 
         val classNameHint = params["class_name"]?.jsonPrimitive?.content
 
-        val content = ReadAction.nonBlocking<String> {
+        val content = smartReadAction(project) {
             // Resolve provider from the file context of a found element (accurate, language-based)
             fun resolveProviderForElement(element: com.intellij.psi.PsiElement): com.workflow.orchestrator.agent.ide.LanguageIntelligenceProvider? {
                 val psiFile = element.containingFile
@@ -109,7 +109,7 @@ class FindDefinitionTool(
 
             val allProviders = registry.allProviders()
             if (allProviders.isEmpty()) {
-                return@nonBlocking "Code intelligence not available — no language provider registered"
+                return@smartReadAction "Code intelligence not available — no language provider registered"
             }
 
             // If class_name hint provided, search within that class first using "class#symbol" syntax
@@ -121,7 +121,7 @@ class FindDefinitionTool(
                     val resolvedProvider = resolveProviderForElement(element) ?: provider
                     val info = resolvedProvider.getDefinitionInfo(element)
                     if (info != null) {
-                        return@nonBlocking formatDefinitionOutput(element, info, symbol)
+                        return@smartReadAction formatDefinitionOutput(element, info, symbol)
                     }
                 }
             }
@@ -129,7 +129,7 @@ class FindDefinitionTool(
             // General symbol lookup (handles FQN, Class#method, bare names) — iterate all providers
             val (provider, element) = allProviders.firstNotNullOfOrNull { p ->
                 p.findSymbol(project, symbol)?.let { p to it }
-            } ?: return@nonBlocking "No definition found for '$symbol'"
+            } ?: return@smartReadAction "No definition found for '$symbol'"
 
             val resolvedProvider = resolveProviderForElement(element) ?: provider
             val info = resolvedProvider.getDefinitionInfo(element)
@@ -143,11 +143,11 @@ class FindDefinitionTool(
                         "\n\n(${allMethods.size - 1} other method(s) with same name — provide class_name to disambiguate)"
                     else ""
                 } else ""
-                return@nonBlocking formatDefinitionOutput(element, info, symbol) + disambiguationNote
+                return@smartReadAction formatDefinitionOutput(element, info, symbol) + disambiguationNote
             }
 
             "No definition found for '$symbol'"
-        }.inSmartMode(project).executeSynchronously()
+        }
 
         return ToolResult(
             content = content,
