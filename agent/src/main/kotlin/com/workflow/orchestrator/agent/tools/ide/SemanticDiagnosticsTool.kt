@@ -1,8 +1,10 @@
 package com.workflow.orchestrator.agent.tools.ide
 
 import com.intellij.openapi.application.smartReadAction
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.DumbService
+import kotlin.coroutines.cancellation.CancellationException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.problems.WolfTheProblemSolver
@@ -180,19 +182,22 @@ class SemanticDiagnosticsTool(
         // pattern in RunInspectionsTool.kt lines 69–71, ListQuickFixesTool.kt
         // lines 77–79, and ProblemViewTool.kt lines 106–111.
         //
-        // Why the top-level guard is sufficient for the provider delegate:
+        // Why the top-level guard is sufficient for the smart-mode guarantee:
         // `smartReadAction(project) { … }` suspends until smart mode (platform
         // contract), so the lambda body is guaranteed to run in smart mode.
-        // Inside the lambda, both
-        // JavaKotlinProvider.getDiagnostics and PythonProvider.getDiagnostics
-        // do index-dependent work — PsiRecursiveElementWalkingVisitor over
-        // the file, PsiReference.resolve() / multiResolve() for unresolved
-        // reference detection, and PsiErrorElement collection. These are all
-        // safe under smart mode. The top-level `isDumb` check short-circuits
-        // callers that arrive during active indexing so they don't queue up
-        // waiting behind `inSmartMode` — which could otherwise hang the tool
-        // for the full reindex duration. Provider-internal re-checks are not
-        // required because `inSmartMode` is the stronger guarantee.
+        // The top-level `isDumb` check short-circuits callers that arrive
+        // during active indexing so they don't queue up waiting behind
+        // `inSmartMode` — which could otherwise hang the tool for the full
+        // reindex duration.
+        //
+        // Cancellation inside provider walks:
+        // Both JavaKotlinProvider.getDiagnostics and PythonProvider.getDiagnostics
+        // do CPU-bound work via PsiRecursiveElementWalkingVisitor. Each provider
+        // now calls ProgressManager.checkCanceled() as the FIRST statement in
+        // its visitElement override so a coroutine cancel (e.g. from a Stop
+        // button) aborts the walk mid-element rather than running to completion.
+        // The pre-call checkCanceled() in this method is a fast-fail guard;
+        // the in-walk checks in the providers are the real abort points.
         if (DumbService.isDumb(project)) {
             return ToolResult("IDE is still indexing. Try again shortly.", "Indexing", 5, isError = true)
         }
@@ -318,8 +323,11 @@ class SemanticDiagnosticsTool(
             } else {
                 result
             }
+        } catch (e: ProcessCanceledException) {
+            throw e
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            if (e is com.intellij.openapi.progress.ProcessCanceledException || e is kotlinx.coroutines.CancellationException) throw e
             ToolResult("Error: ${e.message}", "Error", 5, isError = true)
         }
     }

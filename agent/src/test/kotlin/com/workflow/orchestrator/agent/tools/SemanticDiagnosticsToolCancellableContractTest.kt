@@ -9,6 +9,12 @@ class SemanticDiagnosticsToolCancellableContractTest {
     private val src = File(
         "src/main/kotlin/com/workflow/orchestrator/agent/tools/ide/SemanticDiagnosticsTool.kt"
     ).readText()
+    private val javaSrc = File(
+        "src/main/kotlin/com/workflow/orchestrator/agent/ide/JavaKotlinProvider.kt"
+    ).readText()
+    private val pythonSrc = File(
+        "src/main/kotlin/com/workflow/orchestrator/agent/ide/PythonProvider.kt"
+    ).readText()
 
     @Test
     fun `walk is under a suspend read-action and polls cancellation`() {
@@ -16,7 +22,21 @@ class SemanticDiagnosticsToolCancellableContractTest {
         assertFalse(src.contains("executeSynchronously()"), "blocking read action must be removed")
         assertTrue(
             src.contains("checkCanceled()"),
-            "the diagnostics read action must poll ProgressManager.checkCanceled() so a coroutine cancel aborts the walk",
+            "provider walk must poll checkCanceled() so a coroutine cancel aborts the diagnostics walk",
+        )
+    }
+
+    @Test
+    fun `providers poll checkCanceled inside their diagnostics walk`() {
+        // Note: asserting presence only — file-level contains is sufficient because
+        // each provider has exactly one getDiagnostics walk that adds checkCanceled().
+        assertTrue(
+            javaSrc.contains("checkCanceled()"),
+            "JavaKotlinProvider diagnostics walk must poll checkCanceled()",
+        )
+        assertTrue(
+            pythonSrc.contains("checkCanceled()"),
+            "PythonProvider diagnostics walk must poll checkCanceled()",
         )
     }
 }

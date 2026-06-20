@@ -16,7 +16,7 @@ class RunInspectionsToolCancellableContractTest {
         assertFalse(src.contains("executeSynchronously()"), "blocking read action must be removed")
         assertTrue(
             src.contains("checkCanceled()"),
-            "the PsiRecursiveElementWalkingVisitor walk must poll ProgressManager.checkCanceled() so a coroutine cancel aborts the CPU-bound walk",
+            "visitElement must poll checkCanceled() so a coroutine cancel aborts the CPU-bound walk",
         )
     }
 }

@@ -5,8 +5,10 @@ import com.intellij.codeInspection.ProblemsHolder
 import com.intellij.codeInspection.ex.LocalInspectionToolWrapper
 import com.intellij.codeInsight.daemon.HighlightDisplayKey
 import com.intellij.openapi.application.smartReadAction
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.DumbService
+import kotlin.coroutines.cancellation.CancellationException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.profile.codeInspection.InspectionProjectProfileManager
@@ -257,8 +259,11 @@ class RunInspectionsTool : AgentTool {
             } else {
                 result
             }
+        } catch (e: ProcessCanceledException) {
+            throw e
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            if (e is com.intellij.openapi.progress.ProcessCanceledException || e is kotlinx.coroutines.CancellationException) throw e
             ToolResult("Error running inspections: ${e.message}", "Error", 5, isError = true)
         }
     }

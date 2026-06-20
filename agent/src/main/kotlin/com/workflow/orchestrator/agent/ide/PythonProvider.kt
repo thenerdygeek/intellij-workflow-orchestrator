@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.agent.ide
 
 import com.intellij.openapi.progress.ProcessCanceledException
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.*
@@ -785,6 +786,7 @@ class PythonProvider(
             if (pyRefClass != null) {
                 file.accept(object : PsiRecursiveElementWalkingVisitor() {
                     override fun visitElement(element: PsiElement) {
+                        ProgressManager.checkCanceled()
                         // Skip string literals
                         if (helper.pyStringLiteralClass?.isInstance(element) == true) return
                         super.visitElement(element)
