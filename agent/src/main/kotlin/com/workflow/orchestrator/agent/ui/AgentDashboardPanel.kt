@@ -464,9 +464,10 @@ class AgentDashboardPanel(
         originAgentId: String? = null,
         originLabel: String? = null,
         path: String? = null,
+        commandPrefix: String? = null,
     ) {
-        cefPanel?.showApproval(toolName, riskLevel, description, metadataJson, diffContent, commandPreviewJson, allowSessionApproval, originAgentId, originLabel, path)
-        broadcast(replay = false) { it.showApproval(toolName, riskLevel, description, metadataJson, diffContent, commandPreviewJson, allowSessionApproval, originAgentId, originLabel, path) }
+        cefPanel?.showApproval(toolName, riskLevel, description, metadataJson, diffContent, commandPreviewJson, allowSessionApproval, originAgentId, originLabel, path, commandPrefix)
+        broadcast(replay = false) { it.showApproval(toolName, riskLevel, description, metadataJson, diffContent, commandPreviewJson, allowSessionApproval, originAgentId, originLabel, path, commandPrefix) }
     }
 
     fun showProcessInput(processId: String, description: String, prompt: String, command: String) {
@@ -498,10 +499,16 @@ class AgentDashboardPanel(
         cefPanel?.onEditQuestion = onEdit
     }
 
-    fun setCefApprovalCallbacks(onApprove: () -> Unit, onDeny: () -> Unit, onAllowForSession: ((String) -> Unit)? = null) {
+    fun setCefApprovalCallbacks(
+        onApprove: () -> Unit,
+        onDeny: () -> Unit,
+        onAllowForSession: ((String) -> Unit)? = null,
+        onApproveCommandPrefix: (String) -> Unit,
+    ) {
         cefPanel?.onApproveToolCall = onApprove
         cefPanel?.onDenyToolCall = onDeny
         cefPanel?.onAllowToolForSession = onAllowForSession
+        cefPanel?.onApproveCommandPrefix = onApproveCommandPrefix
     }
 
     fun setCefInteractiveHtmlCallback(onMessage: (String) -> Unit) {
@@ -646,12 +653,14 @@ class AgentDashboardPanel(
         toolCallId: String = "",
         toolName: String, args: String = "",
         status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING,
-        toolTimeoutSeconds: Long? = null
+        toolTimeoutSeconds: Long? = null,
+        autoApproved: Boolean = false,
+        autoApproveReason: String? = null,
     ) {
         val displayName = resolveToolDisplayName(toolName)
-        cefPanel?.appendToolCall(toolCallId, displayName, args, status, toolTimeoutSeconds)
-            ?: fallbackPanel?.appendToolCall(displayName, args, status)
-        broadcast { it.appendToolCall(toolCallId, displayName, args, status, toolTimeoutSeconds) }
+        cefPanel?.appendToolCall(toolCallId, displayName, args, status, toolTimeoutSeconds, autoApproved, autoApproveReason)
+            ?: fallbackPanel?.appendToolCall(displayName, args, status, autoApproved, autoApproveReason)
+        broadcast { it.appendToolCall(toolCallId, displayName, args, status, toolTimeoutSeconds, autoApproved, autoApproveReason) }
     }
 
     fun updateLastToolCall(

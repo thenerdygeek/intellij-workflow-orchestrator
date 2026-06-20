@@ -266,6 +266,12 @@ class AgentController(
     private var contextManager: ContextManager? = null
     /** Session-scoped approval store. Created on first message, cleared on newChat. */
     private val sessionApprovalStore = SessionApprovalStore()
+    /**
+     * Session-scoped allowlist of command PREFIXES the user approved via the run_command approval
+     * card's "Approve all <prefix> this session" button. Mirrors [sessionApprovalStore]'s
+     * ownership/lifecycle but keyed on prefixes; cleared on newChat ([resetForNewChat]).
+     */
+    private val sessionCommandAllowlist = com.workflow.orchestrator.agent.loop.SessionCommandAllowlist()
     private var currentJob: Job? = null
     private var taskStartTime: Long = 0L
 
@@ -1136,7 +1142,12 @@ class AgentController(
             onAllowForSession = { _ ->
                 LOG.info("AgentController: tool '${pendingApprovalToolName}' allowed for session")
                 pendingApproval?.complete(ApprovalResult.ALLOWED_FOR_SESSION)
-            }
+            },
+            onApproveCommandPrefix = { prefix ->
+                LOG.info("AgentController: command prefix '$prefix' approved for session")
+                sessionCommandAllowlist.approve(prefix)
+                pendingApproval?.complete(ApprovalResult.APPROVED)
+            },
         )
 
         // Steering cancel callback
@@ -2648,6 +2659,7 @@ class AgentController(
             onPlanDiscarded = { invokeLater { onPlanDiscardedByLlm() } },
             approvalGate = ::approvalGate,
             sessionApprovalStore = sessionApprovalStore,
+            sessionCommandAllowlist = sessionCommandAllowlist,
             onSubagentProgress = ::onSubagentProgress,
             onTokenUpdate = ::onTokenUpdate,
             onSessionStats = ::onSessionStats,
@@ -2818,6 +2830,7 @@ class AgentController(
         val description: String
         val diffContent: String?
         var commandPreviewJson: String? = null
+        var commandPrefix: String? = null
 
         when (toolName) {
             "edit_file" -> {
@@ -2844,6 +2857,8 @@ class AgentController(
                 description = payload.description
                 diffContent = null
                 commandPreviewJson = payload.commandPreviewJson
+                commandPrefix = (parsedArgs?.get("command")?.jsonPrimitive?.content)
+                    ?.let { com.workflow.orchestrator.agent.security.CommandShape.derivePrefix(it) }
             }
             "revert_file" -> {
                 val path = parsedArgs?.get("path")?.jsonPrimitive?.content ?: "unknown"
@@ -2871,6 +2886,7 @@ class AgentController(
                 originAgentId = originAgentId,
                 originLabel = originLabel,
                 path = approvalPath,
+                commandPrefix = commandPrefix,
             )
         }
 
@@ -3135,7 +3151,9 @@ class AgentController(
                     toolName = progress.toolName,
                     args = progress.args,
                     status = RichStreamingPanel.ToolCallStatus.RUNNING,
-                    toolTimeoutSeconds = toolTimeoutSeconds
+                    toolTimeoutSeconds = toolTimeoutSeconds,
+                    autoApproved = progress.autoApproved,
+                    autoApproveReason = progress.autoApproveReason,
                 )
             } else {
                 // Tool call completed
@@ -4036,6 +4054,7 @@ class AgentController(
         contextManager?.clearActivePlanPath()
         contextManager = null
         sessionApprovalStore.clear()
+        sessionCommandAllowlist.clear()
         taskStartTime = 0L
         subagentAccumIn = 0L
         subagentAccumOut = 0L
