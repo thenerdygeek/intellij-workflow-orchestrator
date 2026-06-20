@@ -1,44 +1,37 @@
 package com.workflow.orchestrator.agent.tools.background
 
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.agent.loop.AgentLoop
+import com.workflow.orchestrator.agent.loop.queue.QueueSourceKind
+import com.workflow.orchestrator.agent.loop.queue.QueuedMessage
 import io.mockk.mockk
-import io.mockk.verify
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
-import java.nio.file.Path
 
 /**
- * Behavioral characterization of [BackgroundCompletionCoordinator] — the background-process
- * completion routing + auto-resume message builders extracted out of `AgentService` (Phase 3
- * cut F). Previously this lived on the `@Service` god-class and could only be exercised through
- * the `BackgroundPool` listener seam; pulling it into a plain injectable class makes both the
- * routing decision and the synthetic-message FORMAT directly assertable (the latter is the
- * `AutoWakeSyntheticMessageFormatTest` the old KDoc promised but never had).
+ * Behavioral characterization of [BackgroundCompletionCoordinator] after Task 2.2 —
+ * background-process completions now route through the unified queue as [QueueSourceKind.BACKGROUND]
+ * items instead of steering-message / persist-and-wake split.
  *
- * The shared auto-wake substrate (the single `IdleSessionWaker`, its guard state, the
- * controller listener) deliberately stays on `AgentService` and is injected here as the
- * [autoWake] lambda, so monitor / background / delegation wakes keep sharing one guard.
+ * The [buildCompletionSystemMessage] companion pin is preserved. The removed
+ * [buildAutoResumeSyntheticMessage] assertions are dropped. The test-capturer short-circuit is kept.
+ * New assertions verify that [BackgroundCompletionCoordinator.onBackgroundCompletion] calls the
+ * injected [enqueue] lambda with the correct [QueuedMessage] fields.
  */
 class BackgroundCompletionCoordinatorTest {
-
-    @TempDir
-    lateinit var agentDir: Path
 
     private val project: Project = mockk(relaxed = true)
     private val pool: BackgroundPool = mockk(relaxed = true)
 
-    private lateinit var wakeCalls: MutableList<Triple<String, String, String>>
+    private lateinit var enqueuedMessages: MutableList<Pair<String, QueuedMessage>>
 
     @BeforeEach
     fun setup() {
         io.mockk.every { project.getService(BackgroundPool::class.java) } returns pool
         io.mockk.every { pool.addCompletionListener(any()) } returns mockk(relaxed = true)
-        wakeCalls = mutableListOf()
+        enqueuedMessages = mutableListOf()
     }
 
     @AfterEach
@@ -65,13 +58,13 @@ class BackgroundCompletionCoordinatorTest {
         occurredAt = 0L,
     )
 
-    private fun coordinator(activeLoopForSession: (String) -> AgentLoop? = { null }) =
+    private fun coordinator() =
         BackgroundCompletionCoordinator(
             project = project,
-            agentDirProvider = { agentDir.toFile() },
-            activeLoopForSession = activeLoopForSession,
-            autoWake = { sid, text, source -> wakeCalls.add(Triple(sid, text, source)) },
+            enqueue = { sid, msg -> enqueuedMessages.add(sid to msg) },
         )
+
+    // ── buildCompletionSystemMessage pin ────────────────────────────────────────────────
 
     @Test
     fun `buildCompletionSystemMessage carries the marker, ids, and tail output`() {
@@ -84,43 +77,48 @@ class BackgroundCompletionCoordinatorTest {
         assertTrue(msg.contains("/tmp/out.txt"), "spill path should be surfaced: $msg")
     }
 
+    // ── queue-routing assertions (Task 2.2) ─────────────────────────────────────────────
+
     @Test
-    fun `buildAutoResumeSyntheticMessage carries the auto-resumed marker and completion guidance`() {
-        val msg = BackgroundCompletionCoordinator.buildAutoResumeSyntheticMessage(event())
-        assertTrue(msg.contains("[BACKGROUND COMPLETION — AUTO-RESUMED]"), msg)
-        assertTrue(msg.contains("attempt_completion"), "should instruct the LLM how to finish: $msg")
+    fun `onBackgroundCompletion enqueues a BACKGROUND message with correct fields`() {
+        val coordinator = coordinator()
+        val ev = event(bgId = "bg-42", sessionId = "s1")
+
+        coordinator.onBackgroundCompletion(ev)
+
+        assertEquals(1, enqueuedMessages.size, "exactly one enqueue call expected")
+        val (sid, msg) = enqueuedMessages.single()
+        assertEquals("s1", sid, "session id must match the event")
+        assertEquals(QueueSourceKind.BACKGROUND, msg.kind)
+        assertEquals(ev.bgId, msg.coalesceKey, "coalesceKey must equal event.bgId")
+        assertEquals(
+            BackgroundCompletionCoordinator.buildCompletionSystemMessage(ev),
+            msg.body,
+            "body must equal buildCompletionSystemMessage(event)",
+        )
     }
 
     @Test
-    fun `live loop receives the completion as a steering message and no auto-wake fires`() {
-        val loop = mockk<AgentLoop>(relaxed = true)
-        val coordinator = coordinator(activeLoopForSession = { sid -> if (sid == "s1") loop else null })
+    fun `enqueued message id starts with bg- prefix and includes bgId`() {
+        coordinator().onBackgroundCompletion(event(bgId = "bg-99"))
 
-        coordinator.onBackgroundCompletion(event(sessionId = "s1"))
-
-        verify { loop.enqueueSteeringMessage(match { it.contains("[BACKGROUND COMPLETION]") }) }
-        assertTrue(wakeCalls.isEmpty(), "a live loop must not trigger the idle auto-wake path")
+        val (_, msg) = enqueuedMessages.single()
+        assertTrue(msg.id.startsWith("bg-bg-99-"), "id should be 'bg-{bgId}-{nanoTime}': ${msg.id}")
     }
 
     @Test
-    fun `idle session persists the completion and triggers a guarded auto-wake`() {
-        val coordinator = coordinator(activeLoopForSession = { null })
+    fun `enqueued message meta contains bgId`() {
+        coordinator().onBackgroundCompletion(event(bgId = "bg-7"))
 
-        coordinator.onBackgroundCompletion(event(bgId = "bg-9", sessionId = "s2"))
-
-        assertEquals(1, wakeCalls.size, "idle path must call autoWake exactly once")
-        val (sid, text, source) = wakeCalls.single()
-        assertEquals("s2", sid)
-        assertTrue(text.contains("[BACKGROUND COMPLETION — AUTO-RESUMED]"), text)
-        assertTrue(source.contains("bg-9"), "wake source should identify the process: $source")
-
-        val persisted = BackgroundPersistence(agentDir).loadPendingCompletions("s2")
-        assertEquals(1, persisted.size, "completion must be persisted first so it survives a guard-rejected wake")
+        val (_, msg) = enqueuedMessages.single()
+        assertEquals("bg-7", msg.meta["bgId"], "meta must carry bgId for coalesce resolution")
     }
 
+    // ── test-capturer short-circuit ──────────────────────────────────────────────────────
+
     @Test
-    fun `installed test capturer intercepts the message and short-circuits routing`() {
-        val coordinator = coordinator(activeLoopForSession = { mockk(relaxed = true) })
+    fun `installed test capturer intercepts the message and short-circuits enqueue`() {
+        val coordinator = coordinator()
         val captured = mutableListOf<String>()
         coordinator.setSteeringCapturerForTest("s3") { captured.add(it) }
 
@@ -128,6 +126,25 @@ class BackgroundCompletionCoordinatorTest {
 
         assertEquals(1, captured.size, "capturer must receive the message")
         assertTrue(captured.single().contains("[BACKGROUND COMPLETION]"), captured.single())
-        assertTrue(wakeCalls.isEmpty(), "capturer path must short-circuit before live-loop / auto-wake routing")
+        assertTrue(
+            enqueuedMessages.isEmpty(),
+            "capturer path must short-circuit before enqueue routing",
+        )
+    }
+
+    @Test
+    fun `capturer body equals buildCompletionSystemMessage`() {
+        val coordinator = coordinator()
+        val ev = event(bgId = "bg-3", sessionId = "s9")
+        val captured = mutableListOf<String>()
+        coordinator.setSteeringCapturerForTest("s9") { captured.add(it) }
+
+        coordinator.onBackgroundCompletion(ev)
+
+        assertEquals(
+            BackgroundCompletionCoordinator.buildCompletionSystemMessage(ev),
+            captured.single(),
+            "capturer must receive the same body as the queue message would carry",
+        )
     }
 }

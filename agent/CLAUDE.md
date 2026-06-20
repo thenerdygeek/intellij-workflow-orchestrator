@@ -26,7 +26,7 @@ AgentController (UI entry point, owns AgentCefPanel + JCEF bridges)
       → ContextManager (single-stage CC-style: dedup pre-pass → LLM summary at 88%)
       → LoopDetector (doom loop detection: 3 soft warning, 5 hard failure)
       → Tool execution with optional approval gate
-      → Steering messages (ConcurrentLinkedQueue, drained at iteration boundary)
+      → UnifiedMessageQueue (typed sources, timestamp-ordered drain at Stage 0.5)
 ```
 
 ## Key Components
@@ -400,14 +400,21 @@ Four hook-exempt tools let the LLM manage typed tasks within a session:
 
 ## Real-Time Steering
 
-Users can send messages while the agent is working. Messages are injected at iteration boundaries (between tool calls), not mid-tool.
+All async message injection flows through ONE per-session `UnifiedMessageQueue` (`loop/queue/`). Typed sources: `USER`, `DELEGATION`, `BACKGROUND`, `MONITOR`. Each source has a `QueueSourcePolicy` (priority, durable, autoWakesIdle, resetsUserSilenceCounter, defersCompletion, coalesceKey, frame()).
 
-**Flow:**
-1. User types in chat input during agent execution (input stays enabled in "steering mode")
-2. `AgentController` routes message to `AgentLoop`'s steering queue (`ConcurrentLinkedQueue<SteeringMessage>`)
-3. At the top of each ReAct loop iteration, `AgentLoop` drains the queue
-4. Drained messages added to `ContextManager` as user messages
-5. LLM sees the steering context on the next call and adjusts its approach
+**Drain — AgentLoop Stage 0.5:** timestamp-ordered (priority is a tiebreaker only), grouped by source, each group framed by `policy.frame()`, emitted as ONE combined `addUserMessage` with one `withEnvDetails`. Only a `USER` group resets `iterationsSinceLastUser`. This fixes the old bug where every async event was mislabeled with the user-steering prefix.
+
+**Producers:**
+- User/plan steering: `AgentController` enqueues a `QueuedMessage(kind=USER)` directly.
+- Background completions: `BackgroundCompletionCoordinator` calls `AgentService.enqueueToSession(sessionId, QueuedMessage(kind=BACKGROUND))`.
+- Delegation nudges: `enqueueNudgeForSession` calls `AgentService.enqueueToSession(sessionId, QueuedMessage(kind=DELEGATION))`.
+- Monitor events: `AgentMonitorCoordinator` passes a plain `enqueueToQueue` lambda (no sessionId lookup needed); `wakeIdle` still returns a `WakeOutcome` so per-monitor wake-budget/flood accounting is preserved.
+
+**Idle sessions:** durable items persist to `sessions/{id}/pending_queue.json` via `QueuePersistence`. `enqueueToSession` auto-wakes the idle session (shared `IdleSessionWaker` guard) when `policy.autoWakesIdle`. Resume drains the same queue via `queueForSession(sid).drainGrouped()` into the `[TASK RESUMPTION]` preamble — identical framing live and on resume.
+
+**Coalescing:** background items latest-wins by `bgId` (coalesceKey).
+
+**Persistence changes (unified queue P0-P3):** `MonitorPersistence` now persists only `MonitorSpec` (the notification writer was removed; the reader is retained one release). `BackgroundPersistence` and `DelegationNudgePersistence` are no longer written; their classes are retained one release as legacy resume readers (resume drains both the queue and, for pre-upgrade sessions, the legacy files — disjoint, no double-delivery). `enqueueSteeringMessage` + `SteeringMessage` were removed (P3).
 
 ## Monitor Framework
 
@@ -476,7 +483,7 @@ Shipped in commits `09a6940d0` (settings UI), `8a390ec56` (markAllDormant), `842
 - **Settings UI:** `monitorCoalesceWindowMs`, `monitorWakeBudgetPerMonitor`, `monitorFloodThresholdPerMin` now have a "Monitors" group under AI Agent ▸ Advanced (`AgentAdvancedConfigurable`).
 - **Dormancy on abnormal exit:** `MonitorManager.markAllDormant()` + `AgentService.markMonitorsDormantForSession(sessionId)` called from `AgentController.onComplete` on `LoopResult.Failed`/`Cancelled` (NOT `Completed`/`SessionHandoff`) — a just-exhausted/cancelled session is not re-woken; events still surface passively.
 - **Persistence + resume re-arm:** `MonitorSpec(id, sourceType, description, params)` persisted per-session to `sessions/{id}/monitors.json` via `MonitorPersistence`. `MonitorSourceFactory.build(spec, …)` is the shared construction path for both live `monitor start` and resume re-arm. `AgentMonitorCoordinator.reArmMonitors(sessionId)` (called from `AgentService.resumeSession` via the delegator, `runCatching`-guarded) rebuilds sources with the SAME id so prior `monitor stop <id>` references resolve, and calls `forget` to clear stale dormancy. New chat clears `monitors.json` via `AgentService.clearPersistedMonitors` from `AgentController.killBackgroundsOnTransition`; resume does NOT clear.
-- **Persist-before-wake:** the `wakeIdle` lambda persists the notification batch to `monitor-notifications.json` BEFORE waking (mirrors `onBackgroundCompletion`). On resume, notifications are drained into the `[TASK RESUMPTION]` preamble (`# Monitor notifications while away`) then cleared — `SKIP_GUARD`/`DEFER` routes replay instead of dropping.
+- **Persist-before-wake:** the `wakeIdle` lambda persists the notification batch to `monitor-notifications.json` BEFORE waking (mirrors `onBackgroundCompletion`). On resume, notifications are drained into the `[TASK RESUMPTION]` preamble (`# Monitor notifications while away`) then cleared — `SKIP_GUARD`/`DEFER` routes replay instead of dropping. **Unified queue (P0-P3 follow-up):** the notification WRITER was removed from `MonitorPersistence` (monitor events now land in `pending_queue.json` via the unified queue); the legacy `monitor-notifications.json` reader is retained one release for pre-upgrade sessions.
 - **Webview surfacing:** `MonitorPool.emitSnapshot` fires `WorkflowEvent.MonitorChanged(sessionId, snapshot: List<MonitorSnapshotDto>)` on register/stop/markExited/killAll. `AgentController.subscribeToMonitorChanges` pushes via `receiveMonitorUpdate`/`__receiveMonitorUpdate` + `_loadMonitorSnapshot` hydration → `chatStore.monitorHandles` → `<MonitorIndicator>` top-bar chip (mirrors `BackgroundIndicator`).
 
 ### Remaining follow-up
@@ -560,6 +567,30 @@ clamp is the PURE `clampLineRange(start, end, lineCount)` — both unit-tested h
 collides with the existing `EditFilePersistenceFixtureTest` on the headless "Indexing timeout"
 (issue #51) and failed CI. The markup add/dispose + editor-open glue is the only untested surface
 (trivial, covered by in-IDE smoke).
+
+## Async Event Cards
+
+UI-only timeline cards for background-completion and monitor events — rendered in the chat timeline but invisible to the LLM (persisted to `ui_messages.json` only, never to `api_conversation_history.json`). Mirrors `DELEGATION_CARD`.
+
+**Model** (`session/UiMessage.kt`): `UiSay.ASYNC_EVENT` carries `UiMessage.asyncEventData: AsyncEventCardData`. `AsyncEventCardData(id, kind, sourceId, label, status, summary, details, timestamp, spillPath)` — `kind ∈ {BACKGROUND, MONITOR}`, `status ∈ {SUCCESS, FAILURE, NOTABLE, ALERT}`. Stable dedup id: `"bg-{bgId}-{occurredAt}"` (background) / `"mon-{monitorId}-{batchTs}"` (monitor).
+
+**Presenter** (`ui/AsyncEventCardPresenter.kt`, pure object):
+- `fromBackground(e)` → `EXITED+exit0 → SUCCESS`, else `FAILURE`.
+- `fromMonitor(monitorId, severity, text, ts)` → `ALERT → ALERT`, else `NOTABLE`.
+
+**Focused-session emit — background:** `BackgroundCompletionCoordinator.onBackgroundCompletion` stashes the card as `meta["card"]` (JSON-encoded) on the `QueuedMessage` alongside the steering body; `AgentController.pushAsyncEventCard` (wired via `AgentService.setAsyncEventCardListener`/`emitAsyncEventCard`) persists via `appendAsyncEventCardToSession` and live-pushes to the webview when `viewedSessionId == sessionId`. This replaces the former `subscribeToBackgroundCompletions` status bubble.
+
+**Focused-session emit — monitor:** `AgentMonitorCoordinator` receives the widened `deliverToLoop(monitorId, severity, text)` callback; when the loop is live it calls `emitCard(sessionId, AsyncEventCardPresenter.fromMonitor(...))` (injected as `AgentService::emitAsyncEventCard` at construction). `AgentController.pushAsyncEventCard` handles the persist + webview push identically to the background path.
+
+**Persist seam:** `AgentService.appendAsyncEventCardToSession` — active-handler-guarded (`activeMessageStateHandler ?: return`), calls `handler.addToClineMessages` only (no api history write).
+
+**Queue-backed idle path:** when the loop is idle the card rides in `meta["card"]` of the durable `pending_queue.json` item. On `AgentService.resumeSession`, `AsyncEventResumeSynthesis.cardsToAppend(items, existingIds)` decodes cards from the drain groups' meta, deduplicates by `AsyncEventCardData.id` against the loaded `savedUiMessages`, and appends the new ones onto the resume-local `handler` inside the `cs.launch` job (NOT via `appendAsyncEventCardToSession` — the session is not yet active at this point).
+
+**Bridge:** `AgentCefPanel.pushAsyncEventCard(cardJson)` calls `window._pushAsyncEventCard`. The JS handler (`jcef-bridge.ts`) does `JSON.parse(json)` → `chatStore.addAsyncEventCard(card)`. `<AsyncEventCard>` component (`webview/src/components/agent/AsyncEventCard.tsx`) is dispatched from `ChatView.renderItem` on `say === "ASYNC_EVENT"`.
+
+**Separate fix (commit `866f00db3`):** top-bar `BackgroundIndicator`/`MonitorIndicator` chips never populated because the bridge treated a JSON-string snapshot as an array — fixed by `coerceSnapshotArray` in the webview bridge.
+
+**Tests:** `AsyncEventCardPresenterTest`, `AsyncEventResumeSynthesisTest`, `AsyncEventResumeSynthesisPinTest`, `AsyncEventCardDataTest`, `AsyncEventCardWiringContractTest`; webview: `async-event-card.test.ts`, `AsyncEventCard.test.tsx`, `push-async-event-card.test.ts`.
 
 ## Run/Test Tool Disposal — RunInvocation Pattern
 
@@ -1146,7 +1177,7 @@ When IDE-B starts a delegated session, `AgentController.pushActiveSessionDelegat
 
 ### Async result auto-delivery + explicit wait (2026-05-30)
 
-**Auto-delivery fix.** A delegation result that arrives after IDE-A's orchestrator turn already ended was silently dropped — `enqueueNudgeForSession` only had an active-loop branch (`enqueueSteeringMessage`); the idle case logged "nudge dropped". The normal post-`send` state IS idle (the LLM completes its turn after delegating), so single-delegation results routinely vanished. Fixed by routing the idle case through the **same persist+auto-wake mechanism background-process completion uses**: `enqueueNudgeForSession` → `autoWakeIdleSession` (shared helper, also now used by `autoResumeForBackgroundCompletion`) → guarded by `autoWakeGuards` + `AgentSettings.autoWakeOnBackgroundCompletion` → resumes the session with a `[DELEGATION RESULT — AUTO-RESUMED]` synthetic message. The pure routing decision is `idleWakeRoute(decision, listenerPresent)` (unit-testable without constructing `AgentService`). Tests: `DelegationIdleWakeRoutingTest` + the unchanged background `BackgroundCompletionSteeringTest`/`AutoWakeGuardStateTest`.
+**Auto-delivery fix.** A delegation result that arrives after IDE-A's orchestrator turn already ended was silently dropped — the idle case logged "nudge dropped". The normal post-`send` state IS idle (the LLM completes its turn after delegating), so single-delegation results routinely vanished. Fixed by routing through `AgentService.enqueueToSession(sessionId, QueuedMessage(kind=DELEGATION))` → `autoWakeIdleSession` (shared helper, also used by background completions) → guarded by `autoWakeGuards` + `AgentSettings.autoWakeOnBackgroundCompletion` → resumes the session with a `[DELEGATION RESULT — AUTO-RESUMED]` synthetic message. The pure routing decision is `idleWakeRoute(decision, listenerPresent)` (unit-testable without constructing `AgentService`). Tests: `DelegationIdleWakeRoutingTest` + the unchanged background `BackgroundCompletionSteeringTest`/`AutoWakeGuardStateTest`.
 
 **Explicit `wait`.** `delegation(action="wait", handle, timeout_seconds?)` blocks the current turn until the delegation completes or raises a question, returned inline (default 300 s, 5–1800). Implemented via `DelegationOutboundService.awaitResult` + a `pendingResultWaiters` one-shot deferred per handle: the reader loop completes the waiter on `Result`/`Question` (and suppresses the async nudge for that handle), with a `finally` safety-net so a channel close can't leave `wait` hanging. `DelegationTool.timeoutMs = Long.MAX_VALUE` so the loop's 120 s per-tool timeout doesn't truncate a legitimate wait (the action is self-bounded by its own `timeout_seconds`). A wait timeout is NOT a failure — the async auto-delivery still fires. Tests: `DelegationWaitTest`, `DelegationWaitActionTest`.
 

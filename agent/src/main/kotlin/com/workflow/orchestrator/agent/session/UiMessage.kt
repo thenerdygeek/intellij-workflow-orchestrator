@@ -52,7 +52,43 @@ enum class UiSay {
      * shows the full conversation, not just the task + the agent's work.
      */
     DELEGATION_CARD,
+
+    /**
+     * Async background/monitor event timeline card. Carries [UiMessage.asyncEventData]
+     * describing a background-process completion or a monitor notification. UI-only
+     * (persisted to ui_messages.json, never to api_conversation_history.json). Dedup
+     * key is [AsyncEventCardData.id] so the resume-synthesis path never double-renders
+     * a card already shown live.
+     */
+    ASYNC_EVENT,
 }
+
+/** Source of an [UiSay.ASYNC_EVENT] timeline card. */
+@Serializable
+enum class AsyncEventKind { BACKGROUND, MONITOR }
+
+/** Outcome/severity of an [UiSay.ASYNC_EVENT] card → drives the status-dot color. */
+@Serializable
+enum class AsyncEventStatus { SUCCESS, FAILURE, NOTABLE, ALERT }
+
+/**
+ * Payload for a [UiSay.ASYNC_EVENT] message — a background-completion or monitor-event card
+ * shown in the chat timeline. UI-only (persisted to ui_messages.json, never to api history).
+ * [id] is a stable dedup key ("bg-{bgId}-{occurredAt}" / "mon-{monitorId}-{batchTs}") so the
+ * resume-synthesis path never double-renders a card already shown live.
+ */
+@Serializable
+data class AsyncEventCardData(
+    val id: String,
+    val kind: AsyncEventKind,
+    val sourceId: String,
+    val label: String,
+    val status: AsyncEventStatus,
+    val summary: String,
+    val details: String,
+    val timestamp: Long,
+    val spillPath: String? = null,
+)
 
 /** Kind of delegation conversation card (which leg of the narration). */
 @Serializable
@@ -191,6 +227,7 @@ data class UiMessage(
     val subagentData: SubagentCardData? = null,
     val toolCallData: ToolCallData? = null,
     val delegationCardData: DelegationCardData? = null,
+    val asyncEventData: AsyncEventCardData? = null,
     val completionData: CompletionData? = null,
     val planApprovalData: PlanApprovalData? = null,
     /**

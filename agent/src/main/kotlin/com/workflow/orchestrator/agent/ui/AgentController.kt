@@ -18,8 +18,10 @@ import com.workflow.orchestrator.agent.loop.FailureReason
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.loop.PlanJson
 import com.workflow.orchestrator.agent.loop.SessionApprovalStore
-import com.workflow.orchestrator.agent.loop.SteeringMessage
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
+import com.workflow.orchestrator.agent.loop.queue.QueuedMessage
+import com.workflow.orchestrator.agent.loop.queue.QueueSourceKind
+import com.workflow.orchestrator.agent.loop.queue.UserQueuePolicy
 import com.workflow.orchestrator.agent.monitor.MonitorPool
 import com.workflow.orchestrator.agent.observability.HaikuPhraseGenerator
 import com.workflow.orchestrator.agent.observability.PhraseActivityGate
@@ -314,12 +316,12 @@ class AgentController(
     private val pendingReplyImageRefs = java.util.concurrent.atomic.AtomicReference<List<com.workflow.orchestrator.agent.session.ContentBlock.ImageRef>>(emptyList())
 
     /**
-     * Thread-safe queue for mid-turn steering messages.
-     * When the user sends a message while the loop is actively running (not waiting for input),
-     * the message is added here instead of cancelling the current task.
-     * The AgentLoop drains this at the start of each iteration.
+     * Task 2.1: queue ownership moved to AgentService (per-session, persistence-backed).
+     * Resolve via [com.workflow.orchestrator.agent.AgentService.queueForSession] for the active
+     * session. Returns null when no session is active (safe — callers guard on currentSessionId).
      */
-    private val steeringQueue = java.util.concurrent.ConcurrentLinkedQueue<SteeringMessage>()
+    private fun activeSessionQueue() = currentSessionId?.let { service.queueForSession(it) }
+
     private val steeringCounter = java.util.concurrent.atomic.AtomicLong(0)
 
     /**
@@ -623,6 +625,11 @@ class AgentController(
         // a real session resume through AgentController so all UI callbacks are attached.
         wireAutoWakeListener()
 
+        // Phase 3 Task 3.1 — wire the monitor card listener so monitor events on focused
+        // sessions render a visible async-event card in the chat panel (same as background
+        // process completions — persisted + live-pushed iff the session is on screen).
+        service.setAsyncEventCardListener { sessionId, card -> pushAsyncEventCard(sessionId, card) }
+
         // Wire document-extraction progress so SessionDocumentArtifactService can push
         // live "page X of Y" updates to the JCEF chat panel while read_document blocks.
         service.onDocumentProgress = ::pushDocumentProgress
@@ -823,27 +830,9 @@ class AgentController(
                 LOG.info("[Background] completion for session=${event.sessionId} — not active (active=$active); skipping UI bubble")
                 return@addCompletionListener
             }
-            val stateLabel = when (event.state) {
-                com.workflow.orchestrator.agent.tools.background.BackgroundState.EXITED ->
-                    if (event.exitCode == 0) "completed" else "exited with code ${event.exitCode}"
-                com.workflow.orchestrator.agent.tools.background.BackgroundState.KILLED -> "was killed"
-                com.workflow.orchestrator.agent.tools.background.BackgroundState.TIMED_OUT -> "timed out"
-                com.workflow.orchestrator.agent.tools.background.BackgroundState.RUNNING -> "finished"
-            }
-            val label = event.label.take(80)
-            val message = "Background ${event.bgId} ($label) $stateLabel · ${event.runtimeMs / 1000}s"
-            val statusType = when (event.state) {
-                com.workflow.orchestrator.agent.tools.background.BackgroundState.EXITED ->
-                    if (event.exitCode == 0) RichStreamingPanel.StatusType.SUCCESS
-                    else RichStreamingPanel.StatusType.WARNING
-                com.workflow.orchestrator.agent.tools.background.BackgroundState.KILLED,
-                com.workflow.orchestrator.agent.tools.background.BackgroundState.TIMED_OUT ->
-                    RichStreamingPanel.StatusType.WARNING
-                com.workflow.orchestrator.agent.tools.background.BackgroundState.RUNNING ->
-                    RichStreamingPanel.StatusType.INFO
-            }
-            LOG.info("[Background] pushing completion bubble — $message")
-            invokeLater { dashboard.appendStatus(message, statusType) }
+            val card = com.workflow.orchestrator.agent.ui.AsyncEventCardPresenter.fromBackground(event)
+            LOG.info("[Background] pushing completion card — ${card.id} (${card.status})")
+            invokeLater { pushAsyncEventCard(active, card) }
         })
     }
 
@@ -1143,7 +1132,7 @@ class AgentController(
 
         // Steering cancel callback
         panel.setCefCancelSteeringCallback { steeringId ->
-            steeringQueue.removeIf { it.id == steeringId }
+            activeSessionQueue()?.remove(steeringId)
             dashboard.removeQueuedSteeringMessage(steeringId)
             LOG.info("AgentController: cancelled steering message $steeringId")
         }
@@ -1641,6 +1630,15 @@ class AgentController(
                 "if (window._appendDelegatedResult) " +
                     "window._appendDelegatedResult(${historyJson.encodeToString(payload)})"
             )
+        }
+    }
+
+    /** Persist an async-event card and live-push it when the target session is the one on screen. */
+    fun pushAsyncEventCard(sessionId: String, card: com.workflow.orchestrator.agent.session.AsyncEventCardData) {
+        service.appendAsyncEventCardToSession(sessionId, card)
+        if (viewedSessionId != sessionId) return
+        controllerScope.launch(Dispatchers.EDT) {
+            dashboard.pushAsyncEventCard(historyJson.encodeToString(com.workflow.orchestrator.agent.session.AsyncEventCardData.serializer(), card))
         }
     }
 
@@ -2446,7 +2444,15 @@ class AgentController(
         if (currentJob?.isActive == true && !loopWaitingForInput) {
             val steeringId = "steer-${System.currentTimeMillis()}-${steeringCounter.incrementAndGet()}"
             LOG.info("AgentController: queuing steering message: ${task.take(80)}")
-            steeringQueue.offer(SteeringMessage(id = steeringId, text = task))
+            activeSessionQueue()?.enqueue(
+                QueuedMessage(
+                    id = steeringId,
+                    kind = QueueSourceKind.USER,
+                    body = task,
+                    timestamp = System.currentTimeMillis(),
+                    priority = UserQueuePolicy.priority,
+                ),
+            )
             dashboard.addQueuedSteeringMessage(steeringId, uiText)
             return
         }
@@ -2542,7 +2548,6 @@ class AgentController(
             onSessionStats = ui.onSessionStats,
             onDebugLog = ui.onDebugLog,
             onSessionStarted = ui.onSessionStarted,
-            steeringQueue = ui.steeringQueue,
             onSteeringDrained = ui.onSteeringDrained,
             onAwaitingUserInput = ui.onAwaitingUserInput,
             uiMessageOverride = uiMessageOverride,
@@ -2641,7 +2646,6 @@ class AgentController(
                 dashboard.pushDebugLogEntry(level, event, detail, meta)
             } else null,
             onSessionStarted = { sid -> currentSessionId = sid },
-            steeringQueue = steeringQueue,
             onSteeringDrained = { drainedIds ->
                 invokeLater { handleSteeringDrained(drainedIds) }
             },
@@ -3392,7 +3396,7 @@ class AgentController(
             userInputChannel = null
             loopWaitingForInput = false
             // Clear any orphaned steering messages that were queued after the last drain
-            steeringQueue.clear()
+            activeSessionQueue()?.clearAll()
 
         }
     }
@@ -3431,7 +3435,7 @@ class AgentController(
         loopWaitingForInput = false
         pendingUiMessageOverride.set(null)
         pendingReplyImageRefs.set(emptyList())
-        steeringQueue.clear()
+        activeSessionQueue()?.clearAll()
         clearStream()
         toolStreamBatcher.flush()   // drain any buffered output on cancel
         firstFlushSeen.clear()
@@ -3810,7 +3814,7 @@ class AgentController(
             userInputChannel?.close(CancellationException("delegated agent loop completed"))
             userInputChannel = null
             loopWaitingForInput = false
-            steeringQueue.clear()
+            activeSessionQueue()?.clearAll()
         }
     }
 
@@ -3838,10 +3842,10 @@ class AgentController(
                 //    local prompt-submit hook does not apply (it runs only in executeTaskInternal).
                 //  - Local mid-turn STEERING of a delegated session is unsupported: cross-IDE
                 //    interaction flows through the routed question/answer channel
-                //    (DelegationInboundService), not the local steering queue. The bundle's
-                //    steeringQueue is still forwarded (harmless — no local typing path feeds it for
-                //    a delegated session), so no behavior is lost; the human path is the routed
-                //    Q&A channel.
+                //    (DelegationInboundService), not the local steering queue. The loop resolves
+                //    its queue directly via queueForSession(sessionId) inside executeTask/
+                //    resumeSession; there is no messageQueue bundle field to forward (removed in
+                //    the unified-queue migration).
                 //
                 // SINGLE SOURCE OF TRUTH: source the full callback set from the SAME builder the
                 // interactive path uses, then .copy() ONLY the two delegated-specific overrides:
@@ -4514,7 +4518,6 @@ class AgentController(
                 dashboard.pushDebugLogEntry(level, event, detail, meta)
             } else null,
             onSessionStarted = { sid -> currentSessionId = sid },
-            steeringQueue = steeringQueue,
             onSteeringDrained = { drainedIds ->
                 invokeLater { handleSteeringDrained(drainedIds) }
             },
@@ -4924,7 +4927,15 @@ class AgentController(
         } else if (currentJob?.isActive == true) {
             // Loop is running but not waiting — queue as steering
             val steeringId = "steer-revise-${System.currentTimeMillis()}"
-            steeringQueue.offer(SteeringMessage(id = steeringId, text = revisionMessage))
+            activeSessionQueue()?.enqueue(
+                QueuedMessage(
+                    id = steeringId,
+                    kind = QueueSourceKind.USER,
+                    body = revisionMessage,
+                    timestamp = System.currentTimeMillis(),
+                    priority = UserQueuePolicy.priority,
+                ),
+            )
         } else {
             LOG.warn("AgentController.revisePlan: no active loop to receive revision")
             dashboard.setBusy(false)
@@ -4956,7 +4967,15 @@ class AgentController(
                 }
             } else if (currentJob?.isActive == true) {
                 val steeringId = "steer-dismiss-${System.currentTimeMillis()}"
-                steeringQueue.offer(SteeringMessage(id = steeringId, text = marker))
+                activeSessionQueue()?.enqueue(
+                    QueuedMessage(
+                        id = steeringId,
+                        kind = QueueSourceKind.USER,
+                        body = marker,
+                        timestamp = System.currentTimeMillis(),
+                        priority = UserQueuePolicy.priority,
+                    ),
+                )
             }
         }
     }

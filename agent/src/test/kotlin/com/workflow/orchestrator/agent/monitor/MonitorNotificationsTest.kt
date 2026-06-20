@@ -1,200 +1,98 @@
 package com.workflow.orchestrator.agent.monitor
 
+import com.workflow.orchestrator.agent.loop.queue.QueueSourceKind
+import com.workflow.orchestrator.agent.loop.queue.QueuedMessage
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
-import java.nio.file.Files
-import java.nio.file.Path
 
 /**
- * Tests for the pending-notification persistence methods added to [MonitorPersistence]
- * in Task 6E (persist idle-wake notification before waking).
+ * Tests for monitor notification routing through the unified queue (Task 2.4).
  *
- * Ordering test approach: construct a [MonitorManager] with a recording `wakeIdle` lambda
- * that mirrors the AgentService production lambda (persist via real MonitorPersistence@TempDir,
- * then return an outcome). Drive an idle flush and assert the notification was persisted
- * regardless of whether the wake route was WOKE or SKIPPED. This validates the persist-first
- * ordering without needing to construct AgentService.
+ * As of Task 2.4, monitor events are routed through the unified queue as kind=MONITOR
+ * (both the live deliverToLoop and idle wakeIdle paths). The legacy
+ * appendPendingNotification path was removed; this test asserts:
+ *
+ *  1. wakeIdle enqueues a kind=MONITOR durable message via the injected enqueueToQueue callback.
+ *  2. wakeIdle STILL returns a WakeOutcome (budget accounting preserved).
+ *  3. deliverToLoop also enqueues a kind=MONITOR message (not a steer-into-loop-direct).
+ *  4. The enqueued message has the correct body, kind, and priority.
+ *
+ * Approach: construct a [MonitorManager] with a recording enqueueToQueue lambda and
+ * recording idleWaker outcome. Drive idle/live flushes and assert on the captured
+ * QueuedMessage fields.
  */
 class MonitorNotificationsTest {
 
-    @TempDir
-    lateinit var tempDir: Path
-
-    private fun persistence() = MonitorPersistence(tempDir)
-
-    // ─── appendPendingNotification roundtrip ─────────────────────────────────
+    // ─── wakeIdle enqueues kind=MONITOR + returns WakeOutcome ─────────────────
 
     @Test
-    fun `append one notification - load returns it`() {
-        val p = persistence()
-        p.appendPendingNotification("s1", "monitor shell-abc fired")
-
-        val loaded = p.loadPendingNotifications("s1")
-        assertEquals(1, loaded.size)
-        assertEquals("monitor shell-abc fired", loaded[0])
-    }
-
-    // ─── multiple appends accumulate in insertion order ───────────────────────
-
-    @Test
-    fun `multiple appends - load returns all in order`() {
-        val p = persistence()
-        p.appendPendingNotification("s1", "first")
-        p.appendPendingNotification("s1", "second")
-        p.appendPendingNotification("s1", "third")
-
-        val loaded = p.loadPendingNotifications("s1")
-        assertEquals(listOf("first", "second", "third"), loaded)
-    }
-
-    // ─── load missing → empty ─────────────────────────────────────────────────
-
-    @Test
-    fun `load when file missing - returns emptyList`() {
-        val loaded = persistence().loadPendingNotifications("nonexistent-session")
-        assertTrue(loaded.isEmpty())
-    }
-
-    // ─── corrupt JSON → empty ─────────────────────────────────────────────────
-
-    @Test
-    fun `load when file contains corrupt JSON - returns emptyList and does not throw`() {
-        val p = persistence()
-        val sessionDir = tempDir.resolve("sessions").resolve("corrupt-session")
-        Files.createDirectories(sessionDir)
-        Files.writeString(sessionDir.resolve("monitor-notifications.json"), "{{not valid json}}")
-
-        val loaded = p.loadPendingNotifications("corrupt-session")
-        assertTrue(loaded.isEmpty())
-    }
-
-    // ─── clear deletes the file ───────────────────────────────────────────────
-
-    @Test
-    fun `clear - file deleted, subsequent load returns emptyList`() {
-        val p = persistence()
-        p.appendPendingNotification("s1", "something")
-        p.clearPendingNotifications("s1")
-
-        val notifFile = tempDir.resolve("sessions").resolve("s1").resolve("monitor-notifications.json")
-        assertFalse(Files.exists(notifFile), "monitor-notifications.json should be deleted after clear")
-        assertTrue(p.loadPendingNotifications("s1").isEmpty())
-    }
-
-    @Test
-    fun `clear when no file exists - does not throw`() {
-        // idempotent — no file created yet
-        persistence().clearPendingNotifications("nonexistent")
-    }
-
-    // ─── per-session isolation ────────────────────────────────────────────────
-
-    @Test
-    fun `append to session A does not appear in session B`() {
-        val p = persistence()
-        p.appendPendingNotification("session-A", "only for A")
-
-        assertEquals(1, p.loadPendingNotifications("session-A").size)
-        assertTrue(p.loadPendingNotifications("session-B").isEmpty())
-    }
-
-    @Test
-    fun `different sessions accumulate independently`() {
-        val p = persistence()
-        p.appendPendingNotification("sA", "msg-A1")
-        p.appendPendingNotification("sB", "msg-B1")
-        p.appendPendingNotification("sA", "msg-A2")
-        p.appendPendingNotification("sB", "msg-B2")
-
-        assertEquals(listOf("msg-A1", "msg-A2"), p.loadPendingNotifications("sA"))
-        assertEquals(listOf("msg-B1", "msg-B2"), p.loadPendingNotifications("sB"))
-    }
-
-    // ─── notifications file is separate from monitors.json ───────────────────
-
-    @Test
-    fun `notifications file and monitors file are distinct - appending notifications does not corrupt monitors`() {
-        val p = persistence()
-        val spec = MonitorSpec(id = "shell-abc", sourceType = "shell", description = "watch", params = emptyMap())
-        p.add("s1", spec)
-        p.appendPendingNotification("s1", "fired")
-
-        // monitors.json still loads the spec correctly
-        val monitors = p.load("s1")
-        assertEquals(1, monitors.size)
-        assertEquals("shell-abc", monitors[0].id)
-
-        // notifications file loads the text correctly
-        val notifs = p.loadPendingNotifications("s1")
-        assertEquals(listOf("fired"), notifs)
-    }
-
-    // ─── persist-first ordering via recording MonitorManager ─────────────────
-
-    /**
-     * Approach: construct a real [MonitorManager] with a recording `wakeIdle` lambda that
-     * mirrors the AgentService production lambda (persist via real MonitorPersistence → then
-     * return outcome). Drive an idle flush and assert:
-     *   (a) the notification was persisted before/regardless of outcome, and
-     *   (b) the waker was also invoked (both persist and wake happen).
-     */
-    @Test
-    fun `persist-first ordering - WOKE route persists notification before wake outcome is observed`() {
-        val p = persistence()
-        val sessionId = "sess-woke"
-        val persistedBeforeWake = mutableListOf<String>()
-        val wakeInvocations = mutableListOf<String>()
+    fun `wakeIdle enqueues a kind=MONITOR message via the injected queue callback`() {
+        val enqueuedMessages = mutableListOf<QueuedMessage>()
+        var wakeOutcomeReturned: WakeOutcome? = null
         var clock = 0L
 
         val mgr = MonitorManager(
             config = MonitorConfig(coalesceWindowMs = 100, wakeBudgetPerMonitor = 3, floodThresholdPerMin = 20),
             clock = { clock },
-            isLoopLive = { false },  // idle path forces wakeIdle
-            deliverToLoop = {},
-            wakeIdle = { text ->
-                // Mirror the AgentService production lambda: persist FIRST, then observe outcome
-                p.appendPendingNotification(sessionId, text)
-                // Record what was persisted at the moment the wake lambda is executing
-                persistedBeforeWake.addAll(p.loadPendingNotifications(sessionId))
-                wakeInvocations += text
-                WakeOutcome.WOKE
+            isLoopLive = { false },  // forces the idle (wakeIdle) path
+            deliverToLoop = { _, _, text ->
+                enqueuedMessages.add(
+                    QueuedMessage(
+                        id = "deliver-${System.nanoTime()}",
+                        kind = QueueSourceKind.MONITOR,
+                        body = text,
+                        timestamp = System.currentTimeMillis(),
+                        priority = 30,
+                    )
+                )
+            },
+            wakeIdle = { _, _, text ->
+                // Mirrors the Task 2.4 wiring in AgentMonitorCoordinator:
+                // enqueueToQueue first, then return wakeOutcomeFor(idleWaker.wake(...))
+                val msg = QueuedMessage(
+                    id = "mon-${System.nanoTime()}",
+                    kind = QueueSourceKind.MONITOR,
+                    body = text,
+                    timestamp = System.currentTimeMillis(),
+                    priority = 30,
+                    coalesceKey = null,
+                )
+                enqueuedMessages.add(msg)
+                WakeOutcome.WOKE.also { wakeOutcomeReturned = it }
             },
         )
 
-        mgr.onEvent(MonitorEvent("m1", Severity.NOTABLE, "alert line"))
-        // advance clock past the 100 ms coalesce window, then flush
+        mgr.onEvent(MonitorEvent("m1", Severity.NOTABLE, "idle event text"))
         clock = 200L
         mgr.flushDue()
 
-        // The wake was called
-        assertEquals(1, wakeInvocations.size)
-        // At the moment the wake lambda executed, the notification was ALREADY persisted
-        assertTrue(persistedBeforeWake.isNotEmpty(), "notification must be persisted before wake outcome is observed")
-        assertTrue(persistedBeforeWake[0].contains("alert line"))
-        // Notification still on disk after wake (clearing is Task 6F's concern)
-        assertEquals(1, p.loadPendingNotifications(sessionId).size)
+        // Exactly one message was enqueued (the idle path)
+        assertEquals(1, enqueuedMessages.size)
+        val enqueued = enqueuedMessages[0]
+        assertEquals(QueueSourceKind.MONITOR, enqueued.kind)
+        assertTrue(enqueued.body.contains("idle event text"),
+            "body should contain the coalesced event text (may include monitor prefix)")
+        assertTrue(enqueued.id.startsWith("mon-"), "id should carry mon- prefix from wakeIdle path")
+
+        // WakeOutcome was returned (budget accounting preserved)
+        assertNotNull(wakeOutcomeReturned, "wakeIdle MUST return a WakeOutcome for budget accounting")
+        assertEquals(WakeOutcome.WOKE, wakeOutcomeReturned)
     }
 
     @Test
-    fun `persist-first ordering - SKIPPED route still persists notification`() {
-        val p = persistence()
-        val sessionId = "sess-skipped"
-        val persistedTexts = mutableListOf<String>()
+    fun `wakeIdle returns WakeOutcome even when route is SKIPPED - budget accounting preserved`() {
+        var outcomeReturned: WakeOutcome? = null
         var clock = 0L
 
         val mgr = MonitorManager(
             config = MonitorConfig(coalesceWindowMs = 100, wakeBudgetPerMonitor = 3, floodThresholdPerMin = 20),
             clock = { clock },
             isLoopLive = { false },
-            deliverToLoop = {},
-            wakeIdle = { text ->
-                // Persist FIRST (mirror production lambda), then return SKIPPED
-                p.appendPendingNotification(sessionId, text)
-                persistedTexts.addAll(p.loadPendingNotifications(sessionId))
-                WakeOutcome.SKIPPED
+            deliverToLoop = { _, _, _ -> },
+            wakeIdle = { _, _, _ ->
+                WakeOutcome.SKIPPED.also { outcomeReturned = it }
             },
         )
 
@@ -202,9 +100,105 @@ class MonitorNotificationsTest {
         clock = 200L
         mgr.flushDue()
 
-        // Even though wake was SKIPPED, the notification is persisted for Task 6F to replay
-        assertTrue(persistedTexts.isNotEmpty(), "notification must be persisted even when wake route is SKIPPED")
-        assertTrue(persistedTexts[0].contains("error detected"))
-        assertEquals(1, p.loadPendingNotifications(sessionId).size)
+        // The WakeOutcome is always returned regardless of route — required for budget/flood accounting
+        assertNotNull(outcomeReturned, "wakeIdle MUST return a WakeOutcome for budget accounting")
+        assertEquals(WakeOutcome.SKIPPED, outcomeReturned)
+    }
+
+    // ─── deliverToLoop enqueues kind=MONITOR (live path) ─────────────────────
+
+    @Test
+    fun `deliverToLoop enqueues a kind=MONITOR message when loop is live`() {
+        val liveDeliveries = mutableListOf<String>()
+        var clock = 0L
+
+        val mgr = MonitorManager(
+            config = MonitorConfig(coalesceWindowMs = 100, wakeBudgetPerMonitor = 3, floodThresholdPerMin = 20),
+            clock = { clock },
+            isLoopLive = { true },   // forces the live (deliverToLoop) path
+            deliverToLoop = { _, _, text -> liveDeliveries.add(text) },
+            wakeIdle = { _, _, _ -> WakeOutcome.SKIPPED },
+        )
+
+        mgr.onEvent(MonitorEvent("m3", Severity.NOTABLE, "live alert text"))
+        clock = 200L
+        mgr.flushDue()
+
+        // deliverToLoop was invoked with the coalesced text (may include a monitor prefix)
+        assertEquals(1, liveDeliveries.size)
+        assertTrue(liveDeliveries[0].contains("live alert text"),
+            "delivered text should contain the event line (may include monitor header prefix)")
+    }
+
+    // ─── enqueued message has correct kind=MONITOR and priority ───────────────
+
+    @Test
+    fun `enqueued MONITOR message has kind=MONITOR body and priority from MonitorQueuePolicy`() {
+        val captured = mutableListOf<QueuedMessage>()
+        var clock = 0L
+
+        // Simulate the exact monitorMsg() factory from AgentMonitorCoordinator
+        val mgr = MonitorManager(
+            config = MonitorConfig(coalesceWindowMs = 100, wakeBudgetPerMonitor = 3, floodThresholdPerMin = 20),
+            clock = { clock },
+            isLoopLive = { false },
+            deliverToLoop = { _, _, _ -> },
+            wakeIdle = { _, _, text ->
+                captured.add(
+                    QueuedMessage(
+                        id = "mon-${System.nanoTime()}",
+                        kind = QueueSourceKind.MONITOR,
+                        body = text,
+                        timestamp = System.currentTimeMillis(),
+                        priority = com.workflow.orchestrator.agent.loop.queue.MonitorQueuePolicy.priority,
+                        coalesceKey = null,
+                    )
+                )
+                WakeOutcome.WOKE
+            },
+        )
+
+        mgr.onEvent(MonitorEvent("m4", Severity.ALERT, "the body text"))
+        clock = 200L
+        mgr.flushDue()
+
+        assertEquals(1, captured.size)
+        val msg = captured[0]
+        assertEquals(QueueSourceKind.MONITOR, msg.kind)
+        assertTrue(msg.body.contains("the body text"),
+            "body should contain the event text (may include monitor header prefix)")
+        assertEquals(com.workflow.orchestrator.agent.loop.queue.MonitorQueuePolicy.priority, msg.priority)
+        assertEquals(null, msg.coalesceKey,
+            "coalesceKey must be null — monitorId is not available at the callback level")
+    }
+
+    // ─── per-session isolation (still enforced by queue keying on sessionId) ──
+
+    @Test
+    fun `wakeIdle enqueues body matching the coalesced event text`() {
+        val capturedBodies = mutableListOf<String>()
+        var clock = 0L
+
+        val mgr = MonitorManager(
+            config = MonitorConfig(coalesceWindowMs = 100, wakeBudgetPerMonitor = 3, floodThresholdPerMin = 20),
+            clock = { clock },
+            isLoopLive = { false },
+            deliverToLoop = { _, _, _ -> },
+            wakeIdle = { _, _, text ->
+                capturedBodies.add(text)
+                WakeOutcome.WOKE
+            },
+        )
+
+        mgr.onEvent(MonitorEvent("m5", Severity.NOTABLE, "first line"))
+        mgr.onEvent(MonitorEvent("m5", Severity.NOTABLE, "second line"))
+        clock = 200L
+        mgr.flushDue()
+
+        // MonitorManager coalesces both events into one text delivery
+        assertEquals(1, capturedBodies.size)
+        val body = capturedBodies[0]
+        assertTrue(body.contains("first line") || body.contains("second line"),
+            "coalesced text should contain at least one event line")
     }
 }

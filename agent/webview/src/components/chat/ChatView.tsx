@@ -16,6 +16,7 @@ import {
   DelegationAnswerCard,
   DelegationResultCard,
 } from '@/components/agent/DelegationConversationCards';
+import { AsyncEventCard } from '@/components/agent/AsyncEventCard';
 import type { UiMessage, ToolCall, Plan } from '@/bridge/types';
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList';
 import { ScrollButton } from '@/components/ui/prompt-kit/scroll-button';
@@ -168,6 +169,14 @@ export const ChatView = memo(function ChatView() {
           ) : (
             <DelegationResultCard data={d} />
           )}
+        </ErrorBoundary>
+      );
+    }
+
+    if (msg.say === 'ASYNC_EVENT' && msg.asyncEventData) {
+      return (
+        <ErrorBoundary key={key}>
+          <AsyncEventCard data={msg.asyncEventData} />
         </ErrorBoundary>
       );
     }

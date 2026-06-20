@@ -36,8 +36,8 @@ class MonitorManager(
     private val config: MonitorConfig,
     private val clock: () -> Long,
     private val isLoopLive: () -> Boolean,
-    private val deliverToLoop: (String) -> Unit,
-    private val wakeIdle: (String) -> WakeOutcome,
+    private val deliverToLoop: (monitorId: String, severity: Severity, text: String) -> Unit,
+    private val wakeIdle: (monitorId: String, severity: Severity, text: String) -> WakeOutcome,
     /** Invoked when a monitor flood-trips so the caller can actually stop the source process. */
     private val onFloodStop: (String) -> Unit = {},
 ) {
@@ -59,7 +59,7 @@ class MonitorManager(
         if (registerAndCheckFlood(id)) {
             autoStopped += id
             val notice = "[monitor $id] auto-stopped — flood (> ${config.floodThresholdPerMin} events/min)"
-            if (isLoopLive()) deliverToLoop(notice)   // best-effort final notice; idle case relies on env-details
+            if (isLoopLive()) deliverToLoop(id, Severity.ALERT, notice)   // best-effort final notice; idle case relies on env-details
             onFloodStop(id)
             return
         }
@@ -79,10 +79,11 @@ class MonitorManager(
         for ((id, p) in ready) {
             val batch = p.lines.toList(); p.lines.clear()
             val text = batch.joinToString("\n") { it.formatLine() }
+            val sev = if (batch.any { it.severity == Severity.ALERT }) Severity.ALERT else Severity.NOTABLE
             if (isLoopLive()) {
-                deliverToLoop(text)
+                deliverToLoop(id, sev, text)
             } else if (batch.any { it.wakeEligible } && id !in dormant) {
-                when (wakeIdle(text)) {
+                when (wakeIdle(id, sev, text)) {
                     WakeOutcome.WOKE -> {
                         val left = (wakeBudget.getOrPut(id) { config.wakeBudgetPerMonitor }) - 1
                         wakeBudget[id] = left

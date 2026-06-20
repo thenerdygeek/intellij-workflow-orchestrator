@@ -150,6 +150,8 @@ declare global {
     _appendDelegatedQuestion?: (json: string) => void;
     _appendDelegatedAnswer?: (json: string) => void;
     _appendDelegatedResult?: (json: string) => void;
+    /** Phase 1 — push an async background/monitor event timeline card. Payload is a JSON-object string of UiMessageAsyncEventData. */
+    _pushAsyncEventCard?: (json: string) => void;
     /**
      * Task 11 — drop-zone overlay driven by the JVM Swing DropTarget.
      * Pushed by Kotlin's AttachmentDropTarget via AgentCefPanel.callJs()

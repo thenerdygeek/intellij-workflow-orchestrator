@@ -22,6 +22,7 @@ import type {
   CompletionData,
   CompletionKind,
   ImageRef,
+  UiMessageAsyncEventData,
 } from '../bridge/types';
 import type { MonitorSnapshot } from '../bridge/globals';
 import { answerToDisplay } from '../util/question-answer';
@@ -691,6 +692,9 @@ interface ChatState {
   appendDelegatedQuestion(questionId: string, delegatorRepo: string, text: string, options: string[]): void;
   appendDelegatedAnswer(questionId: string, delegatorRepo: string, text: string): void;
   appendDelegatedResult(delegatorRepo: string, status: string, durationSeconds: number, summary: string, reason: string | null): void;
+
+  // Async background/monitor event timeline card (Phase 1)
+  addAsyncEventCard(card: UiMessageAsyncEventData): void;
 
   // Drop-zone overlay
   setDropActive(active: boolean): void;
@@ -2880,6 +2884,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
           durationSeconds,
           reason,
         },
+      };
+      return { messages: capMessages([...state.messages, msg]) };
+    }),
+
+  addAsyncEventCard: (card) =>
+    set((state) => {
+      const msg: UiMessage = {
+        ts: uniqueTs(),
+        type: 'SAY',
+        say: 'ASYNC_EVENT',
+        asyncEventData: card,
       };
       return { messages: capMessages([...state.messages, msg]) };
     }),

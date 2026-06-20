@@ -12,19 +12,21 @@ import java.nio.file.Path
 /**
  * Regression coverage for the dropped-delegation-result bug: when IDE-A's orchestrator
  * loop has already ended (the normal state after delegating and completing the turn),
- * an arriving delegation result/question must be PERSISTED and then AUTO-WOKEN — never
- * silently dropped (the old `enqueueNudgeForSession` else-branch).
+ * an arriving delegation result/question must be durably queued and then AUTO-WOKEN — never
+ * silently dropped.
  *
  * The routing decision is extracted into the pure [idleWakeRoute] so it can be unit
  * tested without constructing AgentService (whose init loads the full tool/memory/hook
- * subsystem). A source-text pin guards that `enqueueNudgeForSession`:
- *   (a) PERSISTS the nudge BEFORE auto-wake (BUG #2 — so a guard-rejected / active-session-
- *       deferred nudge replays on the next resume rather than vanishing), and
- *   (b) still routes through the auto-wake path rather than logging-and-dropping.
+ * subsystem). A source-text pin guards that `enqueueNudgeForSession` routes through
+ * `enqueueToSession` with `kind=DELEGATION` (Task 2.3 migration): the unified queue's
+ * durable persistence (pending_queue.json, DelegationQueuePolicy.durable=true) and its
+ * idle auto-wake (DelegationQueuePolicy.autoWakesIdle=true) now own the BUG #2 / BUG #4
+ * guarantee that previously lived in the hand-rolled persist-first-then-wake branch.
  *
  * BUG #4 added a `safeToResume` gate (a delegation result for an idle target must not
  * cancel/reset a DIFFERENT live session); the SKIP route is no longer the only "don't
- * wake now" outcome — DEFER_ACTIVE_SESSION joins it, and BOTH leave the nudge persisted.
+ * wake now" outcome — DEFER_ACTIVE_SESSION joins it, and BOTH leave the nudge in the
+ * durable queue until the target session is next resumed.
  */
 class DelegationIdleWakeRoutingTest {
 
@@ -67,27 +69,32 @@ class DelegationIdleWakeRoutingTest {
     }
 
     @Test
-    fun `source pin - enqueueNudgeForSession persists the idle nudge BEFORE auto-wake, never drops`() {
+    fun `source pin - enqueueNudgeForSession routes through enqueueToSession with kind=DELEGATION`() {
         val source = Files.readString(
             Path.of("src/main/kotlin/com/workflow/orchestrator/agent/AgentService.kt")
         )
         val fnStart = source.indexOf("fun enqueueNudgeForSession")
         assertTrue(fnStart >= 0, "enqueueNudgeForSession must exist")
-        val fnBody = source.substring(fnStart, minOf(fnStart + 1400, source.length))
+        val fnBody = source.substring(fnStart, minOf(fnStart + 1000, source.length))
 
-        val persistIdx = fnBody.indexOf("persistDelegationNudgeForLaterResume")
-        val wakeIdx = fnBody.indexOf("autoWakeIdleSession")
         assertTrue(
-            persistIdx >= 0,
-            "enqueueNudgeForSession must PERSIST the idle nudge (BUG #2) so a guard-rejected wake replays on resume",
+            fnBody.contains("enqueueToSession"),
+            "enqueueNudgeForSession must delegate to enqueueToSession (Task 2.3: unified queue owns persist+wake)",
         )
         assertTrue(
-            wakeIdx >= 0,
-            "enqueueNudgeForSession must route idle sessions through autoWakeIdleSession (was: silently dropped)",
+            fnBody.contains("QueueSourceKind.DELEGATION") || fnBody.contains("DELEGATION"),
+            "enqueueNudgeForSession must enqueue with kind=DELEGATION so DelegationQueuePolicy.durable=true " +
+                "covers BUG #2 (guard-rejected wake replays on resume) and autoWakesIdle=true covers BUG #4",
         )
         assertTrue(
-            persistIdx < wakeIdx,
-            "the persist must happen BEFORE the auto-wake (mirrors onBackgroundCompletion's persist-first contract)",
+            !fnBody.contains("persistDelegationNudgeForLaterResume"),
+            "the old hand-rolled persist helper must NOT appear inside enqueueNudgeForSession " +
+                "(removed in Task 2.3 — queue persistence is the new carrier)",
+        )
+        assertTrue(
+            !fnBody.contains("autoWakeIdleSession"),
+            "enqueueNudgeForSession must NOT call autoWakeIdleSession directly " +
+                "(enqueueToSession now owns idle auto-wake via DelegationQueuePolicy.autoWakesIdle)",
         )
     }
 }

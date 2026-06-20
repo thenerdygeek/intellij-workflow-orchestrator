@@ -84,8 +84,8 @@ class MonitorIdleWakeIntegrationTest {
             ),
             clock = { clockVal },
             isLoopLive = { false },             // idle throughout
-            deliverToLoop = {},
-            wakeIdle = { text -> wakeOutcomeFor(waker.wake(sessionId, text, "monitor")) },
+            deliverToLoop = { _, _, _ -> },
+            wakeIdle = { _, _, text -> wakeOutcomeFor(waker.wake(sessionId, text, "monitor")) },
         )
 
         return Fixture(
@@ -207,8 +207,8 @@ class MonitorIdleWakeIntegrationTest {
                 config = MonitorConfig(coalesceWindowMs = 0L, wakeBudgetPerMonitor = 2, floodThresholdPerMin = 20),
                 clock = { clockVal2 },
                 isLoopLive = { false },
-                deliverToLoop = {},
-                wakeIdle = { text -> wakeOutcomeFor(waker2.wake("sess-5-permissive", text, "monitor")) },
+                deliverToLoop = { _, _, _ -> },
+                wakeIdle = { _, _, text -> wakeOutcomeFor(waker2.wake("sess-5-permissive", text, "monitor")) },
             )
             Triple(guards2, mgr2, wokeTexts2)
         }

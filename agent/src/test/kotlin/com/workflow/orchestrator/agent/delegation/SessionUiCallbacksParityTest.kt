@@ -90,7 +90,7 @@ class SessionUiCallbacksParityTest {
             "onPlanDiscarded", "onSubagentProgress", "onTokenUpdate", "onSessionStats",
             "onDebugLog", "onSessionStarted", "onSteeringDrained", "onAwaitingUserInput",
             "onUserInputReceived", "streamingEditCallback", "onHandoffProposed",
-            "steeringQueue", "sessionApprovalStore",
+            "sessionApprovalStore",
         )
         val missing = required.filter { it !in props }
         assertTrue(

@@ -22,8 +22,8 @@ import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.FailureReason
 import com.workflow.orchestrator.agent.loop.LoopResult
-import com.workflow.orchestrator.agent.loop.SteeringMessage
 import com.workflow.orchestrator.agent.loop.ToolCallProgress
+import com.workflow.orchestrator.agent.loop.queue.UnifiedMessageQueue
 import com.workflow.orchestrator.agent.prompt.EnvironmentDetailsBuilder
 import com.workflow.orchestrator.agent.prompt.InstructionLoader
 import com.workflow.orchestrator.agent.prompt.SystemPrompt
@@ -136,16 +136,14 @@ class AgentService(
      * Background-process completion routing + auto-resume message building, extracted into
      * [com.workflow.orchestrator.agent.tools.background.BackgroundCompletionCoordinator] (Phase 3
      * cut F). Subscribes to [com.workflow.orchestrator.agent.tools.background.BackgroundPool] on
-     * construction; registered under this service for disposal in `init`. The shared auto-wake
-     * substrate ([idleWaker] via [autoWakeIdleSession]) and [activeLoopForSession] are injected so
-     * monitor / background / delegation wakes keep sharing one guard.
+     * construction; registered under this service for disposal in `init`. Routes background
+     * completions through the unified queue via [enqueueToSession] — the sole collaborator
+     * injected after the unified-queue migration (Task 2.2).
      */
     private val backgroundCompletionCoordinator =
         com.workflow.orchestrator.agent.tools.background.BackgroundCompletionCoordinator(
             project = project,
-            agentDirProvider = { agentDir },
-            activeLoopForSession = ::activeLoopForSession,
-            autoWake = { sessionId, text, source -> autoWakeIdleSession(sessionId, text, source) },
+            enqueue = ::enqueueToSession,
         )
 
     /**
@@ -225,6 +223,12 @@ class AgentService(
         agentDirProvider = { agentDir },
         idleWaker = idleWaker,
         activeLoopForSession = ::activeLoopForSession,
+        // Task 2.4 — plain enqueue primitive (NO auto-wake); the coordinator's wakeIdle
+        // callback fires idleWaker.wake() separately after enqueuing, preserving the
+        // per-monitor wake-budget/flood accounting contract.
+        enqueueToQueue = { sid, msg -> queueForSession(sid).enqueue(msg) },
+        // Phase 3 Task 3.1 — live card delivery (focused sessions only).
+        emitCard = ::emitAsyncEventCard,
     )
 
     /** @see AgentMonitorCoordinator.ensureMonitorManager */
@@ -241,6 +245,21 @@ class AgentService(
 
     /** @see AgentMonitorCoordinator.clearPersistedMonitors */
     fun clearPersistedMonitors(sessionId: String) = monitorCoordinator.clearPersistedMonitors(sessionId)
+
+    // ── Async-event card seam (Phase 3 Task 3.1) ─────────────────────────────────
+    // Placed OUTSIDE the sentinel range (delegatedIncomingTaskText..mapLoopResultToDelegationResult)
+    // so source-text contract tests in DelegationConversationNarrationTest are not affected.
+
+    @Volatile private var asyncEventCardListener: ((String, com.workflow.orchestrator.agent.session.AsyncEventCardData) -> Unit)? = null
+
+    fun setAsyncEventCardListener(l: (String, com.workflow.orchestrator.agent.session.AsyncEventCardData) -> Unit) {
+        asyncEventCardListener = l
+    }
+
+    /** Persist a card and notify the controller (live push happens there iff the session is on screen). */
+    fun emitAsyncEventCard(sessionId: String, card: com.workflow.orchestrator.agent.session.AsyncEventCardData) {
+        asyncEventCardListener?.invoke(sessionId, card)
+    }
 
     /**
      * Document-extraction progress sink wired by [AgentController] after construction.
@@ -461,50 +480,56 @@ class AgentService(
         return if (task.sessionId == sessionId) task.loop else null
     }
 
+    // ── Per-session queue ownership (Task 2.1) ─────────────────────────────────────────────────
+    // The single-instance invariant: EVERY path that constructs an AgentLoop for a session AND
+    // every producer that enqueues into that session's queue MUST go through queueForSession().
+    // Never call UnifiedMessageQueue(...) directly outside this method.
+
+    private val queuePersistence by lazy {
+        com.workflow.orchestrator.agent.loop.queue.QueuePersistence(agentDir.toPath())
+    }
+    private val sessionQueues =
+        java.util.concurrent.ConcurrentHashMap<String, com.workflow.orchestrator.agent.loop.queue.UnifiedMessageQueue>()
+
+    /** Return (or lazily create) the per-session [UnifiedMessageQueue] for [sessionId]. */
+    fun queueForSession(sessionId: String): com.workflow.orchestrator.agent.loop.queue.UnifiedMessageQueue =
+        sessionQueues.getOrPut(sessionId) {
+            com.workflow.orchestrator.agent.loop.queue.UnifiedMessageQueue(sessionId, queuePersistence)
+        }
+
+    /** Enqueue an async message for [sessionId]; auto-wake the session if it is idle and the source policy allows it. */
+    fun enqueueToSession(sessionId: String, msg: com.workflow.orchestrator.agent.loop.queue.QueuedMessage) {
+        queueForSession(sessionId).enqueue(msg)
+        if (activeLoopForSession(sessionId) == null) {
+            val policy = com.workflow.orchestrator.agent.loop.queue.QueueSourceRegistry.policyFor(msg.kind)
+            if (policy.autoWakesIdle) autoWakeIdleSession(sessionId, syntheticText = "", source = msg.kind.name)
+        }
+    }
+
     /**
-     * Inject a synthetic nudge message into the loop that owns [sessionId].
+     * Inject a cross-IDE delegation result / clarifying-question nudge into [sessionId].
      *
-     * Called when an async cross-IDE delegation result / clarifying question arrives.
-     * If the loop is still running, the nudge surfaces at the next iteration boundary
-     * via the steering queue. If the loop has already ended — the NORMAL state after the
-     * orchestrator completes its turn following a `delegation(send)` — the nudge is
-     * PERSISTED FIRST (BUG #2) and then auto-woken:
-     *
-     *  - persist-first mirrors [onBackgroundCompletion] (persist before [autoWakeIdleSession]):
-     *    if the auto-wake guard rejects (cooldown / cap / disabled / no-listener) OR the wake is
-     *    deferred because a DIFFERENT session is currently active (BUG #4), the nudge is NOT
-     *    dropped — it REPLAYS in the resume preamble ([resumeSession] → "[DELEGATION RESULTS —
-     *    delivered on resume]") when the target session is next resumed.
-     *  - the persisted entry is consumed on successful replay; on a successful auto-wake the
-     *    [resumeSession] pickup also drains it, so it is delivered exactly once.
-     *
-     * This matters most for a clarifying QUESTION nudge: IDE-B's `routeQuestion` await is
-     * bounded by the channel lifecycle — the outbound `IdleTimer` (delegationIdleTimeoutMinutes)
-     * closes a silent channel, which terminates IDE-B's read loop and cancels the pending
-     * question (CancellationException → a clean "session ended" tool error). Persist-first
-     * additionally guarantees IDE-A surfaces the question on its next resume even if the live
-     * wake was rejected/deferred, so a human/LLM can answer well before that idle timeout fires.
+     * Routes through the unified queue as [com.workflow.orchestrator.agent.loop.queue.QueueSourceKind.DELEGATION]:
+     * the queue's durable persistence (pending_queue.json) and [enqueueToSession]'s idle
+     * auto-wake own the persist-then-wake contract that previously lived here. If the loop
+     * is live the item is drained at the next iteration boundary (same as before); if the
+     * loop is idle, [DelegationQueuePolicy.autoWakesIdle] triggers [autoWakeIdleSession]
+     * and [DelegationQueuePolicy.durable] ensures the item survives a guard-rejected or
+     * deferred wake — it is replayed via the queue drain on the next resume.
      *
      * Safe to call from any thread.
      */
     fun enqueueNudgeForSession(sessionId: String, text: String) {
-        val loop = activeLoopForSession(sessionId)
-        if (loop != null) {
-            loop.enqueueSteeringMessage(text)
-        } else {
-            // Loop ended (the normal post-delegate state). Persist FIRST so a guard-rejected
-            // or active-session-deferred wake still replays on the next resume, then attempt
-            // the auto-wake — exactly mirroring onBackgroundCompletion's persist-then-wake.
-            val nudgeId = persistDelegationNudgeForLaterResume(sessionId, text)
-            // The persisted nudge is the SINGLE delivery carrier: on WAKE the listener triggers
-            // resumeSession, whose "[DELEGATION RESULTS — delivered on resume]" preamble replays
-            // AND consumes the persisted entry exactly once. We therefore hand the waker a BLANK
-            // synthetic message (resumeSession adds no duplicate "User message on resume" line),
-            // avoiding double-delivery. On SKIP_GUARD / DEFER_ACTIVE_SESSION / DEFER_NO_LISTENER
-            // the nudge simply stays persisted until the target session is next resumed.
-            val route = autoWakeIdleSession(sessionId, syntheticText = "", source = "delegation")
-            log.info("[AgentService] delegation nudge for $sessionId routed=$route (persisted id=$nudgeId)")
-        }
+        enqueueToSession(
+            sessionId,
+            com.workflow.orchestrator.agent.loop.queue.QueuedMessage(
+                id = "delg-${System.nanoTime()}",
+                kind = com.workflow.orchestrator.agent.loop.queue.QueueSourceKind.DELEGATION,
+                body = text,
+                timestamp = System.currentTimeMillis(),
+                priority = com.workflow.orchestrator.agent.loop.queue.DelegationQueuePolicy.priority,
+            ),
+        )
     }
 
     /**
@@ -554,20 +579,31 @@ class AgentService(
     }
 
     /**
-     * BUG #2 — persist a cross-IDE delegation result/question nudge for an idle session so
-     * it survives an auto-wake guard rejection / active-session defer and REPLAYS in the
-     * resume preamble ([resumeSession] Task-6.2-style pickup). Mirrors [persistForLaterResume]
-     * for background completions; returns the generated nudge id (for logging/observability).
-     * Best-effort: a persistence failure is logged but never propagated (the live auto-wake
-     * may still deliver the nudge).
+     * Persist an [UiSay.ASYNC_EVENT] background/monitor card into [sessionId]'s ui_messages.json
+     * (UI-only — never api history). Sibling of [appendDelegationCardToSession]: active-session-only;
+     * no-op when no active handler matches (the idle case is covered by resume synthesis).
      */
-    private fun persistDelegationNudgeForLaterResume(sessionId: String, text: String): String? =
-        runCatching {
-            com.workflow.orchestrator.agent.tools.background.DelegationNudgePersistence(agentDir.toPath())
-                .appendNudge(sessionId, text)
-        }.onFailure {
-            log.warn("[AgentService] DelegationNudgePersistence append failed for $sessionId: ${it.message}", it)
-        }.getOrNull()
+    fun appendAsyncEventCardToSession(
+        sessionId: String,
+        card: com.workflow.orchestrator.agent.session.AsyncEventCardData,
+    ) {
+        val handler = activeMessageStateHandler ?: return
+        if (handler.sessionId != sessionId) return
+        cs.launch(Dispatchers.IO) {
+            try {
+                handler.addToClineMessages(
+                    com.workflow.orchestrator.agent.session.UiMessage(
+                        ts = System.currentTimeMillis(),
+                        type = com.workflow.orchestrator.agent.session.UiMessageType.SAY,
+                        say = com.workflow.orchestrator.agent.session.UiSay.ASYNC_EVENT,
+                        asyncEventData = card,
+                    )
+                )
+            } catch (e: Exception) {
+                log.warn("[Agent] appendAsyncEventCardToSession: persist failed for $sessionId", e)
+            }
+        }
+    }
 
     /** Current session's message state handler — non-null while a task is running. */
     @Volatile var activeMessageStateHandler: MessageStateHandler? = null
@@ -1594,12 +1630,6 @@ class AgentService(
          */
         onSessionStarted: ((sessionId: String) -> Unit)? = null,
         /**
-         * Thread-safe queue for mid-turn steering messages.
-         * When provided, the loop drains this at the start of each iteration and
-         * injects queued user messages into the conversation context.
-         */
-        steeringQueue: java.util.concurrent.ConcurrentLinkedQueue<SteeringMessage>? = null,
-        /**
          * Callback fired after steering messages are drained and injected.
          * The UI promotes queued messages to regular chat messages.
          */
@@ -2408,7 +2438,9 @@ class AgentService(
                             sessionId = sid,
                         )
                     },
-                    steeringQueue = steeringQueue,
+                    // Task 2.1: resolve from the service's per-session map so that both the loop
+                    // drain path and any async producer (enqueueToSession) share ONE instance.
+                    messageQueue = queueForSession(sid),
                     onSteeringDrained = onSteeringDrained,
                     onAwaitingUserInput = onAwaitingUserInput,
                     brainFactory = brainFactory,
@@ -2657,7 +2689,6 @@ class AgentService(
         onSessionStats: ((modelId: String, tokensIn: Long, tokensOut: Long, costUsd: Double?) -> Unit)? = null,
         onDebugLog: ((level: String, event: String, detail: String, meta: Map<String, Any?>?) -> Unit)? = null,
         onSessionStarted: ((sessionId: String) -> Unit)? = null,
-        steeringQueue: java.util.concurrent.ConcurrentLinkedQueue<SteeringMessage>? = null,
         onSteeringDrained: ((drainedIds: List<String>) -> Unit)? = null,
         sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
         onAwaitingUserInput: ((reason: String) -> Unit)? = null,
@@ -2768,6 +2799,20 @@ class AgentService(
             wasPreviouslyCompleted = (resumeAskType == UiAsk.RESUME_COMPLETED_TASK),
         )
 
+        // Task 4.1 — drain the unified queue ONCE; reuse `drainedGroups` for BOTH the preamble
+        // text (here) and the async-event card synthesis (inside the cs.launch job below).
+        // The drain call clears the queue; a second drain call would lose items.
+        val drainedGroups = runCatching { queueForSession(sessionId).drainGrouped() }.getOrElse { err ->
+            log.warn("[AgentService] unified queue drain failed for $sessionId — continuing without queue items: ${err.message}", err)
+            emptyList()
+        }
+        if (drainedGroups.isNotEmpty()) {
+            log.info("[AgentService] resume pickup: delivered ${drainedGroups.sumOf { it.ids.size }} queued item(s) from unified queue for $sessionId")
+        }
+        val queueDrain = drainedGroups.joinToString("\n") { it.framedText }
+        val baseWithQueue = if (queueDrain.isBlank()) basePreamble else basePreamble + queueDrain
+
+        // LEGACY: retire next release
         // Task 6.2 — append any background-completion events that landed while the
         // session was idle. BackgroundPersistence accumulates them under
         // sessions/{id}/background/pending_completions.json; we splice them into
@@ -2783,7 +2828,7 @@ class AgentService(
                 }
             val completionsPreamble = ResumeHelper.formatBackgroundCompletionsSection(pending)
             if (completionsPreamble.isEmpty()) {
-                basePreamble
+                baseWithQueue
             } else {
                 // Consume entries only after we've built the combined preamble — if
                 // the join fails or the caller aborts, we'd prefer to redeliver than
@@ -2795,10 +2840,11 @@ class AgentService(
                         }
                 }
                 log.info("[AgentService] resume pickup: delivered ${pending.size} persisted background completion(s) for $sessionId")
-                basePreamble + completionsPreamble
+                baseWithQueue + completionsPreamble
             }
         }
 
+        // LEGACY: retire next release
         // BUG #2 — append any cross-IDE delegation result/question nudges that landed while
         // the session was idle but whose auto-wake was rejected (cooldown/cap/disabled/
         // no-listener) or DEFERRED because a different session was active (BUG #4). Mirrors
@@ -2827,6 +2873,7 @@ class AgentService(
             }
         }
 
+        // LEGACY: retire next release
         // Task 6F — append any monitor notifications that were persisted by the idle-wake path
         // (Task 6E) while the session was paused.  Mirrors the background-completion and
         // delegation-nudge pickup blocks above: splice into the preamble, then clear so they
@@ -2889,6 +2936,29 @@ class AgentService(
                 ask = resumeAskType,
                 text = "Task was interrupted $agoText. Resuming..."
             ))
+
+            // Task 4.1 — async-event cards (queue-backed idle path, review B1). The session is NOT
+            // active here (activeMessageStateHandler is set later in executeTask), so append onto
+            // THIS resume-local `handler` directly — not appendAsyncEventCardToSession (which would
+            // no-op). Dedup against the in-memory savedUiMessages so a card already shown live on
+            // the focused session isn't duplicated. addToClineMessages is suspend → callable here.
+            runCatching {
+                val existingIds = savedUiMessages.mapNotNull { it.asyncEventData?.id }.toSet()
+                val items = drainedGroups
+                    .filter {
+                        it.kind == com.workflow.orchestrator.agent.loop.queue.QueueSourceKind.BACKGROUND ||
+                        it.kind == com.workflow.orchestrator.agent.loop.queue.QueueSourceKind.MONITOR
+                    }
+                    .flatMap { it.items }
+                com.workflow.orchestrator.agent.ui.AsyncEventResumeSynthesis.cardsToAppend(items, existingIds).forEach { card ->
+                    handler.addToClineMessages(UiMessage(
+                        ts = System.currentTimeMillis(),
+                        type = UiMessageType.SAY,
+                        say = UiSay.ASYNC_EVENT,
+                        asyncEventData = card,
+                    ))
+                }
+            }.onFailure { log.warn("[AgentService] async-event resume synthesis failed for $sessionId: ${it.message}", it) }
 
             // TASK_RESUME hook — now safe to call suspend functions (we're on IO dispatcher)
             if (hookManager.hasHooks(HookType.TASK_RESUME)) {
@@ -2994,7 +3064,6 @@ class AgentService(
                 onSessionStats = onSessionStats,
                 onDebugLog = onDebugLog,
                 onSessionStarted = onSessionStarted,
-                steeringQueue = steeringQueue,
                 onSteeringDrained = onSteeringDrained,
                 sessionApprovalStore = sessionApprovalStore,
                 onAwaitingUserInput = onAwaitingUserInput,
@@ -3278,7 +3347,6 @@ class AgentService(
                 onSessionStats = callbacks.onSessionStats,
                 onDebugLog = callbacks.onDebugLog,
                 onSessionStarted = callbacks.onSessionStarted,
-                steeringQueue = callbacks.steeringQueue,
                 onSteeringDrained = callbacks.onSteeringDrained,
                 onAwaitingUserInput = callbacks.onAwaitingUserInput,
                 onUserInputReceived = callbacks.onUserInputReceived,
@@ -3430,7 +3498,6 @@ class AgentService(
                 onSessionStats = callbacks.onSessionStats,
                 onDebugLog = callbacks.onDebugLog,
                 onSessionStarted = callbacks.onSessionStarted,
-                steeringQueue = callbacks.steeringQueue,
                 onSteeringDrained = callbacks.onSteeringDrained,
                 onAwaitingUserInput = callbacks.onAwaitingUserInput,
                 onUserInputReceived = callbacks.onUserInputReceived,

@@ -131,19 +131,12 @@ class MonitorPersistenceTest {
         assertTrue(loadedB.isEmpty())
     }
 
-    // ─── pending notifications roundtrip ──────────────────────────────────────
-
-    @Test
-    fun `appendPendingNotification then loadPendingNotifications - roundtrip`() {
-        val p = persistence()
-        p.appendPendingNotification("s1", "monitor shell-abc · NOTABLE — build finished")
-        p.appendPendingNotification("s1", "monitor bamboo-xyz · ALERT — build failed")
-
-        val loaded = p.loadPendingNotifications("s1")
-        assertEquals(2, loaded.size)
-        assertEquals("monitor shell-abc · NOTABLE — build finished", loaded[0])
-        assertEquals("monitor bamboo-xyz · ALERT — build failed", loaded[1])
-    }
+    // ─── pending notifications — READER half only (Task 2.4 / Task 2.5) ─────────
+    //
+    // The WRITER half (appendPendingNotification) was removed in Task 2.4. Only the
+    // reader (loadPendingNotifications) and clear (clearPendingNotifications) remain for
+    // one-release legacy compatibility. These tests use direct file I/O to seed the
+    // legacy file and verify the reader still works correctly.
 
     @Test
     fun `loadPendingNotifications when file missing - returns emptyList`() {
@@ -151,26 +144,63 @@ class MonitorPersistenceTest {
     }
 
     @Test
-    fun `clearPendingNotifications - file deleted, subsequent load returns emptyList`() {
-        val p = persistence()
-        p.appendPendingNotification("s1", "some event")
-        p.clearPendingNotifications("s1")
+    fun `loadPendingNotifications reads legacy monitor-notifications-json when it exists`() {
+        // Seed the file directly (the writer no longer exists in MonitorPersistence)
+        val sessionDir = tempDir.resolve("sessions").resolve("legacy-session")
+        Files.createDirectories(sessionDir)
+        Files.writeString(
+            sessionDir.resolve("monitor-notifications.json"),
+            """["monitor shell-abc · NOTABLE — build finished","monitor bamboo-xyz · ALERT — build failed"]""",
+        )
 
-        val notifFile = tempDir.resolve("sessions").resolve("s1").resolve("monitor-notifications.json")
+        val loaded = persistence().loadPendingNotifications("legacy-session")
+        assertEquals(2, loaded.size)
+        assertEquals("monitor shell-abc · NOTABLE — build finished", loaded[0])
+        assertEquals("monitor bamboo-xyz · ALERT — build failed", loaded[1])
+    }
+
+    @Test
+    fun `loadPendingNotifications corrupt file returns emptyList`() {
+        val sessionDir = tempDir.resolve("sessions").resolve("corrupt-notif")
+        Files.createDirectories(sessionDir)
+        Files.writeString(sessionDir.resolve("monitor-notifications.json"), "{{not valid json}}")
+
+        assertTrue(persistence().loadPendingNotifications("corrupt-notif").isEmpty())
+    }
+
+    @Test
+    fun `clearPendingNotifications deletes the legacy file (idempotent)`() {
+        val sessionDir = tempDir.resolve("sessions").resolve("s-clear")
+        Files.createDirectories(sessionDir)
+        val notifFile = sessionDir.resolve("monitor-notifications.json")
+        Files.writeString(notifFile, """["some event"]""")
+        assertTrue(Files.exists(notifFile), "file should exist before clear")
+
+        persistence().clearPendingNotifications("s-clear")
+
         assertFalse(Files.exists(notifFile), "monitor-notifications.json should be deleted after clearPendingNotifications")
-        assertTrue(p.loadPendingNotifications("s1").isEmpty())
+        assertTrue(persistence().loadPendingNotifications("s-clear").isEmpty())
+    }
+
+    @Test
+    fun `clearPendingNotifications is idempotent when no file exists`() {
+        persistence().clearPendingNotifications("no-file-session")
+        // No exception expected
     }
 
     // ─── clearPersistedMonitors contract (Task 6F: clear + clearPendingNotifications) ───
 
     @Test
-    fun `clear and clearPendingNotifications both delete their files - mirrors clearPersistedMonitors`() {
+    fun `clear and clearPendingNotifications both delete their respective files`() {
         val p = persistence()
         p.add("s1", spec("mon-1"))
-        p.appendPendingNotification("s1", "event text")
+        // Seed legacy notification file directly
+        val sessionDir = tempDir.resolve("sessions").resolve("s1")
+        Files.createDirectories(sessionDir)
+        Files.writeString(sessionDir.resolve("monitor-notifications.json"), """["event text"]""")
 
-        val monitorsFile = tempDir.resolve("sessions").resolve("s1").resolve("monitors.json")
-        val notifFile = tempDir.resolve("sessions").resolve("s1").resolve("monitor-notifications.json")
+        val monitorsFile = sessionDir.resolve("monitors.json")
+        val notifFile = sessionDir.resolve("monitor-notifications.json")
         assertTrue(Files.exists(monitorsFile), "monitors.json should exist before clear")
         assertTrue(Files.exists(notifFile), "monitor-notifications.json should exist before clearPendingNotifications")
 

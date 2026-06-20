@@ -9,6 +9,8 @@ class MonitorManagerTest {
         var now = 0L
         val delivered = mutableListOf<String>()   // text routed to the LIVE loop
         val woke = mutableListOf<String>()         // text routed via idle-wake
+        val deliveredSeverities = mutableListOf<Severity>()   // severity of each deliver call
+        val deliveredMonitorIds = mutableListOf<String>()      // monitorId of each deliver call
         var loopLive = false
         var wakeRoute = WakeOutcome.WOKE           // what the injected waker returns
         val floodStopped = mutableListOf<String>() // monitor ids the flood-stop hook fired for
@@ -17,8 +19,8 @@ class MonitorManagerTest {
             config = MonitorConfig(coalesceWindowMs = 100, wakeBudgetPerMonitor = 2, floodThresholdPerMin = 5),
             clock = { now },
             isLoopLive = { loopLive },
-            deliverToLoop = { text -> delivered += text },
-            wakeIdle = { text -> woke += text; wakeRoute },
+            deliverToLoop = { id, sev, text -> deliveredMonitorIds += id; deliveredSeverities += sev; delivered += text },
+            wakeIdle = { _, _, text -> woke += text; wakeRoute },
             onFloodStop = { floodStopped += it },
         )
     }
@@ -102,14 +104,38 @@ class MonitorManagerTest {
             config = MonitorConfig(coalesceWindowMs = 100, wakeBudgetPerMonitor = 1, floodThresholdPerMin = 5),
             clock = { h.now },
             isLoopLive = { h.loopLive },
-            deliverToLoop = { text -> h.delivered += text },
-            wakeIdle = { text -> h.woke += text; h.wakeRoute },
+            deliverToLoop = { _, _, text -> h.delivered += text },
+            wakeIdle = { _, _, text -> h.woke += text; h.wakeRoute },
         )
         h.loopLive = false
         mgr.onEvent(MonitorEvent("m1", Severity.ALERT, "e0"))
         h.now = 200; mgr.flushDue()
         assertEquals(1, h.woke.size)
         assertEquals(true, mgr.isDormant("m1"))
+    }
+
+    // ── callback-widening contract tests ─────────────────────────────────────
+
+    @Test
+    fun `deliverToLoop receives monitorId and NOTABLE severity for a batch with no ALERT events`() {
+        val h = Harness(); h.loopLive = true
+        h.mgr.onEvent(MonitorEvent("mon-x", Severity.NOTABLE, "a"))
+        h.mgr.onEvent(MonitorEvent("mon-x", Severity.INFO, "b"))
+        h.now = 200; h.mgr.flushDue()
+        assertEquals(1, h.delivered.size)
+        assertEquals("mon-x", h.deliveredMonitorIds[0])
+        assertEquals(Severity.NOTABLE, h.deliveredSeverities[0])
+    }
+
+    @Test
+    fun `deliverToLoop receives ALERT severity when any event in the batch is ALERT`() {
+        val h = Harness(); h.loopLive = true
+        h.mgr.onEvent(MonitorEvent("mon-y", Severity.NOTABLE, "first"))
+        h.mgr.onEvent(MonitorEvent("mon-y", Severity.ALERT, "critical"))
+        h.now = 200; h.mgr.flushDue()
+        assertEquals(1, h.delivered.size)
+        assertEquals("mon-y", h.deliveredMonitorIds[0])
+        assertEquals(Severity.ALERT, h.deliveredSeverities[0])
     }
 
     // ── markAllDormant tests ─────────────────────────────────────────────────

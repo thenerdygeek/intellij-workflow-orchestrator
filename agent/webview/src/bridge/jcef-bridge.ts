@@ -14,6 +14,31 @@ import { updateChartById } from '../components/rich/chartUtils';
 // Gate all debug logging behind this flag — eliminated in production builds.
 const BRIDGE_DEBUG = import.meta.env?.MODE !== 'production';
 
+/**
+ * Coerce a Kotlin-bridge snapshot argument to an array.
+ *
+ * Kotlin calls `__receiveBackgroundUpdate`, `__receiveMonitorUpdate`, and the
+ * `_loadBackgroundSnapshot` / `_loadMonitorSnapshot` hydration `.then` callbacks
+ * with a JSON STRING (serialised via `JsEscape.toJsString`), not a parsed array.
+ * `Array.isArray(string)` is always `false`, so the old guards were always
+ * falling through to `[]`.  This helper handles all three valid shapes:
+ *   - already-parsed array  → returned as-is
+ *   - JSON array string     → parsed and returned
+ *   - anything else         → [] (non-array JSON / malformed JSON / null / undefined)
+ */
+export function coerceSnapshotArray(arg: unknown): any[] {
+  if (Array.isArray(arg)) return arg;
+  if (typeof arg === 'string' && arg.length > 0) {
+    try {
+      const parsed = JSON.parse(arg);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 // Zustand store accessors — set by initBridge() after stores are created
 type StoreAccessors = {
   getChatStore: () => any;
@@ -1005,9 +1030,10 @@ export function initBridge(storeAccessors: StoreAccessors): void {
 
   // Background process push (Phase 7, Task 7.3) — called by Kotlin via EventBus push
   // when BackgroundProcessPool emits a state change for the current session.
+  // Kotlin delivers the snapshot as a JSON STRING (via JsEscape.toJsString); use
+  // coerceSnapshotArray() to handle both the string and already-parsed-array shapes.
   window.__receiveBackgroundUpdate = (snapshot: any) => {
-    const parsed = Array.isArray(snapshot) ? snapshot : [];
-    stores?.getChatStore().setBackgroundProcesses(parsed);
+    stores?.getChatStore().setBackgroundProcesses(coerceSnapshotArray(snapshot));
   };
 
   // Initial hydration: load background processes for the current session on mount.
@@ -1017,22 +1043,25 @@ export function initBridge(storeAccessors: StoreAccessors): void {
     // No session ID in the store — Kotlin knows the active session; call with empty
     // string as the sentinel for "current session". The Kotlin handler ignores the
     // parameter and returns the pool snapshot for the active session.
+    // The promise resolves with a JSON string (Kotlin returns String); parse it.
     window._loadBackgroundSnapshot('').then((snap: any) => {
-      stores?.getChatStore().setBackgroundProcesses(snap || []);
+      stores?.getChatStore().setBackgroundProcesses(coerceSnapshotArray(snap));
     }).catch(() => { /* pool may not be ready yet — ignore */ });
   }
 
   // Monitor push (Task 6G) — called by Kotlin via EventBus push
   // when MonitorPool emits a state change for the current session.
+  // Kotlin delivers the snapshot as a JSON STRING (via JsEscape.toJsString); use
+  // coerceSnapshotArray() to handle both the string and already-parsed-array shapes.
   window.__receiveMonitorUpdate = (snapshot: any) => {
-    const parsed = Array.isArray(snapshot) ? snapshot : [];
-    stores?.getChatStore().setMonitorHandles(parsed);
+    stores?.getChatStore().setMonitorHandles(coerceSnapshotArray(snapshot));
   };
 
   // Initial hydration: load monitors for the current session on mount.
+  // The promise resolves with a JSON string (Kotlin returns String); parse it.
   if (window._loadMonitorSnapshot) {
     window._loadMonitorSnapshot('').then((snap: any) => {
-      stores?.getChatStore().setMonitorHandles(snap || []);
+      stores?.getChatStore().setMonitorHandles(coerceSnapshotArray(snap));
     }).catch(() => { /* pool may not be ready yet — ignore */ });
   }
 
@@ -1188,6 +1217,15 @@ export function initBridge(storeAccessors: StoreAccessors): void {
         .appendDelegatedResult(p.delegatorRepo, p.status, p.durationSeconds ?? 0, p.summary ?? '', p.reason ?? null);
     } catch (e) {
       console.error('[bridge] _appendDelegatedResult: bad payload', e);
+    }
+  };
+
+  window._pushAsyncEventCard = (json: string) => {
+    try {
+      const card = JSON.parse(json);
+      stores?.getChatStore().addAsyncEventCard(card);
+    } catch (e) {
+      console.error('[bridge] _pushAsyncEventCard: bad payload', e);
     }
   };
 }

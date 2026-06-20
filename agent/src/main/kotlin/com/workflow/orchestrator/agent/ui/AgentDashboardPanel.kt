@@ -906,6 +906,15 @@ class AgentDashboardPanel(
     }
 
     /**
+     * Live-push an async-event card (background completion or monitor event) into the
+     * viewed session's chat timeline. Mirrors [receiveBackgroundUpdate] pattern.
+     */
+    fun pushAsyncEventCard(cardJson: String) {
+        runOnEdt { cefPanel?.pushAsyncEventCard(cardJson) }
+        broadcast(replay = false) { it.pushAsyncEventCard(cardJson) }
+    }
+
+    /**
      * Push a full background-process snapshot to the webview top-bar indicator.
      * Calls the `window.__receiveBackgroundUpdate` global registered in jcef-bridge.ts.
      */

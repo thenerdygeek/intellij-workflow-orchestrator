@@ -133,9 +133,9 @@ class SafeAutoWakeRouteTest {
     @Test
     fun `source pin - AgentService wires the live session id into the shared idleWaker`() {
         // The single shared IdleSessionWaker is used by BOTH cross-IDE delegation
-        // (enqueueNudgeForSession) and background-process completion
-        // (autoResumeForBackgroundCompletion), so wiring activeSessionId once protects both
-        // async-completion paths from hijacking a different live session.
+        // (enqueueNudgeForSession) and background-process completion (routed through the unified
+        // queue via enqueueToSession in BackgroundCompletionCoordinator), so wiring activeSessionId
+        // once protects both async-completion paths from hijacking a different live session.
         val source = java.nio.file.Files.readString(
             java.nio.file.Path.of("src/main/kotlin/com/workflow/orchestrator/agent/AgentService.kt")
         )
