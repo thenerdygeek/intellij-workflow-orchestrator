@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.psi
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.smartReadAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiManager
@@ -122,19 +122,19 @@ class FindReferencesTool(
             null
         }
 
-        val content = ReadAction.nonBlocking<String> {
+        val content = smartReadAction(project) {
             val scope = GlobalSearchScope.projectScope(project)
 
             // Resolve the search target via provider or fallback
             val searchTarget = resolveSearchTarget(project, symbol, resolvedFilePath, scope)
 
             if (searchTarget == null) {
-                return@nonBlocking "No symbol '$symbol' found in project"
+                return@smartReadAction "No symbol '$symbol' found in project"
             }
 
             val references = ReferencesSearch.search(searchTarget, scope).findAll()
             if (references.isEmpty()) {
-                return@nonBlocking "No references found for '$symbol'"
+                return@smartReadAction "No references found for '$symbol'"
             }
 
             val results = references.take(50).mapNotNull { ref ->
@@ -175,7 +175,7 @@ class FindReferencesTool(
             val header = "References to '$symbol' (${references.size} total):\n"
             val truncated = if (references.size > 50) "\n... (showing first 50 of ${references.size})" else ""
             header + results.joinToString("\n") + truncated
-        }.inSmartMode(project).executeSynchronously()
+        }
 
         val spilled = spillOrFormat(content, project)
         return ToolResult(
