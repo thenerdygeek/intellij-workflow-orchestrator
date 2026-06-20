@@ -193,6 +193,10 @@ class RunInspectionsTool : AgentTool {
                                 ))
                             }
                         }
+                    } catch (e: ProcessCanceledException) {
+                        throw e
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (_: Exception) {
                         // Some inspections may fail on certain file types — skip silently
                     }
