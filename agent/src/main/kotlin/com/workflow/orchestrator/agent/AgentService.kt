@@ -1588,6 +1588,13 @@ class AgentService(
          */
         sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
         /**
+         * Per-session command-prefix allowlist for "Approve all <prefix> this session".
+         * Mirrors [sessionApprovalStore]'s ownership/lifecycle but keyed on command prefixes;
+         * injected from the controller so prefix approvals persist across follow-up messages.
+         * Defaults to a fresh allowlist for backward compatibility (tests, sub-agents).
+         */
+        sessionCommandAllowlist: com.workflow.orchestrator.agent.loop.SessionCommandAllowlist = com.workflow.orchestrator.agent.loop.SessionCommandAllowlist(),
+        /**
          * Optional callback for sub-agent progress updates.
          * Streams sub-agent status (running/completed/failed) and tool calls to the dashboard.
          */
@@ -2171,6 +2178,8 @@ class AgentService(
                     spawnAgentTool.toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate"
                     spawnAgentTool.approvalGate = approvalGate
                     spawnAgentTool.sessionApprovalStore = sessionApprovalStore
+                    spawnAgentTool.sessionCommandAllowlist = sessionCommandAllowlist
+                    spawnAgentTool.autoApproveSafeCommands = agentSettings.state.autoApproveSafeCommands
                     spawnAgentTool.hookManager = hookManager
                     spawnAgentTool.sessionMetrics = sessionMetrics
                     spawnAgentTool.fileLogger = fileLogger
@@ -2397,6 +2406,8 @@ class AgentService(
                     pendingChannelImageRefs = pendingChannelImageRefs,
                     approvalGate = approvalGate,
                     sessionApprovalStore = sessionApprovalStore,
+                    autoApproveSafeCommands = agentSettings.state.autoApproveSafeCommands,
+                    sessionCommandAllowlist = sessionCommandAllowlist,
                     onDebugLog = onDebugLog,
                     onRetry = onRetry,
                     onCompactionState = onCompactionState,
@@ -2691,6 +2702,7 @@ class AgentService(
         onSessionStarted: ((sessionId: String) -> Unit)? = null,
         onSteeringDrained: ((drainedIds: List<String>) -> Unit)? = null,
         sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore = com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
+        sessionCommandAllowlist: com.workflow.orchestrator.agent.loop.SessionCommandAllowlist = com.workflow.orchestrator.agent.loop.SessionCommandAllowlist(),
         onAwaitingUserInput: ((reason: String) -> Unit)? = null,
         onUserInputReceived: ((task: String) -> com.workflow.orchestrator.agent.session.UiMessage?)? = null,
         streamingEditCallback: com.workflow.orchestrator.agent.loop.StreamingEditCallback? = null,
@@ -3066,6 +3078,10 @@ class AgentService(
                 onSessionStarted = onSessionStarted,
                 onSteeringDrained = onSteeringDrained,
                 sessionApprovalStore = sessionApprovalStore,
+                // resumeSession delegates to executeTask (the single AgentLoop build); thread the
+                // command allowlist through so prefix approvals survive a resume. autoApproveSafeCommands
+                // is read from settings inside executeTask, so it needs no separate pass here.
+                sessionCommandAllowlist = sessionCommandAllowlist,
                 onAwaitingUserInput = onAwaitingUserInput,
                 onUserInputReceived = onUserInputReceived,
                 streamingEditCallback = streamingEditCallback,
