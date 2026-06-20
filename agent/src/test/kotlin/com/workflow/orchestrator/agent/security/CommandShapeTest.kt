@@ -63,6 +63,21 @@ class CommandShapeTest {
         assertNull(CommandShape.derivePrefix("git status > out"))
     }
 
+    @Test fun `derivePrefix uses verb for multi-verb tool with subcommand`() {
+        assertEquals("./gradlew clean", CommandShape.derivePrefix("./gradlew clean build"))
+    }
+
+    @Test fun `path-prefixed interpreters and structural patterns are rejected`() {
+        // Fix 1: path-prefixed shell and code interpreters must be rejected
+        assertFalse(CommandShape.isAutoApprovable("echo x | /bin/bash"))
+        assertFalse(CommandShape.isAutoApprovable("/usr/bin/python -c \"x\""))
+        // Lock-in: structural patterns already correct but now explicitly tested
+        assertFalse(CommandShape.isAutoApprovable("git status &> out.txt"))
+        assertFalse(CommandShape.isAutoApprovable("bash <<< \"cmd\""))
+        assertFalse(CommandShape.isAutoApprovable("sort <(cat f1)"))
+        assertFalse(CommandShape.isAutoApprovable("tee >(wc -l)"))
+    }
+
     // ── coveringPrefixes ──
     @Test fun `coveringPrefixes token-boundary matches and requires all sub-commands`() {
         val allow = setOf("git add", "git status")
