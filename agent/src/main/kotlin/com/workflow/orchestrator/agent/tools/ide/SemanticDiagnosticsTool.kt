@@ -53,7 +53,14 @@ class SemanticDiagnosticsTool(
 
     override fun documentation(): ToolDocumentation = toolDoc("diagnostics") {
         summary {
-            technical("Single-file semantic diagnostics via the registered LanguageIntelligenceProvider — runs PSI traversal under ReadAction.nonBlocking().inSmartMode() to surface compile errors, unresolved references, type mismatches, and PsiErrorElements; optional start_line/end_line scopes the result to an edit range; full structured DiagnosticEntry list spills to disk above 30K, prose preview (head 20) stays inline.")
+            technical(
+                "Single-file semantic diagnostics via the registered LanguageIntelligenceProvider — " +
+                    "runs PSI traversal under smartReadAction(project) with a leading " +
+                    "ProgressManager.checkCanceled() guard so the walk is coroutine-cancellation-aware; " +
+                    "surfaces compile errors, unresolved references, type mismatches, and PsiErrorElements; " +
+                    "optional start_line/end_line scopes the result to an edit range; full structured " +
+                    "DiagnosticEntry list spills to disk above 30K, prose preview (head 20) stays inline.",
+            )
             plain("Like the squiggly red and yellow underlines in your IDE — but as a structured list the agent can read. Tells the LLM exactly which lines have errors, what's broken, and at what severity, without it having to spawn a Maven or Gradle build.")
         }
         whatLLMSees(description)
@@ -140,7 +147,7 @@ class SemanticDiagnosticsTool(
      * 5. **PSI parse failure** (`PsiManager.findFile` returns null) — VFS
      *    entry exists but IntelliJ cannot build a PSI tree for it (e.g.
      *    unsupported file extension). Emits `"Cannot parse: $path"`.
-     * 6. **PSI invalidation mid-analysis** — the `ReadAction.nonBlocking`
+     * 6. **PSI invalidation mid-analysis** — the `smartReadAction(project)`
      *    lambda returns `null` when `!psiFile.isValid`; the outer
      *    `result ?: …` fallback surfaces this as
      *    `"PSI file became invalid during analysis."`

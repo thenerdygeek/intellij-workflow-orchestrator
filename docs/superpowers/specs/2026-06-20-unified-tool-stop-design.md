@@ -210,11 +210,20 @@ Each child sub-agent (single **and** parallel fan-out) renders its own `SubAgent
 
 Coroutine cancellation is **cooperative**. Several tools do truly *blocking*, non-suspending work, so a coroutine cancel only *abandons the result* — the underlying work keeps running (CPU or a pinned DB connection) until it finishes or hits its own timeout. Returning "Stopped by user" while work continues would be misleading and leak resources. Wire real cancel hooks for the two common blocking patterns:
 
-| Tool(s) | Blocking pattern (evidence) | Hard-cancel hook |
+| Tool(s) | Blocking pattern (evidence) | Hard-cancel hook (as shipped) |
 |---|---|---|
-| `find_references` (`FindReferencesTool.kt:135,:178`), `find_definition`, `run_inspections` (`RunInspectionsTool.kt:166–172,:233`), `diagnostics` | `ReadAction.nonBlocking{…}.inSmartMode(project).executeSynchronously()` parks the thread; PSI walk runs to completion | Drive the read action with a `ProgressIndicator` tied to the per-call `callJob`; cancel the indicator on stop so `executeSynchronously()` aborts |
-| `db_query` (`DbQueryTool.kt`) | JDBC `stmt.executeQuery(sql)` inside `withContext(Dispatchers.IO)` is blocking; cancel abandons the IO task but the query runs until `queryTimeout` | Hold the `Statement`; call `Statement.cancel()` on stop |
+| `find_references`, `find_definition` | `smartReadAction(project)` — coroutine-cancellation-aware suspend read action; the underlying `ReferencesSearch` / `findSymbol` walks honour cooperative cancellation | The `smartReadAction` wrapper itself is the hook; coroutine cancel propagates into the platform read-action and abandons promptly. |
+| `run_inspections`, `diagnostics` (+ `JavaKotlinProvider`/`PythonProvider.getDiagnostics`) | `smartReadAction(project)` with per-element `ProgressManager.checkCanceled()` calls inserted in PSI visitor walks | `ProgressManager.checkCanceled()` at each element boundary translates a coroutine cancel into a `ProcessCanceledException` that unwinds the visitor walk; no separate `ProgressIndicator` wiring required. |
+| `db_query` (`DbQueryTool.kt`) | JDBC `stmt.executeQuery(sql)` inside `withContext(Dispatchers.IO)` is blocking; coroutine cancel abandons the IO task but the query runs until `queryTimeout` on the DB side | `callJob?.invokeOnCompletion { cause -> if (cause is CancellationException) runCatching { stmt.cancel() } }` — wired before `stmt.executeQuery` so a coroutine cancel also sends a JDBC `Statement.cancel()` to interrupt the in-flight query. |
 | `web_fetch` (`WebFetchTool.kt`) | OkHttp `.execute()` inside `withContext(Dispatchers.IO)`, re-throws `CancellationException` | Already cooperative — coroutine cancel abandons promptly. No extra hook. |
+
+> **Implementation note:** The original design anticipated manually wiring a `ProgressIndicator`
+> to the per-call `callJob` and driving `ReadAction.nonBlocking().inSmartMode(project).executeSynchronously()`.
+> The shipped implementation used the higher-level `smartReadAction(project)` suspend extension
+> (introduced in IntelliJ Platform 2023.1+), which is coroutine-cancellation-aware by construction,
+> combined with per-element `ProgressManager.checkCanceled()` in PSI visitor walks for the
+> inspection/diagnostics tools. The `db_query` hook uses `invokeOnCompletion` → `Statement.cancel()`
+> rather than a `ProgressIndicator`. The intent is identical; only the platform mechanism differs.
 
 Add an opt-out hatch on the tool interface:
 
@@ -254,8 +263,9 @@ Build/verify: `./gradlew :agent:clean :agent:test --rerun --no-build-cache` (sus
 - `loop/AgentLoop.kt` — funnel wrapper (`coroutineScope` + register/unregister), discriminating `catch`, keep existing `finally` cleanup; `isUserStop`/`stoppedByUserResult` helpers (placed outside source-text-sliced ranges).
 - `ui/AgentController.kt:1115–1118` — rewire `setCefKillCallback` target to `ToolStopCoordinator.requestStop`.
 - `tools/AgentTool.kt` — add `interruptible: Boolean get() = true` (Phase 3).
-- `FindReferencesTool.kt` / `FindDefinitionTool.kt` / `RunInspectionsTool.kt` / `SemanticDiagnosticsTool.kt` — `ProgressIndicator` hook (Phase 3).
-- `DbQueryTool.kt` — `Statement.cancel()` hook (Phase 3).
+- `FindReferencesTool.kt` / `FindDefinitionTool.kt` — migrate to `smartReadAction(project)` (coroutine-cancellation-aware; replaces the originally planned `ProgressIndicator` wiring) (Phase 3).
+- `RunInspectionsTool.kt` / `SemanticDiagnosticsTool.kt` — `smartReadAction(project)` + per-element `ProgressManager.checkCanceled()` in PSI visitor walks (Phase 3).
+- `DbQueryTool.kt` — `invokeOnCompletion { stmt.cancel() }` hook (Phase 3; replaces `Statement.cancel()` via `ProgressIndicator`).
 - webview `components/agent/ToolCallChain.tsx` — generic Stop button + `{ask_user_input, agent}` suppression; vitest.
 - *(Phase 2 optional/defensive)* `tools/subagent/SubagentRunner.kt` — re-throw `CancellationException` in `runInternal`'s `catch`. **No `SubAgentRegistry`, no `SpawnAgentTool` change** — sub-agent stop reuses the existing `agentId`-keyed Kill path (§6).
 
@@ -263,5 +273,5 @@ Build/verify: `./gradlew :agent:clean :agent:test --rerun --no-build-cache` (sus
 
 1. **~~Sub-agent abort API~~ — RESOLVED 2026-06-20.** Verified against the code: `SpawnAgentTool.cancelAgent(agentId)` (`:701`) → `runner.abort()` (`SubagentRunner.kt:160`, sets `abortRequested` + `brain.cancelActiveRequest()`) and a complete `agentId`-keyed UI kill path already exist (`SubAgentView.tsx:152` → `killSubAgent` → `_killSubAgent` → `cancelAgent`). No `toolCallId → agentId` mapping is needed — Phase 2 reduces to suppressing the universal Stop button for `agent` (§6). The `SubagentRunner` `catch(Exception)` swallow is real but **not load-bearing** (the existing path sets `abortRequested` before the swallow runs).
 2. **run_command spawn-after-cancel TOCTOU** — between funnel `register` and the tool's `ProcessRegistry.register`, a Stop finds no process and falls back to coroutine cancel; if the process spawns *after*, it could orphan. Mitigation: process-precedence usually wins (process registers early); optionally have `RunCommandTool` check `callJob.isActive` around spawn. Low severity.
-3. **ProgressIndicator wiring** for `ReadAction.nonBlocking().executeSynchronously()` — confirm the indicator-cancel actually aborts the synchronous read action in this platform version. (Phase 3 — now the main genuine unknown.)
+3. **Phase 3 cancellation — RESOLVED.** Shipped with `smartReadAction(project)` (a coroutine-cancellation-aware suspend wrapper) + per-element `ProgressManager.checkCanceled()` for PSI visitor walks. The originally planned `ProgressIndicator` tie-in to `ReadAction.nonBlocking().executeSynchronously()` was superseded; no open unknowns remain for Phase 3.
 4. **Status double-collapse** — accepted for v1 (renders as `COMPLETED`); revisit only if a distinct badge is wanted (Phase 4).

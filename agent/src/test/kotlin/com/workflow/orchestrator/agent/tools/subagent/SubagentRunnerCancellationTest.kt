@@ -155,7 +155,7 @@ class SubagentRunnerCancellationTest {
      * [CancellationException]. The callback is set after the runner is constructed so it
      * can call [SubagentRunner.abort] on the runner, exercising the abort path that only
      * fires when [abortRequested] becomes true WHILE the brain is running (i.e. AFTER the
-     * early-abort guard at line 264 of SubagentRunner.kt, which this test must NOT hit).
+     * early-abort guard at the top of runInternal, which this test must NOT hit).
      */
     private class AbortingCancellationBrain : LlmBrain {
         override val modelId: String = "test-aborting-cancellation-brain"
@@ -193,16 +193,17 @@ class SubagentRunnerCancellationTest {
 
     @Test
     fun `abort mid-brain returns cancelled result via catch CancellationException block`() = runTest {
-        // This test exercises the ELSE branch of the new catch (CancellationException) block
-        // (SubagentRunner.kt ~line 490). The brain calls runner.abort() and then throws
-        // CancellationException — simulating a user abort that arrives while the LLM is
-        // streaming. At that point abortRequested == true, so the block must return a
-        // cancelled SubagentRunResult, NOT re-throw.
+        // This test exercises the ELSE branch of the catch(CancellationException) block.
+        // The brain calls runner.abort() and then throws CancellationException — simulating
+        // a user abort that arrives while the LLM is streaming. At that point
+        // abortRequested == true, so the block must return a cancelled SubagentRunResult,
+        // NOT re-throw.
         //
-        // Critical: abort() is called INSIDE the brain's chatStream(), i.e. AFTER the early
-        // abort guard at line 264 has already passed (abortRequested was false then). This
-        // is the only code path that the existing tests do NOT cover — test 2 above calls
-        // abort() BEFORE run(), so it hits the early guard and never reaches the new block.
+        // Critical: abort() is called INSIDE the brain's chatStream(), i.e. AFTER the
+        // early-abort guard at the top of runInternal has already passed (abortRequested
+        // was false then). This is the only code path that the existing tests do NOT cover
+        // — test 2 above calls abort() BEFORE run(), so it hits the early guard and never
+        // reaches the catch(CancellationException) block.
         val brain = AbortingCancellationBrain()
         val runner = createRunner(brain)
 

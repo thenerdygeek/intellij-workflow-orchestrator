@@ -50,7 +50,16 @@ class RunInspectionsTool : AgentTool {
 
     override fun documentation(): ToolDocumentation = toolDoc("run_inspections") {
         summary {
-            technical("File-scoped IntelliJ inspection sweep via the active project inspection profile — iterates LocalInspectionToolWrapper entries gated by profile.isToolEnabled(), runs each tool's buildVisitor+PsiRecursiveElementWalkingVisitor walk under ReadAction.nonBlocking().inSmartMode(), collects ProblemDescriptors, applies an optional minimum-severity filter, builds structured DiagnosticEntry list (head-20 prose preview inline, full JSON spills to disk above 30K via ToolOutputSpiller), and returns isError=false even when problems are found.")
+            technical(
+                "File-scoped IntelliJ inspection sweep via the active project inspection profile — " +
+                    "iterates LocalInspectionToolWrapper entries gated by profile.isToolEnabled(), " +
+                    "runs each tool's buildVisitor+PsiRecursiveElementWalkingVisitor walk under " +
+                    "smartReadAction(project) with per-element ProgressManager.checkCanceled() so " +
+                    "the walk is coroutine-cancellation-aware, collects ProblemDescriptors, applies " +
+                    "an optional minimum-severity filter, builds structured DiagnosticEntry list " +
+                    "(head-20 prose preview inline, full JSON spills to disk above 30K via " +
+                    "ToolOutputSpiller), and returns isError=false even when problems are found.",
+            )
             plain("Like running the IntelliJ 'Inspect Code' command on a single file and getting back a list of every warning and error the IDE can see — unused variables, null-safety issues, Spring misconfigurations, performance hints, deprecations — all scoped to the file you're working on, without launching a full build.")
         }
         whatLLMSees(description)

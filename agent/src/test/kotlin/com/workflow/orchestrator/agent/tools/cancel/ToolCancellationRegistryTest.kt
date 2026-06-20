@@ -44,6 +44,8 @@ class ToolCancellationRegistryTest {
             ce is UserStopCancellationException || ce.cause is UserStopCancellationException,
             "cancellation cause must be (or wrap) UserStopCancellationException, was $ce",
         )
+        // cancel() removes the entry — must no longer be active
+        assertFalse(ToolCancellationRegistry.isActive("t2"))
         // second cancel finds nothing
         assertFalse(ToolCancellationRegistry.cancel("t2"))
     }

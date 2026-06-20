@@ -495,6 +495,9 @@ class SubagentRunner(
             // CancellationException — return the cancelled result here in THIS block rather
             // than re-throwing. Non-cancellation failures are handled in the separate
             // catch (e: Exception) block below.
+            // No textBatcher?.flush() here — deliberate. An aborted sub-agent's
+            // batched tail prose is intentionally dropped; flushing would deliver
+            // a partial/misleading trailing chunk to the UI after the abort card.
             textBatcher?.dispose()
             if (!abortRequested.get()) throw e
             // abortRequested is true: fall through to return the cancelled result below.
