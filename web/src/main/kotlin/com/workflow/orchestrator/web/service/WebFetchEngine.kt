@@ -19,12 +19,15 @@ import com.workflow.orchestrator.web.audit.WebAuditRecord
 import com.workflow.orchestrator.web.service.sanitizer.JsoupReadability
 import com.workflow.orchestrator.web.service.sanitizer.SanitizerSubagent
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import kotlin.coroutines.cancellation.CancellationException
 import java.time.Instant
 import java.util.UUID
 
@@ -483,6 +486,7 @@ class WebFetchEngine(
         callClient: OkHttpClient,
     ): Response {
         var url = initialUrl
+        val callJob = currentCoroutineContext()[Job]
         repeat(3) { _ ->
             val req = Request.Builder()
                 .url(url)
@@ -490,7 +494,20 @@ class WebFetchEngine(
                 .header("Accept", ACCEPT)
                 .header("X-Web-Tool-CorrelationId", correlationId)
                 .build()
-            val resp = withContext(Dispatchers.IO) { callClient.newCall(req).execute() }
+            // Fix C — graceful tool-stop: capture the OkHttp Call before executing so we can
+            // cancel it (close the socket) when the coroutine is cancelled. Without this, a
+            // stopped web_fetch would abandon the in-flight TCP connection until OkHttp's own
+            // read timeout fires. Call.cancel() is OkHttp-thread-safe and immediately aborts
+            // both the initial execute() and any in-progress body read on the same Call.
+            val call = callClient.newCall(req)
+            val cancelHook = callJob?.invokeOnCompletion { cause ->
+                if (cause is CancellationException) runCatching { call.cancel() }
+            }
+            val resp = try {
+                withContext(Dispatchers.IO) { call.execute() }
+            } finally {
+                cancelHook?.dispose()
+            }
             val loc = resp.header("Location")
             if (resp.code !in 300..399 || loc == null) {
                 // Not a redirect — return this response to caller

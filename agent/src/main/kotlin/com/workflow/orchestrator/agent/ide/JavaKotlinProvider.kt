@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.ide
 
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.*
@@ -646,6 +647,7 @@ class JavaKotlinProvider(private val project: Project) : LanguageIntelligencePro
         val unresolvedSeen = mutableSetOf<String>()
         file.accept(object : PsiRecursiveElementWalkingVisitor() {
             override fun visitElement(element: PsiElement) {
+                ProgressManager.checkCanceled()
                 if (element is PsiComment) return
                 if (element is PsiLiteralExpression && element.value is String) return
 

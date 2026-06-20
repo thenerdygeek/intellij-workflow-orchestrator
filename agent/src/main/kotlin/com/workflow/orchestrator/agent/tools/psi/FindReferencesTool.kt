@@ -1,6 +1,6 @@
 package com.workflow.orchestrator.agent.tools.psi
 
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.smartReadAction
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiManager
@@ -39,7 +39,14 @@ class FindReferencesTool(
 
     override fun documentation(): ToolDocumentation = toolDoc("find_references") {
         summary {
-            technical("PSI find-usages for a class, method, or field — resolves the symbol to a `PsiElement` (provider `findSymbol` first, `PsiShortNamesCache` fallback), then runs `ReferencesSearch.search(target, projectScope).findAll()` and emits `path:line  <line text>` rows (or `>>>`-marked context blocks when `context_lines > 0`); capped at the first 50 hits with a count footer.")
+            technical(
+                "PSI find-usages for a class, method, or field — resolves the symbol to a " +
+                    "`PsiElement` (provider `findSymbol` first, `PsiShortNamesCache` fallback), " +
+                    "then runs `ReferencesSearch.search(target, projectScope).findAll()` inside " +
+                    "`smartReadAction(project)` so the search is coroutine-cancellation-aware, " +
+                    "and emits `path:line  <line text>` rows (or `>>>`-marked context blocks " +
+                    "when `context_lines > 0`); capped at the first 50 hits with a count footer.",
+            )
             plain("The agent's 'Find Usages' (Cmd-Click → Find Usages in IntelliJ). Hand it a symbol name and it returns every place that symbol is read, called, or referenced — same index-backed search the IDE shows in the Usages tool window, just textual output instead of a tree view.")
         }
         whatLLMSees(description)
@@ -50,7 +57,12 @@ class FindReferencesTool(
         llmMistake("Confuses the result with `find_definition` output — find_references returns USAGES (excluding the declaration itself, which lives elsewhere in the index), so the LLM sometimes claims 'this method has no callers' when the result is empty, when really the method IS the only thing named `foo` and just isn't called yet. Use find_definition first to confirm the target exists before drawing 'unused' conclusions.")
         llmMistake("Searches an overloaded method by bare name without the `file` hint — the resolver hits `PsiShortNamesCache.getMethodsByName(symbol).firstOrNull()`, which picks WHICHEVER overload the cache returns first. References for the wrong overload come back, and the LLM treats them as canonical. Pass `file` to scope the lookup to the declaring file.")
         llmMistake("Calls find_references in a pure-Python project without passing `file` — the no-file-context path now iterates all registered providers via `registry.allProviders()`, so `PythonProvider` is found correctly even when no Java plugin is loaded. Passing `file` still provides the most reliable file-scoped disambiguation, but is no longer required for basic symbol resolution in Python projects.")
-        llmMistake("Calls find_references during indexing — gets a dumb-mode error from `PsiToolUtils.isDumb(project)` and immediately retries without backoff. No internal wait/retry; the LLM should pause one tool-call cycle or fall back to `search_code`.")
+        llmMistake(
+            "Calls find_references during indexing — `smartReadAction(project)` suspends until smart mode, " +
+                "but if the entire IDE is in dumb mode for an extended period the call may time out. " +
+                "No internal wait/retry beyond the platform suspension; the LLM should pause one " +
+                "tool-call cycle or fall back to `search_code` when indexing is actively in progress.",
+        )
         llmMistake("Sets `context_lines` higher than 3 expecting more context — the value is silently coerced to `0..3` by `coerceIn(0, 3)`. Asking for `context_lines=10` returns the same output as `context_lines=3`, which can mislead the LLM into thinking it's seeing the full surrounding block.")
         llmMistake("Treats the 50-result cap as the true count — output truncation appends `... (showing first 50 of N)` only when `references.size > 50`, but the LLM sometimes drops the footer when summarising and reports '50 references' as the total. The header line `References to '<symbol>' (N total)` is the authoritative count.")
         params {
@@ -100,7 +112,12 @@ class FindReferencesTool(
         downside("Hard 50-result cap with no pagination, sort key, or filter — `references.take(50)` truncates without sorting by file path, line number, or relevance. For a method called 200+ times across the codebase, the LLM sees an arbitrary slice of the first 50 in iteration order and can't widen the search. Workaround: pass a more specific symbol or use `file` to scope, then re-query for the remainder.")
         downside("Does NOT separate import-statement references from real call/use references — `ReferencesSearch.search` returns import references alongside actual usages. For Java/Kotlin classes with many imports and few real call sites, the result is dominated by import lines. The LLM has to filter visually. Workaround: ask the LLM to grep for the symbol name in the result lines, ignoring lines starting with `import`.")
         downside("Slow on large codebases — `ReferencesSearch.findAll()` is index-backed but still walks every file in `GlobalSearchScope.projectScope`. For symbols in large monorepos, expect multi-second latencies; the 120s default tool timeout can be hit on pathological symbols (every PSI element named `equals` / `hashCode` / `toString`).")
-        downside("Requires indexing to be complete — `PsiToolUtils.isDumb(project)` guard at entry returns immediately with a dumb-mode error if indexing is in progress; the `inSmartMode(project)` on the read-action only defers WITHIN the action, not the entry check. LLM gets a hard fail and has to retry.")
+        downside(
+            "Requires indexing to be complete — `smartReadAction(project)` suspends until smart " +
+                "mode, but the underlying `ReferencesSearch` APIs are index-dependent. If the IDE is " +
+                "in a prolonged dumb-mode period the call may time out at the tool's timeout boundary. " +
+                "LLM should retry after a pause when indexing finishes.",
+        )
         downside("File-scoped resolution's class-walk fallback (in `resolveSearchTarget`) only runs for `PsiJavaFile` — Kotlin files, Python files, and any other language with `file` set fall through to the global path even when file-scoped resolution should narrow them. Disambiguation via `file` is therefore most reliable for Java sources.")
         downside("Top-level Kotlin functions / extension functions are not findable by bare name in the no-file-context path — `findSymbol` walks `PsiShortNamesCache.getMethodsByName`, which indexes class members only. Workaround: pass `file` pointing at the containing `.kt` file, which uses provider resolution.")
         observation("Hardcoded-fallback bug is now fixed in both find_references and find_definition — both now use `registry.allProviders().firstNotNullOfOrNull` for the no-file-context path. Fixed together in the same commit; consistent with find_implementations, call_hierarchy, and type_hierarchy.")
@@ -122,19 +139,19 @@ class FindReferencesTool(
             null
         }
 
-        val content = ReadAction.nonBlocking<String> {
+        val content = smartReadAction(project) {
             val scope = GlobalSearchScope.projectScope(project)
 
             // Resolve the search target via provider or fallback
             val searchTarget = resolveSearchTarget(project, symbol, resolvedFilePath, scope)
 
             if (searchTarget == null) {
-                return@nonBlocking "No symbol '$symbol' found in project"
+                return@smartReadAction "No symbol '$symbol' found in project"
             }
 
             val references = ReferencesSearch.search(searchTarget, scope).findAll()
             if (references.isEmpty()) {
-                return@nonBlocking "No references found for '$symbol'"
+                return@smartReadAction "No references found for '$symbol'"
             }
 
             val results = references.take(50).mapNotNull { ref ->
@@ -175,7 +192,7 @@ class FindReferencesTool(
             val header = "References to '$symbol' (${references.size} total):\n"
             val truncated = if (references.size > 50) "\n... (showing first 50 of ${references.size})" else ""
             header + results.joinToString("\n") + truncated
-        }.inSmartMode(project).executeSynchronously()
+        }
 
         val spilled = spillOrFormat(content, project)
         return ToolResult(

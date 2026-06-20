@@ -5,11 +5,14 @@ import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import com.workflow.orchestrator.core.web.SearchProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * [SearchProvider] backed by a self-hosted SearXNG instance.
@@ -59,8 +62,11 @@ class SearXNGProvider(
         }
     }
 
-    override suspend fun search(query: String, maxResults: Int): Result<List<SearchProvider.RawHit>> =
-        withContext(Dispatchers.IO) {
+    override suspend fun search(query: String, maxResults: Int): Result<List<SearchProvider.RawHit>> {
+        // Fix C (web_search) — capture the Job BEFORE entering withContext so the cancel hook
+        // can close the OkHttp socket immediately when the coroutine is stopped.
+        val callJob = currentCoroutineContext()[Job]
+        return withContext(Dispatchers.IO) {
             try {
                 val encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8)
                 val url = "$baseUrl/search?q=$encodedQuery&format=json&safesearch=1&categories=general"
@@ -70,48 +76,57 @@ class SearXNGProvider(
                     .get()
                     .build()
 
-                client.newCall(request).execute().use { response ->
-                    if (response.code == 401) {
-                        return@withContext Result.failure(
-                            IllegalStateException("PROVIDER_AUTH_FAILED")
-                        )
-                    }
-                    if (!response.isSuccessful) {
-                        return@withContext Result.failure(
-                            IllegalStateException("SearXNG returned HTTP ${response.code}")
-                        )
-                    }
-
-                    val body = readBodyCapped(response) ?: ""
-                    val parsed = try {
-                        responseAdapter.fromJson(body)
-                    } catch (_: Exception) {
-                        null
-                    }
-
-                    if (parsed == null) {
-                        return@withContext Result.failure(
-                            IllegalStateException("PROVIDER_MALFORMED_RESPONSE")
-                        )
-                    }
-
-                    val hits = parsed.results
-                        .take(maxResults)
-                        .mapIndexed { index, item ->
-                            SearchProvider.RawHit(
-                                title = item.title,
-                                url = item.url,
-                                snippet = item.content,
-                                rank = index,
+                val call = client.newCall(request)
+                val cancelHook = callJob?.invokeOnCompletion { cause ->
+                    if (cause is CancellationException) runCatching { call.cancel() }
+                }
+                try {
+                    call.execute().use { response ->
+                        if (response.code == 401) {
+                            return@withContext Result.failure(
+                                IllegalStateException("PROVIDER_AUTH_FAILED")
                             )
                         }
-                    Result.success(hits)
+                        if (!response.isSuccessful) {
+                            return@withContext Result.failure(
+                                IllegalStateException("SearXNG returned HTTP ${response.code}")
+                            )
+                        }
+
+                        val body = readBodyCapped(response) ?: ""
+                        val parsed = try {
+                            responseAdapter.fromJson(body)
+                        } catch (_: Exception) {
+                            null
+                        }
+
+                        if (parsed == null) {
+                            return@withContext Result.failure(
+                                IllegalStateException("PROVIDER_MALFORMED_RESPONSE")
+                            )
+                        }
+
+                        val hits = parsed.results
+                            .take(maxResults)
+                            .mapIndexed { index, item ->
+                                SearchProvider.RawHit(
+                                    title = item.title,
+                                    url = item.url,
+                                    snippet = item.content,
+                                    rank = index,
+                                )
+                            }
+                        Result.success(hits)
+                    }
+                } finally {
+                    cancelHook?.dispose()
                 }
-            } catch (e: kotlinx.coroutines.CancellationException) {
+            } catch (e: CancellationException) {
                 // I13 — re-throw, never swallow. Per agent/CLAUDE.md contract.
                 throw e
             } catch (e: Exception) {
                 Result.failure(e)
             }
         }
+    }
 }

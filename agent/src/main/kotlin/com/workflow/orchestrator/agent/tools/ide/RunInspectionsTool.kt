@@ -4,8 +4,11 @@ import com.intellij.codeInspection.InspectionManager
 import com.intellij.codeInspection.ProblemsHolder
 import com.intellij.codeInspection.ex.LocalInspectionToolWrapper
 import com.intellij.codeInsight.daemon.HighlightDisplayKey
-import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.application.smartReadAction
+import com.intellij.openapi.progress.ProcessCanceledException
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.DumbService
+import kotlin.coroutines.cancellation.CancellationException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.profile.codeInspection.InspectionProjectProfileManager
@@ -47,7 +50,16 @@ class RunInspectionsTool : AgentTool {
 
     override fun documentation(): ToolDocumentation = toolDoc("run_inspections") {
         summary {
-            technical("File-scoped IntelliJ inspection sweep via the active project inspection profile — iterates LocalInspectionToolWrapper entries gated by profile.isToolEnabled(), runs each tool's buildVisitor+PsiRecursiveElementWalkingVisitor walk under ReadAction.nonBlocking().inSmartMode(), collects ProblemDescriptors, applies an optional minimum-severity filter, builds structured DiagnosticEntry list (head-20 prose preview inline, full JSON spills to disk above 30K via ToolOutputSpiller), and returns isError=false even when problems are found.")
+            technical(
+                "File-scoped IntelliJ inspection sweep via the active project inspection profile — " +
+                    "iterates LocalInspectionToolWrapper entries gated by profile.isToolEnabled(), " +
+                    "runs each tool's buildVisitor+PsiRecursiveElementWalkingVisitor walk under " +
+                    "smartReadAction(project) with per-element ProgressManager.checkCanceled() so " +
+                    "the walk is coroutine-cancellation-aware, collects ProblemDescriptors, applies " +
+                    "an optional minimum-severity filter, builds structured DiagnosticEntry list " +
+                    "(head-20 prose preview inline, full JSON spills to disk above 30K via " +
+                    "ToolOutputSpiller), and returns isError=false even when problems are found.",
+            )
             plain("Like running the IntelliJ 'Inspect Code' command on a single file and getting back a list of every warning and error the IDE can see — unused variables, null-safety issues, Spring misconfigurations, performance hints, deprecations — all scoped to the file you're working on, without launching a full build.")
         }
         whatLLMSees(description)
@@ -135,12 +147,12 @@ class RunInspectionsTool : AgentTool {
         }
 
         return try {
-            val result = ReadAction.nonBlocking<ToolResult?> {
+            val result = smartReadAction(project) {
                 val vf = LocalFileSystem.getInstance().findFileByIoFile(java.io.File(path!!))
-                    ?: return@nonBlocking ToolResult("File not found: $path", "Not found", 5, isError = true)
+                    ?: return@smartReadAction ToolResult("File not found: $path", "Not found", 5, isError = true)
                 val psiFile = PsiManager.getInstance(project).findFile(vf)
-                    ?: return@nonBlocking ToolResult("Cannot parse: $path", "Parse error", 5, isError = true)
-                if (!psiFile.isValid) return@nonBlocking null
+                    ?: return@smartReadAction ToolResult("Cannot parse: $path", "Parse error", 5, isError = true)
+                if (!psiFile.isValid) return@smartReadAction null
 
                 val profile = InspectionProjectProfileManager.getInstance(project).currentProfile
                 val inspectionManager = InspectionManager.getInstance(project)
@@ -166,6 +178,7 @@ class RunInspectionsTool : AgentTool {
                         val visitor = tool.buildVisitor(holder, false)
                         psiFile.accept(object : PsiRecursiveElementWalkingVisitor() {
                             override fun visitElement(element: PsiElement) {
+                                ProgressManager.checkCanceled()
                                 element.accept(visitor)
                                 super.visitElement(element)
                             }
@@ -189,6 +202,10 @@ class RunInspectionsTool : AgentTool {
                                 ))
                             }
                         }
+                    } catch (e: ProcessCanceledException) {
+                        throw e
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (_: Exception) {
                         // Some inspections may fail on certain file types — skip silently
                     }
@@ -230,7 +247,7 @@ class RunInspectionsTool : AgentTool {
                     // Phase 7: outer coroutine will call spillOrFormat on the full body.
                     ToolResult(content, "${allProblems.size} problems", TokenEstimator.estimate(content))
                 }
-            }.inSmartMode(project).executeSynchronously()
+            }
 
             if (result == null) {
                 return ToolResult("PSI file became invalid during analysis.", "Invalid", 5, isError = true)
@@ -255,6 +272,10 @@ class RunInspectionsTool : AgentTool {
             } else {
                 result
             }
+        } catch (e: ProcessCanceledException) {
+            throw e
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             ToolResult("Error running inspections: ${e.message}", "Error", 5, isError = true)
         }

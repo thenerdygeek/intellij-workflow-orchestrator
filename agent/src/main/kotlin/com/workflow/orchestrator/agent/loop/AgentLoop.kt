@@ -28,6 +28,9 @@ import com.workflow.orchestrator.agent.tools.ToolOutputConfig
 import com.workflow.orchestrator.agent.tools.ToolOutputSpiller
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.ToolResultType
+import com.workflow.orchestrator.agent.tools.cancel.ToolCancellationRegistry
+import com.workflow.orchestrator.agent.tools.cancel.isUserStop
+import com.workflow.orchestrator.agent.tools.cancel.stoppedByUserResult
 import com.workflow.orchestrator.agent.tools.estimateTokens
 import com.workflow.orchestrator.agent.tools.truncateOutput
 import com.workflow.orchestrator.core.ai.LlmBrain
@@ -41,8 +44,12 @@ import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.core.model.ModelPricingRegistry
 import com.workflow.orchestrator.core.util.StringUtils
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
 import com.workflow.orchestrator.agent.loop.queue.UnifiedMessageQueue
@@ -2038,21 +2045,45 @@ class AgentLoop(
                 } else {
                     tool.execute(params, project)
                 }
-                if (timeout == Long.MAX_VALUE) {
-                    executeOnce()
-                } else {
-                    withTimeoutOrNull(timeout) {
-                        executeOnce()
-                    } ?: ToolResult(
-                        content = "Error: Tool '$toolName' timed out after ${timeout / 1000}s. " +
-                            "The operation took too long. Try a more specific query or smaller scope.",
-                        summary = "Error: timeout after ${timeout / 1000}s",
-                        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                        isError = true
-                    )
+                // Unified tool stop (Task 1.4): wrap the single execution funnel in a
+                // child coroutineScope and register its Job under toolCallId so the UI
+                // Stop button can cancel THIS tool call mid-flight via
+                // ToolCancellationRegistry.cancel(toolCallId). withTimeoutOrNull stays
+                // INSIDE the scope — it swallows its own TimeoutCancellationException and
+                // returns the timeout ToolResult, so a timeout never reaches the
+                // catch (CancellationException) below where isUserStop() would misread it.
+                coroutineScope {
+                    val callJob = coroutineContext[Job]!!  // this scope's job (a child of the loop)
+                    ToolCancellationRegistry.register(toolCallId, callJob)
+                    try {
+                        if (timeout == Long.MAX_VALUE) {
+                            executeOnce()
+                        } else {
+                            withTimeoutOrNull(timeout) {
+                                executeOnce()
+                            } ?: ToolResult(
+                                content = "Error: Tool '$toolName' timed out after ${timeout / 1000}s. " +
+                                    "The operation took too long. Try a more specific query or smaller scope.",
+                                summary = "Error: timeout after ${timeout / 1000}s",
+                                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+                                isError = true
+                            )
+                        }
+                    } finally {
+                        ToolCancellationRegistry.unregister(toolCallId)
+                    }
                 }
             } catch (e: CancellationException) {
-                throw e  // CRITICAL: Propagate cancellation — never swallow
+                if (isUserStop(e)) {
+                    // User clicked Stop on THIS tool call: feed a benign "Stopped by user"
+                    // result back to the LLM and CONTINUE the loop. ensureActive() guards
+                    // against a misclassified whole-loop cancel surfacing here — if the
+                    // loop's own job is cancelled it re-throws cleanly instead of swallowing.
+                    currentCoroutineContext().ensureActive()
+                    stoppedByUserResult(toolName)
+                } else {
+                    throw e  // CRITICAL: genuine loop cancellation — propagate, never swallow
+                }
             } catch (e: Exception) {
                 val errorMsg = "Tool '$toolName' threw exception: ${e.message}"
                 LOG.warn("[Loop] Tool $toolName failed: ${errorMsg.take(200)}")

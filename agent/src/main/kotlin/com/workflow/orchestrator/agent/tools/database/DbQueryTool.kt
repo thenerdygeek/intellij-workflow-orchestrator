@@ -13,6 +13,9 @@ import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
 import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
 import com.workflow.orchestrator.agent.tools.docs.VerdictSeverity
 import com.workflow.orchestrator.agent.tools.docs.toolDoc
+import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -209,10 +212,22 @@ class DbQueryTool : AgentTool {
             )
         }
 
+        // Capture the per-call Job here, in the suspend execute() body, before entering
+        // withConnection whose block: (Connection)->T is a plain non-suspend lambda and
+        // cannot call currentCoroutineContext() directly.
+        val callJob = currentCoroutineContext()[Job]
+
         val result = DatabaseConnectionManager.withConnection(profile, database) { conn ->
             DatabaseConnectionManager.createStatement(conn).use { stmt ->
-                stmt.executeQuery(sql).use { rs ->
-                    DatabaseConnectionManager.resultSetToMarkdown(rs)
+                val cancelHook = callJob?.invokeOnCompletion { cause ->
+                    if (cause is CancellationException) runCatching { stmt.cancel() }
+                }
+                try {
+                    stmt.executeQuery(sql).use { rs ->
+                        DatabaseConnectionManager.resultSetToMarkdown(rs)
+                    }
+                } finally {
+                    cancelHook?.dispose()
                 }
             }
         }
