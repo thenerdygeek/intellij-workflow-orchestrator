@@ -237,6 +237,21 @@ class AgentAdvancedConfigurable(
                 }
             }
 
+            group("Commands") {
+                row {
+                    checkBox("Auto-approve safe shell commands without asking")
+                        .bindSelected(agentSettings.state::autoApproveSafeCommands)
+                }
+                row {
+                    comment(
+                        "When on, read-only/build/test commands the analyzer rates SAFE run without a prompt. " +
+                            "Dangerous commands are always blocked; anything with redirection, subshells, or " +
+                            "variable expansion still asks. You can also approve a command type for the current " +
+                            "session from its approval card."
+                    )
+                }
+            }
+
             group("Sub-agents") {
                 row {
                     checkBox("Enable research sub-agent")
