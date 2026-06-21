@@ -165,7 +165,8 @@ class RichStreamingPanel : JPanel(BorderLayout()) {
     // ═══════════════════════════════════════════════════
 
     fun appendToolCall(
-        toolName: String, args: String = "",
+        toolName: String,
+        args: String = "",
         status: ToolCallStatus = ToolCallStatus.RUNNING,
         // Accepted for signature parity with the JCEF path (AgentDashboardPanel forwards these to
         // whichever panel is live). This Swing fallback renders a minimal "auto-approved" chip with

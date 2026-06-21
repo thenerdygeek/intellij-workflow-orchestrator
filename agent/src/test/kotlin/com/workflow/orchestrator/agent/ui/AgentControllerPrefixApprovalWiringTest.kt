@@ -22,7 +22,10 @@ class AgentControllerPrefixApprovalWiringTest {
 
     @Test
     fun `owns and clears a SessionCommandAllowlist`() {
-        assertTrue(src.contains("SessionCommandAllowlist()"), "AgentController must construct a SessionCommandAllowlist")
+        assertTrue(
+            src.contains("SessionCommandAllowlist()"),
+            "AgentController must construct a SessionCommandAllowlist",
+        )
         assertTrue(
             Regex("sessionCommandAllowlist\\.clear\\(\\)").containsMatchIn(src),
             "resetForNewChat must clear the sessionCommandAllowlist",

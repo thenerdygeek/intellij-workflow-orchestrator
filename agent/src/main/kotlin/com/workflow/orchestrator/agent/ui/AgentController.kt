@@ -266,6 +266,7 @@ class AgentController(
     private var contextManager: ContextManager? = null
     /** Session-scoped approval store. Created on first message, cleared on newChat. */
     private val sessionApprovalStore = SessionApprovalStore()
+
     /**
      * Session-scoped allowlist of command PREFIXES the user approved via the run_command approval
      * card's "Approve all <prefix> this session" button. Mirrors [sessionApprovalStore]'s
