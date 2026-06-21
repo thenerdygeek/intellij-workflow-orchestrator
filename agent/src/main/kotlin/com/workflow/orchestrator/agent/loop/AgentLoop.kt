@@ -815,6 +815,13 @@ class AgentLoop(
         fun classifyCommandRisk(command: String): CommandRisk =
             CommandSafetyAnalyzer.classify(command)
 
+        /** Map a [CommandRisk] to the approval card's "low"/"medium"/"high" label. */
+        fun riskLabel(risk: CommandRisk): String = when (risk) {
+            CommandRisk.DANGEROUS -> "high"
+            CommandRisk.RISKY -> "medium"
+            CommandRisk.SAFE -> "low"
+        }
+
     }
 
     /**
@@ -1947,14 +1954,19 @@ class AgentLoop(
             // run_command auto-approval (Part A toggle + Part B session prefix allowlist).
             // Bypasses ONLY the approvalGate prompt — logging/metrics/PreToolUse/checkpoint still run.
             var autoApproveReason: String? = null
+            // Computed once for run_command and reused for the gate's riskLevel below (avoids a
+            // second JSON parse + classify on the prompt path; keeps card risk == decision risk).
+            var runCommandRisk: CommandRisk? = null
             if (toolName == "run_command") {
                 val cmd = try {
                     json.decodeFromString<JsonObject>(call.function.arguments)["command"]
                         ?.let { (it as? JsonPrimitive)?.contentOrNull } ?: ""
                 } catch (_: Exception) { "" }
+                val risk = classifyCommandRisk(cmd)
+                runCommandRisk = risk
                 when (val d = com.workflow.orchestrator.agent.security.CommandApprovalDecision.evaluate(
                     command = cmd,
-                    risk = classifyCommandRisk(cmd),
+                    risk = risk,
                     autoApproveSafe = autoApproveSafeCommands,
                     sessionAllowedPrefixes = sessionCommandAllowlist.snapshot(),
                 )) {
@@ -1977,7 +1989,7 @@ class AgentLoop(
                 }
                 val sessionApproved = !isMemoryWrite && sessionApprovalStore.isApproved(toolName)
                 if (policy.requiresApproval && approvalGate != null && !sessionApproved) {
-                    val riskLevel = assessRisk(toolName, call.function.arguments)
+                    val riskLevel = runCommandRisk?.let { riskLabel(it) } ?: assessRisk(toolName, call.function.arguments)
                     val result = approvalGate.invoke(toolName, call.function.arguments, riskLevel, policy.allowSessionApproval)
                     when (result) {
                         ApprovalResult.DENIED -> {
@@ -2839,11 +2851,7 @@ class AgentLoop(
             try {
                 val args = json.decodeFromString<JsonObject>(argsJson)
                 val command = (args["command"] as? JsonPrimitive)?.contentOrNull ?: ""
-                when (classifyCommandRisk(command)) {
-                    CommandRisk.DANGEROUS -> "high"
-                    CommandRisk.RISKY -> "medium"
-                    CommandRisk.SAFE -> "low"
-                }
+                riskLabel(classifyCommandRisk(command))
             } catch (_: Exception) {
                 "medium" // can't parse args — default to medium
             }
