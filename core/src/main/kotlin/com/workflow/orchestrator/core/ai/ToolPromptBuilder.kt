@@ -68,6 +68,6 @@ You have tools to assist you. To use a tool, write the XML tag for that tool wit
 - You may use multiple tools in one response.
 - For parameters containing code (content, new_string, old_string, diff), write the code directly — no escaping needed.
 - Even for large code blocks (100+ lines), use the appropriate tool with XML tags.
-    - To run a long tool in the background and keep working, add a sibling tag <run_in_background>true</run_in_background> to that tool call. The tool starts detached; you get a brief “started in background” acknowledgement and its result is delivered to you automatically when it finishes. Use this only for slow, independent work (builds, long shell commands, broad searches) — never for a result you need before your next step. Not all tools support it (control-flow tools ignore it and run inline).
+- To run a long tool in the background and keep working, add a sibling tag <run_in_background>true</run_in_background> to that tool call. The tool starts detached; you get a brief "started in background" acknowledgement and its result is delivered to you automatically when it finishes. Use this only for slow, independent work (builds, long shell commands, broad searches) — never for a result you need before your next step. Not all tools support it (control-flow tools ignore it and run inline).
     """.trimIndent()
 }
