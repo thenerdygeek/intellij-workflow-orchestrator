@@ -622,7 +622,12 @@ class SourcegraphChatClient(
     private val apiDebugDir: java.io.File? get() {
         val sessionDir = apiDebugSessionDir
         return if (sessionDir != null) {
-            java.io.File(sessionDir, "api-debug").also { it.mkdirs() }
+            // A4: the api-debug dir holds full LLM request bodies (conversation + file contents) —
+            // make it owner-only (rwx------) so other users on a shared host can't read the dumps.
+            java.io.File(sessionDir, "api-debug").also {
+                it.mkdirs()
+                com.workflow.orchestrator.core.util.OwnerOnlyFile.restrictDir(it)
+            }
         } else null
     }
 

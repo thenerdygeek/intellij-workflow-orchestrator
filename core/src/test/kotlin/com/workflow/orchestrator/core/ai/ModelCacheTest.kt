@@ -4,8 +4,28 @@ import com.workflow.orchestrator.core.ai.dto.ModelInfo
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.io.File
 
 class ModelCacheTest {
+
+    // B6: `models` + `lastFetchMs` are written under `lock` in fetchModels but read lock-free in
+    // getCached() and written off-lock in populateFromExternal()/reset() (settings EDT). Without a
+    // happens-before edge a reader can observe a stale `models` ref or an inconsistent
+    // (models, lastFetchMs) pair. @Volatile is the cheapest correct fix (reference/long writes
+    // become atomic + visible). Memory-visibility races can't be tested deterministically, so this
+    // is a source-contract pin.
+    @Test
+    fun `cross-thread cache fields are @Volatile for happens-before visibility`() {
+        val src = File("src/main/kotlin/com/workflow/orchestrator/core/ai/ModelCache.kt").readText()
+        assertTrue(
+            Regex("""@Volatile\s+private var models\b""").containsMatchIn(src),
+            "ModelCache.models must be @Volatile (read lock-free by getCached, written off-lock by populateFromExternal)",
+        )
+        assertTrue(
+            Regex("""@Volatile\s+private var lastFetchMs\b""").containsMatchIn(src),
+            "ModelCache.lastFetchMs must be @Volatile (paired with models; long writes are non-atomic without it)",
+        )
+    }
 
     @BeforeEach
     fun reset() {

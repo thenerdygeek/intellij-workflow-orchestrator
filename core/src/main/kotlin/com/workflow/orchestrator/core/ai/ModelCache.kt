@@ -13,8 +13,11 @@ import kotlinx.coroutines.sync.withLock
 object ModelCache {
 
     private val LOG = Logger.getInstance(ModelCache::class.java)
-    private var models: List<ModelInfo> = emptyList()
-    private var lastFetchMs: Long = 0
+    // B6: read lock-free by getCached() and written off-lock by populateFromExternal()/reset()
+    // (settings EDT) while fetchModels() mutates under [lock]. @Volatile gives the happens-before
+    // edge so readers never see a stale ref or an inconsistent (models, lastFetchMs) pair.
+    @Volatile private var models: List<ModelInfo> = emptyList()
+    @Volatile private var lastFetchMs: Long = 0
     private val lock = Mutex()
 
     private const val TTL_MS = 24L * 60 * 60 * 1000

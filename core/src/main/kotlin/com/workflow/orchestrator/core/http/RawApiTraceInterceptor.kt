@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.core.http
 
 import com.intellij.openapi.diagnostic.Logger
+import com.workflow.orchestrator.core.util.OwnerOnlyFile
 import okhttp3.Interceptor
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
@@ -100,6 +101,7 @@ class RawApiTraceInterceptor(
         val effectiveReqId = request.header(TRACE_HEADER) ?: reqId
 
         dir.mkdirs()
+        OwnerOnlyFile.restrictDir(dir)  // A4: trace dir holds full request/response bodies (source code)
 
         // ── Capture and rebuild request ──────────────────────────────────────
         val outgoingRequest = writeRequestFile(request, effectiveReqId, dir)
