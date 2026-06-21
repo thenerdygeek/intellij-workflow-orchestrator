@@ -731,7 +731,7 @@ class AgentService(
     private val brainFactory = com.workflow.orchestrator.agent.brain.BrainFactory(
         project = project,
         toolNames = { registry.allToolNames() },
-        paramNames = { registry.allParamNames() },
+        paramNames = { registry.allParamNames() + com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.RUN_IN_BACKGROUND_PARAM },
     )
 
     /**
@@ -1898,7 +1898,7 @@ class AgentService(
                 val fbTokenProvider = { fbCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
                 val brainFactory: suspend (String, String?) -> LlmBrain = { modelId: String, reason: String? ->
                     val currentToolNames = registry.allToolNames()
-                    val currentParamNames = registry.allParamNames()
+                    val currentParamNames = registry.allParamNames() + com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.RUN_IN_BACKGROUND_PARAM
                     val newBrain = OpenAiCompatBrain(
                         sourcegraphUrl = fbUrl,
                         tokenProvider = fbTokenProvider,
@@ -2461,7 +2461,7 @@ class AgentService(
                     messageStateHandler = messageState,
                     toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate",
                     toolNameProvider = { registry.allToolNames() },
-                    paramNameProvider = { registry.allParamNames() },
+                    paramNameProvider = { registry.allParamNames() + com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.RUN_IN_BACKGROUND_PARAM },
                     outputSpiller = _outputSpiller,
                     onUserInputReceived = onUserInputReceived,
                     // Multimodal-agent Phase 3 — provide the session-scoped

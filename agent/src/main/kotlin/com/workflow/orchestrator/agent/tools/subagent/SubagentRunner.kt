@@ -23,6 +23,7 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.coroutines.coroutineContext
+import com.workflow.orchestrator.agent.tools.background.BackgroundEligibility
 
 /**
  * Wraps [AgentLoop] with per-subagent stats tracking, progress callbacks, and cancellation.
@@ -273,7 +274,7 @@ class SubagentRunner(
 
             // 3. Scope the brain's XML parser to ALL tools (core + deferred)
             brain.toolNameSet = subagentRegistry.allToolNames()
-            brain.paramNameSet = subagentRegistry.allParamNames()
+            brain.paramNameSet = subagentRegistry.allParamNames() + BackgroundEligibility.RUN_IN_BACKGROUND_PARAM
 
             // 4. Create fresh context manager with budget
             val contextManager = ContextManager(maxInputTokens = contextBudget)
@@ -326,7 +327,7 @@ class SubagentRunner(
                 toolResolver = { name -> subagentRegistry.get(name) },
                 systemPromptProvider = { buildComposedSystemPrompt(subagentRegistry) },
                 toolNameProvider = { subagentRegistry.allToolNames() },
-                paramNameProvider = { subagentRegistry.allParamNames() },
+                paramNameProvider = { subagentRegistry.allParamNames() + BackgroundEligibility.RUN_IN_BACKGROUND_PARAM },
                 onToolCall = { progress ->
                     // AgentLoop fires onToolCall twice: once at tool start (empty result, durationMs=0)
                     // and once at tool completion (populated result, durationMs>0). We must propagate

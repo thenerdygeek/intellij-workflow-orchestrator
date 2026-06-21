@@ -6,6 +6,9 @@ package com.workflow.orchestrator.agent.tools.background
  * plan-mode WRITE_TOOLS denylist shape in AgentLoop.
  */
 object BackgroundEligibility {
+    /** Reserved loop-level attribute the parser must keep on any tool call, then the loop strips. */
+    const val RUN_IN_BACKGROUND_PARAM = "run_in_background"
+
     /** Tools that must always run inline (steer the loop / need inline user input / mutate loop state). */
     val CONTROL_FLOW_DENYLIST: Set<String> = setOf(
         "attempt_completion",   // ends the task
