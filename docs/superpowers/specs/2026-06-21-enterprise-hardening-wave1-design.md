@@ -26,6 +26,8 @@ tractable set below.
 | Expanded admin-policy framework (`PluginFeature` for run_command/auto-approve/sub-agents) | Effort-M design decision; `FeatureRegistry` seam already exists. |
 | Log-integrity HMAC / SIEM export | Larger feature; needs product decision. |
 | Live release signing/publishing run | Needs the user's `CERTIFICATE_CHAIN`/`PRIVATE_KEY` GitHub secrets + a tag push. Workflow is scaffolded gated-on-secrets; cannot be end-to-end verified here. |
+| **C5 — CycloneDX SBOM plugin** (moved to deferred during impl) | `verify-metadata=true` (strict dependency verification) means applying `org.cyclonedx.bom` requires regenerating `verification-metadata.xml` for the plugin + all transitive deps (`--write-verification-metadata`, network, whole-file rewrite) — not a low-risk change. `release.yml` already calls `cyclonedxBom` with `continue-on-error: true`, so it activates the moment the plugin is added. |
+| **D5 — raw-API-trace disclosure / retention / redaction-lock** (re-assessed as NOT a gap on `main`) | Verified against current code: the `rawApiTraceMode`/`rawApiTraceRetentionDays` settings are **not exposed in any editable Configurable** (only persisted for diagnostic-bundle reporting); `RawApiTraceConfig.mode` is never set from settings (the trace is diagnostic-only, OFF, with no user toggle); `redactPromptBody` already defaults `true` **and is pinned by a test** (`core:F-3`); dir pruning is already wired to `RawApiTraceConfig.retentionDays`; Auth/Cookie headers are always redacted. The audit (run on the auto-approve branch) over-stated this; forcing its asks would *remove* a documented secure-by-default opt-out for no real gain. |
 
 ---
 
