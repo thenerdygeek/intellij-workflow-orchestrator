@@ -2098,8 +2098,10 @@ class AgentLoop(
                         syntheticBackgroundStartResult(toolName, toolCallId)
                     } else {
                         // Inline await: the processed result OR a user "Move to background" detach signal.
+                        // claimDelivery() guards the detach-vs-completion race: if the executor's completion
+                        // handler already claimed delivery (queue), the result is null here → treat as moved.
                         val r: ToolResult? = kotlinx.coroutines.selects.select {
-                            handle.deferred.onAwait { it }
+                            handle.deferred.onAwait { result -> if (handle.claimDelivery()) result else null }
                             handle.detachSignal.onAwait { null }
                         }
                         r ?: syntheticMovedToBackgroundResult(toolName, toolCallId)

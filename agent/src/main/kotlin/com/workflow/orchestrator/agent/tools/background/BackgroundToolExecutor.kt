@@ -4,6 +4,7 @@ import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.cancel.ToolCancellationRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -29,8 +30,11 @@ class BackgroundToolExecutor(
 
     @OptIn(ExperimentalCoroutinesApi::class)
     fun start(handle: BackgroundToolHandle, block: suspend () -> ToolResult) {
-        registry.add(handle)
-        val job = scope.launch {
+        // LAZY so the body cannot run — and invokeOnCompletion cannot fire registry.remove — until the
+        // handle is fully published (job assigned, registered, added). This closes two cross-thread races:
+        // (a) cancelAllForSession on the EDT touching `handle.job` before it is assigned (lateinit crash),
+        // and (b) a fast-completing body's remove() racing ahead of registry.add() (registry leak).
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             val result = try {
                 block()
             } catch (e: CancellationException) {
@@ -46,12 +50,16 @@ class BackgroundToolExecutor(
         job.invokeOnCompletion {
             ToolCancellationRegistry.unregister(handle.toolCallId)
             registry.remove(handle)
-            if (handle.backgrounded) {
+            // Deliver iff this completion (not the loop's inline consume) wins the single delivery claim —
+            // closes the detach-vs-completion double-delivery TOCTOU.
+            if (handle.backgrounded && handle.claimDelivery()) {
                 val delivered = if (handle.deferred.isCompleted) handle.deferred.getCompleted()
                                 else stoppedResult(handle.toolName)
                 onDeliver(handle, delivered)
             }
         }
+        registry.add(handle)
+        job.start()
     }
 
     /** User "Move to background": detach the loop's inline await; the job runs on and delivers later. */

@@ -9,6 +9,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -83,5 +84,25 @@ class BackgroundToolExecutorTest {
         val r = h.deferred.await()   // onAwait must NOT rethrow
         assertTrue(r.isError)
         assertTrue(r.content.contains("boom"))
+    }
+
+    @Test
+    fun `claimDelivery succeeds exactly once`() {
+        val h = handle("c1")
+        assertTrue(h.claimDelivery())
+        assertFalse(h.claimDelivery())
+    }
+
+    @Test
+    fun `does not double-deliver when the loop already claimed the result inline`() = runTest {
+        val delivered = ArrayList<String>()
+        val reg = BackgroundToolRegistry()
+        val exec = BackgroundToolExecutor(CoroutineScope(SupervisorJob()), reg) { h, _ -> delivered += h.toolCallId }
+        val h = handle("c2").also { it.backgrounded = true }
+        // Simulate the loop's inline select winning the single delivery claim first (detach-vs-completion race):
+        assertTrue(h.claimDelivery())
+        exec.start(h) { ToolResult("x", "x", 1) }
+        h.job.join()
+        assertTrue(delivered.isEmpty())  // executor's invokeOnCompletion saw the claim taken → no queue double-delivery
     }
 }
