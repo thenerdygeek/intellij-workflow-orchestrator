@@ -60,6 +60,7 @@ declare global {
     _acceptDiffHunk?: (filePath: string, hunkIndex: number, editedContent?: string) => void;
     _rejectDiffHunk?: (filePath: string, hunkIndex: number) => void;
     _killToolCall?: (toolCallId: string) => void;
+    _moveToolToBackground?: (toolCallId: string) => void;
     _cancelSteering?: (steeringId: string) => void;
     _revertToUserMessage?: (ts: number) => void;
     _revertFileToBaseline?: (path: string) => void;

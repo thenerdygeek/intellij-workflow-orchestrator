@@ -3714,6 +3714,9 @@ class AgentService(
         sessionDisposableHolder.resetSession()
     }
 
+    /** UI "Move to background": detach the running tool so the loop stops awaiting it (it runs on). */
+    fun moveToolToBackground(toolCallId: String): Boolean = backgroundToolExecutor.detach(toolCallId)
+
     // ── Dispose ────────────────────────────────────────────────────────────
 
     override fun dispose() {

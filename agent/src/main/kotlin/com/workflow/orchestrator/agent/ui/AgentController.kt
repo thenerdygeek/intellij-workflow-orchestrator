@@ -1104,6 +1104,12 @@ class AgentController(
             ToolStopCoordinator.requestStop(toolCallId)
         }
 
+        // Move-to-background callback
+        panel.setCefMoveToBackgroundCallback { toolCallId ->
+            LOG.info("AgentController: move-to-background requested for tool call $toolCallId")
+            service.moveToolToBackground(toolCallId)
+        }
+
         // Artifact render-result callback — sandbox iframe posts render outcome back
         panel.setCefArtifactResultCallback { json ->
             parseAndDispatchArtifactResult(json)

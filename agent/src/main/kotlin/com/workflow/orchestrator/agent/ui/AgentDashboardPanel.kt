@@ -517,6 +517,10 @@ class AgentDashboardPanel(
         cefPanel?.onKillToolCall = onKill
     }
 
+    fun setCefMoveToBackgroundCallback(onMove: (String) -> Unit) {
+        cefPanel?.onMoveToolToBackground = onMove
+    }
+
     fun setCefArtifactResultCallback(onResult: (String) -> Unit) {
         cefPanel?.onArtifactResult = onResult
     }
