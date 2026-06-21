@@ -42,6 +42,10 @@ object EnvironmentDetailsBuilder {
          * tests) omits the "Actively Running Processes" section entirely.
          */
         sessionId: String? = null,
+        /** Still-pending backgrounded tool runs for this session (id, tool name, elapsed ms).
+         *  Empty list (default) omits the "Background tasks in progress" section.
+         *  A later task wires the real data; the default keeps existing call sites compiling. */
+        backgroundTasks: List<Triple<String, String, Long>> = emptyList(),
     ): String {
         val sb = StringBuilder()
         sb.appendLine("<environment_details>")
@@ -83,6 +87,9 @@ object EnvironmentDetailsBuilder {
             }
             renderActiveMonitors(monitors).takeIf { it.isNotEmpty() }?.let { sb.append(it) }
         }
+
+        // 6d. Background Tool Execution — still-pending backgrounded tool runs.
+        renderBackgroundTasks(backgroundTasks).takeIf { it.isNotEmpty() }?.let { sb.append(it) }
 
         // 7. Active Plan
         val planPath = contextManager?.getActivePlanPath()
@@ -204,6 +211,17 @@ object EnvironmentDetailsBuilder {
             sb.append("- ${h.bgId} (${h.label}) — last: ${tail.take(120)}\n")
         }
         sb.appendLine()
+        return sb.toString()
+    }
+
+    /** Pure: render the still-running background tools for this session. Empty list → "". */
+    fun renderBackgroundTasks(tasks: List<Triple<String, String, Long>>): String {
+        if (tasks.isEmpty()) return ""
+        val sb = StringBuilder()
+        sb.append("\n# Background tasks in progress\n")
+        for ((id, name, elapsedMs) in tasks) {
+            sb.append("- $id · $name · ${humanizeMs(elapsedMs)} elapsed\n")
+        }
         return sb.toString()
     }
 

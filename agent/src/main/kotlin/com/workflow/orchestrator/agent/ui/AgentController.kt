@@ -1104,6 +1104,15 @@ class AgentController(
             ToolStopCoordinator.requestStop(toolCallId)
         }
 
+        // Move-to-background callback
+        panel.setCefMoveToBackgroundCallback { toolCallId ->
+            LOG.info("AgentController: move-to-background requested for tool call $toolCallId")
+            val detached = service.moveToolToBackground(toolCallId)
+            if (!detached) {
+                LOG.warn("AgentController: move-to-background no-op for '$toolCallId' (tool already finished?)")
+            }
+        }
+
         // Artifact render-result callback — sandbox iframe posts render outcome back
         panel.setCefArtifactResultCallback { json ->
             parseAndDispatchArtifactResult(json)

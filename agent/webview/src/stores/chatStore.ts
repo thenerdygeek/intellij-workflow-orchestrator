@@ -632,6 +632,7 @@ interface ChatState {
   clearDebugLog(): void;
   appendToolOutput(toolCallId: string, chunk: string): void;
   killToolCall(toolCallId: string): void;
+  moveToolToBackground(toolCallId: string): void;
 
   // Aggregate Diff Actions
   updateAggregateDiff(diff: AggregateDiff): void;
@@ -2003,6 +2004,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   killToolCall(toolCallId: string) {
     import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
       (kotlinBridge as any).killToolCall(toolCallId);
+    });
+  },
+
+  moveToolToBackground(toolCallId: string) {
+    import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
+      (kotlinBridge as any).moveToolToBackground(toolCallId);
     });
   },
 

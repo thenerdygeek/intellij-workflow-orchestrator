@@ -760,6 +760,7 @@ export const kotlinBridge = {
   openToolsPanel(): void { callKotlin('_openToolsPanel'); },
   viewInEditor(): void { callKotlin('_viewInEditor'); },
   killToolCall(toolCallId: string): void { callKotlin('_killToolCall', toolCallId); },
+  moveToolToBackground(toolCallId: string): void { callKotlin('_moveToolToBackground', toolCallId); },
   killSubAgent(agentId: string): void { callKotlin('_killSubAgent', agentId); },
   resolveProcessInput(input: string): void { callKotlin('_resolveProcessInput', input); },
   searchMentions(type: string, query: string): void { callKotlin('_searchMentions', `${type}:${query}`); },

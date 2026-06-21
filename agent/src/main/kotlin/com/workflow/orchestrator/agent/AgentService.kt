@@ -188,6 +188,21 @@ class AgentService(
         onLog = { log.info(it) },
     )
 
+    // ── Background tool executor (Task 7) ──────────────────────────────────────
+    // AgentService owns both the registry (session-keyed index of live handles) and the
+    // executor (runs tool blocks in a SupervisorJob scope, delivers completed results back
+    // via deliverBackgroundResult). The executor is disposed alongside AgentService.
+
+    private val backgroundToolRegistry =
+        com.workflow.orchestrator.agent.tools.background.BackgroundToolRegistry()
+
+    private val backgroundToolExecutor =
+        com.workflow.orchestrator.agent.tools.background.BackgroundToolExecutor(
+            parentScope = cs,
+            registry = backgroundToolRegistry,
+            onDeliver = { handle, result -> deliverBackgroundResult(handle, result) },
+        )
+
     /**
      * Task 6.1 — optional hook the UI layer (AgentController) registers to carry out
      * the actual auto-wake. The agent service cannot drive the full resume pipeline
@@ -605,6 +620,39 @@ class AgentService(
         }
     }
 
+    /** Deliver a finished background tool's result into its session queue (auto-wakes if idle) + UI card. */
+    private fun deliverBackgroundResult(
+        handle: com.workflow.orchestrator.agent.tools.background.BackgroundToolHandle,
+        result: com.workflow.orchestrator.agent.tools.ToolResult,
+    ) {
+        val nowMs = System.currentTimeMillis()
+        val body = "Tool '${handle.toolName}' (id=${handle.toolCallId}) finished:\n${result.content}"
+        // Surface the (already grep/spill/truncate-processed) output tail + spill link on the card, so a
+        // backgrounded tool that spilled to disk is as inspectable as a background-process card. Card
+        // construction lives in AsyncEventCardPresenter alongside the other producers (fromBackground/fromMonitor).
+        val card = com.workflow.orchestrator.agent.ui.AsyncEventCardPresenter.fromToolResult(
+            toolCallId = handle.toolCallId,
+            toolName = handle.toolName,
+            isError = result.isError,
+            summary = result.summary,
+            details = result.content.take(BACKGROUND_CARD_DETAIL_CHARS),
+            spillPath = result.spillPath,
+            occurredAt = nowMs,
+        )
+        enqueueToSession(
+            handle.sessionId,
+            com.workflow.orchestrator.agent.loop.queue.QueuedMessage(
+                id = "bg-${handle.toolCallId}-$nowMs",
+                kind = com.workflow.orchestrator.agent.loop.queue.QueueSourceKind.BACKGROUND,
+                body = body,
+                timestamp = nowMs,
+                priority = com.workflow.orchestrator.agent.loop.queue.BackgroundQueuePolicy.priority,
+                coalesceKey = handle.toolCallId,
+                meta = mapOf("card" to com.workflow.orchestrator.agent.ui.AsyncEventCardPresenter.encodeCard(card)),
+            ),
+        )
+    }
+
     /** Current session's message state handler — non-null while a task is running. */
     @Volatile var activeMessageStateHandler: MessageStateHandler? = null
         private set
@@ -731,7 +779,7 @@ class AgentService(
     private val brainFactory = com.workflow.orchestrator.agent.brain.BrainFactory(
         project = project,
         toolNames = { registry.allToolNames() },
-        paramNames = { registry.allParamNames() },
+        paramNames = { com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.withReservedParams(registry.allParamNames()) },
     )
 
     /**
@@ -1898,7 +1946,7 @@ class AgentService(
                 val fbTokenProvider = { fbCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
                 val brainFactory: suspend (String, String?) -> LlmBrain = { modelId: String, reason: String? ->
                     val currentToolNames = registry.allToolNames()
-                    val currentParamNames = registry.allParamNames()
+                    val currentParamNames = com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.withReservedParams(registry.allParamNames())
                     val newBrain = OpenAiCompatBrain(
                         sourcegraphUrl = fbUrl,
                         tokenProvider = fbTokenProvider,
@@ -2436,6 +2484,9 @@ class AgentService(
                             // Surfaces this session's still-running background processes
                             // + their new output since last turn.
                             sessionId = sid,
+                            backgroundTasks = backgroundToolRegistry.list(sid).map {
+                                Triple(it.toolCallId, it.toolName, System.currentTimeMillis() - it.startedAt)
+                            },
                         )
                     },
                     // Task 2.1: resolve from the service's per-session map so that both the loop
@@ -2461,8 +2512,12 @@ class AgentService(
                     messageStateHandler = messageState,
                     toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate",
                     toolNameProvider = { registry.allToolNames() },
-                    paramNameProvider = { registry.allParamNames() },
+                    paramNameProvider = { com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.withReservedParams(registry.allParamNames()) },
                     outputSpiller = _outputSpiller,
+                    backgroundExecutor = backgroundToolExecutor,
+                    backgroundCap = agentSettings.state.maxBackgroundedToolsPerSession,
+                    backgroundEnabled = { AgentSettings.getInstance(project).state.allowToolsRunInBackground },
+                    backgroundInFlightCount = { backgroundToolRegistry.countForSession(sid) },
                     onUserInputReceived = onUserInputReceived,
                     // Multimodal-agent Phase 3 — provide the session-scoped
                     // AttachmentStore so AgentLoop wraps every tool invocation
@@ -3580,6 +3635,7 @@ class AgentService(
         activeTask.get()?.let { task ->
             task.loop.cancel()
             task.job.cancel()
+            backgroundToolExecutor.cancelAllForSession(task.sessionId)
 
             // Plan 3 cascade-cancel: close every open child delegation channel for
             // the session being canceled. Idempotent — outbound service tracks
@@ -3641,6 +3697,10 @@ class AgentService(
         val sid = currentSessionId
         if (sid != null) releaseSessionState(sid)
         cancelCurrentTask()
+        // NOT redundant with cancelCurrentTask's cancel: that one is activeTask-gated, so when the session
+        // is idle (loop already exited after attempt_completion) it no-ops — yet a tool backgrounded before
+        // completion is still running. New-chat must cancel those idle-session background jobs too.
+        if (sid != null) backgroundToolExecutor.cancelAllForSession(sid)
         registry.resetActiveDeferred()
         ProcessRegistry.killAll()
         activeTask.set(null)
@@ -3652,6 +3712,9 @@ class AgentService(
         sessionRuntime.clear() // Drop per-conversation counters + token/cost running totals
         sessionDisposableHolder.resetSession()
     }
+
+    /** UI "Move to background": detach the running tool so the loop stops awaiting it (it runs on). */
+    fun moveToolToBackground(toolCallId: String): Boolean = backgroundToolExecutor.detach(toolCallId)
 
     // ── Dispose ────────────────────────────────────────────────────────────
 
@@ -3672,6 +3735,7 @@ class AgentService(
             log.warn("[AgentService] Failed to close AgentFileLogger on dispose", e)
         }
         cancelCurrentTask()
+        backgroundToolExecutor.dispose()
         ProcessRegistry.killAll()
         debugController?.dispose()
     }
@@ -3765,6 +3829,9 @@ class AgentService(
     }
 
     companion object {
+        /** Max chars of a backgrounded tool's output shown in its async-event card's detail pane. */
+        private const val BACKGROUND_CARD_DETAIL_CHARS = 2000
+
         fun getInstance(project: Project): AgentService =
             project.service<AgentService>()
 

@@ -43,6 +43,31 @@ object AsyncEventCardPresenter {
         )
     }
 
+    /**
+     * Card for a backgrounded *tool* completion. Distinct from [fromBackground] (which maps an OS-process
+     * [BackgroundCompletionEvent]); a backgrounded tool delivers a [com.workflow.orchestrator.agent.tools.ToolResult].
+     * Centralizes the `bg-{id}-{ts}` id format + SUCCESS/FAILURE mapping here, alongside the other producers.
+     */
+    fun fromToolResult(
+        toolCallId: String,
+        toolName: String,
+        isError: Boolean,
+        summary: String,
+        details: String,
+        spillPath: String?,
+        occurredAt: Long,
+    ): AsyncEventCardData = AsyncEventCardData(
+        id = "bg-$toolCallId-$occurredAt",
+        kind = AsyncEventKind.BACKGROUND,
+        sourceId = toolCallId,
+        label = toolName.take(LABEL_MAX),
+        status = if (isError) AsyncEventStatus.FAILURE else AsyncEventStatus.SUCCESS,
+        summary = summary,
+        details = details,
+        timestamp = occurredAt,
+        spillPath = spillPath,
+    )
+
     fun fromMonitor(monitorId: String, severity: Severity, text: String, ts: Long): AsyncEventCardData {
         val status = when (severity) {
             Severity.ALERT -> AsyncEventStatus.ALERT

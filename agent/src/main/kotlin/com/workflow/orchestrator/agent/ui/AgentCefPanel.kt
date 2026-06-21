@@ -106,6 +106,7 @@ class AgentCefPanel(
     private var acceptDiffHunkQuery: JBCefJSQuery? = null
     private var rejectDiffHunkQuery: JBCefJSQuery? = null
     private var killToolCallQuery: JBCefJSQuery? = null
+    private var moveToolToBackgroundQuery: JBCefJSQuery? = null
     private var killSubAgentQuery: JBCefJSQuery? = null
     private var startIncomingDelegationQuery: JBCefJSQuery? = null
     private var revertToUserMessageQuery: JBCefJSQuery? = null
@@ -300,6 +301,8 @@ class AgentCefPanel(
     var onRejectDiffHunk: ((String, Int) -> Unit)? = null
     /** Callback when user clicks "Kill" on a running tool call. Param: toolCallId. */
     var onKillToolCall: ((String) -> Unit)? = null
+    /** Callback when the user clicks "Move to background" on a running tool. Param: toolCallId. */
+    var onMoveToolToBackground: ((String) -> Unit)? = null
     /** Callback when user clicks the kill button on a running sub-agent boundary card. Param: agentId. */
     var onKillSubAgent: ((String) -> Unit)? = null
     /** Callback when user clicks Start on a busy-case incoming cross-IDE delegation top-bar prompt. Param: delegation key. */
@@ -651,6 +654,7 @@ class AgentCefPanel(
             JBCefJSQuery.Response("ok")
         }
         killToolCallQuery = registerQuery(b) { toolCallId -> onKillToolCall?.invoke(toolCallId); JBCefJSQuery.Response("ok") }
+        moveToolToBackgroundQuery = registerQuery(b) { toolCallId -> onMoveToolToBackground?.invoke(toolCallId); JBCefJSQuery.Response("ok") }
         killSubAgentQuery = registerQuery(b) { agentId -> onKillSubAgent?.invoke(agentId); JBCefJSQuery.Response("ok") }
         startIncomingDelegationQuery = registerQuery(b) { key -> onStartIncomingDelegation?.invoke(key); JBCefJSQuery.Response("ok") }
         revertToUserMessageQuery = registerQuery(b) { tsStr ->
@@ -872,6 +876,7 @@ class AgentCefPanel(
                     injectBridge("_acceptDiffHunk") { acceptDiffHunkQuery?.let { q -> js("window._acceptDiffHunk = function(fp,hi,ec) { ${q.inject("JSON.stringify({filePath:fp,hunkIndex:hi,editedContent:ec||null})")} }") } }
                     injectBridge("_rejectDiffHunk") { rejectDiffHunkQuery?.let { q -> js("window._rejectDiffHunk = function(fp,hi) { ${q.inject("JSON.stringify({filePath:fp,hunkIndex:hi})")} }") } }
                     injectBridge("_killToolCall") { killToolCallQuery?.let { q -> js("window._killToolCall = function(toolCallId) { ${q.inject("toolCallId")} }") } }
+                    injectBridge("_moveToolToBackground") { moveToolToBackgroundQuery?.let { q -> js("window._moveToolToBackground = function(toolCallId) { ${q.inject("toolCallId")} }") } }
                     injectBridge("_killSubAgent") { killSubAgentQuery?.let { q -> js("window._killSubAgent = function(agentId) { ${q.inject("agentId")} }") } }
                     injectBridge("_startIncomingDelegation") { startIncomingDelegationQuery?.let { q -> js("window._startIncomingDelegation = function(key) { ${q.inject("key")} }") } }
                     injectBridge("_resolveProcessInput") { processInputQuery?.let { q -> js("window._resolveProcessInput = function(input) { ${q.inject("input")} }") } }

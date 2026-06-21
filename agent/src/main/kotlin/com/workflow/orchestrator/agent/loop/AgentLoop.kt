@@ -24,7 +24,6 @@ import com.workflow.orchestrator.agent.session.*
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.builtin.BackgroundProcessTool
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
-import com.workflow.orchestrator.agent.tools.ToolOutputConfig
 import com.workflow.orchestrator.agent.tools.ToolOutputSpiller
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.ToolResultType
@@ -412,6 +411,18 @@ class AgentLoop(
      * output_file=true are written to disk and a preview is returned to the LLM.
      */
     private val outputSpiller: ToolOutputSpiller? = null,
+    /**
+     * When non-null, eligible tools carrying a <run_in_background> attribute (or detached by the user) run
+     * detached in this executor and deliver their result via the session queue. Null for sub-agents/tests
+     * → backgrounding is disabled and every tool runs inline exactly as before.
+     */
+    private val backgroundExecutor: com.workflow.orchestrator.agent.tools.background.BackgroundToolExecutor? = null,
+    /** Per-session cap on concurrent backgrounded tools; beyond it the flag is ignored (inline fallback). */
+    private val backgroundCap: Int = 5,
+    /** Live kill-switch: when false, the run_in_background attribute is ignored and tools run inline. */
+    private val backgroundEnabled: () -> Boolean = { false },
+    /** Live count of this session's in-flight background tools (for the cap + env_details). */
+    private val backgroundInFlightCount: () -> Int = { 0 },
     /**
      * Callback fired when the loop is about to suspend on [userInputChannel] waiting
      * for user input (plan-mode text turns, consecutive-mistakes recovery). Without
@@ -1963,7 +1974,7 @@ class AgentLoop(
             }
 
             // Parse arguments
-            val params: JsonObject = try {
+            var params: JsonObject = try {
                 json.decodeFromString<JsonObject>(call.function.arguments)
             } catch (e: Exception) {
                 reportToolError(call, startTime, "Invalid JSON arguments for '$toolName': ${e.message}")
@@ -2005,16 +2016,6 @@ class AgentLoop(
                 )
             )
 
-            // Execute tool (with per-tool timeout and CancellationException propagation).
-            // Streaming-capable tools read RunCommandTool.currentToolCallId + streamCallback to
-            // push live output to the webview. Any tool that spawns a long-running external
-            // process (shell commands, sonar-scanner, etc.) should be listed here until a
-            // proper context-element migration replaces the ThreadLocal (see RunCommandTool
-            // companion TODO). Without this, the tool runs fine but the UI shows a silent
-            // spinner for the entire duration.
-            BackgroundProcessTool.currentSessionId.set(sessionId)
-            if (toolName in STREAMING_TOOLS) RunCommandTool.currentToolCallId.set(toolCallId)
-            if (toolName in STREAMING_TOOLS) RunCommandTool.currentSessionId.set(sessionId)
             // Per-user-message checkpoint capture: copy pre-edit state of touched files.
             if (toolName in WRITE_TOOLS) {
                 val msgTs = currentUserMessageTsProvider?.invoke() ?: 0L
@@ -2030,110 +2031,132 @@ class AgentLoop(
                     }
                 }
             }
-            val toolResult = try {
+            // Read + strip the reserved background attribute (string-valued — BrainRouter serializes XML
+            // params as strings). Stripping prevents any tool seeing an unexpected param.
+            val bgKey = com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.RUN_IN_BACKGROUND_PARAM
+            val requestedBackground = (params[bgKey] as? JsonPrimitive)?.contentOrNull?.equals("true", ignoreCase = true) == true
+            if (params.containsKey(bgKey)) params = JsonObject(params - bgKey)
+
+            val canBackground = backgroundExecutor != null && backgroundEnabled() &&
+                com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.isBackgroundable(toolName) &&
+                backgroundInFlightCount() < backgroundCap
+
+            // Background results are processed inside the executor job (runAndProcess); inline + synthetic
+            // results are processed by the shared block AFTER the try. alreadyProcessed gates that.
+            var alreadyProcessed = false
+            val toolResult: ToolResult = try {
                 val timeout = tool.timeoutMs
                 val attachmentStore = attachmentStoreProvider()
-                // Multimodal-agent Phase 3 — install SessionAttachmentAccess around
-                // the tool invocation so feature-module tools (e.g. JiraTool) can
-                // deposit image bytes via :core/AttachmentSink without taking a
-                // direct dependency on :agent. Skipped when no store is provisioned
-                // (sub-agents, tests) — preserves prior behavior bit-for-bit.
-                suspend fun executeOnce(): ToolResult = if (attachmentStore != null) {
-                    AgentLoopAttachmentScope.runWithStore(attachmentStore) {
-                        tool.execute(params, project)
-                    }
-                } else {
-                    tool.execute(params, project)
-                }
-                // Unified tool stop (Task 1.4): wrap the single execution funnel in a
-                // child coroutineScope and register its Job under toolCallId so the UI
-                // Stop button can cancel THIS tool call mid-flight via
-                // ToolCancellationRegistry.cancel(toolCallId). withTimeoutOrNull stays
-                // INSIDE the scope — it swallows its own TimeoutCancellationException and
-                // returns the timeout ToolResult, so a timeout never reaches the
-                // catch (CancellationException) below where isUserStop() would misread it.
-                coroutineScope {
-                    val callJob = coroutineContext[Job]!!  // this scope's job (a child of the loop)
-                    ToolCancellationRegistry.register(toolCallId, callJob)
+                // executeOnce sets the streaming ThreadLocals + attachment scope INSIDE the call so they
+                // bind on whatever thread actually runs the tool (loop thread inline, executor thread bg).
+                suspend fun executeOnce(): ToolResult {
+                    BackgroundProcessTool.currentSessionId.set(sessionId)
+                    if (toolName in STREAMING_TOOLS) RunCommandTool.currentToolCallId.set(toolCallId)
+                    if (toolName in STREAMING_TOOLS) RunCommandTool.currentSessionId.set(sessionId)
                     try {
-                        if (timeout == Long.MAX_VALUE) {
-                            executeOnce()
+                        return if (attachmentStore != null) {
+                            AgentLoopAttachmentScope.runWithStore(attachmentStore) { tool.execute(params, project) }
                         } else {
-                            withTimeoutOrNull(timeout) {
-                                executeOnce()
-                            } ?: ToolResult(
-                                content = "Error: Tool '$toolName' timed out after ${timeout / 1000}s. " +
-                                    "The operation took too long. Try a more specific query or smaller scope.",
-                                summary = "Error: timeout after ${timeout / 1000}s",
-                                tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
-                                isError = true
-                            )
+                            tool.execute(params, project)
                         }
                     } finally {
-                        ToolCancellationRegistry.unregister(toolCallId)
+                        BackgroundProcessTool.currentSessionId.remove()
+                        if (toolName in STREAMING_TOOLS) RunCommandTool.currentToolCallId.remove()
+                        if (toolName in STREAMING_TOOLS) RunCommandTool.currentSessionId.remove()
+                    }
+                }
+                fun timeoutResult() = ToolResult(
+                    content = "Error: Tool '$toolName' timed out after ${timeout / 1000}s. " +
+                        "The operation took too long. Try a more specific query or smaller scope.",
+                    summary = "Error: timeout after ${timeout / 1000}s",
+                    tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE, isError = true,
+                )
+                // For the background path the executor job runs execute + the SAME post-processing, so the
+                // delivered/inline-awaited result already has processed content + token estimate.
+                suspend fun runAndProcess(): ToolResult {
+                    val raw = if (timeout == Long.MAX_VALUE) executeOnce()
+                              else withTimeoutOrNull(timeout) { executeOnce() } ?: timeoutResult()
+                    val grep = (params["grep_pattern"] as? JsonPrimitive)?.contentOrNull
+                    val outFile = try { params["output_file"]?.jsonPrimitive?.boolean == true } catch (_: Exception) { false }
+                    val p = ToolOutputProcessor.process(
+                        toolName, raw.content, raw.tokenEstimate, grep, outFile,
+                        tool.outputConfig.maxChars, outputSpiller, ::truncateOutput, ::estimateTokens,
+                    )
+                    return raw.copy(content = p.content, tokenEstimate = p.tokenEstimate)
+                }
+
+                if (canBackground) {
+                    val handle = com.workflow.orchestrator.agent.tools.background.BackgroundToolHandle(
+                        toolCallId = toolCallId, sessionId = sessionId ?: "", toolName = toolName,
+                        startedAt = System.currentTimeMillis(),
+                    )
+                    if (requestedBackground) handle.backgrounded = true
+                    backgroundExecutor.start(handle) { runAndProcess() }
+                    alreadyProcessed = true   // bg results are pre-processed; synthetic results are short/clean
+                    if (requestedBackground) {
+                        // Agent-initiated: don't await — synthesize "started in background" and move on.
+                        syntheticBackgroundStartResult(toolName, toolCallId)
+                    } else {
+                        // Inline await: the processed result OR a user "Move to background" detach signal.
+                        // claimDelivery() guards the detach-vs-completion race: if the executor's completion
+                        // handler already claimed delivery (queue), the result is null here → treat as moved.
+                        val r: ToolResult? = kotlinx.coroutines.selects.select {
+                            handle.deferred.onAwait { result -> if (handle.claimDelivery()) result else null }
+                            handle.detachSignal.onAwait { null }
+                        }
+                        r ?: syntheticMovedToBackgroundResult(toolName, toolCallId)
+                    }
+                } else {
+                    // Unchanged inline funnel (ineligible / kill-switch off / cap full / no executor):
+                    // register the job for the #62 per-tool Stop, time out, return the RAW result.
+                    coroutineScope {
+                        val callJob = coroutineContext[Job]!!
+                        ToolCancellationRegistry.register(toolCallId, callJob)
+                        try {
+                            if (timeout == Long.MAX_VALUE) executeOnce() else (withTimeoutOrNull(timeout) { executeOnce() } ?: timeoutResult())
+                        } finally {
+                            ToolCancellationRegistry.unregister(toolCallId)
+                        }
                     }
                 }
             } catch (e: CancellationException) {
                 if (isUserStop(e)) {
-                    // User clicked Stop on THIS tool call: feed a benign "Stopped by user"
-                    // result back to the LLM and CONTINUE the loop. ensureActive() guards
-                    // against a misclassified whole-loop cancel surfacing here — if the
-                    // loop's own job is cancelled it re-throws cleanly instead of swallowing.
                     currentCoroutineContext().ensureActive()
+                    alreadyProcessed = true            // short synthetic stopped result; no processing needed
                     stoppedByUserResult(toolName)
                 } else {
-                    throw e  // CRITICAL: genuine loop cancellation — propagate, never swallow
+                    backgroundExecutor?.cancelOne(toolCallId)   // un-detached inline bg tool dies with the loop
+                    throw e
                 }
             } catch (e: Exception) {
                 val errorMsg = "Tool '$toolName' threw exception: ${e.message}"
                 LOG.warn("[Loop] Tool $toolName failed: ${errorMsg.take(200)}")
                 val exceptionDurationMs = System.currentTimeMillis() - startTime
-                fileLogger?.logToolCall(
-                    sessionId = sessionId ?: "",
-                    toolName = toolName,
-                    durationMs = exceptionDurationMs,
-                    isError = true,
-                    errorMessage = errorMsg.take(500)
-                )
+                fileLogger?.logToolCall(sessionId = sessionId ?: "", toolName = toolName, durationMs = exceptionDurationMs, isError = true, errorMessage = errorMsg.take(500))
                 sessionMetrics?.recordToolCall(toolName, exceptionDurationMs, true)
-                onDebugLog?.invoke("error", "tool_call", "$toolName EXCEPTION (${exceptionDurationMs}ms)",
-                    mapOf("tool" to toolName, "error" to errorMsg.take(200)))
+                onDebugLog?.invoke("error", "tool_call", "$toolName EXCEPTION (${exceptionDurationMs}ms)", mapOf("tool" to toolName, "error" to errorMsg.take(200)))
                 reportToolError(call, startTime, errorMsg)
                 continue
-            } finally {
-                BackgroundProcessTool.currentSessionId.remove()
-                if (toolName in STREAMING_TOOLS) RunCommandTool.currentToolCallId.remove()
-                if (toolName in STREAMING_TOOLS) RunCommandTool.currentSessionId.remove()
             }
 
             val durationMs = System.currentTimeMillis() - startTime
 
-            // Apply LLM-requested output filtering (grep_pattern, output_file)
-            var processedContent = toolResult.content
-            val grepPattern = (params["grep_pattern"] as? JsonPrimitive)?.contentOrNull
-            if (!grepPattern.isNullOrBlank() && processedContent.isNotBlank()) {
-                processedContent = ToolOutputConfig.applyGrep(processedContent, grepPattern)
-            }
-
-            // Spill to file if requested via output_file=true or if over threshold
-            val requestedOutputFile = try {
-                params["output_file"]?.jsonPrimitive?.boolean == true
-            } catch (_: Exception) { false }
-
-            if (outputSpiller != null && (requestedOutputFile || processedContent.length > ToolOutputConfig.SPILL_THRESHOLD_CHARS)) {
-                val spillResult = outputSpiller.spill(toolName, processedContent)
-                processedContent = spillResult.preview
-            }
-
-            val truncatedContent = truncateOutput(processedContent, tool.outputConfig.maxChars)
-            // Re-estimate tokens after processing (grep/spill/truncation) so budget tracking
-            // reflects what actually enters context, not the raw tool output.
-            val actualTokenEstimate = if (truncatedContent.length < processedContent.length) {
-                estimateTokens(truncatedContent)  // Content was truncated — re-estimate
-            } else if (processedContent.length < toolResult.content.length) {
-                estimateTokens(processedContent)  // Content was grep-filtered or spilled — re-estimate
+            // Post-process the RAW inline result (grep/spill/truncate/estimate). Background + synthetic
+            // results are already finalized (alreadyProcessed), so use their content/estimate as-is.
+            val truncatedContent: String
+            val actualTokenEstimate: Int
+            if (alreadyProcessed) {
+                truncatedContent = toolResult.content
+                actualTokenEstimate = toolResult.tokenEstimate
             } else {
-                toolResult.tokenEstimate  // No processing occurred — use original estimate
+                val grepPattern = (params["grep_pattern"] as? JsonPrimitive)?.contentOrNull
+                val requestedOutputFile = try { params["output_file"]?.jsonPrimitive?.boolean == true } catch (_: Exception) { false }
+                val p = ToolOutputProcessor.process(
+                    toolName, toolResult.content, toolResult.tokenEstimate, grepPattern, requestedOutputFile,
+                    tool.outputConfig.maxChars, outputSpiller, ::truncateOutput, ::estimateTokens,
+                )
+                truncatedContent = p.content
+                actualTokenEstimate = p.tokenEstimate
             }
 
             if (toolResult.isError) {
@@ -2643,6 +2666,22 @@ class AgentLoop(
         val ts = contextManager.toolResultTimeStampOrNull() ?: return content
         return "$ts\n\n$content"
     }
+
+    private fun syntheticBackgroundStartResult(toolName: String, toolCallId: String) = ToolResult(
+        content = "Started '$toolName' in the background (id=$toolCallId). It will deliver its result " +
+            "when done — continue with other work; do not wait for it here.",
+        summary = "Started '$toolName' in background",
+        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+        isError = false,
+    )
+
+    private fun syntheticMovedToBackgroundResult(toolName: String, toolCallId: String) = ToolResult(
+        content = "User moved '$toolName' (id=$toolCallId) to the background; it is still running. " +
+            "Continuing — its result will arrive when it finishes.",
+        summary = "Moved '$toolName' to background",
+        tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE,
+        isError = false,
+    )
 
     /**
      * Adds a user message delivered via [userInputChannel] (plan-mode reply,

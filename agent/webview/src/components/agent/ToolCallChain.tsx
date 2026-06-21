@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { CopyButton } from '@/components/ui/copy-button';
 import { cn } from '@/lib/utils';
 import { formatElapsedMs, formatElapsedSeconds } from '@/lib/time';
-import { Loader2, Check, X, Clock, Square } from 'lucide-react';
+import { Loader2, Check, X, Clock, Square, ArrowDownToLine } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
 import { useShiki } from '@/hooks/useShiki';
 
@@ -390,6 +390,18 @@ const ToolCallItem = memo(function ToolCallItem({ tc }: { tc: ToolCall }) {
                 aria-label="Stop"
               >
                 <Square className="h-3 w-3" style={{ color: 'var(--error)' }} />
+              </Button>
+            )}
+            {isRunning && !STOP_SUPPRESSED_TOOLS.has(tc.name) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 w-5 p-0 shrink-0"
+                onClick={(e) => { e.stopPropagation(); useChatStore.getState().moveToolToBackground(tc.id) }}
+                title="Move to background"
+                aria-label="Move to background"
+              >
+                <ArrowDownToLine className="h-3 w-3" style={{ color: 'var(--fg-muted)' }} />
               </Button>
             )}
             {/* Elapsed time / duration. Hidden on row hover so it doesn't sit
