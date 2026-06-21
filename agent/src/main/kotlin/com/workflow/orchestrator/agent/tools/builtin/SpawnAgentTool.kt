@@ -69,6 +69,20 @@ class SpawnAgentTool(
      * back to the parent's subsequent turns.
      */
     var sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore? = null,
+    /**
+     * Parent-session command-prefix allowlist. Forwarded to every [SubagentRunner] (Task 8) so a
+     * sub-agent honors "Approve all <prefix> this session" decisions already made in this
+     * conversation — shared reference, not a copy, so prefixes approved inside a sub-agent also
+     * propagate back to the parent's subsequent turns. Mirrors [sessionApprovalStore].
+     */
+    var sessionCommandAllowlist: com.workflow.orchestrator.agent.loop.SessionCommandAllowlist? = null,
+    /**
+     * Parent-session "auto-approve safe read-only commands" toggle
+     * ([com.workflow.orchestrator.core.settings.AgentSettings.autoApproveSafeCommands]). Forwarded
+     * to every [SubagentRunner] (Task 8) so safe-command auto-approval behaves identically whether a
+     * command is run directly by the main agent or delegated to a sub-agent.
+     */
+    var autoApproveSafeCommands: Boolean = false,
     /** Parent hook manager — fires PRE/POST_TOOL_USE etc. for sub-agent tool calls. */
     var hookManager: com.workflow.orchestrator.agent.hooks.HookManager? = null,
     /** Parent session metrics — sub-agent tool / API timings flow into parent scorecard. */
@@ -833,6 +847,8 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
             toolExecutionMode = toolExecutionMode,
             approvalGate = approvalGate,
             sessionApprovalStore = sessionApprovalStore,
+            sessionCommandAllowlist = sessionCommandAllowlist,
+            autoApproveSafeCommands = autoApproveSafeCommands,
             hookManager = hookManager,
             sessionMetrics = sessionMetrics,
             fileLogger = fileLogger,
@@ -951,6 +967,8 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
                         toolExecutionMode = toolExecutionMode,
                         approvalGate = approvalGate,
                         sessionApprovalStore = sessionApprovalStore,
+                        sessionCommandAllowlist = sessionCommandAllowlist,
+                        autoApproveSafeCommands = autoApproveSafeCommands,
                         hookManager = hookManager,
                         sessionMetrics = sessionMetrics,
                         fileLogger = fileLogger,

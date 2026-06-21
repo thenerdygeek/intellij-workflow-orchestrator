@@ -37,6 +37,13 @@ export interface ApprovalCardProps extends SerializableApprovalCard {
   onConfirm?: () => void | Promise<void>;
   onCancel?: () => void | Promise<void>;
   onAllowForSession?: () => void | Promise<void>;
+  /**
+   * For `run_command` approvals — the safe command prefix the user can approve
+   * once for the session (e.g. "git add"). When present, the card renders an
+   * extra "Approve all \"{commandPrefix}\" this session" button.
+   */
+  commandPrefix?: string;
+  onApproveCommandPrefix?: (prefix: string) => void | Promise<void>;
 }
 
 // ---------- Helpers ----------
@@ -126,6 +133,8 @@ export function ApprovalCard({
   onConfirm,
   onCancel,
   onAllowForSession,
+  commandPrefix,
+  onApproveCommandPrefix,
 }: ApprovalCardProps) {
   const resolvedVariant = variant ?? "default";
   const resolvedConfirmLabel = confirmLabel ?? "Approve";
@@ -147,9 +156,11 @@ export function ApprovalCard({
         await onCancel?.();
       } else if (actionId === "allowForSession") {
         await onAllowForSession?.();
+      } else if (actionId === "approveCommandPrefix" && commandPrefix) {
+        await onApproveCommandPrefix?.(commandPrefix);
       }
     },
-    [onConfirm, onCancel, onAllowForSession],
+    [onConfirm, onCancel, onAllowForSession, onApproveCommandPrefix, commandPrefix],
   );
 
   const handleKeyDown = React.useCallback(
@@ -168,6 +179,7 @@ export function ApprovalCard({
   const actions = [
     { id: "cancel", label: resolvedCancelLabel, variant: "ghost" },
     ...(onAllowForSession ? [{ id: "allowForSession", label: "Allow for session", variant: "outline" }] : []),
+    ...(commandPrefix ? [{ id: "approveCommandPrefix", label: `Approve all "${commandPrefix}" this session`, variant: "outline" }] : []),
     { id: "confirm", label: resolvedConfirmLabel, variant: confirmVariant },
   ];
 

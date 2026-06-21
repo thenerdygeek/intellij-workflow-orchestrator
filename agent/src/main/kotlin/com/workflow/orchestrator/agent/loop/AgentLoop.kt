@@ -514,6 +514,20 @@ class AgentLoop(
      */
     private val autoApproveMemoryOperations: Boolean = false,
     /**
+     * Part A — when true, run_command invocations classified SAFE (and structurally
+     * auto-approvable) bypass the approval prompt. Read from
+     * [com.workflow.orchestrator.core.settings.AgentSettings.autoApproveSafeCommands].
+     * Default false (tests, sub-agents) keeps the prompt.
+     */
+    private val autoApproveSafeCommands: Boolean = false,
+    /**
+     * Part B — per-session allowlist of command PREFIXES the user approved via
+     * "Approve all <prefix> this session". A run_command whose every sub-command is
+     * covered by an allowed prefix bypasses the prompt regardless of [autoApproveSafeCommands].
+     * Injected from the controller/session level so it persists across follow-up messages.
+     */
+    private val sessionCommandAllowlist: SessionCommandAllowlist = SessionCommandAllowlist(),
+    /**
      * Optional callback that lets the loop push a streaming `edit_file` diff into
      * the chat panel while the LLM is still emitting `<new_string>`. When non-null,
      * an internal [com.workflow.orchestrator.agent.preview.StreamingEditTracker] is
@@ -806,6 +820,18 @@ class AgentLoop(
             Regex("token.{0,20}(limit|exceeded|overflow)", RegexOption.IGNORE_CASE),
             Regex("(input|prompt).{0,20}too.{0,10}(long|large)", RegexOption.IGNORE_CASE)
         )
+
+        /** Classify a raw shell command. Single source of truth for the approval gate
+         *  risk AND the auto-approve decision (avoids drift between two classify calls). */
+        fun classifyCommandRisk(command: String): CommandRisk =
+            CommandSafetyAnalyzer.classify(command)
+
+        /** Map a [CommandRisk] to the approval card's "low"/"medium"/"high" label. */
+        fun riskLabel(risk: CommandRisk): String = when (risk) {
+            CommandRisk.DANGEROUS -> "high"
+            CommandRisk.RISKY -> "medium"
+            CommandRisk.SAFE -> "low"
+        }
 
     }
 
@@ -1936,8 +1962,37 @@ class AgentLoop(
             //  - OFF → force per-invocation approval (no allow-for-session) AND ignore any
             //    prior session approval, so a generic "Allow for session" on edit_file cannot
             //    silence memory writes.
+            // run_command auto-approval (Part A toggle + Part B session prefix allowlist).
+            // Bypasses ONLY the approvalGate prompt — logging/metrics/PreToolUse/checkpoint still run.
+            var autoApproveReason: String? = null
+            // Computed once for run_command and reused for the gate's riskLevel below (avoids a
+            // second JSON parse + classify on the prompt path; keeps card risk == decision risk).
+            var runCommandRisk: CommandRisk? = null
+            if (toolName == "run_command") {
+                val cmd = try {
+                    json.decodeFromString<JsonObject>(call.function.arguments)["command"]
+                        ?.let { (it as? JsonPrimitive)?.contentOrNull } ?: ""
+                } catch (_: Exception) { "" }
+                val risk = classifyCommandRisk(cmd)
+                runCommandRisk = risk
+                when (val d = com.workflow.orchestrator.agent.security.CommandApprovalDecision.evaluate(
+                    command = cmd,
+                    risk = risk,
+                    autoApproveSafe = autoApproveSafeCommands,
+                    sessionAllowedPrefixes = sessionCommandAllowlist.snapshot(),
+                )) {
+                    is com.workflow.orchestrator.agent.security.ApprovalDecision.Skip ->
+                        autoApproveReason = when (val r = d.reason) {
+                            is com.workflow.orchestrator.agent.security.AutoApproveReason.Safe -> "safe"
+                            is com.workflow.orchestrator.agent.security.AutoApproveReason.SessionRule ->
+                                "session rule: " + r.prefixes.joinToString(", ")
+                        }
+                    com.workflow.orchestrator.agent.security.ApprovalDecision.Prompt -> { /* fall through to gate */ }
+                }
+            }
+
             val isMemoryWrite = MemoryWriteClassifier.isMemoryWrite(toolName, call.function.arguments, memoryDirPath)
-            if (!(isMemoryWrite && autoApproveMemoryOperations)) {
+            if (autoApproveReason == null && !(isMemoryWrite && autoApproveMemoryOperations)) {
                 val policy = if (isMemoryWrite) {
                     ApprovalPolicy(requiresApproval = true, allowSessionApproval = false)
                 } else {
@@ -1945,7 +2000,7 @@ class AgentLoop(
                 }
                 val sessionApproved = !isMemoryWrite && sessionApprovalStore.isApproved(toolName)
                 if (policy.requiresApproval && approvalGate != null && !sessionApproved) {
-                    val riskLevel = assessRisk(toolName, call.function.arguments)
+                    val riskLevel = runCommandRisk?.let { riskLabel(it) } ?: assessRisk(toolName, call.function.arguments)
                     val result = approvalGate.invoke(toolName, call.function.arguments, riskLevel, policy.allowSessionApproval)
                     when (result) {
                         ApprovalResult.DENIED -> {
@@ -2012,7 +2067,9 @@ class AgentLoop(
                 ToolCallProgress(
                     toolName = toolName,
                     args = call.function.arguments,
-                    toolCallId = toolCallId
+                    toolCallId = toolCallId,
+                    autoApproved = autoApproveReason != null,
+                    autoApproveReason = autoApproveReason,
                 )
             )
 
@@ -2833,11 +2890,7 @@ class AgentLoop(
             try {
                 val args = json.decodeFromString<JsonObject>(argsJson)
                 val command = (args["command"] as? JsonPrimitive)?.contentOrNull ?: ""
-                when (CommandSafetyAnalyzer.classify(command)) {
-                    CommandRisk.DANGEROUS -> "high"
-                    CommandRisk.RISKY -> "medium"
-                    CommandRisk.SAFE -> "low"
-                }
+                riskLabel(classifyCommandRisk(command))
             } catch (_: Exception) {
                 "medium" // can't parse args — default to medium
             }

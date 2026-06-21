@@ -259,6 +259,13 @@ interface PendingApproval {
   originAgentId?: string | null;
   /** Human-readable label of the sub-agent that requested approval. */
   originLabel?: string | null;
+  /**
+   * For `run_command` approvals, the safe command prefix the user can approve
+   * once for the rest of the session (e.g. "git add"). When present and
+   * non-empty, the approval card offers an "Approve all \"{prefix}\" this
+   * session" button that routes to `kotlinBridge.approveCommandPrefix`.
+   */
+  commandPrefix?: string;
 }
 
 // ── Toast state ──
@@ -529,7 +536,7 @@ interface ChatState {
   addAgentText(text: string): void;
   appendToken(token: string): void;
   endStream(): void;
-  addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus, toolTimeoutSeconds?: number): void;
+  addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus, toolTimeoutSeconds?: number, autoApproved?: boolean, autoApproveReason?: string): void;
   setToolCallOpen(toolCallId: string, open: boolean): void;
   updateToolCall(name: string, status: ToolCallStatus, result: string, durationMs: number, output?: string, diff?: string, toolCallId?: string, imageRefs?: ImageRef[]): void;
   finalizeToolChain(): void;
@@ -622,8 +629,8 @@ interface ChatState {
   dismissToast(id: string): void;
   receiveMentionResults(query: string, results: MentionSearchResult[]): void;
   setPendingMentionQuery(query: string): void;
-  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval?: boolean, originAgentId?: string | null, originLabel?: string | null, path?: string): void;
-  resolveApproval(decision: 'approve' | 'deny' | 'allowForSession'): void;
+  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval?: boolean, originAgentId?: string | null, originLabel?: string | null, path?: string, commandPrefix?: string): void;
+  resolveApproval(decision: 'approve' | 'deny' | 'allowForSession' | 'approveCommandPrefix'): void;
   showProcessInput(processId: string, description: string, prompt: string, command: string): void;
   resolveProcessInput(input: string): void;
   sendMessage(text: string, mentions: Mention[], attachments?: Array<{ sha256: string; mime: string; size: number; originalFilename: string; kind?: 'image' | 'file'; path?: string }>): void;
@@ -1082,7 +1089,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus, toolTimeoutSeconds?: number) {
+  addToolCall(toolCallId: string, name: string, args: string, status: ToolCallStatus, toolTimeoutSeconds?: number, autoApproved?: boolean, autoApproveReason?: string) {
     set(state => {
       // Use the LLM-assigned tool call ID so streaming output (keyed by the same ID) resolves correctly.
       // Fall back to a generated ID for legacy callers that don't supply one.
@@ -1110,6 +1117,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         args,
         status,
         ...(toolTimeoutSeconds != null ? { toolTimeoutSeconds } : {}),
+        ...(autoApproved === true ? { autoApproved: true } : {}),
+        ...(autoApproveReason ? { autoApproveReason } : {}),
       });
 
       // Flush any in-flight streaming buffer into messages so the tool call
@@ -1844,7 +1853,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ pendingMentionQuery: query });
   },
 
-  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval: boolean = true, originAgentId?: string | null, originLabel?: string | null, path?: string) {
+  showApproval(toolName: string, riskLevel: string, description?: string, metadata?: Array<{ key: string; value: string }>, diffContent?: string, commandPreview?: ApprovalCommandPreview, allowSessionApproval: boolean = true, originAgentId?: string | null, originLabel?: string | null, path?: string, commandPrefix?: string) {
     set(state => {
       const approval: PendingApproval = {
         toolName,
@@ -1857,6 +1866,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         allowSessionApproval,
         originAgentId,
         originLabel,
+        commandPrefix,
       };
 
       // Drain any active tool chain into individual UiMessage entries and
@@ -1929,7 +1939,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  resolveApproval(decision: 'approve' | 'deny' | 'allowForSession') {
+  resolveApproval(decision: 'approve' | 'deny' | 'allowForSession' | 'approveCommandPrefix') {
     const pending = get().pendingApproval;
     set({ pendingApproval: null });
     import('../bridge/jcef-bridge').then(({ kotlinBridge }) => {
@@ -1937,6 +1947,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         (kotlinBridge as any).approveToolCall();
       } else if (decision === 'allowForSession' && pending?.toolName) {
         (kotlinBridge as any).allowToolForSession(pending.toolName);
+      } else if (decision === 'approveCommandPrefix' && pending?.commandPrefix) {
+        (kotlinBridge as any).approveCommandPrefix(pending.commandPrefix);
       } else {
         (kotlinBridge as any).denyToolCall();
       }

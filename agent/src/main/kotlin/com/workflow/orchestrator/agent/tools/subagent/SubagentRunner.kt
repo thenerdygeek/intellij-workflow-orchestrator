@@ -65,6 +65,20 @@ class SubagentRunner(
      */
     private val sessionApprovalStore: com.workflow.orchestrator.agent.loop.SessionApprovalStore? = null,
     /**
+     * Optional session command-prefix allowlist shared with the parent session (Task 8).
+     * When set, sub-agent run_commands honor "Approve all <prefix> this session" decisions
+     * the user has already made — shared reference, not a copy, so prefixes approved inside
+     * a sub-agent also propagate back to the parent's subsequent turns.
+     * Null = fresh empty allowlist (tests, disconnected sub-agents).
+     */
+    private val sessionCommandAllowlist: com.workflow.orchestrator.agent.loop.SessionCommandAllowlist? = null,
+    /**
+     * Parent-session "auto-approve safe read-only commands" toggle (Task 8). When true,
+     * the sub-agent's AgentLoop auto-approves commands that CommandSafetyAnalyzer classifies
+     * as SAFE, mirroring the main agent's behavior. Null/false = no auto-approval.
+     */
+    private val autoApproveSafeCommands: Boolean = false,
+    /**
      * Optional hook manager forwarded from the parent session. When set, PRE_TOOL_USE /
      * POST_TOOL_USE / etc. fire for sub-agent tool calls with the same semantics as the
      * main agent.
@@ -379,6 +393,8 @@ class SubagentRunner(
                 toolExecutionMode = effectiveToolExecutionMode,
                 approvalGate = approvalGate,
                 sessionApprovalStore = sessionApprovalStore ?: com.workflow.orchestrator.agent.loop.SessionApprovalStore(),
+                sessionCommandAllowlist = sessionCommandAllowlist ?: com.workflow.orchestrator.agent.loop.SessionCommandAllowlist(),
+                autoApproveSafeCommands = autoApproveSafeCommands,
                 hookManager = hookManager,
                 sessionMetrics = sessionMetrics,
                 fileLogger = fileLogger,

@@ -57,6 +57,7 @@ export const ChatFooter = memo(function ChatFooter() {
   const handleApprove = useCallback(() => resolveApproval('approve'), [resolveApproval]);
   const handleDeny = useCallback(() => resolveApproval('deny'), [resolveApproval]);
   const handleAllowForSession = useCallback(() => resolveApproval('allowForSession'), [resolveApproval]);
+  const handleApproveCommandPrefix = useCallback(() => resolveApproval('approveCommandPrefix'), [resolveApproval]);
 
   // P1-14: memoize so ChatFooter's many per-token re-renders don't allocate
   // a fresh array each time (activeToolCalls Map identity is already stable
@@ -130,6 +131,8 @@ export const ChatFooter = memo(function ChatFooter() {
             onApprove={handleApprove}
             onDeny={handleDeny}
             onAllowForSession={pendingApproval.allowSessionApproval ? handleAllowForSession : undefined}
+            commandPrefix={pendingApproval.commandPrefix}
+            onApproveCommandPrefix={pendingApproval.commandPrefix ? handleApproveCommandPrefix : undefined}
             originAgentId={pendingApproval.originAgentId}
             originLabel={pendingApproval.originLabel}
           />

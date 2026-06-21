@@ -72,6 +72,15 @@ export interface ToolCall {
    * suppresses the "/ ..." suffix entirely.
    */
   toolTimeoutSeconds?: number;
+  /**
+   * True when this tool call ran without an approval prompt because a
+   * session-scoped auto-approve rule matched (run_command prefix-approval or
+   * the default-OFF "auto-approve safe commands" setting). When true, the
+   * tool-call row renders a small "auto-approved · {autoApproveReason}" badge.
+   */
+  autoApproved?: boolean;
+  /** Human-readable reason for the auto-approval (e.g. "safe", "git add"). */
+  autoApproveReason?: string;
 }
 
 // ── Plan types ──
