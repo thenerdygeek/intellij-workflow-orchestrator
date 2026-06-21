@@ -1179,9 +1179,7 @@ class AgentCefPanel(
     ) {
         val timeoutArg = toolTimeoutSeconds?.toString() ?: "null"
         val autoApproveReasonArg = if (autoApproveReason != null) JsEscape.toJsString(autoApproveReason) else "null"
-        callJs(
-            "appendToolCall(${JsEscape.toJsString(toolCallId)},${JsEscape.toJsString(toolName)},${JsEscape.toJsString(args)},'${status.name}',$timeoutArg,$autoApproved,$autoApproveReasonArg)",
-        )
+        callJs("appendToolCall(${JsEscape.toJsString(toolCallId)},${JsEscape.toJsString(toolName)},${JsEscape.toJsString(args)},'${status.name}',$timeoutArg,$autoApproved,$autoApproveReasonArg)")
     }
 
     fun updateLastToolCall(
