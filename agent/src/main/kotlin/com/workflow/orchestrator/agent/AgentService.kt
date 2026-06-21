@@ -637,9 +637,11 @@ class AgentService(
                 com.workflow.orchestrator.agent.session.AsyncEventStatus.SUCCESS
             },
             summary = result.summary,
-            details = "",
+            // Surface the (already grep/spill/truncate-processed) output tail + spill link on the card,
+            // so a backgrounded tool that spilled to disk is as inspectable as a background-process card.
+            details = result.content.take(BACKGROUND_CARD_DETAIL_CHARS),
             timestamp = System.currentTimeMillis(),
-            spillPath = null,
+            spillPath = result.spillPath,
         )
         enqueueToSession(
             handle.sessionId,
@@ -3825,6 +3827,9 @@ class AgentService(
     }
 
     companion object {
+        /** Max chars of a backgrounded tool's output shown in its async-event card's detail pane. */
+        private const val BACKGROUND_CARD_DETAIL_CHARS = 2000
+
         fun getInstance(project: Project): AgentService =
             project.service<AgentService>()
 
