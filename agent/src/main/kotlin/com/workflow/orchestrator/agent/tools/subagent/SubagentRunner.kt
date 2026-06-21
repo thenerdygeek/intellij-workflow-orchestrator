@@ -274,7 +274,7 @@ class SubagentRunner(
 
             // 3. Scope the brain's XML parser to ALL tools (core + deferred)
             brain.toolNameSet = subagentRegistry.allToolNames()
-            brain.paramNameSet = subagentRegistry.allParamNames() + BackgroundEligibility.RUN_IN_BACKGROUND_PARAM
+            brain.paramNameSet = BackgroundEligibility.withReservedParams(subagentRegistry.allParamNames())
 
             // 4. Create fresh context manager with budget
             val contextManager = ContextManager(maxInputTokens = contextBudget)
@@ -327,7 +327,7 @@ class SubagentRunner(
                 toolResolver = { name -> subagentRegistry.get(name) },
                 systemPromptProvider = { buildComposedSystemPrompt(subagentRegistry) },
                 toolNameProvider = { subagentRegistry.allToolNames() },
-                paramNameProvider = { subagentRegistry.allParamNames() + BackgroundEligibility.RUN_IN_BACKGROUND_PARAM },
+                paramNameProvider = { BackgroundEligibility.withReservedParams(subagentRegistry.allParamNames()) },
                 onToolCall = { progress ->
                     // AgentLoop fires onToolCall twice: once at tool start (empty result, durationMs=0)
                     // and once at tool completion (populated result, durationMs>0). We must propagate

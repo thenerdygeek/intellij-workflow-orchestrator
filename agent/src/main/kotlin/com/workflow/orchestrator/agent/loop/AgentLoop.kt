@@ -2088,7 +2088,7 @@ class AgentLoop(
                 if (canBackground) {
                     val handle = com.workflow.orchestrator.agent.tools.background.BackgroundToolHandle(
                         toolCallId = toolCallId, sessionId = sessionId ?: "", toolName = toolName,
-                        params = params, tool = tool, startedAt = System.currentTimeMillis(),
+                        startedAt = System.currentTimeMillis(),
                     )
                     if (requestedBackground) handle.backgrounded = true
                     backgroundExecutor.start(handle) { runAndProcess() }

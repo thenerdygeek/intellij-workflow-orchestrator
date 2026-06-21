@@ -625,31 +625,27 @@ class AgentService(
         handle: com.workflow.orchestrator.agent.tools.background.BackgroundToolHandle,
         result: com.workflow.orchestrator.agent.tools.ToolResult,
     ) {
+        val nowMs = System.currentTimeMillis()
         val body = "Tool '${handle.toolName}' (id=${handle.toolCallId}) finished:\n${result.content}"
-        val card = com.workflow.orchestrator.agent.session.AsyncEventCardData(
-            id = "bg-${handle.toolCallId}-${System.currentTimeMillis()}",
-            kind = com.workflow.orchestrator.agent.session.AsyncEventKind.BACKGROUND,
-            sourceId = handle.toolCallId,
-            label = handle.toolName,
-            status = if (result.isError) {
-                com.workflow.orchestrator.agent.session.AsyncEventStatus.FAILURE
-            } else {
-                com.workflow.orchestrator.agent.session.AsyncEventStatus.SUCCESS
-            },
+        // Surface the (already grep/spill/truncate-processed) output tail + spill link on the card, so a
+        // backgrounded tool that spilled to disk is as inspectable as a background-process card. Card
+        // construction lives in AsyncEventCardPresenter alongside the other producers (fromBackground/fromMonitor).
+        val card = com.workflow.orchestrator.agent.ui.AsyncEventCardPresenter.fromToolResult(
+            toolCallId = handle.toolCallId,
+            toolName = handle.toolName,
+            isError = result.isError,
             summary = result.summary,
-            // Surface the (already grep/spill/truncate-processed) output tail + spill link on the card,
-            // so a backgrounded tool that spilled to disk is as inspectable as a background-process card.
             details = result.content.take(BACKGROUND_CARD_DETAIL_CHARS),
-            timestamp = System.currentTimeMillis(),
             spillPath = result.spillPath,
+            occurredAt = nowMs,
         )
         enqueueToSession(
             handle.sessionId,
             com.workflow.orchestrator.agent.loop.queue.QueuedMessage(
-                id = "bg-${handle.toolCallId}-${System.nanoTime()}",
+                id = "bg-${handle.toolCallId}-$nowMs",
                 kind = com.workflow.orchestrator.agent.loop.queue.QueueSourceKind.BACKGROUND,
                 body = body,
-                timestamp = System.currentTimeMillis(),
+                timestamp = nowMs,
                 priority = com.workflow.orchestrator.agent.loop.queue.BackgroundQueuePolicy.priority,
                 coalesceKey = handle.toolCallId,
                 meta = mapOf("card" to com.workflow.orchestrator.agent.ui.AsyncEventCardPresenter.encodeCard(card)),
@@ -783,7 +779,7 @@ class AgentService(
     private val brainFactory = com.workflow.orchestrator.agent.brain.BrainFactory(
         project = project,
         toolNames = { registry.allToolNames() },
-        paramNames = { registry.allParamNames() + com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.RUN_IN_BACKGROUND_PARAM },
+        paramNames = { com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.withReservedParams(registry.allParamNames()) },
     )
 
     /**
@@ -1950,7 +1946,7 @@ class AgentService(
                 val fbTokenProvider = { fbCredentialStore.getToken(ServiceType.SOURCEGRAPH) }
                 val brainFactory: suspend (String, String?) -> LlmBrain = { modelId: String, reason: String? ->
                     val currentToolNames = registry.allToolNames()
-                    val currentParamNames = registry.allParamNames() + com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.RUN_IN_BACKGROUND_PARAM
+                    val currentParamNames = com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.withReservedParams(registry.allParamNames())
                     val newBrain = OpenAiCompatBrain(
                         sourcegraphUrl = fbUrl,
                         tokenProvider = fbTokenProvider,
@@ -2516,7 +2512,7 @@ class AgentService(
                     messageStateHandler = messageState,
                     toolExecutionMode = agentSettings.state.toolExecutionMode ?: "accumulate",
                     toolNameProvider = { registry.allToolNames() },
-                    paramNameProvider = { registry.allParamNames() + com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.RUN_IN_BACKGROUND_PARAM },
+                    paramNameProvider = { com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.withReservedParams(registry.allParamNames()) },
                     outputSpiller = _outputSpiller,
                     backgroundExecutor = backgroundToolExecutor,
                     backgroundCap = agentSettings.state.maxBackgroundedToolsPerSession,
@@ -3701,6 +3697,9 @@ class AgentService(
         val sid = currentSessionId
         if (sid != null) releaseSessionState(sid)
         cancelCurrentTask()
+        // NOT redundant with cancelCurrentTask's cancel: that one is activeTask-gated, so when the session
+        // is idle (loop already exited after attempt_completion) it no-ops — yet a tool backgrounded before
+        // completion is still running. New-chat must cancel those idle-session background jobs too.
         if (sid != null) backgroundToolExecutor.cancelAllForSession(sid)
         registry.resetActiveDeferred()
         ProcessRegistry.killAll()

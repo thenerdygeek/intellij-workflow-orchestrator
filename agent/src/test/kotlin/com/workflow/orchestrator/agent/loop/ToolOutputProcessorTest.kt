@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.agent.loop
 
-import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -8,7 +7,7 @@ import org.junit.jupiter.api.Test
 
 class ToolOutputProcessorTest {
     @Test
-    fun `no grep, no spill, no truncate returns original content and original token estimate`() = runTest {
+    fun `no grep, no spill, no truncate returns original content and original token estimate`() {
         val r = ToolOutputProcessor.process(
             toolName = "read_file", rawContent = "line1\nline2", rawTokenEstimate = 7,
             grepPattern = null, requestedOutputFile = false, maxChars = 1000, spiller = null,
@@ -20,7 +19,7 @@ class ToolOutputProcessorTest {
     }
 
     @Test
-    fun `grep filters lines and re-estimates tokens`() = runTest {
+    fun `grep filters lines and re-estimates tokens`() {
         val r = ToolOutputProcessor.process(
             toolName = "search_code", rawContent = "apple\nbanana\napricot", rawTokenEstimate = 99,
             grepPattern = "ap", requestedOutputFile = false, maxChars = 1000, spiller = null,
@@ -32,7 +31,7 @@ class ToolOutputProcessorTest {
     }
 
     @Test
-    fun `truncate shortens and re-estimates`() = runTest {
+    fun `truncate shortens and re-estimates`() {
         val r = ToolOutputProcessor.process(
             toolName = "run_command", rawContent = "0123456789", rawTokenEstimate = 50,
             grepPattern = null, requestedOutputFile = false, maxChars = 4, spiller = null,

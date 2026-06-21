@@ -13,7 +13,7 @@ data class ProcessedToolResult(val content: String, val tokenEstimate: Int, val 
  * are injected (they are AgentLoop helpers) so this stays unit-testable without constructing AgentLoop.
  */
 object ToolOutputProcessor {
-    suspend fun process(
+    fun process(
         toolName: String,
         rawContent: String,
         rawTokenEstimate: Int,

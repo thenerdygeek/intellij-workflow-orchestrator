@@ -9,6 +9,13 @@ object BackgroundEligibility {
     /** Reserved loop-level attribute the parser must keep on any tool call, then the loop strips. */
     const val RUN_IN_BACKGROUND_PARAM = "run_in_background"
 
+    /**
+     * Augment a tool's parameter-name allowlist with the reserved background tag so the XML parser keeps
+     * it on any tool call. Single source for the augmentation — used at every brain/param-provider site
+     * (orchestrator + sub-agent) so a future reserved attribute is added in exactly one place.
+     */
+    fun withReservedParams(base: Set<String>): Set<String> = base + RUN_IN_BACKGROUND_PARAM
+
     /** Tools that must always run inline (steer the loop / need inline user input / mutate loop state). */
     val CONTROL_FLOW_DENYLIST: Set<String> = setOf(
         "attempt_completion",   // ends the task

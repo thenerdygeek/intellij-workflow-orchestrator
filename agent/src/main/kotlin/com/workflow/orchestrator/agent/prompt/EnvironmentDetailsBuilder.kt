@@ -220,7 +220,7 @@ object EnvironmentDetailsBuilder {
         val sb = StringBuilder()
         sb.append("\n# Background tasks in progress\n")
         for ((id, name, elapsedMs) in tasks) {
-            sb.append("- $id · $name · ${elapsedMs / 1000}s elapsed\n")
+            sb.append("- $id · $name · ${humanizeMs(elapsedMs)} elapsed\n")
         }
         return sb.toString()
     }

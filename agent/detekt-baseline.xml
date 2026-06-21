@@ -291,7 +291,7 @@
     <ID>ArgumentListWrapping:AgentFileLoggerTest.kt$AgentFileLoggerTest.RetentionAndRotation$("""{"ts":"2020-01-01T00:00:00Z","event":"session_start","session":"test"}""" + "\n")</ID>
     <ID>ArgumentListWrapping:AgentFileLoggerTest.kt$AgentFileLoggerTest.RetentionAndRotation$(tempDir, name)</ID>
     <ID>ArgumentListWrapping:AgentLoop.kt$AgentLoop$( content = "Error: Tool '$toolName' timed out after ${timeout / 1000}s. " + "The operation took too long. Try a more specific query or smaller scope.", summary = "Error: timeout after ${timeout / 1000}s", tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE, isError = true, )</ID>
-    <ID>ArgumentListWrapping:AgentLoop.kt$AgentLoop$( toolCallId = toolCallId, sessionId = sessionId ?: "", toolName = toolName, params = params, tool = tool, startedAt = System.currentTimeMillis(), )</ID>
+    <ID>ArgumentListWrapping:AgentLoop.kt$AgentLoop$( toolCallId = toolCallId, sessionId = sessionId ?: "", toolName = toolName, startedAt = System.currentTimeMillis(), )</ID>
     <ID>ArgumentListWrapping:AgentLoop.kt$AgentLoop$(", ")</ID>
     <ID>ArgumentListWrapping:AgentLoop.kt$AgentLoop$("::")</ID>
     <ID>ArgumentListWrapping:AgentLoop.kt$AgentLoop$("Agent failed to use tools after $maxConsecutiveMistakes attempts.", iteration, FailureReason.NO_TOOLS_USED)</ID>
@@ -446,6 +446,7 @@
     <ID>ArgumentListWrapping:AgentService.kt$AgentService$(brain, hookManager, force = force, iterationsSinceLastUser = Int.MAX_VALUE)</ID>
     <ID>ArgumentListWrapping:AgentService.kt$AgentService$(items, existingIds)</ID>
     <ID>ArgumentListWrapping:AgentService.kt$AgentService$(projectPath)</ID>
+    <ID>ArgumentListWrapping:AgentService.kt$AgentService$(registry.allParamNames())</ID>
     <ID>ArgumentListWrapping:AgentService.kt$AgentService$(researchDirPath)</ID>
     <ID>ArgumentListWrapping:AgentServiceActiveTaskMutexTest.kt$AgentServiceActiveTaskMutexTest$(allLocks.size >= 2, "Expected at least 2 activeTaskMutex.withLock sites (set + finally clear); found ${allLocks.size}")</ID>
     <ID>ArgumentListWrapping:AgentServiceActiveTaskMutexTest.kt$AgentServiceActiveTaskMutexTest$(cancelJob in lockIdx..setIdx, "prev.job.cancel() must appear between withLock and activeTask.set")</ID>
@@ -8522,8 +8523,8 @@
     <ID>Wrapping:AgentService.kt$AgentService$(</ID>
     <ID>Wrapping:AgentService.kt$AgentService$(project, object : com.intellij.openapi.project.ProjectManagerListener { override fun projectClosing(closingProject: com.intellij.openapi.project.Project) { if (closingProject == project) { runCatching { com.workflow.orchestrator.agent.tools.background.BackgroundPool .getInstance(project).killAllForProject() }.onFailure { log.warn("[AgentService] killAllForProject failed at shutdown: ${it.message}", it) } } } })</ID>
     <ID>Wrapping:AgentService.kt$AgentService$SpawnAgentTool( brainProvider = { modelOverride -> createBrain(modelOverride ?: currentBrainModelId) }, toolRegistry = registry, project = project, configLoader = AgentConfigLoader.getInstance(), ideContext = ideContext, outputSpiller = { _outputSpiller }, attachmentStoreProvider = { activeAttachmentStore }, brainFactory = { liveBrainFactory }, cachedFallbackChain = { liveCachedFallbackChain }, onModelSwitch = { from, to, reason -> liveOnModelSwitch?.invoke(from, to, reason) }, modelCatalogService = { sharedCatalogHolder.peek() }, parentSessionIdProvider = { activeTask.get()?.sessionId }, subagentMessageStateHandlerFactory = { parentId, agentId -> val basePath = project.basePath ?: System.getProperty("user.home") val agentBaseDir = ProjectIdentifier.agentDir(basePath) MessageStateHandler( baseDir = agentBaseDir, sessionId = "$parentId/subagents/$agentId", taskText = "sub-agent $agentId", ) }, )</ID>
+    <ID>Wrapping:AgentService.kt$AgentService$com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.withReservedParams(registry.allParamNames())</ID>
     <ID>Wrapping:AgentService.kt$AgentService$com.workflow.orchestrator.agent.tools.integration.SessionDocumentArtifactService.defaultCacheDirProvider()</ID>
-    <ID>Wrapping:AgentService.kt$AgentService$registry.allParamNames() + com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.RUN_IN_BACKGROUND_PARAM</ID>
     <ID>Wrapping:AgentServiceActiveTaskMutexTest.kt$AgentServiceActiveTaskMutexTest$(</ID>
     <ID>Wrapping:AgentServiceCrossIdeDelegationGateTest.kt$AgentServiceCrossIdeDelegationGateTest$(</ID>
     <ID>Wrapping:AgentServiceModelChangeCasTest.kt$AgentServiceModelChangeCasTest$(</ID>

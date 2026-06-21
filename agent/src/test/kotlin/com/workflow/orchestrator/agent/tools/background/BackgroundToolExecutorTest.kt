@@ -1,13 +1,10 @@
 package com.workflow.orchestrator.agent.tools.background
 
-import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
-import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.JsonObject
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -15,7 +12,7 @@ import org.junit.jupiter.api.Test
 
 class BackgroundToolExecutorTest {
     private fun handle(id: String, session: String = "S1") =
-        BackgroundToolHandle(id, session, "run_command", JsonObject(emptyMap()), mockk<AgentTool>(), 0L)
+        BackgroundToolHandle(id, session, "run_command", 0L)
 
     @Test
     fun `agent-initiated background delivers result on completion`() = runTest {

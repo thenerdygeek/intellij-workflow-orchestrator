@@ -1,10 +1,8 @@
 package com.workflow.orchestrator.agent.tools.background
 
-import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolResult
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
-import kotlinx.serialization.json.JsonObject
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -18,8 +16,6 @@ class BackgroundToolHandle(
     val toolCallId: String,
     val sessionId: String,
     val toolName: String,
-    val params: JsonObject,
-    val tool: AgentTool,
     val startedAt: Long,
 ) {
     lateinit var job: Job

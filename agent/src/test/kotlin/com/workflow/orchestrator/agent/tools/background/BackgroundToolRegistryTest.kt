@@ -1,8 +1,5 @@
 package com.workflow.orchestrator.agent.tools.background
 
-import com.workflow.orchestrator.agent.tools.AgentTool
-import io.mockk.mockk
-import kotlinx.serialization.json.JsonObject
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
@@ -10,7 +7,7 @@ import org.junit.jupiter.api.Test
 
 class BackgroundToolRegistryTest {
     private fun handle(id: String, session: String, started: Long) =
-        BackgroundToolHandle(id, session, "run_command", JsonObject(emptyMap()), mockk<AgentTool>(), started)
+        BackgroundToolHandle(id, session, "run_command", started)
 
     @Test
     fun `list returns this session's handles oldest-first and isolates other sessions`() {
