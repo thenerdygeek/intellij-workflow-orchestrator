@@ -188,6 +188,21 @@ class AgentService(
         onLog = { log.info(it) },
     )
 
+    // ── Background tool executor (Task 7) ──────────────────────────────────────
+    // AgentService owns both the registry (session-keyed index of live handles) and the
+    // executor (runs tool blocks in a SupervisorJob scope, delivers completed results back
+    // via deliverBackgroundResult). The executor is disposed alongside AgentService.
+
+    private val backgroundToolRegistry =
+        com.workflow.orchestrator.agent.tools.background.BackgroundToolRegistry()
+
+    private val backgroundToolExecutor =
+        com.workflow.orchestrator.agent.tools.background.BackgroundToolExecutor(
+            parentScope = cs,
+            registry = backgroundToolRegistry,
+            onDeliver = { handle, result -> deliverBackgroundResult(handle, result) },
+        )
+
     /**
      * Task 6.1 — optional hook the UI layer (AgentController) registers to carry out
      * the actual auto-wake. The agent service cannot drive the full resume pipeline
@@ -603,6 +618,41 @@ class AgentService(
                 log.warn("[Agent] appendAsyncEventCardToSession: persist failed for $sessionId", e)
             }
         }
+    }
+
+    /** Deliver a finished background tool's result into its session queue (auto-wakes if idle) + UI card. */
+    private fun deliverBackgroundResult(
+        handle: com.workflow.orchestrator.agent.tools.background.BackgroundToolHandle,
+        result: com.workflow.orchestrator.agent.tools.ToolResult,
+    ) {
+        val body = "Tool '${handle.toolName}' (id=${handle.toolCallId}) finished:\n${result.content}"
+        val card = com.workflow.orchestrator.agent.session.AsyncEventCardData(
+            id = "bg-${handle.toolCallId}-${System.currentTimeMillis()}",
+            kind = com.workflow.orchestrator.agent.session.AsyncEventKind.BACKGROUND,
+            sourceId = handle.toolCallId,
+            label = handle.toolName,
+            status = if (result.isError) {
+                com.workflow.orchestrator.agent.session.AsyncEventStatus.FAILURE
+            } else {
+                com.workflow.orchestrator.agent.session.AsyncEventStatus.SUCCESS
+            },
+            summary = result.summary,
+            details = "",
+            timestamp = System.currentTimeMillis(),
+            spillPath = null,
+        )
+        enqueueToSession(
+            handle.sessionId,
+            com.workflow.orchestrator.agent.loop.queue.QueuedMessage(
+                id = "bg-${handle.toolCallId}-${System.nanoTime()}",
+                kind = com.workflow.orchestrator.agent.loop.queue.QueueSourceKind.BACKGROUND,
+                body = body,
+                timestamp = System.currentTimeMillis(),
+                priority = com.workflow.orchestrator.agent.loop.queue.BackgroundQueuePolicy.priority,
+                coalesceKey = handle.toolCallId,
+                meta = mapOf("card" to com.workflow.orchestrator.agent.ui.AsyncEventCardPresenter.encodeCard(card)),
+            ),
+        )
     }
 
     /** Current session's message state handler — non-null while a task is running. */
@@ -2436,6 +2486,9 @@ class AgentService(
                             // Surfaces this session's still-running background processes
                             // + their new output since last turn.
                             sessionId = sid,
+                            backgroundTasks = backgroundToolRegistry.list(sid).map {
+                                Triple(it.toolCallId, it.toolName, System.currentTimeMillis() - it.startedAt)
+                            },
                         )
                     },
                     // Task 2.1: resolve from the service's per-session map so that both the loop
@@ -2463,6 +2516,10 @@ class AgentService(
                     toolNameProvider = { registry.allToolNames() },
                     paramNameProvider = { registry.allParamNames() + com.workflow.orchestrator.agent.tools.background.BackgroundEligibility.RUN_IN_BACKGROUND_PARAM },
                     outputSpiller = _outputSpiller,
+                    backgroundExecutor = backgroundToolExecutor,
+                    backgroundCap = agentSettings.state.maxBackgroundedToolsPerSession,
+                    backgroundEnabled = { AgentSettings.getInstance(project).state.allowToolsRunInBackground },
+                    backgroundInFlightCount = { backgroundToolRegistry.countForSession(sid) },
                     onUserInputReceived = onUserInputReceived,
                     // Multimodal-agent Phase 3 — provide the session-scoped
                     // AttachmentStore so AgentLoop wraps every tool invocation
@@ -3580,6 +3637,7 @@ class AgentService(
         activeTask.get()?.let { task ->
             task.loop.cancel()
             task.job.cancel()
+            backgroundToolExecutor.cancelAllForSession(task.sessionId)
 
             // Plan 3 cascade-cancel: close every open child delegation channel for
             // the session being canceled. Idempotent — outbound service tracks
@@ -3641,6 +3699,7 @@ class AgentService(
         val sid = currentSessionId
         if (sid != null) releaseSessionState(sid)
         cancelCurrentTask()
+        if (sid != null) backgroundToolExecutor.cancelAllForSession(sid)
         registry.resetActiveDeferred()
         ProcessRegistry.killAll()
         activeTask.set(null)
@@ -3672,6 +3731,7 @@ class AgentService(
             log.warn("[AgentService] Failed to close AgentFileLogger on dispose", e)
         }
         cancelCurrentTask()
+        backgroundToolExecutor.dispose()
         ProcessRegistry.killAll()
         debugController?.dispose()
     }
