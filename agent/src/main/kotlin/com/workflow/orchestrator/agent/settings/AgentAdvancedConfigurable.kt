@@ -324,6 +324,28 @@ class AgentAdvancedConfigurable(
                         .bindSelected(agentSettings.state::suppressBackgroundKillConfirmation)
                 }
             }
+
+            group("Background Tool Execution") {
+                row {
+                    checkBox("Allow tools to run in the background")
+                        .bindSelected(agentSettings.state::allowToolsRunInBackground)
+                        .comment(
+                            "When ON, the agent can run a long tool in the background (via a " +
+                                "<code>run_in_background</code> attribute) and you can click " +
+                                "\"Move to background\" on a running tool. Results are delivered back " +
+                                "automatically when they finish. OFF → every tool runs inline."
+                        )
+                }
+                row("Max concurrent backgrounded tools per session:") {
+                    intTextField(1..50)
+                        .bindIntText(agentSettings.state::maxBackgroundedToolsPerSession)
+                        .comment(
+                            "Cap on tools running in the background at once. Beyond it, the attribute " +
+                                "is ignored and the tool runs inline. Separate from the background " +
+                                "<i>process</i> cap above."
+                        )
+                }
+            }
         }
         dialogPanel = innerPanel
 
