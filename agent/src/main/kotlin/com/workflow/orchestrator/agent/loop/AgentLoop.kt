@@ -24,7 +24,6 @@ import com.workflow.orchestrator.agent.session.*
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.builtin.BackgroundProcessTool
 import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
-import com.workflow.orchestrator.agent.tools.ToolOutputConfig
 import com.workflow.orchestrator.agent.tools.ToolOutputSpiller
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.ToolResultType
