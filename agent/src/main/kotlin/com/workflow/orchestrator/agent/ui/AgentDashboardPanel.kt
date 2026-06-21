@@ -467,7 +467,9 @@ class AgentDashboardPanel(
         commandPrefix: String? = null,
     ) {
         cefPanel?.showApproval(toolName, riskLevel, description, metadataJson, diffContent, commandPreviewJson, allowSessionApproval, originAgentId, originLabel, path, commandPrefix)
-        broadcast(replay = false) { it.showApproval(toolName, riskLevel, description, metadataJson, diffContent, commandPreviewJson, allowSessionApproval, originAgentId, originLabel, path, commandPrefix) }
+        broadcast(replay = false) {
+            it.showApproval(toolName, riskLevel, description, metadataJson, diffContent, commandPreviewJson, allowSessionApproval, originAgentId, originLabel, path, commandPrefix)
+        }
     }
 
     fun showProcessInput(processId: String, description: String, prompt: String, command: String) {
@@ -647,7 +649,8 @@ class AgentDashboardPanel(
 
     fun appendToolCall(
         toolCallId: String = "",
-        toolName: String, args: String = "",
+        toolName: String,
+        args: String = "",
         status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING,
         toolTimeoutSeconds: Long? = null,
         autoApproved: Boolean = false,
@@ -656,7 +659,17 @@ class AgentDashboardPanel(
         val displayName = resolveToolDisplayName(toolName)
         cefPanel?.appendToolCall(toolCallId, displayName, args, status, toolTimeoutSeconds, autoApproved, autoApproveReason)
             ?: fallbackPanel?.appendToolCall(displayName, args, status, autoApproved, autoApproveReason)
-        broadcast { it.appendToolCall(toolCallId, displayName, args, status, toolTimeoutSeconds, autoApproved, autoApproveReason) }
+        broadcast {
+            it.appendToolCall(
+                toolCallId,
+                displayName,
+                args,
+                status,
+                toolTimeoutSeconds,
+                autoApproved,
+                autoApproveReason,
+            )
+        }
     }
 
     fun updateLastToolCall(

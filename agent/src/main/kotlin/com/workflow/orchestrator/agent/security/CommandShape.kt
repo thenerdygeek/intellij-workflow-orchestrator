@@ -43,7 +43,10 @@ object CommandShape {
             var current = mutableListOf<CommandSafetyAnalyzer.Token>()
             for (t in tokenLine(line)) {
                 if (t.isOperator && t.value in SPLIT_OPS) {
-                    if (current.isNotEmpty()) { result.add(current); current = mutableListOf() }
+                    if (current.isNotEmpty()) {
+                        result.add(current)
+                        current = mutableListOf()
+                    }
                 } else {
                     current.add(t)
                 }
@@ -61,10 +64,10 @@ object CommandShape {
         if (tokens.any { it.isOperator && it.value in REDIRECT_OPS }) return false
         val vals = values(tokens)
         if (vals.isEmpty()) return false
-        if (vals.any { it.contains('$') || it.contains('`') }) return false   // expansion / substitution
-        if (vals.any { it.contains('&') }) return false                       // backgrounding / stray &
+        if (vals.any { it.contains('$') || it.contains('`') }) return false // expansion / substitution
+        if (vals.any { it.contains('&') }) return false // backgrounding / stray &
         val first = vals.first()
-        if (ASSIGNMENT.containsMatchIn(first)) return false                   // FOO=bar cmd
+        if (ASSIGNMENT.containsMatchIn(first)) return false // FOO=bar cmd
         val firstLc = first.lowercase()
         if (firstLc in WRAPPER_DENYLIST) return false
         if (firstLc in SHELL_INTERPRETERS) return false

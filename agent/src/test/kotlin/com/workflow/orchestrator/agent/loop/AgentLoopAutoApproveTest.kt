@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.loop
 
+import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.observability.AgentFileLogger
 import com.workflow.orchestrator.agent.tools.AgentTool
@@ -17,7 +18,6 @@ import com.workflow.orchestrator.core.ai.dto.UsageInfo
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.ErrorType
 import com.workflow.orchestrator.core.model.ModelPricingRegistry
-import com.intellij.openapi.project.Project
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.test.runTest
@@ -52,8 +52,11 @@ class AgentLoopAutoApproveTest {
                         role = "assistant",
                         content = null,
                         toolCalls = listOf(
-                            ToolCall(id = "call_${System.nanoTime()}", type = "function",
-                                function = FunctionCall(name = toolName, arguments = args))
+                            ToolCall(
+                                id = "call_${System.nanoTime()}",
+                                type = "function",
+                                function = FunctionCall(name = toolName, arguments = args),
+                            )
                         )
                     ),
                     finishReason = "tool_calls"
@@ -65,14 +68,23 @@ class AgentLoopAutoApproveTest {
     private class SequenceBrain(private val responses: List<ApiResult<ChatCompletionResponse>>) : LlmBrain {
         override val modelId = "test-model"
         val callIndex = AtomicInteger(0)
-        override suspend fun chat(messages: List<ChatMessage>, tools: List<ToolDefinition>?, maxTokens: Int?, toolChoice: JsonElement?) =
-            throw UnsupportedOperationException()
-        override suspend fun chatStream(messages: List<ChatMessage>, tools: List<ToolDefinition>?, maxTokens: Int?, onChunk: suspend (StreamChunk) -> Unit): ApiResult<ChatCompletionResponse> {
+        override suspend fun chat(
+            messages: List<ChatMessage>,
+            tools: List<ToolDefinition>?,
+            maxTokens: Int?,
+            toolChoice: JsonElement?,
+        ) = throw UnsupportedOperationException()
+        override suspend fun chatStream(
+            messages: List<ChatMessage>,
+            tools: List<ToolDefinition>?,
+            maxTokens: Int?,
+            onChunk: suspend (StreamChunk) -> Unit,
+        ): ApiResult<ChatCompletionResponse> {
             val i = callIndex.getAndIncrement()
             return if (i >= responses.size) ApiResult.Error(ErrorType.SERVER_ERROR, "no more") else responses[i]
         }
         override fun estimateTokens(text: String) = text.length / 4
-        override fun cancelActiveRequest() {}
+        override fun cancelActiveRequest() = Unit
     }
 
     private fun tool(toolName: String, completion: Boolean = false): AgentTool = object : AgentTool {
@@ -86,7 +98,7 @@ class AgentLoopAutoApproveTest {
 
     /** Records every approval-gate invocation. */
     private class GateRecorder {
-        val calls = mutableListOf<Pair<String, Boolean>>()  // (toolName, allowSessionApproval)
+        val calls = mutableListOf<Pair<String, Boolean>>() // (toolName, allowSessionApproval)
         val gate: suspend (String, String, String, Boolean) -> ApprovalResult = { name, _, _, allowSession ->
             calls.add(name to allowSession)
             ApprovalResult.APPROVED
@@ -115,10 +127,12 @@ class AgentLoopAutoApproveTest {
         sessionCommandAllowlist = sessionCommandAllowlist,
     )
 
-    private fun commandThenComplete(command: String) = SequenceBrain(listOf(
-        ApiResult.Success(toolCallResponse("run_command", """{"command":"$command"}""")),
-        ApiResult.Success(toolCallResponse("attempt_completion", """{"kind":"done","result":"done"}"""))
-    ))
+    private fun commandThenComplete(command: String) = SequenceBrain(
+        listOf(
+            ApiResult.Success(toolCallResponse("run_command", """{"command":"$command"}""")),
+            ApiResult.Success(toolCallResponse("attempt_completion", """{"kind":"done","result":"done"}""")),
+        )
+    )
 
     private fun tools() = listOf(tool("run_command"), tool("attempt_completion", completion = true))
 
@@ -247,5 +261,29 @@ class AgentLoopAutoApproveTest {
                 tokenEstimate = any(),
             )
         }
+    }
+
+    @Test
+    fun `toggle OFF plus safe run_command plus empty allowlist invokes gate with autoApproved false`() = runTest {
+        val recorder = GateRecorder()
+        val progress = mutableListOf<ToolCallProgress>()
+        val loop = buildLoop(
+            brain = commandThenComplete("ls -la"),
+            tools = tools(),
+            recorder = recorder,
+            progress = progress,
+            autoApproveSafeCommands = false,
+            sessionCommandAllowlist = SessionCommandAllowlist(),
+        )
+        loop.run("go")
+
+        assertEquals(1, recorder.calls.size) {
+            "Toggle OFF with empty allowlist must hit the approval gate exactly once; got ${recorder.calls}"
+        }
+        assertEquals("run_command", recorder.calls[0].first)
+        val card = startCardFor(progress, "run_command")
+        assertNotNull(card) { "Expected a RUNNING ToolCallProgress for run_command" }
+        assertEquals(false, card!!.autoApproved) { "Gate-prompted command must NOT be auto-approved" }
+        assertNull(card.autoApproveReason) { "autoApproveReason must be null on the gate path" }
     }
 }

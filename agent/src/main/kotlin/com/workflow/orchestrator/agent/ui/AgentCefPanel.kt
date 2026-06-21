@@ -293,6 +293,7 @@ class AgentCefPanel(
     var onDenyToolCall: (() -> Unit)? = null
     /** Callback when user clicks "Allow for session" on a tool in the approval card. Param: toolName. */
     var onAllowToolForSession: ((String) -> Unit)? = null
+
     /** Callback when user clicks "Approve all <prefix> this session" on a run_command approval card. Param: prefix. */
     var onApproveCommandPrefix: ((String) -> Unit)? = null
     /** Callback when user interacts with an interactive HTML message. Param: JSON payload. */
@@ -872,7 +873,11 @@ class AgentCefPanel(
                     injectBridge("_approveToolCall") { approveToolCallQuery?.let { q -> js("window._approveToolCall = function() { ${q.inject("'approve'")} }") } }
                     injectBridge("_denyToolCall") { denyToolCallQuery?.let { q -> js("window._denyToolCall = function() { ${q.inject("'deny'")} }") } }
                     injectBridge("_allowToolForSession") { allowToolForSessionQuery?.let { q -> js("window._allowToolForSession = function(toolName) { ${q.inject("toolName")} }") } }
-                    injectBridge("_approveCommandPrefix") { approveCommandPrefixQuery?.let { q -> js("window._approveCommandPrefix = function(prefix) { ${q.inject("prefix")} }") } }
+                    injectBridge("_approveCommandPrefix") {
+                        approveCommandPrefixQuery?.let { q ->
+                            js("window._approveCommandPrefix = function(prefix) { ${q.inject("prefix")} }")
+                        }
+                    }
                     injectBridge("_interactiveHtmlMessage") { interactiveHtmlMessageQuery?.let { q -> js("window._interactiveHtmlMessage = function(json) { ${q.inject("json")} }") } }
                     injectBridge("_acceptDiffHunk") { acceptDiffHunkQuery?.let { q -> js("window._acceptDiffHunk = function(fp,hi,ec) { ${q.inject("JSON.stringify({filePath:fp,hunkIndex:hi,editedContent:ec||null})")} }") } }
                     injectBridge("_rejectDiffHunk") { rejectDiffHunkQuery?.let { q -> js("window._rejectDiffHunk = function(fp,hi) { ${q.inject("JSON.stringify({filePath:fp,hunkIndex:hi})")} }") } }
@@ -1150,7 +1155,8 @@ class AgentCefPanel(
 
     fun appendToolCall(
         toolCallId: String = "",
-        toolName: String, args: String = "",
+        toolName: String,
+        args: String = "",
         status: RichStreamingPanel.ToolCallStatus = RichStreamingPanel.ToolCallStatus.RUNNING,
         // Resolved per-call timeout (seconds) for tools that expose a configurable
         // wall-clock cap — currently only `run_command`. The webview renders this
@@ -1168,7 +1174,9 @@ class AgentCefPanel(
     ) {
         val timeoutArg = toolTimeoutSeconds?.toString() ?: "null"
         val autoApproveReasonArg = if (autoApproveReason != null) JsEscape.toJsString(autoApproveReason) else "null"
-        callJs("appendToolCall(${JsEscape.toJsString(toolCallId)},${JsEscape.toJsString(toolName)},${JsEscape.toJsString(args)},'${status.name}',$timeoutArg,$autoApproved,$autoApproveReasonArg)")
+        callJs(
+            "appendToolCall(${JsEscape.toJsString(toolCallId)},${JsEscape.toJsString(toolName)},${JsEscape.toJsString(args)},'${status.name}',$timeoutArg,$autoApproved,$autoApproveReasonArg)",
+        )
     }
 
     fun updateLastToolCall(

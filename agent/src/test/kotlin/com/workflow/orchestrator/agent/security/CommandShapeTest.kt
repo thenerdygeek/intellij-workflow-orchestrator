@@ -83,11 +83,11 @@ class CommandShapeTest {
         val allow = setOf("git add", "git status")
         assertEquals(listOf("git add"), CommandShape.coveringPrefixes("git add Foo.kt", allow))
         assertEquals(listOf("git add", "git status"), CommandShape.coveringPrefixes("git add . && git status", allow))
-        assertNull(CommandShape.coveringPrefixes("git addendum", allow))            // token boundary
-        assertNull(CommandShape.coveringPrefixes("git add . && rm -rf x", allow))   // one sub uncovered
-        assertNull(CommandShape.coveringPrefixes("git add x > out", allow))         // not simple
-        assertNull(CommandShape.coveringPrefixes("git status & rm -rf x", allow))   // lone & → not simple
-        assertNull(CommandShape.coveringPrefixes("ls", emptySet()))                 // empty allowlist
+        assertNull(CommandShape.coveringPrefixes("git addendum", allow)) // token boundary
+        assertNull(CommandShape.coveringPrefixes("git add . && rm -rf x", allow)) // one sub uncovered
+        assertNull(CommandShape.coveringPrefixes("git add x > out", allow)) // not simple
+        assertNull(CommandShape.coveringPrefixes("git status & rm -rf x", allow)) // lone & → not simple
+        assertNull(CommandShape.coveringPrefixes("ls", emptySet())) // empty allowlist
     }
 
     @Test fun `coveringPrefixes lowercases the live command but assumes prefixes normalized`() {
