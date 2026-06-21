@@ -59,6 +59,12 @@ object CommandShape {
     private fun values(tokens: List<CommandSafetyAnalyzer.Token>): List<String> =
         tokens.filter { !it.isOperator }.map { it.value }
 
+    /** A code interpreter (python/node/ruby/…) invoked with an inline-eval flag (-c/-e/…) runs
+     *  arbitrary code from its args, so it is never auto-approvable. Checked against both the bare
+     *  first token and its path-stripped basename (e.g. `/usr/bin/python`). */
+    private fun isInlineEvalInterpreter(name: String, args: List<String>): Boolean =
+        name in CODE_INTERPRETERS && args.any { it in INLINE_EVAL_FLAGS }
+
     private fun subIsSimple(tokens: List<CommandSafetyAnalyzer.Token>): Boolean {
         if (tokens.isEmpty()) return false
         if (tokens.any { it.isOperator && it.value in REDIRECT_OPS }) return false
@@ -69,24 +75,26 @@ object CommandShape {
         val first = vals.first()
         if (ASSIGNMENT.containsMatchIn(first)) return false // FOO=bar cmd
         val firstLc = first.lowercase()
+        val args = vals.drop(1)
         if (firstLc in WRAPPER_DENYLIST) return false
         if (firstLc in SHELL_INTERPRETERS) return false
-        if (firstLc in CODE_INTERPRETERS && vals.drop(1).any { it in INLINE_EVAL_FLAGS }) return false
+        if (isInlineEvalInterpreter(firstLc, args)) return false
         val baseName = firstLc.substringAfterLast('/')
         if (baseName in SHELL_INTERPRETERS) return false
-        if (baseName in CODE_INTERPRETERS && vals.drop(1).any { it in INLINE_EVAL_FLAGS }) return false
+        if (isInlineEvalInterpreter(baseName, args)) return false
         return true
     }
+
+    /** True iff [subs] is non-empty and every sub-command is structurally simple. */
+    private fun allSubsSimple(subs: List<List<CommandSafetyAnalyzer.Token>>): Boolean =
+        subs.isNotEmpty() && subs.all { subIsSimple(it) }
 
     /** Public, mostly for tests/spec: render sub-commands as strings (quotes are not preserved). */
     fun splitSubCommands(command: String): List<String> =
         subCommandTokenLists(command).map { sub -> sub.joinToString(" ") { it.value } }
 
     /** True iff EVERY sub-command is structurally simple (auto-approve precondition). */
-    fun isAutoApprovable(command: String): Boolean {
-        val subs = subCommandTokenLists(command)
-        return subs.isNotEmpty() && subs.all { subIsSimple(it) }
-    }
+    fun isAutoApprovable(command: String): Boolean = allSubsSimple(subCommandTokenLists(command))
 
     /**
      * The prefix to offer in the "Approve all <prefix> this session" button.
@@ -116,9 +124,8 @@ object CommandShape {
      */
     fun coveringPrefixes(command: String, prefixes: Set<String>): List<String>? {
         if (prefixes.isEmpty()) return null
-        if (!isAutoApprovable(command)) return null
-        val subs = subCommandTokenLists(command)
-        if (subs.isEmpty()) return null
+        val subs = subCommandTokenLists(command) // tokenize once; allSubsSimple is the isAutoApprovable guard
+        if (!allSubsSimple(subs)) return null
         val matched = subs.map { sub ->
             val vals = values(sub).map { it.lowercase() }
             prefixes.firstOrNull { p ->

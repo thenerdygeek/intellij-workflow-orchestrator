@@ -505,7 +505,7 @@ class AgentDashboardPanel(
         onApprove: () -> Unit,
         onDeny: () -> Unit,
         onAllowForSession: ((String) -> Unit)? = null,
-        onApproveCommandPrefix: (String) -> Unit,
+        onApproveCommandPrefix: ((String) -> Unit)? = null,
     ) {
         cefPanel?.onApproveToolCall = onApprove
         cefPanel?.onDenyToolCall = onDeny
