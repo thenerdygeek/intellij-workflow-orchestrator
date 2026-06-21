@@ -11,6 +11,9 @@ class EnvironmentDetailsBackgroundSectionTest {
         assertTrue(s.contains("# Background tasks in progress"))
         assertTrue(s.contains("tc1"))
         assertTrue(s.contains("run_command"))
+        assertTrue(s.contains("tc2"))
+        // render preserves the registry's oldest-first input order (does not re-sort)
+        assertTrue(s.indexOf("tc1") < s.indexOf("tc2"))
     }
 
     @Test fun `empty list renders nothing`() {

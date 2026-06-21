@@ -71,6 +71,7 @@ class AgentSettings : SimplePersistentStateComponent<AgentSettings.State>(State(
         /** Per-session cap on concurrent backgrounded TOOL runs. Distinct from
          *  [concurrentBackgroundProcessesPerSession] (which caps spawned OS processes). */
         var maxBackgroundedToolsPerSession by property(5)
+
         /** Automatically wake the session when a background process completes. */
         var autoWakeOnBackgroundCompletion by property(true)
         /** Maximum number of auto-wake events allowed per session to prevent spam. */
