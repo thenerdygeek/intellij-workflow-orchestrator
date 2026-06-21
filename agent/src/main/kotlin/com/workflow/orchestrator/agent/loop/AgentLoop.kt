@@ -2108,33 +2108,25 @@ class AgentLoop(
 
             val durationMs = System.currentTimeMillis() - startTime
 
-            // Apply LLM-requested output filtering (grep_pattern, output_file)
-            var processedContent = toolResult.content
+            // Apply LLM-requested output filtering (grep_pattern, output_file), spill, truncate, re-estimate.
+            // Extracted to ToolOutputProcessor so the background-completion path produces identical output.
             val grepPattern = (params["grep_pattern"] as? JsonPrimitive)?.contentOrNull
-            if (!grepPattern.isNullOrBlank() && processedContent.isNotBlank()) {
-                processedContent = ToolOutputConfig.applyGrep(processedContent, grepPattern)
-            }
-
-            // Spill to file if requested via output_file=true or if over threshold
             val requestedOutputFile = try {
                 params["output_file"]?.jsonPrimitive?.boolean == true
             } catch (_: Exception) { false }
-
-            if (outputSpiller != null && (requestedOutputFile || processedContent.length > ToolOutputConfig.SPILL_THRESHOLD_CHARS)) {
-                val spillResult = outputSpiller.spill(toolName, processedContent)
-                processedContent = spillResult.preview
-            }
-
-            val truncatedContent = truncateOutput(processedContent, tool.outputConfig.maxChars)
-            // Re-estimate tokens after processing (grep/spill/truncation) so budget tracking
-            // reflects what actually enters context, not the raw tool output.
-            val actualTokenEstimate = if (truncatedContent.length < processedContent.length) {
-                estimateTokens(truncatedContent)  // Content was truncated — re-estimate
-            } else if (processedContent.length < toolResult.content.length) {
-                estimateTokens(processedContent)  // Content was grep-filtered or spilled — re-estimate
-            } else {
-                toolResult.tokenEstimate  // No processing occurred — use original estimate
-            }
+            val processed = ToolOutputProcessor.process(
+                toolName = toolName,
+                rawContent = toolResult.content,
+                rawTokenEstimate = toolResult.tokenEstimate,
+                grepPattern = grepPattern,
+                requestedOutputFile = requestedOutputFile,
+                maxChars = tool.outputConfig.maxChars,
+                spiller = outputSpiller,
+                truncate = ::truncateOutput,
+                estimateTokens = ::estimateTokens,
+            )
+            val truncatedContent = processed.content
+            val actualTokenEstimate = processed.tokenEstimate
 
             if (toolResult.isError) {
                 LOG.warn("[Loop] Tool $toolName failed: ${toolResult.content.take(200)}")
