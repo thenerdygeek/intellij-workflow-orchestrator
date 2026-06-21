@@ -30,7 +30,9 @@ class QueuePersistence(private val sessionsBaseDir: Path) {
         // completions, MONITOR notifications) must not be SILENT — log so an operator can see why a
         // user's queued-while-idle items vanished (mirrors MonitorPersistence.load).
         return runCatching { json.decodeFromString(serializer, Files.readString(f)) }
-            .onFailure { e -> log.warn("QueuePersistence: dropping corrupt pending_queue.json for session $sessionId", e) }
+            .onFailure { e ->
+                log.warn("QueuePersistence: dropping corrupt pending_queue.json for session $sessionId", e)
+            }
             .getOrDefault(emptyList())
     }
 

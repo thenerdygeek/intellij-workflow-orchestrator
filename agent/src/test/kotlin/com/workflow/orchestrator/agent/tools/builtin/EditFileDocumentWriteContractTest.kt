@@ -67,7 +67,7 @@ class EditFileDocumentWriteContractTest {
             "writeViaFileIo" to src.substringAfter("private fun writeViaFileIo")
                 .substringBefore("private fun countOccurrences"),
         )
-        val rethrow = Regex("""catch\s*\(\s*\w+\s*:\s*CancellationException\s*\)""")
+        val rethrow = Regex("""catch\s*\([^)]*CancellationException\s*\)""")
         tiers.forEach { (name, body) ->
             assertTrue(
                 rethrow.containsMatchIn(body),

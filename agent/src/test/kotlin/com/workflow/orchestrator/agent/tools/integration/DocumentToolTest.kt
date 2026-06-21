@@ -176,11 +176,14 @@ class DocumentToolTest {
         }
 
         val result = DocumentTool(artifactService = svc).execute(
-            buildJsonObject { put("path", "/etc/passwd") },   // classic arbitrary-read target
+            buildJsonObject { put("path", "/etc/passwd") }, // classic arbitrary-read target
             outsideProject,
         )
 
-        assertTrue(result.isError, "a path outside the project + agent data dir must be rejected; got: ${result.content}")
+        assertTrue(
+            result.isError,
+            "a path outside the project + agent data dir must be rejected; got: ${result.content}",
+        )
         assertTrue(
             listOf("outside", "project", "symlink", "restricted", "allow").any {
                 result.content.contains(it, ignoreCase = true)

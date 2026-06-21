@@ -16,6 +16,9 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 
+/** Max chars of the task text recorded in the `session_start` audit entry (D3). */
+private const val TASK_SUMMARY_MAX_CHARS = 100
+
 /**
  * Dedicated structured JSONL file logger for the AI agent.
  *
@@ -170,7 +173,7 @@ class AgentFileLogger(
                 event = "session_start",
                 // D3: anchor the session in the audit trail with what it was asked to do, so an
                 // auditor can correlate a session without reading api_conversation_history.json.
-                taskSummary = task.take(100),
+                taskSummary = task.take(TASK_SUMMARY_MAX_CHARS),
             )
         )
     }

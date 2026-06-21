@@ -5,7 +5,6 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.api.Test
-import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -49,7 +48,8 @@ class QueuePersistenceTest {
     // the log line is observability-only (no return-value change to drive behaviorally).
     @Test
     fun `load logs when it drops a corrupt file`() {
-        val src = File("src/main/kotlin/com/workflow/orchestrator/agent/loop/queue/QueuePersistence.kt").readText()
+        val path = "src/main/kotlin/com/workflow/orchestrator/agent/loop/queue/QueuePersistence.kt"
+        val src = java.io.File(path).readText()
         val loadBody = src.substringAfter("fun load(sessionId: String)").substringBefore("fun save(")
         assertTrue(
             loadBody.contains("onFailure") && Regex("""log\.warn|LOG\.warn""").containsMatchIn(loadBody),

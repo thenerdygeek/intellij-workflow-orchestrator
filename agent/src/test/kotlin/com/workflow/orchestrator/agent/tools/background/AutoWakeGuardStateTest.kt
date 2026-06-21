@@ -133,8 +133,9 @@ class AutoWakeGuardStateTest {
             start.countDown()
             done.await()
             assertEquals(
-                1, proceeds.get(),
-                "exactly one PROCEED expected within the cooldown window; got ${proceeds.get()} (non-atomic decide race)",
+                1,
+                proceeds.get(),
+                "exactly one PROCEED expected in the cooldown window; got ${proceeds.get()} (decide race)",
             )
         }
     }

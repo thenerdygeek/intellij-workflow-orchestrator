@@ -17,7 +17,7 @@ class AuditSettingsWiringContractTest {
         val cwd = File(System.getProperty("user.dir"))
         return listOf(File(cwd, rel), File(cwd, "agent/$rel"), File(cwd.parentFile ?: cwd, "agent/$rel"))
             .firstOrNull { it.isFile }?.readText()
-            ?: throw IllegalStateException("Cannot locate $rel from ${cwd.absolutePath}")
+            ?: error("Cannot locate $rel from ${cwd.absolutePath}")
     }
 
     @Test
