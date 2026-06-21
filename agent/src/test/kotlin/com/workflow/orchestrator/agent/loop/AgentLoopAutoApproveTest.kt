@@ -99,8 +99,12 @@ class AgentLoopAutoApproveTest {
     /** Records every approval-gate invocation. */
     private class GateRecorder {
         val calls = mutableListOf<Pair<String, Boolean>>() // (toolName, allowSessionApproval)
-        val gate: suspend (String, String, String, Boolean) -> ApprovalResult = { name, _, _, allowSession ->
+
+        /** riskLevel string passed as the third arg to the gate — non-null only for prompted calls. */
+        val riskLevels = mutableListOf<String>()
+        val gate: suspend (String, String, String, Boolean) -> ApprovalResult = { name, _, riskLevel, allowSession ->
             calls.add(name to allowSession)
+            riskLevels.add(riskLevel)
             ApprovalResult.APPROVED
         }
     }
@@ -285,5 +289,202 @@ class AgentLoopAutoApproveTest {
         assertNotNull(card) { "Expected a RUNNING ToolCallProgress for run_command" }
         assertEquals(false, card!!.autoApproved) { "Gate-prompted command must NOT be auto-approved" }
         assertNull(card.autoApproveReason) { "autoApproveReason must be null on the gate path" }
+    }
+
+    // ── New behavioral coverage ────────────────────────────────────────────────
+
+    @Test
+    fun `Part B fires even with toggle ON for a risky command`() = runTest {
+        // toggle ON + session-allowlisted "git pull" + RISKY command "git pull origin"
+        // DANGEROUS check passes (not DANGEROUS), isAutoApprovable passes, Part A misses (RISKY ≠ SAFE),
+        // coveringPrefixes finds "git pull" covers "git pull origin" → Skip via SessionRule.
+        val recorder = GateRecorder()
+        val progress = mutableListOf<ToolCallProgress>()
+        val allowlist = SessionCommandAllowlist().apply { approve("git pull") }
+        val loop = buildLoop(
+            brain = commandThenComplete("git pull origin"),
+            tools = tools(),
+            recorder = recorder,
+            progress = progress,
+            autoApproveSafeCommands = true,
+            sessionCommandAllowlist = allowlist,
+        )
+        loop.run("go")
+
+        assertEquals(0, recorder.calls.size) {
+            "Session-allowlisted risky command with toggle ON must NOT hit the gate; got ${recorder.calls}"
+        }
+        val card = startCardFor(progress, "run_command")
+        assertNotNull(card) { "Expected a RUNNING ToolCallProgress for run_command" }
+        assertTrue(card!!.autoApproved) { "autoApproved must be true on the session-rule path" }
+        assertEquals("session rule: git pull", card.autoApproveReason)
+    }
+
+    @Test
+    fun `same-instance SessionCommandAllowlist flows through to the loop`() = runTest {
+        // Construct ONE SessionCommandAllowlist, call approve() on it, pass that same
+        // instance into buildLoop — proves the loop reads the instance it is handed.
+        val recorder = GateRecorder()
+        val progress = mutableListOf<ToolCallProgress>()
+        val allowlist = SessionCommandAllowlist()
+        allowlist.approve("git add")
+        val loop = buildLoop(
+            brain = commandThenComplete("git add Foo.kt"),
+            tools = tools(),
+            recorder = recorder,
+            progress = progress,
+            autoApproveSafeCommands = false,
+            sessionCommandAllowlist = allowlist,
+        )
+        loop.run("go")
+
+        assertEquals(0, recorder.calls.size) {
+            "Instance-approved prefix must skip the gate; got ${recorder.calls}"
+        }
+        val card = startCardFor(progress, "run_command")
+        assertNotNull(card)
+        assertTrue(card!!.autoApproved)
+        assertEquals("session rule: git add", card.autoApproveReason)
+    }
+
+    @Test
+    fun `DANGEROUS command with session-covered prefix still prompts`() = runTest {
+        // Even if a prefix that matches is in the allowlist, DANGEROUS commands
+        // are rejected at the very first check in CommandApprovalDecision.evaluate.
+        val recorder = GateRecorder()
+        val progress = mutableListOf<ToolCallProgress>()
+        val allowlist = SessionCommandAllowlist().apply { approve("rm") }
+        val loop = buildLoop(
+            brain = commandThenComplete("rm -rf /tmp/x"),
+            tools = tools(),
+            recorder = recorder,
+            progress = progress,
+            autoApproveSafeCommands = true,
+            sessionCommandAllowlist = allowlist,
+        )
+        loop.run("go")
+
+        assertEquals(1, recorder.calls.size) {
+            "DANGEROUS command must always hit the gate (short-circuit before prefix check); got ${recorder.calls}"
+        }
+        assertEquals("run_command", recorder.calls[0].first)
+        val card = startCardFor(progress, "run_command")
+        assertNotNull(card)
+        assertEquals(false, card!!.autoApproved)
+        assertNull(card.autoApproveReason)
+    }
+
+    @Test
+    fun `compound command with both sub-commands covered auto-approves`() = runTest {
+        val recorder = GateRecorder()
+        val progress = mutableListOf<ToolCallProgress>()
+        val allowlist = SessionCommandAllowlist().apply {
+            approve("git add")
+            approve("git status")
+        }
+        val loop = buildLoop(
+            brain = commandThenComplete("git add . && git status"),
+            tools = tools(),
+            recorder = recorder,
+            progress = progress,
+            autoApproveSafeCommands = false,
+            sessionCommandAllowlist = allowlist,
+        )
+        loop.run("go")
+
+        assertEquals(0, recorder.calls.size) {
+            "Compound command with every sub covered must skip the gate; got ${recorder.calls}"
+        }
+        val card = startCardFor(progress, "run_command")
+        assertNotNull(card)
+        assertTrue(card!!.autoApproved)
+        assertNotNull(card.autoApproveReason) { "autoApproveReason must be set for session-rule skip" }
+    }
+
+    @Test
+    fun `compound command with one uncovered sub-command prompts`() = runTest {
+        // "git add ." is covered; "rm -rf x" is DANGEROUS → the whole command is
+        // classified DANGEROUS and CommandApprovalDecision short-circuits to Prompt.
+        val recorder = GateRecorder()
+        val progress = mutableListOf<ToolCallProgress>()
+        val allowlist = SessionCommandAllowlist().apply { approve("git add") }
+        val loop = buildLoop(
+            brain = commandThenComplete("git add . && rm -rf x"),
+            tools = tools(),
+            recorder = recorder,
+            progress = progress,
+            autoApproveSafeCommands = true,
+            sessionCommandAllowlist = allowlist,
+        )
+        loop.run("go")
+
+        assertEquals(1, recorder.calls.size) {
+            "Compound with an uncovered/DANGEROUS sub-command must hit the gate; got ${recorder.calls}"
+        }
+        assertEquals("run_command", recorder.calls[0].first)
+        val card = startCardFor(progress, "run_command")
+        assertNotNull(card)
+        assertEquals(false, card!!.autoApproved)
+        assertNull(card.autoApproveReason)
+    }
+
+    @Test
+    fun `redirect on a covered prefix still prompts (structural guard)`() = runTest {
+        // "git status > out" has a redirect operator: CommandShape.isAutoApprovable returns false.
+        // CommandApprovalDecision short-circuits to Prompt before checking the allowlist.
+        val recorder = GateRecorder()
+        val progress = mutableListOf<ToolCallProgress>()
+        val allowlist = SessionCommandAllowlist().apply { approve("git status") }
+        val loop = buildLoop(
+            brain = commandThenComplete("git status > out"),
+            tools = tools(),
+            recorder = recorder,
+            progress = progress,
+            autoApproveSafeCommands = true,
+            sessionCommandAllowlist = allowlist,
+        )
+        loop.run("go")
+
+        assertEquals(1, recorder.calls.size) {
+            "Redirect makes the command non-auto-approvable — must hit the gate; got ${recorder.calls}"
+        }
+        assertEquals("run_command", recorder.calls[0].first)
+        val card = startCardFor(progress, "run_command")
+        assertNotNull(card)
+        assertEquals(false, card!!.autoApproved)
+        assertNull(card.autoApproveReason)
+    }
+
+    @Test
+    fun `riskLevel is passed correctly to the gate for RISKY and DANGEROUS commands`() = runTest {
+        // RISKY: "git push" (toggle OFF, empty allowlist) → gate called with riskLevel "medium".
+        val riskyRecorder = GateRecorder()
+        val riskyProgress = mutableListOf<ToolCallProgress>()
+        buildLoop(
+            brain = commandThenComplete("git push"),
+            tools = tools(),
+            recorder = riskyRecorder,
+            progress = riskyProgress,
+            autoApproveSafeCommands = false,
+        ).run("go")
+        assertEquals(1, riskyRecorder.calls.size) { "Sanity: RISKY command must hit gate" }
+        assertEquals("medium", riskyRecorder.riskLevels[0]) {
+            "RISKY → riskLabel 'medium'; got ${riskyRecorder.riskLevels[0]}"
+        }
+
+        // DANGEROUS: "rm -rf /tmp/x" (toggle OFF, empty allowlist) → gate called with riskLevel "high".
+        val dangerRecorder = GateRecorder()
+        val dangerProgress = mutableListOf<ToolCallProgress>()
+        buildLoop(
+            brain = commandThenComplete("rm -rf /tmp/x"),
+            tools = tools(),
+            recorder = dangerRecorder,
+            progress = dangerProgress,
+            autoApproveSafeCommands = false,
+        ).run("go")
+        assertEquals(1, dangerRecorder.calls.size) { "Sanity: DANGEROUS command must hit gate" }
+        assertEquals("high", dangerRecorder.riskLevels[0]) {
+            "DANGEROUS → riskLabel 'high'; got ${dangerRecorder.riskLevels[0]}"
+        }
     }
 }

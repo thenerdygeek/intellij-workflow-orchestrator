@@ -90,4 +90,40 @@ describe('ToolCallChain auto-approved badge', () => {
     render(<ToolCallChain toolCalls={[tc({ name: 'run_command', status: 'COMPLETED' })]} />)
     expect(screen.queryByText(/auto-approved/i)).toBeNull()
   })
+
+  it('renders the badge for a session-rule reason', () => {
+    render(
+      <ToolCallChain
+        toolCalls={[tc({ name: 'run_command', status: 'COMPLETED', autoApproved: true, autoApproveReason: 'session rule: git add' })]}
+      />,
+    )
+    expect(screen.getByText('auto-approved · session rule: git add')).toBeTruthy()
+  })
+
+  it('badge text exactly matches "auto-approved · <reason>"', () => {
+    render(
+      <ToolCallChain
+        toolCalls={[tc({ name: 'run_command', status: 'COMPLETED', autoApproved: true, autoApproveReason: 'safe' })]}
+      />,
+    )
+    expect(screen.getByText('auto-approved · safe')).toBeTruthy()
+  })
+
+  it('does NOT render the badge when autoApproved is false even if autoApproveReason is set', () => {
+    render(
+      <ToolCallChain
+        toolCalls={[tc({ name: 'run_command', status: 'COMPLETED', autoApproved: false, autoApproveReason: 'safe' })]}
+      />,
+    )
+    expect(screen.queryByText(/auto-approved/i)).toBeNull()
+  })
+
+  it('does NOT render the badge when autoApproved is undefined even if autoApproveReason is set', () => {
+    render(
+      <ToolCallChain
+        toolCalls={[tc({ name: 'run_command', status: 'COMPLETED', autoApproveReason: 'safe' })]}
+      />,
+    )
+    expect(screen.queryByText(/auto-approved/i)).toBeNull()
+  })
 })
