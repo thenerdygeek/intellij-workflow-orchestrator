@@ -28,6 +28,12 @@ class AutoWakeGuardState {
     private val counts = ConcurrentHashMap<String, AtomicInteger>()
     private val lastAt = ConcurrentHashMap<String, AtomicLong>()
 
+    // B1: per-session monitor so the cap-check + cooldown-check + increment + timestamp-set in
+    // [decide] are one atomic decision. The guard is consulted concurrently from background
+    // completion, delegation delivery, and monitor flush; without this, two events for the same
+    // idle session can both PROCEED and resume the session twice (double-delivery/teardown race).
+    private val locks = ConcurrentHashMap<String, Any>()
+
     enum class Decision { PROCEED, DISABLED, CAP_REACHED, COOLDOWN }
 
     /**
@@ -42,16 +48,20 @@ class AutoWakeGuardState {
         now: Long = System.currentTimeMillis(),
     ): Decision {
         if (!enabled) return Decision.DISABLED
-        val count = counts.computeIfAbsent(sessionId) { AtomicInteger(0) }
-        if (count.get() >= cap) return Decision.CAP_REACHED
-        val last = lastAt.computeIfAbsent(sessionId) { AtomicLong(0) }
-        val lastVal = last.get()
-        // Cooldown only applies after an initial successful wake — if lastVal==0
-        // there has never been one, so the cooldown window is not yet armed.
-        if (lastVal > 0 && now - lastVal < cooldownMs) return Decision.COOLDOWN
-        count.incrementAndGet()
-        last.set(now)
-        return Decision.PROCEED
+        // Atomic per session: the cap/cooldown reads and the increment/timestamp writes must not
+        // interleave across the concurrent callers (see [locks]).
+        return synchronized(locks.computeIfAbsent(sessionId) { Any() }) {
+            val count = counts.computeIfAbsent(sessionId) { AtomicInteger(0) }
+            if (count.get() >= cap) return@synchronized Decision.CAP_REACHED
+            val last = lastAt.computeIfAbsent(sessionId) { AtomicLong(0) }
+            val lastVal = last.get()
+            // Cooldown only applies after an initial successful wake — if lastVal==0
+            // there has never been one, so the cooldown window is not yet armed.
+            if (lastVal > 0 && now - lastVal < cooldownMs) return@synchronized Decision.COOLDOWN
+            count.incrementAndGet()
+            last.set(now)
+            Decision.PROCEED
+        }
     }
 
     /** Current auto-wake attempt count for [sessionId]. Test/observability helper. */
@@ -63,11 +73,13 @@ class AutoWakeGuardState {
     fun reset() {
         counts.clear()
         lastAt.clear()
+        locks.clear()
     }
 
     /** Clear counters for a single session (e.g. when it is deleted). */
     fun resetSession(sessionId: String) {
         counts.remove(sessionId)
         lastAt.remove(sessionId)
+        locks.remove(sessionId)
     }
 }

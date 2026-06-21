@@ -1,5 +1,6 @@
 package com.workflow.orchestrator.agent.tools.background
 
+import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.agent.session.AtomicFileWriter
 import kotlinx.serialization.json.Json
 import java.nio.file.Files
@@ -19,6 +20,7 @@ import java.nio.file.StandardCopyOption
 class BackgroundPersistence(private val sessionsBaseDir: Path) {
 
     private val json = Json { prettyPrint = false }
+    private val log = Logger.getInstance(BackgroundPersistence::class.java)
 
     private fun sessionDir(sessionId: String): Path =
         sessionsBaseDir.resolve("sessions").resolve(sessionId).resolve("background").also {
@@ -44,10 +46,18 @@ class BackgroundPersistence(private val sessionsBaseDir: Path) {
     fun loadPendingCompletions(sessionId: String): List<BackgroundCompletionEvent> {
         val file = pendingFile(sessionId)
         if (!Files.exists(file)) return emptyList()
-        return json.decodeFromString(
-            kotlinx.serialization.builtins.ListSerializer(BackgroundCompletionEvent.serializer()),
-            Files.readString(file)
-        )
+        // B4: a corrupt file must not throw out of load — that would wedge BOTH appendCompletion
+        // (new completions can't persist) and consumeCompletion (the corrupt file can't be drained
+        // or repaired). Self-heal to empty and log loudly (mirrors MonitorPersistence).
+        return runCatching {
+            json.decodeFromString(
+                kotlinx.serialization.builtins.ListSerializer(BackgroundCompletionEvent.serializer()),
+                Files.readString(file)
+            )
+        }.getOrElse { e ->
+            log.warn("BackgroundPersistence: dropping corrupt pending_completions.json for session $sessionId", e)
+            emptyList()
+        }
     }
 
     private fun writeAtomic(target: Path, events: List<BackgroundCompletionEvent>) {

@@ -3817,6 +3817,11 @@ class AgentService(
     @Synchronized
     fun releaseSessionState(sessionId: String) {
         perSessionStates.remove(sessionId)
+        // B2/B3: free per-session maps that otherwise grow for the IDE-window lifetime. The queue
+        // self-drains and its durable items persist to disk (recreated + reloaded by queueForSession
+        // on next access), and the auto-wake guard's resetSession cleanup existed but was never called.
+        sessionQueues.remove(sessionId)
+        autoWakeGuards.resetSession(sessionId)
         if (currentSessionId == sessionId) currentSessionId = null
     }
 
