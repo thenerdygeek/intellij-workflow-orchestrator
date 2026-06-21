@@ -292,7 +292,14 @@ class AgentService(
 
     /** Dedicated structured agent log file — one per project, lives for plugin lifetime. */
     private val fileLogger: AgentFileLogger by lazy {
-        AgentFileLogger(logDir = ProjectIdentifier.logsDir(project.basePath ?: ""))
+        // D1/D2: honour the Telemetry & Logs settings that were previously dead — retention window
+        // and the enable toggle now actually reach the logger.
+        val telemetry = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state
+        AgentFileLogger(
+            logDir = ProjectIdentifier.logsDir(project.basePath ?: ""),
+            retentionDays = telemetry.retentionDays,
+            enabled = telemetry.diagnosticJsonlEnabled,
+        )
     }
 
     lateinit var ideContext: IdeContext

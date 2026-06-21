@@ -2228,7 +2228,16 @@ class AgentLoop(
                 isError = toolResult.isError,
                 args = call.function.arguments.take(500),
                 errorMessage = if (toolResult.isError) toolResult.content.take(500) else null,
-                tokenEstimate = actualTokenEstimate
+                tokenEstimate = actualTokenEstimate,
+                // D4: capture run_command output into the audit trail only when the operator opts in
+                // (the "Include run_command output in logs" setting was previously dead).
+                output = if (!toolResult.isError && toolName == "run_command" &&
+                    com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state.includeCommandOutputInLogs
+                ) {
+                    toolResult.content.take(2000)
+                } else {
+                    null
+                },
             )
             sessionMetrics?.recordToolCall(toolName, durationMs, toolResult.isError)
             onDebugLog?.invoke(

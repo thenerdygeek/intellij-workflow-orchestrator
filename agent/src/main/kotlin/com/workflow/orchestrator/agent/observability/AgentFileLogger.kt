@@ -23,13 +23,19 @@ import java.time.format.DateTimeParseException
  * Rotation is handled by filename (daily). Retention is enforced at construction
  * time via [cleanOldLogs] (7-day window).
  *
- * All writes are synchronous — callers are expected to already be on the IO
- * dispatcher. There is no toggle to disable this logger; observability is
- * always-on.
+ * All writes are synchronous — callers are expected to already be on the IO dispatcher.
  *
  * @param logDir Directory in which to write log files. Created if absent.
+ * @param retentionDays Age threshold for [cleanOldLogs]; files older than this are pruned at
+ *   construction. Clamped to >= 1. Wired from `PluginSettings.retentionDays` (D1).
+ * @param enabled When false, every log method is a no-op — honours the "Enable diagnostic JSONL
+ *   logging" setting (D2). Default true so existing callers/tests keep the prior always-on behaviour.
  */
-class AgentFileLogger(private val logDir: File) {
+class AgentFileLogger(
+    private val logDir: File,
+    private val retentionDays: Int = 7,
+    private val enabled: Boolean = true,
+) {
 
     private val log = Logger.getInstance(AgentFileLogger::class.java)
 
@@ -57,6 +63,7 @@ class AgentFileLogger(private val logDir: File) {
         args: String? = null,
         errorMessage: String? = null,
         tokenEstimate: Int? = null,
+        output: String? = null,
     ) {
         write(
             LogEntry(
@@ -69,6 +76,9 @@ class AgentFileLogger(private val logDir: File) {
                 error = errorMessage?.take(500),
                 durationMs = durationMs,
                 tokens = tokenEstimate,
+                // D4: command output, included only when the caller opts in
+                // (PluginSettings.includeCommandOutputInLogs); null → field omitted.
+                output = output,
             )
         )
     }
@@ -158,6 +168,9 @@ class AgentFileLogger(private val logDir: File) {
                 ts = now(),
                 session = truncateSession(sessionId),
                 event = "session_start",
+                // D3: anchor the session in the audit trail with what it was asked to do, so an
+                // auditor can correlate a session without reading api_conversation_history.json.
+                taskSummary = task.take(100),
             )
         )
     }
@@ -217,7 +230,8 @@ class AgentFileLogger(private val logDir: File) {
      * Public so tests can invoke it directly on a temp directory.
      */
     fun cleanOldLogs() {
-        val cutoff = LocalDate.now().minusDays(7)
+        // D1: retention is wired from settings (clamped to >= 1 so a bad value can't disable pruning).
+        val cutoff = LocalDate.now().minusDays(maxOf(1, retentionDays).toLong())
         val pattern = Regex("""^agent-(\d{4}-\d{2}-\d{2})\.jsonl$""")
         logDir.listFiles()?.forEach { file ->
             val match = pattern.matchEntire(file.name) ?: return@forEach
@@ -239,6 +253,7 @@ class AgentFileLogger(private val logDir: File) {
     // ── Internal helpers ────────────────────────────────────────────
 
     private fun write(entry: LogEntry) {
+        if (!enabled) return  // D2: honour the "Enable diagnostic JSONL logging" setting
         try {
             val today = LocalDate.now()
             if (today != currentDate) {
@@ -278,6 +293,8 @@ class AgentFileLogger(private val logDir: File) {
         val tool: String? = null,
         val status: String? = null,
         val args: String? = null,
+        val output: String? = null,
+        val taskSummary: String? = null,
         val error: String? = null,
         val durationMs: Long? = null,
         val latencyMs: Long? = null,
