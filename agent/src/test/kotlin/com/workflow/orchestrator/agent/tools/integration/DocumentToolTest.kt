@@ -5,6 +5,8 @@ import com.workflow.orchestrator.core.model.DocumentSlice
 import com.workflow.orchestrator.core.services.DocumentArtifactService
 import com.workflow.orchestrator.core.services.ToolResult
 import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
@@ -28,7 +30,12 @@ class DocumentToolTest {
     private val svc = mockk<DocumentArtifactService>(relaxed = true)
     private fun tool() = DocumentTool(artifactService = svc)
 
-    private val project = mockk<com.intellij.openapi.project.Project>(relaxed = true)
+    // basePath is "/tmp" so the existing "/tmp/..." document paths resolve INSIDE the project
+    // root once read_document enforces PathValidator (A2). Validation is path-policy only —
+    // no file existence is required.
+    private val project = mockk<com.intellij.openapi.project.Project>(relaxed = true) {
+        every { basePath } returns "/tmp"
+    }
 
     // ── Metadata tests ────────────────────────────────────────────────────────
 
@@ -147,6 +154,41 @@ class DocumentToolTest {
             result.content.contains("offset", ignoreCase = true),
             "error must mention 'offset' so LLM knows which param to fix; got: ${result.content}",
         )
+    }
+
+    // ── A2: read_document must enforce the read allow-list (PathValidator) ──────
+    //
+    // Without this, read_document is an arbitrary-file-read sink (~/.ssh/id_rsa,
+    // ~/.aws/credentials, /etc/passwd) whose extracted text flows back into chat — the exact
+    // protection read_file already enforces. The service must NEVER be reached for an
+    // out-of-tree path.
+
+    @Test
+    fun `execute rejects a path outside the project and agent allow-list`() = runTest {
+        val svc = mockk<DocumentArtifactService>()
+        // Stubbed so that, WITHOUT the guard, execute() would happily reach + return this.
+        coEvery { svc.read(any(), any(), any()) } returns ToolResult.success(
+            data = sectionSlice(matched = null, available = emptyList(), content = "SENSITIVE-BYTES"),
+            summary = "should never be reached for an out-of-tree path",
+        )
+        val outsideProject = mockk<com.intellij.openapi.project.Project>(relaxed = true) {
+            every { basePath } returns "/tmp/some-project"
+        }
+
+        val result = DocumentTool(artifactService = svc).execute(
+            buildJsonObject { put("path", "/etc/passwd") },   // classic arbitrary-read target
+            outsideProject,
+        )
+
+        assertTrue(result.isError, "a path outside the project + agent data dir must be rejected; got: ${result.content}")
+        assertTrue(
+            listOf("outside", "project", "symlink", "restricted", "allow").any {
+                result.content.contains(it, ignoreCase = true)
+            },
+            "rejection should explain the path is not allowed; got: ${result.content}",
+        )
+        // The security invariant: the artifact service must never read the file.
+        coVerify(exactly = 0) { svc.read(any(), any(), any()) }
     }
 
     // ── Requirement C: explicit section miss + discoverability ─────────────────

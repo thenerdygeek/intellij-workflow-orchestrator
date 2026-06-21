@@ -6,6 +6,7 @@ import com.workflow.orchestrator.core.model.DocumentSlice
 import com.workflow.orchestrator.core.services.DocumentArtifactService
 import com.workflow.orchestrator.core.services.ToolResult
 import io.mockk.coEvery
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import kotlinx.coroutines.runBlocking
@@ -24,6 +25,10 @@ class DocumentToolDelegationTest {
             "{" + pairs.joinToString(",") { (k, v) -> "\"$k\":$v" } + "}"
         ) as JsonObject
 
+    // basePath "/tmp" keeps the "/tmp/*.pdf" fixtures INSIDE the project root once read_document
+    // enforces PathValidator (A2). Non-relaxed so an unexpected service call still surfaces.
+    private fun proj(base: String = "/tmp") = mockk<Project> { every { basePath } returns base }
+
     @Test
     fun `passes Offset cursor to the service and renders a continuation hint`() = runBlocking {
         val cursorSlot = slot<DocumentCursor>()
@@ -33,7 +38,7 @@ class DocumentToolDelegationTest {
             summary = "ok",
         )
         val tool = DocumentTool(artifactService = svc)
-        val result = tool.execute(params("path" to "\"/tmp/x.pdf\"", "offset" to "0"), mockk<Project>())
+        val result = tool.execute(params("path" to "\"/tmp/x.pdf\"", "offset" to "0"), proj())
 
         assertFalse(result.isError)
         assertEquals(DocumentCursor.Offset(0), cursorSlot.captured)
@@ -49,7 +54,7 @@ class DocumentToolDelegationTest {
             data = DocumentSlice("p", 1000, 1001, 0, 47, 200), summary = "ok",
         )
         val tool = DocumentTool(artifactService = svc)
-        tool.execute(params("path" to "\"/tmp/x.pdf\"", "page" to "47"), mockk<Project>())
+        tool.execute(params("path" to "\"/tmp/x.pdf\"", "page" to "47"), proj())
         assertEquals(DocumentCursor.Page(47), cursorSlot.captured)
     }
 
@@ -62,7 +67,7 @@ class DocumentToolDelegationTest {
                 summary = "Document extraction in progress — call read_document again shortly.",
             )
         val tool = DocumentTool(artifactService = svc)
-        val result = tool.execute(params("path" to "\"/tmp/x.pdf\"", "offset" to "0"), io.mockk.mockk<com.intellij.openapi.project.Project>())
+        val result = tool.execute(params("path" to "\"/tmp/x.pdf\"", "offset" to "0"), proj())
         assertFalse(result.isError)
         assertTrue(result.content.contains("in progress", ignoreCase = true),
             "in-progress instruction must be in content (LLM reads content, not summary); got: '${result.content}'")
@@ -77,7 +82,7 @@ class DocumentToolDelegationTest {
                 summary = "ok",
             )
         val tool = DocumentTool(artifactService = svc)
-        val result = tool.execute(params("path" to "\"/tmp/x.pdf\"", "offset" to "0"), io.mockk.mockk<com.intellij.openapi.project.Project>())
+        val result = tool.execute(params("path" to "\"/tmp/x.pdf\"", "offset" to "0"), proj())
         assertTrue(result.content.startsWith("real text"))
         assertTrue(result.content.contains("read_document(offset=9)"))
     }

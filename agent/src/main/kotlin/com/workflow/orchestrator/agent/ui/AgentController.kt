@@ -4268,6 +4268,8 @@ class AgentController(
      * Subsequent SAY.TEXT messages are agent responses.
      */
     private fun formatSessionAsMarkdown(baseDir: java.io.File, sessionId: String): String? {
+        // A3: reject path-traversal session ids before reading sessions/$id for export.
+        if (!com.workflow.orchestrator.agent.session.SessionIdValidator.isValid(sessionId)) return null
         val sessionDir = java.io.File(baseDir, "sessions/$sessionId")
         val messages = MessageStateHandler.loadUiMessages(sessionDir)
         if (messages.isEmpty()) return null
@@ -4340,6 +4342,11 @@ class AgentController(
      */
     fun showSession(sessionId: String) {
         LOG.info("AgentController.showSession: $sessionId (view-only)")
+        // A3: reject path-traversal session ids from the webview before building sessions/$id.
+        if (!com.workflow.orchestrator.agent.session.SessionIdValidator.isValid(sessionId)) {
+            LOG.warn("AgentController.showSession: rejected invalid session id '$sessionId'")
+            return
+        }
 
         // ── EDT phase 1: dialog decisions + cheap state flips BEFORE the expensive load ──
         // killBackgroundsOnTransition may show a modal confirmation, which must stay on EDT

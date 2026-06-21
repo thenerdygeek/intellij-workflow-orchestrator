@@ -2764,6 +2764,11 @@ class AgentService(
         onContextManagerReady: ((ContextManager) -> Unit)? = null,
         onHandoffProposed: ((context: String) -> Unit)? = null,
     ): Job? {
+        // A3: reject path-traversal session ids from the webview before building sessions/$id.
+        if (!com.workflow.orchestrator.agent.session.SessionIdValidator.isValid(sessionId)) {
+            log.warn("AgentService.resumeSession: rejected invalid session id '$sessionId'")
+            return null
+        }
         val basePath = project.basePath ?: System.getProperty("user.home")
         val sessionBaseDir = ProjectIdentifier.agentDir(basePath)
         val sessionDir = File(sessionBaseDir, "sessions/$sessionId")

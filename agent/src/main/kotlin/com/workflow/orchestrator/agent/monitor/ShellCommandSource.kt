@@ -32,7 +32,10 @@ class ShellCommandSource(
     @Volatile private var stopped = false
 
     override fun start(emit: (MonitorEvent) -> Unit) {
-        // TODO(Phase 2): gate `command` through DefaultCommandFilter for parity with RunCommandTool.
+        // `command` is gated through DefaultCommandFilter at the tool boundary
+        // (MonitorTool.startShell) before this source is ever constructed — a rejected command
+        // returns an error to the LLM and is never persisted, so the resume re-arm path
+        // (AgentMonitorCoordinator → MonitorSourceFactory) only ever replays already-filtered specs.
         job = cs.launch(Dispatchers.IO) {
             var exit: Int? = null
             runCatching {
