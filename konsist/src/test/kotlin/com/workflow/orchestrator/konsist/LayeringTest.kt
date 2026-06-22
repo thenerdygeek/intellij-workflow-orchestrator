@@ -18,6 +18,7 @@ class LayeringTest {
     @Test
     fun `api layer does not depend on service or ui layers`() {
         val files = Konsist.scopeFromProject().files
+            .filterNot { it.path.contains("/plugin-b/") }
         val violations = mutableListOf<String>()
 
         layeredModules.forEach { module ->

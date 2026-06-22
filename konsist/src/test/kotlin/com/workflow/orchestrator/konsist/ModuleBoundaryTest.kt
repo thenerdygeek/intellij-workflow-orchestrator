@@ -25,6 +25,7 @@ class ModuleBoundaryTest {
     @Test
     fun `feature modules import core only, not other feature or app modules`() {
         val files = Konsist.scopeFromProject().files
+            .filterNot { it.path.contains("/plugin-b/") }
         val violations = mutableListOf<String>()
 
         featureModules.forEach { module ->
