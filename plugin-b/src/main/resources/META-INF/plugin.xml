@@ -8,5 +8,7 @@
     <!-- HARD depends (NOT optional): B's classloader becomes a child of A's. B is useless without A. -->
     <depends>com.workflow.orchestrator.plugin</depends>
 
-    <!-- extensions added in Task 3 (workflowConfig override) and Task 5 (agentToolContributor) -->
+    <extensions defaultExtensionNs="com.workflow.orchestrator">
+        <workflowConfig implementation="com.workflow.orchestrator.companyb.CompanyBWorkflowConfig"/>
+    </extensions>
 </idea-plugin>

@@ -26,6 +26,10 @@ dependencies {
         localPlugin(project(rootProject.path))
         testFramework(TestFrameworkType.Platform)
     }
+    // B compiles against :core's interfaces (WorkflowConfig, ServiceType, ConnectionSettings).
+    // A ships :core at runtime (it's part of plugin A's classpath), so compileOnly is correct —
+    // :core must NOT be bundled inside B's jar (would be a duplicate-class conflict at runtime).
+    compileOnly(project(":core"))
     compileOnly(libs.kotlinx.coroutines.core)
     compileOnly(libs.kotlinx.serialization.json)
     testImplementation(libs.junit5.api)
