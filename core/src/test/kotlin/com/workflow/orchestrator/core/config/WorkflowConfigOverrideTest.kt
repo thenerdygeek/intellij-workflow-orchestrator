@@ -25,12 +25,22 @@ class WorkflowConfigOverrideTest : BasePlatformTestCase() {
     }
 
     fun `test lower-order WorkflowConfig override wins over the default`() {
+        // Competitor: high-order provider (mimics DefaultWorkflowConfig) — must NOT win.
+        val highOrderCompetitor = object : WorkflowConfig {
+            override val order: Int get() = Int.MAX_VALUE
+            override fun baseUrl(service: ServiceType): String =
+                if (service == ServiceType.JIRA) "https://jira.default.example/" else ""
+        }
+        // Override: low-order provider (order=0) — must win.
         val override = object : WorkflowConfig {
             override val order: Int get() = 0
             override fun baseUrl(service: ServiceType): String =
                 if (service == ServiceType.JIRA) "https://jira.company-b.example/" else ""
         }
+        // Registration order must NOT matter — that's the point of the ordering test.
+        WorkflowConfig.EP_NAME.point.registerExtension(highOrderCompetitor, testRootDisposable)
         WorkflowConfig.EP_NAME.point.registerExtension(override, testRootDisposable)
+        // The order=0 override must win over the order=Int.MAX_VALUE competitor.
         assertEquals("https://jira.company-b.example/", WorkflowConfig.resolve().baseUrl(ServiceType.JIRA))
     }
 }
