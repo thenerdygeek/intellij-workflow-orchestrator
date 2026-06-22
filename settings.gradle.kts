@@ -19,4 +19,5 @@ include(
     ":web",
     ":mock-server",
     ":konsist",
+    ":plugin-b",
 )

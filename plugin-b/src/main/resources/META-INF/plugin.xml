@@ -1,0 +1,12 @@
+<idea-plugin>
+    <id>com.workflow.orchestrator.companyb.plugin</id>
+    <name>Workflow Orchestrator - Company B</name>
+    <vendor>Workflow Team</vendor>
+    <description><![CDATA[Company-specific configuration preset and modules for Workflow Orchestrator.]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <!-- HARD depends (NOT optional): B's classloader becomes a child of A's. B is useless without A. -->
+    <depends>com.workflow.orchestrator.plugin</depends>
+
+    <!-- extensions added in Task 3 (workflowConfig override) and Task 5 (agentToolContributor) -->
+</idea-plugin>
