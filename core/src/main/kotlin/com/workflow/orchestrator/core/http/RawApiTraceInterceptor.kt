@@ -101,7 +101,7 @@ class RawApiTraceInterceptor(
         val effectiveReqId = request.header(TRACE_HEADER) ?: reqId
 
         dir.mkdirs()
-        OwnerOnlyFile.restrictDir(dir)  // A4: trace dir holds full request/response bodies (source code)
+        OwnerOnlyFile.restrictDir(dir) // A4: trace dir holds full request/response bodies (source code)
 
         // ── Capture and rebuild request ──────────────────────────────────────
         val outgoingRequest = writeRequestFile(request, effectiveReqId, dir)

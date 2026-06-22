@@ -41,8 +41,8 @@ class OwnerOnlyFileTest {
 
     @Test
     fun `restrict is best-effort and never throws on a missing target`(@TempDir dir: Path) {
-        OwnerOnlyFile.restrictFile(dir.resolve("nope.txt").toFile())   // must not throw
-        OwnerOnlyFile.restrictDir(dir.resolve("nope-dir").toFile())    // must not throw
+        OwnerOnlyFile.restrictFile(dir.resolve("nope.txt").toFile()) // must not throw
+        OwnerOnlyFile.restrictDir(dir.resolve("nope-dir").toFile()) // must not throw
     }
 
     // A4 wiring pin: the three diagnostic dump writers must restrict their output. They write full
@@ -68,6 +68,6 @@ class OwnerOnlyFileTest {
         val cwd = File(System.getProperty("user.dir"))
         listOf(File(cwd, rel), File(cwd, "core/$rel"), File(cwd.parentFile ?: cwd, "core/$rel"))
             .forEach { if (it.isFile) return it }
-        throw IllegalStateException("Cannot locate $rel from cwd=${cwd.absolutePath}")
+        error("Cannot locate $rel from cwd=${cwd.absolutePath}")
     }
 }

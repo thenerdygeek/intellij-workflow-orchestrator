@@ -59,7 +59,7 @@ object PreSanitizeDumper {
     ) {
         try {
             traceDir.mkdirs()
-            OwnerOnlyFile.restrictDir(traceDir)  // A4: dump dir holds full (redacted) request bodies
+            OwnerOnlyFile.restrictDir(traceDir) // A4: dump dir holds full (redacted) request bodies
             val file = File(traceDir, "$reqId.pre-sanitize.json")
             val payload = textRedactor(json.encodeToString(messages))
             OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8).use { w ->

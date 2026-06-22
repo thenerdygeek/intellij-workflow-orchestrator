@@ -2462,6 +2462,11 @@ class AgentService(
                     approvalGate = approvalGate,
                     sessionApprovalStore = sessionApprovalStore,
                     autoApproveSafeCommands = agentSettings.state.autoApproveSafeCommands,
+                    // D4: resolved against the REAL project here (read live per log call in the loop).
+                    includeCommandOutputInLogs = {
+                        com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
+                            .state.includeCommandOutputInLogs
+                    },
                     sessionCommandAllowlist = sessionCommandAllowlist,
                     onDebugLog = onDebugLog,
                     onRetry = onRetry,
