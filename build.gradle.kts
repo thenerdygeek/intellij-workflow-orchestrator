@@ -8,6 +8,7 @@ plugins {
     alias(libs.plugins.changelog)
     alias(libs.plugins.kover)
     alias(libs.plugins.detekt)
+    alias(libs.plugins.cyclonedx)
 }
 
 group = providers.gradleProperty("pluginGroup").get()
@@ -152,6 +153,14 @@ configurations.configureEach {
 allprojects {
     dependencyLocking {
         lockAllConfigurations()
+    }
+
+    // C7 (supply-chain): reproducible build archives. Without these, jar/zip output checksums vary
+    // between builds of identical source (embedded file timestamps + nondeterministic entry order),
+    // which undermines verifiable distribution. Covers every module jar and the buildPlugin zip.
+    tasks.withType<AbstractArchiveTask>().configureEach {
+        isPreserveFileTimestamps = false
+        isReproducibleFileOrder = true
     }
 }
 

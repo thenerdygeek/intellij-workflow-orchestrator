@@ -7,6 +7,7 @@ import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolOutputConfig
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.agent.tools.builtin.PathValidator
 import com.workflow.orchestrator.agent.tools.docs.Relationship
 import com.workflow.orchestrator.agent.tools.docs.SideEffectKind
 import com.workflow.orchestrator.agent.tools.docs.ToolDocumentation
@@ -437,6 +438,12 @@ class DocumentTool(
             return ToolResult("Error: Invalid path: $pathArg — ${e.reason}", "Error: invalid path",
                 tokenEstimate = ToolResult.ERROR_TOKEN_ESTIMATE, isError = true)
         }
+
+        // A2: read_document must enforce the same read allow-list as read_file — otherwise it is an
+        // arbitrary-file-read sink (~/.ssh/id_rsa, ~/.aws/credentials, /etc/passwd) whose extracted
+        // text flows back into chat. resolveAndValidateForRead permits the project + the agent data
+        // dir (where session attachments/downloads live) and rejects everything else.
+        PathValidator.resolveAndValidateForRead(pathArg, project.basePath).second?.let { return it }
 
         // Search is its own MODE: when a non-blank `search` is present it WINS over offset/page/section
         // and returns ranked matching snippets instead of a content slice (G-10).

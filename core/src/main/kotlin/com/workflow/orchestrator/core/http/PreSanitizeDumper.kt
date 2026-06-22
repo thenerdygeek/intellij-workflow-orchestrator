@@ -2,6 +2,7 @@ package com.workflow.orchestrator.core.http
 
 import com.intellij.openapi.diagnostic.Logger
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
+import com.workflow.orchestrator.core.util.OwnerOnlyFile
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -58,11 +59,13 @@ object PreSanitizeDumper {
     ) {
         try {
             traceDir.mkdirs()
+            OwnerOnlyFile.restrictDir(traceDir) // A4: dump dir holds full (redacted) request bodies
             val file = File(traceDir, "$reqId.pre-sanitize.json")
             val payload = textRedactor(json.encodeToString(messages))
             OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8).use { w ->
                 w.write(payload)
             }
+            OwnerOnlyFile.restrictFile(file)
             log.debug("[RawTrace] Pre-sanitize dump: ${file.name} (${messages.size} messages)")
         } catch (e: Exception) {
             log.debug("[RawTrace] Pre-sanitize dump failed: ${e.message}")

@@ -56,6 +56,28 @@ class EditFileDocumentWriteContractTest {
         )
     }
 
+    @Test
+    fun `all write tiers rethrow CancellationException instead of swallowing it`() {
+        val src = locateEditFileToolSource().readText()
+        val tiers = mapOf(
+            "writeViaDocument" to src.substringAfter("internal suspend fun writeViaDocument")
+                .substringBefore("private suspend fun writeViaVfs"),
+            "writeViaVfs" to src.substringAfter("private suspend fun writeViaVfs")
+                .substringBefore("private fun writeViaFileIo"),
+            "writeViaFileIo" to src.substringAfter("private fun writeViaFileIo")
+                .substringBefore("private fun countOccurrences"),
+        )
+        val rethrow = Regex("""catch\s*\([^)]*CancellationException\s*\)""")
+        tiers.forEach { (name, body) ->
+            assertTrue(
+                rethrow.containsMatchIn(body),
+                "$name must catch CancellationException and rethrow it BEFORE the broad catch — a " +
+                    "cooperative cancel (CancellationException : Exception) must propagate, not be " +
+                    "swallowed into a benign-looking `false`. Body was:\n$body",
+            )
+        }
+    }
+
     /**
      * Extracts just the `writeViaDocument` method body from the production source, so the
      * KDoc/documentation strings elsewhere in EditFileTool.kt that mention "WriteCommandAction"

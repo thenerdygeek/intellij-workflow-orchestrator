@@ -40,6 +40,7 @@ kover = "0.9.5"
 qodana = "2026.1.0"
 detekt = "1.23.8"
 konsist = "0.17.3"
+cyclonedx = "3.2.4"
 
 [libraries]
 # Kotlin
@@ -97,3 +98,4 @@ changelog = { id = "org.jetbrains.changelog", version.ref = "changelog" }
 kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }
 qodana = { id = "org.jetbrains.qodana", version.ref = "qodana" }
 detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
+cyclonedx = { id = "org.cyclonedx.bom", version.ref = "cyclonedx" }

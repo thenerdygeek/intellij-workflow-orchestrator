@@ -106,4 +106,37 @@ class AutoWakeGuardStateTest {
         assertEquals(0, guard.attemptCount("x"))
         assertEquals(0, guard.attemptCount("y"))
     }
+
+    // B1: decide() must be atomic. The guard is consulted concurrently from three paths
+    // (background completion, delegation delivery, monitor flush). With a non-atomic
+    // check-then-act, a concurrent first batch for the SAME idle session all pass the
+    // cooldown gate (initial lastAt==0) and all PROCEED → the session is resumed multiple
+    // times (the double-delivery/teardown race). Exactly one PROCEED must win.
+    @Test
+    fun `concurrent decide for one session within the cooldown window yields exactly one PROCEED`() {
+        repeat(20) {
+            val guard = AutoWakeGuardState()
+            val threads = 16
+            val proceeds = java.util.concurrent.atomic.AtomicInteger(0)
+            val start = java.util.concurrent.CountDownLatch(1)
+            val done = java.util.concurrent.CountDownLatch(threads)
+            repeat(threads) {
+                Thread {
+                    start.await()
+                    // cap high (not the limiter), cooldown huge, fixed clock → only the cooldown
+                    // gate may admit more than one, and only if decide() is non-atomic.
+                    val d = guard.decide("sess-race", enabled = true, cap = threads, cooldownMs = 60_000L, now = 1_000L)
+                    if (d == AutoWakeGuardState.Decision.PROCEED) proceeds.incrementAndGet()
+                    done.countDown()
+                }.start()
+            }
+            start.countDown()
+            done.await()
+            assertEquals(
+                1,
+                proceeds.get(),
+                "exactly one PROCEED expected in the cooldown window; got ${proceeds.get()} (decide race)",
+            )
+        }
+    }
 }

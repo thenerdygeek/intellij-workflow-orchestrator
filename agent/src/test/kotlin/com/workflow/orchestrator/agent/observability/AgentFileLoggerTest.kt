@@ -474,6 +474,69 @@ class AgentFileLoggerTest {
         }
     }
 
+    // ── Wave-1 audit-trail fixes (D1–D4) ──────────────────────────────
+
+    @Nested
+    inner class Wave1AuditFixes {
+
+        @Test
+        fun `cleanOldLogs honors a custom retentionDays (D1)`() {
+            val today = LocalDate.now()
+            fun name(daysAgo: Long) = "agent-${today.minusDays(daysAgo).format(DateTimeFormatter.ISO_LOCAL_DATE)}.jsonl"
+            listOf(0L, 1L, 2L, 3L, 5L).forEach { File(tempDir, name(it)).writeText("{}\n") }
+
+            AgentFileLogger(tempDir, retentionDays = 2).cleanOldLogs()
+
+            val remaining = tempDir.listFiles()?.map { it.name }?.toSet() ?: emptySet()
+            assertTrue(remaining.contains(name(0)), "today kept")
+            assertTrue(remaining.contains(name(1)), "1-day kept")
+            assertTrue(remaining.contains(name(2)), "2-day kept (== cutoff, not before)")
+            assertFalse(remaining.contains(name(3)), "3-day deleted with retentionDays=2")
+            assertFalse(remaining.contains(name(5)), "5-day deleted with retentionDays=2")
+        }
+
+        @Test
+        fun `a disabled logger writes nothing (D2)`() {
+            val disabled = AgentFileLogger(tempDir, enabled = false)
+            disabled.logSessionStart("s", "task", 1)
+            disabled.logToolCall("s", "read_file", 1L, false)
+            disabled.flush()
+            val jsonl = tempDir.listFiles()?.filter { it.name.endsWith(".jsonl") } ?: emptyList()
+            assertTrue(jsonl.all { it.readText().isBlank() }, "a disabled logger must not write any entries")
+        }
+
+        @Test
+        fun `session_start records a truncated task summary (D3)`() {
+            logger.logSessionStart("s", "Refactor the auth module thoroughly", 5)
+            logger.flush()
+            assertEquals(
+                "Refactor the auth module thoroughly",
+                readLastEntry()["taskSummary"]?.jsonPrimitive?.content,
+            )
+        }
+
+        @Test
+        fun `session_start task summary is capped at 100 chars (D3)`() {
+            logger.logSessionStart("s", "x".repeat(500), 1)
+            logger.flush()
+            assertEquals(100, readLastEntry()["taskSummary"]?.jsonPrimitive?.content?.length)
+        }
+
+        @Test
+        fun `logToolCall includes the output field when provided (D4)`() {
+            logger.logToolCall("s", "run_command", 5L, false, output = "stdout 1\nstdout 2")
+            logger.flush()
+            assertEquals("stdout 1\nstdout 2", readLastEntry()["output"]?.jsonPrimitive?.content)
+        }
+
+        @Test
+        fun `logToolCall omits the output field when not provided (D4)`() {
+            logger.logToolCall("s", "read_file", 5L, false)
+            logger.flush()
+            assertNull(readLastEntry()["output"])
+        }
+    }
+
     // ── Helpers ────────────────────────────────────────────────────
 
     private fun readAllLines(): List<String> {

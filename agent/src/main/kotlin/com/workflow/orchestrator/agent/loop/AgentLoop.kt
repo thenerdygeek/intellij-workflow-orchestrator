@@ -521,6 +521,13 @@ class AgentLoop(
      */
     private val autoApproveSafeCommands: Boolean = false,
     /**
+     * D4 — when this returns true, run_command stdout/stderr is captured into the JSONL audit log
+     * (honours `PluginSettings.includeCommandOutputInLogs`). Injected as a provider resolved against
+     * the REAL project by AgentService; the default `{ false }` keeps tests/sub-agents from touching
+     * a project service (a relaxed mock Project would ClassCastException on `getService`).
+     */
+    private val includeCommandOutputInLogs: () -> Boolean = { false },
+    /**
      * Part B — per-session allowlist of command PREFIXES the user approved via
      * "Approve all <prefix> this session". A run_command whose every sub-command is
      * covered by an allowed prefix bypasses the prompt regardless of [autoApproveSafeCommands].
@@ -2228,7 +2235,16 @@ class AgentLoop(
                 isError = toolResult.isError,
                 args = call.function.arguments.take(500),
                 errorMessage = if (toolResult.isError) toolResult.content.take(500) else null,
-                tokenEstimate = actualTokenEstimate
+                tokenEstimate = actualTokenEstimate,
+                // D4: capture run_command output into the audit trail only when the operator opts in
+                // (the "Include run_command output in logs" setting was previously dead). The setting
+                // is read via the injected provider — NOT PluginSettings.getInstance(project) here —
+                // so the hot path never does a project-service lookup against a (possibly mock) project.
+                output = if (!toolResult.isError && toolName == "run_command" && includeCommandOutputInLogs()) {
+                    toolResult.content.take(2000)
+                } else {
+                    null
+                },
             )
             sessionMetrics?.recordToolCall(toolName, durationMs, toolResult.isError)
             onDebugLog?.invoke(

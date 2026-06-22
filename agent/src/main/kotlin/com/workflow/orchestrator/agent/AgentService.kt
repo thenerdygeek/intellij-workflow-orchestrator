@@ -292,7 +292,14 @@ class AgentService(
 
     /** Dedicated structured agent log file — one per project, lives for plugin lifetime. */
     private val fileLogger: AgentFileLogger by lazy {
-        AgentFileLogger(logDir = ProjectIdentifier.logsDir(project.basePath ?: ""))
+        // D1/D2: honour the Telemetry & Logs settings that were previously dead — retention window
+        // and the enable toggle now actually reach the logger.
+        val telemetry = com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project).state
+        AgentFileLogger(
+            logDir = ProjectIdentifier.logsDir(project.basePath ?: ""),
+            retentionDays = telemetry.retentionDays,
+            enabled = telemetry.diagnosticJsonlEnabled,
+        )
     }
 
     lateinit var ideContext: IdeContext
@@ -2455,6 +2462,11 @@ class AgentService(
                     approvalGate = approvalGate,
                     sessionApprovalStore = sessionApprovalStore,
                     autoApproveSafeCommands = agentSettings.state.autoApproveSafeCommands,
+                    // D4: resolved against the REAL project here (read live per log call in the loop).
+                    includeCommandOutputInLogs = {
+                        com.workflow.orchestrator.core.settings.PluginSettings.getInstance(project)
+                            .state.includeCommandOutputInLogs
+                    },
                     sessionCommandAllowlist = sessionCommandAllowlist,
                     onDebugLog = onDebugLog,
                     onRetry = onRetry,
@@ -2764,6 +2776,11 @@ class AgentService(
         onContextManagerReady: ((ContextManager) -> Unit)? = null,
         onHandoffProposed: ((context: String) -> Unit)? = null,
     ): Job? {
+        // A3: reject path-traversal session ids from the webview before building sessions/$id.
+        if (!com.workflow.orchestrator.agent.session.SessionIdValidator.isValid(sessionId)) {
+            log.warn("AgentService.resumeSession: rejected invalid session id '$sessionId'")
+            return null
+        }
         val basePath = project.basePath ?: System.getProperty("user.home")
         val sessionBaseDir = ProjectIdentifier.agentDir(basePath)
         val sessionDir = File(sessionBaseDir, "sessions/$sessionId")
@@ -3812,6 +3829,11 @@ class AgentService(
     @Synchronized
     fun releaseSessionState(sessionId: String) {
         perSessionStates.remove(sessionId)
+        // B2/B3: free per-session maps that otherwise grow for the IDE-window lifetime. The queue
+        // self-drains and its durable items persist to disk (recreated + reloaded by queueForSession
+        // on next access), and the auto-wake guard's resetSession cleanup existed but was never called.
+        sessionQueues.remove(sessionId)
+        autoWakeGuards.resetSession(sessionId)
         if (currentSessionId == sessionId) currentSessionId = null
     }
 

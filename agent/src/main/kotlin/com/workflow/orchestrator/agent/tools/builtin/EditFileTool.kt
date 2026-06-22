@@ -38,6 +38,8 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 class EditFileTool : AgentTool {
 
+    private val log = com.intellij.openapi.diagnostic.Logger.getInstance(EditFileTool::class.java)
+
     /**
      * Result of [preview] — pre-validation outcome consumed by the approval gate.
      *
@@ -538,7 +540,12 @@ class EditFileTool : AgentTool {
                 FileDocumentManager.getInstance().saveDocument(document)
                 true
             }
-        } catch (_: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // B5: a cooperative cancel (CancellationException : Exception) must propagate, not be
+            // swallowed into a benign-looking `false` — that breaks structured concurrency.
+            throw e
+        } catch (e: Exception) {
+            log.warn("EditFileTool.writeViaDocument failed for $rawPath", e)
             false
         }
     }
@@ -559,7 +566,10 @@ class EditFileTool : AgentTool {
             // (avoids 1-2s VFS watcher delay before diagnostics update)
             try { vFile.refresh(false, false) } catch (_: Exception) { }
             true
-        } catch (_: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e // B5: propagate cooperative cancel
+        } catch (e: Exception) {
+            log.warn("EditFileTool.writeViaVfs failed for ${vFile.path}", e)
             false
         }
     }
@@ -573,7 +583,10 @@ class EditFileTool : AgentTool {
             // Refresh VFS so IDE sees the change
             try { LocalFileSystem.getInstance().refreshAndFindFileByPath(file.absolutePath) } catch (_: Exception) { }
             true
-        } catch (_: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e // B5: propagate cooperative cancel
+        } catch (e: Exception) {
+            log.warn("EditFileTool.writeViaFileIo failed for ${file.absolutePath}", e)
             false
         }
     }

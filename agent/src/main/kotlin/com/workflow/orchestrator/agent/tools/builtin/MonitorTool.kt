@@ -182,7 +182,18 @@ class MonitorTool(
         val command = params["command"]?.jsonPrimitive?.content
         val filter  = params["filter"]?.jsonPrimitive?.content
         validateStart("shell", command, filter)?.let { return err(it) }
-        val desc = params["description"]?.jsonPrimitive?.content ?: command!!.take(40)
+        // A1: gate the LLM-supplied command through the same hard-block filter run_command uses,
+        // BEFORE spawning a process. monitor(source=shell) is NOT in APPROVAL_TOOLS, so this
+        // pre-spawn filter is the only safety layer between a prompt-injected command and RCE
+        // (it closes the former TODO(Phase 2) gap in ShellCommandSource.start).
+        val shellType = runCatching {
+            com.workflow.orchestrator.agent.tools.process.ShellResolver.resolve(null, project).shellType
+        }.getOrDefault(com.workflow.orchestrator.agent.tools.process.ShellType.BASH)
+        (
+            com.workflow.orchestrator.agent.security.DefaultCommandFilter().check(command!!, shellType)
+                as? com.workflow.orchestrator.agent.security.FilterResult.Reject
+            )?.let { return err("monitor blocked by command filter — ${it.reason}") }
+        val desc = params["description"]?.jsonPrimitive?.content ?: command.take(40)
         val id = "shell-" + java.util.UUID.randomUUID().toString().take(8)
         val specParams = buildMap {
             put("command", command!!)

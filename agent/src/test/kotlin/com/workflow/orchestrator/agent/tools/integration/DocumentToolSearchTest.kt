@@ -7,6 +7,7 @@ import com.workflow.orchestrator.core.services.DocumentArtifactService
 import com.workflow.orchestrator.core.services.ToolResult
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import kotlinx.coroutines.test.runTest
@@ -26,7 +27,11 @@ import org.junit.jupiter.api.Test
  */
 class DocumentToolSearchTest {
 
-    private val project = mockk<com.intellij.openapi.project.Project>(relaxed = true)
+    // basePath "/tmp" keeps the "/tmp/*.pdf" fixtures inside the project root once read_document
+    // enforces PathValidator (A2).
+    private val project = mockk<com.intellij.openapi.project.Project>(relaxed = true) {
+        every { basePath } returns "/tmp"
+    }
 
     private fun searchResult(
         query: String,

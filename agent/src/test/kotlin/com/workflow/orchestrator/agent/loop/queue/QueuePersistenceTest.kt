@@ -32,4 +32,28 @@ class QueuePersistenceTest {
         p.save("s1", emptyList())
         assertFalse(Files.exists(file))
     }
+
+    // B4: a corrupt pending_queue.json must not throw — durable queued work is dropped to empty
+    // rather than crashing resume. (Resilience was already present via getOrDefault; pinned here.)
+    @Test
+    fun `load returns empty on a corrupt file instead of throwing`(@TempDir dir: Path) {
+        val file = dir.resolve("sessions").resolve("s1").also { Files.createDirectories(it) }
+            .resolve("pending_queue.json")
+        Files.writeString(file, "{ not valid json ]]")
+        assertEquals(emptyList<QueuedMessage>(), QueuePersistence(dir).load("s1"))
+    }
+
+    // B4: dropping durable queued work must NOT be silent — the corrupt-file path must log so an
+    // operator can see why a user's queued-while-idle items vanished. Source-contract pin because
+    // the log line is observability-only (no return-value change to drive behaviorally).
+    @Test
+    fun `load logs when it drops a corrupt file`() {
+        val path = "src/main/kotlin/com/workflow/orchestrator/agent/loop/queue/QueuePersistence.kt"
+        val src = java.io.File(path).readText()
+        val loadBody = src.substringAfter("fun load(sessionId: String)").substringBefore("fun save(")
+        assertTrue(
+            loadBody.contains("onFailure") && Regex("""log\.warn|LOG\.warn""").containsMatchIn(loadBody),
+            "QueuePersistence.load must log (log.warn in .onFailure) when it drops a corrupt file: $loadBody",
+        )
+    }
 }

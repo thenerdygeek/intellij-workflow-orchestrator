@@ -53,4 +53,26 @@ class BackgroundPersistenceTest {
         assertEquals(1, persist.loadPendingCompletions("s1").size)
         assertEquals(1, persist.loadPendingCompletions("s2").size)
     }
+
+    // B4: a corrupt pending_completions.json must not throw out of load (which would wedge BOTH
+    // appendCompletion and consumeCompletion forever) — it must self-heal to empty.
+    @Test
+    fun `loadPendingCompletions returns empty on a corrupt file instead of throwing`() {
+        val dir = Files.createTempDirectory("bgp-corrupt-")
+        val persist = BackgroundPersistence(dir)
+        val file = dir.resolve("sessions").resolve("s1").resolve("background").resolve("pending_completions.json")
+        Files.createDirectories(file.parent)
+        Files.writeString(file, "{ not valid json ]]")
+
+        assertTrue(persist.loadPendingCompletions("s1").isEmpty(), "corrupt file must self-heal to empty, not throw")
+
+        // ...and the store must NOT be wedged: a subsequent append still works.
+        val ev = BackgroundCompletionEvent(
+            bgId = "bg_after", kind = "run_command", label = "c", sessionId = "s1",
+            exitCode = 0, state = BackgroundState.EXITED, runtimeMs = 1,
+            tailContent = "", spillPath = null, occurredAt = 1,
+        )
+        persist.appendCompletion("s1", ev)
+        assertEquals(listOf("bg_after"), persist.loadPendingCompletions("s1").map { it.bgId })
+    }
 }
