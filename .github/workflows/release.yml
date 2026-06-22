@@ -70,13 +70,11 @@ jobs:
       - name: Build plugin
         run: ./gradlew --no-daemon --no-configuration-cache -Dorg.gradle.java.home="$JAVA_HOME" buildPlugin
 
-      # Generate SBOM (CycloneDX). The cyclonedxBom task is added by the
-      # org.cyclonedx.bom plugin (C5). The step is included here even if the
-      # plugin is not yet applied; Gradle will simply fail if the task is missing —
-      # add the plugin to the root build.gradle.kts to activate this step.
+      # Generate the CycloneDX SBOM (C5). cyclonedxBom is provided by the org.cyclonedx.bom
+      # plugin in the root build.gradle.kts and aggregates every submodule's dependencies into
+      # build/reports/cyclonedx/bom.json. --no-configuration-cache: the task is not CC-compatible.
       - name: Generate SBOM
         run: ./gradlew --no-daemon --no-configuration-cache -Dorg.gradle.java.home="$JAVA_HOME" cyclonedxBom
-        continue-on-error: true
 
       # Attest build provenance for the signed ZIP artifact.
       - name: Attest build provenance
@@ -90,5 +88,5 @@ jobs:
         with:
           files: |
             build/distributions/*.zip
-            build/reports/*.json
+            build/reports/cyclonedx/bom.json
           generate_release_notes: true

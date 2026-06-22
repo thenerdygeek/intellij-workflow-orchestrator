@@ -8,6 +8,7 @@ plugins {
     alias(libs.plugins.changelog)
     alias(libs.plugins.kover)
     alias(libs.plugins.detekt)
+    alias(libs.plugins.cyclonedx)
 }
 
 group = providers.gradleProperty("pluginGroup").get()
