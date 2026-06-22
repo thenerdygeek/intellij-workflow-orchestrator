@@ -21,6 +21,9 @@ import com.workflow.orchestrator.jira.api.JiraApiClient
  */
 class JiraTicketProviderImpl : JiraTicketProvider {
 
+    /** Shipped fallback sits at the lowest priority so any B override (default order=0) wins. */
+    override val order: Int get() = Int.MAX_VALUE
+
     private val log = Logger.getInstance(JiraTicketProviderImpl::class.java)
 
     /** Fixed client injected in tests; null means [createClient] will build one lazily. */

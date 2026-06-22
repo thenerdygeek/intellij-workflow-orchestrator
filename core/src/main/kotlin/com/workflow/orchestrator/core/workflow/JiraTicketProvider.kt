@@ -14,6 +14,9 @@ import com.intellij.openapi.extensions.ExtensionPointName
  */
 interface JiraTicketProvider {
 
+    /** Lower runs first; the shipped impl sits at the lowest priority (Int.MAX_VALUE). */
+    val order: Int get() = 0
+
     suspend fun getTicketDetails(ticketId: String): TicketDetails?
 
     /**
@@ -29,7 +32,7 @@ interface JiraTicketProvider {
         )
 
         fun getInstance(): JiraTicketProvider? =
-            EP_NAME.extensionList.firstOrNull()
+            EP_NAME.extensionList.minByOrNull { it.order }
     }
 }
 
