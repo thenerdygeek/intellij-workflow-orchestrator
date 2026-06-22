@@ -72,6 +72,10 @@
             qualifiedName="com.workflow.orchestrator.featureRegistry"
             interface="com.workflow.orchestrator.core.capability.FeatureRegistry"
             dynamic="true"/>
+        <extensionPoint
+            qualifiedName="com.workflow.orchestrator.agentToolContributor"
+            interface="com.workflow.orchestrator.agent.tools.contribution.AgentToolContributor"
+            dynamic="true"/>
     </extensionPoints>
 
     <extensions defaultExtensionNs="com.intellij">

@@ -1316,6 +1316,14 @@ class AgentService(
         // Only registered when the service URL is configured in ConnectionSettings
         registerConditionalIntegrationTools()
 
+        // Tools contributed by depending plugins (e.g. plugin B) via the agentToolContributor EP.
+        runCatching {
+            val ctx = com.workflow.orchestrator.agent.tools.contribution
+                .ToolRegistrationContext(project, registry)
+            com.workflow.orchestrator.agent.tools.contribution.AgentToolContributor
+                .EP_NAME.extensionList.forEach { it.registerTools(ctx) }
+        }.onFailure { log.warn("[Tools] agentToolContributor EP iteration failed", it) }
+
         if (failedRegistrations.isNotEmpty()) {
             log.error("AgentService: ${failedRegistrations.size} tools failed to register: $failedRegistrations")
         }

@@ -30,6 +30,12 @@ dependencies {
     // A ships :core at runtime (it's part of plugin A's classpath), so compileOnly is correct —
     // :core must NOT be bundled inside B's jar (would be a duplicate-class conflict at runtime).
     compileOnly(project(":core"))
+    // B compiles against :agent's agentToolContributor EP (AgentToolContributor,
+    // ToolRegistrationContext, AgentTool, FunctionParameters, ToolResult, WorkerType).
+    // localPlugin(A) is a runtime/sandbox dep — it does NOT put A's modules on B's compile
+    // classpath — so this explicit compileOnly is required (Task 3 lesson). compileOnly because
+    // A ships :agent at runtime; bundling it in B's jar would be a duplicate-class conflict.
+    compileOnly(project(":agent"))
     compileOnly(libs.kotlinx.coroutines.core)
     compileOnly(libs.kotlinx.serialization.json)
     testImplementation(libs.junit5.api)

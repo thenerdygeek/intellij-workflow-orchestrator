@@ -10,5 +10,6 @@
 
     <extensions defaultExtensionNs="com.workflow.orchestrator">
         <workflowConfig implementation="com.workflow.orchestrator.companyb.CompanyBWorkflowConfig"/>
+        <agentToolContributor implementation="com.workflow.orchestrator.companyb.CompanyBToolContributor"/>
     </extensions>
 </idea-plugin>
