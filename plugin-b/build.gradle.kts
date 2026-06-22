@@ -45,12 +45,19 @@ intellijPlatform {
             untilBuild = providers.gradleProperty("pluginUntilBuild")
         }
     }
-    pluginVerification {
-        ides {
-            create(
-                org.jetbrains.intellij.platform.gradle.IntelliJPlatformType.IntellijIdeaUltimate,
-                providers.gradleProperty("platformVersion"),
-            )
-        }
-    }
+    // NOTE: no pluginVerification block here. Plugin B is private and hard-depends on
+    // local plugin A (com.workflow.orchestrator.plugin), which the Marketplace Plugin
+    // Verifier cannot resolve (it searches only Local Repo / bundled / Marketplace).
+    // The Marketplace verifier therefore does not apply to B; A (the root project) is
+    // still verified by `verifyPlugin`. B's gates are :plugin-b:buildPlugin +
+    // verifyPluginStructure + the two-plugin runIde smoke.
+}
+
+// Plugin B is private and hard-depends on local plugin A, which the Marketplace Plugin
+// Verifier cannot resolve (it searches only Local Repo / bundled / Marketplace). The
+// Marketplace verifier therefore does not apply to B; A (the root project) is still verified
+// by `verifyPlugin`. B's gates are :plugin-b:buildPlugin + structure verification + the
+// two-plugin runIde smoke.
+tasks.withType<org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask>().configureEach {
+    enabled = false
 }
