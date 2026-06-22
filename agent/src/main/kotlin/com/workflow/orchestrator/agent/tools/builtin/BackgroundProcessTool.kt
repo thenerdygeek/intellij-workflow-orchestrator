@@ -23,6 +23,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class BackgroundProcessTool : AgentTool {
     override val name = "background_process"
+    override val isMutating: Boolean get() = true
     override val description = "Manage background processes spawned in this session via run_command(background: true). " +
         "With no args, lists all background processes in this session. " +
         "With an id and no action, returns status. " +

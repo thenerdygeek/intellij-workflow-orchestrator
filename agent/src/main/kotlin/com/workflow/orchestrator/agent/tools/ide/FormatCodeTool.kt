@@ -26,6 +26,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class FormatCodeTool : AgentTool {
     override val name = "format_code"
+    override val isMutating: Boolean get() = true
     override val description = "Reformat a file according to the project's code style (.editorconfig, IDE settings). Use after editing files to ensure consistent formatting."
     override val parameters = FunctionParameters(
         properties = mapOf(

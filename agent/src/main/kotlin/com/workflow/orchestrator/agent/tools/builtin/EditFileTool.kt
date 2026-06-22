@@ -166,6 +166,7 @@ class EditFileTool : AgentTool {
     }
 
     override val name = "edit_file"
+    override val isMutating: Boolean get() = true
     override val description = "Make targeted edits to an existing file using exact string replacement. This tool should be used when you need to make targeted changes to specific parts of a file. The old_string must match EXACTLY — character-for-character including whitespace, indentation, and line endings. Include enough surrounding context (3-5 lines) to ensure old_string matches uniquely in the file. If old_string matches multiple times, the edit will fail — provide a larger context to disambiguate, or set replace_all=true to replace all occurrences. You MUST read the file with read_file before editing to see the exact content. Keep edits concise — include just the changing lines, and a few surrounding lines if needed for uniqueness. Do not include long runs of unchanging lines. Prefer this over create_file for modifying existing files."
     override val parameters = FunctionParameters(
         properties = mapOf(

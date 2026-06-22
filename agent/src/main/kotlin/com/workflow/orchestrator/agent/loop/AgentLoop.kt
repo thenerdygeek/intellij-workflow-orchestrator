@@ -1940,7 +1940,7 @@ class AgentLoop(
                 null
             }
             if ((planModeProvider?.invoke() ?: planMode) &&
-                (toolName in WRITE_TOOLS || tool.isWriteAction(planModeAction))
+                (tool.isMutating || toolName in WRITE_TOOLS || tool.isWriteAction(planModeAction))
             ) {
                 val planModeBlockMsg = "Error: '$toolName' is blocked in plan mode. You can only read, search, and analyze code."
                 fileLogger?.logToolCall(

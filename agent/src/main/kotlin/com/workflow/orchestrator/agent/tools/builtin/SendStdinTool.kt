@@ -34,6 +34,7 @@ private const val IDLE_LABEL = "stdin"
 
 class SendStdinTool : AgentTool {
     override val name = "send_stdin"
+    override val isMutating: Boolean get() = true
     override val description = "Send input to a running process's stdin. Use when a command is waiting for " +
         "input that you can determine from context (e.g., confirmation prompts, menu selections). " +
         "NEVER use for passwords, tokens, or secrets — use ask_user_input instead. Max 10 sends per process."

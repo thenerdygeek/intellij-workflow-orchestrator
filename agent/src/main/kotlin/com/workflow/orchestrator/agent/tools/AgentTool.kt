@@ -111,6 +111,11 @@ interface AgentTool {
      */
     fun isWriteAction(action: String?): Boolean = false
 
+    /** True if this tool mutates state and must be blocked in plan mode. The guard in AgentLoop
+     *  uses `isMutating || isWriteAction(action)`, so contributed tools declare their own safety
+     *  without editing the hardcoded WRITE_TOOLS set. */
+    val isMutating: Boolean get() = false
+
     /**
      * Invoked by write actions inside [execute] when they need user approval.
      * Default returns [ApprovalResult.APPROVED] — no gate (safe for read-only tools

@@ -26,6 +26,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class OptimizeImportsTool : AgentTool {
     override val name = "optimize_imports"
+    override val isMutating: Boolean get() = true
     override val description = "Add missing imports and remove unused imports in a file. Use after editing to fix 'unresolved reference' errors caused by missing imports."
     override val parameters = FunctionParameters(
         properties = mapOf(

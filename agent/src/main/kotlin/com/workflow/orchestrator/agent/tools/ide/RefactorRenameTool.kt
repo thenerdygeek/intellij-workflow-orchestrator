@@ -34,6 +34,7 @@ class RefactorRenameTool(
     private val registry: LanguageProviderRegistry
 ) : AgentTool {
     override val name = "refactor_rename"
+    override val isMutating: Boolean get() = true
     override val description = "Safely rename a class, method, field, or variable across the entire project. Updates ALL references, imports, and usages. Much safer than text replacement with edit_file."
     override val parameters = FunctionParameters(
         properties = mapOf(
