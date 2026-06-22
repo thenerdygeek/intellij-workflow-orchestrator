@@ -11,6 +11,9 @@ import com.intellij.openapi.project.Project
 class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(State()) {
 
     class State : BaseState() {
+        /** Schema version for one-shot settings migrations (see SettingsMigration). 0 = pre-migration. */
+        var settingsSchemaVersion by property(0)
+
         // Polling intervals (seconds)
         var buildPollIntervalSeconds by property(30)
 

@@ -274,6 +274,8 @@
         <!-- Startup (onboarding check) -->
         <postStartupActivity
             implementation="com.workflow.orchestrator.core.onboarding.OnboardingStartupListener"/>
+        <postStartupActivity
+            implementation="com.workflow.orchestrator.core.settings.SettingsMigrationStartupActivity"/>
 
         <!-- Auto-detect startup activity (runs after DumbService smart mode) -->
         <postStartupActivity
