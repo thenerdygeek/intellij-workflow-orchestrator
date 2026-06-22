@@ -19,7 +19,7 @@ repositories {
     mavenCentral()
 }
 
-val ktorVersion = "3.1.1"
+val ktorVersion = "3.5.0"
 
 dependencies {
     // Ktor server
@@ -34,10 +34,10 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
 
     // Coroutines (for timed build progression)
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
 
     // Logging
-    implementation("ch.qos.logback:logback-classic:1.5.6")
+    implementation("ch.qos.logback:logback-classic:1.5.34")
 
     // Testing
     testImplementation(libs.junit5.api)

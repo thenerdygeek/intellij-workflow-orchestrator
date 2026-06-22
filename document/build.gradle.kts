@@ -41,7 +41,7 @@ dependencies {
     // must be on the plugin classloader to satisfy bytecode verification at first POI/Tika
     // class load. We route Log4j 2 → SLF4J via `log4j-to-slf4j` declared at the bottom of
     // this dependencies block, so no log4j-core implementation is bundled.
-    implementation("org.apache.tika:tika-core:3.2.3") {
+    implementation("org.apache.tika:tika-core:3.3.1") {
         exclude(group = "org.slf4j")
     }
 
@@ -59,7 +59,7 @@ dependencies {
     // ServiceLoader / TIKA-1145: as long as the kept tika-parser-*-module JARs retain their
     // META-INF/services/org.apache.tika.parser.Parser entries, AutoDetectParser registry stays
     // non-empty and detection still works for the formats above.
-    implementation("org.apache.tika:tika-parsers-standard-package:3.2.3") {
+    implementation("org.apache.tika:tika-parsers-standard-package:3.3.1") {
         // SLF4J is provided by IntelliJ Platform; bundling a second copy causes LinkageError.
         // log4j-api stays IN — POI 5.x and Tika modules below directly reference it for
         // class-level static `LogManager.getLogger(...)` initialisation. log4j-core is dropped
@@ -117,7 +117,7 @@ dependencies {
     // Tika's `tika-parser-microsoft-module` (kept) ships HSLFExtractor/ExcelExtractor.HSSFListener/
     // OfficeParser which hard-reference poi-scratchpad classes during ServiceLoader registration.
     // Excluding it triggers NoClassDefFoundError at TikaConfig construction (same trap as jackcess).
-    implementation("org.apache.poi:poi-ooxml:5.4.1") {
+    implementation("org.apache.poi:poi-ooxml:5.5.1") {
         // Keep log4j-api — POI 5.x replaced POILogFactory with direct
         // `org.apache.logging.log4j.LogManager.getLogger(...)` calls (~599 references in
         // poi-5.4.1.jar alone). Excluding it produces NoClassDefFoundError at first POI
@@ -143,7 +143,7 @@ dependencies {
     // do NOT bundle log4j-core (~1.8 MB) — the adapter replaces it as the SPI provider. SLF4J
     // is excluded transitively because the IntelliJ Platform already provides it; bundling a
     // second copy would trigger LinkageError under the plugin classloader.
-    implementation("org.apache.logging.log4j:log4j-to-slf4j:2.24.3") {
+    implementation("org.apache.logging.log4j:log4j-to-slf4j:2.26.0") {
         exclude(group = "org.slf4j")
     }
 
