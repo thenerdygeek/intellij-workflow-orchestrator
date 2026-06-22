@@ -30,7 +30,12 @@ interface WorkflowConfig {
          * environments without the extension-point system (e.g. plain unit tests).
          */
         fun resolve(): WorkflowConfig =
-            runCatching { EP_NAME.extensionList.minByOrNull { it.order } }.getOrNull()
+            runCatching { lowestOrderOf(EP_NAME.extensionList) }.getOrNull()
                 ?: DefaultWorkflowConfig()
+
+        /** Pure selection: the lowest-[order] provider, or null if none. Split out from the platform
+         *  extension-list fetch in [resolve] so the ordering rule is unit-testable without a platform fixture. */
+        internal fun lowestOrderOf(providers: List<WorkflowConfig>): WorkflowConfig? =
+            providers.minByOrNull { it.order }
     }
 }

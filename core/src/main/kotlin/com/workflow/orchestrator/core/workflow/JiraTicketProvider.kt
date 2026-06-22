@@ -31,8 +31,12 @@ interface JiraTicketProvider {
             "com.workflow.orchestrator.jiraTicketProvider"
         )
 
-        fun getInstance(): JiraTicketProvider? =
-            EP_NAME.extensionList.minByOrNull { it.order }
+        fun getInstance(): JiraTicketProvider? = lowestOrderOf(EP_NAME.extensionList)
+
+        /** Pure selection: the lowest-[order] provider, or null if none. Split out from the platform
+         *  extension-list fetch in [getInstance] so the ordering rule is unit-testable without a fixture. */
+        internal fun lowestOrderOf(providers: List<JiraTicketProvider>): JiraTicketProvider? =
+            providers.minByOrNull { it.order }
     }
 }
 
