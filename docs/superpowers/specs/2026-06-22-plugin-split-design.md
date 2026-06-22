@@ -5,7 +5,7 @@
 **Author:** Subhankar (with Claude)
 **Relates to:** Phase 2 enterprise seams already landed (`AuthProvider`/`WorkflowConfig`/`FeatureRegistry`/`@StableApi`)
 
-> **Rev-3 changelog (Round-2 review):** **(A)** dropped `internal` everywhere — A's EP surface is **`public` + `@StableApi(CANDIDATE)` + unfrozen-by-policy** (Kotlin `internal` is module-scoped; B can't implement `internal` interfaces across a plugin boundary), and §10 is honestly softened (internal-first defers the *external-consumer* burden, not the two-plugin **lockstep** burden). **(B)** cut Tier-1 native LLM to **Anthropic-direct only**; demoted Bedrock/Vertex to Tier-2 (SigV4/OAuth2 ≠ static-header auth; their SDKs bypass `IdeProxy`/`IdeTrust`). **(C)** re-scoped §6: the `ToolProtocol`/`LlmProvider` seam is **wider** than first drawn (system-prompt assembly + streaming segmentation + history conventions + model-catalog/capability/error-classification + `BrainRouter` absorption); added the **persisted-message-format migration** and **proxy-aware native client** as Phase-4 workstreams; "NativeProtocol deletes the drift machinery" reworded as 5-site conditional-bypass surgery. **(D)** corrected effort to **~4–6 months**, Phase 4 the critical path. **(E)** softened §4's "platform" rhetoric. **(F)** `IssueTrackerProvider` = rename **+ resolver upgrade**.
+> **Rev-3 changelog (Round-2 review):** **(A)** dropped `internal` everywhere — A's EP surface is **`public` + `@InternalApi` + unfrozen-by-policy** (Kotlin `internal` is module-scoped; B can't implement `internal` interfaces across a plugin boundary), and §10 is honestly softened (internal-first defers the *external-consumer* burden, not the two-plugin **lockstep** burden). **(B)** cut Tier-1 native LLM to **Anthropic-direct only**; demoted Bedrock/Vertex to Tier-2 (SigV4/OAuth2 ≠ static-header auth; their SDKs bypass `IdeProxy`/`IdeTrust`). **(C)** re-scoped §6: the `ToolProtocol`/`LlmProvider` seam is **wider** than first drawn (system-prompt assembly + streaming segmentation + history conventions + model-catalog/capability/error-classification + `BrainRouter` absorption); added the **persisted-message-format migration** and **proxy-aware native client** as Phase-4 workstreams; "NativeProtocol deletes the drift machinery" reworded as 5-site conditional-bypass surgery. **(D)** corrected effort to **~4–6 months**, Phase 4 the critical path. **(E)** softened §4's "platform" rhetoric. **(F)** `IssueTrackerProvider` = rename **+ resolver upgrade**.
 
 ---
 
@@ -29,7 +29,7 @@ Plugin B does **not** copy or edit A's source. B is a **new, separate plugin pro
 **Mechanism precision (Round-1):**
 - **B is a NEW root plugin project.** Today the repo is **one composed plugin** — 12 Gradle modules, a *single* `plugin.xml`, all feature modules in one JAR via `intellijPlatformComposedJar`. B = a new root module applying `org.jetbrains.intellij.platform` (not `.module`), its **own** `plugin.xml` + `buildPlugin`, with the company-only modules' descriptor entries physically relocated out of A's descriptor into B's.
 - **Two requirements:** (a) a **compile-time** Gradle dep on A — `localPlugin(project(...))` / `pluginModule()` in dev (A isn't published until the deferred Phase 5), `plugin("<A-id>", "<version>")` once A is on a repo; **and** (b) a **hard** `<depends>com.A.id</depends>` (NOT `optional="true"`) so B's classloader is a child of A's at runtime.
-- **A's EP surface that B implements MUST be `public`** (Kotlin `internal` is compilation-module-scoped — B, a separate Gradle project consuming A as a JAR, cannot reference `internal` symbols at all). The existing seams are already `public` for exactly this reason (`AuthProvider.kt:13`, `WorkflowConfig.kt:16`, `FeatureRegistry.kt:16`). "Unfrozen" is achieved by **policy + `@StableApi(CANDIDATE)`**, not by `internal` (§8, §10).
+- **A's EP surface that B implements MUST be `public`** (Kotlin `internal` is compilation-module-scoped — B, a separate Gradle project consuming A as a JAR, cannot reference `internal` symbols at all). The existing seams are already `public` for exactly this reason (`AuthProvider.kt:13`, `WorkflowConfig.kt:16`, `FeatureRegistry.kt:16`). "Unfrozen" is achieved by **policy + `@InternalApi`**, not by `internal` (§8, §10).
 - **Override EPs are winner-take-all; contribution EPs must be additive.** Override seams resolve to one winner (lowest `order`; default = `Int.MAX_VALUE`; B registers any `order < that`). The new **contribution** EPs (agent-tool, monitor-source) need **additive-merge** semantics — a different resolver; don't reuse the winner-take-all one.
 - **Service impls are NOT EP-overridable.** `JiraServiceImpl`/… are `<projectService serviceInterface/serviceImplementation>`; the platform forbids two plugins registering a service for the same interface. Provider *swap* happens at the EP layer above the service.
 
@@ -41,7 +41,7 @@ Marketplace plugin A  ◄── <depends> (hard) ── Private plugin B
   :core (generic) + :agent                       :automation
   generic Atlassian/Sonar connectors             :handover
   LlmProvider + ToolProtocol seams               company default values (preset)
-  EP surface = public + @StableApi(CANDIDATE)    proprietary personas
+  EP surface = public + @InternalApi    proprietary personas
   ships sensible defaults                         company-only agent tools
 User installs A (and configures it)             User installs A + B
 ```
@@ -141,7 +141,7 @@ Hard Java dep; Ultimate; Java/Kotlin+Python; Spring graceful-degrade. Personas: 
 
 ## 8. New seams to build (Phase-0 core)
 
-All seams: declare an EP in A, ship a generic default, **expose `public` interfaces marked `@StableApi(CANDIDATE)` (unfrozen-by-policy — we may change them; B recompiles in lockstep)**, document, contract-test. **Do NOT make any B-implemented interface `internal`.**
+All seams: declare an EP in A, ship a generic default, **expose `public` interfaces marked `@InternalApi` (unfrozen-by-policy — we may change them; B recompiles in lockstep)**, document, contract-test. **Do NOT make any B-implemented interface `internal`.** *(Annotation reality: the codebase has `@StableApi(since: String)` (fork-stable) and `@InternalApi` (public but not stable) in `core/.../core/api/ApiStability.kt` — there is no `CANDIDATE` level. During internal-first we mark B-facing EP interfaces `@InternalApi`; `@StableApi(since=…)` is reserved for the eventual external freeze in the deferred Phase 5.)*
 
 1. **`LlmProvider` + `ToolProtocol`** (§6) — wide surface (tool presentation/segmentation/result-formatting + model-catalog/capability/error-classification + absorb `BrainRouter`); ship Sourcegraph(XML) + Anthropic-direct(native). The `DialectDriftDetector` 5-site bypass + the persisted-format discriminator are explicit tasks (discriminator lands in Phase 4 with the native provider).
 2. **`IssueTrackerProvider`** — rename `JiraTicketProvider` **+ resolver upgrade**: the existing EP resolves via `firstOrNull()` (`core/.../workflow/JiraTicketProvider.kt:31-32`), not lowest-order-wins — upgrade it to the `minByOrNull{order}` pattern so B's override deterministically wins. Jira impl ships in A.
@@ -152,7 +152,7 @@ All seams: declare an EP in A, ship a generic default, **expose `public` interfa
 7. **Settings-section contribution** — B contributes its settings pages + its config **preset** and overrides A's neutral defaults.
 8. **Relocate `WorkflowIntent` + defaults out of `:core`** — risk emphasis inverted (Round-1): `WorkflowIntent` is **trivial** (1 referencer; leave it in A unchanged is fine). The **real danger** is blanking `PluginSettings.State` defaults — `SimplePersistentStateComponent`/`BaseState` **omits default-equal fields from XML**, so an existing user who never set a value **silently flips** to the new default on next launch. **No `@State` migration mechanism exists in this repo** (no `ConverterProvider`/`@State(version=…)`). Action: build a concrete migration (first-launch-after-upgrade seed / sentinel / version bump) **before any default is blanked**.
 
-**Public-API tiering (`@StableApi(CANDIDATE)`):** stable-candidate = the EP interfaces + `ToolResult<T>` + the narrow tool/monitor factory DTOs; **not** stable = the broad `:core/model` surface (documented "depend at your own version-coordination risk"). **These are `public` and unfrozen-by-policy** — we are free to change them; B bumps and recompiles in lockstep. **Freezing** (committing to backward-compat for *external* consumers) happens only in the deferred Phase 5. Writing the konsist `StableApi` contract test is a Phase-0 deliverable; `konsist`'s `ModuleBoundaryTest`/`LayeringTest` also need restructuring for the two-plugin graph (A's tests must not see B; B asserts "B→A, not A→B").
+**Public-API tiering (`@InternalApi`):** stable-candidate = the EP interfaces + `ToolResult<T>` + the narrow tool/monitor factory DTOs; **not** stable = the broad `:core/model` surface (documented "depend at your own version-coordination risk"). **These are `public` and unfrozen-by-policy** — we are free to change them; B bumps and recompiles in lockstep. **Freezing** (committing to backward-compat for *external* consumers) happens only in the deferred Phase 5. Writing the konsist `StableApi` contract test is a Phase-0 deliverable; `konsist`'s `ModuleBoundaryTest`/`LayeringTest` also need restructuring for the two-plugin graph (A's tests must not see B; B asserts "B→A, not A→B").
 
 ---
 
@@ -170,7 +170,7 @@ All seams: declare an EP in A, ship a generic default, **expose `public` interfa
 
 ## 10. Sequencing decision — RESOLVED: **internal-first, open-source later** (option 1)
 
-**Resolution (2026-06-22):** build the full two-plugin architecture + de-convention + the `LlmProvider`/`ToolProtocol` seam (Sourcegraph + Anthropic-direct), and **ship A+B privately** for our team. A's EP surface is **`public` + `@StableApi(CANDIDATE)` + unfrozen-by-policy**. Open-sourcing A (freeze the API for external consumers, fresh repo, gates A–D, Marketplace publish, plus Bedrock/Vertex) is a **later, separate effort** once the native provider is proven.
+**Resolution (2026-06-22):** build the full two-plugin architecture + de-convention + the `LlmProvider`/`ToolProtocol` seam (Sourcegraph + Anthropic-direct), and **ship A+B privately** for our team. A's EP surface is **`public` + `@InternalApi` + unfrozen-by-policy**. Open-sourcing A (freeze the API for external consumers, fresh repo, gates A–D, Marketplace publish, plus Bedrock/Vertex) is a **later, separate effort** once the native provider is proven.
 
 **What internal-first does and does NOT buy (Round-2 honesty correction):**
 - **Buys:** defers the **external-consumer** stability burden (no strangers depending on A yet → we can still change signatures), and the open-source distribution/marketing/maintenance load. Captures the modularization + de-convention + provider-agnostic value now; team uses it immediately.
@@ -184,7 +184,7 @@ All seams: declare an EP in A, ship a generic default, **expose `public` interfa
 
 | Phase | What | Notes |
 |---|---|---|
-| **0 — Skeleton + seams** | New B root plugin project (hard `<depends>`, own descriptor); the §8 seams incl. the **wide** `LlmProvider`+`ToolProtocol` shape + the agent-tool factory + safety-prop refactor; the `@State` migration (§8.8); **`public` + `@StableApi(CANDIDATE)`** marking + konsist contract/restructure. **Do NOT freeze; do NOT make EP interfaces `internal`.** | Riskiest *architecturally*; must shape the §6 seam right |
+| **0 — Skeleton + seams** | New B root plugin project (hard `<depends>`, own descriptor); the §8 seams incl. the **wide** `LlmProvider`+`ToolProtocol` shape + the agent-tool factory + safety-prop refactor; the `@State` migration (§8.8); **`public` + `@InternalApi`** marking + konsist contract/restructure. **Do NOT freeze; do NOT make EP interfaces `internal`.** | Riskiest *architecturally*; must shape the §6 seam right |
 | **1 — De-convention → settings** | §7.2: `develop`→config, delete the dead validator, gate the system prompt, hide Sprint tab w/o Software, configurable commit format, `PsiContextEnricher` fix, dynamic role text, blank the `bambooBuildVariableName`/`quickClipboardChips`/status defaults **(migration §8.8 first)** | Highest ROI |
 | **2 — Carve company-only → B** | `:automation`, `:handover` (CopyrightFix→A), `DockerTagsProvider` adapter, copyright template, the config **preset**, `devops-engineer` persona; relocate descriptor entries into B | B becomes lean |
 | **3 — Persona/skill/prompt hardening** | `supportsSpring` gate on `security-auditor`/`performance-engineer`; split `git-workflow` skill | |
@@ -197,12 +197,12 @@ Each phase = its own spec → plan → implementation, **each with multiple inde
 
 ## 12. Phase 0 — detailed
 
-**Objective:** a building, test-green two-plugin structure where B (even near-empty) installs on A and overrides one thing end-to-end; the wide provider/contribution seams exist (shaped right so Phase 4 doesn't reopen them); the `@State` migration is in place; the `public` `@StableApi(CANDIDATE)` contract test exists (**not** frozen).
+**Objective:** a building, test-green two-plugin structure where B (even near-empty) installs on A and overrides one thing end-to-end; the wide provider/contribution seams exist (shaped right so Phase 4 doesn't reopen them); the `@State` migration is in place; the `public` `@InternalApi` contract test exists (**not** frozen).
 
 - **8.1 Build/repo:** new B root project applying `intellijPlatform` with its own `plugin.xml`; B depends on A via `localPlugin(project(...))` + hard `<depends>`. EP interfaces B implements are **`public`** (never `internal`). B contains only B's files (clean-room; protects §9 GATE B).
 - **8.2 Seams:** the **wide** `LlmProvider`+`ToolProtocol` (Sourcegraph-XML wraps current behavior; `NativeProtocol` interface shaped now, impl in Phase 4); `IssueTrackerProvider` (rename + resolver upgrade) / `VcsHostClient` / `CiService` (Atlassian impls ship); the **narrow agent-tool factory EP** + the `AgentTool` safety-prop refactor + project-scoped `ToolRegistrationService`; settings-section contribution. *(monitor-source EP descoped; persisted-format migration deferred to Phase 4.)*
 - **8.3 `@State` migration (§8.8)** lands **before** any default is blanked.
-- **8.4 `public` `@StableApi(CANDIDATE)` + konsist contract test** written; konsist restructured for two plugins. (Marking only — freezing is the deferred Phase 5.)
+- **8.4 `public` `@InternalApi` + konsist contract test** written; konsist restructured for two plugins. (Marking only — freezing is the deferred Phase 5.)
 - **8.5 End-to-end proof (order: migration first, then this):** B overrides `WorkflowConfig`/`defaultTargetBranch` and the change is observed at runtime with both plugins loaded; one B-contributed agent-tool appears in the registry.
 - **Done (verifiable gates):** A builds + tests green standalone; B builds + installs on A; one override + one B-contributed agent-tool work end-to-end; contract test green.
 - **Build note (not a gate):** use `--no-build-cache` for any suspend-signature change (known stale-bytecode `NoSuchMethodError` trap).
@@ -224,7 +224,7 @@ Tier-2 connectors (GitHub/GitLab/Jenkins); **Bedrock/Vertex LLM transports**; Ji
 ---
 
 ## 15. Risks
-- **Public-surface lockstep (not removed by internal-first):** B compiling against A's `public` EP surface pins those signatures de-facto; every A change forces a B recompile. Mitigated by `@StableApi(CANDIDATE)` discipline + keeping the surface narrow; **not** eliminated — §10.
+- **Public-surface lockstep (not removed by internal-first):** B compiling against A's `public` EP surface pins those signatures de-facto; every A change forces a B recompile. Mitigated by `@InternalApi` discipline + keeping the surface narrow; **not** eliminated — §10.
 - **`@State` default-blanking = silent behavior loss for existing installs** — the sharpest near-term risk; gated behind the §8.8 migration (Phase-0/1).
 - **Native-LLM workstream is the critical path and was underestimated** — it's a core-loop + streaming + persistence + transport change (§6), now scoped as Phase 4 with explicit line items (NativeProtocol-through-loop, persisted-format migration, proxy-aware client). Effort ~4–6 months whole-program.
 - **Contribution-EP safety hole** — a B write tool not plan-mode-gated; mitigated by the self-declared-safety-prop refactor before B contributes write tools.
