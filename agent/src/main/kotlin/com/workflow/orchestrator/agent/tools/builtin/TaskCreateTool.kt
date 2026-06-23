@@ -23,6 +23,7 @@ class TaskCreateTool(
 ) : AgentTool {
 
     override val name = "task_create"
+    override val isHookExempt = true
 
     override val description =
         "Create a new task in the session's task list. Use for work that requires 3+ distinct steps or " +

@@ -4,7 +4,6 @@ import com.workflow.orchestrator.agent.tools.builtin.CreateFileTool
 import com.workflow.orchestrator.agent.tools.builtin.DeleteFileTool
 import com.workflow.orchestrator.agent.tools.builtin.EditFileTool
 import com.workflow.orchestrator.agent.tools.builtin.RevertFileTool
-import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.File
@@ -35,5 +34,20 @@ class SafetyPropsCharacterizationTest {
             "RunCommandTool must declare requiresApproval = true")
         assertTrue(s.contains("override val allowSessionApproval = false"),
             "RunCommandTool must declare allowSessionApproval = false (per-invocation only)")
+    }
+
+    // ── Hook exemption ─────────────────────────────────────────────────────
+    @Test
+    fun `task tools and ai_review declare hook exemption`() {
+        for (rel in listOf(
+            "tools/builtin/TaskCreateTool.kt",
+            "tools/builtin/TaskUpdateTool.kt",
+            "tools/builtin/TaskListTool.kt",
+            "tools/builtin/TaskGetTool.kt",
+            "tools/builtin/AiReviewTool.kt",
+        )) {
+            assertTrue(src(rel).contains("override val isHookExempt = true"),
+                "$rel must declare isHookExempt = true")
+        }
     }
 }

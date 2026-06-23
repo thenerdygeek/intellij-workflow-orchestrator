@@ -18,6 +18,7 @@ class TaskListTool(
 ) : AgentTool {
 
     override val name = "task_list"
+    override val isHookExempt = true
 
     override val description =
         "List all tasks in the session with minimal fields (id, subject, status, owner, blockedBy). " +

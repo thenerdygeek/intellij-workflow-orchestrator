@@ -24,6 +24,7 @@ class TaskUpdateTool(
 ) : AgentTool {
 
     override val name = "task_update"
+    override val isHookExempt = true
 
     override val description =
         "Update a task's status, content, ownership, or dependencies. One status transition per call. " +

@@ -20,6 +20,7 @@ class TaskGetTool(
 ) : AgentTool {
 
     override val name = "task_get"
+    override val isHookExempt = true
 
     override val description =
         "Retrieve the full details of a single task — subject, description, status, activeForm, owner, " +

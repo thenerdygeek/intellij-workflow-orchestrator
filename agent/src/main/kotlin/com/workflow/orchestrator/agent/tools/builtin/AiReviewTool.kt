@@ -40,6 +40,7 @@ class AiReviewTool(
 ) : AgentTool {
 
     override val name: String = "ai_review"
+    override val isHookExempt = true
 
     override val description: String = """
 Local PR-review findings store for the code-reviewer persona during a PR review session.
