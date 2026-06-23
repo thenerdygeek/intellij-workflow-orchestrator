@@ -19,6 +19,7 @@ Owns the PR creation dialog, list, detail view, and merge flow for Bitbucket Ser
 
 ## Architecture
 
+- `BitbucketServiceImpl` now ALSO implements the neutral `core.services.VcsHostClient` seam (Phase 0b-2, plugin split) in addition to `BitbucketService` — every `VcsHostClient` method binds for free via identical JVM signatures (only the `VcsUserData` typealias + neutral comment-coordinate param names `repoOwner`/`repoName` differ; `getLinkedJiraIssues`/`getRequiredBuilds` stay vendor-coupled on `BitbucketService`). Behavior-unchanged, no consumer resolves `VcsHostClient` yet.
 - Single entry point to PR creation: PR tab's "+ Create PR" button (via `CreatePrLauncher.getInstance()?.launch(project, scope)`). Build tab's entry was removed in the 2026-04-27 PrBar redesign — PrBar is now a passive mirror of the PR tab's selection.
 - Goes through `CreatePrLauncherImpl` → `CreatePrPrefetch.run(project)` → `CreatePrDialog`.
 - Multi-ticket context sent to LLM via `PrDescriptionPromptBuilder` (tiered budget: primary 8000 chars / 10 comments × 400; additional 3000 chars / 3 comments × 300).

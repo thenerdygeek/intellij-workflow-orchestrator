@@ -15,6 +15,7 @@ class PublicApiSurfaceTest {
         "NativeProtocol",
         "LlmProvider",
         "CiService",
+        "VcsHostClient",
     )
 
     @Test fun `B-facing EP interfaces are public`() {

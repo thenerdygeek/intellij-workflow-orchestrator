@@ -20,6 +20,7 @@ import com.workflow.orchestrator.core.model.PrCommentState
 import com.workflow.orchestrator.core.model.bitbucket.*
 import com.workflow.orchestrator.core.services.BitbucketService
 import com.workflow.orchestrator.core.services.ToolResult
+import com.workflow.orchestrator.core.services.VcsHostClient
 import com.workflow.orchestrator.core.settings.ConnectionSettings
 import com.workflow.orchestrator.core.settings.PluginSettings
 
@@ -30,7 +31,7 @@ import com.workflow.orchestrator.core.settings.PluginSettings
  * to shared domain models ([PullRequestData]) with LLM-optimized text summaries.
  */
 @Service(Service.Level.PROJECT)
-class BitbucketServiceImpl(private val project: Project) : BitbucketService {
+class BitbucketServiceImpl(private val project: Project) : BitbucketService, VcsHostClient {
 
     private val log = Logger.getInstance(BitbucketServiceImpl::class.java)
     private val settings get() = PluginSettings.getInstance(project)
