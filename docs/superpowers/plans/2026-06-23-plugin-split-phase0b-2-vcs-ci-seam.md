@@ -713,11 +713,14 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - Consumes: `ToolResult`; the `core.model.bitbucket.*` DTOs (`RepoInfo`, `PullRequestData`, `CommitData`, `BranchData`, `BitbucketUserData`, `PullRequestDetailData`, `PrActivityData`, `PrChangeData`, `BuildStatusData`, `MergeStatusData`, `ParticipantData`, `BuildStatsData`); `PrComment` (`core.model`).
 - Produces: `interface VcsHostClient` covering the genuinely-neutral BitbucketService operations (all 41 EXCEPT `getLinkedJiraIssues` + `getRequiredBuilds`), with `typealias VcsUserData = BitbucketUserData` and neutral comment-coordinate params (`repoOwner`/`repoName` instead of `projectKey`/`repoSlug`). **Implemented by `BitbucketServiceImpl`.**
 
-**Transcription rule (follow exactly):** copy each method signature from `core/.../services/BitbucketService.kt` verbatim, with three edits:
+> ⚠ **CORRECTION (from Task 4 execution — supersedes the original "identical including defaults" instruction below).** Kotlin forbids an override inheriting a default value for the same parameter from MORE THAN ONE supertype interface (`MULTIPLE_DEFAULTS_INHERITED_FROM_SUPERTYPES`), **even when the default values are equal**. `BitbucketService` already declares defaults (`repoName: String? = null`, `state: String = "OPEN"`, `deleteSourceBranch: Boolean = false`, `onlyOpen/onlyInline: Boolean = false`, `diffType/fromHash/toHash: String? = null`, …). Therefore **`VcsHostClient` MUST declare NO default values on any parameter** — every parameter is required in the interface. Only `BitbucketService` then provides defaults, so the single existing impl override inherits them with no conflict; `VcsHostClient`-typed callers have no defaults, which is harmless because `VcsHostClient` has **zero consumers** in this phase (behavior-unchanged). This mirrors the Task-4 fix on `CiService.getRecentBuilds`.
+
+**Transcription rule (follow exactly):** copy each method signature from `core/.../services/BitbucketService.kt`, with four edits:
 1. `searchUsers` returns `ToolResult<List<VcsUserData>>` (typealias — same type, so the impl conforms).
 2. The 6 comment methods (`listPrComments`, `getPrComment`, `editPrComment`, `deletePrComment`, `resolvePrComment`, `reopenPrComment`): rename params `projectKey`→`repoOwner`, `repoSlug`→`repoName` (types unchanged → identical JVM signatures).
 3. Omit `getLinkedJiraIssues` and `getRequiredBuilds`.
-Everything else is identical to `BitbucketService` (including default values like `repoName: String? = null`, `state: String = "OPEN"`).
+4. **DROP EVERY default value** — strip all ` = null` / ` = "OPEN"` / ` = false` / ` = ...` from the parameters (see CORRECTION above). Param TYPES and ORDER stay identical to `BitbucketService` (so JVM signatures match and the impl conforms); only the ` = default` suffixes are removed.
+Everything else (param types, order, return types) is identical to `BitbucketService`.
 
 - [ ] **Step 1: Write the failing test** (extend contract tests + add an IS-A test)
 
@@ -816,6 +819,10 @@ typealias VcsUserData = BitbucketUserData
  *    build results has the VCS host recorded against this commit." This is deliberately distinct from
  *    [CiService]'s build queries (which ask the CI server directly); an adapter MAY back both with the
  *    same system, but the two seams own different questions. Do not relocate these to [CiService].
+ *  - NO DEFAULT VALUES anywhere below: every parameter is required (no ` = ...`). `BitbucketService`
+ *    already declares the defaults; declaring them here too triggers Kotlin
+ *    MULTIPLE_DEFAULTS_INHERITED_FROM_SUPERTYPES on `BitbucketServiceImpl`. `VcsHostClient` has no
+ *    consumers, so required params here are behavior-neutral. (The signatures shown below omit defaults.)
  */
 @InternalApi
 interface VcsHostClient {
@@ -826,10 +833,10 @@ interface VcsHostClient {
         description: String,
         fromBranch: String,
         toBranch: String,
-        repoName: String? = null,
+        repoName: String?,
     ): ToolResult<PullRequestData>
 
-    suspend fun getPullRequestCommits(prId: Int, repoName: String? = null): ToolResult<List<CommitData>>
+    suspend fun getPullRequestCommits(prId: Int, repoName: String?): ToolResult<List<CommitData>>
 
     suspend fun addInlineComment(
         prId: Int,
@@ -837,74 +844,74 @@ interface VcsHostClient {
         line: Int,
         lineType: String,
         text: String,
-        repoName: String? = null,
-        diffType: String? = null,
-        fromHash: String? = null,
-        toHash: String? = null,
+        repoName: String?,
+        diffType: String?,
+        fromHash: String?,
+        toHash: String?,
     ): ToolResult<Unit>
 
-    suspend fun replyToComment(prId: Int, parentCommentId: Int, text: String, repoName: String? = null): ToolResult<Unit>
+    suspend fun replyToComment(prId: Int, parentCommentId: Int, text: String, repoName: String?): ToolResult<Unit>
 
-    suspend fun setReviewerStatus(prId: Int, username: String, status: String, repoName: String? = null): ToolResult<Unit>
+    suspend fun setReviewerStatus(prId: Int, username: String, status: String, repoName: String?): ToolResult<Unit>
 
-    suspend fun getFileContent(filePath: String, atRef: String, repoName: String? = null): ToolResult<String>
+    suspend fun getFileContent(filePath: String, atRef: String, repoName: String?): ToolResult<String>
 
-    suspend fun addReviewer(prId: Int, username: String, repoName: String? = null): ToolResult<Unit>
+    suspend fun addReviewer(prId: Int, username: String, repoName: String?): ToolResult<Unit>
 
-    suspend fun updatePrTitle(prId: Int, newTitle: String, repoName: String? = null): ToolResult<Unit>
+    suspend fun updatePrTitle(prId: Int, newTitle: String, repoName: String?): ToolResult<Unit>
 
     suspend fun testConnection(): ToolResult<Unit>
 
-    suspend fun getBranches(filter: String? = null, repoName: String? = null): ToolResult<List<BranchData>>
+    suspend fun getBranches(filter: String?, repoName: String?): ToolResult<List<BranchData>>
 
-    suspend fun createBranch(name: String, startPoint: String, repoName: String? = null): ToolResult<BranchData>
+    suspend fun createBranch(name: String, startPoint: String, repoName: String?): ToolResult<BranchData>
 
-    suspend fun searchUsers(filter: String, repoName: String? = null): ToolResult<List<VcsUserData>>
+    suspend fun searchUsers(filter: String, repoName: String?): ToolResult<List<VcsUserData>>
 
-    suspend fun getPullRequestsForBranch(branchName: String, repoName: String? = null): ToolResult<List<PullRequestData>>
+    suspend fun getPullRequestsForBranch(branchName: String, repoName: String?): ToolResult<List<PullRequestData>>
 
-    suspend fun getMyPullRequests(state: String = "OPEN", repoName: String? = null): ToolResult<List<PullRequestData>>
+    suspend fun getMyPullRequests(state: String, repoName: String?): ToolResult<List<PullRequestData>>
 
-    suspend fun getReviewingPullRequests(state: String = "OPEN", repoName: String? = null): ToolResult<List<PullRequestData>>
+    suspend fun getReviewingPullRequests(state: String, repoName: String?): ToolResult<List<PullRequestData>>
 
-    suspend fun getPullRequestDetail(prId: Int, repoName: String? = null): ToolResult<PullRequestDetailData>
+    suspend fun getPullRequestDetail(prId: Int, repoName: String?): ToolResult<PullRequestDetailData>
 
-    suspend fun getPullRequestActivities(prId: Int, repoName: String? = null): ToolResult<List<PrActivityData>>
+    suspend fun getPullRequestActivities(prId: Int, repoName: String?): ToolResult<List<PrActivityData>>
 
-    suspend fun getPullRequestChanges(prId: Int, repoName: String? = null): ToolResult<List<PrChangeData>>
+    suspend fun getPullRequestChanges(prId: Int, repoName: String?): ToolResult<List<PrChangeData>>
 
-    suspend fun getPullRequestDiff(prId: Int, repoName: String? = null): ToolResult<String>
+    suspend fun getPullRequestDiff(prId: Int, repoName: String?): ToolResult<String>
 
-    suspend fun getBuildStatuses(commitId: String, repoName: String? = null): ToolResult<List<BuildStatusData>>
+    suspend fun getBuildStatuses(commitId: String, repoName: String?): ToolResult<List<BuildStatusData>>
 
-    suspend fun approvePullRequest(prId: Int, repoName: String? = null): ToolResult<Unit>
+    suspend fun approvePullRequest(prId: Int, repoName: String?): ToolResult<Unit>
 
-    suspend fun unapprovePullRequest(prId: Int, repoName: String? = null): ToolResult<Unit>
+    suspend fun unapprovePullRequest(prId: Int, repoName: String?): ToolResult<Unit>
 
     suspend fun mergePullRequest(
         prId: Int,
-        strategy: String? = null,
-        deleteSourceBranch: Boolean = false,
-        commitMessage: String? = null,
-        repoName: String? = null,
+        strategy: String?,
+        deleteSourceBranch: Boolean,
+        commitMessage: String?,
+        repoName: String?,
     ): ToolResult<Unit>
 
-    suspend fun declinePullRequest(prId: Int, repoName: String? = null): ToolResult<Unit>
+    suspend fun declinePullRequest(prId: Int, repoName: String?): ToolResult<Unit>
 
-    suspend fun updatePrDescription(prId: Int, description: String, repoName: String? = null): ToolResult<Unit>
+    suspend fun updatePrDescription(prId: Int, description: String, repoName: String?): ToolResult<Unit>
 
-    suspend fun addPrComment(prId: Int, text: String, repoName: String? = null): ToolResult<Unit>
+    suspend fun addPrComment(prId: Int, text: String, repoName: String?): ToolResult<Unit>
 
-    suspend fun checkMergeStatus(prId: Int, repoName: String? = null): ToolResult<MergeStatusData>
+    suspend fun checkMergeStatus(prId: Int, repoName: String?): ToolResult<MergeStatusData>
 
-    suspend fun removeReviewer(prId: Int, username: String, repoName: String? = null): ToolResult<Unit>
+    suspend fun removeReviewer(prId: Int, username: String, repoName: String?): ToolResult<Unit>
 
     suspend fun listPrComments(
         repoOwner: String,
         repoName: String,
         prId: Int,
-        onlyOpen: Boolean = false,
-        onlyInline: Boolean = false,
+        onlyOpen: Boolean,
+        onlyInline: Boolean,
     ): ToolResult<List<PrComment>>
 
     suspend fun getPrComment(
@@ -945,11 +952,11 @@ interface VcsHostClient {
         commentId: Long,
     ): ToolResult<PrComment>
 
-    suspend fun getBlockerCommentsCount(prId: Int, repoName: String? = null): ToolResult<Int>
+    suspend fun getBlockerCommentsCount(prId: Int, repoName: String?): ToolResult<Int>
 
-    suspend fun getPullRequestParticipants(prId: Int, repoName: String? = null): ToolResult<List<ParticipantData>>
+    suspend fun getPullRequestParticipants(prId: Int, repoName: String?): ToolResult<List<ParticipantData>>
 
-    suspend fun getPullRequestsForCommit(sha: String, repoName: String? = null): ToolResult<List<PullRequestData>>
+    suspend fun getPullRequestsForCommit(sha: String, repoName: String?): ToolResult<List<PullRequestData>>
 
     suspend fun getCommitBuildStats(sha: String): ToolResult<BuildStatsData>
 }
