@@ -2,13 +2,19 @@ package com.workflow.orchestrator.core.ai.protocol
 
 import com.workflow.orchestrator.core.ai.LlmProvider
 import com.workflow.orchestrator.core.api.InternalApi
+import com.workflow.orchestrator.core.services.CiService
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.lang.reflect.Modifier
 
 class SeamApiStabilityTest {
-    private val seam = listOf(ToolProtocol::class.java, NativeProtocol::class.java, LlmProvider::class.java)
+    private val seam = listOf(
+        ToolProtocol::class.java,
+        NativeProtocol::class.java,
+        LlmProvider::class.java,
+        CiService::class.java,
+    )
 
     @Test fun `seam interfaces are public, not internal, and @InternalApi-annotated`() {
         for (c in seam) {
