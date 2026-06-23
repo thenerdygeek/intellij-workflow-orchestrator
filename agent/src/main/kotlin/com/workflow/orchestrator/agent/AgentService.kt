@@ -338,10 +338,12 @@ class AgentService(
      */
     val hookManager: HookManager
 
-    /** Tool names that are blocked in plan mode (write/mutate tools).
-     *  Single source of truth is AgentLoop.WRITE_TOOLS — this is an alias so callers
-     *  in this class keep readable local references without duplicating the set. */
-    private val writeToolNames get() = AgentLoop.WRITE_TOOLS
+    /** Tool names blocked in plan mode (write/mutating tools), derived from each tool's
+     *  self-declared `isMutating` — includes any B-contributed write tool.
+     *  Assumes the registry is fully populated (the sole consumer runs inside the per-iteration
+     *  toolDefinitionProvider, long after registerAllTools()); do NOT read this during init. */
+    private val writeToolNames: Set<String>
+        get() = registry.allTools().filter { it.isMutating }.map { it.name }.toSet()
 
     /**
      * Session-scoped Disposable scope for per-run IDE state (IDE tests, coverage runs,

@@ -3,7 +3,7 @@ package com.workflow.orchestrator.agent.tools.background
 /**
  * Decides which tools may run in the background. All *work* tools are eligible; *control-flow* and
  * *interactive* tools (which steer the loop or need an inline user answer) are not. Mirrors the
- * plan-mode WRITE_TOOLS denylist shape in AgentLoop.
+ * plan-mode write-tool denylist shape (per-tool `isMutating`) used by AgentLoop.
  */
 object BackgroundEligibility {
     /** Reserved loop-level attribute the parser must keep on any tool call, then the loop strips. */

@@ -13,15 +13,21 @@ import org.junit.jupiter.api.Test
  * - Act mode: exclude "plan_mode_respond" + "discard_plan"; keep all other tools
  * - use_skill: excluded when hasSkills=false, included when hasSkills=true (before plan/act split)
  *
- * These tests exercise the exact predicate logic sourced from production constants —
- * writeToolNames is AgentLoop.WRITE_TOOLS (the single source of truth used by AgentService).
+ * These tests exercise the exact predicate logic. `writeToolNames` is a test-local literal copy of
+ * the canonical write-tool list (production derives it from `registry.allTools().filter { isMutating }`;
+ * each concrete tool's `isMutating` is pinned by `SafetyPropsCharacterizationTest`).
  */
 class AgentServiceToolFilterTest {
+
+    private val writeToolNames = setOf(
+        "edit_file", "create_file", "delete_file", "run_command", "revert_file",
+        "send_stdin", "format_code", "optimize_imports", "refactor_rename", "background_process",
+    )
 
     /**
      * Delegates to the production predicate [com.workflow.orchestrator.agent.tools.ToolDefinitionFilter]
      * (extracted from AgentService.executeTask's toolDefinitionProvider in Phase 3 cut B, incision 3).
-     * Uses AgentLoop.WRITE_TOOLS as the authoritative write-tool set; `isDelegatedSession=false` here
+     * Uses the test-local write-tool literal; `isDelegatedSession=false` here
      * (the delegated act-only path is pinned by `DelegatedActOnlyToolFilterTest`).
      */
     private fun filterForMode(isPlanMode: Boolean, toolName: String, hasSkills: Boolean = true): Boolean =
@@ -30,7 +36,7 @@ class AgentServiceToolFilterTest {
             isPlanMode = isPlanMode,
             isDelegatedSession = false,
             hasSkills = hasSkills,
-            writeToolNames = AgentLoop.WRITE_TOOLS,
+            writeToolNames = writeToolNames,
         )
 
     private val allToolNames = listOf(
@@ -120,8 +126,8 @@ class AgentServiceToolFilterTest {
     fun `plan mode excludes write tools`() {
         val planModeTools = allToolNames.filter { filterForMode(isPlanMode = true, toolName = it) }
 
-        // Verify every tool in the production WRITE_TOOLS set is blocked
-        for (writeTool in AgentLoop.WRITE_TOOLS) {
+        // Verify every tool in the canonical write-tool set is blocked
+        for (writeTool in writeToolNames) {
             assertFalse(planModeTools.contains(writeTool), "$writeTool must be blocked in plan mode")
         }
         // Spot-check the most commonly expected names explicitly for readable failure messages
@@ -192,23 +198,6 @@ class AgentServiceToolFilterTest {
         assertFalse(
             planModeTools.contains("use_skill"),
             "use_skill must be excluded from plan mode when no skills are available (contextRequirements)"
-        )
-    }
-
-    // ---- WRITE_TOOLS set completeness check ----
-
-    @Test
-    fun `AgentLoop WRITE_TOOLS contains all expected write tool names`() {
-        val expectedWriteTools = setOf(
-            "edit_file", "create_file", "delete_file", "run_command", "revert_file",
-            "send_stdin", "format_code", "optimize_imports",
-            "refactor_rename", "background_process"
-        )
-        assertEquals(
-            expectedWriteTools,
-            AgentLoop.WRITE_TOOLS,
-            "AgentLoop.WRITE_TOOLS must match the canonical write-tool list. " +
-            "If you add/remove a write tool, update both AgentLoop.WRITE_TOOLS and this test."
         )
     }
 

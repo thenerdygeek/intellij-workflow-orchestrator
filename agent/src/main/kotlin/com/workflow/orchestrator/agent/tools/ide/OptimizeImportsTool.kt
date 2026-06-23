@@ -106,7 +106,7 @@ class OptimizeImportsTool : AgentTool {
         //   - run inside withContext(EDT) + WriteCommandAction
         //   - implement no-op detection by comparing text before/after
         //   - return identical ToolResult shapes (artifacts=[path], same token estimate)
-        //   - belong to WRITE_TOOLS in AgentLoop and CODER worker only
+        //   - declare isMutating (plan-mode blocked) and CODER worker only
         // The dispatch difference is one line: optimizer.processFile vs CodeStyleManager.reformat.
         // A single `transform(path, kind: imports|format|both)` action would shrink the schema
         // surface and let the LLM optimize+format in a single tool call (which is the natural

@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.agent.tools
 
-import com.workflow.orchestrator.agent.loop.AgentLoop
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -23,7 +22,10 @@ import org.junit.jupiter.api.Test
  */
 class ToolDefinitionFilterTest {
 
-    private val writeTools = AgentLoop.WRITE_TOOLS
+    private val writeTools = setOf(
+        "edit_file", "create_file", "delete_file", "run_command", "revert_file",
+        "send_stdin", "format_code", "optimize_imports", "refactor_rename", "background_process",
+    )
 
     private fun include(
         toolName: String,

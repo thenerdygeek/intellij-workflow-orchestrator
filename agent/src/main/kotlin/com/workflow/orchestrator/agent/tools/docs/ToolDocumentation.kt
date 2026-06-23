@@ -111,9 +111,9 @@ enum class SideEffectKind {
  * Bridge-populated metadata derived from the tool's source — never hand-authored.
  *
  * The `AgentController.buildToolDocsJson` endpoint computes one of these per tool by
- * inspecting the registered `AgentTool` instance, the `ToolRegistry` tier, the
- * `WRITE_TOOLS` constant in `AgentLoop`, the tool's self-declared `requiresApproval`
- * property, and the registration gate in `ToolRegistrationFilter`. Authors don't see this — it's appended to the
+ * inspecting the registered `AgentTool` instance, the `ToolRegistry` tier, the tool's
+ * self-declared `isMutating` + `requiresApproval` properties, and the registration gate
+ * in `ToolRegistrationFilter`. Authors don't see this — it's appended to the
  * JSON response alongside [ToolDocumentation].
  *
  * Intentionally separate from [ToolDocumentation] so author-only fields don't
@@ -129,7 +129,7 @@ data class AutoDerivedMetadata(
     val schemaTokenCost: Int,
     /** "ALWAYS_APPROVE" / "ALLOW_FOR_SESSION" / "ALWAYS_PER_INVOCATION" / "N/A". */
     val approvalPolicy: String,
-    /** True if this tool is in the `WRITE_TOOLS` set in `AgentLoop` and therefore blocked in plan mode. */
+    /** True if this tool declares `isMutating` and is therefore blocked in plan mode. */
     val planModeBlocked: Boolean,
     /** Worker types allowed to call this tool — from `AgentTool.allowedWorkers`. */
     val allowedWorkers: List<String>,
@@ -137,7 +137,7 @@ data class AutoDerivedMetadata(
     val timeoutClass: String,
     /** Output cap in characters — "Default (50K)" / "Command (100K)". */
     val outputCap: String,
-    /** True if this tool is in `WRITE_TOOLS` (sequential execution, plan-mode block). */
+    /** True if this tool declares `isMutating` (sequential execution, plan-mode block). */
     val isWriteTool: Boolean,
 )
 

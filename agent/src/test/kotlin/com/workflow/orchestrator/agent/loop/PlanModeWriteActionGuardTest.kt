@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test
  * Bug (Batches 16 + 25 of the Phase 5 swarm):
  * - `project_structure` has 8 write actions that mutate the IDE project model.
  * - `runtime_config` has 3 write actions (create/modify/delete_run_config).
- * - None were in [AgentLoop.WRITE_TOOLS], so the execution guard in plan mode
+ * - Neither tool declares `isMutating`, so the execution guard in plan mode
  *   would silently let them through.
  *
  * Fix:
@@ -36,7 +36,7 @@ import org.junit.jupiter.api.Test
  * - [ProjectStructureTool] and [RuntimeConfigTool] override it to return true
  *   for their mutating actions.
  * - The plan-mode guard now checks:
- *   `toolName in WRITE_TOOLS || tool.isWriteAction(action)`.
+ *   `tool.isMutating || tool.isWriteAction(action)`.
  */
 class PlanModeWriteActionGuardTest {
 

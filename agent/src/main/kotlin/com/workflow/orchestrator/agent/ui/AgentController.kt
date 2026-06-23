@@ -3085,7 +3085,7 @@ class AgentController(
 
     /**
      * Tools whose successful completion changes the file tree and should trigger
-     * an aggregate-diff refresh. Subset of AgentLoop.WRITE_TOOLS — excludes
+     * an aggregate-diff refresh. Subset of the mutating (`isMutating`) tools — excludes
      * `run_command`, `background_process`, `send_stdin` since those don't carry
      * path args and aren't snapshotted by the checkpoint store.
      */

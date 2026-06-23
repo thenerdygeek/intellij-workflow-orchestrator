@@ -41,12 +41,12 @@ class WalkthroughRegistrationContractTest {
     }
 
     @Test
-    fun `walkthrough must NOT be in WRITE_TOOLS (plan-mode legal by design)`() {
-        val text = source("loop/AgentLoop.kt")
-        val writeToolsBlock = text.substringAfter("val WRITE_TOOLS").substringBefore(")")
+    fun `walkthrough must NOT be a mutating tool (plan-mode legal by design)`() {
+        val walkthroughSrc = source("tools/ide/WalkthroughTool.kt")
         assertFalse(
-            writeToolsBlock.contains("walkthrough"),
-            "walkthrough is read-only; adding it to WRITE_TOOLS breaks plan-mode tours",
+            walkthroughSrc.contains("override val isMutating = true"),
+            "walkthrough must not be a mutating tool (read-only -> plan-mode legal); " +
+                "declaring isMutating = true would block plan-mode tours",
         )
     }
 }

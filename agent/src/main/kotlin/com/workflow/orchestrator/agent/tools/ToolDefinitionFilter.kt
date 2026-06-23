@@ -21,8 +21,9 @@ object ToolDefinitionFilter {
     /**
      * Whether [toolName] should be included in the tool definitions sent to the LLM.
      *
-     * @param writeToolNames the authoritative write-tool set (`AgentLoop.WRITE_TOOLS`), injected so
-     *   this stays a pure function with no dependency on the loop package's mutable state.
+     * @param writeToolNames the authoritative write-tool set (derived by `AgentService` from
+     *   `registry.allTools().filter { it.isMutating }`), injected so this stays a pure function
+     *   with no dependency on the loop package's mutable state.
      */
     fun shouldInclude(
         toolName: String,

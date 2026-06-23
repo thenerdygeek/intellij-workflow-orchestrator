@@ -100,6 +100,14 @@ class PlanModeLoopTest {
     private fun sequenceBrain(vararg responses: ChatCompletionResponse): SequenceBrain =
         SequenceBrain(responses.map { ApiResult.Success(it) })
 
+    // Local copy of the canonical write-tool name list (production now derives `isMutating`
+    // per-tool; there is no `AgentLoop.WRITE_TOOLS` set anymore). A stub named e.g. "edit_file"
+    // must still report `isMutating = true` so the plan-mode guard blocks it.
+    private val writeToolNames = setOf(
+        "edit_file", "create_file", "delete_file", "run_command", "revert_file",
+        "send_stdin", "format_code", "optimize_imports", "refactor_rename", "background_process",
+    )
+
     private fun fakeTool(
         toolName: String,
         result: ToolResult = ToolResult(content = "ok", summary = "ok", tokenEstimate = 5)
@@ -108,7 +116,7 @@ class PlanModeLoopTest {
         override val description = "Test tool $toolName"
         override val parameters = FunctionParameters(properties = emptyMap())
         override val allowedWorkers = setOf(WorkerType.CODER)
-        override val isMutating = toolName in AgentLoop.WRITE_TOOLS
+        override val isMutating = toolName in writeToolNames
         override suspend fun execute(params: JsonObject, project: Project) = result
     }
 

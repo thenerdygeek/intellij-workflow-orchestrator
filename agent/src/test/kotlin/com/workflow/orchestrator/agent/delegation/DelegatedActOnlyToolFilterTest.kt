@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.agent.delegation
 
-import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.tools.ToolDefinitionFilter
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -23,13 +22,18 @@ import org.junit.jupiter.api.Test
  */
 class DelegatedActOnlyToolFilterTest {
 
+    private val writeToolNames = setOf(
+        "edit_file", "create_file", "delete_file", "run_command", "revert_file",
+        "send_stdin", "format_code", "optimize_imports", "refactor_rename", "background_process",
+    )
+
     private fun include(toolName: String, isDelegatedSession: Boolean, isPlanMode: Boolean = false) =
         ToolDefinitionFilter.shouldInclude(
             toolName = toolName,
             isPlanMode = isPlanMode,
             isDelegatedSession = isDelegatedSession,
             hasSkills = true,
-            writeToolNames = AgentLoop.WRITE_TOOLS,
+            writeToolNames = writeToolNames,
         )
 
     @Test

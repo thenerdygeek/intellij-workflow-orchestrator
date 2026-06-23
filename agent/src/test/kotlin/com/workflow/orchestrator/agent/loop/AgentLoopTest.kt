@@ -153,6 +153,14 @@ class AgentLoopTest {
     private fun sequenceBrain(vararg responses: ChatCompletionResponse): SequenceBrain =
         SequenceBrain(responses.map { ApiResult.Success(it) })
 
+    // Local copy of the canonical write-tool name list (production now derives `isMutating`
+    // per-tool; there is no `AgentLoop.WRITE_TOOLS` set anymore). The fakeTool factory gates
+    // its `isMutating` on this so a stub named e.g. "edit_file" is still plan-mode-blocked.
+    private val writeToolNames = setOf(
+        "edit_file", "create_file", "delete_file", "run_command", "revert_file",
+        "send_stdin", "format_code", "optimize_imports", "refactor_rename", "background_process",
+    )
+
     private fun fakeTool(
         toolName: String,
         result: ToolResult = ToolResult(content = "ok", summary = "ok", tokenEstimate = 5)
@@ -161,7 +169,7 @@ class AgentLoopTest {
         override val description = "Test tool $toolName"
         override val parameters = FunctionParameters(properties = emptyMap())
         override val allowedWorkers = setOf(WorkerType.CODER)
-        override val isMutating = toolName in AgentLoop.WRITE_TOOLS
+        override val isMutating = toolName in writeToolNames
         override suspend fun execute(params: JsonObject, project: Project) = result
     }
 
@@ -444,16 +452,6 @@ class AgentLoopTest {
             val readProgress = progressList.find { it.toolName == "read_file" }
             assertNotNull(readProgress, "read_file progress should be reported")
             assertFalse(readProgress!!.isError, "read_file should not be an error in plan mode")
-        }
-
-        @Test
-        fun `all write tool names are blocked in plan mode`() = runTest {
-            val expectedWriteTools = setOf(
-                "edit_file", "create_file", "delete_file", "run_command", "revert_file",
-                "send_stdin", "format_code", "optimize_imports",
-                "refactor_rename", "background_process"
-            )
-            assertEquals(expectedWriteTools, AgentLoop.WRITE_TOOLS, "WRITE_TOOLS set should contain all write tools")
         }
     }
 

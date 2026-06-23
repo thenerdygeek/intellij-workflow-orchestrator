@@ -103,17 +103,18 @@ interface AgentTool {
      * For meta-tools that dispatch on an `action` parameter: returns true if this
      * action mutates state. Default false (read-only / not a meta-tool). The
      * plan-mode execution guard in [com.workflow.orchestrator.agent.loop.AgentLoop]
-     * combines this with `WRITE_TOOLS` to decide whether to block the call:
+     * combines this with [isMutating] to decide whether to block the call:
      * ```
-     * if (planMode && (toolName in WRITE_TOOLS || tool.isWriteAction(action))) { block }
+     * if (planMode && (tool.isMutating || tool.isWriteAction(action))) { block }
      * ```
-     * Override in meta-tools that contain mutating actions not covered by [WRITE_TOOLS].
+     * Override in meta-tools that contain mutating actions a tool-level [isMutating]
+     * flag can't express (per-action write classification).
      */
     fun isWriteAction(action: String?): Boolean = false
 
     /** True if this tool mutates state and must be blocked in plan mode. The guard in AgentLoop
      *  uses `isMutating || isWriteAction(action)`, so contributed tools declare their own safety
-     *  without editing the hardcoded WRITE_TOOLS set. */
+     *  without editing a hardcoded write-tool name set. */
     val isMutating: Boolean get() = false
 
     /**

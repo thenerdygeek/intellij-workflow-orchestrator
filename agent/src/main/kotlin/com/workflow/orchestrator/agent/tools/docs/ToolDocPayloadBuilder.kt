@@ -1,6 +1,5 @@
 package com.workflow.orchestrator.agent.tools.docs
 
-import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.loop.ApprovalPolicy
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolOutputConfig
@@ -13,9 +12,9 @@ import kotlinx.serialization.json.Json
  * Composes the wire-format [ToolDocPayload] sent to the JCEF tool-docs editor.
  *
  * The hand-authored half ([ToolDocumentation] from [AgentTool.documentation]) is
- * merged with [AutoDerivedMetadata] computed from the live [ToolRegistry] and the
- * [AgentLoop] / [ApprovalPolicy] / [ToolOutputConfig] constants — that way the
- * UI can never lie about whether a tool is in `WRITE_TOOLS`, what its registered
+ * merged with [AutoDerivedMetadata] computed from the live [ToolRegistry] and each
+ * tool's self-declared [AgentTool.isMutating] / [ApprovalPolicy] / [ToolOutputConfig] —
+ * that way the UI can never lie about whether a tool is mutating, what its registered
  * tier is, or what its approval policy is.
  *
  * Returns null when the tool exists but has no `documentation()` block — the UI
@@ -71,7 +70,7 @@ object ToolDocPayloadBuilder {
         val schemaTokenCost = estimateTokens(schemaJson)
 
         val approvalPolicy = describeApprovalPolicy(tool)
-        val isWriteTool = tool.name in AgentLoop.WRITE_TOOLS
+        val isWriteTool = tool.isMutating
 
         return AutoDerivedMetadata(
             tier = tier,

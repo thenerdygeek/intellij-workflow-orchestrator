@@ -4,7 +4,6 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.workflow.orchestrator.agent.api.dto.FunctionParameters
 import com.workflow.orchestrator.agent.api.dto.ParameterProperty
-import com.workflow.orchestrator.agent.loop.AgentLoop
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
 import com.workflow.orchestrator.agent.tools.ToolResult
@@ -281,7 +280,7 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
                 }
                 whenLLMUses(
                     "Default mode for any focused delegation: implementation work (\"refactor X\"), coder/reviewer specialist tasks, single-question research, anything that doesn't need fan-out. " +
-                    "Also the only mode available for personas with write tools — `inferPlanMode()` forces single execution when any tool in the resolved set is in `AgentLoop.WRITE_TOOLS`."
+                    "Also the only mode available for personas with write tools — `inferPlanMode()` forces single execution when any tool in the resolved set declares `isMutating`."
                 )
                 params {
                     required("description", "string") {
@@ -499,7 +498,7 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
                         whenAbsent("All workers use the persona/Sonnet-default fallback chain.")
                     }
                 }
-                precondition("Resolved persona must have ZERO tools in `AgentLoop.WRITE_TOOLS` — `inferPlanMode()` returns false otherwise and the call silently falls back to single mode.")
+                precondition("Resolved persona must have ZERO tools declaring `isMutating` — `inferPlanMode()` returns false otherwise and the call silently falls back to single mode.")
                 precondition("At least one of `prompt_2..prompt_5` must be non-blank for parallel mode to actually engage; otherwise `executeSingle` is called.")
                 precondition("Hard cap of 5 prompts (`MAX_PARALLEL_PROMPTS = 5`) — extra slots in the schema would compete with other tools' description budget.")
                 onSuccess(
@@ -566,7 +565,7 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
                 C -- found --> D[resolveConfigToolsTiered<br/>filters out 'agent' + 'attempt_completion'<br/>injects 'task_report']
                 D --> E{coreTools.isEmpty?}
                 E -- yes --> Z3[error: no resolvable core tools]
-                E -- no --> F[inferPlanMode<br/>= no WRITE_TOOLS in set]
+                E -- no --> F[inferPlanMode<br/>= no isMutating tool in set]
                 F --> G{readOnly AND any prompt_2..5?}
                 G -- yes --> H[executeParallel<br/>supervisorScope mapIndexed async]
                 G -- no --> I[executeSingle]
@@ -795,7 +794,7 @@ Parallel fan-out (read-only agents like "explorer" only): pass up to 5 prompts (
      * Read-only agents run in plan mode (no file mutations) and support parallel execution.
      */
     private fun inferPlanMode(resolvedTools: Map<String, AgentTool>): Boolean {
-        return resolvedTools.keys.none { it in AgentLoop.WRITE_TOOLS }
+        return resolvedTools.values.none { it.isMutating }
     }
 
     private fun buildUnknownAgentTypeError(name: String): String {

@@ -26,7 +26,7 @@ import kotlinx.serialization.json.contentOrNull
  * Guided code tour meta-tool. Every action returns immediately — the user pages
  * through the tour at their own pace while the agent keeps appending in the
  * background (producer/consumer; spec 2026-06-11-code-walkthrough-design.md).
- * NOT in WRITE_TOOLS (read-only -> plan-mode legal); excluded from sub-agents via
+ * Not mutating (read-only -> plan-mode legal); excluded from sub-agents via
  * SpawnAgentTool's name filter (allowedWorkers is documentation, not enforcement).
  */
 class WalkthroughTool(

@@ -137,11 +137,21 @@ class SpawnAgentToolTest {
         return reg
     }
 
+    // Canonical write-tool names — production tools declare `isMutating = true` (the former
+    // AgentLoop.WRITE_TOOLS set). `inferPlanMode` now reads each resolved tool's `isMutating`,
+    // so a write-named stub must mirror the real tool and report `isMutating = true` for the
+    // read-only-vs-write inference (and parallel-vs-single execution) to behave correctly.
+    private val writeToolNames = setOf(
+        "edit_file", "create_file", "delete_file", "run_command", "revert_file",
+        "send_stdin", "format_code", "optimize_imports", "refactor_rename", "background_process",
+    )
+
     private fun stubTool(toolName: String): AgentTool = object : AgentTool {
         override val name = toolName
         override val description = "Stub tool: $toolName"
         override val parameters = FunctionParameters(properties = emptyMap())
         override val allowedWorkers = setOf(WorkerType.CODER)
+        override val isMutating = toolName in writeToolNames
         override suspend fun execute(params: JsonObject, project: Project) =
             ToolResult(content = "stub:$toolName", summary = "stub", tokenEstimate = 5)
     }

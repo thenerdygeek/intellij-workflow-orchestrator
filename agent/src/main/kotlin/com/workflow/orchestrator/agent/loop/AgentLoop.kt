@@ -757,14 +757,6 @@ class AgentLoop(
             "CRITICAL: You have called the same tool with identical arguments 5 times consecutively. " +
             "The task cannot make progress this way. Stopping to prevent further token waste."
 
-        /** Tools that mutate state — blocked when plan mode is active. */
-        val WRITE_TOOLS = setOf(
-            "edit_file", "create_file", "delete_file", "run_command", "revert_file",
-            "send_stdin", "format_code", "optimize_imports",
-            "refactor_rename",
-            "background_process",
-        )
-
         /**
          * Tools that stream live output to the UI via [RunCommandTool.streamCallback].
          * The loop must set [RunCommandTool.currentToolCallId] before invoking these so
