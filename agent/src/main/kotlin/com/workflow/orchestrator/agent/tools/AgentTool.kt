@@ -117,6 +117,40 @@ interface AgentTool {
     val isMutating: Boolean get() = false
 
     /**
+     * True if this tool's PreToolUse/PostToolUse hooks should be SKIPPED. Internal
+     * bookkeeping tools (task management, local-only staging) declare this so they are
+     * not observable by — and cannot be blocked by — user hooks. Replaces the old
+     * `AgentLoop.HOOK_EXEMPT` name set so a depending plugin can self-declare exemption.
+     *
+     * ⚠ TRUST BOUNDARY: a tool that sets this to true escapes ALL user governance hooks
+     * (a user PreToolUse hook can neither observe nor block it). A depending plugin (B) is
+     * trusted-by-design (it `<depends>` on A and runs in-process), so a B tool *may* set
+     * this — but only trusted depending plugins should be installed. This is a deliberate,
+     * documented decision (spec §5 mandates HOOK_EXEMPT move onto a self-declared property);
+     * a future EP-validation layer could restrict it to A-owned tools if the trust model tightens.
+     */
+    val isHookExempt: Boolean get() = false
+
+    /**
+     * True if this tool must pass the loop-level approval gate before executing (the user
+     * sees an approval card). Replaces `ApprovalPolicy`'s hardcoded name sets so a depending
+     * plugin can contribute an approval-gated write tool.
+     *
+     * NOTE: This is distinct from [requestApproval] (the suspend method). [requiresApproval]
+     * is the loop-level gate trigger consulted in `AgentLoop` BEFORE execution; [requestApproval]
+     * is the per-action hook a meta-tool calls DURING execution to route an individual mutating
+     * action through the same gate. A tool may use either, both, or neither.
+     */
+    val requiresApproval: Boolean get() = false
+
+    /**
+     * Only meaningful when [requiresApproval] is true. If true, the approval card offers
+     * "Allow for the session" (the user can grant once); if false, every invocation must be
+     * approved individually (e.g. `run_command`, where each command is arbitrarily different).
+     */
+    val allowSessionApproval: Boolean get() = false
+
+    /**
      * Invoked by write actions inside [execute] when they need user approval.
      * Default returns [ApprovalResult.APPROVED] — no gate (safe for read-only tools
      * and tests). The AgentLoop overrides this per-call via [ApprovalGatedTool] when
