@@ -1320,8 +1320,19 @@ class AgentService(
         runCatching {
             val ctx = com.workflow.orchestrator.agent.tools.contribution
                 .ToolRegistrationContext(project, registry)
-            com.workflow.orchestrator.agent.tools.contribution.AgentToolContributor
-                .EP_NAME.extensionList.forEach { it.registerTools(ctx) }
+            val contributors = com.workflow.orchestrator.agent.tools.contribution.AgentToolContributor
+                .EP_NAME.extensionList
+            val toolsBefore = registry.getActiveTools().keys.toSet()
+            contributors.forEach { it.registerTools(ctx) }
+            // Diagnostic: surface which depending plugins contributed which tools (empty unless a
+            // plugin like B is installed). Used by the Phase-0a two-plugin runIde smoke.
+            if (contributors.isNotEmpty()) {
+                val added = registry.getActiveTools().keys - toolsBefore
+                log.info(
+                    "[agentToolContributor] ${contributors.size} contributor(s) " +
+                        "${contributors.map { it::class.java.simpleName }} contributed tools: $added"
+                )
+            }
         }.onFailure { log.warn("[Tools] agentToolContributor EP iteration failed", it) }
 
         if (failedRegistrations.isNotEmpty()) {
