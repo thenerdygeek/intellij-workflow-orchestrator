@@ -2431,6 +2431,18 @@ class AgentService(
                 liveBrainFactory = brainFactory
                 liveCachedFallbackChain = cachedFallbackChain
 
+                // Phase 0b-1 — construct the XmlLlmProvider facade (additive; loop still takes
+                // brain + toolProtocol separately per the plan's out-of-scope constraint).
+                // `brain` here IS the BrainRouter-wrapped instance that the loop uses, so
+                // cancel/interrupt/temperature all reach the in-flight request correctly.
+                // Phase 4 will rewire the loop to accept an LlmProvider as its single input.
+                @Suppress("UNUSED_VARIABLE")
+                val xmlProvider = com.workflow.orchestrator.agent.loop.XmlLlmProvider(
+                    delegate = brain,
+                    catalogService = sharedCatalogHolder.peek(),
+                    toolProtocol = toolProtocol,
+                )
+
                 val loop = AgentLoop(
                     brain = brain,
                     tools = tools,
