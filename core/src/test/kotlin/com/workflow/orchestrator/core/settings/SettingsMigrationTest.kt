@@ -12,6 +12,7 @@ class SettingsMigrationTest {
         assertTrue(SettingsMigration.migrate(state))
         assertEquals(SettingsMigration.CURRENT_VERSION, state.settingsSchemaVersion)
     }
+
     @Test fun `already-current state is a no-op`() {
         val state = PluginSettings.State()
         state.settingsSchemaVersion = SettingsMigration.CURRENT_VERSION

@@ -11,10 +11,13 @@ import org.junit.jupiter.api.Test
 class ToolPresentationRoutingCharacterizationTest {
     @Test fun `routing tool presentation through XmlToolProtocol equals direct ToolPromptBuilder`() {
         val tools = listOf(
-            ToolDefinition(function = FunctionDefinition(
-                name = "list_dir", description = "List a dir.",
-                parameters = FunctionParameters(properties = emptyMap()),
-            )),
+            ToolDefinition(
+                function = FunctionDefinition(
+                    name = "list_dir",
+                    description = "List a dir.",
+                    parameters = FunctionParameters(properties = emptyMap()),
+                ),
+            ),
         )
         // This is the exact substitution applied at AgentService:2205 and SubagentRunner:625.
         assertEquals(ToolPromptBuilder.build(tools), XmlToolProtocol().presentTools(tools))

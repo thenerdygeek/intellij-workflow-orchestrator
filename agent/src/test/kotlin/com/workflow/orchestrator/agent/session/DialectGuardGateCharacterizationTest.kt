@@ -58,23 +58,33 @@ class DialectGuardGateCharacterizationTest {
         h.addToApiConversationHistory(
             ApiMessage(
                 role = ApiRole.ASSISTANT,
-                content = listOf(ContentBlock.Text(
-                    "Let me read the file.\n\n<invoke name=\"read_file\">\n<parameter name=\"path\">src/Foo.kt</parameter>\n</invoke>"
-                )),
+                content = listOf(
+                    ContentBlock.Text(
+                        "Let me read the file.\n\n<invoke name=\"read_file\">\n" +
+                            "<parameter name=\"path\">src/Foo.kt</parameter>\n</invoke>"
+                    ),
+                ),
             )
         )
 
         // Turn must be rejected (same as pre-gate behavior for XML).
-        assertEquals(0, h.getApiConversationHistory().size,
-            "Drift-bearing assistant turn must be rejected through the XML gate")
+        assertEquals(
+            0,
+            h.getApiConversationHistory().size,
+            "Drift-bearing assistant turn must be rejected through the XML gate",
+        )
 
         // Flag raised at the chokepoint — returns true exactly once.
-        assertTrue(h.consumeDialectDriftFlag(),
-            "consumeDialectDriftFlag() must return true after drift detection (XML gate is transparent)")
+        assertTrue(
+            h.consumeDialectDriftFlag(),
+            "consumeDialectDriftFlag() must return true after drift detection (XML gate is transparent)",
+        )
 
         // One-shot: second call resets.
-        assertFalse(h.consumeDialectDriftFlag(),
-            "consumeDialectDriftFlag() must return false on second call (one-shot reset)")
+        assertFalse(
+            h.consumeDialectDriftFlag(),
+            "consumeDialectDriftFlag() must return false on second call (one-shot reset)",
+        )
     }
 
     /**
@@ -88,18 +98,29 @@ class DialectGuardGateCharacterizationTest {
         h.addToApiConversationHistory(
             ApiMessage(
                 role = ApiRole.ASSISTANT,
-                content = listOf(ContentBlock.Text(
-                    "Checking now.\n\n<tool_call>{\"tool_name\":\"run_command\",\"parameters\":{\"command\":\"ls\"}}</tool_call>"
-                )),
+                content = listOf(
+                    ContentBlock.Text(
+                        "Checking now.\n\n<tool_call>" +
+                            "{\"tool_name\":\"run_command\",\"parameters\":{\"command\":\"ls\"}}" +
+                            "</tool_call>"
+                    ),
+                ),
             )
         )
 
-        assertEquals(0, h.getApiConversationHistory().size,
-            "Hermes tool_call drift must be rejected through the XML gate")
-        assertTrue(h.consumeDialectDriftFlag(),
-            "consumeDialectDriftFlag() must return true for Hermes dialect under XML gate")
-        assertFalse(h.consumeDialectDriftFlag(),
-            "One-shot reset must apply for Hermes dialect too")
+        assertEquals(
+            0,
+            h.getApiConversationHistory().size,
+            "Hermes tool_call drift must be rejected through the XML gate",
+        )
+        assertTrue(
+            h.consumeDialectDriftFlag(),
+            "consumeDialectDriftFlag() must return true for Hermes dialect under XML gate",
+        )
+        assertFalse(
+            h.consumeDialectDriftFlag(),
+            "One-shot reset must apply for Hermes dialect too",
+        )
     }
 
     // ── (b) RESUME REDACTION: pure ResumeHelper call; pre-gate parity ────────────
@@ -117,28 +138,42 @@ class DialectGuardGateCharacterizationTest {
         val driftHistory = listOf(
             ApiMessage(
                 role = ApiRole.ASSISTANT,
-                content = listOf(ContentBlock.Text(
-                    "Searching now.\n\n<invoke name=\"search_code\">\n<parameter name=\"pattern\">JWT</parameter>\n</invoke>"
-                )),
+                content = listOf(
+                    ContentBlock.Text(
+                        "Searching now.\n\n<invoke name=\"search_code\">\n" +
+                            "<parameter name=\"pattern\">JWT</parameter>\n</invoke>"
+                    ),
+                ),
                 ts = 1L,
             ),
         )
         val redaction = ResumeHelper.redactDialectDriftInHistory(driftHistory)
-        assertTrue(redaction.redactedCount >= 1,
-            "known drift must redact at least one turn (pre-gate parity: gate does not short-circuit under XML)")
+        assertTrue(
+            redaction.redactedCount >= 1,
+            "known drift must redact at least one turn (pre-gate parity: gate does not short-circuit under XML)",
+        )
 
         // Verify the actual text was redacted (sanity check the marker is present).
         val assistantText = (redaction.history[0].content[0] as ContentBlock.Text).text
-        assertTrue(assistantText.contains(DialectDriftDetector.REDACTION_MARKER),
-            "Redacted turn must contain the REDACTION_MARKER")
-        assertFalse(assistantText.contains("<invoke"),
-            "Redacted turn must not contain the raw <invoke tag")
+        assertTrue(
+            assistantText.contains(DialectDriftDetector.REDACTION_MARKER),
+            "Redacted turn must contain the REDACTION_MARKER",
+        )
+        assertFalse(
+            assistantText.contains("<invoke"),
+            "Redacted turn must not contain the raw <invoke tag",
+        )
 
         // emptyRedaction() shape-correct check — the native branch substitutes this.
         val empty = ResumeHelper.emptyRedaction()
-        assertEquals(0, empty.redactedCount,
-            "emptyRedaction().redactedCount must be 0 (native no-op)")
-        assertTrue(empty.history.isEmpty(),
-            "emptyRedaction().history must be empty (safe for the if(redactedCount>0) guard)")
+        assertEquals(
+            0,
+            empty.redactedCount,
+            "emptyRedaction().redactedCount must be 0 (native no-op)",
+        )
+        assertTrue(
+            empty.history.isEmpty(),
+            "emptyRedaction().history must be empty (safe for the if(redactedCount>0) guard)",
+        )
     }
 }

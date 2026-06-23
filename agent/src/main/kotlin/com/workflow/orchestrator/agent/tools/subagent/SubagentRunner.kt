@@ -10,11 +10,11 @@ import com.workflow.orchestrator.agent.loop.ContextManager
 import com.workflow.orchestrator.agent.loop.LoopResult
 import com.workflow.orchestrator.agent.tools.AgentTool
 import com.workflow.orchestrator.agent.tools.ToolRegistry
+import com.workflow.orchestrator.agent.tools.background.BackgroundEligibility
 import com.workflow.orchestrator.agent.tools.builtin.ToolSearchTool
 import com.workflow.orchestrator.core.ai.LlmBrain
-import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.ai.OpenAiCompatBrain
-import com.workflow.orchestrator.core.ai.ToolPromptBuilder
+import com.workflow.orchestrator.core.ai.TokenEstimator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -23,7 +23,6 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.coroutines.coroutineContext
-import com.workflow.orchestrator.agent.tools.background.BackgroundEligibility
 
 /**
  * Wraps [AgentLoop] with per-subagent stats tracking, progress callbacks, and cancellation.

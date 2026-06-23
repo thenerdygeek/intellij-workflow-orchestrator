@@ -14,10 +14,18 @@ class LlmProviderContractTest {
         val provider: LlmProvider = object : LlmProvider {
             override val modelId = "test::v1::model"
             override val toolProtocol = XmlToolProtocol()
-            override suspend fun chat(messages: List<com.workflow.orchestrator.core.ai.dto.ChatMessage>, tools: List<com.workflow.orchestrator.core.ai.dto.ToolDefinition>?, maxTokens: Int?, toolChoice: kotlinx.serialization.json.JsonElement?) =
-                ApiResult.Error(ErrorType.SERVER_ERROR, "unused")
-            override suspend fun chatStream(messages: List<com.workflow.orchestrator.core.ai.dto.ChatMessage>, tools: List<com.workflow.orchestrator.core.ai.dto.ToolDefinition>?, maxTokens: Int?, onChunk: suspend (com.workflow.orchestrator.core.ai.dto.StreamChunk) -> Unit) =
-                ApiResult.Error(ErrorType.SERVER_ERROR, "unused")
+            override suspend fun chat(
+                messages: List<com.workflow.orchestrator.core.ai.dto.ChatMessage>,
+                tools: List<com.workflow.orchestrator.core.ai.dto.ToolDefinition>?,
+                maxTokens: Int?,
+                toolChoice: kotlinx.serialization.json.JsonElement?,
+            ) = ApiResult.Error(ErrorType.SERVER_ERROR, "unused")
+            override suspend fun chatStream(
+                messages: List<com.workflow.orchestrator.core.ai.dto.ChatMessage>,
+                tools: List<com.workflow.orchestrator.core.ai.dto.ToolDefinition>?,
+                maxTokens: Int?,
+                onChunk: suspend (com.workflow.orchestrator.core.ai.dto.StreamChunk) -> Unit,
+            ) = ApiResult.Error(ErrorType.SERVER_ERROR, "unused")
             override fun estimateTokens(text: String) = text.length / 4
             override suspend fun getCatalog(force: Boolean) = null
             override fun getContextWindow(modelRef: String, tier: String) = null

@@ -7,7 +7,11 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
 class ApiMessageProtocolDiscriminatorTest {
-    private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true; encodeDefaults = true }
+    private val json = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+        encodeDefaults = true
+    }
 
     @Test fun `protocol defaults to null and a v2 file without the field still deserializes`() {
         // Backward compat: an existing on-disk message JSON with NO protocol field loads with protocol=null.
@@ -27,8 +31,16 @@ class ApiMessageProtocolDiscriminatorTest {
     }
 
     @Test fun `a reserved protocol value round-trips`() {
-        val msg = ApiMessage(role = ApiRole.ASSISTANT, content = listOf(ContentBlock.Text("x")), ts = 1, protocol = "xml")
-        val restored = json.decodeFromString(ApiMessage.serializer(), json.encodeToString(ApiMessage.serializer(), msg))
+        val msg = ApiMessage(
+            role = ApiRole.ASSISTANT,
+            content = listOf(ContentBlock.Text("x")),
+            ts = 1,
+            protocol = "xml",
+        )
+        val restored = json.decodeFromString(
+            ApiMessage.serializer(),
+            json.encodeToString(ApiMessage.serializer(), msg),
+        )
         assertEquals("xml", restored.protocol)
         assertFalse(restored.protocol == null)
     }

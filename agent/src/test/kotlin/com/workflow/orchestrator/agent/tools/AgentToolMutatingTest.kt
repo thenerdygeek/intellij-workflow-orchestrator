@@ -8,5 +8,6 @@ import org.junit.jupiter.api.Test
 
 class AgentToolMutatingTest {
     @Test fun `read-only tool defaults to non-mutating`() { assertFalse(ReadFileTool().isMutating) }
+
     @Test fun `edit_file declares itself mutating`() { assertTrue(EditFileTool().isMutating) }
 }

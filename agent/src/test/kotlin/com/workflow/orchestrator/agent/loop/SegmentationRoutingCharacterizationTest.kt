@@ -13,8 +13,14 @@ class SegmentationRoutingCharacterizationTest {
         // Partial (mid-stream) and complete accumulations — both must match the parser exactly.
         val partial = StringBuilder("<edit_file>\n<path>/a.kt</path>\n<content>line")
         val full = StringBuilder("<edit_file>\n<path>/a.kt</path>\n<content>line one</content>\n</edit_file>")
-        assertEquals(AssistantMessageParser.parse(partial, tools, params), protocol.parseToolCalls(partial, tools, params))
-        assertEquals(AssistantMessageParser.parse(full, tools, params), protocol.parseToolCalls(full, tools, params))
+        assertEquals(
+            AssistantMessageParser.parse(partial, tools, params),
+            protocol.parseToolCalls(partial, tools, params),
+        )
+        assertEquals(
+            AssistantMessageParser.parse(full, tools, params),
+            protocol.parseToolCalls(full, tools, params),
+        )
     }
 
     @Test fun `UI-splitter helpers through protocol equal AssistantMessageParser (GAP1)`() {

@@ -6,8 +6,14 @@ import org.junit.jupiter.api.Test
 
 class PublicApiSurfaceTest {
     private val bFacingEpInterfaces = listOf(
-        "AgentToolContributor", "WorkflowConfig", "AuthProvider", "FeatureRegistry", "JiraTicketProvider",
-        "ToolProtocol", "NativeProtocol", "LlmProvider",
+        "AgentToolContributor",
+        "WorkflowConfig",
+        "AuthProvider",
+        "FeatureRegistry",
+        "JiraTicketProvider",
+        "ToolProtocol",
+        "NativeProtocol",
+        "LlmProvider",
     )
 
     @Test fun `B-facing EP interfaces are public`() {
@@ -19,7 +25,9 @@ class PublicApiSurfaceTest {
         assertTrue(targets.isNotEmpty(), "Konsist found none of the target EP interfaces — check API/scope")
 
         val violations = targets.filter { it.hasInternalModifier }.map { "${it.name} is `internal`" }
-        assertTrue(violations.isEmpty(),
-            "EP interfaces must be public for plugin B:\n" + violations.joinToString("\n"))
+        assertTrue(
+            violations.isEmpty(),
+            "EP interfaces must be public for plugin B:\n" + violations.joinToString("\n"),
+        )
     }
 }

@@ -50,16 +50,29 @@ class XmlToolProtocolCharacterizationTest {
         val p = XmlToolProtocol()
         // A trailing incomplete tag must be stripped exactly as the parser does today.
         for (s in listOf("hello <read", "hello <read_file>\n<pa", "plain text, no tag", "<")) {
-            assertEquals(AssistantMessageParser.stripPartialTag(s), p.stripPartialTag(s), "stripPartialTag mismatch on: $s")
+            assertEquals(
+                AssistantMessageParser.stripPartialTag(s),
+                p.stripPartialTag(s),
+                "stripPartialTag mismatch on: $s",
+            )
         }
     }
 
     @Test fun `endsWithIncompleteTag is identical to AssistantMessageParser endsWithIncompleteTag (GAP1)`() {
         val p = XmlToolProtocol()
         // CharSequence inputs (StringBuilder + String) must classify identically to the parser.
-        val cases: List<CharSequence> = listOf(StringBuilder("foo <read"), "complete <a>b</a>", "no tag here", StringBuilder("trailing <"))
+        val cases: List<CharSequence> = listOf(
+            StringBuilder("foo <read"),
+            "complete <a>b</a>",
+            "no tag here",
+            StringBuilder("trailing <"),
+        )
         for (c in cases) {
-            assertEquals(AssistantMessageParser.endsWithIncompleteTag(c), p.endsWithIncompleteTag(c), "endsWithIncompleteTag mismatch on: $c")
+            assertEquals(
+                AssistantMessageParser.endsWithIncompleteTag(c),
+                p.endsWithIncompleteTag(c),
+                "endsWithIncompleteTag mismatch on: $c",
+            )
         }
     }
 

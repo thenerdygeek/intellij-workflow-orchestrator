@@ -68,7 +68,8 @@ class XmlLlmProvider(
     ): ApiResult<ChatCompletionResponse> = delegate.chatStream(messages, tools, maxTokens, onChunk)
 
     override suspend fun getCatalog(force: Boolean): ModelCatalog? = catalogService?.getCatalog(force)
-    override fun getContextWindow(modelRef: String, tier: String): ContextWindow? = catalogService?.getContextWindow(modelRef, tier)
+    override fun getContextWindow(modelRef: String, tier: String): ContextWindow? =
+        catalogService?.getContextWindow(modelRef, tier)
     override fun supportsVision(modelRef: String): Boolean = catalogService?.supportsVision(modelRef) ?: false
     override fun supportsTools(modelRef: String): Boolean = catalogService?.supportsTools(modelRef) ?: true
     override fun getDefaultChatModel(): String? = catalogService?.getDefaultChatModel()

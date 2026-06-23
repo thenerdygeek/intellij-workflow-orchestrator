@@ -43,6 +43,7 @@ class XmlToolProtocol : ToolProtocol {
     companion object {
         /** Wire-send tool-result prefix. The single source of truth; MessageSanitizer references it (Task 6). */
         const val TOOL_RESULT_WIRE_PREFIX = "TOOL RESULT:\n"
+
         /** Normalized finish reason consumed by AgentLoop.kt:1571. */
         const val UPSTREAM_TIMEOUT = "upstream_timeout"
     }

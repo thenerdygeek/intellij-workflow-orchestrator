@@ -12,6 +12,7 @@ class ClassifyStreamLineParityTest {
         "data: [DONE]",
         "",
     )
+
     @Test fun `classifyStreamLine returns upstream_timeout exactly when GatewayErrorDetector fires`() {
         for (line in frames) {
             val expected = if (GatewayErrorDetector.isUpstreamTimeoutFrame(line)) "upstream_timeout" else null

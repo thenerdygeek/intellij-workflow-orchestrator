@@ -2890,9 +2890,11 @@ class AgentService(
         // Site 6 gate: under native (requiresDialectGuard=false) skip the redaction walk entirely
         // and use the no-op emptyRedaction() so redactedCount==0 and the assignment below is never
         // taken. Under XML (requiresDialectGuard=true) the call is identical to pre-gate behavior.
-        val dialectRedaction = if (toolProtocol.requiresDialectGuard)
+        val dialectRedaction = if (toolProtocol.requiresDialectGuard) {
             ResumeHelper.redactDialectDriftInHistory(activeApiHistory)
-        else ResumeHelper.emptyRedaction()
+        } else {
+            ResumeHelper.emptyRedaction()
+        }
         val redactedCount = dialectRedaction.redactedCount
         if (redactedCount > 0) {
             log.info("[AgentService] resume cleanup: redacted dialect tool-call XML in $redactedCount assistant turn(s)")

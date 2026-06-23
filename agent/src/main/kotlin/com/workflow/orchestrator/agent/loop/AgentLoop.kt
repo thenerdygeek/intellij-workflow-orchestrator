@@ -2,39 +2,39 @@ package com.workflow.orchestrator.agent.loop
 
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.workflow.orchestrator.core.ai.AssistantMessageContent
-import com.workflow.orchestrator.core.ai.AssistantMessageParser
-import com.workflow.orchestrator.core.ai.TextContent
-import com.workflow.orchestrator.core.ai.ToolUseContent
 import com.workflow.orchestrator.agent.api.dto.ToolCall
 import com.workflow.orchestrator.agent.api.dto.ToolDefinition
 import com.workflow.orchestrator.agent.hooks.HookEvent
-import com.workflow.orchestrator.agent.loop.completion.CompletionGateChain
-import com.workflow.orchestrator.agent.loop.completion.FeedbackGate
-import com.workflow.orchestrator.agent.loop.completion.MemoryReviewGate
-import com.workflow.orchestrator.agent.memory.MemoryWriteClassifier
-import com.workflow.orchestrator.agent.observability.AgentFileLogger
-import com.workflow.orchestrator.agent.observability.SessionMetrics
 import com.workflow.orchestrator.agent.hooks.HookManager
 import com.workflow.orchestrator.agent.hooks.HookResult
 import com.workflow.orchestrator.agent.hooks.HookType
-import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
+import com.workflow.orchestrator.agent.loop.completion.CompletionGateChain
+import com.workflow.orchestrator.agent.loop.completion.FeedbackGate
+import com.workflow.orchestrator.agent.loop.completion.MemoryReviewGate
+import com.workflow.orchestrator.agent.loop.queue.UnifiedMessageQueue
+import com.workflow.orchestrator.agent.memory.MemoryWriteClassifier
+import com.workflow.orchestrator.agent.observability.AgentFileLogger
+import com.workflow.orchestrator.agent.observability.SessionMetrics
 import com.workflow.orchestrator.agent.security.CommandRisk
+import com.workflow.orchestrator.agent.security.CommandSafetyAnalyzer
 import com.workflow.orchestrator.agent.session.*
 import com.workflow.orchestrator.agent.tools.AgentTool
-import com.workflow.orchestrator.agent.tools.builtin.BackgroundProcessTool
-import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.agent.tools.ToolOutputSpiller
 import com.workflow.orchestrator.agent.tools.ToolResult
 import com.workflow.orchestrator.agent.tools.ToolResultType
+import com.workflow.orchestrator.agent.tools.builtin.BackgroundProcessTool
+import com.workflow.orchestrator.agent.tools.builtin.RunCommandTool
 import com.workflow.orchestrator.agent.tools.cancel.ToolCancellationRegistry
 import com.workflow.orchestrator.agent.tools.cancel.isUserStop
 import com.workflow.orchestrator.agent.tools.cancel.stoppedByUserResult
 import com.workflow.orchestrator.agent.tools.estimateTokens
 import com.workflow.orchestrator.agent.tools.truncateOutput
+import com.workflow.orchestrator.core.ai.AssistantMessageContent
 import com.workflow.orchestrator.core.ai.LlmBrain
 import com.workflow.orchestrator.core.ai.ModelCatalogService
+import com.workflow.orchestrator.core.ai.TextContent
 import com.workflow.orchestrator.core.ai.TokenEstimator
+import com.workflow.orchestrator.core.ai.ToolUseContent
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
 import com.workflow.orchestrator.core.ai.dto.ContentPart
 import com.workflow.orchestrator.core.ai.dto.hasImageParts
@@ -45,13 +45,11 @@ import com.workflow.orchestrator.core.util.StringUtils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.random.Random
-import com.workflow.orchestrator.agent.loop.queue.UnifiedMessageQueue
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -59,6 +57,7 @@ import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.random.Random
 
 /**
  * Result of the user's decision when asked to approve a tool execution.
@@ -1941,9 +1940,9 @@ class AgentLoop(
             } catch (_: Exception) {
                 null
             }
-            if ((planModeProvider?.invoke() ?: planMode) &&
-                (tool.isMutating || toolName in WRITE_TOOLS || tool.isWriteAction(planModeAction))
-            ) {
+            val planModeActive = planModeProvider?.invoke() ?: planMode
+            val isMutatingTool = tool.isMutating || toolName in WRITE_TOOLS || tool.isWriteAction(planModeAction)
+            if (planModeActive && isMutatingTool) {
                 val planModeBlockMsg = "Error: '$toolName' is blocked in plan mode. You can only read, search, and analyze code."
                 fileLogger?.logToolCall(
                     sessionId = sessionId ?: "",
