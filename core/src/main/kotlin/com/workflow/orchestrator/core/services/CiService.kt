@@ -65,8 +65,19 @@ interface CiService {
     /** Download an artifact to a local file. Returns true on success. */
     suspend fun downloadArtifact(artifactUrl: String, targetFile: java.io.File): ToolResult<Boolean>
 
-    /** Recent build results for a pipeline. */
-    suspend fun getRecentBuilds(pipelineId: String, maxResults: Int = 10): ToolResult<List<BuildResultData>>
+    /**
+     * Recent build results for a pipeline.
+     *
+     * NOTE: `maxResults` intentionally has NO default here, even though the conceptual default is 10.
+     * [BambooServiceImpl] satisfies BOTH this method and `BambooService.getRecentBuilds(chainKey,
+     * maxResults = 10)` with a single override (identical JVM signature). Kotlin forbids one override
+     * from inheriting a default for the SAME parameter from two supertypes (it cannot prove the two
+     * defaults agree → "MULTIPLE_DEFAULTS_INHERITED_FROM_SUPERTYPES"). Keeping the default only on the
+     * vendor `BambooService` (which has real callers) and dropping it on this consumer-less neutral
+     * seam is the minimal behavior-preserving resolution — every existing call site passes both args
+     * explicitly, so no behavior changes. Restore the default here only if `BambooService` drops its.
+     */
+    suspend fun getRecentBuilds(pipelineId: String, maxResults: Int): ToolResult<List<BuildResultData>>
 
     /** All pipelines visible to the authenticated user. */
     suspend fun getPipelines(): ToolResult<List<PipelineData>>

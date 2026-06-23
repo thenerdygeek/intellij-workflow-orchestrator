@@ -3,9 +3,14 @@ package com.workflow.orchestrator.bamboo.service
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.bamboo.api.BambooApiClient
+import com.workflow.orchestrator.bamboo.api.dto.BambooResultDto
+import com.workflow.orchestrator.bamboo.api.dto.BambooStageDto
 import com.workflow.orchestrator.core.auth.CredentialStore
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.model.CiGroupData
 import com.workflow.orchestrator.core.model.ErrorType
+import com.workflow.orchestrator.core.model.PipelineData
 import com.workflow.orchestrator.core.model.ServiceType
 import com.workflow.orchestrator.core.model.bamboo.ArtifactData
 import com.workflow.orchestrator.core.model.bamboo.BuildChangeData
@@ -19,13 +24,14 @@ import com.workflow.orchestrator.core.model.bamboo.PlanData
 import com.workflow.orchestrator.core.model.bamboo.PlanVariableData
 import com.workflow.orchestrator.core.model.bamboo.ProjectData
 import com.workflow.orchestrator.core.model.bamboo.TestResultsData
+import com.workflow.orchestrator.core.model.toCiGroupData
+import com.workflow.orchestrator.core.model.toPipelineData
 import com.workflow.orchestrator.core.services.BambooService
+import com.workflow.orchestrator.core.services.CiService
 import com.workflow.orchestrator.core.services.ToolResult
+import com.workflow.orchestrator.core.services.mapData
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.ui.TimeFormatter
-import com.workflow.orchestrator.bamboo.api.BambooApiClient
-import com.workflow.orchestrator.bamboo.api.dto.BambooResultDto
-import com.workflow.orchestrator.bamboo.api.dto.BambooStageDto
 
 /**
  * Unified Bamboo service implementation used by both UI panels and AI agent.
@@ -34,7 +40,7 @@ import com.workflow.orchestrator.bamboo.api.dto.BambooStageDto
  * domain models ([BuildResultData]) with LLM-optimized text summaries.
  */
 @Service(Service.Level.PROJECT)
-class BambooServiceImpl(private val project: Project) : BambooService {
+class BambooServiceImpl(private val project: Project) : BambooService, CiService {
 
     private val log = Logger.getInstance(BambooServiceImpl::class.java)
     private val credentialStore = CredentialStore()
@@ -1126,6 +1132,42 @@ class BambooServiceImpl(private val project: Project) : BambooService {
             hint = "Set up Bamboo connection in Settings > Tools > Workflow Orchestrator > General."
         )
     }
+
+    // --- CiService neutral seam (Phase 0b-2): delegates to the BambooService methods above ---
+    // The other 11 CiService methods (getLatestBuild/getBuild/testConnection/getBuildLog/
+    // getTestResults/stopBuild/cancelBuild/getArtifacts/downloadArtifact/getRecentBuilds/
+    // getBuildChanges) are already satisfied by the BambooService overrides above — identical
+    // JVM signatures, so no extra override is needed.
+    // MAINTAINER NOTE: those 11 bind "for free" ONLY because each shares an identical JVM signature
+    // with its BambooService counterpart. If a future BambooService overload reuses one of those
+    // CiService method names (changing arity/types), re-verify the delegation still binds — add an
+    // explicit override here if it no longer does (same disambiguation as triggerBuild/getRunningBuilds).
+
+    override suspend fun triggerBuild(
+        pipelineId: String,
+        variables: Map<String, String>,
+    ): ToolResult<BuildTriggerData> =
+        // Explicit `stages = null` disambiguates from this 2-arg override (else infinite recursion).
+        triggerBuild(pipelineId, variables, stages = null)
+
+    override suspend fun retryFailedJobs(pipelineId: String, buildNumber: Int): ToolResult<Unit> =
+        rerunFailedJobs(pipelineId, buildNumber)
+
+    override suspend fun getRunningBuilds(pipelineId: String): ToolResult<List<BuildResultData>> =
+        // Explicit `repoName = null` disambiguates from this 1-arg override (else infinite recursion).
+        getRunningBuilds(pipelineId, repoName = null)
+
+    override suspend fun getPipelines(): ToolResult<List<PipelineData>> =
+        getPlans().mapData { plans -> plans.map { it.toPipelineData() } }
+
+    override suspend fun getPipelinesForGroup(groupKey: String): ToolResult<List<PipelineData>> =
+        getProjectPlans(groupKey).mapData { plans -> plans.map { it.toPipelineData() } }
+
+    override suspend fun searchPipelines(query: String): ToolResult<List<PipelineData>> =
+        searchPlans(query).mapData { plans -> plans.map { it.toPipelineData() } }
+
+    override suspend fun getGroups(): ToolResult<List<CiGroupData>> =
+        getProjects().mapData { projects -> projects.map { it.toCiGroupData() } }
 
     companion object {
         @JvmStatic
