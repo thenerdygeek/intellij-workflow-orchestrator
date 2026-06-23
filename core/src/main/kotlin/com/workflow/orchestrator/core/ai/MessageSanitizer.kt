@@ -1,6 +1,7 @@
 package com.workflow.orchestrator.core.ai
 
 import com.workflow.orchestrator.core.ai.dto.ChatMessage
+import com.workflow.orchestrator.core.ai.protocol.XmlToolProtocol
 import com.workflow.orchestrator.core.util.StringUtils
 
 /**
@@ -71,7 +72,8 @@ object MessageSanitizer {
                     // Do NOT use XML tags like <tool_result> — they prime the LLM to
                     // generate <tool_calls> as text instead of using the structured API.
                     // Plain text labels (matching OpenHands/SWE-agent pattern) avoid this.
-                    val toolContent = "TOOL RESULT:\n${msg.content ?: ""}"
+                    val toolContent =
+                        "${XmlToolProtocol.TOOL_RESULT_WIRE_PREFIX}${msg.content ?: ""}"
                     // Preserve `parts` so that ContentPart.Image entries on a tool-result
                     // message survive the role-coercion. The /stream path reads `parts`
                     // directly to hydrate base64 image URIs; dropping them here would lose
