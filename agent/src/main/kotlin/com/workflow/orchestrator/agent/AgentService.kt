@@ -1066,7 +1066,7 @@ class AgentService(
         }
 
         // Task system tools — four LLM-facing tools for typed task management.
-        // Ported from Claude Code's task-system behavior. Hook-exempt (see AgentLoop.HOOK_EXEMPT).
+        // Ported from Claude Code's task-system behavior. Each declares `isHookExempt = true`.
         safeRegisterCore { TaskCreateTool { currentTaskStore() } }
         safeRegisterCore { TaskUpdateTool { currentTaskStore() } }
         safeRegisterCore { TaskListTool { currentTaskStore() } }

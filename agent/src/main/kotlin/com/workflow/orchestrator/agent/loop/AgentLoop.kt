@@ -757,18 +757,6 @@ class AgentLoop(
             "CRITICAL: You have called the same tool with identical arguments 5 times consecutively. " +
             "The task cannot make progress this way. Stopping to prevent further token waste."
 
-        /**
-         * Tools that bypass PreToolUse/PostToolUse hooks.
-         * Ported from Claude Code's task-system behavior — task management tools are
-         * internal bookkeeping and should not be observable by external hooks.
-         */
-        private val HOOK_EXEMPT: Set<String> = setOf(
-            "task_create", "task_update", "task_list", "task_get",
-            // ai_review writes only to local disk (no Bitbucket calls) — internal
-            // staging store; should not trigger user approval hooks.
-            "ai_review"
-        )
-
         /** Tools that mutate state — blocked when plan mode is active. */
         val WRITE_TOOLS = setOf(
             "edit_file", "create_file", "delete_file", "run_command", "revert_file",
@@ -2038,8 +2026,9 @@ class AgentLoop(
             // Runs before each tool execution; can cancel (block) the tool.
             // Cline: "This should be called by tool handlers after approval succeeds
             //  but before the actual tool execution begins."
-            // Task-system tools are hook-exempt (internal bookkeeping, not user-observable).
-            if (toolName !in HOOK_EXEMPT && hookManager != null && hookManager.hasHooks(HookType.PRE_TOOL_USE)) {
+            // Tools that declare isHookExempt = true (task management + ai_review) are skipped
+            // as internal bookkeeping that should not be observable by external hooks.
+            if (!tool.isHookExempt && hookManager != null && hookManager.hasHooks(HookType.PRE_TOOL_USE)) {
                 val preHookResult = hookManager.dispatch(
                     HookEvent(
                         type = HookType.PRE_TOOL_USE,
@@ -2349,8 +2338,9 @@ class AgentLoop(
             // POST_TOOL_USE hook (ported from Cline's PostToolUse hook)
             // Observation-only: runs after tool execution, cannot change the result.
             // Cline: fires PostToolUse with tool name, parameters, result, success, durationMs.
-            // Task-system tools are hook-exempt (internal bookkeeping, not user-observable).
-            if (toolName !in HOOK_EXEMPT && hookManager != null && hookManager.hasHooks(HookType.POST_TOOL_USE)) {
+            // Tools that declare isHookExempt = true (task management + ai_review) are skipped
+            // as internal bookkeeping that should not be observable by external hooks.
+            if (!tool.isHookExempt && hookManager != null && hookManager.hasHooks(HookType.POST_TOOL_USE)) {
                 try {
                     hookManager.dispatch(
                         HookEvent(
