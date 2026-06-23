@@ -197,6 +197,28 @@ JBColor constants with light/dark variants: SUCCESS (green), ERROR (red), WARNIN
   `docs/architecture/phase5-workflow-context-plan.md`. T-AutoSeed:
   `docs/architecture/phase7-handover-context-plan.md` § 6.
 
+## Connector seams (plugin split, Phase 0b-2)
+
+Neutral, vendor-agnostic seams layered ABOVE the concrete vendor services so a future
+GitHub/GitLab/Jenkins connector is additive. Both are `public` + `@InternalApi` (unfrozen),
+shape-reservation only (no consumer/registration yet — like `NativeProtocol` pre-Phase-4):
+
+- `core/services/VcsHostClient.kt` — neutral VCS-host ops (branch/PR/review/file). Implemented by
+  `BitbucketServiceImpl` (`:pullrequest`) alongside `BitbucketService` — identical JVM signatures, so
+  zero extra methods. Excludes `getLinkedJiraIssues`/`getRequiredBuilds` (vendor-coupled).
+  `typealias VcsUserData = BitbucketUserData`; comment ops use neutral `repoOwner`/`repoName` params.
+  **No default values on any parameter** — declaring defaults here too would trigger Kotlin
+  `MULTIPLE_DEFAULTS_INHERITED_FROM_SUPERTYPES` when `BitbucketServiceImpl` inherits from both
+  `BitbucketService` (which has the defaults) and `VcsHostClient`; every existing call site passes
+  args explicitly, so this is behavior-neutral.
+- `core/services/CiService.kt` — neutral CI ops (build/trigger/log/test/pipeline list). Implemented by
+  `BambooServiceImpl` (`:bamboo`) alongside `BambooService` via 7 explicit delegating methods (11 of 18 bind "for free" via identical JVM signatures).
+  Neutral DTOs `PipelineData`/`CiGroupData` (`core/model/CiModels.kt`) replace `PlanData`/`ProjectData`;
+  opaque `pipelineId`/`buildId` strings. Bamboo-specific ops (plan branches/variables/stage trigger/
+  auto-detect) stay on `BambooService`. `ToolResult.mapData` (`core/services/ToolResultMapping.kt`)
+  is the envelope-preserving remap helper used by the delegating methods. `getRecentBuilds` likewise
+  declares no default for `maxResults` (same MULTIPLE_DEFAULTS reason; default stays on `BambooService`).
+
 ## Repo resolution
 
 Multi-module / multi-repo projects (parent has no `.git`, each submodule has its own) need callers to pick the right `GitRepository` for the action they're performing. `RepoContextResolver` exposes:

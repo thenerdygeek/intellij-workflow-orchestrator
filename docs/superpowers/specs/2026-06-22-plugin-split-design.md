@@ -231,3 +231,17 @@ Tier-2 connectors (GitHub/GitLab/Jenkins); **Bedrock/Vertex LLM transports**; Ji
 - **Bedrock/Vertex transport** (SigV4/OAuth2 + IDE-proxy/truststore bypass) — explicitly Tier-2; do not promise it as "free."
 - **Build-cache trap** on suspend-signature changes → `--no-build-cache`.
 - **Scope creep into Tier 2** — hold the line at Tier 1 for v1.
+
+---
+
+## 16. Phase 0b-2 implementation note (2026-06-23)
+
+**Resolved design: genuinely-neutral dual-implementation.** `VcsHostClient` and `CiService` are independent neutral interfaces (in `:core`) with their respective impls (`BitbucketServiceImpl` / `BambooServiceImpl`) implementing both the vendor interface and the neutral seam concurrently. No behavior changes in 0b-2; no consumer or EP registration yet — deferred to the phase that adds the first neutral consumer (same pattern as `NativeProtocol` pre-Phase-4). Both interfaces are `public` + `@InternalApi` (unfrozen-by-policy).
+
+**Documented exclusions / deviations:**
+
+- `getDefaultBranch` / default-reviewer resolution — NOT on `VcsHostClient` in 0b-2. These live on the lower `BitbucketBranchClient` / `DefaultBranchResolver`; threading them through a neutral op is a Phase-1 (de-convention) task.
+- `getLinkedJiraIssues` / `getRequiredBuilds` — intentionally NOT on `VcsHostClient`. They are Atlassian-vendor-coupled (Bitbucket↔Jira link plugin; Bamboo plan-key-keyed required-builds conditions) and remain on `BitbucketService`.
+- `BuildResultData`-family package relocation — still in `core/model/bamboo/`. Relocation to `core/model/ci/` is deferred; the neutral `PipelineData`/`CiGroupData` DTOs introduced in 0b-2 already live at `core/model/`.
+- **No default values on any `VcsHostClient` parameter** — `BitbucketService` already declares the defaults; redeclaring them on `VcsHostClient` triggers Kotlin `MULTIPLE_DEFAULTS_INHERITED_FROM_SUPERTYPES` on `BitbucketServiceImpl`. Applied uniformly across all 39 methods on the interface. (Discovery: Task 4; applied to `VcsHostClient` in Task 5.)
+- **No default for `maxResults` on `CiService.getRecentBuilds`** — same `MULTIPLE_DEFAULTS_INHERITED_FROM_SUPERTYPES` constraint applies where `BambooService` already declares `maxResults = 10`. Every existing call site passes both args explicitly, so behavior is unchanged. Default stays on `BambooService`; restore on `CiService` only if `BambooService` drops it first. (Discovery: Task 4.)
