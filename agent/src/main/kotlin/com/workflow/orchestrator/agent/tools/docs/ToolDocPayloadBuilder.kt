@@ -70,7 +70,7 @@ object ToolDocPayloadBuilder {
         val schemaJson = json.encodeToString(tool.toToolDefinition())
         val schemaTokenCost = estimateTokens(schemaJson)
 
-        val approvalPolicy = describeApprovalPolicy(tool.name)
+        val approvalPolicy = describeApprovalPolicy(tool)
         val isWriteTool = tool.name in AgentLoop.WRITE_TOOLS
 
         return AutoDerivedMetadata(
@@ -86,8 +86,8 @@ object ToolDocPayloadBuilder {
         )
     }
 
-    private fun describeApprovalPolicy(toolName: String): String {
-        val policy = ApprovalPolicy.forTool(toolName)
+    private fun describeApprovalPolicy(tool: AgentTool): String {
+        val policy = ApprovalPolicy.forTool(tool)
         return when {
             !policy.requiresApproval -> "ALWAYS_APPROVE"
             policy.allowSessionApproval -> "ALLOW_FOR_SESSION"

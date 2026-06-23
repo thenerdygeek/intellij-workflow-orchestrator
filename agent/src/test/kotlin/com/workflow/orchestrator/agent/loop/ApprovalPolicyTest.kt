@@ -1,84 +1,44 @@
 package com.workflow.orchestrator.agent.loop
 
+import com.intellij.openapi.project.Project
+import com.workflow.orchestrator.agent.tools.AgentTool
+import com.workflow.orchestrator.agent.tools.ToolResult
+import com.workflow.orchestrator.agent.tools.WorkerType
+import com.workflow.orchestrator.core.ai.dto.FunctionParameters
+import kotlinx.serialization.json.JsonObject
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.Assertions.*
 
 class ApprovalPolicyTest {
-
-    @Test
-    fun `run_command requires approval but never allows session-wide`() {
-        val policy = ApprovalPolicy.forTool("run_command")
-        assertTrue(policy.requiresApproval)
-        assertFalse(policy.allowSessionApproval)
+    private fun tool(
+        n: String, requires: Boolean = false, session: Boolean = false,
+    ) = object : AgentTool {
+        override val name = n
+        override val description = n
+        override val parameters = FunctionParameters(properties = emptyMap())
+        override val allowedWorkers = setOf(WorkerType.ORCHESTRATOR)
+        override val requiresApproval = requires
+        override val allowSessionApproval = session
+        override suspend fun execute(params: JsonObject, project: Project) =
+            ToolResult(content = "", summary = "", tokenEstimate = 0)
     }
 
     @Test
-    fun `edit_file allows session-wide approval`() {
-        val policy = ApprovalPolicy.forTool("edit_file")
-        assertTrue(policy.requiresApproval)
-        assertTrue(policy.allowSessionApproval)
+    fun `run_command-style tool is per-invocation`() {
+        val p = ApprovalPolicy.forTool(tool("run_command", requires = true, session = false))
+        assertTrue(p.requiresApproval); assertFalse(p.allowSessionApproval)
     }
 
     @Test
-    fun `create_file allows session-wide approval`() {
-        val policy = ApprovalPolicy.forTool("create_file")
-        assertTrue(policy.requiresApproval)
-        assertTrue(policy.allowSessionApproval)
+    fun `edit_file-style tool allows session`() {
+        val p = ApprovalPolicy.forTool(tool("edit_file", requires = true, session = true))
+        assertTrue(p.requiresApproval); assertTrue(p.allowSessionApproval)
     }
 
     @Test
-    fun `revert_file allows session-wide approval`() {
-        val policy = ApprovalPolicy.forTool("revert_file")
-        assertTrue(policy.requiresApproval)
-        assertTrue(policy.allowSessionApproval)
-    }
-
-    @Test
-    fun `read_file does not require approval`() {
-        val policy = ApprovalPolicy.forTool("read_file")
-        assertFalse(policy.requiresApproval)
-        assertFalse(policy.allowSessionApproval)
-    }
-
-    @Test
-    fun `search_code does not require approval`() {
-        val policy = ApprovalPolicy.forTool("search_code")
-        assertFalse(policy.requiresApproval)
-        assertFalse(policy.allowSessionApproval)
-    }
-
-    @Test
-    fun `unknown tool does not require approval`() {
-        val policy = ApprovalPolicy.forTool("some_unknown_tool")
-        assertFalse(policy.requiresApproval)
-        assertFalse(policy.allowSessionApproval)
-    }
-
-    @Test
-    fun `APPROVAL_TOOLS contains all approval-required tools`() {
-        assertEquals(
-            setOf("run_command", "edit_file", "create_file", "delete_file", "revert_file"),
-            ApprovalPolicy.APPROVAL_TOOLS
-        )
-    }
-
-    @Test
-    fun `every tool in APPROVAL_TOOLS has requiresApproval true`() {
-        for (toolName in ApprovalPolicy.APPROVAL_TOOLS) {
-            val policy = ApprovalPolicy.forTool(toolName)
-            assertTrue(policy.requiresApproval, "$toolName should require approval")
-        }
-    }
-
-    @Test
-    fun `only run_command has allowSessionApproval false among approval tools`() {
-        for (toolName in ApprovalPolicy.APPROVAL_TOOLS) {
-            val policy = ApprovalPolicy.forTool(toolName)
-            if (toolName == "run_command") {
-                assertFalse(policy.allowSessionApproval, "run_command must not allow session approval")
-            } else {
-                assertTrue(policy.allowSessionApproval, "$toolName should allow session approval")
-            }
-        }
+    fun `read-only tool needs no approval`() {
+        val p = ApprovalPolicy.forTool(tool("read_file"))
+        assertFalse(p.requiresApproval); assertFalse(p.allowSessionApproval)
     }
 }

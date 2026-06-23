@@ -89,6 +89,10 @@ class SubagentAutoApproveBehaviorTest {
         override val description = "Stub run_command tool"
         override val parameters = FunctionParameters(properties = emptyMap())
         override val allowedWorkers = setOf(WorkerType.CODER)
+        // Mirror real run_command: per-invocation approval (post-0b-3 the gate reads
+        // requiresApproval, not the deleted name sets).
+        override val requiresApproval = true
+        override val allowSessionApproval = false
         override suspend fun execute(params: JsonObject, project: Project) =
             ToolResult(content = "ran", summary = "ran", tokenEstimate = 5)
     }

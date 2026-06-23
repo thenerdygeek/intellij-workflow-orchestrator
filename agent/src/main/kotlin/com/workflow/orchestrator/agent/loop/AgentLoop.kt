@@ -74,7 +74,7 @@ enum class ApprovalResult { APPROVED, DENIED, ALLOWED_FOR_SESSION }
  * Delegates all [AgentTool] behaviour to [delegate] but overrides
  * [AgentTool.requestApproval] to route through the loop's [gate].
  * Allows write actions inside tools to call [requestApproval] without
- * being added to [ApprovalPolicy.APPROVAL_TOOLS].
+ * declaring [AgentTool.requiresApproval].
  */
 private class ApprovalGatedTool(
     private val delegate: com.workflow.orchestrator.agent.tools.AgentTool,
@@ -776,9 +776,6 @@ class AgentLoop(
             "refactor_rename",
             "background_process",
         )
-
-        /** Subset of write tools that require user approval via the approval gate. */
-        val APPROVAL_TOOLS = ApprovalPolicy.APPROVAL_TOOLS
 
         /**
          * Tools that stream live output to the UI via [RunCommandTool.streamCallback].
@@ -1997,7 +1994,7 @@ class AgentLoop(
                 val policy = if (isMemoryWrite) {
                     ApprovalPolicy(requiresApproval = true, allowSessionApproval = false)
                 } else {
-                    ApprovalPolicy.forTool(toolName)
+                    ApprovalPolicy.forTool(tool)
                 }
                 val sessionApproved = !isMemoryWrite && sessionApprovalStore.isApproved(toolName)
                 if (policy.requiresApproval && approvalGate != null && !sessionApproved) {

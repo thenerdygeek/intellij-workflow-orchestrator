@@ -667,6 +667,10 @@ class SubagentRunnerTest {
                 override val description = "stub edit tool"
                 override val parameters = FunctionParameters(properties = emptyMap())
                 override val allowedWorkers = setOf(WorkerType.CODER)
+                // Mirror real edit_file: approval-gated, session-approvable (post-0b-3 the
+                // gate reads requiresApproval, not the deleted name sets).
+                override val requiresApproval = true
+                override val allowSessionApproval = true
                 override suspend fun execute(params: JsonObject, project: Project) =
                     ToolResult(content = "edited", summary = "edited", tokenEstimate = 5)
             }
@@ -715,6 +719,10 @@ class SubagentRunnerTest {
                 override val description = "stub"
                 override val parameters = FunctionParameters(properties = emptyMap())
                 override val allowedWorkers = setOf(WorkerType.CODER)
+                // Mirror real edit_file: approval-gated, session-approvable (post-0b-3 the
+                // gate reads requiresApproval, not the deleted name sets).
+                override val requiresApproval = true
+                override val allowSessionApproval = true
                 override suspend fun execute(params: JsonObject, project: Project) =
                     ToolResult(content = "edited", summary = "edited", tokenEstimate = 5)
             }

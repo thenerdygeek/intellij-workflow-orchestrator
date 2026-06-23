@@ -191,7 +191,7 @@ description optional: for approval dialog on create/modify/delete.
             "runtime_config is NOT in AgentLoop.WRITE_TOOLS but overrides AgentTool.isWriteAction() so the " +
                 "plan-mode execution guard blocks create_run_config, modify_run_config, and delete_run_config. " +
                 "Bug fixed: plan-mode bypass for the 3 mutating actions (Batches 16+25 of the Phase 5 swarm). " +
-                "Note: these actions are still not in APPROVAL_TOOLS — the only mutation guard is [Agent]-prefix on delete.",
+                "Note: this tool does not declare requiresApproval — the only mutation guard is [Agent]-prefix on delete.",
         )
         related("runtime_exec", Relationship.COMPOSE_WITH, "Use runtime_exec.run_config to launch the configuration after creating it with create_run_config.")
         related("debug_breakpoints", Relationship.COMPLEMENT, "Set breakpoints before launching a debug configuration; debug_breakpoints.attach_to_process attaches to an already-running process instead of creating a config.")

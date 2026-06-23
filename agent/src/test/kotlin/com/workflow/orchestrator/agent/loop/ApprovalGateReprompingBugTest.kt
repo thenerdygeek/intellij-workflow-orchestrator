@@ -110,6 +110,11 @@ class ApprovalGateReprompingBugTest {
         override val description = "fake"
         override val parameters = FunctionParameters(properties = emptyMap())
         override val allowedWorkers = setOf(WorkerType.CODER)
+        // Mirror the real approval-tool self-declarations so the loop-level gate fires by
+        // property (post-0b-3 the gate reads requiresApproval, not the deleted name sets).
+        override val requiresApproval =
+            name in setOf("edit_file", "create_file", "delete_file", "revert_file", "run_command")
+        override val allowSessionApproval = requiresApproval && name != "run_command"
         override suspend fun execute(params: JsonObject, project: Project) =
             ToolResult(content = "ok", summary = "ok", tokenEstimate = 5)
     }

@@ -112,8 +112,8 @@ enum class SideEffectKind {
  *
  * The `AgentController.buildToolDocsJson` endpoint computes one of these per tool by
  * inspecting the registered `AgentTool` instance, the `ToolRegistry` tier, the
- * `WRITE_TOOLS` / `APPROVAL_TOOLS` constants in `AgentLoop`, and the registration
- * gate in `ToolRegistrationFilter`. Authors don't see this — it's appended to the
+ * `WRITE_TOOLS` constant in `AgentLoop`, the tool's self-declared `requiresApproval`
+ * property, and the registration gate in `ToolRegistrationFilter`. Authors don't see this — it's appended to the
  * JSON response alongside [ToolDocumentation].
  *
  * Intentionally separate from [ToolDocumentation] so author-only fields don't

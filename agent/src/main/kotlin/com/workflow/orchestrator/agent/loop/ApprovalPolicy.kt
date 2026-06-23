@@ -1,30 +1,26 @@
 package com.workflow.orchestrator.agent.loop
 
+import com.workflow.orchestrator.agent.tools.AgentTool
+
 /**
- * Per-tool approval policy. Determines whether a tool requires user approval
- * and whether the user can grant session-wide approval for it.
+ * Per-tool approval policy, derived from the tool's self-declared safety properties.
  *
- * `run_command` is always per-invocation because each command can be arbitrarily
- * different — approving one `ls` doesn't mean `rm -rf /` should be auto-approved.
+ * `requiresApproval` trips the loop-level approval gate; `allowSessionApproval` decides whether
+ * the user may "Allow for the session". (`run_command` declares `allowSessionApproval = false`
+ * because each command is arbitrarily different — approving one `ls` must not auto-approve
+ * `rm -rf /`.) The hardcoded ALWAYS_PER_INVOCATION / SESSION_APPROVABLE name sets were removed
+ * in Phase 0b-3 — a tool now carries its own policy, so a depending plugin can contribute an
+ * approval-gated write tool.
  */
 data class ApprovalPolicy(
     val requiresApproval: Boolean,
     val allowSessionApproval: Boolean,
 ) {
     companion object {
-        /** Tools that always require per-invocation approval (no "allow for session"). */
-        private val ALWAYS_PER_INVOCATION = setOf("run_command")
-
-        /** Tools that require approval but can be allowed for the session. */
-        private val SESSION_APPROVABLE = setOf("edit_file", "create_file", "delete_file", "revert_file")
-
-        /** All tools that go through the approval gate. */
-        val APPROVAL_TOOLS = ALWAYS_PER_INVOCATION + SESSION_APPROVABLE
-
-        fun forTool(toolName: String): ApprovalPolicy = when (toolName) {
-            in ALWAYS_PER_INVOCATION -> ApprovalPolicy(requiresApproval = true, allowSessionApproval = false)
-            in SESSION_APPROVABLE -> ApprovalPolicy(requiresApproval = true, allowSessionApproval = true)
-            else -> ApprovalPolicy(requiresApproval = false, allowSessionApproval = false)
-        }
+        fun forTool(tool: AgentTool): ApprovalPolicy =
+            ApprovalPolicy(
+                requiresApproval = tool.requiresApproval,
+                allowSessionApproval = tool.allowSessionApproval,
+            )
     }
 }
