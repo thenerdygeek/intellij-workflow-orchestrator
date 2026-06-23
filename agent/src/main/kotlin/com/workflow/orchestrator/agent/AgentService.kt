@@ -1323,23 +1323,18 @@ class AgentService(
         registerConditionalIntegrationTools()
 
         // Tools contributed by depending plugins (e.g. plugin B) via the agentToolContributor EP.
+        // Delegated to the project-scoped ToolRegistrationService (per-contributor isolation).
         runCatching {
-            val ctx = com.workflow.orchestrator.agent.tools.contribution
-                .ToolRegistrationContext(project, registry)
-            val contributors = com.workflow.orchestrator.agent.tools.contribution.AgentToolContributor
-                .EP_NAME.extensionList
-            val toolsBefore = registry.getActiveTools().keys.toSet()
-            contributors.forEach { it.registerTools(ctx) }
-            // Diagnostic: surface which depending plugins contributed which tools (empty unless a
-            // plugin like B is installed). Used by the Phase-0a two-plugin runIde smoke.
-            if (contributors.isNotEmpty()) {
-                val added = registry.getActiveTools().keys - toolsBefore
+            val diag = com.workflow.orchestrator.agent.tools.contribution.ToolRegistrationService
+                .getInstance(project).contributeExternalTools(registry)
+            if (diag.contributorCount > 0) {
                 log.info(
-                    "[agentToolContributor] ${contributors.size} contributor(s) " +
-                        "${contributors.map { it::class.java.simpleName }} contributed tools: $added"
+                    "[agentToolContributor] ${diag.contributorCount} contributor(s) " +
+                        "${diag.contributorClasses} contributed tools: ${diag.addedToolNames}",
                 )
             }
-        }.onFailure { log.warn("[Tools] agentToolContributor EP iteration failed", it) }
+            diag.failures.forEach { log.warn("[Tools] contributor ${it.contributorClass} failed", it.error) }
+        }.onFailure { log.warn("[Tools] agentToolContributor EP delegation failed", it) }
 
         if (failedRegistrations.isNotEmpty()) {
             log.error("AgentService: ${failedRegistrations.size} tools failed to register: $failedRegistrations")
