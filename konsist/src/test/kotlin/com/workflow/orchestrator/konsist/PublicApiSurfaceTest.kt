@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test
 class PublicApiSurfaceTest {
     private val bFacingEpInterfaces = listOf(
         "AgentToolContributor", "WorkflowConfig", "AuthProvider", "FeatureRegistry", "JiraTicketProvider",
+        "ToolProtocol", "NativeProtocol", "LlmProvider",
     )
 
     @Test fun `B-facing EP interfaces are public`() {

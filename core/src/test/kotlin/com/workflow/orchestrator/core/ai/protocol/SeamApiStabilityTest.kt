@@ -16,8 +16,10 @@ class SeamApiStabilityTest {
             // the assertions below will fail loudly — the list is constructed from direct ::class.java
             // literals so a typo is a compile error, not a silent vacuous pass.
             assertTrue(c.isInterface, "${c.simpleName} must be an interface")
-            // Kotlin `internal` on a top-level class is encoded as package-private at the JVM level;
-            // a public interface is the only JVM-public form and the only way plugin B can implement it.
+            // Modifier.isPublic is a JVM-accessibility sanity check only — Kotlin `internal` on a
+            // top-level type compiles to a JVM-public class (not package-private), so this assertion
+            // does NOT catch accidental `internal` modifiers. The genuine "not internal" guard lives in
+            // konsist PublicApiSurfaceTest, which source-scans via hasInternalModifier().
             assertTrue(Modifier.isPublic(c.modifiers), "${c.simpleName} must be public (not internal)")
             assertTrue(
                 c.isAnnotationPresent(InternalApi::class.java),
