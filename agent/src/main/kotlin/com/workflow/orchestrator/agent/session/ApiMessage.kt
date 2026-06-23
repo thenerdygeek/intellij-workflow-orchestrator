@@ -74,6 +74,13 @@ data class ApiMessage(
     val ts: Long = System.currentTimeMillis(),
     val modelInfo: ModelInfo? = null,
     val metrics: ApiRequestMetrics? = null,
+    /**
+     * Tool-calling paradigm that produced this turn. RESERVED (Phase 0b-1): null ⇒ treat as "xml"
+     * (every existing/legacy session). No reader branches on it yet — Phase 4 adds the migration +
+     * selects toChatMessage()'s rendering path by this value. Nullable + default-null keeps all
+     * pre-existing on-disk files loadable unchanged.
+     */
+    val protocol: String? = null,
 )
 
 /**
