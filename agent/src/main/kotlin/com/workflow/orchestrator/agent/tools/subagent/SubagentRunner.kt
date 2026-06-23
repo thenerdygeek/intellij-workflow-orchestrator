@@ -336,6 +336,7 @@ class SubagentRunner(
                 toolDefinitions = subagentRegistry.getActiveDefinitions(),
                 contextManager = contextManager,
                 project = project,
+                toolProtocol = toolProtocol,
                 maxIterations = maxIterations,
                 maxOutputTokens = maxOutputTokens,
                 planMode = planMode,

@@ -128,6 +128,8 @@ class AgentLoop(
     private val toolDefinitions: List<ToolDefinition>,
     private val contextManager: ContextManager,
     private val project: Project,
+    private val toolProtocol: com.workflow.orchestrator.core.ai.protocol.ToolProtocol =
+        com.workflow.orchestrator.core.ai.protocol.XmlToolProtocol(),
     private val onStreamChunk: (String) -> Unit = {},
     private val onToolCall: (ToolCallProgress) -> Unit = {},
     private val maxIterations: Int = 200,
@@ -1071,7 +1073,7 @@ class AgentLoop(
                     val blocks = if (needsParse) {
                         // Zero-copy: parse takes CharSequence — no full-buffer String copy
                         // per re-parse (P1-2, plan Wave2-T4).
-                        AssistantMessageParser.parse(
+                        toolProtocol.parseToolCalls(
                             accumulatedText,
                             currentToolNames,
                             currentParamNames
@@ -1116,7 +1118,7 @@ class AgentLoop(
                         // (TextContent.content is trimmed by the parser, which loses trailing spaces at chunk boundaries)
                         val hasToolCalls = blocks.any { it is ToolUseContent }
                         val base = if (hasToolCalls) visibleText else accumulatedText.toString()
-                        AssistantMessageParser.stripPartialTag(base)
+                        toolProtocol.stripPartialTag(base)
                             .also { cachedStrippedText = it }
                     } else {
                         // Skip-parse path: only append plain text when no tool call is in flight.
@@ -1134,7 +1136,7 @@ class AgentLoop(
                         // "<read" and ">" is appended verbatim to the visible stream because
                         // it has no `<` or `>` to force a re-parse, and the leading "<read"
                         // was already stripped by stripPartialTag().
-                        val endsInIncompleteTag = AssistantMessageParser.endsWithIncompleteTag(accumulatedText)
+                        val endsInIncompleteTag = toolProtocol.endsWithIncompleteTag(accumulatedText)
                         if (hasPendingTool || endsInIncompleteTag) {
                             cachedStrippedText  // tool tag in flight — don't leak its body to the display
                         } else {

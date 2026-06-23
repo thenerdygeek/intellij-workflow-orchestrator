@@ -2434,6 +2434,7 @@ class AgentService(
                     toolDefinitions = toolDefs,
                     contextManager = ctx,
                     project = project,
+                    toolProtocol = toolProtocol,
                     onStreamChunk = onStreamChunk,
                     onToolCall = onToolCall,
                     planMode = isPlanModeActive(),
