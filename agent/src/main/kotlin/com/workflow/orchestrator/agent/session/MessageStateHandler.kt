@@ -38,6 +38,13 @@ class MessageStateHandler(
     val taskText: String,
     /** Clock seam for the partial-save + api-save + global-index throttles (deterministic tests); production default. */
     private val uiSaveClock: () -> Long = { System.currentTimeMillis() },
+    /**
+     * Tool-calling paradigm for this session. Defaults to [XmlToolProtocol] so every existing
+     * construction site stays behavior-identical (WA-1 gate: the chokepoint + write guards consult
+     * this to bypass drift machinery under native, where structured output cannot drift).
+     */
+    private val toolProtocol: com.workflow.orchestrator.core.ai.protocol.ToolProtocol =
+        com.workflow.orchestrator.core.ai.protocol.XmlToolProtocol(),
 ) {
     private val mutex = Mutex()
     // Delegate to the shared, polymorphic-fallback-enabled Json instance in the
@@ -204,7 +211,7 @@ class MessageStateHandler(
             // already in-memory only via ContextManager.
             return@withLock
         }
-        if (hasDialectDrift(message)) {
+        if (toolProtocol.requiresDialectGuard && hasDialectDrift(message)) {
             // Assistant emitted tool calls in an incompatible dialect (Anthropic
             // <function_calls><invoke> or Hermes <tool_call>{json}). The host parser
             // doesn't recognize these, so the tool didn't run — persisting the turn
@@ -214,6 +221,9 @@ class MessageStateHandler(
             // flag the session so the next system prompt carries a corrective
             // <system-reminder>; AgentLoop will see no persisted turn and retry the
             // call.
+            // WA-1: gate is true for XmlToolProtocol (requiresDialectGuard=true) so
+            // behavior is identical to pre-gate. Under NativeProtocol the guard is
+            // skipped — structured output cannot carry dialect XML.
             dialectDriftFlag.set(true)
             return@withLock
         }
@@ -310,6 +320,10 @@ class MessageStateHandler(
      * @return number of assistant turns rewritten.
      */
     suspend fun redactDialectXmlInHistory(): Int = mutex.withLock {
+        // WA-1 belt-and-suspenders: skip the entire redaction walk under native where
+        // structured output cannot produce dialect XML (avoids wasted work; not a behavior
+        // change under XML where requiresDialectGuard=true).
+        if (!toolProtocol.requiresDialectGuard) return@withLock 0
         var rewritten = 0
         synchronized(stateLock) {
             for (i in apiHistory.indices) {
@@ -346,7 +360,16 @@ class MessageStateHandler(
      * static prompt updates lose attention over long context; dynamic reminders
      * fired on state transitions steer better).
      */
-    fun consumeDialectDriftFlag(): Boolean = dialectDriftFlag.getAndSet(false)
+    /**
+     * WA-1 chokepoint — the single gate covering BOTH flag readers
+     * (`AgentService.kt:2133`, `SubagentRunner.kt:640`). Under XML (`requiresDialectGuard=true`)
+     * this is transparent: getAndSet fires and the corrective `<system-reminder>` is injected
+     * exactly once per drift event. Under native (`requiresDialectGuard=false`) short-circuits to
+     * false WITHOUT consuming the flag — correct, because under native the flag is never raised
+     * (the two writers are inside detector paths that the write-guard above already bypasses).
+     */
+    fun consumeDialectDriftFlag(): Boolean =
+        toolProtocol.requiresDialectGuard && dialectDriftFlag.getAndSet(false)
 
     private fun hasDialectDrift(message: ApiMessage): Boolean {
         if (message.role != ApiRole.ASSISTANT) return false

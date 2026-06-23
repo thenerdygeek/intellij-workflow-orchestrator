@@ -637,6 +637,8 @@ class SubagentRunner(
         // injects the corrective <system-reminder> on the immediately-next call and resets.
         // The initial buildComposedSystemPrompt() call also lands here, but the flag is false
         // at session start, so no reminder is emitted then (same as the orchestrator).
+        // WA-1 structural no-op: consumeDialectDriftFlag() is the chokepoint — under NativeProtocol
+        // it short-circuits to false without getAndSet, so no explicit guard needed here.
         val dialectDriftDetected = messageStateHandler?.consumeDialectDriftFlag() ?: false
 
         return SubagentSystemPromptBuilder.build(

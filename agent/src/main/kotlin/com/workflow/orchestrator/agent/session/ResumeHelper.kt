@@ -202,6 +202,16 @@ object ResumeHelper {
     )
 
     /**
+     * No-op result for native sessions where dialect redaction does not apply (Phase 0b-1 gate).
+     *
+     * The consumer (`AgentService` site 6) only reads [DialectRedactionResult.history] inside an
+     * `if (redactedCount > 0)` block, so `emptyList()` is safe — it is never dereferenced under
+     * native. Returns a structurally identical shape to [DialectRedactionResult] so the gate can
+     * substitute it transparently.
+     */
+    fun emptyRedaction(): DialectRedactionResult = DialectRedactionResult(history = emptyList(), redactedCount = 0)
+
+    /**
      * Redact incompatible-format tool-call XML (Anthropic `<invoke>`, Hermes `<tool_call>{json}`, etc.)
      * inline on assistant turns before the history is seeded into the resumed session. Pure: delegates
      * each assistant text block to [DialectDriftDetector.redactDialectMarkers] and returns the rewritten

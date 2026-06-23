@@ -174,6 +174,8 @@ object SystemPrompt {
     ): String = buildString {
 
         // 0. DIALECT-DRIFT CORRECTIVE REMINDER (primacy zone, one-shot)
+        // WA-1 structural no-op: under NativeProtocol the chokepoint (MessageStateHandler.consumeDialectDriftFlag)
+        // short-circuits to false, so dialectDriftDetected is always false here — no explicit guard needed.
         if (dialectDriftDetected) {
             appendLine("<system-reminder>")
             appendLine("CRITICAL — TOOL-CALL FORMAT CORRECTION")

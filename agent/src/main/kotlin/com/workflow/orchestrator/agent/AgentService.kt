@@ -2128,6 +2128,9 @@ class AgentService(
                     // consumeDialectDriftFlag() is already atomic (AtomicBoolean.getAndSet), but
                     // the explicit local variable makes it impossible to accidentally read it twice
                     // if SystemPrompt.build's parameter list is ever refactored.
+                    // WA-1 structural no-op: consumeDialectDriftFlag() is the chokepoint — under
+                    // NativeProtocol it short-circuits to false without getAndSet; no explicit guard
+                    // needed here (the gate is in MessageStateHandler.consumeDialectDriftFlag).
                     // NOTE: must remain the LAST local before SystemPrompt.build() — pinned by
                     // AgentServiceModelChangeCasTest (snapshot-within-300-chars invariant).
                     val dialectDriftSnapshot = messageStateRef?.consumeDialectDriftFlag() ?: false
@@ -2872,7 +2875,12 @@ class AgentService(
         // handler runs its first save (the resumption user-message append at the
         // bottom of this function will overwrite the file with the cleaned list).
         var dialectDriftDetectedOnResume = false
-        val dialectRedaction = ResumeHelper.redactDialectDriftInHistory(activeApiHistory)
+        // Site 6 gate: under native (requiresDialectGuard=false) skip the redaction walk entirely
+        // and use the no-op emptyRedaction() so redactedCount==0 and the assignment below is never
+        // taken. Under XML (requiresDialectGuard=true) the call is identical to pre-gate behavior.
+        val dialectRedaction = if (toolProtocol.requiresDialectGuard)
+            ResumeHelper.redactDialectDriftInHistory(activeApiHistory)
+        else ResumeHelper.emptyRedaction()
         val redactedCount = dialectRedaction.redactedCount
         if (redactedCount > 0) {
             log.info("[AgentService] resume cleanup: redacted dialect tool-call XML in $redactedCount assistant turn(s)")
