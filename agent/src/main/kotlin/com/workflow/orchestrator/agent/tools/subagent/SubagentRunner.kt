@@ -159,6 +159,8 @@ class SubagentRunner(
     private val modelCatalogService: com.workflow.orchestrator.core.ai.ModelCatalogService? = null,
 ) {
     private val abortRequested = AtomicBoolean(false)
+    private val toolProtocol: com.workflow.orchestrator.core.ai.protocol.ToolProtocol =
+        com.workflow.orchestrator.core.ai.protocol.XmlToolProtocol()
 
     /**
      * Job of the child [coroutineScope] that wraps the sub-agent's inner [AgentLoop.run]
@@ -622,7 +624,7 @@ class SubagentRunner(
 
     private fun buildUnifiedSystemPrompt(registry: ToolRegistry): String {
         val coreDefinitions = registry.getActiveDefinitions()
-        val toolDefinitionsMarkdown = ToolPromptBuilder.build(coreDefinitions)
+        val toolDefinitionsMarkdown = toolProtocol.presentTools(coreDefinitions)
         val deferredToolCatalog = registry.getDeferredCatalogGroupedWithDescriptions()
             .takeIf { it.isNotEmpty() }
 

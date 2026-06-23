@@ -856,6 +856,10 @@ class AgentService(
         )
     }
 
+    /** The active tool-calling protocol for this service. Tier-1 = XML (Sourcegraph). Phase 4 selects per provider. */
+    private val toolProtocol: com.workflow.orchestrator.core.ai.protocol.ToolProtocol =
+        com.workflow.orchestrator.core.ai.protocol.XmlToolProtocol()
+
     private fun getOrCreateSharedCatalog(
         sgUrl: String,
         tokenProvider: () -> String?,
@@ -2202,7 +2206,10 @@ class AgentService(
                     val defsHash = defs.map { it.function.name }.hashCode()
                     if (defsHash != lastXmlToolDefsHash) {
                         lastXmlToolDefsHash = defsHash
-                        val markdown = com.workflow.orchestrator.core.ai.ToolPromptBuilder.build(defs)
+                        // presentTools() returns String? (null only under native; XML is always non-null). Keep `markdown`
+                        // NON-NULL so the existing `markdown.length` usages at :2215 compile unchanged (the `?: ""` is dead
+                        // for XML — never taken — but preserves the non-null type without behavior change).
+                        val markdown = toolProtocol.presentTools(defs) ?: ""
                         val fullPrompt = systemPromptBuilder(markdown)
                         // RANK-1 MEASUREMENT (perf/token-context-optimization): size the
                         // first-message baseline so prompt-trim work targets real numbers.
