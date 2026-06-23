@@ -33,6 +33,8 @@ import java.util.concurrent.TimeUnit
 class RevertFileTool : AgentTool {
     override val name = "revert_file"
     override val isMutating: Boolean get() = true
+    override val requiresApproval = true
+    override val allowSessionApproval = true
     override val description = """Use to undo changes made to a file. Reverts a single file to its original state before the agent modified it (via git checkout). This is a surgical operation — only the specified file is reverted, all other changes remain intact. Use this when an edit introduced bugs, broke tests, or went in the wrong direction. This is safer than trying to manually reverse edits with edit_file, as it restores the exact original content."""
 
     override val parameters = FunctionParameters(

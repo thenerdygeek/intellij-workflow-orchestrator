@@ -41,6 +41,8 @@ class CreateFileTool : AgentTool {
 
     override val name = "create_file"
     override val isMutating: Boolean get() = true
+    override val requiresApproval = true
+    override val allowSessionApproval = true
     override val description = "Create a new file with specified content at the specified path. If the file exists, it will fail unless overwrite=true. If the file doesn't exist, it will be created. This tool will automatically create any directories needed to write the file. ALWAYS provide the COMPLETE intended content of the file, without any truncation or omissions. You MUST include ALL parts of the file, even if they haven't been modified. Prefer edit_file for modifying existing files — only use create_file for new files or complete rewrites with overwrite=true."
     override val parameters = FunctionParameters(
         properties = mapOf(

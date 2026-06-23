@@ -38,6 +38,8 @@ class DeleteFileTool : AgentTool {
 
     override val name = "delete_file"
     override val isMutating: Boolean get() = true
+    override val requiresApproval = true
+    override val allowSessionApproval = true
     override val description = "Delete a file at the specified path. The deletion is recorded in IntelliJ's Local History (recoverable via Edit → Local History → Show History) but is NOT sent to the OS trash. Use for retiring stale files, including stale memory files under {agentDir}/memory/."
     override val parameters = FunctionParameters(
         properties = mapOf(

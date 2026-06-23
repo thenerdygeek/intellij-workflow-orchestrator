@@ -43,6 +43,8 @@ class RunCommandTool(
 ) : AgentTool {
     override val name = "run_command"
     override val isMutating: Boolean get() = true
+    override val requiresApproval = true
+    override val allowSessionApproval = false
     override val description = "Execute a CLI command — for system operations with no IDE-tool equivalent (deploy, Docker, custom scripts, git). Runs in the project directory by default; you MUST set `shell` to one of your environment's available shells. DO NOT pre-wrap the command in a shell yourself (e.g. 'cmd /c …', 'bash -c …') — the tool wraps it in the selected shell, and pre-wrapping double-nests and breaks quoting on Windows. For interactive prompts use background=true + send_stdin (or ask_user_input for passwords); idle output is auto-classified (PASSWORD_PROMPT / STDIN_PROMPT / GENERIC_IDLE) and surfaced — set on_idle=wait to disable. Dangerous commands are blocked."
     override val parameters: FunctionParameters = buildShellParameters(allowedShells)
     override val allowedWorkers = setOf(WorkerType.CODER)
