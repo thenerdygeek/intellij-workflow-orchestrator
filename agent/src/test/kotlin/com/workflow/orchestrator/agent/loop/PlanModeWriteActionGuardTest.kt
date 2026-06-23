@@ -266,6 +266,7 @@ class PlanModeWriteActionGuardTest {
         override val description = "Fake edit_file"
         override val parameters = FunctionParameters(properties = emptyMap())
         override val allowedWorkers = setOf(WorkerType.CODER, WorkerType.ORCHESTRATOR)
+        override val isMutating = true
         override suspend fun execute(params: JsonObject, project: Project): ToolResult {
             executed.add("edit_file")
             return ToolResult(content = "ok", summary = "ok", tokenEstimate = 5)

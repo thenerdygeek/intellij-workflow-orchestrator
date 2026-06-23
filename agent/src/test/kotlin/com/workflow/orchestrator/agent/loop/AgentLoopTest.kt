@@ -161,6 +161,7 @@ class AgentLoopTest {
         override val description = "Test tool $toolName"
         override val parameters = FunctionParameters(properties = emptyMap())
         override val allowedWorkers = setOf(WorkerType.CODER)
+        override val isMutating = toolName in AgentLoop.WRITE_TOOLS
         override suspend fun execute(params: JsonObject, project: Project) = result
     }
 

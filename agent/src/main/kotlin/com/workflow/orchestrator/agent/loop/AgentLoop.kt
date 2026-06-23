@@ -1919,14 +1919,14 @@ class AgentLoop(
             // Plan mode guard: block write tools even if the LLM hallucinates them.
             // For meta-tools that dispatch on an `action` parameter (e.g. project_structure,
             // runtime_config), also consult AgentTool.isWriteAction(action) so per-action
-            // mutations are blocked even though the tool name is not in WRITE_TOOLS.
+            // mutations are blocked even though the tool does not declare `isMutating`.
             val planModeAction: String? = try {
                 json.decodeFromString<JsonObject>(call.function.arguments)["action"]?.jsonPrimitive?.contentOrNull
             } catch (_: Exception) {
                 null
             }
             val planModeActive = planModeProvider?.invoke() ?: planMode
-            val isMutatingTool = tool.isMutating || toolName in WRITE_TOOLS || tool.isWriteAction(planModeAction)
+            val isMutatingTool = tool.isMutating || tool.isWriteAction(planModeAction)
             if (planModeActive && isMutatingTool) {
                 val planModeBlockMsg = "Error: '$toolName' is blocked in plan mode. You can only read, search, and analyze code."
                 fileLogger?.logToolCall(
@@ -2038,7 +2038,7 @@ class AgentLoop(
                             "iteration" to iteration,
                             "sessionId" to sessionId,
                             "riskLevel" to assessRisk(toolName, call.function.arguments),
-                            "isWriteTool" to (toolName in WRITE_TOOLS).toString(),
+                            "isWriteTool" to (tool.isMutating).toString(),
                         )
                     )
                 )
@@ -2061,7 +2061,7 @@ class AgentLoop(
             )
 
             // Per-user-message checkpoint capture: copy pre-edit state of touched files.
-            if (toolName in WRITE_TOOLS) {
+            if (tool.isMutating) {
                 val msgTs = currentUserMessageTsProvider?.invoke() ?: 0L
                 if (msgTs > 0L && checkpointStore != null) {
                     for (path in extractPathsFromToolArgs(toolName, call.function.arguments)) {
