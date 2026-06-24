@@ -3,6 +3,12 @@ package com.workflow.orchestrator.core.settings
 import com.intellij.openapi.components.*
 import com.intellij.openapi.project.Project
 
+/**
+ * Neutral default target branch (Phase 1a de-convention). Replaced the company convention
+ * "develop". Existing installs keep "develop" via [SettingsMigration] v1->v2 seeding.
+ */
+const val NEUTRAL_DEFAULT_TARGET_BRANCH = "main"
+
 @Service(Service.Level.PROJECT)
 @State(
     name = "WorkflowOrchestratorSettings",
@@ -65,7 +71,7 @@ class PluginSettings : SimplePersistentStateComponent<PluginSettings.State>(Stat
         var queueMaxDepthPerSuite by property(10)
 
         // Phase 2B: Handover settings
-        var defaultTargetBranch by string("develop")
+        var defaultTargetBranch by string(NEUTRAL_DEFAULT_TARGET_BRANCH)
         var branchTargetOverrides by string("")
         var bitbucketProjectKey by string("")
         var bitbucketRepoSlug by string("")

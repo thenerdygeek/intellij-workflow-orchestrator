@@ -7,6 +7,7 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.ApiResult
+import com.workflow.orchestrator.core.settings.NEUTRAL_DEFAULT_TARGET_BRANCH
 import com.workflow.orchestrator.core.settings.PluginSettings
 import git4idea.repo.GitRepository
 import kotlinx.coroutines.*
@@ -227,7 +228,7 @@ class DefaultBranchResolver(
 
     private fun getFallback(): String {
         val settings = PluginSettings.getInstance(project)
-        return settings.state.defaultTargetBranch?.takeIf { it.isNotBlank() } ?: "develop"
+        return settings.state.defaultTargetBranch?.takeIf { it.isNotBlank() } ?: NEUTRAL_DEFAULT_TARGET_BRANCH
     }
 
     // --- Override management ---

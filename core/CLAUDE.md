@@ -156,6 +156,20 @@ Models live in `core.model.jira.*` (`MyPermissionsData`, `JiraFieldData`, `Remot
 
 `JiraApiClient` adds an HTML content-type guard: any 200 response with `Content-Type: text/html` (auth-expired login redirect) is mapped to `ApiResult.Error(AUTH_FAILED)` so the loop doesn't try to JSON-parse the login page.
 
+### Settings migration (plugin split, Phase 1a)
+
+`SettingsMigration` (`core/settings/SettingsMigration.kt`) is the version-gated, one-shot migration
+run at startup by `SettingsMigrationStartupActivity`. `settingsSchemaVersion` (a `PluginSettings.State`
+field) distinguishes upgraders (`>= 1`, stamped by the 0a build) from fresh installs (`== 0`).
+
+When A blanks a company-convention default to a neutral value, the migration SEEDS the old literal
+for upgraders so behavior is preserved — necessary because `BaseState` omits default-equal fields
+from XML (a user who never set the value has no record of the old default on disk). v1→v2 blanks
+`defaultTargetBranch` `"develop"`→`NEUTRAL_DEFAULT_TARGET_BRANCH` (`"main"`) and seeds `"develop"`
+for upgraders. Pattern for future de-conventions: add a `if (field == neutralDefault) field = legacyLiteral`
+line in `seedLegacyConventionDefaults` and bump `CURRENT_VERSION`. Seed ONLY init-default fields this
+way; `init`-block-populated fields (e.g. `quickClipboardChips`) are always persisted and need no seeding.
+
 ## CredentialStore
 
 Wraps `PasswordSafe`. Keys scoped by `ServiceType`. All tokens stored here, never in `workflowOrchestrator.xml`.
