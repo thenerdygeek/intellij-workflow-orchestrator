@@ -3,7 +3,9 @@ package com.workflow.orchestrator.agent.tools
 import com.workflow.orchestrator.agent.tools.builtin.CreateFileTool
 import com.workflow.orchestrator.agent.tools.builtin.DeleteFileTool
 import com.workflow.orchestrator.agent.tools.builtin.EditFileTool
+import com.workflow.orchestrator.agent.tools.builtin.ReadFileTool
 import com.workflow.orchestrator.agent.tools.builtin.RevertFileTool
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.File
@@ -34,6 +36,29 @@ class SafetyPropsCharacterizationTest {
             "RunCommandTool must declare requiresApproval = true")
         assertTrue(s.contains("override val allowSessionApproval = false"),
             "RunCommandTool must declare allowSessionApproval = false (per-invocation only)")
+    }
+
+    // ── isMutating completeness lock ───────────────────────────────────────
+    @Test
+    fun `write tools declare isMutating true and read tools declare false`() {
+        // No-arg write tools — instantiate directly
+        for (tool in listOf(EditFileTool(), CreateFileTool(), DeleteFileTool(), RevertFileTool())) {
+            assertTrue(tool.isMutating, "${tool.name} must declare isMutating = true")
+        }
+        // Ctor-heavy write tools — verify by source text
+        for (rel in listOf(
+            "tools/builtin/RunCommandTool.kt",
+            "tools/builtin/BackgroundProcessTool.kt",
+            "tools/builtin/SendStdinTool.kt",
+            "tools/ide/FormatCodeTool.kt",
+            "tools/ide/OptimizeImportsTool.kt",
+            "tools/ide/RefactorRenameTool.kt",
+        )) {
+            assertTrue(src(rel).contains("override val isMutating"),
+                "$rel must declare isMutating (write tool)")
+        }
+        // Read tools must NOT declare isMutating = true
+        assertFalse(ReadFileTool().isMutating, "read_file must NOT declare isMutating = true")
     }
 
     // ── Hook exemption ─────────────────────────────────────────────────────

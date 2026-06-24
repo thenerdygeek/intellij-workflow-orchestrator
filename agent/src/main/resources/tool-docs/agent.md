@@ -46,7 +46,7 @@ in source.
 The tool dispatches between two execution paths based on two facts:
 
 1. **Is the resolved persona read-only?** — `inferPlanMode()` returns true if no
-   tool in the resolved set is in `AgentLoop.WRITE_TOOLS`.
+   tool in the resolved set declares `isMutating = true`.
 2. **Did the LLM provide `prompt_2..5`?**
 
 | Read-only? | prompt_2..5 present? | Path | Workers |

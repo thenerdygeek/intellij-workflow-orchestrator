@@ -121,7 +121,7 @@ class DiscardPlanTool : AgentTool {
         downside(
             "Schema-filtered out of act mode (alongside plan_mode_respond). Cached tool-call replay from a " +
             "plan-mode turn can surface it in act mode — the execution guard in AgentLoop dispatches it " +
-            "normally (it is not in WRITE_TOOLS), so the history rewrite still fires; the net effect is " +
+            "normally (it does not declare `isMutating = true`), so the history rewrite still fires; the net effect is " +
             "usually benign but unexpected."
         )
         observation(

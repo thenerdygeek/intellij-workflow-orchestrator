@@ -245,3 +245,22 @@ Tier-2 connectors (GitHub/GitLab/Jenkins); **Bedrock/Vertex LLM transports**; Ji
 - `BuildResultData`-family package relocation — still in `core/model/bamboo/`. Relocation to `core/model/ci/` is deferred; the neutral `PipelineData`/`CiGroupData` DTOs introduced in 0b-2 already live at `core/model/`.
 - **No default values on any `VcsHostClient` parameter** — `BitbucketService` already declares the defaults; redeclaring them on `VcsHostClient` triggers Kotlin `MULTIPLE_DEFAULTS_INHERITED_FROM_SUPERTYPES` on `BitbucketServiceImpl`. Applied uniformly across all 39 methods on the interface. (Discovery: Task 4; applied to `VcsHostClient` in Task 5.)
 - **No default for `maxResults` on `CiService.getRecentBuilds`** — same `MULTIPLE_DEFAULTS_INHERITED_FROM_SUPERTYPES` constraint applies where `BambooService` already declares `maxResults = 10`. Every existing call site passes both args explicitly, so behavior is unchanged. Default stays on `BambooService`; restore on `CiService` only if `BambooService` drops it first. (Discovery: Task 4.)
+
+## 17. Phase 0b-3 implementation note (2026-06-24)
+
+**Resolved: safety-props migration + thin ToolRegistrationService.** The hardcoded `AgentLoop.WRITE_TOOLS` / `HOOK_EXEMPT` sets and `ApprovalPolicy`'s `ALWAYS_PER_INVOCATION` / `SESSION_APPROVABLE` / `APPROVAL_TOOLS` sets were deleted. Every agent tool now self-declares:
+
+- `isMutating: Boolean` — true if the tool mutates state and must be blocked in plan mode (consumed by the AgentLoop execution guard + schema filter). Equivalent to the spec's `isWriteTool`.
+- `isHookExempt: Boolean` — true if PreToolUse/PostToolUse hooks should be skipped (replaces `AgentLoop.HOOK_EXEMPT`).
+- `requiresApproval: Boolean` — true if the loop-level approval gate must be passed before execution.
+- `allowSessionApproval: Boolean` — true if the user can grant "allow for this session" (false → per-invocation).
+
+Consumed via `ApprovalPolicy.forTool(tool)` in `AgentLoop`. No behavior change for plugin A tools.
+
+**Thin-host decision.** The `agentToolContributor` EP is hosted by a thin project-scoped `ToolRegistrationService` (`@Service(PROJECT)`). The EP iteration and per-contributor isolation logic live in the pure `ToolContributionRunner` (no IntelliJ deps — unit-testable). `ToolRegistrationService` only constructs `ToolContributionRunner` and calls `contribute(contributors, registry)`.
+
+**Property names B uses to contribute a safe write tool.** A plugin B tool that mutates state and requires approval declares:
+- `override val isMutating = true` — plan-mode blocked + sequential execution
+- `override val requiresApproval = true` — shows approval card before execution
+- `override val allowSessionApproval = true` (or `false` for per-invocation, like `run_command`)
+- `override val isHookExempt = false` (default) — user hooks can observe/veto it

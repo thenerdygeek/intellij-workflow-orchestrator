@@ -121,13 +121,13 @@ interface AgentTool {
      * True if this tool's PreToolUse/PostToolUse hooks should be SKIPPED. Internal
      * bookkeeping tools (task management, local-only staging) declare this so they are
      * not observable by — and cannot be blocked by — user hooks. Replaces the old
-     * `AgentLoop.HOOK_EXEMPT` name set so a depending plugin can self-declare exemption.
+     * A depending plugin can self-declare exemption without editing a hardcoded name set.
      *
      * ⚠ TRUST BOUNDARY: a tool that sets this to true escapes ALL user governance hooks
      * (a user PreToolUse hook can neither observe nor block it). A depending plugin (B) is
      * trusted-by-design (it `<depends>` on A and runs in-process), so a B tool *may* set
      * this — but only trusted depending plugins should be installed. This is a deliberate,
-     * documented decision (spec §5 mandates HOOK_EXEMPT move onto a self-declared property);
+     * documented decision (spec §5 (0b-3 impl note) moved HOOK_EXEMPT onto this self-declared property);
      * a future EP-validation layer could restrict it to A-owned tools if the trust model tightens.
      */
     val isHookExempt: Boolean get() = false

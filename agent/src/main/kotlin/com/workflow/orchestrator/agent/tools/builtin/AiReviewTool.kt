@@ -590,7 +590,7 @@ Actions:
         )
         downside(
             "`sideEffect = FILE_WRITE` reflects the local disk write to the findings store. It is NOT a " +
-                "plan-mode signal: `ai_review` is deliberately excluded from `AgentLoop.WRITE_TOOLS` (see " +
+                "plan-mode signal: `ai_review` does not declare `isMutating = true` (see " +
                 "the observation below), so the plan-mode execution guard does not block it. A code-reviewer " +
                 "persona CAN stage findings during plan mode. The FILE_WRITE classification only drives the " +
                 "tool-call UI chip and the documentation-page blast-radius indicator."
@@ -601,8 +601,8 @@ Actions:
                 "hook-based audit trails do not capture individual finding additions."
         )
         observation(
-            "ai_review is not in WRITE_TOOLS (edit_file, create_file, run_command, etc.) — it bypasses " +
-                "the approval gate entirely. The hook-exemption and non-membership in WRITE_TOOLS are " +
+            "ai_review does not declare `isMutating = true` (unlike edit_file, create_file, run_command, etc.) — it bypasses " +
+                "the approval gate entirely. The hook-exemption and non-declaration of `isMutating` are " +
                 "complementary: no gate, no hook, no plan-mode block. The rationale is that disk writes to " +
                 "the local findings store are equivalent to internal bookkeeping (same reasoning as task_create)."
         )

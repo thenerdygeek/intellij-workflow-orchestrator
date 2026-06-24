@@ -232,7 +232,7 @@ Actions and their parameters:
             "Passes `scope` values from the topology/list_* enum (`project`, `application`, `all`) to set_module_dependency, where `scope` means dependency scope (`compile`, `test`, `runtime`, `provided`). The parameter is shared in the schema but has completely different semantics depending on action."
         )
         observation(
-            "Write actions call requestApproval internally. `project_structure` is NOT in AgentLoop.WRITE_TOOLS but overrides AgentTool.isWriteAction() so the plan-mode execution guard catches per-action write calls. Bug fixed: plan-mode bypass for the 8 mutating actions (Batches 16+25 of the Phase 5 swarm)."
+            "Write actions call requestApproval internally. `project_structure` does not declare isMutating but overrides AgentTool.isWriteAction() so the plan-mode execution guard catches per-action write calls. Bug fixed: plan-mode bypass for the 8 mutating actions (Batches 16+25 of the Phase 5 swarm)."
         )
         downside(
             "refresh_external_project is a fire-and-forget trigger — it enqueues a Gradle/Maven reimport in IntelliJ's background task queue but does not wait for it to finish. The LLM cannot determine whether the reimport succeeded within the same tool call; it must poll (via a subsequent module_detail or topology call) or rely on the user to verify."

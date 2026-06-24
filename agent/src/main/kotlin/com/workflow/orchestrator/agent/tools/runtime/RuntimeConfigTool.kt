@@ -188,7 +188,7 @@ description optional: for approval dialog on create/modify/delete.
                 "before attempting the create.",
         )
         observation(
-            "runtime_config is NOT in AgentLoop.WRITE_TOOLS but overrides AgentTool.isWriteAction() so the " +
+            "runtime_config does not declare isMutating but overrides AgentTool.isWriteAction() so the " +
                 "plan-mode execution guard blocks create_run_config, modify_run_config, and delete_run_config. " +
                 "Bug fixed: plan-mode bypass for the 3 mutating actions (Batches 16+25 of the Phase 5 swarm). " +
                 "Note: this tool does not declare requiresApproval — the only mutation guard is [Agent]-prefix on delete.",

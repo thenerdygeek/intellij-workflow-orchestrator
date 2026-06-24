@@ -106,7 +106,7 @@ class EnablePlanModeTool : AgentTool {
                 B -- yes --> C[Return ToolResult.planModeToggle<br/>enablePlanMode=true]
                 C --> D[AgentLoop sees enablePlanMode=true<br/>fires planModeCallback]
                 D --> E[AgentService.planModeActive.set(true)]
-                E --> F[Dynamic schema provider rebuilds:<br/>- WRITE_TOOLS removed<br/>- enable_plan_mode removed<br/>- plan_mode_respond added]
+                E --> F[Dynamic schema provider rebuilds:<br/>- tools with isMutating=true removed<br/>- enable_plan_mode removed<br/>- plan_mode_respond added]
                 F --> G[Next LLM turn sees plan-mode schema]
                 G --> H[LLM calls plan_mode_respond<br/>with plan markdown]
                 H --> I[Loop suspends for user review]

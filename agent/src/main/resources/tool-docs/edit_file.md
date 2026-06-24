@@ -96,11 +96,11 @@ canonical-path-prefix based, so `../../etc/passwd` traversal is caught.
 
 `edit_file` is in two enforcement sets:
 
-- **`AgentLoop.WRITE_TOOLS`** — runs sequentially (never in parallel with other
+- **`isMutating = true` (self-declared)** — runs sequentially (never in parallel with other
   writes). Blocked outright when plan mode is active, both at the schema-filtering
   layer (LLM doesn't see the tool) and at the execution-guard layer (defence in
   depth against cached tool calls from before mode switch).
-- **`ApprovalPolicy.SESSION_APPROVABLE`** — requires user approval the first time;
+- **`requiresApproval=true, allowSessionApproval=true` (self-declared)** — requires user approval the first time;
   the user can choose "approve for session" to skip the dialog on subsequent
   edits. This is the same gate as `create_file` and `revert_file`.
 
