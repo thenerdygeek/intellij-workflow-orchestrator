@@ -111,7 +111,7 @@ class RepositoriesConfigurable(
                 bambooPlanKey = repo.bambooPlanKey ?: ""
                 sonarProjectKey = repo.sonarProjectKey ?: ""
                 dockerTagKey = repo.dockerTagKey ?: ""
-                defaultTargetBranch = repo.defaultTargetBranch ?: "develop"
+                defaultTargetBranch = repo.defaultTargetBranch ?: NEUTRAL_DEFAULT_TARGET_BRANCH
                 localVcsRootPath = repo.localVcsRootPath ?: ""
                 canonicalCloneUrl = repo.canonicalCloneUrl ?: ""
                 isPrimary = repo.isPrimary
@@ -389,7 +389,7 @@ class RepositoriesConfigurable(
         private val bambooField = JBTextField(existing?.bambooPlanKey ?: "", 30)
         private val sonarField = JBTextField(existing?.sonarProjectKey ?: "", 30)
         private val dockerField = JBTextField(existing?.dockerTagKey ?: "", 30)
-        private val branchField = JBTextField(existing?.defaultTargetBranch ?: "develop", 30)
+        private val branchField = JBTextField(existing?.defaultTargetBranch ?: NEUTRAL_DEFAULT_TARGET_BRANCH, 30)
         private val primaryCheckbox = JCheckBox("Primary repository", existing?.isPrimary ?: false)
 
         /** Displays ✓/✗ or a running indicator next to the Sonar field. */
@@ -508,7 +508,7 @@ class RepositoriesConfigurable(
             bambooPlanKey = bambooField.text.trim()
             sonarProjectKey = sonarField.text.trim()
             dockerTagKey = dockerField.text.trim()
-            defaultTargetBranch = branchField.text.trim().ifBlank { "develop" }
+            defaultTargetBranch = branchField.text.trim().ifBlank { NEUTRAL_DEFAULT_TARGET_BRANCH }
             isPrimary = primaryCheckbox.isSelected
         }
     }

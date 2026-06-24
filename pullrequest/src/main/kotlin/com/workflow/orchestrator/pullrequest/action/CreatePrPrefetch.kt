@@ -9,6 +9,7 @@ import com.workflow.orchestrator.core.bitbucket.BitbucketUser
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.model.jira.TransitionMeta
 import com.workflow.orchestrator.core.services.jira.TicketTransitionService
+import com.workflow.orchestrator.core.settings.NEUTRAL_DEFAULT_TARGET_BRANCH
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
@@ -305,7 +306,7 @@ object CreatePrPrefetch {
                     com.workflow.orchestrator.core.util.DefaultBranchResolver.getInstance(project)
                         .resolve(gitRepo)
                 } catch (e: Exception) {
-                    config.defaultTargetBranch.orEmpty().ifBlank { "develop" }
+                    config.defaultTargetBranch.orEmpty().ifBlank { NEUTRAL_DEFAULT_TARGET_BRANCH }
                 }
             } else {
                 config.defaultTargetBranch.orEmpty().ifBlank { "develop" }

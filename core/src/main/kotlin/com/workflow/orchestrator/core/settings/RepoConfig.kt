@@ -9,7 +9,7 @@ class RepoConfig : BaseState() {
     var bambooPlanKey by string("")
     var sonarProjectKey by string("")
     var dockerTagKey by string("")
-    var defaultTargetBranch by string("develop")
+    var defaultTargetBranch by string(NEUTRAL_DEFAULT_TARGET_BRANCH)
     var localVcsRootPath by string("")
     /** Server-anchored HTTPS clone URL, populated after first successful Bitbucket validation. */
     var canonicalCloneUrl by string("")
