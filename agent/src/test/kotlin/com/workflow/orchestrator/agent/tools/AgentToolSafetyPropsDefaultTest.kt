@@ -1,4 +1,3 @@
-// agent/src/test/kotlin/com/workflow/orchestrator/agent/tools/AgentToolSafetyPropsDefaultTest.kt
 package com.workflow.orchestrator.agent.tools
 
 import com.intellij.openapi.project.Project

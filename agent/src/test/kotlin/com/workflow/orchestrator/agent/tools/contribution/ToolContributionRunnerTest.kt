@@ -57,4 +57,20 @@ class ToolContributionRunnerTest {
         assertTrue(diag.addedToolNames.isEmpty())
         assertTrue(diag.failures.isEmpty())
     }
+
+    @Test
+    fun `a contributor that registers a deferred tool appears in addedToolNames`() {
+        // Regression: before the fix, addedToolNames was diffed on getActiveTools() which
+        // excludes the deferred tier — so a registerDeferred call produced addedToolNames=[] even
+        // though the tool was registered correctly. allToolNames() spans all three tiers.
+        val registry = ToolRegistry()
+        val c = contributor { ctx -> ctx.registerDeferred(toolNamed("deferred_tool")) }
+
+        val diag = ToolContributionRunner.run(listOf(c),
+            ToolRegistrationContext(project, registry), registry)
+
+        assertTrue("deferred_tool" in diag.addedToolNames,
+            "deferred tool must appear in diagnostic — addedToolNames was ${diag.addedToolNames}")
+        assertEquals(0, diag.failures.size)
+    }
 }

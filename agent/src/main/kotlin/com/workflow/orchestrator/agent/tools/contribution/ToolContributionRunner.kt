@@ -17,6 +17,11 @@ data class ContributorFailure(val contributorClass: String, val error: Throwable
  * (e.g. from plugin B) cannot abort the others — the per-contributor isolation deferred from
  * Phase 0a (where a single `runCatching` wrapped the whole `forEach`). Pure: no platform/EP
  * access — the caller fetches the EP list and supplies the registry.
+ *
+ * The `addedToolNames` diff in [ContributionDiagnostics] is computed over [ToolRegistry.allToolNames],
+ * which spans all three registry tiers (core, active-deferred, and deferred). Contributors that
+ * register a deferred tool via [ToolRegistrationContext.registerDeferred] therefore appear in
+ * the diagnostic correctly — using only [ToolRegistry.getActiveTools] would exclude them.
  */
 object ToolContributionRunner {
     fun run(
@@ -24,13 +29,13 @@ object ToolContributionRunner {
         context: ToolRegistrationContext,
         registry: ToolRegistry,
     ): ContributionDiagnostics {
-        val before = registry.getActiveTools().keys.toSet()
+        val before = registry.allToolNames().toSet()
         val failures = mutableListOf<ContributorFailure>()
         for (c in contributors) {
             runCatching { c.registerTools(context) }
                 .onFailure { failures += ContributorFailure(c::class.java.simpleName, it) }
         }
-        val added = registry.getActiveTools().keys - before
+        val added = registry.allToolNames() - before
         return ContributionDiagnostics(
             contributorCount = contributors.size,
             contributorClasses = contributors.map { it::class.java.simpleName },

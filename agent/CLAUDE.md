@@ -326,7 +326,7 @@ Key files: `ide/LanguageIntelligenceProvider.kt`, `ide/LanguageProviderRegistry.
 
 ## ToolRegistry Internals
 
-- **ToolRegistrationService** — thin project-scoped `@Service(PROJECT)` that hosts the `agentToolContributor` extension point. It constructs a pure `ToolContributionRunner` (no IntelliJ dependencies — unit-testable) and calls `contribute(contributors, registry)`. Plugin B tools reach `ToolRegistry` via this EP without touching `AgentService` or `AgentLoop` directly.
+- **ToolRegistrationService** — thin project-scoped `@Service(PROJECT)` that hosts the `agentToolContributor` extension point. It delegates to the pure `ToolContributionRunner.run(contributors, context, registry)` (no IntelliJ dependencies — unit-testable) via `contributeExternalTools(registry)`. Plugin B tools reach `ToolRegistry` via this EP without touching `AgentService` or `AgentLoop` directly.
 - **Thread safety**: Registry map uses `ConcurrentHashMap`. `activateDeferred()` and `resetActiveDeferred()` are `@Synchronized` to prevent races when integration tools are toggled from multiple coroutines.
 - **Deferred activation**: Integration tools (Jira, Bamboo, Sonar, Bitbucket, DB) are registered lazily. `reregisterConditionalTools()` re-evaluates integration availability at runtime (e.g., after settings change) and adds/removes tools without restarting the session.
 - **Unregistration**: `unregisterDeferred(toolName)` removes a single tool from the deferred or active-deferred pool and invalidates the name cache; used to clean up integration tools that lose their service connection.
