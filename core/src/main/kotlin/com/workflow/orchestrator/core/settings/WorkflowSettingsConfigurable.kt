@@ -10,6 +10,12 @@ import javax.swing.JComponent
  * Parent settings page: Tools > Workflow Orchestrator.
  * Shows a read-only connection status overview.
  * All editable fields live in child pages: General, Workflow, CI/CD, AI & Advanced.
+ *
+ * PUBLIC ANCHOR: the plugin.xml `id="workflow.orchestrator"` on this configurable's
+ * <projectConfigurable> (root plugin.xml) is a STABLE nesting anchor — `parentId` resolves
+ * against that plugin.xml id (NOT getId()). Depending plugins (e.g. plugin B) nest their own
+ * Settings pages with <projectConfigurable parentId="workflow.orchestrator">. Do NOT rename
+ * this id; a rename silently detaches every depending plugin's page. Pinned by SettingsAnchorContractTest.
  */
 class WorkflowSettingsConfigurable(
     private val project: Project
