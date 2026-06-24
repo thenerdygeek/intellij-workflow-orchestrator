@@ -558,7 +558,7 @@ stored step by 1-based index).
 **Tests:** pure-logic units `WalkthroughStepParsingTest`, `WalkthroughStateMachineTest`,
 `WalkthroughMarkdownTest`, `WalkthroughServiceTest`, `WalkthroughToolTest`;
 source-text contracts `WalkthroughRegistrationContractTest` (registration + sub-agent name-filter +
-not-in-WRITE_TOOLS) and `WalkthroughControllerWiringContractTest` (auto-finish ordering + pause
+not-mutating (isMutating=false)) and `WalkthroughControllerWiringContractTest` (auto-finish ordering + pause
 set/clear symmetry + Ask arm/consume wiring). **No `BasePlatformTestCase` here on purpose:** the
 validator's bounds/message logic is a PURE `validateStepsWith(steps, probe)` over a `StepFileProbe`
 (`defaultStepValidator` supplies the real readAction+FileDocumentManager probe), and the navigator's
@@ -625,7 +625,7 @@ try {
 - **Read-only tools**: Execute in parallel via `coroutineScope { async { ... } }` (read_file, search_code, diagnostics, etc.)
 - **Write tools**: Execute sequentially (edit_file, run_command, etc.)
 - **`edit_file` silent-no-op guard (data-loss bug #3 fix).** `EditFileTool.writeViaDocument` returns `true` ONLY when it actually replaced. The validated `content` (read at execute() top) can diverge from the Document it mutates (the `readAction`→`java.io` fallback, a VFS/Document reload between the read and the EDT write, or an external write behind the VFS), so `document.text.indexOf(oldString)` can be `-1` and the replace silently no-ops. Returning `true` on that no-op was a false-success: `execute()`'s `writeViaDocument || writeViaVfs || writeViaFileIo` chain short-circuited and reported the edit done with the file unchanged (surfaced most in sub-agents — their edits aren't shown to the user, and write-heavy run_command→edit chains widen the staleness window). The fix makes `writeViaDocument` return `false` on a no-op, so the chain falls through to `writeViaVfs` which writes the full validated `newContent` (and reloads the Document) — the edit **self-heals and lands** rather than vanishing. Pinned by `EditFilePersistenceFixtureTest` (a `BasePlatformTestCase` exercising the real Document path via an in-memory `LightVirtualFile` — single test method on purpose: a second `BasePlatformTestCase` lifecycle hangs on an "Indexing timeout" in headless CI). `:agent` gained `testFramework(TestFrameworkType.Platform)` + `junit5-vintage-engine` for this.
-- **Write tools** (self-declared via `isMutating = true`): edit_file, create_file, run_command, revert_file, background_process, send_stdin, format_code, optimize_imports, refactor_rename — execute sequentially; blocked in plan mode. Meta-tools (runtime_config, project_structure) override `isWriteAction(action)` to block mutating actions per-call.
+- **Write tools** (self-declared via `isMutating = true`): edit_file, create_file, delete_file, run_command, revert_file, background_process, send_stdin, format_code, optimize_imports, refactor_rename — execute sequentially; blocked in plan mode. Meta-tools (runtime_config, project_structure) override `isWriteAction(action)` to block mutating actions per-call.
 - **Approval-gated tools** (self-declared via `requiresApproval` / `allowSessionApproval`): edit_file, create_file, revert_file declare `requiresApproval=true, allowSessionApproval=true` (session-approvable); run_command declares `requiresApproval=true, allowSessionApproval=false` (per-invocation). Consumed via `ApprovalPolicy.forTool(tool)`.
 - **Per-tool timeouts**: `withTimeoutOrNull` wraps every execution — default 120s, `run_command` 600s, `agent` (SpawnAgentTool) unlimited. Timeout returns an error ToolResult; the LLM can retry or adjust.
 - **RunCommandTool component architecture**:
@@ -682,7 +682,7 @@ Two-layer enforcement:
 1. **Schema filtering** (`AgentService` tool definition provider) — Removes write tools and `enable_plan_mode` from tool definitions before each LLM call. The LLM never sees blocked tools. In act mode, removes `plan_mode_respond`. The pure inclusion predicate (use_skill gating + act-only delegated + plan/act split) is `tools/ToolDefinitionFilter.shouldInclude(...)`, extracted from the `toolDefinitionProvider` closure in Phase 3 cut B (incision 3) and pinned by `ToolDefinitionFilterTest` (with `AgentServiceToolFilterTest` + `DelegatedActOnlyToolFilterTest` now delegating to it).
 2. **Execution guard** (`AgentLoop.run()`) — Checks `planMode && (tool.isMutating || tool.isWriteAction(action))` as a safety net for cached tool calls from before mode switch.
 
-**Blocked in plan mode (declare `isMutating=true` or override `isWriteAction`):** edit_file, create_file, run_command, revert_file, background_process, send_stdin, format_code, optimize_imports, refactor_rename, enable_plan_mode
+**Blocked in plan mode (declare `isMutating=true` or override `isWriteAction`):** edit_file, create_file, delete_file, run_command, revert_file, background_process, send_stdin, format_code, optimize_imports, refactor_rename, enable_plan_mode
 **Always available:** read_file, search_code, glob_files, diagnostics, find_definition, find_references, think, agent, tool_search, ask_followup_question, plan_mode_respond, etc.
 
 **Transition:** `AgentService.setPlanModeActive(false)` → tools restored on next LLM call → dashboard UI updated.

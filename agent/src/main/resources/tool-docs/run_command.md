@@ -123,8 +123,8 @@ shows up in the docs UI.
 
 ## Per-invocation approval, no session-trust
 
-Approval policy: `ALWAYS_PER_INVOCATION` (hardcoded — see
-`agent/loop/ApprovalPolicy.kt`). Every call requires a fresh approval. There is no
+Approval policy: `ALWAYS_PER_INVOCATION` (run_command declares `requiresApproval=true`,
+`allowSessionApproval=false` — every call is approved individually). Every call requires a fresh approval. There is no
 "allow `run_command` for this session" option in the UI. The other write tools
 (`edit_file`, `create_file`, `revert_file`) can be allow-listed for the session, but
 not this one.
