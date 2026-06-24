@@ -61,6 +61,14 @@ Activity-aware polling: `baseIntervalMs` (default 30s), `maxIntervalMs` (default
 - `ConnectionSettings` — application-level (shared across projects): service URLs (Jira, Bamboo, Bitbucket, SonarQube, Sourcegraph), Bitbucket username
 - `PluginSettings` — project-level: plan keys, polling intervals, feature toggles, docker tag key, sonar project key
 
+### Settings-group anchor (plugin split)
+
+`workflow.orchestrator` is the stable **public** settings-group anchor for the "Workflow Orchestrator" page in Tools &rarr; Settings. Depending plugins (e.g. Plugin B) nest their own pages under this group by declaring `<projectConfigurable parentId="workflow.orchestrator" .../>` in their own `plugin.xml` — **no custom EP is needed** on Plugin A's side; the platform resolves the parent/child relationship automatically.
+
+**Do not rename this id.** It is the unique identifier that Platform uses for the group node AND the parent lookup for any contributing plugin. Renaming it silently orphans every B-contributed page (they fall back to "Other Settings" without any error).
+
+Pinned by `SettingsAnchorContractTest` (`:konsist`) — the test asserts that `WorkflowSettingsConfigurable` carries `id = "workflow.orchestrator"` in A's `plugin.xml` registration. Keep the test and the id in sync if the configurable is ever restructured.
+
 ### Sub-agent settings
 
 - `enableResearchSubagent: Boolean = true` (project-level) — gates the bundled `research` sub-agent persona; when false, `SpawnAgentTool` returns `RESEARCH_SUBAGENT_DISABLED` for both LLM-driven and slash-command invocations.

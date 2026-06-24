@@ -264,3 +264,13 @@ Consumed via `ApprovalPolicy.forTool(tool)` in `AgentLoop`. No behavior change f
 - `override val requiresApproval = true` — shows approval card before execution
 - `override val allowSessionApproval = true` (or `false` for per-invocation, like `run_command`)
 - `override val isHookExempt = false` (default) — user hooks can observe/veto it
+
+## 18. Phase 0b-4 resolved (2026-06-24)
+
+**What shipped.** Settings-section contribution via the platform `parentId` anchor — no custom EP on Plugin A is needed. B nests its own settings pages under A's "Workflow Orchestrator" group by declaring `<projectConfigurable parentId="workflow.orchestrator" .../>` in B's own `plugin.xml`. The anchor id (`workflow.orchestrator`) is the same string already on A's `WorkflowSettingsConfigurable` registration. A demonstrative `CompanyBSettingsConfigurable` was added to `:plugin-b` and registered this way, proving the mechanism end-to-end at the compile / contract-test level.
+
+**Decision: config-preset widening is DEFERRED to Phase 1.** B's `CompanyBSettingsConfigurable` is a placeholder; it does not yet write any defaults into A's `ConnectionSettings` / `PluginSettings`. The preset (§8.7 "B contributes … its config preset / overrides A's neutral defaults") cannot be implemented until Phase 1 blanks A's hardcoded defaults via the `@State` migration (§8.8) — there is nothing neutral to override yet. Widening B's configurable to apply defaults is a Phase-1 task that follows the migration.
+
+**No custom A-side settings EP was needed.** The platform `parentId` mechanism is sufficient for B to contribute pages. A does not need a dedicated EP for settings-section contribution.
+
+**CI coverage vs. runtime appearance.** Three things are CI-verified: (i) `CompanyBSettingsConfigurable` compiles and the class exists in `:plugin-b`; (ii) `WorkflowSettingsConfigurable` carries `id = "workflow.orchestrator"` in A's `plugin.xml` (pinned by `SettingsAnchorContractTest` in `:konsist`); (iii) B's `plugin.xml` declares `parentId="workflow.orchestrator"` with the matching FQN. CI does **not** verify runtime rendering — the platform resolves parent/child silently and falls back to "Other Settings" on a bad parentId without any error. **Runtime page-appearance under the "Workflow Orchestrator" group remains a runIde smoke (PENDING-USER).**
