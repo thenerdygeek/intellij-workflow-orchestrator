@@ -23,6 +23,7 @@ import com.workflow.orchestrator.core.ai.BranchNameAiGenerator
 import com.workflow.orchestrator.core.bitbucket.BitbucketBranchClient
 import com.workflow.orchestrator.core.model.ApiResult
 import com.workflow.orchestrator.core.settings.ConnectionSettings
+import com.workflow.orchestrator.core.settings.NEUTRAL_DEFAULT_TARGET_BRANCH
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
@@ -1004,7 +1005,7 @@ class SprintDashboardPanel(
                 val gitRepo = readAction {
                     GitRepositoryManager.getInstance(project).repositories.firstOrNull()
                 }
-                val defaultSource = gitRepo?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
+                val defaultSource = gitRepo?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: NEUTRAL_DEFAULT_TARGET_BRANCH
                 val branchesResult = branchingService.fetchRemoteBranches(branchClient, projectKey, repoSlug)
 
                 val branches = when (branchesResult) {

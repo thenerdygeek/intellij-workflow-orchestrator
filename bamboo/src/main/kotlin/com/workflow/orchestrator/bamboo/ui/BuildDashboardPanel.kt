@@ -37,6 +37,7 @@ import com.workflow.orchestrator.core.events.EventBus
 import com.workflow.orchestrator.core.events.WorkflowEvent
 import com.workflow.orchestrator.core.model.workflow.InteractionMode
 import com.workflow.orchestrator.core.model.workflow.PrRef
+import com.workflow.orchestrator.core.settings.NEUTRAL_DEFAULT_TARGET_BRANCH
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.settings.RepoConfig
 import com.workflow.orchestrator.core.settings.RepoContextResolver
@@ -904,7 +905,7 @@ class BuildDashboardPanel(private val project: Project) : JPanel(BorderLayout())
                     returnToLatestBuild()
                 }
                 panelScope.launch {
-                    val branch = getCurrentBranch() ?: getGitRepo()?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: "develop"
+                    val branch = getCurrentBranch() ?: getGitRepo()?.let { DefaultBranchResolver.getInstance(project).resolve(it) } ?: NEUTRAL_DEFAULT_TARGET_BRANCH
                     monitorService.pollOnce(planKey, branch)
                 }
                 // Refresh the build history; PrBar self-updates via its state collector.

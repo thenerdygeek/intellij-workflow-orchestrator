@@ -18,6 +18,7 @@ import com.workflow.orchestrator.agent.tools.docs.toolDoc
 import com.workflow.orchestrator.agent.tools.integration.ServiceLookup
 import com.workflow.orchestrator.core.ai.TokenEstimator
 import com.workflow.orchestrator.core.settings.ConnectionSettings
+import com.workflow.orchestrator.core.settings.NEUTRAL_DEFAULT_TARGET_BRANCH
 import com.workflow.orchestrator.core.settings.PluginSettings
 import com.workflow.orchestrator.core.util.DefaultBranchResolver
 import com.workflow.orchestrator.core.workflow.ChainKeyResolver
@@ -518,7 +519,7 @@ class ProjectContextTool : AgentTool {
                 if (!config.bitbucketProjectKey.isNullOrBlank()) {
                     sb.appendLine("    Bitbucket: ${config.bitbucketProjectKey}/${config.bitbucketRepoSlug ?: ""}")
                 }
-                if (!config.defaultTargetBranch.isNullOrBlank() && config.defaultTargetBranch != "develop") {
+                if (!config.defaultTargetBranch.isNullOrBlank() && config.defaultTargetBranch != NEUTRAL_DEFAULT_TARGET_BRANCH) {
                     sb.appendLine("    Target Branch: ${config.defaultTargetBranch}")
                 }
             }
