@@ -309,7 +309,7 @@ object CreatePrPrefetch {
                     config.defaultTargetBranch.orEmpty().ifBlank { NEUTRAL_DEFAULT_TARGET_BRANCH }
                 }
             } else {
-                config.defaultTargetBranch.orEmpty().ifBlank { "develop" }
+                config.defaultTargetBranch.orEmpty().ifBlank { NEUTRAL_DEFAULT_TARGET_BRANCH }
             }
 
             // PR 6 of the 2026-05-07 write-ops fix plan (audit P1 finding #6):
