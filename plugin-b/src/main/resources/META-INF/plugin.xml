@@ -12,4 +12,13 @@
         <workflowConfig implementation="com.workflow.orchestrator.companyb.CompanyBWorkflowConfig"/>
         <agentToolContributor implementation="com.workflow.orchestrator.companyb.CompanyBToolContributor"/>
     </extensions>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <projectConfigurable
+            parentId="workflow.orchestrator"
+            instance="com.workflow.orchestrator.companyb.CompanyBSettingsConfigurable"
+            id="workflow.orchestrator.companyb"
+            displayName="Company B"
+            nonDefaultProject="true"/>
+    </extensions>
 </idea-plugin>
